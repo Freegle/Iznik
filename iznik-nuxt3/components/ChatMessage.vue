@@ -77,6 +77,11 @@
     <div v-else-if="chatmessage?.type === 'Reminder'">
       <chat-message-reminder :id="id" :chatid="chatid" :pov="pov" />
     </div>
+    <!-- A question from Freegle with tappable answers, e.g. "could you deliver?"
+         on a post that has gone quiet. -->
+    <div v-else-if="chatmessage?.type === 'Prompt'">
+      <chat-message-prompt :id="id" :chatid="chatid" :pov="pov" />
+    </div>
     <!-- Synthetic system notices, e.g. "the item you replied about has now been
          taken" posted when a replied-to post is taken/withdrawn. Just the text. -->
     <div
@@ -85,9 +90,19 @@
     >
       <span class="preline forcebreak">{{ chatmessage?.message }}</span>
     </div>
-    <div v-else>
-      Unknown chat message type {{ chatmessage?.type }}, {{ chat }}
-      {{ chatmessage }}
+    <!-- A type this build does not know about. Every message carries readable
+         text in `message` whatever its type, so show that: a client that is
+         simply older than the feature then degrades to a plain message instead
+         of rendering something broken.
+
+         This used to dump the type and two raw objects into the conversation.
+         That is a fine thing to see in development and a terrible one to send to
+         a member - it has already happened once in the wild, with `System`
+         (6d833bb62). The dump does not help them, and they cannot report it
+         usefully. Old apps are not upgradeable in arrears, so the fallback has
+         to be safe for the app somebody is still running two years from now. -->
+    <div v-else class="preline forcebreak">
+      {{ chatmessage?.message }}
     </div>
     <!-- Held-by-rippling notice. Deliberately never shown to the sender: their
          reply should look like an ordinary sent message awaiting a response, so

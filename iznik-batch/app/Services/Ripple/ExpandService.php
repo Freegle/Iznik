@@ -1007,6 +1007,16 @@ class ExpandService
                 $total = (int) $row->total_ticks;
                 $target = min($this->reach->tickForElapsedHours($elapsedHours), $total);
 
+                // A floor set by something we have LEARNED, as opposed to the clock.
+                // A scout who replied was outside the reach at the time, so their
+                // reply is evidence the item is wanted that far out - and the people
+                // around them should get the same chance rather than waiting for the
+                // schedule to arrive. Never lowers the target, and never exceeds the
+                // post's own schedule length.
+                if ($row->min_tick !== null) {
+                    $target = min(max($target, (int) $row->min_tick), $total);
+                }
+
                 if ($target <= (int) $row->tick) {
                     // Not actually due for a new tick yet — reschedule and move on.
                     if (!$dryRun) {

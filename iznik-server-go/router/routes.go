@@ -56,6 +56,7 @@ import (
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
 
+	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modconfig"
@@ -331,6 +332,21 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} chat.ChatMessage
 		rg.Post("/chat/:id/message", chat.CreateChatMessage)
 
+		// Answer a Freegle prompt
+		// @Router /chat/{id}/message/{mid}/prompt [post]
+		// @Summary Answer a Freegle chat prompt
+		// @Description Records the member's answer to a type='Prompt' chat message and applies
+		// @Description it to the posts the prompt covers. Only the member the prompt was sent
+		// @Description to may answer, and only once.
+		// @Tags chat
+		// @Accept json
+		// @Produce json
+		// @Param id path integer true "Chat ID"
+		// @Param mid path integer true "Chat message ID"
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/chat/:id/message/:mid/prompt", chat.AnswerChatPrompt)
+
 		// Patch Chat Message
 		// @Router /chatmessages [patch]
 		// @Summary Update chat message
@@ -551,6 +567,11 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/config/:key", config.Get)
 
 		// Rippling-out live event counters, read-only, Support/Admin only (sysadmin §15/§16).
+		// First-reply effectiveness, per lever. Same Support/Admin gate as rippling.
+		firstReplyAdmin := rg.Group("/firstreply")
+		firstReplyAdmin.Use(config.RequireSupportOrAdminMiddleware())
+		firstReplyAdmin.Get("/metrics", firstreply.Metrics)
+
 		ripplingAdmin := rg.Group("/rippling")
 		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
 		ripplingAdmin.Get("/metrics", rippling.Metrics)
@@ -982,6 +1003,11 @@ func SetupRoutes(app *fiber.App) {
 		// @Param limit query int false "Max results (default 10, max 30)"
 		// @Success 200 {array} message.SimilarResult
 		rg.Get("/message/:id/matches", message.PostMatches)
+
+		// Members whose SAVED SEARCH matches this post, at the same
+		// MinMatchedPostScore the matched-posts email uses - both compare stored
+		// document embeddings, so the number means the same thing on both.
+		rg.Get("/message/:id/searchmatches", message.SearchMatchesForPost)
 
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 

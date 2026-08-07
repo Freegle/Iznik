@@ -71,7 +71,9 @@ const mockSessionStart = vi.fn()
 const mockSetAppVersion = vi.fn()
 vi.mock('~/composables/useClientLog', () => ({
   setAppVersion: (...args) => mockSetAppVersion(...args),
-  useClientLog: () => ({ sessionStart: (...args) => mockSessionStart(...args) }),
+  useClientLog: () => ({
+    sessionStart: (...args) => mockSessionStart(...args),
+  }),
 }))
 
 vi.mock('~/stores/debug', () => ({
@@ -139,8 +141,9 @@ describe('mobile store', () => {
       const store = useMobileStore()
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
       mockPlatform = 'ios'
-      // Mock initApp to avoid Capacitor imports
-      store.initApp = vi.fn()
+      // Mock initApp to avoid Capacitor imports. It is async and init()
+      // attaches a .catch() to it, so the stub must return a promise.
+      store.initApp = vi.fn().mockResolvedValue(undefined)
       store.init({ public: { MOBILE_VERSION: '2.0.0' } })
       expect(store.isApp).toBe(true)
       expect(store.isiOS).toBe(true)
@@ -153,10 +156,32 @@ describe('mobile store', () => {
       const store = useMobileStore()
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
       mockPlatform = 'android'
-      store.initApp = vi.fn()
+      store.initApp = vi.fn().mockResolvedValue(undefined)
       store.init({ public: { MOBILE_VERSION: '2.0.0' } })
       expect(store.isApp).toBe(true)
       expect(store.isiOS).toBe(false)
+      logSpy.mockRestore()
+    })
+
+    // initApp() is deliberately not awaited, so a rejection has nowhere to go.
+    // Left uncaught it is invisible on device, which is how a failed config
+    // fetch silently cost the app its back-button handler.
+    it('catches an initApp rejection instead of leaving it unhandled', async () => {
+      const store = useMobileStore()
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const unhandled = vi.fn()
+      process.on('unhandledRejection', unhandled)
+      mockPlatform = 'android'
+      store.initApp = vi.fn().mockRejectedValue(new Error('init exploded'))
+
+      expect(() =>
+        store.init({ public: { MOBILE_VERSION: '2.0.0' } })
+      ).not.toThrow()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      process.off('unhandledRejection', unhandled)
+      expect(unhandled).not.toHaveBeenCalled()
+      expect(logSpy).toHaveBeenCalledWith('initApp failed:', 'init exploded')
       logSpy.mockRestore()
     })
   })
@@ -491,6 +516,24 @@ describe('mobile store', () => {
       mockConfigFetchv2.mockResolvedValue([{ value: '1.0.0' }])
 
       await store.checkForAppUpdate()
+      expect(store.appupdaterequired).toBe(false)
+    })
+
+    // This check is best-effort and runs partway through initApp(), which has
+    // no try/catch and is called without await or .catch(). When the config
+    // fetch threw, the rejection escaped initApp() as a silent unhandled
+    // rejection and every later step was skipped — including
+    // initBackButton(), so no JS backButton listener was ever registered and
+    // Capacitor's native default swallowed the back gesture at the root. A
+    // failed version check must never cost the app its back button.
+    it('swallows an API failure instead of rejecting', async () => {
+      const store = useMobileStore()
+      store.config = { public: {} }
+      store.isiOS = false
+
+      mockConfigFetchv2.mockRejectedValue(new Error('Network request failed'))
+
+      await expect(store.checkForAppUpdate()).resolves.toBeUndefined()
       expect(store.appupdaterequired).toBe(false)
     })
 
@@ -1064,10 +1107,10 @@ describe('mobile store', () => {
       )
 
       // Member changes the OS setting while we're backgrounded.
-      mockTextZoomGetPreferred.mockResolvedValue({ value: 1.5 })
+      mockTextZoomGetPreferred.mockResolvedValue({ value: 1.15 })
       await app.fire('resume')
 
-      expect(mockTextZoomSet).toHaveBeenLastCalledWith({ value: 1.5 })
+      expect(mockTextZoomSet).toHaveBeenLastCalledWith({ value: 1.15 })
     })
 
     it('does not set a zoom when the preferred value is unusable', async () => {
@@ -1077,6 +1120,23 @@ describe('mobile store', () => {
       await store.initTextZoom(fakeApp())
 
       expect(mockTextZoomSet).not.toHaveBeenCalled()
+    })
+
+    // Samsung's "Accessibility > Font size and style" setting (distinct from the
+    // standard Display font-size slider, whose max is 1.3 - see the "applies the
+    // preferred zoom on startup" test above) can push Configuration.fontScale up
+    // to ~3.0. Applying that directly to the WebView blows up ModTools' fixed-width
+    // navbar/left-menu shell (min-width/px-based, not designed to reflow at 2-3x
+    // text size), which is what topic 10010/1 reported as the screen "narrower" /
+    // differently sized after upgrading the app. Clamp to the standard slider's
+    // max so extreme accessibility settings can't break the shell chrome.
+    it('clamps an extreme preferred zoom so the ModTools shell does not break', async () => {
+      mockTextZoomGetPreferred.mockResolvedValue({ value: 2.6 })
+      const store = useMobileStore()
+
+      await store.initTextZoom(fakeApp())
+
+      expect(mockTextZoomSet).toHaveBeenCalledWith({ value: 1.3 })
     })
 
     it('survives the plugin being unavailable', async () => {

@@ -201,7 +201,12 @@ For each due post, `ripple:expand`:
   call, creates the `rippling_reach` row and does the first ripple-in.
 - **`advanceDue`** advances to the next hazard tick: one catchment call materialises that
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
-  schedule recomputation.
+  schedule recomputation. The target is normally elapsed time alone, but
+  `rippling_reach.min_tick` raises a floor under it (capped at the post's schedule length):
+  a scout who replies was outside the reach when we mailed them, so their reply is evidence
+  the item is wanted that far out and the people around them should get the same chance
+  rather than waiting on the clock. See
+  [first-reply.md](first-reply.md#a-scout-who-replies-pulls-the-reach-out-to-them).
 - **`rippleIntoNewGroups`** resolves target groups with a non-locking snapshot `SELECT`, then
   inserts each `messages_groups` membership as its own `INSERT IGNORE` (Galera-safe; avoids
   the lock-wait storms a single `INSERT ... SELECT` caused). Rippled copies carry the post's
@@ -293,6 +298,12 @@ retracted, so re-approval restores the copy without re-rippling.
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
 - **Reach mail:** the join notification when a post ripples to within reach.
 - **Held replies:** replies to rippled posts held for moderator Chat Review where applicable.
+  One exception: a post's FIRST reply is not held when the replier is inside the reach the
+  post will eventually have (`rippling_reach.max_polygon`). They were always going to be
+  allowed to reply once the ripple got there, so holding them delays a poster who currently
+  has nothing without protecting local-first ordering in any lasting way. See
+  [first-reply.md](first-reply.md); gated by `freegle.firstreply.passthrough.enabled`, off by
+  default.
 - **Rippling Explorer (ModTools `/rippling`):** draws the exact polygon and tints groups from
   the per-tick `reachable_group_ids`.
 

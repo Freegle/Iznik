@@ -30,9 +30,15 @@ community.
   - replies to your own posts,
   - a copy of messages you send,
   - ChitChat and notifications,
+  - Freegle's messages about your posts,
   - suggested posts,
   - newsletters and stories,
   - encouragement emails.
+
+**Freegle's messages about your posts** are the ones Freegle itself sends you in Chat when a
+post has been up a while with no replies: whether you could deliver it, whether you need it
+gone by a date, and how many people have looked at it. They come with buttons, so answering
+takes one tap and updates your post. They are on by default and can be turned off here.
 
 You can set each community to **immediate**, **daily digest**, or **no emails**. If you
 turn emails right down, Freegle warns you to check your Chats regularly so you do not miss

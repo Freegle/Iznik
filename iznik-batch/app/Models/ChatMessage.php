@@ -106,6 +106,13 @@ class ChatMessage extends Model implements Auditable
     public const TYPE_REMINDER = 'Reminder';
     public const TYPE_REPORTEDUSER = 'ReportedUser';
 
+    /**
+     * A question from Freegle with tappable answers. The question text is in
+     * `message` like any other message, so everything that renders chat renders
+     * this; the options and the answer live in the chat_prompts side table.
+     */
+    public const TYPE_PROMPT = 'Prompt';
+
     // Review reason values (reportreason column).
     public const REVIEW_USER = 'User';
 

@@ -200,6 +200,7 @@ test.describe('Settings Page - Email Level Settings', () => {
         'Email me replies to my posts',
         'Copy of my sent messages',
         'ChitChat & notifications',
+        "Freegle's messages about your posts",
         'Suggested posts for you',
         'Newsletters & stories',
         'Encouragement emails',

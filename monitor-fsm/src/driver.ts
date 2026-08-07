@@ -170,12 +170,14 @@ interface RedPRCheck {
  * it force-transitions back to ROUTER whenever any redPR exists. The LLM cannot
  * escape this — there's no prompt to persuade.
  *
- * Pass `terminalPRNumbers` to exclude PRs the FSM has given up on (loop-breaker
- * terminal records). Without this, the hard-invariant ping-pongs with ROUTER:
- * ROUTER sees terminal PR and skips it → past the gate → hard-invariant re-adds it →
- * ROUTER skips it again → infinite oscillation.
+ * Pass `skipPRNumbers` to exclude PRs that CI_ROUTER will not pick this
+ * iteration: loop-breaker terminal records, and PRs whose fix attempt already
+ * ran without pushing anything. This set MUST track the router's own skip rule
+ * in ci_router_decide — if the driver drags back a PR the router then skips,
+ * the two oscillate: ROUTER skips it → past the gate → hard-invariant re-adds
+ * it → ROUTER skips it again, burning the step budget on nothing.
  */
-async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promise<RedPRCheck> {
+async function realRedPRCheck(skipPRNumbers: Set<number> = new Set()): Promise<RedPRCheck> {
   try {
     const { stdout: listOut } = await exec('gh', [
       'pr', 'list',
@@ -186,7 +188,7 @@ async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promi
       '--json', 'number,title,url',
     ], { maxBuffer: 10 * 1024 * 1024 })
     const rawPRs = JSON.parse(listOut) as Array<{ number: number; title: string; url: string }>
-    const prs = rawPRs.filter(p => !terminalPRNumbers.has(p.number))
+    const prs = rawPRs.filter(p => !skipPRNumbers.has(p.number))
     const redPRs: RedPRCheck['redPRs'] = []
     for (const pr of prs) {
       // `gh pr checks` uses exit code as a SIGNAL: 0=all green, 1=has failures,
@@ -803,9 +805,14 @@ async function main() {
       const postRed = await engine.getInstance(instance.id)
       if (STATES_PAST_GATE.has(postRed.currentState)) {
         const ctxRed: any = postRed.context ?? {}
-        const attemptsRed: Array<{ prNumber: number; terminal?: boolean }> = Array.isArray(ctxRed.openPRFixAttempts) ? ctxRed.openPRFixAttempts : []
-        const terminalSet = new Set(attemptsRed.filter(a => a.terminal).map(a => a.prNumber))
-        const red = await realRedPRCheck(terminalSet)
+        const attemptsRed: Array<{ prNumber: number; terminal?: boolean; pushed?: boolean }> = Array.isArray(ctxRed.openPRFixAttempts) ? ctxRed.openPRFixAttempts : []
+        // Mirror ci_router_decide's skip rule exactly: a PR is out of play for
+        // this iteration once its attempt is terminal OR pushed nothing. Only
+        // suppressing terminal records here would oscillate against the router.
+        const skipSet = new Set(
+          attemptsRed.filter(a => a.terminal || a.pushed !== true).map(a => a.prNumber)
+        )
+        const red = await realRedPRCheck(skipSet)
         if (red.redPRs.length > 0) {
           const summary = red.redPRs.map(p => `#${p.number} (${p.failedChecks.length} red)`).join(', ')
           outWarn(`red tests on ${summary} — returning to check automated tests`)
@@ -828,7 +835,19 @@ async function main() {
       // straight to PARALLEL_ANALYZE_AND_FIX so Discourse parsing still runs.
       if (process.env.PARSE_ONLY === '1') {
         const parseOnlyNow = await engine.getInstance(instance.id)
-        if (parseOnlyNow.currentState === 'FIX_MASTER_CI') {
+        // Judge the state we are HEADED FOR, not only the one we are sitting
+        // in. A step's action returns its target as `_transition`, and reading
+        // currentState alone let a PARSE_ONLY run walk straight into
+        // PARALLEL_FIX_BUGS and dispatch real fix delegates: WORK_ROUTER
+        // returned _transition PARALLEL_FIX_BUGS, currentState still read as
+        // an analysis state, the stop never fired. Considering both is correct
+        // whenever the engine applies the transition.
+        const proposedNext: string[] = result.actionsExecuted
+          .map((a: any) => a?.result?._transition)
+          .filter((t: any): t is string => typeof t === 'string' && t.length > 0)
+        const candidateStates = [parseOnlyNow.currentState, ...proposedNext]
+
+        if (candidateStates.includes('FIX_MASTER_CI')) {
           out('PARSE_ONLY: master red but skipping fix — forcing straight to Discourse analysis')
           await engine.forceTransition(instance.id, 'PARALLEL_ANALYZE_AND_FIX', 'PARSE_ONLY: bypassing FIX_MASTER_CI')
           continue
@@ -837,8 +856,9 @@ async function main() {
           'LOAD_STATE', 'CHECK_CI', 'CI_ROUTER',
           'PARALLEL_ANALYZE_AND_FIX', 'COLLATE_RESULTS', 'WORK_ROUTER',
         ])
-        if (!ANALYSIS_STATES.has(parseOnlyNow.currentState)) {
-          out(`PARSE_ONLY: stopping before ${humanizeState(parseOnlyNow.currentState)}`)
+        const offender = candidateStates.find(s => !ANALYSIS_STATES.has(s))
+        if (offender) {
+          out(`PARSE_ONLY: stopping before ${humanizeState(offender)}`)
           break
         }
       }

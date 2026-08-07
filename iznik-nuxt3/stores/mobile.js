@@ -21,6 +21,11 @@ import { useDebugStore } from '~/stores/debug'
 import { setAppVersion, useClientLog } from '~/composables/useClientLog'
 import api from '~/api'
 
+// Ceiling for the OS-preferred text zoom we'll apply to the WebView - the
+// standard Android "Largest" font-size step / non-accessibility Dynamic Type
+// max. See initTextZoom().
+const MAX_TEXT_ZOOM = 1.3
+
 // Helper to get debug store safely (may not be initialized early)
 function dbg() {
   try {
@@ -75,7 +80,11 @@ export const useMobileStore = defineStore('mobile', {
           platform
         )
         this.mobileVersion = config.public.MOBILE_VERSION
-        this.initApp()
+        // Deliberately not awaited, but DO catch: unhandled rejections here are
+        // invisible on device, and this promise covers the whole of app init.
+        this.initApp().catch((e) => {
+          console.log('initApp failed:', e?.message)
+        })
       } else {
         console.log('Mobile store initialized - running in web browser')
       }
@@ -98,6 +107,17 @@ export const useMobileStore = defineStore('mobile', {
       // to the share flow - which delayed the give-flow navigation on a
       // share-triggered cold start with nothing on screen in the meantime.
       this.initShareIntent(App)
+
+      // Register the App-plugin listeners FIRST. They need nothing but `App`,
+      // and everything below here can reject: initApp() has no try/catch and
+      // its caller neither awaits nor catches it, so one failed await used to
+      // silently abandon the rest of init. When that happened the back button
+      // was never registered and Capacitor's native default swallowed the back
+      // gesture at the root — trapping the user in the app, the very thing the
+      // handler exists to prevent. Registering up front means a later failure
+      // can cost us a version check, but never the back button.
+      this.initBackButton(App)
+      this.initWakeUpActions(App)
 
       // Log app and plugin versions for debugging
       const runtimeConfig = useRuntimeConfig()
@@ -144,8 +164,6 @@ export const useMobileStore = defineStore('mobile', {
       this.initTextZoom(App)
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
-      this.initWakeUpActions(App)
-      this.initBackButton(App)
     },
 
     // Log a second session_start now that we know both the real installed app
@@ -180,6 +198,13 @@ export const useMobileStore = defineStore('mobile', {
       // (Dynamic Type on iOS, font scale on Android); applying it makes text
       // grow WITH REFLOW, unlike pinch zoom which scales the whole viewport
       // including the navbars.
+      //
+      // Clamp to the standard OS font-size slider's max (Android's "Largest" /
+      // iOS's non-accessibility Dynamic Type ceiling). Samsung's separate
+      // Accessibility > Font size setting can push Configuration.fontScale up to
+      // ~3x, which the ModTools/app shell's fixed-width navbar and left menu were
+      // never designed to reflow at - applying it uncapped breaks that chrome
+      // (reported as the screen looking "narrower" after an app update).
       try {
         const { TextZoom } = await import('@capacitor/text-zoom')
 
@@ -187,8 +212,12 @@ export const useMobileStore = defineStore('mobile', {
           try {
             const { value } = await TextZoom.getPreferred()
             if (value && value > 0) {
-              await TextZoom.set({ value })
-              dbg()?.info('Applied preferred text zoom', { value })
+              const clamped = Math.min(value, MAX_TEXT_ZOOM)
+              await TextZoom.set({ value: clamped })
+              dbg()?.info('Applied preferred text zoom', {
+                value,
+                clamped,
+              })
             }
           } catch (e) {
             dbg()?.debug('Text zoom apply failed', e?.message)
@@ -903,16 +932,26 @@ export const useMobileStore = defineStore('mobile', {
         ? 'app_fd_version_ios_required'
         : 'app_fd_version_android_required'
 
-      const reqdValues = await api(this.config).config.fetchv2(requiredKey)
-      if (reqdValues && reqdValues.length === 1) {
-        const requiredVersion = reqdValues[0].value
-        if (requiredVersion) {
-          this.apprequiredversion = requiredVersion
-          if (this.versionOutOfDate(requiredVersion)) {
-            this.appupdaterequired = true
-            console.log('==========appupdate required!')
+      // Best-effort: this runs partway through initApp(), which has no
+      // try/catch and is called without await or .catch(). An APIError from
+      // this fetch (offline cold start, slow or failing API) used to escape as
+      // a silent unhandled rejection and abandon the REST of app init — which
+      // is where the back button and resume handlers get registered. Never let
+      // a version check cost the app its back button.
+      try {
+        const reqdValues = await api(this.config).config.fetchv2(requiredKey)
+        if (reqdValues && reqdValues.length === 1) {
+          const requiredVersion = reqdValues[0].value
+          if (requiredVersion) {
+            this.apprequiredversion = requiredVersion
+            if (this.versionOutOfDate(requiredVersion)) {
+              this.appupdaterequired = true
+              console.log('==========appupdate required!')
+            }
           }
         }
+      } catch (e) {
+        console.log('Failed to check for app update:', e?.message)
       }
     },
 

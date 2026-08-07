@@ -270,12 +270,22 @@ workflows:
             branches:
               only:
                 - production
-      - freegle/auto-submit-ios:
+      - freegle/auto-release-ios:
           filters:
             branches:
               only:
                 - production
-      - freegle/auto-release-ios:
+      # MUST follow auto-release-ios. Only one version can sit in the App Store
+      # submission pipeline at a time, and auto-submit refuses to run (by
+      # design, so a stall is never silent) while a version is
+      # PENDING_DEVELOPER_RELEASE. Run in parallel these two race: on
+      # 2026-08-05 auto-submit-ios failed at 22:07:33 on blocking version
+      # 100.0.873, which auto-release-ios then released successfully at
+      # 22:09:43 — the blocker was cleared two minutes after the job that
+      # tripped over it gave up.
+      - freegle/auto-submit-ios:
+          requires:
+            - freegle/auto-release-ios
           filters:
             branches:
               only:

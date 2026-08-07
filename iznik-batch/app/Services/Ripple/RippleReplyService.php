@@ -3,6 +3,9 @@
 namespace App\Services\Ripple;
 
 use App\Models\ChatMessage;
+use App\Services\FirstReply\MaxReachService;
+use App\Services\FirstReply\Metrics;
+use App\Services\FirstReply\Rollout;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -28,8 +31,20 @@ use Illuminate\Support\Facades\Log;
  */
 class RippleReplyService
 {
-    public function __construct(private ReachQueryService $reach)
+    private ?MaxReachService $maxReach;
+
+    /**
+     * $maxReach is optional so the many places that construct this by hand (tests
+     * included) keep working; it is resolved from the container when omitted.
+     */
+    public function __construct(private ReachQueryService $reach, ?MaxReachService $maxReach = null)
     {
+        $this->maxReach = $maxReach;
+    }
+
+    private function maxReach(): MaxReachService
+    {
+        return $this->maxReach ??= app(MaxReachService::class);
     }
 
     /**
@@ -59,6 +74,15 @@ class RippleReplyService
      * post is actively rippling (has a reach row) AND the replier is outside the
      * current reach. No reach row → not rippling → deliver normally. Unknown
      * location → cannot test → deliver normally.
+     *
+     * One exception, the first-reply passthrough: a post that has no replies at all
+     * yet does not hold its first one, provided the replier is inside the reach the
+     * post will EVENTUALLY have. Nothing is given away by that - the reply was
+     * always going to be allowed once the ripple got there, so the hold only
+     * changes when the poster hears, not whether. On a post with replies already
+     * that delay is a fair price for local-first ordering; on a post with none it
+     * is charged against the posts that can least afford it, because a poster
+     * cannot tell a delayed first reply from no interest at all.
      */
     public function shouldHold(int $msgid, ?float $lat, ?float $lng): bool
     {
@@ -68,8 +92,88 @@ class RippleReplyService
         if (!$this->hasReach($msgid)) {
             return false;
         }
+        if ($this->reach->isWithinReach($msgid, $lat, $lng)) {
+            return false;
+        }
 
-        return !$this->reach->isWithinReach($msgid, $lat, $lng);
+        return !$this->qualifiesForFirstReplyPassthrough($msgid, $lat, $lng);
+    }
+
+    /**
+     * Is this the reply the passthrough exists for: a post with (almost) no
+     * repliers, and a replier the post's reach will eventually cover?
+     *
+     * Both switches have to be on and the max-reach geometry has to be populated;
+     * any of those missing means the normal hold applies, so this can be deployed
+     * ahead of the backfill without changing behaviour.
+     */
+    public function qualifiesForFirstReplyPassthrough(int $msgid, float $lat, float $lng): bool
+    {
+        if (!config('freegle.firstreply.enabled') || !config('freegle.firstreply.passthrough.enabled')) {
+            return false;
+        }
+
+        // Trial arm: a post outside the rollout behaves exactly as it did before
+        // any of this existed, which is what makes it a usable control.
+        if (!Rollout::includes($msgid)) {
+            return false;
+        }
+
+        $maxRepliers = (int) config('freegle.firstreply.passthrough.max_existing_repliers', 1);
+        if ($this->distinctReplierCount($msgid) >= $maxRepliers) {
+            return false;
+        }
+
+        if (!$this->maxReach()->isWithinMaxReach($msgid, $lat, $lng)) {
+            return false;
+        }
+
+        // Counted separately from the web path (which records passthrough_web in
+        // the Go API), because the two doors have different volumes and a change
+        // in one should not be read as a change in the other.
+        app(Metrics::class)->record('passthrough_email');
+
+        // Also record it individually, with where the replier was, so the sweep
+        // can work out how long this particular reply would have waited. The
+        // counter says the lever fired; only this says what firing bought.
+        try {
+            DB::table('firstreply_passthroughs')->insert([
+                'msgid' => $msgid,
+                'source' => 'email',
+                'lat' => $lat,
+                'lng' => $lng,
+                'created_at' => now(),
+            ]);
+        } catch (\Throwable $e) {
+            // Instrumentation must never decide whether a reply gets through.
+            Log::warning("firstreply: could not record passthrough for {$msgid}: {$e->getMessage()}");
+        }
+
+        return true;
+    }
+
+    /**
+     * How many distinct people have replied to this post, not counting the poster
+     * talking on their own post. Held replies count: the poster has an answer
+     * coming, so the post is not silent in the sense the passthrough is about.
+     */
+    private function distinctReplierCount(int $msgid): int
+    {
+        try {
+            return DB::table('chat_messages as cm')
+                ->join('messages as m', 'm.id', '=', 'cm.refmsgid')
+                ->where('cm.refmsgid', $msgid)
+                ->where('cm.type', ChatMessage::TYPE_INTERESTED)
+                ->whereColumn('cm.userid', '<>', 'm.fromuser')
+                ->distinct()
+                ->count('cm.userid');
+        } catch (\Throwable $e) {
+            Log::warning("ripple: distinctReplierCount failed for {$msgid}: {$e->getMessage()}");
+
+            // Cannot tell how many replies there are, so do not spend the
+            // passthrough on a post that might already have plenty.
+            return PHP_INT_MAX;
+        }
     }
 
     /**

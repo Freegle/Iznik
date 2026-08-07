@@ -260,6 +260,23 @@ export const useMemberStore = defineStore('member', {
 
     async updateMembership(params) {
       await api(this.config).memberships.save(params)
+
+      /*
+       * ourPostingStatus gates the Approve button on a pending message
+       * elsewhere (ModMessage.vue's membership computed feeds
+       * ModMessageButtons' :cantpost prop). No event tells the frontend
+       * about the write, so the cached userStore entry for params.userid
+       * keeps the pre-change value and that gate keeps failing on the next
+       * render - a mod flipping Can't Post -> Moderated on the pending
+       * message's own page (ModModeration.vue) saw no Approve button appear
+       * until something unrelated forced a re-fetch (Discourse #10008 post
+       * 1). Force-refresh the cached entry so the next render picks up the
+       * new posting status.
+       */
+      if (params.userid && params.ourPostingStatus) {
+        const userStore = useUserStore()
+        await userStore.fetch(params.userid, true)
+      }
     },
 
     async remove(userid, groupid, membershipid) {
@@ -314,8 +331,13 @@ export const useMemberStore = defineStore('member', {
        * "Trainee not showing as a Mod in the group logs" report on
        * Discourse #9481 post 545. Force-refresh the cached entry so the
        * next render picks up the new systemrole.
+       *
+       * ourPostingStatus (e.g. changed via ModSupportMembership.vue) needs
+       * the same treatment: it gates the Approve button on a pending
+       * message elsewhere and otherwise stays stale in the cache
+       * (Discourse #10008 post 1).
        */
-      if (params.userid && params.role) {
+      if (params.userid && (params.role || params.ourPostingStatus)) {
         const userStore = useUserStore()
         await userStore.fetch(params.userid, true)
       }

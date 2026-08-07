@@ -700,82 +700,207 @@ class UnifiedDigestService
                 $lower = array_map('strtolower', $allowlist);
                 $recipientIds = DB::table('users_emails')
                     ->whereIn('userid', $recipientIds)
-                    ->whereIn(DB::raw('LOWER(email)'), $lower)
+                    // users_emails.email is utf8mb4_unicode_ci, so this is
+                    // already case-insensitive. The LOWER() wrapper bought
+                    // nothing and stopped the index being usable.
+                    ->whereIn('email', $lower)
                     ->pluck('userid')->unique()->map(fn ($v) => (int) $v)->all();
                 if (empty($recipientIds)) {
                     return 0;
                 }
             }
 
-            $postedToGroups = DB::table('messages_groups')->where('msgid', $msgid)
-                ->where('collection', MessageGroup::COLLECTION_APPROVED)->where('deleted', 0)
-                ->pluck('groupid')->map(fn ($v) => (int) $v)->all();
-            $sponsorsCache = !empty($postedToGroups) ? $this->getSponsorsForGroup((int) $postedToGroups[0]) : null;
+            return count($this->spoolPostToRecipients($msg, $recipientIds, $recipientLatLng, $dryRun));
+        } catch (\Throwable $e) {
+            Log::warning('ripple: mailNewlyReachedForPost failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+            return 0;
+        }
+    }
 
-            $users = User::whereIn('id', $recipientIds)->with(['emails', 'memberships'])->get();
-            $sent = 0;
-            foreach ($users as $user) {
-                if (!$user->email_preferred) {
-                    continue;
+    /**
+     * Mail one post immediately to an explicit list of members, bypassing both the
+     * reach ledger's "newly reached" logic and the recipient's digest frequency.
+     *
+     * This exists for first-reply scouting (App\Services\FirstReply\ScoutService),
+     * which picks a handful of members who look genuinely likely to want a
+     * specific silent post - somebody with a matching open WANTED, or a saved
+     * search for it - and tells them now rather than when their daily digest runs
+     * or when the ripple eventually arrives. The caller has already decided WHO;
+     * this decides nothing except whether each of them can be mailed at all.
+     *
+     * Everything else about the mail is identical to a reach immediate digest,
+     * deliberately: recipients get the format they already recognise, not a new
+     * kind of mail from Freegle.
+     *
+     * Returns the ids actually mailed rather than a count. The caller has to know
+     * WHO received it, because for some of them this mail stands in for their
+     * daily digest and that has to be recorded against those members and no
+     * others - including not against anyone whose spool failed.
+     *
+     * @param int[] $userIds
+     * @return int[]
+     */
+    public function mailPostToUsers(int $msgid, array $userIds, bool $dryRun = false): array
+    {
+        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE) || empty($userIds)) {
+            return [];
+        }
+
+        try {
+            $msg = Message::with($this->digestPostEagerLoads())->find($msgid);
+            if ($msg === null) {
+                return [];
+            }
+
+            $allowlist = $this->getImmediateAllowlist();
+            if ($allowlist !== ['*']) {
+                $lower = array_map('strtolower', $allowlist);
+                $userIds = DB::table('users_emails')
+                    ->whereIn('userid', $userIds)
+                    ->whereIn(DB::raw('LOWER(email)'), $lower)
+                    ->pluck('userid')->unique()->map(fn ($v) => (int) $v)->all();
+                if (empty($userIds)) {
+                    return [];
                 }
-                // Distance-preference filter (settings.browseMaxDistance). Deliberately
-                // does NOT write rippling_reach_notified on a filtered-out skip (unlike
-                // the "already sent" path below) — see the design doc's "Reach-mail
-                // ledger semantics" edge case: leaving the ledger unwritten lets a later
-                // tick re-consider this (post, user) pair if the member widens their
-                // slider (or their location changes) while the post is still inside the
-                // reach-mail recency window; once that window closes the post drops out
-                // of sendReachDigests' candidate query regardless, so the cost is bounded.
-                // Own posts always bypass (mirrors the cursor path's own-post exception).
-                $isOwnPost = (int) $user->id === (int) $msg->fromuser;
-                if (!$this->passesDistancePreference(
-                    $recipientLatLng[(int) $user->id] ?? null,
-                    $msg->lat,
-                    $msg->lng,
-                    $user,
-                    $isOwnPost,
-                    $this->authorMaxMiles((int) $msg->fromuser)
-                )) {
-                    continue;
-                }
-                if ($dryRun) {
-                    $sent++;
-                    continue;
-                }
-                $deduped = collect([['message' => $msg, 'postedToGroups' => $postedToGroups]]);
-                try {
-                    app(\App\Services\EmailSpoolerService::class)->spool(
-                        new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
-                        $user->email_preferred,
-                        emailType: 'digest_immediate',
-                    );
+            }
+
+            // The distance-preference filter needs each recipient's point, resolved
+            // the same "mylocation else lastlocation" way the reach query resolves it.
+            $latLng = [];
+            foreach (DB::table('users as u')
+                ->leftJoin('locations as l', 'l.id', '=', 'u.lastlocation')
+                ->whereIn('u.id', $userIds)
+                ->selectRaw("u.id AS id,
+                    CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                              AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                         THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
+                         ELSE l.lat END AS resolved_lat,
+                    CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                              AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                         THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
+                         ELSE l.lng END AS resolved_lng")
+                ->get() as $row) {
+                $latLng[(int) $row->id] = ($row->resolved_lat !== null && $row->resolved_lng !== null)
+                    ? [(float) $row->resolved_lat, (float) $row->resolved_lng]
+                    : null;
+            }
+
+            return $this->spoolPostToRecipients($msg, $userIds, $latLng, $dryRun, writeReachLedger: false);
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: mailPostToUsers failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+            return [];
+        }
+    }
+
+    /**
+     * Spool one post as an immediate digest to a resolved recipient list.
+     *
+     * Shared by the reach mailer and by first-reply scouting so the two cannot
+     * drift on the things that decide whether a member should be mailed at all:
+     * bouncing/absent preferred address, the browseMaxDistance slider, and the
+     * poster's own exemption from their own post.
+     *
+     * Returns the ids actually spooled to, so a caller can act on exactly who was
+     * mailed. Both public entry points count them; only first-reply scouting
+     * needs the ids themselves.
+     *
+     * @param int[] $recipientIds
+     * @param array<int,array{0:float,1:float}|null> $recipientLatLng
+     * @return int[]
+     */
+    private function spoolPostToRecipients(
+        Message $msg,
+        array $recipientIds,
+        array $recipientLatLng,
+        bool $dryRun,
+        bool $writeReachLedger = true
+    ): array {
+        $msgid = (int) $msg->id;
+
+        $postedToGroups = DB::table('messages_groups')->where('msgid', $msgid)
+            ->where('collection', MessageGroup::COLLECTION_APPROVED)->where('deleted', 0)
+            ->pluck('groupid')->map(fn ($v) => (int) $v)->all();
+        $sponsorsCache = !empty($postedToGroups) ? $this->getSponsorsForGroup((int) $postedToGroups[0]) : null;
+
+        $users = User::whereIn('id', $recipientIds)->with(['emails', 'memberships'])->get();
+        $mailed = [];
+        foreach ($users as $user) {
+            if (!$user->email_preferred) {
+                continue;
+            }
+            // Distance-preference filter (settings.browseMaxDistance). Deliberately
+            // does NOT write rippling_reach_notified on a filtered-out skip (unlike
+            // the "already sent" path below) - see the design doc's "Reach-mail
+            // ledger semantics" edge case: leaving the ledger unwritten lets a later
+            // tick re-consider this (post, user) pair if the member widens their
+            // slider (or their location changes) while the post is still inside the
+            // reach-mail recency window; once that window closes the post drops out
+            // of sendReachDigests' candidate query regardless, so the cost is bounded.
+            // Own posts always bypass (mirrors the cursor path's own-post exception).
+            $isOwnPost = (int) $user->id === (int) $msg->fromuser;
+            if (!$this->passesDistancePreference(
+                $recipientLatLng[(int) $user->id] ?? null,
+                $msg->lat,
+                $msg->lng,
+                $user,
+                $isOwnPost,
+                $this->authorMaxMiles((int) $msg->fromuser)
+            )) {
+                continue;
+            }
+            if ($dryRun) {
+                $mailed[] = (int) $user->id;
+                continue;
+            }
+            $deduped = collect([['message' => $msg, 'postedToGroups' => $postedToGroups]]);
+            try {
+                app(\App\Services\EmailSpoolerService::class)->spool(
+                    new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
+                    $user->email_preferred,
+                    emailType: 'digest_immediate',
+                );
+                if ($writeReachLedger) {
                     DB::table('rippling_reach_notified')->insertOrIgnore([
                         'msgid' => $msgid,
                         'userid' => (int) $user->id,
                         'notified_at' => now(),
                     ]);
-                    $sent++;
-                } catch (\Throwable $e) {
-                    Log::warning('ripple: failed to spool reach immediate mail', [
-                        'msgid' => $msgid, 'user_id' => $user->id, 'error' => $e->getMessage(),
+                }
+                $mailed[] = (int) $user->id;
+            } catch (\Throwable $e) {
+                Log::warning('ripple: failed to spool reach immediate mail', [
+                    'msgid' => $msgid, 'user_id' => $user->id, 'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        // #0 / §15 instrumentation: count immediate mails sent on expansion.
+        if (!empty($mailed) && !$dryRun) {
+            $count = count($mailed);
+            $today = now()->toDateString();
+
+            $updated = DB::table('rippling_event_metrics')
+                ->where('day', $today)
+                ->where('event', 'immediate_mailed')
+                ->increment('count', $count);
+
+            if ($updated === 0) {
+                try {
+                    DB::table('rippling_event_metrics')->insert([
+                        'day' => $today,
+                        'event' => 'immediate_mailed',
+                        'count' => $count,
                     ]);
+                } catch (\Throwable) {
+                    DB::table('rippling_event_metrics')
+                        ->where('day', $today)
+                        ->where('event', 'immediate_mailed')
+                        ->increment('count', $count);
                 }
             }
-
-            // #0 / §15 instrumentation: count immediate mails sent on expansion.
-            if ($sent > 0 && !$dryRun) {
-                DB::statement(
-                    'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
-                    . 'ON DUPLICATE KEY UPDATE count = count + ?',
-                    ['immediate_mailed', $sent, $sent]
-                );
-            }
-
-            return $sent;
-        } catch (\Throwable $e) {
-            Log::warning('ripple: mailNewlyReachedForPost failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
-            return 0;
         }
+
+        return $mailed;
     }
 
     protected function getGroupMessagesSinceCursor(int $groupid, ?string $cursorMsgdate, int $cursorMsgid): Collection

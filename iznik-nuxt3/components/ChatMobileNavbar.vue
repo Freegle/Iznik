@@ -98,7 +98,15 @@
             <SupporterInfo v-if="otheruser.supporter" class="supporter-badge" />
           </div>
           <div class="profile-card-details">
-            <div class="profile-card-badges">
+            <!-- Freegle's own chat: no rating, no "last seen", no distance -
+                 none of it means anything for an account that is not a person.
+                 The "these are automated" note is said once here rather than on
+                 every message. -->
+            <div v-if="chat.systemchat" class="systemchat-note">
+              Automated messages about your posts. Freegle doesn't read replies
+              here.
+            </div>
+            <div v-else class="profile-card-badges">
               <UserRatings
                 :id="chat.otheruid"
                 :key="'otheruser-' + chat.otheruid"
@@ -109,7 +117,7 @@
                 @show-remove-modal="handleShowRemoveModal"
               />
             </div>
-            <div class="profile-card-stats">
+            <div v-if="!chat.systemchat" class="profile-card-stats">
               <span
                 v-if="otheruser.lastaccess"
                 v-b-tooltip.bottom="LAST_SEEN_TOOLTIP"
@@ -154,7 +162,12 @@
           }}</b-badge>
         </button>
         <button
-          v-if="otheruser && otheruser.info && !otheruser?.deleted"
+          v-if="
+            !chat.systemchat &&
+            otheruser &&
+            otheruser.info &&
+            !otheruser?.deleted
+          "
           class="action-btn"
           @click="showInfo"
         >
@@ -173,7 +186,7 @@
           <span>{{ chat.status === 'Closed' ? 'Show' : 'Hide' }}</span>
         </button>
         <button
-          v-if="chat.chattype === 'User2User' && otheruser"
+          v-if="!chat.systemchat && chat.chattype === 'User2User' && otheruser"
           class="action-btn"
           @click="chat.status === 'Blocked' ? unhide() : showblock()"
         >
@@ -182,7 +195,10 @@
         </button>
         <button
           v-if="
-            chat.chattype === 'User2User' && otheruser && !otheruser?.deleted
+            !chat.systemchat &&
+            chat.chattype === 'User2User' &&
+            otheruser &&
+            !otheruser?.deleted
           "
           class="action-btn action-btn--danger"
           @click="report"
@@ -721,6 +737,12 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* Said once, in the header, instead of on every message. */
+.systemchat-note {
+  font-size: 0.8125rem;
+  color: $color-gray--dark;
 }
 
 .stat-chip {
