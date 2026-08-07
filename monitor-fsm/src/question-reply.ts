@@ -18,9 +18,15 @@
  * approve — real volunteers read these in real time.
  */
 
-/** Appended to every question reply. Kept short so it reads as honesty, not hedging. */
+/**
+ * Appended to every question reply. Kept short so it reads as honesty, not hedging.
+ *
+ * It opens by saying the reply is from an AI. That is the part readers most need:
+ * a volunteer weighing how much to trust an answer should not have to work out
+ * who wrote it, and these post under a name that reads like a person's.
+ */
 export const QUESTION_REPLY_CAVEAT =
-  "I may have got the wrong end of the stick here — if I've answered a different question to the one you asked, say so and I'll have another go."
+  "This is an AI response - so it may have got the wrong end of the stick. If I've answered a different question to the one you asked, say so and I'll have another go."
 
 /** Sentence used when the answer itself is uncertain, not just the reading of the question. */
 export const QUESTION_REPLY_UNSURE_PREFIX =
@@ -63,6 +69,7 @@ export function composeQuestionReply(input: QuestionReplyInput): string | null {
 export function hasCaveat(text: string): boolean {
   const t = (text ?? '').toLowerCase()
   return (
+    t.includes('this is an ai response') ||
     t.includes('wrong end of the stick') ||
     t.includes('misunderstood your question') ||
     t.includes('misread your question') ||

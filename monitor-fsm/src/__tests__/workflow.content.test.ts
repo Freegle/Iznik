@@ -624,3 +624,53 @@ describe('postDiscourseReply — a test run can never reach the live forum', () 
     if (fetchAt > -1) expect(guard).toBeLessThan(fetchAt)
   })
 })
+
+describe('question delegates — do not repeat an answer someone already gave', () => {
+  // Of the first three answers drafted for real, one was already answered
+  // correctly by a volunteer (and the asker had said thanks) and another
+  // duplicated its sibling in the same thread. Posting all three unattended
+  // would have been noise, and repeating a volunteer implies their answer was
+  // not trusted. Both prompts that dispatch question work carry the check.
+  const prompts = [
+    workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt,
+    workflow.states.ANSWER_QUESTIONS.prompt,
+  ]
+
+  it('tells the delegate to read the later replies first', () => {
+    for (const p of prompts) {
+      expect(p).toContain('Check whether someone has ALREADY answered it')
+      expect(p).toContain('Read every reply that comes after the question')
+    }
+  })
+
+  it('says stay quiet when it is already answered', () => {
+    for (const p of prompts) {
+      expect(p).toContain('Output ANSWER= with nothing after it and stop')
+    }
+  })
+
+  it('permits a reply only when the existing answer is wrong or incomplete', () => {
+    for (const p of prompts) {
+      expect(p).toContain('WRONG or INCOMPLETE')
+    }
+  })
+
+  it('forbids naming anyone as wrong, and asks for credit where due', () => {
+    for (const p of prompts) {
+      expect(p).toContain('never name them as wrong')
+      expect(p).toContain('credit whoever got it right')
+    }
+  })
+})
+
+describe('question reply caveat — says up front that it is an AI', () => {
+  const src = readFileSync(join(__dirname, '../question-reply.ts'), 'utf8')
+
+  it('opens by identifying itself as an AI response', () => {
+    expect(src).toContain("This is an AI response - so it may have got the wrong end of the stick")
+  })
+
+  it('still detects its own caveat so it is never doubled up', () => {
+    expect(src).toContain("t.includes('this is an ai response')")
+  })
+})
