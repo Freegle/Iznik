@@ -40,6 +40,7 @@ function mountComponent() {
         ModSysAdminRecommendations: stub('c-recommendations'),
         ModSysAdminReengageEffectiveness: stub('c-reengage'),
         ModSysAdminRipplingAnalytics: stub('c-rippling'),
+        ModSysAdminFirstReply: stub('c-firstreply'),
       },
     },
   })
@@ -51,11 +52,18 @@ describe('sysadmin page tab grouping', () => {
     mockRouteQuery.value = {}
   })
 
-  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling', async () => {
+  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling, First reply', async () => {
     const wrapper = mountComponent()
     await flushPromises()
     const text = wrapper.text()
-    for (const label of ['Housekeeping', 'Cron Jobs', 'Mail', 'Behaviour', 'Rippling']) {
+    for (const label of [
+      'Housekeeping',
+      'Cron Jobs',
+      'Mail',
+      'Behaviour',
+      'Rippling',
+      'First reply',
+    ]) {
       expect(text).toContain(label)
     }
   })

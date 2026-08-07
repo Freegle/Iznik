@@ -11,6 +11,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
@@ -726,8 +727,36 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// isn't notified until the post ripples to the replier. The existing
 					// ripple:release-replies cron then delivers it (or 'taken-gone' if the post goes
 					// first). Mirrors IncomingMailService::holdReplyIfOutsideReach for the web path.
+					//
+					// Unless this is the post's FIRST reply and the replier is inside the reach the
+					// post will eventually have (see firstreply.ShouldPassThrough). Holding that
+					// reply delays a poster who currently has nothing, to protect an ordering the
+					// replier was going to be allowed to cross anyway.
 					if rc.ReachRows > 0 && rc.InReach == 0 {
-						holdReply = true
+						holdReply = !firstreply.ShouldPassThrough(db, *payload.Refmsgid, reach.lng, reach.lat)
+						if !holdReply {
+							db.Table("firstreply_event_metrics").Clauses(clause.OnConflict{
+								DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+							}).Create(map[string]interface{}{
+								"day":   gorm.Expr("CURDATE()"),
+								"event": gorm.Expr("'passthrough_web'"),
+								"count": gorm.Expr("1"),
+							})
+							// Record it individually too, with where the replier was, so the batch
+							// sweep can work out how long THIS reply would otherwise have waited.
+							// The counter says the lever fired; only that says what firing bought.
+							// Deliberately just an INSERT: working out which tick would have covered
+							// them means parsing the reach schedule, and doing that here as well as
+							// in the batch app would be the same geometry in two languages.
+							db.Table("firstreply_passthroughs").Create(map[string]interface{}{
+								"msgid":      *payload.Refmsgid,
+								"userid":     myid,
+								"source":     "web",
+								"lat":        reach.lat,
+								"lng":        reach.lng,
+								"created_at": gorm.Expr("NOW()"),
+							})
+						}
 					}
 				}
 			}

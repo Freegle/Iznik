@@ -117,6 +117,18 @@
           </div>
 
           <div class="option-row">
+            <span>Freegle's messages about your posts</span>
+            <OurToggle
+              v-model="freeglechatLocal"
+              :width="120"
+              :sync="true"
+              :labels="{ checked: 'On', unchecked: 'Off' }"
+              :color="toggleColor"
+              @change="changeFreegleChat"
+            />
+          </div>
+
+          <div class="option-row">
             <span>Suggested posts for you</span>
             <OurToggle
               v-model="relevantallowedLocal"
@@ -193,6 +205,7 @@ const notificationSettingsLocal = ref({
   facebook: true,
 })
 const notificationmailsLocal = ref(true)
+const freeglechatLocal = ref(true)
 const relevantallowedLocal = ref(true)
 const newslettersallowedLocal = ref(true)
 const engagementSettings = ref(true)
@@ -286,6 +299,14 @@ const notificationmails = computed(() => {
   return Boolean(me.value?.settings?.notificationmails)
 })
 
+// Freegle's own messages about a post nobody has replied to yet - "could you
+// deliver?", "7 people have looked at this". Absent means on: this is opt-OUT,
+// because the messages exist to help a post that is failing quietly and someone
+// who has never thought about the setting is exactly who they are for.
+const freeglechat = computed(() => {
+  return me.value?.settings?.freeglechat !== false
+})
+
 const relevantallowed = computed(() => {
   return Boolean(me.value?.relevantallowed)
 })
@@ -331,6 +352,13 @@ const changeNotifChitchat = async (e) => {
   emit('update')
 }
 
+const changeFreegleChat = async (e) => {
+  const settings = me.value.settings
+  settings.freeglechat = e
+  await authStore.saveAndGet({ settings })
+  emit('update')
+}
+
 const changeNewsletter = async (e) => {
   await authStore.saveAndGet({ newslettersallowed: e })
   emit('update')
@@ -360,6 +388,7 @@ watch(
       }
       notificationSettingsLocal.value = { ...notificationSettings.value }
       notificationmailsLocal.value = notificationmails.value
+      freeglechatLocal.value = freeglechat.value
       relevantallowedLocal.value = relevantallowed.value
       newslettersallowedLocal.value = newslettersallowed.value
       engagementSettings.value = newVal.settings?.engagement || false

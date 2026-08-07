@@ -12,6 +12,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -26,26 +27,31 @@ type Tabler interface {
 }
 
 type ChatRoomListEntry struct {
-	ID             uint64          `json:"id" gorm:"primary_key"`
-	Chattype       string          `json:"chattype"`
-	Groupid        uint64          `json:"groupid"`
-	User1          uint64          `json:"user1"`
-	User2          uint64          `json:"user2"`
-	Otheruid       uint64          `json:"otheruid"`
-	Otherdeleted   *time.Time      `json:"-"`
-	Supporter      bool            `json:"supporter"`
-	Icon           string          `json:"icon"`
-	Lastdate       *time.Time      `json:"lastdate"`
-	Lastmsg        uint64          `json:"lastmsg"`
-	Lastmsgseen    uint64          `json:"lastmsgseen"`
-	Lasttype       *time.Time      `json:"lasttype"`
-	Name           string          `json:"name"`
-	Nameshort      string          `json:"-"`
-	Namefull       string          `json:"-"`
-	Firstname      string          `json:"-"`
-	Lastname       string          `json:"-"`
-	Fullname       string          `json:"-"`
-	Replyexpected  uint64          `json:"replyexpected"`
+	ID            uint64     `json:"id" gorm:"primary_key"`
+	Chattype      string     `json:"chattype"`
+	Groupid       uint64     `json:"groupid"`
+	User1         uint64     `json:"user1"`
+	User2         uint64     `json:"user2"`
+	Otheruid      uint64     `json:"otheruid"`
+	Otherdeleted  *time.Time `json:"-"`
+	Supporter     bool       `json:"supporter"`
+	Icon          string     `json:"icon"`
+	Lastdate      *time.Time `json:"lastdate"`
+	Lastmsg       uint64     `json:"lastmsg"`
+	Lastmsgseen   uint64     `json:"lastmsgseen"`
+	Lasttype      *time.Time `json:"lasttype"`
+	Name          string     `json:"name"`
+	Nameshort     string     `json:"-"`
+	Namefull      string     `json:"-"`
+	Firstname     string     `json:"-"`
+	Lastname      string     `json:"-"`
+	Fullname      string     `json:"-"`
+	Replyexpected uint64     `json:"replyexpected"`
+	// Systemchat marks a chat with the Freegle account rather than with a person.
+	// The client uses it to show a different header: most of what Freegle says is
+	// not a conversation, so rating, blocking or reporting it is nonsense, and
+	// "this is automated" belongs there once instead of on every message.
+	Systemchat     bool            `json:"systemchat,omitempty" gorm:"-"`
 	Snippet        string          `json:"snippet"`
 	Unseen         uint64          `json:"unseen"`
 	Chatmsg        string          `json:"-"`
@@ -1124,6 +1130,14 @@ func listChats(myid uint64, chattypes []string, start string, search string, onl
 			}
 
 			chats[ix].Name = tnre.ReplaceAllString(chats[ix].Name, "$1")
+		}
+
+		// Independent of chat type: Freegle talks to members in an ordinary
+		// User2User room, so the only way the client can tell it apart from a
+		// person is by who is on the other side. Resolved once per process; 0
+		// means the account does not exist yet, so no chat is flagged.
+		if freegleID := firstreply.SystemUserID(db); freegleID > 0 && chat.Otheruid == freegleID {
+			chats[ix].Systemchat = true
 		}
 	}
 
