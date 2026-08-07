@@ -2276,6 +2276,9 @@ print(urllib.request.urlopen(req).read().decode())
           const existing = kvGet(db, key)
           if (existing && existing !== '0') {
             kvSet(db, key, '0')
+            // Drop the dispatch marker too, so a PR that goes red again starts
+            // from a clean budget rather than inheriting a stale charge guard.
+            kvSet(db, `pr_fix_dispatched_${pr.number}`, null)
             out(`check_my_open_pr_ci: PR #${pr.number} is green — reset fix attempt counter (was ${existing})`)
           }
 
@@ -3144,11 +3147,18 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const masterFixAttempted = ctx?.masterFixAttempted === true
       const productionFixAttempted = ctx?.productionFixAttempted === true
       const redPRs: Array<{ number: number }> = Array.isArray(prCheck.redPRs) ? prCheck.redPRs : []
-      const attempts: Array<{ prNumber: number; terminal?: boolean }> = Array.isArray(ctx?.openPRFixAttempts) ? ctx.openPRFixAttempts : []
-      // Allow re-picking a PR whose latest attempt did not push a commit —
-      // matches the original LLM prompt's "keep trying" rule. A terminal
-      // record (loop-breaker) is respected.
-      const attemptedNums = new Set(attempts.filter(a => a.terminal).map(a => a.prNumber))
+      const attempts: Array<{ prNumber: number; terminal?: boolean; pushed?: boolean }> = Array.isArray(ctx?.openPRFixAttempts) ? ctx.openPRFixAttempts : []
+      // A PR whose attempt pushed nothing has had its go for this iteration.
+      // Re-picking it re-asserts onlyFixPR, which the PARALLEL_ANALYZE_AND_FIX
+      // prompt reads as "skip Discourse triage entirely" — so the old "keep
+      // trying" rule let one unfixable PR starve triage for a whole iteration
+      // (2026-08-06: #1266's delegate exited without pushing, was re-picked
+      // twice more, and Michael's topic 10010 was never read). If an attempt
+      // fails to push, move on to the next actual task. A terminal record
+      // (loop-breaker) is respected the same way.
+      const attemptedNums = new Set(
+        attempts.filter(a => a.terminal || a.pushed !== true).map(a => a.prNumber)
+      )
 
       // Persistent per-PR fix attempt budget: if a PR has been picked >= 3 times
       // across iterations (tracked in SQLite kv) without going green, give up and
@@ -3221,9 +3231,27 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
       if (focusPR) {
         const key = `pr_fix_attempts_${focusPR.number}`
-        const prev = parseInt(kvGet(db, key) ?? '0', 10)
-        kvSet(db, key, String(prev + 1))
-        out(`ci_router_decide: PR #${focusPR.number} fix attempt ${prev + 1}/${MAX_FIX_ATTEMPTS} (focus PR)`)
+        // Budget is spent per DISPATCHED attempt, not per router visit. The
+        // router is re-entered several times per iteration (COVERAGE_GATE
+        // bounces back through CI_ROUTER), and charging every visit spent
+        // #1266's entire 3-attempt budget on a single delegate run. The marker
+        // pins a charge to (iteration, attempts already reported for this PR),
+        // so a bare re-entry is free while a genuinely new dispatch is charged.
+        const dispatchKey = `pr_fix_dispatched_${focusPR.number}`
+        const iterationTs = String(ctx?.iterationStartTs ?? '')
+        const reportedForFocus = attempts.filter(a => a.prNumber === focusPR.number).length
+        const marker = `${iterationTs}:${reportedForFocus}`
+        // With no iteration stamp we cannot tell a re-entry from a new
+        // iteration, so charge — under-charging would let a PR retry forever.
+        if (iterationTs && kvGet(db, dispatchKey) === marker) {
+          const spent = kvGet(db, key) ?? '0'
+          out(`ci_router_decide: PR #${focusPR.number} already dispatched this iteration — budget unchanged at ${spent}/${MAX_FIX_ATTEMPTS}`)
+        } else {
+          const prev = parseInt(kvGet(db, key) ?? '0', 10)
+          kvSet(db, key, String(prev + 1))
+          kvSet(db, dispatchKey, marker)
+          out(`ci_router_decide: PR #${focusPR.number} fix attempt ${prev + 1}/${MAX_FIX_ATTEMPTS} (focus PR)`)
+        }
       }
 
       // onlyFixPR: when there IS a focus PR to fix, the iteration should ONLY
