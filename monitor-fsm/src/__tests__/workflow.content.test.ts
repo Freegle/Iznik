@@ -674,3 +674,32 @@ describe('question reply caveat — says up front that it is an AI', () => {
     expect(src).toContain("t.includes('this is an ai response')")
   })
 })
+
+describe('already-answered check counts our own earlier reply', () => {
+  // The first live run of this got it wrong: the rule said "answered by someone
+  // ELSE", so a delegate looked at a thread we had answered an hour earlier,
+  // decided that did not count, and posted a near-identical second reply.
+  const prompts = [
+    workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt,
+    workflow.states.ANSWER_QUESTIONS.prompt,
+  ]
+
+  it('counts any answer already in the thread, including its own', () => {
+    for (const p of prompts) {
+      expect(p).toContain('INCLUDING an earlier reply posted by you')
+      expect(p).not.toContain('completely by someone else?')
+    }
+  })
+
+  it('says two near-identical AI replies are worse than none', () => {
+    for (const p of prompts) {
+      expect(p).toContain('two near-identical AI replies in it is worse than one with none')
+    }
+  })
+
+  it('requires reading the whole thread, not just the question', () => {
+    for (const p of prompts) {
+      expect(p).toContain('Read the WHOLE thread before deciding')
+    }
+  })
+})

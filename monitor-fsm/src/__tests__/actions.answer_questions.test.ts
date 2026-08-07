@@ -176,3 +176,22 @@ describe('listUnansweredQuestions helper', () => {
     expect(listUnansweredQuestions(db).map(q => q.topic)).toEqual([99531, 99530])
   })
 })
+
+describe('a rejected draft does not re-open the question', () => {
+  // Rejecting a draft means a human looked and said no - usually because the
+  // question was already answered, or the reply duplicated one just sent. While
+  // only non-rejected drafts counted, the question became eligible again and the
+  // next iteration posted the very duplicate the rejection existed to prevent:
+  // topic 10005 ended up with two near-identical AI replies an hour apart.
+  it('stays out of the unanswered list once its draft is rejected', async () => {
+    addQuestion(99540, 1)
+    await queueDraftsHandler({ answers: [{ topic: 99540, post: 1, answer: 'About 28 days.' }] }, {})
+
+    const draft = db.prepare('SELECT id FROM discourse_draft WHERE topic = 99540').get() as { id: number }
+    db.prepare("UPDATE discourse_draft SET rejected_at = datetime('now'), rejection_reason = 'already answered' WHERE id = ?")
+      .run(draft.id)
+
+    expect(listUnansweredQuestions(db).map(q => q.topic)).not.toContain(99540)
+    expect((await listQuestionsHandler({}, {})).count).toBe(0)
+  })
+})

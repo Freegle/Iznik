@@ -511,7 +511,15 @@ export function listUnansweredQuestions(db: DB, limit = 5): Array<{
     WHERE b.state = 'question'
       AND NOT EXISTS (
         SELECT 1 FROM discourse_draft d
-        WHERE d.topic = b.topic AND d.post = b.post AND d.rejected_at IS NULL
+        -- Any draft at all, including a rejected one. A rejection means a human
+        -- looked at the answer and said no - usually because the question was
+        -- already answered, or the reply duplicated one we had just sent. Only
+        -- skipping non-rejected drafts made the question eligible again, so the
+        -- next iteration researched it afresh and posted the duplicate the
+        -- rejection existed to prevent (topic 10005, twice in one thread).
+        -- Re-answering after a human has declined should be a deliberate act,
+        -- not the default.
+        WHERE d.topic = b.topic AND d.post = b.post
       )
     ORDER BY b.first_seen_at ASC
     LIMIT ?
