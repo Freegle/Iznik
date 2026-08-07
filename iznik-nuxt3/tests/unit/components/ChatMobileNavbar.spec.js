@@ -67,6 +67,29 @@ describe('profile card close button', () => {
   })
 })
 
+// Discourse 10001: opening a chat with unseen messages on a narrow viewport
+// (the iOS app always renders below md) briefly shows the per-chat "Mark
+// read" icon in the top navbar, then the first-visit profile hint
+// auto-expands the profile card 500ms later (onMounted) and - because the
+// icon's v-if also hides it whenever the card is expanded - the mark-read
+// affordance disappears even though the user never asked to see the
+// profile card and never actually marked the chat read. Desktop's
+// ChatHeader/ChatPane "Mark read" buttons have no such auto-expanding
+// overlay, so there the button simply stays visible - hence "works on
+// desktop, flashes and vanishes on iOS".
+describe('navbar mark-read icon survives the auto-shown first-visit hint (Discourse 10001)', () => {
+  it('keeps the icon visible while the card is expanded only by the auto-shown hint, not a deliberate tap', () => {
+    // toggleProfileCard() clears showProfileHint as soon as the user
+    // deliberately opens the card (see "Hide hint when user interacts with
+    // profile card" above), so gating on showProfileHint distinguishes an
+    // involuntary hint-driven expansion from a real one: the icon must only
+    // hide when the user chose to open the card themselves.
+    expect(navbarSource).toMatch(
+      /<button\s+v-if="unseen && \(!profileCardExpanded \|\| showProfileHint\)"\s+class="navbar-mark-read"/
+    )
+  })
+})
+
 describe('ChatMobileNavbar', () => {
   describe('component structure', () => {
     it('is a mobile navbar for chat pages', () => {

@@ -18,7 +18,7 @@
         </h1>
       </div>
       <button
-        v-if="unseen && !profileCardExpanded"
+        v-if="unseen && (!profileCardExpanded || showProfileHint)"
         class="navbar-mark-read"
         @click.stop="markRead"
       >
