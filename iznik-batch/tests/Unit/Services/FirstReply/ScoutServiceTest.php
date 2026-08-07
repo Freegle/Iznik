@@ -297,6 +297,25 @@ class ScoutServiceTest extends TestCase
         $this->assertSame($before, count($this->scoutsFor((int) $message->id)));
     }
 
+    public function test_the_rationed_slots_go_to_whoever_stands_nearest_the_reach_edge(): void
+    {
+        config(['freegle.firstreply.scouts.max_per_post' => 1]);
+
+        $message = $this->seedSilentOffer();
+        // Both sit outside today's reach and inside the eventual one. The far
+        // one is created first so an insertion-ordered tie (the old behaviour)
+        // would pick it - the slot must go to whoever is just past the edge,
+        // because that is who the reach is about to cover anyway.
+        $far = $this->frequentReplierOn((int) $message->id, 51.5, 0.8);
+        $near = $this->frequentReplierOn((int) $message->id, 51.5, 0.0);
+
+        $this->service()->run();
+
+        $scouts = $this->scoutsFor((int) $message->id);
+        $this->assertArrayHasKey($near->id, $scouts, 'the rationed slot goes nearest-first');
+        $this->assertArrayNotHasKey($far->id, $scouts, 'the distant member waits for the reach itself');
+    }
+
     public function test_scouted_members_are_marked_so_the_reach_mailer_does_not_repeat_the_post(): void
     {
         $message = $this->seedSilentOffer();

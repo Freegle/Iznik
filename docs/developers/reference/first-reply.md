@@ -228,6 +228,16 @@ A candidate dropped by either gate does not leave a hole: filtering happens **be
 top-N cap, so the next-best candidate takes the slot and the post still gets its full
 complement.
 
+**Slots are spent nearest-the-edge first** (signal score only breaks ties). Every candidate
+stands outside today's polygon by construction — inside it the ordinary ripple already tells
+them — but the reach will have grown by the time a scout reads their mail, so the rationed
+`frequent` slots go to the people just past the edge, whom the reach is about to cover, not
+to the strongest signal ten miles out. Strong signals lose nothing: their cap is a
+never-binding backstop, so ordering only decides who gets the rationed slots. The distance
+comes from `ST_Distance` to the current polygon inside the eligibility query itself
+(coordinate degrees — the SRID 3857 tag is the site-wide mislabel — which ranks correctly
+within a post).
+
 **A `frequent` scout's digest is then recorded as sent**, so today's does not also go out -
 the mail genuinely replaces it rather than arriving alongside it. Only `lastsent` is stamped,
 never the `lastmsgid` cursor: the member has not actually seen today's roll-up, so tomorrow's

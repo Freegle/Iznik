@@ -396,9 +396,19 @@ class ScoutService
         $maxFrequent = max(0, (int) ($cfg['max_per_post'] ?? 10));
         $maxStrong = max(0, (int) ($cfg['max_strong_per_post'] ?? 50));
 
-        // Highest score first, so a post with three near-perfect matches mails
-        // three people rather than padding the list out to the cap.
-        uasort($candidates, static fn ($a, $b) => $b['score'] <=> $a['score']);
+        // Nearest to the current reach edge first, score as the tiebreak. Every
+        // candidate is outside today's polygon by construction (inside it the
+        // ordinary ripple already tells them), but the reach will have grown by
+        // the time a scout reads their mail - so the slots should go to the
+        // people standing just past the edge, whom the reach is about to cover,
+        // not to the strongest signal ten miles out. Strong signals lose nothing
+        // by this: their cap is a never-binding backstop, so ordering only
+        // decides who gets the rationed `frequent` slots.
+        uasort($candidates, static function ($a, $b) {
+            $cmp = ($a['dist'] ?? INF) <=> ($b['dist'] ?? INF);
+
+            return $cmp !== 0 ? $cmp : $b['score'] <=> $a['score'];
+        });
 
         $chosen = [];
         $strong = 0;
@@ -407,7 +417,9 @@ class ScoutService
 
         foreach ($candidates as $userId => $candidate) {
             if ($candidate['score'] < $minScore) {
-                break;
+                // Not `break`: the list is distance-ordered now, so a weak
+                // nearby candidate must not hide a strong one further out.
+                continue;
             }
 
             if ($candidate['reason'] === 'frequent') {
@@ -629,12 +641,19 @@ class ScoutService
         $strong = array_keys(array_filter($scores, static fn ($c) => $c['reason'] !== 'frequent'));
         $weak = array_keys(array_filter($scores, static fn ($c) => $c['reason'] === 'frequent'));
 
-        $eligible = array_merge(
-            $this->filterEligible($msgid, $strong, $cfg, true),
-            $this->filterEligible($msgid, $weak, $cfg, false)
-        );
+        // id => distance beyond the current reach edge, from the eligibility
+        // query itself so nobody is measured twice.
+        $eligible = $this->filterEligible($msgid, $strong, $cfg, true)
+            + $this->filterEligible($msgid, $weak, $cfg, false);
 
-        return array_intersect_key($scores, array_flip($eligible));
+        $out = [];
+        foreach ($eligible as $userId => $dist) {
+            if (isset($scores[$userId])) {
+                $out[$userId] = $scores[$userId] + ['dist' => $dist];
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -828,12 +847,35 @@ class ScoutService
             }
         }
 
-        // The reach test and the "is this a real, mailable member" test in one
-        // pass. resolved_lat/lng follow the same "mylocation else lastlocation"
+        // The candidate's point, resolved the same "mylocation else lastlocation"
         // order the reach mailer uses, so a candidate is measured from the point
-        // that decides their reach membership everywhere else.
+        // that decides their reach membership everywhere else. Built once and
+        // interpolated three times (band tests + distance); each use binds SRID.
+        $pointExpr = "ST_SRID(POINT(
+                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
+                          ELSE l.lng END,
+                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
+                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
+                          ELSE l.lat END
+                   ), ?)";
+
+        // The reach test and the "is this a real, mailable member" test in one
+        // pass. dist is how far the candidate stands beyond the CURRENT reach
+        // edge - the selection loop spends its slots nearest-first, because the
+        // reach will have grown by the time a scout reads their mail, and the
+        // people just past today's edge are the ones it is about to cover.
+        // (Coordinate degrees, not metres - the geometry's SRID 3857 tag is a
+        // site-wide mislabel - but ordering within one post is unaffected.)
+        //
+        // keep-raw: spatial ST_Contains/ST_Distance band tests over a JSON-vs-
+        // locations CASE point expression, a dynamic IN list and a conditional
+        // cadence-gate fragment - the builder cannot render this shape.
         $rows = DB::select(
-            "SELECT u.id AS id
+            "SELECT u.id AS id,
+                    ST_Distance(rr.polygon, $pointExpr) AS dist
              FROM users u
              LEFT JOIN locations l ON l.id = u.lastlocation
              JOIN rippling_reach rr ON rr.msgid = ?
@@ -847,26 +889,8 @@ class ScoutService
                -- polygon is going to be told anyway, by the ordinary ripple, so
                -- scouting them spends a scout slot and a mail to change nothing.
                -- The whole point of a scout is to reach past the current edge.
-               AND NOT ST_Contains(rr.polygon, ST_SRID(POINT(
-                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
-                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                          ELSE l.lng END,
-                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
-                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                          ELSE l.lat END
-                   ), ?))
-               AND ST_Contains(rr.max_polygon, ST_SRID(POINT(
-                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
-                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                          ELSE l.lng END,
-                     CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                               AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
-                          THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                          ELSE l.lat END
-                   ), ?)) = 1
+               AND NOT ST_Contains(rr.polygon, $pointExpr)
+               AND ST_Contains(rr.max_polygon, $pointExpr) = 1
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
                      WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
@@ -878,10 +902,15 @@ class ScoutService
                      WHERE rn.msgid = ? AND rn.userid = u.id
                    )
                $cadenceGate",
-            array_merge([$msgid], $userIds, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid], $extra)
+            array_merge([self::SRID, $msgid], $userIds, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid], $extra)
         );
 
-        return array_map(static fn ($r) => (int) $r->id, $rows);
+        $out = [];
+        foreach ($rows as $r) {
+            $out[(int) $r->id] = $r->dist === null ? null : (float) $r->dist;
+        }
+
+        return $out;
     }
 
 }
