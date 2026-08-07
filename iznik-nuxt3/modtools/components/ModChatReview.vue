@@ -153,9 +153,9 @@
                act (the other member is on a group you mod), which is a
                different thing - a mod of many communities was having to open
                each chat to work out whether the post was theirs to handle. -->
-          <span v-if="message.refmsggroup">
+          <span v-if="message.refmsggroups?.length">
             <v-icon icon="signpost-2" /> Post is on
-            {{ message.refmsggroup.namedisplay }}
+            {{ postGroupNames(message) }}
           </span>
           <span>
             <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{
@@ -472,6 +472,17 @@ const reviewreason = computed(() => {
 
   return ret
 })
+
+// The communities the post is on, origin first as the server orders them, then
+// the ones it rippled to. Comma-separated, the way group lists read elsewhere -
+// a moderator is scanning for whether ANY of these is theirs, so the names have
+// to be there rather than hidden behind a count.
+function postGroupNames(message) {
+  return (message?.refmsggroups ?? [])
+    .map((g) => g.namedisplay)
+    .filter(Boolean)
+    .join(', ')
+}
 
 function reload() {
   emit('reload')

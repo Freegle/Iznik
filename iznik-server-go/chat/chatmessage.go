@@ -1582,7 +1582,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		Nameshort string `gorm:"column:nameshort"`
 		Namefull  string `gorm:"column:namefull"`
 	}
-	refGroups := make(map[uint64]fiber.Map)
+	refGroups := make(map[uint64][]fiber.Map)
 	if len(refmsgids) > 0 {
 		var refRows []refGroupRow
 		db.Table("messages_groups mg").
@@ -1591,21 +1591,23 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			Where("mg.msgid IN ? AND mg.deleted = 0", refmsgids).
 			Order("mg.msgid, mg.rippled_in, mg.arrival").
 			Scan(&refRows)
+		// ALL the communities the post is on, not just the first. A rippled post
+		// is genuinely on several, and a moderator deciding whether a chat is
+		// theirs needs to see whether ANY of them is one of theirs - showing only
+		// the origin hides exactly the case where it is theirs by ripple. The
+		// ORDER carries the meaning instead: origin first (the query sorts on
+		// rippled_in, then arrival), so the community that knows the post reads
+		// first, the way group lists are shown elsewhere.
 		for _, r := range refRows {
-			if _, done := refGroups[r.Msgid]; done {
-				// Already have this post's origin - later rows are groups it
-				// rippled to.
-				continue
-			}
 			namedisplay := r.Namefull
 			if namedisplay == "" {
 				namedisplay = r.Nameshort
 			}
-			refGroups[r.Msgid] = fiber.Map{
+			refGroups[r.Msgid] = append(refGroups[r.Msgid], fiber.Map{
 				"id":          r.ID,
 				"nameshort":   r.Nameshort,
 				"namedisplay": namedisplay,
-			}
+			})
 		}
 	}
 
@@ -1666,11 +1668,12 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			msg["msgid"] = *m.Msgid
 		}
 
-		// The community the post itself is on, so a moderator can see at a
-		// glance whether a chat is theirs to handle (Discourse #10004).
+		// The communities the post itself is on, so a moderator can see at a
+		// glance whether a chat is theirs to handle (Discourse #10004). Origin
+		// first; a rippled post lists every community it reached.
 		if m.Refmsgid != nil {
-			if g, ok := refGroups[*m.Refmsgid]; ok {
-				msg["refmsggroup"] = g
+			if g, ok := refGroups[*m.Refmsgid]; ok && len(g) > 0 {
+				msg["refmsggroups"] = g
 			}
 		}
 
