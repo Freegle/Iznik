@@ -136,10 +136,17 @@ if [ "${1:-}" = "--diff" ]; then
       lineno=${entry%%:*}
       text=${entry#*:}
       echo "$text" | grep -qE "$pattern" || continue
-      # A justification may be on the added line itself or on any of the few
-      # lines above it in the file as it now stands - the comment is usually
-      # pre-existing context, not part of the diff.
-      start=$((lineno > 8 ? lineno - 8 : 1))
+      # A justification may be on the added line itself or above it in the file
+      # as it now stands - the comment is usually pre-existing context, not part
+      # of the diff.
+      #
+      # The window is 25 lines, not 8. A keep-raw comment sits above the WHOLE
+      # statement, and a fluent builder chain routinely runs ten or more lines
+      # before reaching its whereRaw. At 8 this gate blocked its own repository:
+      # MigrateReachBoundsSchemaCommand's ST_GeometryType/ST_Contains predicates
+      # carry an 8-line explanation immediately above a chain that reaches them
+      # on the 11th line, and CI rejected them as unjustified.
+      start=$((lineno > 25 ? lineno - 25 : 1))
       if sed -n "${start},${lineno}p" "$file" | grep -qiE "$KEEP_RAW"; then
         continue
       fi

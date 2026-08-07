@@ -95,6 +95,13 @@ ci 'justified raw allowed' allow
 (cd "$REPO" && printf '<?php\nDB::select("SELECT 1");\n' > iznik-batch/tests/T.php && git add -A && git commit -qm testfile)
 ci 'raw in tests allowed' allow
 
+# The justification window must span a whole fluent chain. At 8 lines this gate
+# blocked its own repository: a keep-raw comment above the statement, then a
+# builder chain that reaches its whereRaw on the 11th line, was reported as
+# unjustified and failed CI.
+(cd "$REPO" && printf '<?php\n// keep-raw: ST_Contains has no builder method.\n// line2\n// line3\n// line4\n// line5\n// line6\n// line7\n$q = DB::table("t")\n    ->select("a")\n    ->where("b", 1)\n    ->where("c", 2)\n    ->whereRaw("ST_Contains(g, p)")\n    ->get();\n' > iznik-batch/app/Long.php && git add -A && git commit -qm longchain)
+ci 'keep-raw above a long chain allowed' allow
+
 (cd "$REPO" && printf 'package m\nfunc f() { db.Raw("SELECT 1") }\n' > iznik-server-go/a.go && git add -A && git commit -qm go)
 ci 'new raw go blocked' block
 
