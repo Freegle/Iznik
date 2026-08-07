@@ -2,6 +2,8 @@
 
 namespace App\Services\Mail\Incoming;
 
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use App\Mail\Fbl\FblNotification;
 use App\Mail\Session\UnsubscribedNotice;
 use App\Models\ChatImage;
@@ -1732,17 +1734,19 @@ class IncomingMailService
                 'userid' => $messageOwner,
             ]);
 
-            // keep-raw: correlated scalar subquery as an UPDATE SET value. The query
-            // builder's update() only special-cases Expression values (col => raw SQL) -
-            // there is no subquery-as-value equivalent to selectSub() for update(), so
-            // this can't be expressed without either DB::raw or a second round-trip that
-            // would change the query from one atomic UPDATE into two.
+            // Correlated scalar subquery as an UPDATE SET value: Query\Builder::update()
+            // special-cases a sub-builder value directly (parses it via parseSub() and
+            // wraps it as "(select ...)"), so passing the un-executed aggregate builder
+            // itself renders one atomic correlated UPDATE, same as the raw SQL did.
+            $lastMsgIdSub = DB::table('chat_messages')->where('chatid', $chat->id);
+            $lastMsgIdSub->aggregate = ['function' => 'max', 'columns' => ['id']];
+
             DB::table('chat_roster')
                 ->where('chatid', $chat->id)
                 ->where('userid', $messageOwner)
                 ->update([
                     'lastemailed' => now(),
-                    'lastmsgemailed' => DB::raw("(SELECT MAX(id) FROM chat_messages WHERE chatid = {$chat->id})"),
+                    'lastmsgemailed' => $lastMsgIdSub,
                 ]);
         }
 
@@ -4156,27 +4160,29 @@ class IncomingMailService
         $msgType = $message->type;
 
         try {
-            // keep-raw: ST_GeomFromText() is a spatial function with no query builder
-            // method, and this is an atomic upsert (ON DUPLICATE KEY UPDATE) - upsert()
-            // only emits col = values(col) or col = ?, neither of which can express the
-            // ST_GeomFromText() recomputation needed on the update branch.
-            $sql = "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-                    VALUES (?, ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?), ?, ?, ?)
-                    ON DUPLICATE KEY UPDATE
-                    point = ST_GeomFromText('POINT({$message->lng} {$message->lat})', ?),
-                    groupid = ?, msgtype = ?, arrival = ?";
+            // Atomic upsert (ON DUPLICATE KEY UPDATE) recomputing ST_GeomFromText() on
+            // both branches. Grammar::compileUpsert() renders each $update value via
+            // parameter(), which special-cases an Expression by inlining its SQL
+            // directly instead of a `?` placeholder - so the StGeomFromText expression
+            // works on the update branch exactly like the plain scalars do on it.
+            $point = new StGeomFromText(Value::of("POINT({$message->lng} {$message->lat})"), $srid);
 
-            DB::statement($sql, [
-                $messageId,
-                $srid,
-                $groupId,
-                $msgType,
-                $arrival,
-                $srid,
-                $groupId,
-                $msgType,
-                $arrival,
-            ]);
+            DB::table('messages_spatial')->upsert(
+                [
+                    'msgid' => $messageId,
+                    'point' => $point,
+                    'groupid' => $groupId,
+                    'msgtype' => $msgType,
+                    'arrival' => $arrival,
+                ],
+                ['msgid'],
+                [
+                    'point' => $point,
+                    'groupid' => $groupId,
+                    'msgtype' => $msgType,
+                    'arrival' => $arrival,
+                ]
+            );
 
             Log::debug('Added message to spatial index', [
                 'message_id' => $messageId,

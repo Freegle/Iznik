@@ -2,6 +2,16 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Collate;
+use App\Database\Expressions\Count;
+use App\Database\Expressions\CountDistinct;
+use App\Database\Expressions\NullIf;
+use App\Database\Expressions\Round;
+use App\Database\Expressions\Sum;
+use App\Database\Expressions\Value;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Membership;
@@ -100,10 +110,11 @@ class StatsGenerationService
         $avg = (float) (DB::table('items')
             ->whereNotNull('weight')
             ->where('weight', '!=', 0)
-            // keep-raw: division between two aggregates (SUM/SUM) - arithmetic
-            // across aggregate results has no builder method.
-            ->selectRaw('SUM(popularity * weight) / SUM(popularity) AS average')
-            ->value('average') ?? 0);
+            ->value(new Arithmetic(
+                new Sum(new Arithmetic('popularity', '*', 'weight')),
+                '/',
+                new Sum('popularity')
+            )) ?? 0);
 
         // V1's search_history.groups is a comma-separated string. One scan,
         // tally per-group, vs the previous "scan per group" approach.
@@ -143,10 +154,11 @@ class StatsGenerationService
                 ->where('messages_groups.rippled_in', 0) // native posts only
                 ->whereNotNull('messages.sourceheader')
                 ->groupBy('messages_groups.groupid', 'messages.sourceheader')
-                // keep-raw: COUNT(*) aliased alongside two grouped columns in a
-                // multi-row SELECT list - no builder method projects an aliased
-                // aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, messages.sourceheader AS source, COUNT(*) AS cnt')
+                ->select([
+                    'messages_groups.groupid as gid',
+                    'messages.sourceheader as source',
+                    new Alias(new Count(), 'cnt'),
+                ])
                 ->get() as $row
         ) {
             $postMethod[(int) $row->gid][$row->source] = (int) $row->cnt;
@@ -164,10 +176,11 @@ class StatsGenerationService
                 ->where('messages_groups.rippled_in', 0) // native posts only
                 ->whereNotNull('messages.type')
                 ->groupBy('messages_groups.groupid', 'messages.type')
-                // keep-raw: COUNT(*) aliased alongside two grouped columns in a
-                // multi-row SELECT list - no builder method projects an aliased
-                // aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, messages.type AS type, COUNT(*) AS cnt')
+                ->select([
+                    'messages_groups.groupid as gid',
+                    'messages.type as type',
+                    new Alias(new Count(), 'cnt'),
+                ])
                 ->get() as $row
         ) {
             $messageTypes[(int) $row->gid][$row->type] = (int) $row->cnt;
@@ -182,10 +195,10 @@ class StatsGenerationService
                 ->where('users_active.timestamp', '>=', $windowStart)
                 ->where('users_active.timestamp', '<', $windowEnd)
                 ->groupBy('memberships.groupid')
-                // keep-raw: COUNT(DISTINCT ...) aliased alongside a grouped
-                // column in a multi-row SELECT list - no builder method
-                // projects an aliased aggregate here.
-                ->selectRaw('memberships.groupid AS gid, COUNT(DISTINCT users_active.userid) AS cnt')
+                ->select([
+                    'memberships.groupid as gid',
+                    new Alias(new CountDistinct('users_active.userid'), 'cnt'),
+                ])
                 ->get() as $row
         ) {
             $activeUsers[(int) $row->gid] = (int) $row->cnt;
@@ -209,10 +222,10 @@ class StatsGenerationService
                         ->whereColumn('messages_bulk_items.msgid', 'messages_outcomes.msgid');
                 })
                 ->groupBy('messages_groups.groupid')
-                // keep-raw: aggregate (COUNT DISTINCT) aliased alongside a grouped
-                // column in a multi-row SELECT list - no builder method projects
-                // an aliased aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, COUNT(DISTINCT messages_outcomes.msgid) AS cnt')
+                ->select([
+                    'messages_groups.groupid as gid',
+                    new Alias(new CountDistinct('messages_outcomes.msgid'), 'cnt'),
+                ])
                 ->get() as $row
         ) {
             $outcomes[(int) $row->gid] = (int) $row->cnt;
@@ -228,10 +241,10 @@ class StatsGenerationService
                 ->where('messages_bulk_items.updated_at', '>=', $date)
                 ->where('messages_bulk_items.updated_at', '<', $next)
                 ->groupBy('messages_groups.groupid')
-                // keep-raw: SUM(...) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an
-                // aliased aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, SUM(messages_bulk_items.quantity) AS cnt')
+                ->select([
+                    'messages_groups.groupid as gid',
+                    new Alias(new Sum('messages_bulk_items.quantity'), 'cnt'),
+                ])
                 ->get() as $row
         ) {
             $gid = (int) $row->gid;
@@ -250,10 +263,10 @@ class StatsGenerationService
                 ->where('messages_bulk_items_interest.updated_at', '>=', $date)
                 ->where('messages_bulk_items_interest.updated_at', '<', $next)
                 ->groupBy('messages_groups.groupid')
-                // keep-raw: SUM(...) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an
-                // aliased aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, SUM(messages_bulk_items_interest.quantity) AS cnt')
+                ->select([
+                    'messages_groups.groupid as gid',
+                    new Alias(new Sum('messages_bulk_items_interest.quantity'), 'cnt'),
+                ])
                 ->get() as $row
         ) {
             $gid = (int) $row->gid;
@@ -270,10 +283,10 @@ class StatsGenerationService
                 ->where('messages.arrival', '<', $next)
                 ->where('messages_groups.collection', Membership::COLLECTION_APPROVED)
                 ->groupBy('messages_groups.groupid')
-                // keep-raw: COUNT(DISTINCT ...) aliased alongside a grouped
-                // column in a multi-row SELECT list - no builder method
-                // projects an aliased aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, COUNT(DISTINCT messages_groups.msgid) AS cnt')
+                ->select([
+                    'messages_groups.groupid as gid',
+                    new Alias(new CountDistinct('messages_groups.msgid'), 'cnt'),
+                ])
                 ->get() as $row
         ) {
             $approvedMessages[(int) $row->gid] = (int) $row->cnt;
@@ -298,10 +311,10 @@ class StatsGenerationService
                 ->where('messages.arrival', '<', $next)
                 ->where('messages_groups.collection', Membership::COLLECTION_APPROVED)
                 ->groupBy('messages_groups.groupid')
-                // keep-raw: SUM(availableinitially - 1) is arithmetic on a column
-                // combined with an aggregate alias under GROUP BY - no builder
-                // method for either.
-                ->selectRaw('messages_groups.groupid AS gid, SUM(messages.availableinitially - 1) AS topup')
+                ->select([
+                    'messages_groups.groupid as gid',
+                    new Alias(new Sum(new Arithmetic('messages.availableinitially', '-', 1)), 'topup'),
+                ])
                 ->get() as $row
         ) {
             $gid = (int) $row->gid;
@@ -319,10 +332,7 @@ class StatsGenerationService
                 ->where('added', '<', $next)
                 ->where('collection', Membership::COLLECTION_APPROVED)
                 ->groupBy('groupid')
-                // keep-raw: COUNT(*) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an
-                // aliased aggregate here.
-                ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
+                ->select(['groupid as gid', new Alias(new Count(), 'cnt')])
                 ->get() as $row
         ) {
             $approvedMembers[(int) $row->gid] = (int) $row->cnt;
@@ -338,10 +348,7 @@ class StatsGenerationService
                 ->where('subtype', 'ClassifiedSpam')
                 ->whereNotNull('groupid')
                 ->groupBy('groupid')
-                // keep-raw: COUNT(*) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an
-                // aliased aggregate here.
-                ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
+                ->select(['groupid as gid', new Alias(new Count(), 'cnt')])
                 ->get() as $row
         ) {
             $spamMessages[(int) $row->gid] = (int) $row->cnt;
@@ -361,10 +368,7 @@ class StatsGenerationService
                 ->where('logs.subtype', 'Left')
                 ->whereNotNull('logs.groupid')
                 ->groupBy('logs.groupid')
-                // keep-raw: COUNT(*) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an
-                // aliased aggregate here.
-                ->selectRaw('logs.groupid AS gid, COUNT(*) AS cnt')
+                ->select(['logs.groupid as gid', new Alias(new Count(), 'cnt')])
                 ->get() as $row
         ) {
             $spamMembers[(int) $row->gid] = (int) $row->cnt;
@@ -379,10 +383,7 @@ class StatsGenerationService
                 ->where('chattype', ChatRoom::TYPE_USER2MOD)
                 ->whereNotNull('groupid')
                 ->groupBy('groupid')
-                // keep-raw: COUNT(*) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an
-                // aliased aggregate here.
-                ->selectRaw('groupid AS gid, COUNT(*) AS cnt')
+                ->select(['groupid as gid', new Alias(new Count(), 'cnt')])
                 ->get() as $row
         ) {
             $supportQueries[(int) $row->gid] = (int) $row->cnt;
@@ -407,10 +408,11 @@ class StatsGenerationService
                     self::TYPE_FEEDBACK_UNHAPPY,
                 ])
                 ->groupBy('messages_groups.groupid', 'messages_outcomes.happiness')
-                // keep-raw: COUNT(DISTINCT ...) aliased alongside two grouped
-                // columns in a multi-row SELECT list - no builder method
-                // projects an aliased aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, messages_outcomes.happiness AS happiness, COUNT(DISTINCT messages_outcomes.msgid) AS cnt')
+                ->select([
+                    'messages_groups.groupid as gid',
+                    'messages_outcomes.happiness as happiness',
+                    new Alias(new CountDistinct('messages_outcomes.msgid'), 'cnt'),
+                ])
                 ->get() as $row
         ) {
             $feedback[(int) $row->gid][$row->happiness] = (int) $row->cnt;
@@ -423,10 +425,7 @@ class StatsGenerationService
         foreach (
             DB::table('memberships')
                 ->groupBy('groupid', 'ourPostingStatus')
-                // keep-raw: COUNT(*) aliased alongside two grouped columns in a
-                // multi-row SELECT list - no builder method projects an
-                // aliased aggregate here.
-                ->selectRaw('groupid AS gid, ourPostingStatus, COUNT(*) AS cnt')
+                ->select(['groupid as gid', 'ourPostingStatus', new Alias(new Count(), 'cnt')])
                 ->get() as $row
         ) {
             $ourPosting[(int) $row->gid][$row->ourPostingStatus] = (int) $row->cnt;
@@ -449,10 +448,7 @@ class StatsGenerationService
                         ->whereColumn('messages_bulk_items.msgid', 'chat_messages.refmsgid');
                 })
                 ->groupBy('messages_groups.groupid')
-                // keep-raw: COUNT(*) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an aliased
-                // aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
+                ->select(['messages_groups.groupid as gid', new Alias(new Count(), 'cnt')])
                 ->get() as $row
         ) {
             $replies[(int) $row->gid] = (int) $row->cnt;
@@ -467,10 +463,7 @@ class StatsGenerationService
                 ->where('messages_bulk_items_interest.created_at', '>=', $date)
                 ->where('messages_bulk_items_interest.created_at', '<', $next)
                 ->groupBy('messages_groups.groupid')
-                // keep-raw: COUNT(*) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an
-                // aliased aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
+                ->select(['messages_groups.groupid as gid', new Alias(new Count(), 'cnt')])
                 ->get() as $row
         ) {
             $gid = (int) $row->gid;
@@ -499,10 +492,7 @@ class StatsGenerationService
                         ->whereColumn('messages_bulk_items_interest.userid', 'chat_messages.userid');
                 })
                 ->groupBy('messages_groups.groupid')
-                // keep-raw: COUNT(*) aliased alongside a grouped column in a
-                // multi-row SELECT list - no builder method projects an aliased
-                // aggregate here.
-                ->selectRaw('messages_groups.groupid AS gid, COUNT(*) AS cnt')
+                ->select(['messages_groups.groupid as gid', new Alias(new Count(), 'cnt')])
                 ->get() as $row
         ) {
             $gid = (int) $row->gid;
@@ -516,27 +506,33 @@ class StatsGenerationService
         // per-group distinct()+foreach. Bulk-offer messages are excluded here.
         $weight = [];
         foreach (
-            // keep-raw: derived-table aggregate using COALESCE()/NULLIF()/ROUND()
-            // on columns and a bound parameter, plus a correlated NOT EXISTS
-            // inside the derived table - none of these have builder methods,
-            // and fromSub() would still need selectRaw for the COALESCE/NULLIF
-            // expression, so nothing is actually eliminated by partial conversion.
-            DB::select(
-                'SELECT sub.groupid AS gid, ROUND(SUM(sub.eff_weight)) AS total_weight '
-                . 'FROM ('
-                . '  SELECT DISTINCT mo.msgid, mg.groupid, '
-                . '    COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight '
-                . '  FROM messages_outcomes mo '
-                . '  INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 '
-                . '  INNER JOIN messages_items mi ON mi.msgid = mo.msgid '
-                . '  LEFT JOIN items i ON i.id = mi.itemid '
-                . '  WHERE mo.timestamp >= ? AND mo.timestamp < ? '
-                . '    AND mo.outcome IN (?, ?)'
-                . '    AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bxi WHERE bxi.msgid = mo.msgid)'
-                . ') sub '
-                . 'GROUP BY sub.groupid',
-                [$avg, $date, $next, Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]
-            ) as $row
+            DB::query()->fromSub(
+                DB::table('messages_outcomes as mo')
+                    ->join('messages_groups as mg', function ($j) {
+                        $j->on('mg.msgid', '=', 'mo.msgid')->where('mg.rippled_in', 0);
+                    })
+                    ->join('messages_items as mi', 'mi.msgid', '=', 'mo.msgid')
+                    ->leftJoin('items as i', 'i.id', '=', 'mi.itemid')
+                    ->where('mo.timestamp', '>=', $date)
+                    ->where('mo.timestamp', '<', $next)
+                    ->whereIn('mo.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
+                    ->whereNotExists(function ($q) {
+                        // No ->select() needed inside NOT EXISTS: default '*' is
+                        // semantically identical to SELECT 1 for existence checks.
+                        $q->from('messages_bulk_items as bxi')
+                            ->whereColumn('bxi.msgid', 'mo.msgid');
+                    })
+                    ->distinct()
+                    ->select([
+                        'mo.msgid',
+                        'mg.groupid',
+                        new Alias(new Coalesce(new NullIf('i.weight', 0), Value::of($avg)), 'eff_weight'),
+                    ]),
+                'sub'
+            )
+                ->groupBy('sub.groupid')
+                ->select(['sub.groupid as gid', new Alias(new Round(new Sum('sub.eff_weight')), 'total_weight')])
+                ->get() as $row
         ) {
             $weight[(int) $row->gid] = (int) $row->total_weight;
         }
@@ -544,21 +540,26 @@ class StatsGenerationService
         // WEIGHT bulk flip: catalogue items marked available=0 on $date, weighted by
         // items.weight matched by name (not itemid), multiplied by remaining quantity.
         foreach (
-            // keep-raw: ROUND(SUM(COALESCE(NULLIF(...)) * col)) - arithmetic on a
-            // column combined with COALESCE/NULLIF/ROUND, none of which have
-            // builder methods; also a COLLATE clause on the join, which the
-            // builder cannot express either.
-            DB::select(
-                'SELECT mg.groupid AS gid, '
-                . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight '
-                . 'FROM messages_bulk_items bi '
-                . 'INNER JOIN messages_groups mg ON mg.msgid = bi.msgid AND mg.rippled_in = 0 '
-                . 'LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci '
-                . 'WHERE bi.available = 0 '
-                . '  AND bi.updated_at >= ? AND bi.updated_at < ? '
-                . 'GROUP BY mg.groupid',
-                [$avg, $date, $next]
-            ) as $row
+            DB::table('messages_bulk_items as bi')
+                ->join('messages_groups as mg', function ($j) {
+                    $j->on('mg.msgid', '=', 'bi.msgid')->where('mg.rippled_in', 0);
+                })
+                ->leftJoin('items as i', function ($j) {
+                    $j->on('i.name', '=', new Collate('bi.name', 'utf8mb4_unicode_ci'));
+                })
+                ->where('bi.available', 0)
+                ->where('bi.updated_at', '>=', $date)
+                ->where('bi.updated_at', '<', $next)
+                ->groupBy('mg.groupid')
+                ->select([
+                    'mg.groupid as gid',
+                    new Alias(new Round(new Sum(new Arithmetic(
+                        new Coalesce(new NullIf('i.weight', 0), Value::of($avg)),
+                        '*',
+                        'bi.quantity'
+                    ))), 'bulk_weight'),
+                ])
+                ->get() as $row
         ) {
             $gid = (int) $row->gid;
             $bw = (int) $row->bulk_weight;
@@ -570,22 +571,27 @@ class StatsGenerationService
         // WEIGHT collected: in-app collections attributed on updated_at day, weighted by
         // items.weight matched via the parent bulk item's name, times interest-row quantity.
         foreach (
-            // keep-raw: ROUND(SUM(COALESCE(NULLIF(...)) * col)) - arithmetic on a
-            // column combined with COALESCE/NULLIF/ROUND, none of which have
-            // builder methods; also a COLLATE clause on the join, which the
-            // builder cannot express either.
-            DB::select(
-                'SELECT mg.groupid AS gid, '
-                . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbi.quantity)) AS coll_weight '
-                . 'FROM messages_bulk_items_interest mbi '
-                . 'INNER JOIN messages_bulk_items bi ON bi.id = mbi.bulkitemid '
-                . 'INNER JOIN messages_groups mg ON mg.msgid = mbi.msgid AND mg.rippled_in = 0 '
-                . 'LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci '
-                . 'WHERE mbi.state = ? '
-                . '  AND mbi.updated_at >= ? AND mbi.updated_at < ? '
-                . 'GROUP BY mg.groupid',
-                [$avg, 'Collected', $date, $next]
-            ) as $row
+            DB::table('messages_bulk_items_interest as mbi')
+                ->join('messages_bulk_items as bi', 'bi.id', '=', 'mbi.bulkitemid')
+                ->join('messages_groups as mg', function ($j) {
+                    $j->on('mg.msgid', '=', 'mbi.msgid')->where('mg.rippled_in', 0);
+                })
+                ->leftJoin('items as i', function ($j) {
+                    $j->on('i.name', '=', new Collate('bi.name', 'utf8mb4_unicode_ci'));
+                })
+                ->where('mbi.state', 'Collected')
+                ->where('mbi.updated_at', '>=', $date)
+                ->where('mbi.updated_at', '<', $next)
+                ->groupBy('mg.groupid')
+                ->select([
+                    'mg.groupid as gid',
+                    new Alias(new Round(new Sum(new Arithmetic(
+                        new Coalesce(new NullIf('i.weight', 0), Value::of($avg)),
+                        '*',
+                        'mbi.quantity'
+                    ))), 'coll_weight'),
+                ])
+                ->get() as $row
         ) {
             $gid = (int) $row->gid;
             $cw = (int) $row->coll_weight;
@@ -725,10 +731,11 @@ class StatsGenerationService
         $avg = (float) (DB::table('items')
             ->whereNotNull('weight')
             ->where('weight', '!=', 0)
-            // keep-raw: division between two aggregates (SUM/SUM) - arithmetic
-            // across aggregate results has no builder method.
-            ->selectRaw('SUM(popularity * weight) / SUM(popularity) AS average')
-            ->value('average') ?? 0);
+            ->value(new Arithmetic(
+                new Sum(new Arithmetic('popularity', '*', 'weight')),
+                '/',
+                new Sum('popularity')
+            )) ?? 0);
 
         $datesProcessed = 0;
         $rowsWritten = 0;
@@ -744,27 +751,33 @@ class StatsGenerationService
             // to multiple items with different weights contributes all of
             // them — same shape as the PHP `distinct()` + foreach the old
             // path had. Bulk-offer messages are excluded and handled below.
-            // keep-raw: derived-table aggregate using COALESCE()/NULLIF()/ROUND()
-            // on columns and a bound parameter, plus a correlated NOT EXISTS
-            // inside the derived table - none of these have builder methods,
-            // and fromSub() would still need selectRaw for the COALESCE/NULLIF
-            // expression, so nothing is actually eliminated by partial conversion.
-            $rows = DB::select(
-                'SELECT sub.groupid, ROUND(SUM(sub.eff_weight)) AS total_weight '
-                . 'FROM ('
-                . '  SELECT DISTINCT mo.msgid, mg.groupid, '
-                . '    COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight '
-                . '  FROM messages_outcomes mo '
-                . '  INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0 '
-                . '  INNER JOIN messages_items mi ON mi.msgid = mo.msgid '
-                . '  LEFT JOIN items i ON i.id = mi.itemid '
-                . '  WHERE mo.timestamp >= ? AND mo.timestamp < ? '
-                . '    AND mo.outcome IN (?, ?)'
-                . '    AND NOT EXISTS (SELECT 1 FROM messages_bulk_items bxi WHERE bxi.msgid = mo.msgid)'
-                . ') sub '
-                . 'GROUP BY sub.groupid',
-                [$avg, $date, $next, Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]
-            );
+            $rows = DB::query()->fromSub(
+                DB::table('messages_outcomes as mo')
+                    ->join('messages_groups as mg', function ($j) {
+                        $j->on('mg.msgid', '=', 'mo.msgid')->where('mg.rippled_in', 0);
+                    })
+                    ->join('messages_items as mi', 'mi.msgid', '=', 'mo.msgid')
+                    ->leftJoin('items as i', 'i.id', '=', 'mi.itemid')
+                    ->where('mo.timestamp', '>=', $date)
+                    ->where('mo.timestamp', '<', $next)
+                    ->whereIn('mo.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED])
+                    ->whereNotExists(function ($q) {
+                        // No ->select() needed inside NOT EXISTS: default '*' is
+                        // semantically identical to SELECT 1 for existence checks.
+                        $q->from('messages_bulk_items as bxi')
+                            ->whereColumn('bxi.msgid', 'mo.msgid');
+                    })
+                    ->distinct()
+                    ->select([
+                        'mo.msgid',
+                        'mg.groupid',
+                        new Alias(new Coalesce(new NullIf('i.weight', 0), Value::of($avg)), 'eff_weight'),
+                    ]),
+                'sub'
+            )
+                ->groupBy('sub.groupid')
+                ->select(['sub.groupid', new Alias(new Round(new Sum('sub.eff_weight')), 'total_weight')])
+                ->get();
 
             // Merge non-bulk results into a groupid-keyed array.
             $weightByGroup = [];
@@ -778,21 +791,26 @@ class StatsGenerationService
             // WEIGHT bulk flip arm: catalogue items marked available=0 on this date,
             // weighted by items.weight matched by name, multiplied by remaining quantity.
             foreach (
-                // keep-raw: ROUND(SUM(COALESCE(NULLIF(...)) * col)) - arithmetic
-                // on a column combined with COALESCE/NULLIF/ROUND, none of which
-                // have builder methods; also a COLLATE clause on the join, which
-                // the builder cannot express either.
-                DB::select(
-                    'SELECT mg.groupid, '
-                    . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * bi.quantity)) AS bulk_weight '
-                    . 'FROM messages_bulk_items bi '
-                    . 'INNER JOIN messages_groups mg ON mg.msgid = bi.msgid AND mg.rippled_in = 0 '
-                    . 'LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci '
-                    . 'WHERE bi.available = 0 '
-                    . '  AND bi.updated_at >= ? AND bi.updated_at < ? '
-                    . 'GROUP BY mg.groupid',
-                    [$avg, $date, $next]
-                ) as $bulkRow
+                DB::table('messages_bulk_items as bi')
+                    ->join('messages_groups as mg', function ($j) {
+                        $j->on('mg.msgid', '=', 'bi.msgid')->where('mg.rippled_in', 0);
+                    })
+                    ->leftJoin('items as i', function ($j) {
+                        $j->on('i.name', '=', new Collate('bi.name', 'utf8mb4_unicode_ci'));
+                    })
+                    ->where('bi.available', 0)
+                    ->where('bi.updated_at', '>=', $date)
+                    ->where('bi.updated_at', '<', $next)
+                    ->groupBy('mg.groupid')
+                    ->select([
+                        'mg.groupid',
+                        new Alias(new Round(new Sum(new Arithmetic(
+                            new Coalesce(new NullIf('i.weight', 0), Value::of($avg)),
+                            '*',
+                            'bi.quantity'
+                        ))), 'bulk_weight'),
+                    ])
+                    ->get() as $bulkRow
             ) {
                 $gid = (int) $bulkRow->groupid;
                 $bw = (int) $bulkRow->bulk_weight;
@@ -803,22 +821,27 @@ class StatsGenerationService
 
             // WEIGHT collected arm: in-app collections attributed on updated_at day.
             foreach (
-                // keep-raw: ROUND(SUM(COALESCE(NULLIF(...)) * col)) - arithmetic
-                // on a column combined with COALESCE/NULLIF/ROUND, none of which
-                // have builder methods; also a COLLATE clause on the join, which
-                // the builder cannot express either.
-                DB::select(
-                    'SELECT mg.groupid, '
-                    . '  ROUND(SUM(COALESCE(NULLIF(i.weight, 0), ?) * mbi.quantity)) AS coll_weight '
-                    . 'FROM messages_bulk_items_interest mbi '
-                    . 'INNER JOIN messages_bulk_items bi ON bi.id = mbi.bulkitemid '
-                    . 'INNER JOIN messages_groups mg ON mg.msgid = mbi.msgid AND mg.rippled_in = 0 '
-                    . 'LEFT JOIN items i ON i.name = bi.name COLLATE utf8mb4_unicode_ci '
-                    . 'WHERE mbi.state = ? '
-                    . '  AND mbi.updated_at >= ? AND mbi.updated_at < ? '
-                    . 'GROUP BY mg.groupid',
-                    [$avg, 'Collected', $date, $next]
-                ) as $collRow
+                DB::table('messages_bulk_items_interest as mbi')
+                    ->join('messages_bulk_items as bi', 'bi.id', '=', 'mbi.bulkitemid')
+                    ->join('messages_groups as mg', function ($j) {
+                        $j->on('mg.msgid', '=', 'mbi.msgid')->where('mg.rippled_in', 0);
+                    })
+                    ->leftJoin('items as i', function ($j) {
+                        $j->on('i.name', '=', new Collate('bi.name', 'utf8mb4_unicode_ci'));
+                    })
+                    ->where('mbi.state', 'Collected')
+                    ->where('mbi.updated_at', '>=', $date)
+                    ->where('mbi.updated_at', '<', $next)
+                    ->groupBy('mg.groupid')
+                    ->select([
+                        'mg.groupid',
+                        new Alias(new Round(new Sum(new Arithmetic(
+                            new Coalesce(new NullIf('i.weight', 0), Value::of($avg)),
+                            '*',
+                            'mbi.quantity'
+                        ))), 'coll_weight'),
+                    ])
+                    ->get() as $collRow
             ) {
                 $gid = (int) $collRow->groupid;
                 $cw = (int) $collRow->coll_weight;
@@ -842,11 +865,20 @@ class StatsGenerationService
             }
 
             if (!empty($placeholders)) {
-                // keep-raw: REPLACE INTO. upsert() only emits ON DUPLICATE KEY
-                // UPDATE col = VALUES(col) / col = ?, which is INSERT-then-UPDATE
-                // semantics; REPLACE INTO here relies on delete-then-reinsert
-                // (and does so across a hand-built multi-row VALUES list), which
-                // upsert() cannot reproduce.
+                // keep-raw: REPLACE INTO, verified NOT reproducible by upsert().
+                // `stats` has a NOT NULL `end` column with no default that this
+                // statement never sets; the app connection runs with strict mode
+                // off (config/database.php 'strict' => false), so that's not a
+                // constraint-violation error - it silently zero-dates `end`
+                // (confirmed against this DB: REPLACE INTO stats (date, groupid,
+                // type, count) ... yields end = '0000-00-00'). REPLACE's
+                // delete-then-reinsert re-zeroes `end` on EVERY write, including
+                // an overwrite of a row that currently holds a real `end` value
+                // (this DB has live rows with `end` = date+1, most likely written
+                // by V1's Stats::generate() before the V2 cutover). upsert()'s
+                // ON DUPLICATE KEY UPDATE would instead leave an existing row's
+                // `end` untouched on overwrite - an observable behaviour change
+                // for exactly the backfill-rerun case this method exists for.
                 DB::statement(
                     'REPLACE INTO stats (date, groupid, type, count) VALUES '
                     . implode(', ', $placeholders),
@@ -874,8 +906,11 @@ class StatsGenerationService
             return 1;
         }
 
-        // keep-raw: REPLACE INTO - upsert() emits ON DUPLICATE KEY UPDATE
-        // (INSERT-then-UPDATE), not the delete-then-reinsert REPLACE relies on.
+        // keep-raw: REPLACE INTO, verified NOT reproducible by upsert() - see
+        // the identical REPLACE in regenerateWeightForRange() for the full
+        // finding (the NOT NULL, no-default `end` column that REPLACE
+        // silently re-zeroes on every write, which upsert()'s
+        // ON DUPLICATE KEY UPDATE would instead leave untouched on overwrite).
         DB::statement(
             'REPLACE INTO stats (date, groupid, type, count) VALUES (?, ?, ?, ?)',
             [$date, $groupId, $type, $val]
@@ -895,8 +930,11 @@ class StatsGenerationService
             return 1;
         }
 
-        // keep-raw: REPLACE INTO - upsert() emits ON DUPLICATE KEY UPDATE
-        // (INSERT-then-UPDATE), not the delete-then-reinsert REPLACE relies on.
+        // keep-raw: REPLACE INTO, verified NOT reproducible by upsert() - see
+        // the identical REPLACE in regenerateWeightForRange() for the full
+        // finding (the NOT NULL, no-default `end` column that REPLACE
+        // silently re-zeroes on every write, which upsert()'s
+        // ON DUPLICATE KEY UPDATE would instead leave untouched on overwrite).
         DB::statement(
             'REPLACE INTO stats (date, groupid, type, breakdown) VALUES (?, ?, ?, ?)',
             [$date, $groupId, $type, json_encode($map, JSON_UNESCAPED_UNICODE)]

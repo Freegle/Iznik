@@ -155,13 +155,17 @@ class EmbeddingService
                 continue;
             }
 
-            DB::statement(
-                'INSERT INTO users_searches_embeddings (searchid, term_embedding, model_version)
-                 VALUES (?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                   term_embedding = VALUES(term_embedding),
-                   model_version  = VALUES(model_version)',
-                [(int) $id, $this->packVector($vectors[$id]), self::MODEL_VERSION]
+            // Same upsert() shape as processMessages() above: the update columns are
+            // given as a plain LIST so each renders "col = values(col)" rather than
+            // "col = ?" bound to a fixed value.
+            DB::table('users_searches_embeddings')->upsert(
+                [[
+                    'searchid' => (int) $id,
+                    'term_embedding' => $this->packVector($vectors[$id]),
+                    'model_version' => self::MODEL_VERSION,
+                ]],
+                ['searchid'],
+                ['term_embedding', 'model_version']
             );
             $count++;
         }

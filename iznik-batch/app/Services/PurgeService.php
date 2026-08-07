@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Count;
 use App\Models\ChatImage;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
@@ -1133,13 +1134,17 @@ class PurgeService
         $cutoff = now()->subDays($daysBack)->startOfDay();
         $deleted = 0;
 
-        // keep-raw: COUNT(*) needs an alias (`count`) to be usable in the having()
-        // below, and no query builder method projects an aliased aggregate
-        // alongside other columns in a GROUP BY select list.
-        $duplicateChats = DB::table('chat_messages')
-            ->select('chatid', 'message', 'refmsgid', DB::raw('COUNT(*) as count'))
+        // COUNT(*) needs an alias (`count`) to be usable in the having() below,
+        // alongside other columns in a GROUP BY select list. selectSub() accepts
+        // a plain SQL string (Query\Builder::parseSub() special-cases strings),
+        // so the Count expression is rendered once via getValue() and projected
+        // as an aliased column the same way selectSub() aliases any subquery.
+        $duplicateChatsQuery = DB::table('chat_messages')
+            ->select('chatid', 'message', 'refmsgid')
             ->where('date', '>=', $cutoff)
-            ->groupBy('chatid', 'message', 'refmsgid')
+            ->groupBy('chatid', 'message', 'refmsgid');
+        $duplicateChatsQuery->selectSub((new Count('*'))->getValue($duplicateChatsQuery->getGrammar()), 'count');
+        $duplicateChats = $duplicateChatsQuery
             ->having('count', '>', 1)
             ->get();
 

@@ -2,6 +2,12 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\StAsText;
+use App\Database\Expressions\StContains;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -65,20 +71,17 @@ class PostcodeRemapService
 
         if ($polygon) {
             $srid = (int) config('freegle.srid', 3857);
-            // keep-raw: ST_Contains/ST_GeomFromText are spatial functions with no
-            // query-builder equivalent.
+            $contains = new StContains(
+                new StGeomFromText(Value::of($polygon), $srid),
+                'locations_spatial.geometry'
+            );
+
             if ($locationId) {
-                $pcQuery->where(function ($q) use ($polygon, $locationId, $srid) {
-                    $q->whereRaw(
-                        "ST_Contains(ST_GeomFromText(?, {$srid}), locations_spatial.geometry)",
-                        [$polygon],
-                    )->orWhere('locations.areaid', $locationId);
+                $pcQuery->where(function ($q) use ($contains, $locationId) {
+                    $q->where($contains)->orWhere('locations.areaid', $locationId);
                 });
             } else {
-                $pcQuery->whereRaw(
-                    "ST_Contains(ST_GeomFromText(?, {$srid}), locations_spatial.geometry)",
-                    [$polygon],
-                );
+                $pcQuery->where($contains);
             }
         }
 
@@ -117,11 +120,9 @@ class PostcodeRemapService
      */
     private function seedArea(int $locationId): void
     {
-        // keep-raw: ST_AsText and COALESCE are functions with no query-builder equivalent.
         $row = DB::table('locations')
             ->where('id', $locationId)
-            ->select('name', 'type')
-            ->selectRaw('ST_AsText(COALESCE(ourgeometry, geometry)) AS wkt')
+            ->select('name', 'type', new Alias(new StAsText(new Coalesce('ourgeometry', 'geometry')), 'wkt'))
             ->first();
 
         if (!$row || empty($row->wkt)) {

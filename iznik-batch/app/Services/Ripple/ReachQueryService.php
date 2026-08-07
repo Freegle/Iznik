@@ -2,6 +2,12 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StContains;
+use App\Database\Expressions\StGeometryType;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\Value;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -48,40 +54,57 @@ class ReachQueryService
     public function isWithinReach(int $msgid, float $lat, float $lng): bool
     {
         try {
+            // The point built the same way the Go API/every other writer does:
+            // ST_SRID(POINT(lng, lat), SRID). $lat/$lng are floats, unambiguous
+            // literals under RendersOperands - no Value::of() wrapping needed.
+            $point = new StSrid(new Point($lng, $lat), self::SRID);
+
             if ($this->boundsAvailable()) {
-                $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
-                // keep-raw: ST_Contains/ST_GeometryType/ST_SRID/EXISTS-in-SELECT
-                // are spatial functions and predicate composition with no builder method.
-                $row = DB::selectOne(
-                    "SELECT EXISTS(
-                        SELECT 1 FROM rippling_reach rr
-                        WHERE rr.msgid = ?
-                          AND ((ST_GeometryType(rr.outer_bound) <> 'POINT'
-                                AND ST_Contains(rr.outer_bound, $point)
-                                AND (COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 1
-                                     OR EXISTS (SELECT 1 FROM rippling_reach r2
-                                         WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, $point))))
-                               OR (ST_GeometryType(rr.outer_bound) = 'POINT'
-                                   AND EXISTS (SELECT 1 FROM rippling_reach r2
-                                       WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, $point))))
-                     ) AS within",
-                    [$msgid, $lng, $lat, $lng, $lat, $lng, $lat, $lng, $lat]
-                );
-            } else {
-                // keep-raw: ST_Contains/ST_SRID/EXISTS-in-SELECT are spatial functions
-                // and predicate composition with no builder method (same blocker as the
-                // bounds-available branch above).
-                $row = DB::selectOne(
-                    'SELECT EXISTS(
-                        SELECT 1 FROM rippling_reach
-                        WHERE msgid = ?
-                          AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
-                     ) AS within',
-                    [$msgid, $lng, $lat]
-                );
+                // Sandwich test: outside outer_bound is an authoritative reject;
+                // inside inner_bound (or, absent that, inside the exact polygon via
+                // a correlated EXISTS) is an authoritative accept. Degraded (POINT)
+                // outer_bound skips straight to the exact-polygon EXISTS - see the
+                // class docblock. ->exists() compiles to the same
+                // "SELECT EXISTS(SELECT ... WHERE ...)" shape the raw form built by
+                // hand, just via the query builder.
+                return DB::table('rippling_reach as rr')
+                    ->where('rr.msgid', $msgid)
+                    ->where(function ($q) use ($point) {
+                        $q->where(function ($q2) use ($point) {
+                            $q2->where(new Comparison(new StGeometryType('rr.outer_bound'), '<>', Value::of('POINT')))
+                                ->where(new StContains('rr.outer_bound', $point))
+                                ->where(function ($q3) use ($point) {
+                                    // ST_Contains used directly as a boolean predicate is
+                                    // equivalent to COALESCE(ST_Contains(...), 0) = 1: MySQL
+                                    // treats NULL and 0 identically as "false" in a WHERE.
+                                    $q3->where(new StContains('rr.inner_bound', $point))
+                                        ->orWhere(function ($q4) use ($point) {
+                                            $q4->whereExists(function ($sub) use ($point) {
+                                                $sub->from('rippling_reach as r2')
+                                                    ->whereColumn('r2.msgid', 'rr.msgid')
+                                                    ->where(new StContains('r2.polygon', $point));
+                                            });
+                                        });
+                                });
+                        })->orWhere(function ($q2) use ($point) {
+                            $q2->where(new Comparison(new StGeometryType('rr.outer_bound'), '=', Value::of('POINT')))
+                                ->whereExists(function ($sub) use ($point) {
+                                    $sub->from('rippling_reach as r2')
+                                        ->whereColumn('r2.msgid', 'rr.msgid')
+                                        ->where(new StContains('r2.polygon', $point));
+                                });
+                        });
+                    })
+                    ->exists();
             }
 
-            return (bool) ($row->within ?? 0);
+            // Pre-migration fallback: no sandwich columns yet, test the exact
+            // polygon directly. ST_Contains(...) used directly as the sole where()
+            // condition is the truthiness test the raw form's "= 1" spelled out.
+            return DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->where(new StContains('polygon', $point))
+                ->exists();
         } catch (\Throwable $e) {
             // rippling_reach is created by the reach engine (PR A). Until that is
             // deployed the table may be absent — fail open ("not within reach") so

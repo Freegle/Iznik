@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Length;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -207,13 +209,14 @@ class UserDataExportService
                 'memberships.groupid',
                 'memberships.collection',
                 'memberships.added',
-                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
-                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
-                // in this file because the rows go into the payload wholesale. Selecting
-                // namefull and nameshort separately and coalescing in PHP would add two
-                // columns to the export and drop groupname, unless a map() step rebuilds the
-                // exact same keys - more code, no functional gain, and a subject-access
-                // payload as the blast radius if it is got wrong.
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('memberships.added', 'asc')
@@ -231,13 +234,14 @@ class UserDataExportService
                 'memberships_history.groupid',
                 'memberships_history.collection',
                 'memberships_history.added',
-                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
-                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
-                // in this file because the rows go into the payload wholesale. Selecting
-                // namefull and nameshort separately and coalescing in PHP would add two
-                // columns to the export and drop groupname, unless a map() step rebuilds the
-                // exact same keys - more code, no functional gain, and a subject-access
-                // payload as the blast radius if it is got wrong.
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('memberships_history.added', 'asc')
@@ -304,13 +308,14 @@ class UserDataExportService
                 'users_banned.date',
                 'users_banned.userid',
                 'users_emails.email',
-                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
-                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
-                // in this file because the rows go into the payload wholesale. Selecting
-                // namefull and nameshort separately and coalescing in PHP would add two
-                // columns to the export and drop groupname, unless a map() step rebuilds the
-                // exact same keys - more code, no functional gain, and a subject-access
-                // payload as the blast radius if it is got wrong.
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('users_banned.date', 'asc')
@@ -448,13 +453,14 @@ class UserDataExportService
             ->leftJoin('groups', 'locations_excluded.groupid', '=', 'groups.id')
             ->leftJoin('locations', 'locations_excluded.locationid', '=', 'locations.id')
             ->select(
-                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
-                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
-                // in this file because the rows go into the payload wholesale. Selecting
-                // namefull and nameshort separately and coalescing in PHP would add two
-                // columns to the export and drop groupname, unless a map() step rebuilds the
-                // exact same keys - more code, no functional gain, and a subject-access
-                // payload as the blast radius if it is got wrong.
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname'),
                 'locations.name as location',
                 'locations_excluded.date'
@@ -482,13 +488,14 @@ class UserDataExportService
                 'messages.arrival',
                 'messages_groups.collection',
                 'messages_groups.groupid',
-                // keep-raw: COALESCE here is not a display convenience - `groupname` is the
-                // OUTPUT COLUMN NAME of a GDPR data export, and it is never referenced again
-                // in this file because the rows go into the payload wholesale. Selecting
-                // namefull and nameshort separately and coalescing in PHP would add two
-                // columns to the export and drop groupname, unless a map() step rebuilds the
-                // exact same keys - more code, no functional gain, and a subject-access
-                // payload as the blast radius if it is got wrong.
+                // keep-raw: `groupname` is the OUTPUT COLUMN NAME of a GDPR export field,
+                // consumed verbatim via (array) $e -> JSON payload. App\Database\Expressions
+                // has no alias concept: Builder::select() only honours an array-key alias for
+                // sub-selects (Closure|Builder|Relation), never for an Expression - confirmed
+                // live that `select(['groupname' => new Coalesce(...)])` silently drops the
+                // alias and the result row's key becomes the literal rendered SQL text instead
+                // of `groupname`. Re-wrapping in DB::raw('...AS groupname') to restore the
+                // alias would leave a raw call at this exact site, so nothing is gained.
                 DB::raw('COALESCE(groups.namefull, groups.nameshort) AS groupname')
             )
             ->orderBy('messages.arrival', 'asc')
@@ -610,11 +617,9 @@ class UserDataExportService
 
     private function getAboutMe(int $userId): array
     {
-        // keep-raw: LENGTH(text) is a SQL function applied to a column; the query
-        // builder has no method that emits a function call into a WHERE predicate.
         return DB::table('users_aboutme')
             ->where('userid', $userId)
-            ->whereRaw('LENGTH(text) > 5')
+            ->where(new Comparison(new Length('text'), '>', 5))
             ->select('timestamp', 'text')
             ->orderBy('timestamp', 'asc')
             ->get()

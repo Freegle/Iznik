@@ -2,12 +2,19 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Count;
+use App\Database\Expressions\Greatest;
+use App\Database\Expressions\TimestampDiff;
+use App\Database\Expressions\Value;
 use App\Helpers\MailHelper;
 use App\Models\Message;
 use App\Models\User;
 use App\Models\UserDeletion;
 use App\Models\UserEmail;
 use App\Traits\ChunkedProcessing;
+use Illuminate\Database\Query\Expression as RawExpression;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -60,12 +67,12 @@ class UserManagementService
         ];
 
         // Find email addresses linked to multiple users.
-        // keep-raw: COUNT(DISTINCT userid) is an aggregate with no query builder
-        // method - having() only compares a column/alias to a value, it cannot
-        // express a DISTINCT-counted aggregate condition.
+        // having() accepts a ConditionExpression directly (Query\Builder::having()
+        // special-cases it, same as where()), so the DISTINCT-counted aggregate
+        // condition is expressed structurally via Count + Comparison.
         $duplicates = UserEmail::select('email')
             ->groupBy('email')
-            ->havingRaw('COUNT(DISTINCT userid) > 1')
+            ->having(new Comparison(new Count('userid', distinct: true), '>', 1))
             ->get();
 
         $stats['duplicates_found'] = $duplicates->count();
@@ -564,25 +571,35 @@ class UserManagementService
         // optional - it is the whole correctness argument for narrowing the hourly one.
         $since = $full ? null : $this->lastAccessWindowStart();
 
-        // keep-raw: both arms compare one table's column against another's with an
-        // interval, and union two DISTINCT sets. The query builder cannot express the
-        // correlated column-to-column comparison without raw fragments anyway, and the
-        // shape is unchanged from the version this replaces bar the window.
-        $users = DB::select("
-            SELECT DISTINCT(userid) FROM (
-                SELECT DISTINCT(userid) FROM users
-                INNER JOIN chat_messages ON chat_messages.userid = users.id
-                WHERE users.lastaccess < chat_messages.date
-                    AND TIMESTAMPDIFF(SECOND, users.lastaccess, chat_messages.date) > 600
-                    AND (? IS NULL OR chat_messages.date >= ?)
-                UNION
-                SELECT DISTINCT(userid) FROM memberships
-                INNER JOIN users ON users.id = memberships.userid
-                WHERE TIMESTAMPDIFF(SECOND, users.lastaccess, memberships.added) > 600
-                    AND (? IS NULL OR memberships.added >= ?)
-            ) t
-            LIMIT 50000
-        ", [$since, $since, $since, $since]);
+        // TIMESTAMPDIFF(SECOND, a, b) here compares two COLUMNS (not a column
+        // against NOW()) - whereColumn() only supports a direct column-to-column
+        // operator comparison, not an offset/interval between them, hence the
+        // TimestampDiff expression wrapped in Comparison (a ConditionExpression,
+        // which where() special-cases directly, same as having() above).
+        $chatCandidates = DB::table('users')
+            ->join('chat_messages', 'chat_messages.userid', '=', 'users.id')
+            ->whereColumn('users.lastaccess', '<', 'chat_messages.date')
+            ->where(new Comparison(new TimestampDiff('SECOND', 'users.lastaccess', 'chat_messages.date'), '>', 600))
+            ->when($since !== null, function ($q) use ($since) {
+                $q->where('chat_messages.date', '>=', $since);
+            })
+            ->distinct()
+            ->select('chat_messages.userid');
+
+        $membershipCandidates = DB::table('memberships')
+            ->join('users', 'users.id', '=', 'memberships.userid')
+            ->where(new Comparison(new TimestampDiff('SECOND', 'users.lastaccess', 'memberships.added'), '>', 600))
+            ->when($since !== null, function ($q) use ($since) {
+                $q->where('memberships.added', '>=', $since);
+            })
+            ->distinct()
+            ->select('memberships.userid');
+
+        $users = DB::table($chatCandidates->union($membershipCandidates), 't')
+            ->select('userid')
+            ->distinct()
+            ->limit(50000)
+            ->get();
 
         $stats['full'] = $full;
         $stats['since'] = $since;
@@ -592,13 +609,28 @@ class UserManagementService
 
         foreach ($users as $user) {
             // Find the latest activity timestamp from chat messages or memberships.
-            // keep-raw: GREATEST() and COALESCE() have no query builder equivalents.
-            $result = DB::selectOne("
-                SELECT GREATEST(
-                    COALESCE((SELECT MAX(date) FROM chat_messages WHERE userid = ?), '1970-01-01'),
-                    COALESCE((SELECT MAX(added) FROM memberships WHERE userid = ?), '1970-01-01')
-                ) AS max
-            ", [$user->userid, $user->userid]);
+            // GREATEST()/COALESCE() are composed via the Expressions library; the
+            // correlated MAX(...) subqueries embed userid as a literal (Value::of())
+            // rather than a binding, per this library's NOT BOUND convention (see
+            // App\Database\Expressions\Value's docblock), so the assembled scalar
+            // expression carries zero bindings and can be projected via
+            // selectSub() on a from-less query (Query\Builder::parseSub()
+            // special-cases plain strings) exactly as GREATEST/COALESCE's own
+            // docblocks illustrate.
+            $chatMaxSub = DB::table('chat_messages')->where('userid', Value::of($user->userid));
+            $chatMaxSub->aggregate = ['function' => 'max', 'columns' => ['date']];
+
+            $membershipMaxSub = DB::table('memberships')->where('userid', Value::of($user->userid));
+            $membershipMaxSub->aggregate = ['function' => 'max', 'columns' => ['added']];
+
+            $maxExpr = new Greatest(
+                new Coalesce(new RawExpression('('.$chatMaxSub->toSql().')'), Value::of('1970-01-01')),
+                new Coalesce(new RawExpression('('.$membershipMaxSub->toSql().')'), Value::of('1970-01-01'))
+            );
+
+            $maxQuery = DB::query();
+            $maxQuery->selectSub($maxExpr->getValue($maxQuery->getGrammar()), 'max');
+            $result = $maxQuery->first();
 
             if ($result && $result->max && $result->max !== '1970-01-01') {
                 $currentAccess = DB::table('users')

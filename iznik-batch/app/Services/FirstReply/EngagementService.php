@@ -195,6 +195,10 @@ class EngagementService
                 ->from('messages_outcomes as mo')
                 ->whereColumn('mo.msgid', 'ms.msgid'))
             ->groupBy('m.fromuser')
+            // keep-raw: MIN() ordering an aggregated GROUP BY result has no query
+            // builder method - selecting it as an aliased column would still need
+            // selectRaw/DB::raw for the aggregate itself, which only relocates the
+            // raw site rather than removing it.
             ->orderByRaw('MIN(ms.arrival) ASC')
             ->limit($limit);
 
@@ -223,6 +227,9 @@ class EngagementService
                 'hasphoto'
             )
             ->selectSub(
+                // keep-raw: COUNT(*) as a non-terminal select column has no query
+                // builder method - ->count() is a terminal call that executes
+                // immediately, which selectSub needs NOT to happen here.
                 DB::table('messages_likes as l')
                     ->selectRaw('COUNT(*)')
                     ->whereColumn('l.msgid', 'ms.msgid')
@@ -496,6 +503,10 @@ class EngagementService
     private function retireStalePrompts(): int
     {
         try {
+            // keep-raw: JSON_TABLE() is a MySQL table-valued function with no query
+            // builder equivalent - it is what lets this statement join cp.msgids'
+            // JSON array elements against messages/messages_outcomes/chat_messages
+            // in one pass, rather than fetching every candidate row into PHP first.
             return DB::update(
                 "UPDATE chat_prompts cp
                  SET cp.expires_at = NOW()

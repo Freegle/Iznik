@@ -2,6 +2,9 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\NullIf;
+use App\Database\Expressions\Value;
 use App\Mail\Volunteering\VolunteeringRenewMail;
 use App\Models\User;
 use App\Models\Volunteering;
@@ -227,8 +230,10 @@ class VolunteeringMaintenanceService
         $name = DB::table('volunteering_groups')
             ->join('groups', 'groups.id', '=', 'volunteering_groups.groupid')
             ->where('volunteering_groups.volunteeringid', $volId)
-            // keep-raw: COALESCE()/NULLIF() have no builder method.
-            ->selectRaw("COALESCE(NULLIF(groups.namefull, ''), groups.nameshort) AS name")
+            // ->value('name') is positional, not name-lookup (see App\Database\Expressions\
+            // Coalesce usage elsewhere for the full explanation) - the Coalesce/NullIf below
+            // need no alias since select() already set the query's only column.
+            ->select(new Coalesce(new NullIf('groups.namefull', Value::of('')), 'groups.nameshort'))
             ->value('name');
 
         return $name ?: config('freegle.site_name', 'Freegle');

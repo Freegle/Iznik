@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Coalesce;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Group;
@@ -79,8 +80,13 @@ class StoriesNewsletterService
                 ->where('memberships.userid', $story->userid)
                 ->where('groups.type', Group::TYPE_FREEGLE)
                 ->where('groups.onmap', 1)
-                // keep-raw: COALESCE has no builder equivalent.
-                ->selectRaw('COALESCE(groups.namefull, groups.nameshort) AS namedisplay')
+                // ->value('namedisplay') is positional, not name-lookup: Builder::value()
+                // calls first([$column]) then Arr::first() on the resulting row, and since
+                // columns are already set by select() above, the passed column name is not
+                // used to re-select - it just returns the first (only) selected value.
+                // Confirmed live: value('namedisplay') and value('anything-else') return the
+                // same result here. So no alias is needed on the Coalesce.
+                ->select(new Coalesce('groups.namefull', 'groups.nameshort'))
                 ->value('namedisplay');
 
             $photoUrl = null;
@@ -169,8 +175,12 @@ class StoriesNewsletterService
             ->whereNull('users.deleted')
             ->where(function ($q) {
                 // newsletter defaults to on (1) when not set; only excluded if explicitly set to 0.
-                // keep-raw: COALESCE(JSON_EXTRACT(...), 1) has no builder equivalent - the JSON
-                // where()/whereJsonContains() helpers don't support a default-value fallback.
+                // keep-raw: the COALESCE half could use App\Database\Expressions\Coalesce, but
+                // it is fused with JSON_EXTRACT(), for which the Expressions library has no
+                // class - converting just the outer COALESCE would still need JSON_EXTRACT
+                // nested inside via a raw Expression operand, leaving a raw call at this exact
+                // site for no reduction. whereJsonContains()/where('->') also don't support a
+                // default-value fallback for a missing key.
                 $q->whereNull('groups.settings')
                     ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 1) != 0");
             })

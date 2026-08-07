@@ -2039,10 +2039,13 @@ class User extends Model implements Auditable
             'memberships.role',
             'memberships.configid',
             'memberships.ourPostingStatus',
-            // keep-raw: CASE WHEN is a construct the query builder has no method for (the
-            // same gap COALESCE has), and here it is additionally projected under an alias
-            // that orderBy('namedisplay') below depends on - there is no builder-native way
-            // to compute a derived, aliased select column from two other columns.
+            // keep-raw: App\Database\Expressions\CaseWhen exists, but when() requires a
+            // ConditionExpression, and the only implementation (Comparison) whitelists only
+            // =, !=, <>, <, <=, >, >=, <=>, LIKE, NOT LIKE - no IS NULL/IS NOT NULL - so
+            // "namefull IS NOT NULL" can't be built. Coalesce(namefull, nameshort) is
+            // runtime-equivalent but renders as COALESCE(...), not this CASE WHEN ... END
+            // text, so it isn't substituted in either. Also projected under an alias that
+            // orderBy('namedisplay') below depends on.
             DB::raw("CASE WHEN groups.namefull IS NOT NULL THEN groups.namefull ELSE groups.nameshort END AS namedisplay"),
         ])
             ->orderBy('namedisplay') // LOWER() is redundant: both CASE arms are utf8mb4_unicode_ci

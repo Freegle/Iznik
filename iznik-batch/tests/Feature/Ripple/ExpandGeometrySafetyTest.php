@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Ripple;
 
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use App\Services\Ripple\ExpandService;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -150,15 +152,20 @@ class ExpandGeometrySafetyTest extends TestCase
         $service = app(ExpandService::class);
         $method = new ReflectionMethod($service, 'advanceSplitForUndoLog');
 
-        // The same statement shape process() builds, minus the bounds SET.
-        $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
-             SET polygon = ST_GeomFromText(?, 3857)' . $set . ',
-                 reachable_group_ids = COALESCE(?, reachable_group_ids),
-                 tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
-             WHERE msgid = ?';
+        // The same update-values shape process() builds, minus the bounds columns.
+        // advanceSplitForUndoLog() now takes a callable returning the column =>
+        // value map rather than a SQL string plus a bindings array; this mirrors
+        // the production construction at ExpandService::process().
+        $advanceValues = fn (string $wkt): array => [
+            'polygon' => new StGeomFromText(Value::of($wkt), 3857),
+            'tick' => 9,
+            'next_expansion_at' => null,
+            'status' => 'done',
+            'updated_at' => now(),
+        ];
         $bigger = 'POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))';
 
-        $method->invoke($service, $bigger, $advanceSql, [null, 9, null, 'done', $message->id], $message->id);
+        $method->invoke($service, $bigger, $advanceValues, $message->id);
 
         $row = DB::selectOne(
             'SELECT tick, status, ST_AsText(polygon) AS poly FROM rippling_reach WHERE msgid = ?',
