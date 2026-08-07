@@ -38,6 +38,12 @@ class PushNotificationService
     // previous day's tray entry rather than stacking a new one.
     private const NEW_POSTS_NOT_ID = '200000001';
 
+    // Mirrors iznik-server-go utils.NOTIFICATION_AGE: the in-app notification
+    // bell/list (notification.Count()/List()) never returns rows older than this,
+    // so a member can never mark them seen once they age out. A notification the
+    // badge counts but the bell can't show would be a permanent phantom blob.
+    private const NOTIFICATION_VISIBLE_DAYS = 90;
+
     private $messaging = null;
 
     /** Whether we've already alerted that FCM is unavailable (avoids per-push spam). */
@@ -301,9 +307,21 @@ class PushNotificationService
      */
     public function consumerUnreadCounts(int $userId): array
     {
+        // Only count notifications the member can actually see and clear in the
+        // app: within the bell's visibility window, and not from a spam/pending-add
+        // sender (mirrors iznik-server-go notification.Count()'s LEFT JOIN spam_users
+        // and NotificationChaseUpService's chaseup-mail exclusion). Discourse #9953:
+        // an old or spam-hidden unseen notification can never be marked seen, so
+        // without this bound it inflates the app-icon badge forever.
         $notifcount = (int) DB::table('users_notifications')
-            ->where('touser', $userId)
-            ->where('seen', 0)
+            ->leftJoin('spam_users', function ($join) {
+                $join->on('spam_users.userid', '=', 'users_notifications.fromuser')
+                    ->whereIn('spam_users.collection', NotificationChaseUpService::SPAM_COLLECTIONS);
+            })
+            ->where('users_notifications.touser', $userId)
+            ->where('users_notifications.seen', 0)
+            ->where('users_notifications.timestamp', '>=', now()->subDays(self::NOTIFICATION_VISIBLE_DAYS))
+            ->whereNull('spam_users.userid')
             ->count();
 
         // Unseen chats: User2User/User2Mod rooms where a message from someone
@@ -344,10 +362,20 @@ class PushNotificationService
             $threadId = 'chats';
             $category = 'CHAT_MESSAGE';
         } elseif ($notifcount > 0) {
+            // Same visibility bound as consumerUnreadCounts(): the highest-id unseen
+            // row could otherwise be a spam-sender notification even though it's
+            // excluded from $notifcount, showing its content instead of a real one.
             $latest = DB::table('users_notifications')
-                ->where('touser', $userId)
-                ->where('seen', 0)
-                ->orderByDesc('id')
+                ->leftJoin('spam_users', function ($join) {
+                    $join->on('spam_users.userid', '=', 'users_notifications.fromuser')
+                        ->whereIn('spam_users.collection', NotificationChaseUpService::SPAM_COLLECTIONS);
+                })
+                ->where('users_notifications.touser', $userId)
+                ->where('users_notifications.seen', 0)
+                ->where('users_notifications.timestamp', '>=', now()->subDays(self::NOTIFICATION_VISIBLE_DAYS))
+                ->whereNull('spam_users.userid')
+                ->select('users_notifications.*')
+                ->orderByDesc('users_notifications.id')
                 ->first();
 
             $title = ($latest->title ?? '') ?: 'You have a new notification';
