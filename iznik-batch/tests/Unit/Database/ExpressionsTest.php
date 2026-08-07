@@ -111,9 +111,14 @@ class ExpressionsTest extends TestCase
         $sql = (new Value($evil))->getValue($this->grammar);
 
         // The literal is embedded directly in the SQL text (this is the
-        // documented "escaped, not bound" behaviour) - but it must be
-        // properly quote-escaped so it cannot break out of the string.
-        $this->assertStringNotContainsString("'; DROP TABLE", $sql);
+        // documented "escaped, not bound" behaviour). MySQL's PDO driver
+        // escapes embedded quotes with a backslash rather than doubling
+        // them, so the raw "'; DROP TABLE" substring is still present in the
+        // compiled SQL by design - that is not a vulnerability. What proves
+        // safety is that the embedded quote is backslash-escaped (so it
+        // cannot terminate the string early) and that the value round-trips
+        // exactly when the SQL is actually executed.
+        $this->assertStringContainsString("\\'; DROP TABLE", $sql);
         $this->assertSame($evil, $this->evaluate($sql));
     }
 

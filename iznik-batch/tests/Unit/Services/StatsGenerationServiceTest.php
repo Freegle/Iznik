@@ -658,7 +658,7 @@ class StatsGenerationServiceTest extends TestCase
 
         return array_values(array_filter(
             array_map(fn ($q) => $q['query'], $log),
-            fn ($sql) => str_contains($sql, 'items i ON i.name = bi.name')
+            fn ($sql) => str_contains($sql, '`i`.`name` = `bi`.`name`')
         ));
     }
 
@@ -683,7 +683,7 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertNotEmpty($joins, 'Expected the daily context to run the items-by-name join');
         foreach ($joins as $sql) {
             $this->assertStringContainsString(
-                'i.name = bi.name COLLATE utf8mb4_unicode_ci',
+                '`i`.`name` = `bi`.`name` COLLATE utf8mb4_unicode_ci',
                 $sql,
                 'items-by-name join must force utf8mb4_unicode_ci to match items.name'
             );
@@ -713,7 +713,7 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertNotEmpty($joins, 'Expected weight regeneration to run the items-by-name join');
         foreach ($joins as $sql) {
             $this->assertStringContainsString(
-                'i.name = bi.name COLLATE utf8mb4_unicode_ci',
+                '`i`.`name` = `bi`.`name` COLLATE utf8mb4_unicode_ci',
                 $sql,
                 'items-by-name join must force utf8mb4_unicode_ci to match items.name'
             );
