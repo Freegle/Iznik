@@ -58,6 +58,19 @@ export interface ParkedBug {
 export const REVIVED_BUG_REJECTIONS = 1
 
 /**
+ * How many times one iteration may enter WRITE_COVERAGE.
+ *
+ * COVERAGE_GATE is the only way in and the only way out, so any gate arm that
+ * routes to coverage on a condition a coverage pass cannot itself change is a
+ * closed loop. That is not hypothetical: the jitter arm fires whenever a
+ * coverage-jitter PR exists, the booster pushes to that PR's branch rather than
+ * creating one, and CI needs minutes to re-run - so the PR still looks jittery
+ * on the way back. Three iterations died that way on 2026-08-07, one spending
+ * 32 of its 40 steps alternating between the two states.
+ */
+export const MAX_COVERAGE_VISITS_PER_ITERATION = 3
+
+/**
  * Bugs still waiting on something, for the feedback scan to re-read.
  *
  * This used to look at 'open' and 'investigating' only (plus 'deferred' for the
@@ -3269,7 +3282,32 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       }
 
       const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
-      const coverageJitterPRs = Array.isArray(r.coverageJitterPRs) ? r.coverageJitterPRs : []
+      const allJitterPRs = Array.isArray(r.coverageJitterPRs) ? r.coverageJitterPRs : []
+
+      // Boost each jitter PR at most once per iteration. The arm below routes to
+      // WRITE_COVERAGE whenever a jitter PR exists, and deliberately outranks
+      // both WRAP_UP arms - but the booster pushes to the branch rather than
+      // creating a PR, and CI takes minutes to re-run, so on the way back the PR
+      // still looks exactly as jittery as before. That is a closed loop:
+      // WRITE_COVERAGE -> COVERAGE_GATE -> WRITE_COVERAGE until the 40-step cap
+      // ends the iteration having produced nothing. It burned three whole
+      // iterations on 2026-08-07, one of them 32 steps of pure ping-pong.
+      //
+      // Marking on the way out, not after the boost reports success, is what
+      // makes this a guarantee: a boost that silently does nothing still cannot
+      // be retried inside the same iteration.
+      const boostedKey = `coverage_boosted_${iterationStartTs ?? 'none'}`
+      const boosted = new Set((kvGet(db, boostedKey) ?? '').split(',').filter(Boolean))
+      const coverageJitterPRs = allJitterPRs.filter((p: any) => !boosted.has(String(p.number)))
+      const alreadyBoosted = allJitterPRs.length - coverageJitterPRs.length
+      if (coverageJitterPRs.length > 0) {
+        for (const p of coverageJitterPRs) boosted.add(String(p.number))
+        kvSet(db, boostedKey, [...boosted].join(','))
+      }
+      if (alreadyBoosted > 0) {
+        out(`coverage_gate_decide: ${alreadyBoosted} coverage-jitter PR(s) already boosted this iteration — not re-entering WRITE_COVERAGE for them`)
+      }
+
       let target: string
       if (pickableRedCount > 0) target = 'CI_ROUTER'
       else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
@@ -3288,6 +3326,25 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       if (coverageJitterPRs.length > 0) {
         out(`coverage_gate_decide: ${coverageJitterPRs.length} coverage-jitter PR(s) [${coverageJitterPRs.map((p: any) => '#' + p.number).join(', ')}] — booster will add genuine coverage to clear the noise floor`)
       }
+
+      // Backstop. Every arm that sends work to WRITE_COVERAGE is a potential
+      // cycle, because WRITE_COVERAGE's only exit is back to this gate and the
+      // conditions it is judged on are ones a single coverage pass often cannot
+      // change: the trailing arm fires when no PR was created this iteration,
+      // and a pass that pushes to an existing branch never creates one. Rather
+      // than reason arm by arm about which can settle, cap the visits. Three is
+      // enough for the booster to do real work and still leaves the iteration
+      // most of its 40 steps for everything else.
+      if (target === 'WRITE_COVERAGE') {
+        const visitsKey = `coverage_visits_${iterationStartTs ?? 'none'}`
+        const visits = parseInt(kvGet(db, visitsKey) ?? '0', 10) + 1
+        kvSet(db, visitsKey, String(visits))
+        if (visits > MAX_COVERAGE_VISITS_PER_ITERATION) {
+          out(`coverage_gate_decide: WRITE_COVERAGE already visited ${visits - 1}x this iteration without clearing the gate — wrapping up instead of looping`)
+          target = 'WRAP_UP'
+        }
+      }
+
       return { count: prCount, redCount, pickableRedCount, exhaustedRedCount, pendingCount, dirtyPRs, coverageJitterPRs, verify, red, _transition: target }
     },
   },
