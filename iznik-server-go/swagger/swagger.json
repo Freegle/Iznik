@@ -5618,6 +5618,80 @@
         }
       }
     },
+    "/user/unsubscribe": {
+      "get": {
+        "description": "Turns off one category of Freegle email for a user - the HTTPS arm of the\nList-Unsubscribe header on every bulk mailable. GET only asks; it does not\napply the change (POST applies it).",
+        "tags": [
+          "user"
+        ],
+        "summary": "Turn off one category of Freegle email",
+        "operationId": "getUserUnsubscribe",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "User ID",
+            "name": "u",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "Auto-login Link key",
+            "name": "k",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "Category: digest, events, volunteering, newsletter, relevant, chat, notifications, engagement or all",
+            "name": "t",
+            "in": "query",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          }
+        }
+      },
+      "post": {
+        "description": "Turns off one category of Freegle email for a user - the HTTPS arm of the\nList-Unsubscribe header on every bulk mailable. POST applies it; this is the\nRFC 8058 one-click List-Unsubscribe form used by Gmail/Yahoo.",
+        "tags": [
+          "user"
+        ],
+        "summary": "Turn off one category of Freegle email",
+        "operationId": "postUserUnsubscribe",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "User ID",
+            "name": "u",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "Auto-login Link key",
+            "name": "k",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "Category: digest, events, volunteering, newsletter, relevant, chat, notifications, engagement or all",
+            "name": "t",
+            "in": "query",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          }
+        }
+      }
+    },
     "/user/{id}": {
       "get": {
         "security": [
