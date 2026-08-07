@@ -21,6 +21,11 @@ import { useDebugStore } from '~/stores/debug'
 import { setAppVersion, useClientLog } from '~/composables/useClientLog'
 import api from '~/api'
 
+// Ceiling for the OS-preferred text zoom we'll apply to the WebView - the
+// standard Android "Largest" font-size step / non-accessibility Dynamic Type
+// max. See initTextZoom().
+const MAX_TEXT_ZOOM = 1.3
+
 // Helper to get debug store safely (may not be initialized early)
 function dbg() {
   try {
@@ -182,6 +187,13 @@ export const useMobileStore = defineStore({
       // (Dynamic Type on iOS, font scale on Android); applying it makes text
       // grow WITH REFLOW, unlike pinch zoom which scales the whole viewport
       // including the navbars.
+      //
+      // Clamp to the standard OS font-size slider's max (Android's "Largest" /
+      // iOS's non-accessibility Dynamic Type ceiling). Samsung's separate
+      // Accessibility > Font size setting can push Configuration.fontScale up to
+      // ~3x, which the ModTools/app shell's fixed-width navbar and left menu were
+      // never designed to reflow at - applying it uncapped breaks that chrome
+      // (reported as the screen looking "narrower" after an app update).
       try {
         const { TextZoom } = await import('@capacitor/text-zoom')
 
@@ -189,8 +201,12 @@ export const useMobileStore = defineStore({
           try {
             const { value } = await TextZoom.getPreferred()
             if (value && value > 0) {
-              await TextZoom.set({ value })
-              dbg()?.info('Applied preferred text zoom', { value })
+              const clamped = Math.min(value, MAX_TEXT_ZOOM)
+              await TextZoom.set({ value: clamped })
+              dbg()?.info('Applied preferred text zoom', {
+                value,
+                clamped,
+              })
             }
           } catch (e) {
             dbg()?.debug('Text zoom apply failed', e?.message)
