@@ -424,13 +424,34 @@ export async function postDiscourseReply(
   topicId: number,
   raw: string,
   replyToPostNumber?: number,
-  opts: { maxRetries?: number; sleepFn?: (ms: number) => Promise<void> } = {},
+  opts: {
+    maxRetries?: number
+    sleepFn?: (ms: number) => Promise<void>
+    /**
+     * Opt out of the test-run guard below. ONLY for the tests that exercise this
+     * function's own retry/error handling against a stubbed `fetch`, where no
+     * request can leave the machine. Nothing else may set it.
+     */
+    allowInTests?: boolean
+  } = {},
 ): Promise<{ ok: boolean; error?: string }> {
+  // HARD INVARIANT: a test run must NEVER reach the live forum. Test fixtures
+  // use small integer topic ids, and small integers are REAL topics — on
+  // 2026-08-07 a suite run posted an answer onto a seven-year-old thread
+  // (topic 523, "How do I block a member"), where real volunteers saw it. The
+  // fixtures have since moved into an impossible range, but that only helps
+  // fixtures someone remembered to move; this stops the whole class, for every
+  // test that exists now or later, including ones that never mention posting.
   // HARD INVARIANT: never post a reply without quoted text. This is the single
   // chokepoint for the auto-post path, so the check here makes a context-less
   // post impossible regardless of any upstream bug in how `raw` was built.
+  // Runs first because it is pure logic — it reaches no network either way.
   if (!hasNonEmptyQuote(raw)) {
     return { ok: false, error: 'refusing to post a Discourse reply with no quoted text' }
+  }
+
+  if (!opts.allowInTests && (process.env.VITEST || process.env.NODE_ENV === 'test')) {
+    return { ok: false, error: 'refusing to post to Discourse from a test run' }
   }
 
   const maxRetries = opts.maxRetries ?? 4
@@ -1358,7 +1379,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
   {
     name: 'queue_question_reply_drafts',
-    description: 'Queues answers to triaged questions as Discourse drafts for HUMAN APPROVAL — never posts them. Pass answers: [{topic, post, answer, unsure?}]. Every reply gets the "I may have got the wrong end of the stick" caveat appended in code (not left to the prompt, so it cannot be dropped on the confident-sounding answers that most need it), and an unsure answer is additionally flagged as a starting point. An empty answer is skipped rather than queued as a caveat-only reply. Returns {queued, skipped}.',
+    description: 'POSTS answers to triaged questions straight to Discourse, quoted against the asking post. Pass answers: [{topic, post, answer, unsure?}]. Every reply gets the "I may have got the wrong end of the stick" caveat appended in code (not left to the prompt, so it cannot be dropped on the confident-sounding answers that most need it), and an unsure answer is additionally flagged as a starting point — that admission is what makes posting without review acceptable. An empty answer is skipped rather than posted as a caveat-only reply. A post that FAILS is left as a pending draft so it is neither lost nor silently dropped, and shows in the dashboard reply queue. Returns {posted, queued, skipped}.',
     paramsSchema: {
       type: 'object',
       properties: {
@@ -1382,6 +1403,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
     handler: async (params) => {
       const answers: Array<any> = Array.isArray((params as any)?.answers) ? (params as any).answers : []
       const db = getDb()
+      let posted = 0
       let queued = 0
       let skipped = 0
 
@@ -1392,7 +1414,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
         const body = composeQuestionReply({ answer: String(a?.answer ?? ''), unsure: a?.unsure === true })
         if (!body) {
-          out(`queue_question_reply_drafts: ${topic}/${post} had no answer — not queuing a caveat-only reply`)
+          out(`queue_question_reply_drafts: ${topic}/${post} had no answer — nothing to post`)
           skipped++
           continue
         }
@@ -1401,20 +1423,38 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           'SELECT reporter, excerpt FROM discourse_bug WHERE topic = ? AND post = ?'
         ).get(topic, post) as { reporter: string | null; excerpt: string | null } | undefined
 
-        queueDiscourseDraft(db, {
-          topic,
-          post,
-          username: bug?.reporter ?? '',
-          // The quote is what the reply visibly answers; posting refuses an
-          // empty one, so fall back to the summary we stored at triage.
-          quote: (bug?.excerpt ?? '').trim() || 'your question',
-          body,
-        })
-        out(`queue_question_reply_drafts: queued answer for ${topic}/${post} (awaiting approval)`)
-        queued++
+        const username = bug?.reporter ?? ''
+        // The quote is what the reply visibly answers; posting refuses an empty
+        // one, so fall back to the summary we stored at triage.
+        const quote = (bug?.excerpt ?? '').trim() || 'your question'
+
+        // One reply per asking post, however many iterations see the question.
+        const already = db.prepare(
+          'SELECT id FROM discourse_draft WHERE topic = ? AND post = ? AND rejected_at IS NULL'
+        ).get(topic, post) as { id: number } | undefined
+        if (already) {
+          out(`queue_question_reply_drafts: ${topic}/${post} already answered — skipping`)
+          skipped++
+          continue
+        }
+
+        const raw = formatReplyRaw({ username, post, topic, quote, body })
+        const result = await postDiscourseReply(topic, raw, post)
+
+        if (result.ok) {
+          recordPostedReply(db, { topic, post, username, quote, body })
+          out(`queue_question_reply_drafts: posted answer to ${topic}/${post}`)
+          posted++
+        } else {
+          // Keep it as a pending draft rather than losing it: it stays visible in
+          // the dashboard reply queue and can be sent by hand.
+          queueDiscourseDraft(db, { topic, post, username, quote, body })
+          outWarn(`queue_question_reply_drafts: FAILED to post ${topic}/${post} (${result.error}) — left as a pending draft`)
+          queued++
+        }
       }
 
-      return { queued, skipped }
+      return { posted, queued, skipped }
     },
   },
 

@@ -85,7 +85,7 @@ describe('postDiscourseReply 429 retry', () => {
       .mockResolvedValueOnce(res(429, RATE_LIMIT_BODY, '2'))
       .mockResolvedValueOnce(res(200))
 
-    const result = await postDiscourseReply(9692, QUOTED_RAW, 8, { sleepFn })
+    const result = await postDiscourseReply(9692, QUOTED_RAW, 8, { allowInTests: true, sleepFn })
 
     expect(result.ok).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -98,7 +98,7 @@ describe('postDiscourseReply 429 retry', () => {
       .mockResolvedValueOnce(res(429, RATE_LIMIT_BODY)) // wait_seconds: 44
       .mockResolvedValueOnce(res(201))
 
-    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { sleepFn })
+    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { allowInTests: true, sleepFn })
 
     expect(result.ok).toBe(true)
     expect(sleeps).toEqual([44000])
@@ -109,14 +109,14 @@ describe('postDiscourseReply 429 retry', () => {
       .mockResolvedValueOnce(res(429, RATE_LIMIT_BODY, '9999'))
       .mockResolvedValueOnce(res(200))
 
-    await postDiscourseReply(9692, QUOTED_RAW, undefined, { sleepFn })
+    await postDiscourseReply(9692, QUOTED_RAW, undefined, { allowInTests: true, sleepFn })
     expect(sleeps).toEqual([60000])
   })
 
   it('gives up after maxRetries consecutive 429s and reports the error', async () => {
     fetchMock.mockResolvedValue(res(429, RATE_LIMIT_BODY, '1'))
 
-    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { maxRetries: 3, sleepFn })
+    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { allowInTests: true, maxRetries: 3, sleepFn })
 
     expect(result.ok).toBe(false)
     expect(result.error).toContain('HTTP 429')
@@ -128,7 +128,7 @@ describe('postDiscourseReply 429 retry', () => {
   it('does not retry a non-429 error', async () => {
     fetchMock.mockResolvedValueOnce(res(422, 'unprocessable'))
 
-    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { sleepFn })
+    const result = await postDiscourseReply(9692, QUOTED_RAW, undefined, { allowInTests: true, sleepFn })
 
     expect(result.ok).toBe(false)
     expect(result.error).toContain('HTTP 422')
@@ -166,7 +166,7 @@ describe('postDiscourseReply quote invariant', () => {
   })
 
   it('posts when the raw carries non-empty quoted text', async () => {
-    const result = await postDiscourseReply(9692, QUOTED_RAW, 8)
+    const result = await postDiscourseReply(9692, QUOTED_RAW, 8, { allowInTests: true })
     expect(result.ok).toBe(true)
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })

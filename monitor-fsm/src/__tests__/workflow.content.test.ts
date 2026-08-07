@@ -590,3 +590,37 @@ describe('COLLATE_RESULTS — question answers become approval drafts', () => {
     expect(prompt).toContain('never post to Discourse yourself')
   })
 })
+
+describe('postDiscourseReply — a test run can never reach the live forum', () => {
+  // Test fixtures use small integer topic ids, and small integers are REAL
+  // topics. On 2026-08-07 a suite run posted an answer onto a seven-year-old
+  // thread (topic 523, "How do I block a member") where real volunteers saw it.
+  // Fixtures have moved out of that range, but that only protects fixtures
+  // someone remembered to move. The guard stops the whole class.
+  it('refuses to post when running under a test runner', () => {
+    const idx = actionsTs.indexOf('export async function postDiscourseReply')
+    expect(idx).toBeGreaterThan(-1)
+    const body = actionsTs.slice(idx, idx + 3000)
+    expect(body).toContain("process.env.VITEST || process.env.NODE_ENV === 'test'")
+    expect(body).toContain('refusing to post to Discourse from a test run')
+  })
+
+  // The only permitted bypass is for the tests that exercise this function's own
+  // retry handling against a stubbed fetch, where nothing leaves the machine.
+  it('allows exactly one opt-out, and only for a stubbed fetch', () => {
+    expect(actionsTs).toContain('allowInTests?: boolean')
+    expect(actionsTs).toContain('!opts.allowInTests &&')
+    // Nothing outside the retry test may use it.
+    const users = actionsTs.split('allowInTests').length - 1
+    expect(users).toBeLessThanOrEqual(3) // type, doc comment, and the guard
+  })
+
+  it('checks that BEFORE anything that could reach the network', () => {
+    const idx = actionsTs.indexOf('export async function postDiscourseReply')
+    const body = actionsTs.slice(idx, idx + 3000)
+    const guard = body.indexOf('refusing to post to Discourse from a test run')
+    const fetchAt = body.indexOf('fetch(')
+    expect(guard).toBeGreaterThan(-1)
+    if (fetchAt > -1) expect(guard).toBeLessThan(fetchAt)
+  })
+})

@@ -20,7 +20,7 @@
         </div>
 
         <!-- Right column: PRs -->
-        <div class="col-lg-5">
+        <div class="col-lg-5" :class="{ 'col-xxl-4': pendingDraftCount > 0 }">
           <PrPanel
             :prs="prsData.state.prs"
             :loading="prsData.state.loading"
@@ -32,8 +32,19 @@
           />
         </div>
 
-        <!-- Reply Queue column removed: deployed-fix replies are the fixed
-             verbatim text and no longer need a per-draft review column here. -->
+        <!-- Reply Queue: shown only when something is actually waiting.
+             It was removed when every draft was the fixed verbatim "possible fix
+             applied, please retest" text — nothing to read, nothing to decide.
+             Answers to questions are different: they are written fresh for the
+             person who asked, so they have to be read before they go out, and
+             with no column here they were queueing up invisibly. -->
+        <div v-if="pendingDraftCount > 0" class="col-lg-12 col-xxl-3">
+          <ReplyQueue
+            :drafts="draftsData.state.drafts"
+            :loading="draftsData.state.loading"
+            @refresh="draftsData.refresh()"
+          />
+        </div>
       </div>
 
       <!-- Feature Requests (collapsible, only shown when non-empty) -->
