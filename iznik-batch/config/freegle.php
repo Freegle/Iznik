@@ -683,6 +683,12 @@ return [
             'frequent_replier_min' => (int) env('FIRSTREPLY_SCOUTS_FREQUENT_MIN', 3),
             // Candidate pool size before scoring. Bounds the cost of the geo query.
             'candidate_limit' => (int) env('FIRSTREPLY_SCOUTS_CANDIDATE_LIMIT', 500),
+            // Silent posts examined per run. Small on purpose: each post costs
+            // seconds, and a run must comfortably finish inside the DB's
+            // wait_timeout or its idle write connection is closed under it.
+            // The every-minute cadence means throughput is 25/min, far above
+            // the arrival rate of in-trial silent posts.
+            'posts_per_run' => (int) env('FIRSTREPLY_SCOUTS_POSTS_PER_RUN', 25),
         ],
 
         // The Freegle chat: Freegle itself talks to the poster.

@@ -561,6 +561,16 @@ class ScoutService
         $quiet = max(0, (int) ($cfg['quiet_minutes'] ?? 45));
         $maxAge = max(1, (int) ($cfg['max_age_hours'] ?? 24));
 
+        // A SMALL batch, newest first. Each post costs seconds (two apiv2
+        // matcher calls, a spatial eligibility query, possibly mail), so 200
+        // per run meant runs of 10+ minutes - long enough for the WRITE
+        // connection to sit idle past the server's wait_timeout (600s), be
+        // closed under the run, and wedge the process polling a dead socket
+        // (the first live hour piled up 40+ such runs). At the every-minute
+        // cadence a small batch drains far faster than posts arrive; newest
+        // first because speed-to-first-reply is the whole point, and the
+        // once-per-post ledger walks the batch through the backlog anyway.
+
         return collect(DB::select(
             "SELECT ms.msgid AS msgid, ms.msgtype AS msgtype, ms.arrival AS arrival,
                     m.fromuser AS fromuser, m.subject AS subject
@@ -582,8 +592,8 @@ class ScoutService
                      SELECT 1 FROM firstreply_scouts fs WHERE fs.msgid = ms.msgid
                    )"
              . Rollout::sqlFilter('ms.msgid') . "
-             ORDER BY ms.arrival ASC
-             LIMIT 200",
+             ORDER BY ms.arrival DESC
+             LIMIT " . max(1, (int) ($cfg['posts_per_run'] ?? 25)),
             [$quiet, $maxAge]
         ));
     }
