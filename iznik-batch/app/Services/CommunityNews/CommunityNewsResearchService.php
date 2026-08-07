@@ -57,6 +57,9 @@ class CommunityNewsResearchService
                 'snippet' => $it['blurb'],
                 'url' => $it['url'],
                 'source' => $it['source'] !== null ? mb_substr($it['source'], 0, 250) : null,
+                // Null unless this is a dated event; the newsletter uses it to
+                // skip anything already over by the time it sends.
+                'event_date' => $it['date'] ?? null,
                 'researched_at' => now(),
             ]);
         }
@@ -320,6 +323,7 @@ class CommunityNewsResearchService
                 'blurb' => $blurb,
                 'url' => $url !== '' ? $url : null,
                 'source' => isset($it['source']) && trim((string) $it['source']) !== '' ? trim((string) $it['source']) : null,
+                'date' => $this->parseEventDate($it['date'] ?? null),
             ];
             if (count($items) >= $maxItems) {
                 break;
@@ -331,6 +335,47 @@ class CommunityNewsResearchService
         }
 
         return [$intro, $items];
+    }
+
+    /**
+     * The day an item's event happens, or null when it isn't a dated event.
+     *
+     * Deliberately strict: only an exact YYYY-MM-DD is accepted. A loose parse
+     * would happily read "Saturday" as some arbitrary date, and a wrong date is
+     * far worse than none — it either hides an event that is still to come or
+     * lets a past one through, which is the whole problem this exists to stop.
+     * Anything unparseable, or absurdly far from now, is treated as "no date"
+     * and the item simply flows through as undated.
+     */
+    private function parseEventDate(mixed $raw): ?string
+    {
+        if (!is_string($raw)) {
+            return null;
+        }
+        $value = trim($raw);
+        if ($value === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return null;
+        }
+
+        try {
+            $date = \Carbon\Carbon::createFromFormat('Y-m-d', $value);
+        } catch (\Throwable $e) {
+            return null;
+        }
+        // createFromFormat accepts overflow (2026-02-31 becomes 3 March), which
+        // means a nonsense date would silently become a real one.
+        if ($date === false || $date->format('Y-m-d') !== $value) {
+            return null;
+        }
+
+        // A community listing is about the coming weeks. A date years out is a
+        // parsing artefact (or a typo in the source), not a real local event, and
+        // trusting it would keep a stale item eligible indefinitely.
+        if ($date->lt(now()->subYear()) || $date->gt(now()->addYear())) {
+            return null;
+        }
+
+        return $date->toDateString();
     }
 
     /**
@@ -391,14 +436,18 @@ class CommunityNewsResearchService
         $lng = $area->lng;
         $groups = $this->groupNames($area);
         $seedBlock = $this->seedBlock($seedSources);
+        // The model cannot resolve "this Saturday" without knowing today's date.
+        $today = now()->toDateString();
 
         return <<<USER
         Area: {$name} (roughly centred on {$lat}, {$lng}; it covers the Freegle communities: {$groups}).
         {$seedBlock}
         Find up to {$maxItems} interesting, genuinely local community happenings for readers here, this week or in the next couple of weeks.
 
+        If an item happens on a particular day, give that day as "date" in YYYY-MM-DD form. Today is {$today}, so work out the actual date of anything described as "Saturday" or "next week". Give the FIRST day for something running over several days. Leave "date" out entirely when the item is not a dated event — an ongoing service, a new footpath, a refurbished library — and never guess: an omitted date is much better than a wrong one.
+
         Then reply with ONLY a JSON object — no prose, no code fences — in exactly this shape:
-        {"intro":"one or two warm, quirky sentences introducing this week's round-up for {$name}","items":[{"title":"punchy title","blurb":"~45-word friendly description","url":"the source URL you found","source":"the site or organisation name"}]}
+        {"intro":"one or two warm, quirky sentences introducing this week's round-up for {$name}","items":[{"title":"punchy title","blurb":"~45-word friendly description","url":"the source URL you found","source":"the site or organisation name","date":"YYYY-MM-DD or omitted"}]}
         USER;
     }
 
