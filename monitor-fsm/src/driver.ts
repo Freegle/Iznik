@@ -24,17 +24,6 @@
 // behaviour. Must be set BEFORE the adapter import.
 if (!process.env.CLAUDECODE) process.env.CLAUDECODE = '1'
 
-// Force the brain + delegate `claude` calls onto the Claude Code SUBSCRIPTION
-// session, never a standalone API key. ../.env sets ANTHROPIC_API_KEY (for other
-// tools) and run-loop.sh exports it; if it reaches the claude-agent-sdk brain
-// call or the delegate_to_coder spawns (which pass no custom env, so they
-// inherit this process's), `claude` bills THAT key instead of the session — and
-// once its prepaid balance is exhausted every LLM call returns "Credit balance
-// is too low" and the FSM silently does nothing (iterations complete, 0 PRs).
-// Deleting it here (before the adapter import / any spawn) makes claude fall
-// back to the logged-in Max subscription. Belt-and-suspenders with run-loop.sh.
-if (process.env.ANTHROPIC_API_KEY) delete process.env.ANTHROPIC_API_KEY
-
 import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -62,6 +51,15 @@ import { partitionFailedChecks } from './coverage-checks.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
 import { renderAllViews } from './db/views.js'
 import { putStatusPost } from './db/discourse-status.js'
+import { applyClaudeAuth } from './claude-auth.js'
+
+// Settle which Claude account the brain and every delegate spawn runs as. They
+// inherit this process's environment, so this is the single control point.
+// Always drops ANTHROPIC_API_KEY; honours MONITOR_FSM_CLAUDE_CODE_OAUTH_TOKEN
+// (or an inherited CLAUDE_CODE_OAUTH_TOKEN) to pin a specific account;
+// otherwise falls back to the logged-in session. Runs at module scope so it is
+// settled before the adapter is constructed or any delegate spawns.
+const claudeAuth = applyClaudeAuth()
 
 const exec = promisify(execFile)
 
@@ -304,6 +302,9 @@ async function main() {
   const phaseInfo = getPhaseInfo()
   out(`phase: ${phaseInfo.phase.toUpperCase()} (${phaseInfo.reason})`)
   out(`model: brain=${modelForBrain(phaseInfo)} delegate=${modelForDelegate(phaseInfo)}`)
+  // Bad Claude credentials do not stop a run — iterations complete having done
+  // nothing — so state the identity every time rather than leaving it implicit.
+  out(`auth: ${claudeAuth.description}${claudeAuth.droppedApiKey ? ' (ANTHROPIC_API_KEY dropped)' : ''}`)
   // Stash on env so nested subprocesses (delegate action) pick up the same
   // decision without us having to thread it through every action handler.
   process.env.MONITOR_ACTIVE_PHASE = phaseInfo.phase

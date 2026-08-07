@@ -128,9 +128,38 @@ The `.bak-*` files alongside `monitor.db` are manual snapshots — keep them if 
 | GitHub CLI | `gh` auth (already configured for the `edwh` account) |
 | CircleCI token | `~/.circleci/cli.yml` (delegates read this directly) |
 | Sentry auth token | `SENTRY_AUTH_TOKEN` in `/home/edward/FreegleDockerWSL/.env` |
-| Claude subscription | Used via the local `claude` CLI — no `ANTHROPIC_API_KEY` needed |
+| Claude account | Logged-in `claude` CLI session by default; `MONITOR_FSM_CLAUDE_CODE_OAUTH_TOKEN` in `../.env` to pin one |
 
 The `run-loop.sh` script sources `../.env` automatically.
+
+### Which Claude account the FSM runs as
+
+The brain and every delegate spawn run the local `claude` CLI and inherit the
+driver's environment, so one setting decides who does all of the FSM's work.
+`src/claude-auth.ts` resolves it once at startup and the driver logs the result
+as `auth: …` — worth reading, because bad credentials do not stop a run:
+iterations complete having achieved nothing.
+
+- **Default**: the logged-in Claude Code subscription session. Nothing to set.
+- **Pinned**: put `MONITOR_FSM_CLAUDE_CODE_OAUTH_TOKEN` in `../.env` (generate
+  with `claude setup-token`). Use this for unattended runs — cron or systemd
+  may have no interactive session to fall back on. It is namespaced because
+  docker-compose reads the same file, and a bare `CLAUDE_CODE_OAUTH_TOKEN`
+  there would reach well beyond the FSM. A `CLAUDE_CODE_OAUTH_TOKEN` already in
+  the environment is honoured too, but the namespaced one wins.
+- **Never** an API key: `ANTHROPIC_API_KEY` is always dropped. `../.env` defines
+  it for other tools and `run-loop.sh` exports everything, and if it reaches
+  `claude` it bills that key instead of the subscription — then, once its
+  balance is gone, every LLM call returns "Credit balance is too low" while the
+  FSM keeps completing iterations with zero PRs.
+
+A blank value counts as unset rather than as an empty credential, so an
+accidental `MONITOR_FSM_CLAUDE_CODE_OAUTH_TOKEN=` falls back to the session
+instead of failing every call.
+
+Note: an interactive Claude Code session strips its own token from the
+environment it hands to Bash tool calls, so an FSM launched from inside one
+inherits no token and uses the session login.
 
 ## How to use it
 
