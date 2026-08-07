@@ -1504,18 +1504,34 @@ class ExpandService
                 $stats['rippled_in'] += $n;
                 // §15/§16 instrumentation: count groups a post was rippled into.
                 try {
-                    // keep-raw: ON DUPLICATE KEY UPDATE count = count + ? is an atomic
-                    // increment, and upsert() cannot emit it - it renders only
-                    // `count` = values(`count`) or `count` = ?, both of which REPLACE the
-                    // counter and would discard every accumulated metric. The CURDATE()
-                    // here IS bindable as today() (MySQL and PHP share one UTC clock in
-                    // this deployment), so the recorded "write storing the database
-                    // clock" reason is not what blocks this site - the increment is.
-                    DB::statement(
-                        'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, ?) '
-                        . 'ON DUPLICATE KEY UPDATE count = count + ?',
-                        ['rippled_in', $n, $n]
-                    );
+                    // Atomic-counter upsert without raw SQL, matching the pattern already used
+                    // in UnifiedDigestService: increment() is itself atomic (UPDATE ... SET
+                    // count = count + n), so an existing row is safe; a missing row falls through
+                    // to an INSERT, and if a concurrent writer wins that race the duplicate-key
+                    // error is caught and the increment retried. No count is lost. NOT upsert()
+                    // (which emits count = values(count) and would REPLACE the counter) and NOT
+                    // incrementOrCreate() (firstOrCreate + a separate increment, i.e. read-then-
+                    // write, which can drop counts between the two statements).
+                    $today = now()->toDateString();
+                    $updated = DB::table('rippling_event_metrics')
+                        ->where('day', $today)
+                        ->where('event', 'rippled_in')
+                        ->increment('count', $n);
+
+                    if ($updated === 0) {
+                        try {
+                            DB::table('rippling_event_metrics')->insert([
+                                'day' => $today,
+                                'event' => 'rippled_in',
+                                'count' => $n,
+                            ]);
+                        } catch (\Throwable) {
+                            DB::table('rippling_event_metrics')
+                                ->where('day', $today)
+                                ->where('event', 'rippled_in')
+                                ->increment('count', $n);
+                        }
+                    }
                 } catch (\Throwable $e) {
                     // best-effort; never affect the expander
                 }

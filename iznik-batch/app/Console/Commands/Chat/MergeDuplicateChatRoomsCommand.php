@@ -128,17 +128,24 @@ class MergeDuplicateChatRoomsCommand extends Command
                 DB::table('chat_roster')->where('chatid', $duplicateId)->delete();
 
                 // 4. Update latestmessage on canonical room to be the most recent
-                // keep-raw: a correlated subquery as an UPDATE value. An audit proposed
-                // passing a sub-builder as the value, and a verifier confirmed it, but the
-                // rendered SQL is "set latestmessage = ?" - Grammar::isExpression() matches
-                // only Expression, never Builder, so the sub-builder is BOUND as a
-                // parameter rather than expanded. That would write a serialised object
-                // into the column. Checked against the rendered output and the vendor
-                // source; there is no non-raw form.
-                DB::update(
-                    'UPDATE chat_rooms SET latestmessage = (SELECT MAX(date) FROM chat_messages WHERE chatid = ?) WHERE id = ?',
-                    [$canonicalId, $canonicalId]
-                );
+                // A sub-builder IS expanded into a correlated subquery here. An earlier
+                // revision of this comment claimed the opposite, having tested
+                // Grammar::compileUpdate() directly - but the Builder->subquery conversion
+                // happens in Builder::update(), one layer ABOVE the grammar, so testing the
+                // grammar alone shows "set x = ?" and hides the feature. Through the real
+                // path this renders:
+                //   set latestmessage = (select date from chat_messages
+                //                        where chatid = ? order by date desc limit 1)
+                // with both ids bound, matching the raw statement. MAX(date) becomes
+                // ORDER BY date DESC LIMIT 1 because a sub-builder renders as a plain
+                // SELECT; both yield NULL for an empty room.
+                DB::table('chat_rooms')->where('id', $canonicalId)->update([
+                    'latestmessage' => DB::table('chat_messages')
+                        ->where('chatid', $canonicalId)
+                        ->orderByDesc('date')
+                        ->limit(1)
+                        ->select('date'),
+                ]);
 
                 // 5. Insert redirect so email replies to old chatid still work
                 DB::table('chat_room_redirects')->insertOrIgnore([
