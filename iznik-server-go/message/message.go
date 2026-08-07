@@ -3244,6 +3244,25 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		groupid = getPrimaryGroupForMessage(db, req.ID)
 	}
 	if groupid == 0 {
+		// The compose client normally resolves the member's location to a
+		// group and sends groupid; some clients fail to (observed live:
+		// WANTED posts whose draft stored a location but whose submit carried
+		// no group - the member was then stuck at "groupid is required" for
+		// good). The message knows where it is, so derive what the client
+		// should have sent: the closest group to the post's own coordinates
+		// (polygon containment is authoritative inside ClosestGroups).
+		var loc struct {
+			Lat float64 `gorm:"column:lat"`
+			Lng float64 `gorm:"column:lng"`
+		}
+		db.Table("messages").Select("lat, lng").Where("id = ?", req.ID).Scan(&loc)
+		if loc.Lat != 0 || loc.Lng != 0 {
+			if g := location.ClosestSingleGroup(loc.Lat, loc.Lng, location.NEARBY); g != nil {
+				groupid = g.ID
+			}
+		}
+	}
+	if groupid == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
 	}
 
