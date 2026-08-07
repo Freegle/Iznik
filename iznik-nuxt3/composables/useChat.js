@@ -69,6 +69,20 @@ function useChatShared(chatId) {
   }
 }
 
+// Whether the per-chat "Mark read" icon should show in the mobile chat
+// navbar (Discourse 10001). It must stay visible while there are unseen
+// messages and the profile card is expanded only because of the auto-shown
+// first-visit hint - not because the user deliberately tapped the avatar.
+// toggleProfileCard() clears showProfileHint as soon as the user opens the
+// card themselves, so that flag is what tells the two cases apart.
+export function shouldShowChatMarkReadIcon(
+  unseen,
+  profileCardExpanded,
+  showProfileHint
+) {
+  return !!unseen && (!profileCardExpanded || !!showProfileHint)
+}
+
 export function setupChat(selectedChatId, chatMessageId) {
   const { chatStore, authStore, myid, chat, otheruser } =
     useChatShared(selectedChatId)

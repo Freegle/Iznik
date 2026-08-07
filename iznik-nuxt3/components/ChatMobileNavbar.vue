@@ -18,7 +18,13 @@
         </h1>
       </div>
       <button
-        v-if="unseen && !profileCardExpanded"
+        v-if="
+          shouldShowChatMarkReadIcon(
+            unseen,
+            profileCardExpanded,
+            showProfileHint
+          )
+        "
         class="navbar-mark-read"
         @click.stop="markRead"
       >
@@ -266,7 +272,7 @@ import {
 } from '~/composables/useNavbar'
 import { useChatStore } from '~/stores/chat'
 import { useMiscStore } from '~/stores/misc'
-import { setupChat } from '~/composables/useChat'
+import { setupChat, shouldShowChatMarkReadIcon } from '~/composables/useChat'
 import { timeago } from '~/composables/useTimeFormat'
 
 const router = useRouter()
