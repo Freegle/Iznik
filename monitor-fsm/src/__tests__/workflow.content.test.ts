@@ -412,13 +412,13 @@ describe('driver.ts — red-CI invariant tracks the router skip rule', () => {
 
   // The hard invariant drags any red PR back to CHECK_CI. Its suppression set
   // must match ci_router_decide's skip rule, or the two oscillate: the router
-  // skips a PR that pushed nothing, the instance goes past the gate, the
-  // invariant re-adds it, the router skips it again — until the step cap.
-  it('suppresses PRs whose attempt pushed nothing, not just terminal records', () => {
+  // skips a PR already attempted this iteration, the instance goes past the
+  // gate, the invariant re-adds it, the router skips it again — to the cap.
+  it('suppresses every PR already attempted this iteration', () => {
     const idx = driverTs.indexOf('const attemptsRed')
     expect(idx).toBeGreaterThan(-1)
     const block = driverTs.slice(idx, idx + 700)
-    expect(block).toContain('a.terminal || a.pushed !== true')
+    expect(block).toContain('attemptsRed.map(a => a.prNumber)')
   })
 
   it('feeds that skip set into the red-PR check', () => {
@@ -427,11 +427,11 @@ describe('driver.ts — red-CI invariant tracks the router skip rule', () => {
 })
 
 describe('actions.ts — ci_router_decide budget and skip rules', () => {
-  it('drops a PR from re-picking once its attempt pushed nothing', () => {
+  it('drops a PR from re-picking once it has been attempted this iteration', () => {
     const idx = actionsTs.indexOf('const attemptedNums')
     expect(idx).toBeGreaterThan(-1)
     const block = actionsTs.slice(idx, idx + 300)
-    expect(block).toContain('a.terminal || a.pushed !== true')
+    expect(block).toContain('attempts.map(a => a.prNumber)')
   })
 
   it('charges the fix budget per dispatch rather than per router visit', () => {

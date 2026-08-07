@@ -3148,17 +3148,19 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const productionFixAttempted = ctx?.productionFixAttempted === true
       const redPRs: Array<{ number: number }> = Array.isArray(prCheck.redPRs) ? prCheck.redPRs : []
       const attempts: Array<{ prNumber: number; terminal?: boolean; pushed?: boolean }> = Array.isArray(ctx?.openPRFixAttempts) ? ctx.openPRFixAttempts : []
-      // A PR whose attempt pushed nothing has had its go for this iteration.
-      // Re-picking it re-asserts onlyFixPR, which the PARALLEL_ANALYZE_AND_FIX
-      // prompt reads as "skip Discourse triage entirely" — so the old "keep
-      // trying" rule let one unfixable PR starve triage for a whole iteration
-      // (2026-08-06: #1266's delegate exited without pushing, was re-picked
-      // twice more, and Michael's topic 10010 was never read). If an attempt
-      // fails to push, move on to the next actual task. A terminal record
-      // (loop-breaker) is respected the same way.
-      const attemptedNums = new Set(
-        attempts.filter(a => a.terminal || a.pushed !== true).map(a => a.prNumber)
-      )
+      // ONE attempt per PR per iteration, whatever the outcome. Re-picking a
+      // PR re-asserts onlyFixPR, which PARALLEL_ANALYZE_AND_FIX reads as "skip
+      // Discourse triage entirely", so every re-pick costs another whole
+      // triage pass. Neither outcome earns one:
+      //   - pushed nothing: the attempt failed, so move on to the next actual
+      //     task (2026-08-06: #1266's delegate exited without pushing, was
+      //     re-picked twice more, and Michael's topic 10010 was never read).
+      //   - pushed: CI must re-run before there is anything new to judge, so a
+      //     second delegate would only re-read stale or pending checks
+      //     (2026-08-07: #984 pushed at 06:55 and was re-picked at 07:19,
+      //     spending 2/3 of its budget and skipping 6 topics twice).
+      // A terminal record (loop-breaker) is covered by the same rule.
+      const attemptedNums = new Set(attempts.map(a => a.prNumber))
 
       // Persistent per-PR fix attempt budget: if a PR has been picked >= 3 times
       // across iterations (tracked in SQLite kv) without going green, give up and

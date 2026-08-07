@@ -806,12 +806,11 @@ async function main() {
       if (STATES_PAST_GATE.has(postRed.currentState)) {
         const ctxRed: any = postRed.context ?? {}
         const attemptsRed: Array<{ prNumber: number; terminal?: boolean; pushed?: boolean }> = Array.isArray(ctxRed.openPRFixAttempts) ? ctxRed.openPRFixAttempts : []
-        // Mirror ci_router_decide's skip rule exactly: a PR is out of play for
-        // this iteration once its attempt is terminal OR pushed nothing. Only
-        // suppressing terminal records here would oscillate against the router.
-        const skipSet = new Set(
-          attemptsRed.filter(a => a.terminal || a.pushed !== true).map(a => a.prNumber)
-        )
+        // Mirror ci_router_decide's skip rule exactly: one attempt per PR per
+        // iteration, so any PR with a reported attempt is out of play. Anything
+        // narrower here would drag back a PR the router then skips, and the two
+        // would oscillate until the step cap.
+        const skipSet = new Set(attemptsRed.map(a => a.prNumber))
         const red = await realRedPRCheck(skipSet)
         if (red.redPRs.length > 0) {
           const summary = red.redPRs.map(p => `#${p.number} (${p.failedChecks.length} red)`).join(', ')

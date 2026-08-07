@@ -98,7 +98,11 @@ describe('ci_router_decide — a non-pushing fix attempt must not starve triage'
     expect(second.focusPRNumber).toBe(1270)
   })
 
-  it('keeps the focus PR when its attempt DID push (still worth watching)', async () => {
+  // Observed live 2026-08-07: #984's attempt pushed at 06:55 and the router
+  // re-picked it at 07:19, spending 2/3 of its budget on a PR whose CI had not
+  // re-run yet and skipping the same 6 topics a second time. A push earns no
+  // second turn either — CI must re-run before there is anything to judge.
+  it('drops the focus PR even when its attempt DID push', async () => {
     const context = ctx({
       _action_check_my_open_pr_ci: { redPRs: [{ number: 1266 }], pendingPRs: [] },
       _action_discover_active_topics: { topics: TOPICS },
@@ -108,7 +112,9 @@ describe('ci_router_decide — a non-pushing fix attempt must not starve triage'
     context.openPRFixAttempts = [{ prNumber: 1266, exitCode: 0, pushed: true, timedOut: false }]
 
     const result = await ciRouterHandler({}, context)
-    expect(result.focusPRNumber).toBe(1266)
+    expect(result.focusPRNumber).toBeNull()
+    expect(result.onlyFixPR).toBe(false)
+    expect(result.activeTopicCount).toBe(2)
   })
 })
 
@@ -130,7 +136,7 @@ describe('ci_router_decide — the attempt budget counts dispatches, not visits'
     expect(kvGet(db, 'pr_fix_attempts_1266')).toBe('1')
   })
 
-  it('spends the next unit of budget only when a fresh attempt is dispatched', async () => {
+  it('spends at most one unit of budget per PR per iteration', async () => {
     const context = ctx({
       _action_check_my_open_pr_ci: { redPRs: [{ number: 1266 }], pendingPRs: [] },
       _action_discover_active_topics: { topics: TOPICS },
@@ -139,10 +145,30 @@ describe('ci_router_decide — the attempt budget counts dispatches, not visits'
     await ciRouterHandler({}, context)
     expect(kvGet(db, 'pr_fix_attempts_1266')).toBe('1')
 
-    // A pushing attempt completes, so the PR stays focusable and the next
-    // visit dispatches a genuinely new attempt.
+    // Even a successful push buys no second charge inside the iteration —
+    // this is what took #984 to 2/3 in one run.
     context.openPRFixAttempts = [{ prNumber: 1266, exitCode: 0, pushed: true, timedOut: false }]
     await ciRouterHandler({}, context)
+    expect(kvGet(db, 'pr_fix_attempts_1266')).toBe('1')
+  })
+
+  it('spends budget again in a LATER iteration, once CI has re-run', async () => {
+    const context = ctx({
+      _action_check_my_open_pr_ci: { redPRs: [{ number: 1266 }], pendingPRs: [] },
+      _action_discover_active_topics: { topics: TOPICS },
+    })
+
+    await ciRouterHandler({}, context)
+    expect(kvGet(db, 'pr_fix_attempts_1266')).toBe('1')
+
+    // A fresh iteration: new stamp, and openPRFixAttempts starts empty again.
+    const next = ctx({
+      iterationStartTs: '2026-08-07T09:00:00.000Z',
+      _action_check_my_open_pr_ci: { redPRs: [{ number: 1266 }], pendingPRs: [] },
+      _action_discover_active_topics: { topics: TOPICS },
+    })
+    const result = await ciRouterHandler({}, next)
+    expect(result.focusPRNumber).toBe(1266)
     expect(kvGet(db, 'pr_fix_attempts_1266')).toBe('2')
   })
 })
