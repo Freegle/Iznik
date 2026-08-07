@@ -114,9 +114,21 @@ red_pr_numbers() {
     # `gh pr checks` is TSV: name<TAB>state<TAB>elapsed<TAB>url.
     # Netlify emits "skipping" rows for pages-changed/header/redirect
     # pseudo-checks — those aren't real failures, filter them out.
+    #
+    # Coveralls coverage-delta checks are excluded for the same reason the
+    # driver excludes them (src/coverage-checks.ts, isCoverageJitterCheck):
+    # they fail on sub-0.1% run-to-run noise while the actual test gate passes.
+    # This rule MUST match the driver's. When it didn't, the two disagreed about
+    # what "red" means: the driver correctly ignored a coverage-only PR and its
+    # iteration finished having done nothing, while this function still called
+    # it red and skipped the sleep — so the loop restarted every couple of
+    # minutes indefinitely, burning a brain call each time (observed 2026-08-07
+    # on #1201 and #962, both red on Coveralls alone).
     local red
     red=$(echo "$out" | awk -F'\t' '
       /pages.?changed|header rules|redirect rules/ && /[Ss]kipping/ { next }
+      tolower($1) ~ /coveralls/ { next }
+      tolower($1) ~ /^coverage\// { next }
       tolower($2) ~ /^(fail|failure|cancelled|canceled|timed.?out|error)$/ { n++ }
       END { print n+0 }
     ')
