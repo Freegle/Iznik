@@ -377,3 +377,17 @@ func TestFirstReplyMetrics_RequiresSupportOrAdmin(t *testing.T) {
 
 	assert.Equal(t, 403, resp.StatusCode)
 }
+
+// The trial bucket is CRC32(msgid . "|firstreply") % 100, shared bit-for-bit
+// by PHP crc32 (App\Services\FirstReply\Rollout, pinned in RolloutTest.php)
+// and MySQL CRC32() (the metrics arm split). These values are pinned against
+// PHP's output: if any side drifts, the three doors run different trials.
+// A hash rather than msgid % 100 because ids are minted under Galera's
+// auto_increment_increment stride, and a raw modulus is only uniform while
+// the stride stays coprime with the bucket count.
+func TestRolloutBucketPinnedCrossLanguage(t *testing.T) {
+	assert.Equal(t, 69, firstreply.RolloutBucket(1))
+	assert.Equal(t, 47, firstreply.RolloutBucket(121254506))
+	assert.Equal(t, 92, firstreply.RolloutBucket(121346222))
+	assert.Equal(t, 39, firstreply.RolloutBucket(999999999))
+}

@@ -14,11 +14,19 @@ namespace App\Services\FirstReply;
  * per lever instead and the arms overlap, so nothing can be attributed to
  * anything.
  *
- * msgid % 100 rather than a hash: message ids are a dense auto-increment, so the
- * low two digits are as uniform as anything a hash would give, and being able to
- * work out by eye whether a given post is in the trial is worth more than
- * theoretical spread. It is also stable - a post never changes arm, so a
- * before/after on the same post is never comparing two different treatments.
+ * Bucketed by CRC32(msgid . '|firstreply') % 100, NOT by msgid % 100. Message
+ * ids are minted under Galera's auto_increment_increment stride (currently 3),
+ * and a raw modulus is only uniform while the stride stays coprime with 100 -
+ * change the cluster size or increment and the split silently skews or empties.
+ * CRC32 spreads uniformly for any modulus (the same choice ExperimentBucket and
+ * the digest worker sharding made), and the '|firstreply' salt keeps this
+ * split independent of any other experiment bucketed on the same id. The Go
+ * passthrough (firstreply/passthrough.go) and the metrics arm split
+ * (firstreply/metrics.go) MUST use the identical expression - PHP crc32,
+ * MySQL CRC32() and Go crc32.ChecksumIEEE all implement the same polynomial,
+ * and a pinned cross-language test holds them together. Still stable - a post
+ * never changes arm - but no longer auditable by eye; check a post with
+ * SELECT CRC32(CONCAT(msgid, '|firstreply')) % 100.
  *
  * DEFAULTS TO 0. Turning a lever on therefore does nothing until a percentage is
  * set as well. That is deliberate: the failure mode of forgetting the percentage
@@ -48,7 +56,7 @@ class Rollout
             return false;
         }
 
-        return ($msgid % 100) < $percent;
+        return (crc32($msgid . '|firstreply') % 100) < $percent;
     }
 
     /**
@@ -79,7 +87,9 @@ class Rollout
             return $query->whereIn($col, []);
         }
 
-        return $query->whereRaw("($col % 100) < ?", [$percent]);
+        // keep-raw: CRC32/CONCAT bucketing over a dynamic column name - the
+        // builder has no expression API for this.
+        return $query->whereRaw("(CRC32(CONCAT($col, '|firstreply')) % 100) < ?", [$percent]);
     }
 
     public static function sqlFilter(string $col): string
@@ -94,7 +104,7 @@ class Rollout
             return ' AND 1 = 0';
         }
 
-        return " AND ($col % 100) < " . $percent;
+        return " AND (CRC32(CONCAT($col, '|firstreply')) % 100) < " . $percent;
     }
 
     /** One line for a cron log, so a quiet run explains itself. */

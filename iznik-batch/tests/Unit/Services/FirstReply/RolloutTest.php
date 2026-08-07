@@ -46,6 +46,30 @@ class RolloutTest extends TestCase
         $this->assertSame(1000, $in);
     }
 
+    public function test_bucketing_is_the_shared_crc32_and_matches_the_database(): void
+    {
+        // Pinned cross-language values: PHP crc32, Go crc32.ChecksumIEEE
+        // (TestRolloutBucketPinnedCrossLanguage) and MySQL CRC32() (the
+        // metrics arm split) must all place a post in the same bucket, or the
+        // three doors run different trials. A hash rather than msgid % 100
+        // because ids are minted under Galera's auto_increment_increment
+        // stride, and a raw modulus is only uniform while the stride stays
+        // coprime with the bucket count.
+        $this->assertSame(69, crc32('1|firstreply') % 100);
+        $this->assertSame(47, crc32('121254506|firstreply') % 100);
+        $this->assertSame(92, crc32('121346222|firstreply') % 100);
+
+        config(['freegle.firstreply.rollout_percent' => 48]);
+        $this->assertTrue(Rollout::includes(121254506), 'bucket 47 is inside a 48% rollout');
+        config(['freegle.firstreply.rollout_percent' => 47]);
+        $this->assertFalse(Rollout::includes(121254506), 'bucket 47 is outside a 47% rollout');
+
+        // And the database renders the identical bucket, so the SQL filters
+        // and the PHP checks can never disagree about a post's arm.
+        $db = \DB::selectOne('SELECT CRC32(CONCAT(121254506, "|firstreply")) % 100 AS b');
+        $this->assertSame(47, (int) $db->b);
+    }
+
     public function test_a_post_never_changes_arm(): void
     {
         // The whole comparison rests on this: if a post could move between arms,

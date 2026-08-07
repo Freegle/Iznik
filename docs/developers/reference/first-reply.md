@@ -22,11 +22,18 @@ Everything here ships dark behind `freegle.firstreply.*`. With the switches off,
 runs and nothing else behaves differently.
 
 **It also rolls out by percentage.** `freegle.firstreply.rollout_percent` (default **0**)
-buckets on `msgid % 100`, so a post is in or out for its whole life and across **all three
-levers at once** - a post in the trial gets the passthrough, scouting and the Freegle chat, and
-one outside gets none of them. Split per lever instead and the arms overlap, so nothing could
-be attributed to anything. Raising the percentage only ever adds posts, so a trial widens
-without shuffling anyone out of the arm they were being measured in.
+buckets on `CRC32(msgid . '|firstreply') % 100`, so a post is in or out for its whole life and
+across **all three levers at once** - a post in the trial gets the passthrough, scouting and
+the Freegle chat, and one outside gets none of them. Split per lever instead and the arms
+overlap, so nothing could be attributed to anything. Raising the percentage only ever adds
+posts, so a trial widens without shuffling anyone out of the arm they were being measured in.
+A hash rather than a raw `msgid % 100` because ids are minted under Galera's
+`auto_increment_increment` stride - a raw modulus is only uniform while the stride stays
+coprime with the bucket count, and a cluster resize would silently skew the split. PHP
+`crc32`, MySQL `CRC32()` and Go `crc32.ChecksumIEEE` share the same polynomial; pinned tests
+on each side (`RolloutTest.php`, `TestRolloutBucketPinnedCrossLanguage`) hold the three
+expressions together. Check a post by eye with
+`SELECT CRC32(CONCAT(msgid, '|firstreply')) % 100`.
 
 **The trial arm decides which QUESTIONS a post gets, not whether Freegle speaks to it at all.**
 
@@ -521,6 +528,12 @@ does not. More mail sent is not more items rehomed.
 
 The `arms` section answers it directly: rippled posts in the window, split into the arm that got
 the treatment and the arm that did not, counted on **got a reply** and on **Taken**.
+
+**The arm population is floored at `FIRSTREPLY_ENABLED_AT`** (set on the Go API when the trial
+went live). Without the floor a wide date window fills both arms with pre-trial history -
+posts that got replies the ordinary way before the feature existed - and the trial column
+reads as a claim the feature never made. The response's `armsfrom` carries the effective
+floor, and the dashboard states it.
 
 | Field | Meaning |
 |---|---|

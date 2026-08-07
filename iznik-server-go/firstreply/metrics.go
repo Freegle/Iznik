@@ -2,6 +2,7 @@ package firstreply
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -84,8 +85,9 @@ type PromptKind struct {
 //
 // The population is RIPPLED posts, not all posts, because that is the population
 // the levers act on and the one the 44%-no-reply figure comes from. Split by
-// msgid % 100 against the SAME percentage the levers bucket on, so the arms are the
-// posts that did and did not get the treatment, assigned identically on both doors.
+// CRC32(msgid|firstreply) % 100 against the SAME percentage the levers bucket on
+// (see RolloutBucket), so the arms are the posts that did and did not get the
+// treatment, assigned identically on both doors.
 //
 // Two honest limits, stated because the numbers look authoritative either way:
 // at 0% or 100% one arm is empty and the comparison means nothing; and Taken
@@ -264,6 +266,20 @@ func Metrics(c *fiber.Ctx) error {
 		Distinct("jt.msgid").
 		Count(&postsEngaged)
 
+	// The arm comparison only means anything over posts that LIVED under
+	// treatment. Fetched over a wide window it fills BOTH arms with pre-trial
+	// history - posts that got replies the ordinary way before the feature
+	// existed - and the trial column reads as a claim the feature never made
+	// (live case: "1,834 trial posts replied" hours after switch-on).
+	// FIRSTREPLY_ENABLED_AT, stamped when the trial went live, floors the arm
+	// population; the response carries the effective floor so the panel can
+	// say what is being counted. Same layout as start/end, so a string
+	// comparison orders correctly.
+	armStart := start
+	if enabledAt := os.Getenv("FIRSTREPLY_ENABLED_AT"); enabledAt != "" && enabledAt > armStart {
+		armStart = enabledAt
+	}
+
 	// The overall KPI: replies and rehomes, trial against holdout.
 	//
 	// Bounded to rippled posts by rr.created_at, which is indexed
@@ -274,7 +290,7 @@ func Metrics(c *fiber.Ctx) error {
 	// panel just renders empty.
 	arms := []ArmOutcome{}
 	db.Table("rippling_reach rr").
-		Select("CASE WHEN rr.msgid % 100 < ? THEN 'trial' ELSE 'holdout' END AS arm, "+
+		Select("CASE WHEN CRC32(CONCAT(rr.msgid, '|firstreply')) % 100 < ? THEN 'trial' ELSE 'holdout' END AS arm, "+
 			"COUNT(*) AS posts, "+
 			"COALESCE(SUM(EXISTS(SELECT 1 FROM chat_messages cm "+
 			"    WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested' "+
@@ -283,7 +299,7 @@ func Metrics(c *fiber.Ctx) error {
 			"    WHERE mo.msgid = rr.msgid AND mo.outcome IN ('Taken', 'Received'))), 0) AS taken",
 			rolloutPercent()).
 		Joins("JOIN messages m ON m.id = rr.msgid").
-		Where("rr.created_at BETWEEN ? AND ?", start, end).
+		Where("rr.created_at BETWEEN ? AND ?", armStart, end).
 		Where("m.deleted IS NULL").
 		Group("arm").
 		Scan(&arms)
@@ -291,6 +307,7 @@ func Metrics(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"start":          start,
 		"end":            end,
+		"armsfrom":       armStart,
 		"daily":          daily,
 		"passthrough":    passthrough,
 		"scouts":         signals,

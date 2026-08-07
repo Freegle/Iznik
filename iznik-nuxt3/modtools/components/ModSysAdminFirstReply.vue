@@ -1,10 +1,12 @@
 <template>
   <div class="firstreply-effectiveness">
     <p class="text-muted">
-      44% of rippled posts get no reply at all. Three separate levers attack
-      that, and this shows whether each is earning its keep - not just whether
-      it is running. Each is switchable on its own, so a lever that does nothing
-      here should be turned off rather than left to add mail.
+      Many posts never get a reply, and from the poster's side a post that is
+      quietly working looks exactly like one that has failed. This page asks
+      whether the first-reply levers actually change that - do treated posts
+      get replies, and get Taken, more often than untreated ones? Each lever is
+      switchable on its own, so one that does nothing here should be turned off
+      rather than left to add mail.
     </p>
 
     <ModEmailDateFilter
@@ -28,10 +30,45 @@
       <h3 class="ms-2 mt-2">Did it work?</h3>
       <p class="text-muted small ms-2">
         Rippled posts that got the treatment, against the ones that did not.
-        Everything below this is a lever reporting on itself, and all of it can
-        go up without this moving - more mail sent is not more items rehomed.
+        This table is the verdict; the sections below it only show each lever's
+        own activity (mail sent, prompts answered), which can all look busy
+        without any more items actually being rehomed. If the rates here do not
+        beat the holdout, the levers are not working, however active they look.
         <strong>Taken</strong> is the one that matters.
       </p>
+      <p v-if="stats.armsfrom" class="text-muted small ms-2">
+        Counting rippled posts since <strong>{{ stats.armsfrom }}</strong> —
+        when the trial went live. Earlier posts never had the treatment, so
+        including them would credit (or blame) the feature for replies it had
+        nothing to do with.
+      </p>
+      <div v-if="armRates.length" class="arm-chart ms-2 mb-3" role="img" aria-label="Reply and Taken rates, trial versus holdout">
+        <div class="arm-legend small">
+          <span class="arm-swatch arm-swatch-trial" /> Trial
+          <span class="arm-swatch arm-swatch-holdout ms-3" /> Holdout
+        </div>
+        <div v-for="row in armRates" :key="row.label" class="arm-row">
+          <div class="arm-measure small fw-bold">{{ row.label }}</div>
+          <div
+            v-for="bar in row.bars"
+            :key="bar.arm"
+            class="arm-bar-line"
+            :title="`${bar.arm}: ${bar.count} of ${bar.posts} posts (${bar.pct})`"
+          >
+            <span class="arm-name small text-muted text-capitalize">{{ bar.arm }}</span>
+            <span class="arm-track">
+              <span
+                class="arm-fill"
+                :class="'arm-fill-' + bar.arm"
+                :style="{ width: bar.width + '%' }"
+              />
+            </span>
+            <span class="arm-value small">
+              {{ bar.pct }} <span class="text-muted">of {{ bar.posts }}</span>
+            </span>
+          </div>
+        </div>
+      </div>
       <b-table-simple hover responsive small class="mb-2">
         <b-thead>
           <b-tr>
@@ -56,11 +93,11 @@
         whole network, not the effect of the feature.
       </NoticeMessage>
       <p v-else class="text-muted small ms-2 mb-4">
-        Rollout is at {{ stats.rolloutpercent }}%. Posts are assigned by
-        <code>msgid % 100</code>, so the arms are comparable, but they are not
-        equal in size - read the percentages, not the counts. Taken also depends
-        on posters coming back to record an outcome, which is itself something
-        the feature may change.
+        Rollout is at {{ stats.rolloutpercent }}%. Posts are assigned by a
+        stable hash of the post id, so the arms are comparable, but they are
+        not equal in size - read the percentages, not the counts. Taken also
+        depends on posters coming back to record an outcome, which is itself
+        something the feature may change.
       </p>
 
       <!-- 1. Passthrough --------------------------------------------------->
@@ -71,10 +108,17 @@
         so that is measured per reply: for that replier, at that location, when
         <em>would</em> the reach have got to them?
       </p>
+      <p class="text-muted small ms-2">
+        Right now these mostly arrive from TrashNothing, plus Freegle members
+        who have changed their setting to see posts they cannot yet reply to —
+        most Freegle members never see an out-of-reach post, so they cannot be
+        its first reply. If first replies prove their worth, the reach
+        algorithm itself may change to produce more of them.
+      </p>
       <b-table-simple hover responsive small class="mb-4">
         <b-tbody>
           <b-tr>
-            <b-td>Let through, in the app</b-td>
+            <b-td>Let through, replying on Freegle (web or app)</b-td>
             <b-td class="fw-bold">{{ stats.passthrough.web }}</b-td>
           </b-tr>
           <b-tr>
@@ -252,6 +296,38 @@ const comparable = computed(() => {
   return arms.filter((a) => a.posts > 0).length === 2
 })
 
+// The "Did it work?" bars: replied-rate and taken-rate per arm, scaled to the
+// larger rate in each pair so the comparison fills the row. Rates, never raw
+// counts - the arms are deliberately different sizes (rollout percent), so
+// counts always "blow out" on the holdout side and say nothing.
+const armRates = computed(() => {
+  const arms = stats.value?.arms ?? []
+  if (arms.filter((a) => a.posts > 0).length !== 2) {
+    return []
+  }
+  const ordered = ['trial', 'holdout']
+    .map((name) => arms.find((a) => a.arm === name))
+    .filter(Boolean)
+
+  return [
+    { label: 'Got a reply', key: 'replied' },
+    { label: 'Taken', key: 'taken' },
+  ].map(({ label, key }) => {
+    const rates = ordered.map((a) => (a.posts ? a[key] / a.posts : 0))
+    const max = Math.max(...rates, 0.0001)
+    return {
+      label,
+      bars: ordered.map((a, i) => ({
+        arm: a.arm,
+        count: a[key],
+        posts: a.posts,
+        pct: ((a.posts ? a[key] / a.posts : 0) * 100).toFixed(1) + '%',
+        width: Math.round((rates[i] / max) * 100),
+      })),
+    }
+  })
+})
+
 const passthroughTotal = computed(() =>
   stats.value ? stats.value.passthrough.web + stats.value.passthrough.email : 0
 )
@@ -333,3 +409,60 @@ async function onFetch({ start, end }) {
   }
 }
 </script>
+
+<style scoped>
+/* The "Did it work?" comparison. Thin marks, rounded data ends, values as
+   ink-coloured text beside the bar (never text in the series colour). Trial
+   and holdout hues validated for CVD separation and contrast on white. */
+.arm-chart {
+  max-width: 34rem;
+}
+.arm-legend {
+  margin-bottom: 0.25rem;
+}
+.arm-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.arm-swatch-trial,
+.arm-fill-trial {
+  background-color: #2a78d6;
+}
+.arm-swatch-holdout,
+.arm-fill-holdout {
+  background-color: #eb6834;
+}
+.arm-row {
+  margin-bottom: 0.5rem;
+}
+.arm-bar-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 2px;
+}
+.arm-name {
+  flex: 0 0 4rem;
+}
+.arm-track {
+  flex: 1 1 auto;
+  display: block;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.arm-fill {
+  display: block;
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  min-width: 2px;
+}
+.arm-value {
+  flex: 0 0 9rem;
+  white-space: nowrap;
+}
+</style>
