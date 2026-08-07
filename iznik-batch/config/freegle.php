@@ -619,6 +619,12 @@ return [
             'max_existing_repliers' => (int) env('FIRSTREPLY_PASSTHROUGH_MAX_REPLIERS', 1),
         ],
 
+        // How old a saved search may be and still earn its holder mail or an
+        // embedding. Mirrors the Go side's FIRSTREPLY_SEARCH_MAX_AGE_MONTHS
+        // (searchmatches.go) - the two must agree or the embedder covers a
+        // different population than the matcher reads.
+        'search_max_age_months' => (int) env('FIRSTREPLY_SEARCH_MAX_AGE_MONTHS', 6),
+
         // Tell a few likely-interested people early about a post nobody has
         // replied to yet.
         'scouts' => [
