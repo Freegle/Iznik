@@ -404,6 +404,23 @@ inotifywait -m -r -e modify,create,move,close_write,delete \
             ;;
     esac
 
+    # A brand-new DIRECTORY: queue everything inside it.
+    #
+    # inotifywait -r only holds watches on directories that existed when it
+    # started. When a whole tree appears at once - a git checkout or a branch
+    # switch bringing in a new package - the files land before a watch exists on
+    # their parent, so they are never seen and never sync. The container then
+    # runs without them, which for Go means the entire suite fails to COMPILE
+    # and reports "0 passed, 0 failed", i.e. it reads as "no tests ran" rather
+    # than as a missing file (iznik-server-go/firstreply did exactly this).
+    # Walking the new directory here closes that gap for the common case.
+    if [[ "$events" == *ISDIR* && -d "$full_path" ]]; then
+        while IFS= read -r newfile; do
+            [[ -f "$newfile" ]] && queue_sync "$newfile"
+        done < <(find "$full_path" -type f 2>/dev/null)
+        continue
+    fi
+
     # Only process regular files - queue them for sync after settling
     if [[ -f "$full_path" ]]; then
         queue_sync "$full_path"
