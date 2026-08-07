@@ -5248,6 +5248,62 @@ type housekeeperTasksResponse struct {
 //
 //	200: successResponse
 
+// swagger:route GET /user/unsubscribe user getUserUnsubscribe
+// Turn off one category of Freegle email
+//
+// Turns off one category of Freegle email for a user - the HTTPS arm of the
+// List-Unsubscribe header on every bulk mailable. GET only asks; it does not
+// apply the change (POST applies it).
+//
+// Parameters:
+//   + name: u
+//     in: query
+//     description: User ID
+//     required: true
+//     type: integer
+//   + name: k
+//     in: query
+//     description: Auto-login Link key
+//     required: true
+//     type: string
+//   + name: t
+//     in: query
+//     description: Category: digest, events, volunteering, newsletter, relevant, chat, notifications, engagement or all
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /user/unsubscribe user postUserUnsubscribe
+// Turn off one category of Freegle email
+//
+// Turns off one category of Freegle email for a user - the HTTPS arm of the
+// List-Unsubscribe header on every bulk mailable. POST applies it; this is the
+// RFC 8058 one-click List-Unsubscribe form used by Gmail/Yahoo.
+//
+// Parameters:
+//   + name: u
+//     in: query
+//     description: User ID
+//     required: true
+//     type: integer
+//   + name: k
+//     in: query
+//     description: Auto-login Link key
+//     required: true
+//     type: string
+//   + name: t
+//     in: query
+//     description: Category: digest, events, volunteering, newsletter, relevant, chat, notifications, engagement or all
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
 // swagger:route GET /group/{id}/message/summary group getGroupMessageSummaries
 // Get id + subject for a group's live posts
 //
