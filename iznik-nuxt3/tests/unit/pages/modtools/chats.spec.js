@@ -228,6 +228,55 @@ describe('chats/[[id]].vue page', () => {
       expect(filtered).toHaveLength(1)
       expect(filtered[0].name).toBe('Test Chat')
     })
+
+    it('scanChats sorts unread chats to the top when not searching (Discourse 10013)', () => {
+      const wrapper = mountComponent()
+      const chats = [
+        {
+          id: 1,
+          name: 'Read chat, newer',
+          status: 'Active',
+          unseen: 0,
+          lastdate: '2026-08-05T00:00:00Z',
+        },
+        {
+          id: 2,
+          name: 'Unread chat, older',
+          status: 'Active',
+          unseen: 3,
+          lastdate: '2026-08-01T00:00:00Z',
+        },
+      ]
+      const sorted = wrapper.vm.scanChats(false, chats)
+      expect(sorted[0].id).toBe(2)
+    })
+
+    it('scanChats does not reorder by unseen while actively searching', () => {
+      const wrapper = mountComponent()
+      wrapper.vm.search = 'test'
+      const chats = [
+        {
+          id: 1,
+          name: 'Read chat matching test',
+          status: 'Active',
+          unseen: 0,
+          lastdate: '2026-08-05T00:00:00Z',
+          search: true,
+        },
+        {
+          id: 2,
+          name: 'Unread chat matching test',
+          status: 'Active',
+          unseen: 3,
+          lastdate: '2026-08-01T00:00:00Z',
+          search: true,
+        },
+      ]
+      const sorted = wrapper.vm.scanChats(false, chats)
+      // Date order preserved (id 1 is more recent) - unseen must not push
+      // stale search matches to the top of the results.
+      expect(sorted[0].id).toBe(1)
+    })
   })
 
   describe('session expiry on chat load (Discourse 9881)', () => {

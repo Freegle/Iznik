@@ -233,8 +233,18 @@ function scanChats(closed, chatList) {
     })
   }
 
-  // Sort by most recent first.
+  // Sort unread chats to the top, then by most recent first. Skip the
+  // unseen-first pass while actively searching, since search results can
+  // carry stale unseen counts and shouldn't be reordered by them (#356).
   result.sort((a, b) => {
+    if (!search.value) {
+      if (a.unseen === 0 && b.unseen > 0) {
+        return 1
+      } else if (a.unseen > 0 && b.unseen === 0) {
+        return -1
+      }
+    }
+
     if (a.lastdate && b.lastdate) {
       return dayjs(b.lastdate).diff(dayjs(a.lastdate))
     } else if (a.lastdate) {
