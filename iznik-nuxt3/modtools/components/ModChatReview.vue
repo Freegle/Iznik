@@ -149,6 +149,14 @@
               </b-button>
             </span>
           </span>
+          <!-- Which community the POST is on. The line above says why you can
+               act (the other member is on a group you mod), which is a
+               different thing - a mod of many communities was having to open
+               each chat to work out whether the post was theirs to handle. -->
+          <span v-if="message.refmsggroup">
+            <v-icon icon="signpost-2" /> Post is on
+            {{ message.refmsggroup.namedisplay }}
+          </span>
           <span>
             <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{
               message.id
