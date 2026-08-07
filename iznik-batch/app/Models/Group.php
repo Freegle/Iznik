@@ -398,8 +398,14 @@ class Group extends Model implements Auditable
                     ->orWhereJsonContains('groups.settings->volunteering', 1);
             })
             ->where(function ($q) use ($eventsqltime) {
-                $q->whereNull('volunteering.applyby')
-                    ->orWhere('volunteering.applyby', '>=', $eventsqltime);
+                // applyby lives on volunteering_dates, not volunteering. The original
+                // raw SQL used the bare column name, which MySQL resolved unambiguously
+                // because only that joined table has it; the port to the query builder
+                // qualified it with the wrong table, so this method threw
+                // "ERROR 1054 (42S22): Unknown column 'volunteering.applyby'" on EVERY
+                // call - verified by executing both forms against MySQL.
+                $q->whereNull('volunteering_dates.applyby')
+                    ->orWhere('volunteering_dates.applyby', '>=', $eventsqltime);
             })
             ->where(function ($q) use ($eventsqltime) {
                 $q->whereNull('volunteering_dates.end')
