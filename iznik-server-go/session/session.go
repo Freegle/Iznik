@@ -1756,6 +1756,24 @@ func GetSession(c *fiber.Ctx) error {
 		me["permissions"] = perms
 	}
 
+	// Team membership gates a few ModTools pages (currently Partnerships). This is not
+	// gated on systemrole: some team members are ordinary members by role - the account a
+	// team shares for its own inbox, for instance - and they still need their page. The
+	// table is tiny and indexed on userid, so the lookup is cheap enough to always do.
+	var teams []string
+	db.Table("teams_members tm").
+		Select("t.name").
+		Joins("INNER JOIN teams t ON t.id = tm.teamid").
+		Where("tm.userid = ?", myid).
+		Order("t.name ASC").
+		Scan(&teams)
+
+	if teams == nil {
+		teams = []string{}
+	}
+
+	me["teams"] = teams
+
 	if emails == nil {
 		emails = make([]EmailRow, 0)
 	}
