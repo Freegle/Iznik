@@ -342,4 +342,109 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertCount(1, $sent);
         $this->assertSame('Sofa so good', $sent->first()->story['headline']);
     }
+
+    /**
+     * Research runs hourly; this email goes out weekly, and an item stays
+     * eligible for days after it was found. A jumble sale researched on Monday
+     * and held on Wednesday was therefore still "fresh" on Friday and went out
+     * inviting people to something that had already happened.
+     */
+    public function test_leaves_out_events_that_have_already_happened(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'past@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+
+        // Over and done with - must not go out.
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Yesterday jumble sale', 'snippet' => 'Gone.',
+            'url' => 'https://example.org/past', 'source' => 'Hall',
+            'event_date' => now()->subDay()->toDateString(), 'researched_at' => now()->subDays(3),
+        ]);
+        // Still to come - must go out.
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Repair cafe next week', 'snippet' => 'Fix stuff.',
+            'url' => 'https://example.org/future', 'source' => 'Library',
+            'event_date' => now()->addWeek()->toDateString(), 'researched_at' => now()->subDays(3),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $titles = array_column($sent->first()->items, 'title');
+        $this->assertContains('Repair cafe next week', $titles);
+        $this->assertNotContains('Yesterday jumble sale', $titles);
+
+        // The past item stays unemailed, so it is never silently consumed.
+        $this->assertNull(CommunityNewsItem::where('title', 'Yesterday jumble sale')->first()->emailed_at);
+    }
+
+    /** Something on today is still worth telling people about - they can still go. */
+    public function test_includes_an_event_happening_today(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'today@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Coffee morning today', 'snippet' => 'Come along.',
+            'url' => 'https://example.org/today', 'source' => 'Hall',
+            'event_date' => now()->toDateString(), 'researched_at' => now()->subDays(2),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $this->assertContains('Coffee morning today', array_column($sent->first()->items, 'title'));
+    }
+
+    /**
+     * Most items are not dated events at all - a new cycle path, a refurbished
+     * library. Those carry no event_date and must keep flowing through.
+     */
+    public function test_undated_items_are_unaffected(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'undated@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'New cycle path opens', 'snippet' => 'Ride it.',
+            'url' => 'https://example.org/path', 'source' => 'Council',
+            'event_date' => null, 'researched_at' => now()->subDays(3),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $this->assertContains('New cycle path opens', array_column($sent->first()->items, 'title'));
+    }
 }

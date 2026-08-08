@@ -28,6 +28,9 @@ class CommunityNewsItem extends Model
         'researched_at' => 'datetime',
         'posted_at' => 'datetime',
         'emailed_at' => 'datetime',
+        // When the event itself happens, as opposed to when we researched it.
+        // Null for items that aren't dated events, which is most of them.
+        'event_date' => 'date',
     ];
 
     public function area(): BelongsTo
