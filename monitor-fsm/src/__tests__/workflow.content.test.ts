@@ -703,3 +703,63 @@ describe('already-answered check counts our own earlier reply', () => {
     }
   })
 })
+
+// ── Replication lag is not an available diagnosis ─────────────────────────
+//
+// Blamed three times, wrong three times. #1215 blamed a NULL ourPostingStatus
+// read; #1281 blamed a lagging replica for a symptom the reporter watched
+// persist for five hours - Galera certifies across nodes before commit
+// returns, so the mechanism it named resolves six orders of magnitude faster
+// than the thing it claimed to explain. Both PRs were closed unmerged.
+
+describe('replication lag is banned as a diagnosis', () => {
+  it('is a global guardrail, so it binds in every state', () => {
+    expect(workflow.guardrails).toContain('NEVER BLAME DATABASE REPLICATION LAG')
+    expect(workflow.guardrails).toContain('Galera SYNCHRONOUS multi-master')
+  })
+
+  it('names the deterministic causes to diagnose instead', () => {
+    expect(workflow.guardrails).toContain('the write never ran')
+    expect(workflow.guardrails).toContain('cached CLIENT-side copy was never invalidated')
+  })
+
+  it('DIAGNOSE_BUG bans it explicitly and cites the PRs it sank', () => {
+    const prompt: string = workflow.states.DIAGNOSE_BUG.prompt
+    expect(prompt).toContain('BANNED MECHANISM')
+    expect(prompt).toContain('#1215, #1281')
+  })
+
+  it('keeps the one narrow exception explicit, so it is not read as absolute', () => {
+    expect(workflow.states.DIAGNOSE_BUG.prompt).toContain('SELECT max(id) hazard')
+  })
+})
+
+describe('DIAGNOSE_BUG checks the reporter timeline against the mechanism', () => {
+  const prompt: string = workflow.states.DIAGNOSE_BUG.prompt
+
+  it('requires an order-of-magnitude comparison', () => {
+    expect(prompt).toContain('TIMELINE ORDER OF MAGNITUDE')
+    expect(prompt).toContain('arithmetically impossible')
+  })
+
+  it('records the comparison in the brief, so a reviewer can check it', () => {
+    expect(prompt).toContain('"timelineCheck"')
+  })
+
+  it('rules out timing when the symptom outlives a reload', () => {
+    expect(prompt).toContain('outlives a page reload')
+  })
+})
+
+describe('DIAGNOSE_BUG requires a test that reproduces the fault', () => {
+  const prompt: string = workflow.states.DIAGNOSE_BUG.prompt
+
+  it('rejects tests that merely assert the change is present', () => {
+    expect(prompt).toContain('REPRODUCE THE FAULT, NOT ASSERT THE FIX')
+    expect(prompt).toContain('passes whether or not the fault ever existed')
+  })
+
+  it('binds testStrategy specifically', () => {
+    expect(prompt).toContain('testStrategy MUST describe a test that fails BECAUSE')
+  })
+})
