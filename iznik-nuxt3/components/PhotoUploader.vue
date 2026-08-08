@@ -55,6 +55,7 @@
           @rotate="rotatePhoto(selectedPhoto, 90)"
           @retry="retryUpload(selectedPhoto)"
           @show-quality="showQualityWarning(selectedPhoto)"
+          @select="viewPhoto"
         />
       </div>
     </Transition>
@@ -171,6 +172,14 @@
       </template>
     </b-modal>
 
+    <!-- Full-screen zoomable view of the featured photo -->
+    <MessagePhotosModal
+      v-if="viewingPhoto"
+      :attachments="photos"
+      :initial-index="selectedIndex"
+      @hidden="viewingPhoto = false"
+    />
+
     <!-- Uppy Dashboard Modal for web browsers -->
     <DashboardModal
       v-if="!isApp && uppy"
@@ -225,6 +234,9 @@ import {
 } from '~/composables/usePhotoQuality'
 
 const draggable = defineAsyncComponent(() => import('vuedraggable'))
+const MessagePhotosModal = defineAsyncComponent(() =>
+  import('~/components/MessagePhotosModal')
+)
 
 const props = defineProps({
   modelValue: {
@@ -318,6 +330,17 @@ function selectPhoto(index) {
     photos.value.unshift(photo)
     // Keep selectedIndex at 0 (always show first photo as featured)
     selectedIndex.value = 0
+  }
+}
+
+// Tapping the featured photo opens the same full-screen zoomable viewer as a
+// photo on a live post, so you can check the picture is any good before you
+// post it. A photo still uploading has nothing to show yet.
+const viewingPhoto = ref(false)
+
+function viewPhoto() {
+  if (selectedPhoto.value && !selectedPhoto.value.uploading) {
+    viewingPhoto.value = true
   }
 }
 
