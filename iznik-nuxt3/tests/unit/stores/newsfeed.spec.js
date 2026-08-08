@@ -139,7 +139,6 @@ describe('newsfeed store', () => {
       await store.fetchCount('nearby', false)
       expect(mockCount).toHaveBeenCalledWith('nearby', false)
     })
-
   })
 
   describe('server watermark capture', () => {
@@ -176,9 +175,7 @@ describe('newsfeed store', () => {
 
     it('does not treat a watermark on a nested reply as the baseline', () => {
       store.snapshotSeenBeforeVisit()
-      store.addItems([
-        { id: 100, replies: [{ id: 101, seenwatermark: 42 }] },
-      ])
+      store.addItems([{ id: 100, replies: [{ id: 101, seenwatermark: 42 }] }])
 
       expect(store.seenBeforeVisit).toBe(0)
       expect(store.watermarkCaptured).toBe(false)
@@ -485,8 +482,8 @@ describe('newsfeed store', () => {
 
     it('deduplicates concurrent fetches for same id', async () => {
       let resolveFirst
-      const firstPromise = new Promise((r) => {
-        resolveFirst = r
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve
       })
       mockFetchNews.mockReturnValueOnce(firstPromise)
 
@@ -796,7 +793,10 @@ describe('newsfeed store', () => {
       store.init({ public: {} })
       mockSend.mockResolvedValue(999)
       // Thread refetch returns WITHOUT the new reply (replica lag).
-      mockFetchNews.mockResolvedValue({ id: 1, replies: [{ id: 2, replies: [] }] })
+      mockFetchNews.mockResolvedValue({
+        id: 1,
+        replies: [{ id: 2, replies: [] }],
+      })
 
       await store.send('hello there', 1, 1, null)
 
@@ -828,7 +828,10 @@ describe('newsfeed store', () => {
       store.init({ public: {} })
       mockSend.mockResolvedValue(1000)
       // Replying to reply 2 within thread 1; refetch misses it.
-      mockFetchNews.mockResolvedValue({ id: 1, replies: [{ id: 2, replies: [] }] })
+      mockFetchNews.mockResolvedValue({
+        id: 1,
+        replies: [{ id: 2, replies: [] }],
+      })
 
       await store.send('nested reply', 2, 1, null)
 

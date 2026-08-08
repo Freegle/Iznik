@@ -487,9 +487,9 @@ describe('NewsReplies', () => {
       const wrapper = createWrapper()
       const divider = wrapper.find('[data-unread-divider]')
       expect(divider.exists()).toBe(true)
-      expect(divider.element.nextElementSibling.getAttribute('data-reply-id')).toBe(
-        '16'
-      )
+      expect(
+        divider.element.nextElementSibling.getAttribute('data-reply-id')
+      ).toBe('16')
     })
 
     it('describes how many replies are new', () => {
@@ -586,9 +586,9 @@ describe('NewsReplies', () => {
         .map((n) => Number(n.attributes('data-reply-id')))
       expect(renderedIds).toEqual([18, 19])
       // The view-all link comes first, above the visible tail.
-      expect(wrapper.find('.replies-container').element.firstElementChild.className).toContain(
-        'view-all'
-      )
+      expect(
+        wrapper.find('.replies-container').element.firstElementChild.className
+      ).toContain('view-all')
     })
 
     it('counts nested and new replies in the view-all link', () => {
