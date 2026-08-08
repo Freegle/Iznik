@@ -440,7 +440,7 @@ func SetupRoutes(app *fiber.App) {
 		// Changes
 		// @Router /changes [get]
 		// @Summary Get changes since timestamp
-		// @Description Returns message changes, user changes, and ratings since a given time. Requires partner key.
+		// @Description Returns message changes, user changes (Modified or Deleted), and ratings since a given time. Requires partner key.
 		// @Tags changes
 		// @Produce json
 		// @Param since query string false "ISO8601 timestamp (defaults to 1 hour ago)"

@@ -217,6 +217,143 @@ func TestChangesUserLastUpdatedNotEmpty(t *testing.T) {
 	assert.True(t, found, "Expected user in changes")
 }
 
+func TestChangesUserChangeHasModifiedType(t *testing.T) {
+	// A user whose profile has moved is reported as Modified, so a partner can
+	// tell it apart from a user who has been deleted.
+	prefix := uniquePrefix("changes_mod_type")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	userID := CreateTestUser(t, prefix, "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
+
+	db.Exec("UPDATE users SET lastupdated = NOW() WHERE id = ?", userID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	users := changes["users"].([]interface{})
+
+	found := false
+	for _, u := range users {
+		user := u.(map[string]interface{})
+		if uint64(user["id"].(float64)) == userID {
+			assert.Equal(t, "Modified", user["type"], "an updated user must be reported as Modified")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Expected user in changes")
+}
+
+func TestChangesUserDeleted(t *testing.T) {
+	// A forgotten or purged user must be reported so the partner can remove
+	// their copy — the id is all they need.
+	prefix := uniquePrefix("changes_del")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	userID := CreateTestUser(t, prefix, "User")
+
+	// The user is gone entirely — as they would be after a purge. The tombstone
+	// is the only thing left, and it must still produce a change.
+	db.Exec("DELETE FROM users WHERE id = ?", userID)
+	db.Exec("INSERT INTO users_deletions (userid, timestamp, type, reason) VALUES (?, NOW(), 'Purged', 'Test')", userID)
+	defer db.Exec("DELETE FROM users_deletions WHERE userid = ?", userID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	users := changes["users"].([]interface{})
+
+	found := false
+	for _, u := range users {
+		user := u.(map[string]interface{})
+		if uint64(user["id"].(float64)) == userID {
+			assert.Equal(t, "Deleted", user["type"], "a destroyed user must be reported as Deleted")
+			lu, ok := user["lastupdated"].(string)
+			assert.True(t, ok, "deleted users must carry a timestamp")
+			assert.Contains(t, lu, "T", "lastupdated should be ISO8601 format")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Expected deleted user in changes")
+}
+
+func TestChangesUserDeletedRespectsSince(t *testing.T) {
+	// Old tombstones must not be replayed to a partner that has already caught up.
+	prefix := uniquePrefix("changes_del_since")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	userID := CreateTestUser(t, prefix, "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
+
+	db.Exec("INSERT INTO users_deletions (userid, timestamp, type, reason) VALUES (?, DATE_SUB(NOW(), INTERVAL 2 DAY), 'Forgotten', 'Test')", userID)
+	defer db.Exec("DELETE FROM users_deletions WHERE userid = ?", userID)
+
+	// Default window is the last hour, so a two-day-old deletion is not in it.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	users := changes["users"].([]interface{})
+
+	for _, u := range users {
+		user := u.(map[string]interface{})
+		if uint64(user["id"].(float64)) == userID {
+			assert.NotEqual(t, "Deleted", user["type"], "a deletion older than since must not be reported")
+		}
+	}
+
+	// Widen the window and it should appear.
+	since := time.Now().Add(-72 * time.Hour).Format(time.RFC3339)
+	req = httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s&since=%s", partnerKey, since), nil)
+	resp, err = getApp().Test(req, -1)
+	require.NoError(t, err)
+
+	json2.Unmarshal(rsp(resp), &result)
+	changes = result["changes"].(map[string]interface{})
+	users = changes["users"].([]interface{})
+
+	found := false
+	for _, u := range users {
+		user := u.(map[string]interface{})
+		if uint64(user["id"].(float64)) == userID && user["type"] == "Deleted" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Expected deletion within the since window")
+}
+
 func TestChangesRatingHasIdAndTnRatingId(t *testing.T) {
 	// Ratings must include id and tn_rating_id fields.
 	prefix := uniquePrefix("changes_rid")
