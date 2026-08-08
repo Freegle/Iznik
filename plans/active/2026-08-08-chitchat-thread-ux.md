@@ -80,20 +80,21 @@ flash-fade arrival highlight, combined-block pin fix.
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| A1 | Go test: seenwatermark on Single (4 cases) | 🔄 | RED proven with count-variant test (suite failed exactly 1/3941); rewriting test to target Single per design |
-| A2 | Go impl: helper + field in Single | ⬜ | |
-| B1 | Store spec: watermark capture via addItems | ⬜ | rewrite my count-based draft spec |
-| B2 | Store impl | ⬜ | |
-| B3 | Page: unconditional snapshot + delayed seen | ⬜ | |
-| C1 | NewsReplies: collapse-on-deeplink + target exemption specs | ⬜ | rewrite 1 bypass test |
-| C2 | NewsReplies impl | ⬜ | |
-| C3 | Divider component + placement specs + impl | ⬜ | |
-| D1 | NewsReply flash highlight + combined pin specs + impl | ⬜ | |
-| D2 | NewsThread divider pin + targetGone notice specs + impl | ⬜ | |
-| E1 | Feed context CTA specs + impl | ⬜ | |
-| F1 | eslint changed files | ⬜ | |
-| F2 | Full vitest suite via status API | ⬜ | port 12386 |
-| F3 | Browser verify in worktree (before/after, mobile) | ⬜ | seed long thread |
-| F4 | Docs freshness | ⬜ | check covers: |
-| G1 | Go suite GREEN | ⬜ | never concurrent with vitest |
-| G2 | Push + PR | ⬜ | |
+| A1 | Go test: seenwatermark on Single (4 cases) | ✅ | RED proven (count-variant failed exactly 1/3941); test moved to Single per design |
+| A2 | Go impl: helper + field in Single | ✅ | seenWatermarkFor shared with Count |
+| B1 | Store spec: watermark capture via addItems | ✅ | RED 5 fail then GREEN 64/64 |
+| B2 | Store impl | ✅ | watermarkCaptured, first-write-wins, recursion-safe |
+| B3 | Page: baseline before fetch + delayed seen everywhere | ✅ | RED 2 fail then GREEN; later split feed/thread (see below) |
+| C1 | NewsReplies: collapse-on-deeplink + target exemption specs | ✅ | RED 6 fail |
+| C2 | NewsReplies impl | ✅ | GREEN 43/43 |
+| C3 | Divider component + placement specs + impl | ✅ | GREEN 3/3 + placement tests |
+| D1 | NewsReply flash highlight + combined pin specs + impl | ✅ | GREEN 56/56 |
+| D2 | NewsThread divider pin + targetGone notice specs + impl | ✅ | GREEN 121/121; DOM is authority for targetGone |
+| E1 | Feed context CTA specs + impl | ✅ | GREEN; suppressed children behind counted links |
+| E2 | REGRESSION found in browser: SPA feed->thread wiped pills | ✅ | ensureSeenBaselineForThreadView; keeps session baseline; GREEN 66/66 + 14/14 |
+| F1 | eslint changed files | ✅ | clean (fixed 7, incl. pre-existing) |
+| F2 | Full vitest suite via status API | 🔄 | first run 709 files / 15014 pass pre-E2; final rerun in flight (sweeper interrupted; containers resynced) |
+| F3 | Browser verify in worktree (before/after, mobile+desktop) | ✅ | seeded 27-reply thread; feed card, divider landing, deep-link flash, CTA nav all verified; screenshots in scratchpad |
+| F4 | Docs freshness | ✅ | OK, 47 pages checked, no covered path touched |
+| G1 | Go suite GREEN | ⬜ | after vitest, never concurrent |
+| G2 | Push + PR with before/after screenshots | ⬜ | orphan assets branch for images |
