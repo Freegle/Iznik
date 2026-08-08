@@ -93,8 +93,8 @@ flash-fade arrival highlight, combined-block pin fix.
 | E1 | Feed context CTA specs + impl | ✅ | GREEN; suppressed children behind counted links |
 | E2 | REGRESSION found in browser: SPA feed->thread wiped pills | ✅ | ensureSeenBaselineForThreadView; keeps session baseline; GREEN 66/66 + 14/14 |
 | F1 | eslint changed files | ✅ | clean (fixed 7, incl. pre-existing) |
-| F2 | Full vitest suite via status API | 🔄 | first run 709 files / 15014 pass pre-E2; final rerun in flight (sweeper interrupted; containers resynced) |
+| F2 | Full vitest suite via status API | ✅ | 709 files / 15,016 passed / 0 failed |
 | F3 | Browser verify in worktree (before/after, mobile+desktop) | ✅ | seeded 27-reply thread; feed card, divider landing, deep-link flash, CTA nav all verified; screenshots in scratchpad |
 | F4 | Docs freshness | ✅ | OK, 47 pages checked, no covered path touched |
-| G1 | Go suite GREEN | ⬜ | after vitest, never concurrent |
-| G2 | Push + PR with before/after screenshots | ⬜ | orphan assets branch for images |
+| G1 | Go suite GREEN | ✅ | 3,941 passed / 0 failed; TestNewsfeedSingleReturnsSeenWatermark PASS |
+| G2 | Push + PR with before/after screenshots | ✅ | PR #1292; true A/B captured by swapping master components into the container |
