@@ -146,6 +146,14 @@ class MaxReachService
             ->select('msgid', 'lat', 'lng', 'schedule')
             ->whereNull('max_polygon')
             ->whereNotNull('schedule')
+            // Only posts still expanding: a done post's current reach IS its
+            // eventual reach, so no reply to it can be held inside max_polygon
+            // and filling one buys nothing. Without this filter the pass,
+            // having covered every live post, spent its whole routing budget
+            // for days working through completed history (observed 2026-08-08:
+            // 320 fills/run against status=done rows after the live backlog
+            // emptied).
+            ->where('status', 'expanding')
             ->orderByDesc('updated_at')
             ->limit($limit)
             ->get()
