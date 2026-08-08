@@ -41,9 +41,9 @@ spreadsheets.
 | 6 | Laravel: expiry reminder command + mail + tests | ✅ | `partnerships:reminders`, 18 Laravel tests green |
 | 7 | Frontend: API + store + page + components + menu | ✅ | |
 | 8 | Vitest tests | ✅ | 83 green |
-| 9 | Run Go / Laravel / vitest suites | 🔄 | Laravel + vitest green; final Go run in flight |
-| 10 | Live DB | ✅ | Team + members + logins already existed - see below |
-| 11 | Docs + PR | 🔄 | |
+| 9 | Run Go / Laravel / vitest suites | ✅ | Go 3992✓, Laravel 18✓, vitest 84✓ |
+| 10 | Live DB | ✅ | Tables created; team + members + logins already existed - see below |
+| 11 | Docs + PR | ✅ | PR #1291 |
 
 ## Bugs this turned up along the way
 
@@ -69,5 +69,6 @@ Checked over the tunnel before changing anything, and the intended state was alr
   member's account uses a personal address, and the shared account uses a different
   `@ilovefreegle.org` one. Left as-is rather than guessing at mail routing.
 
-The only outstanding live change is creating the `partnerships*` tables, which the production
-SQL twins alongside the migrations do.
+The `partnerships*` tables have been created on live from the production SQL twins alongside
+the migrations: seven tables, eight foreign keys, `content` as MEDIUMBLOB. Nothing reads or
+writes them until the code deploys.
