@@ -43,6 +43,12 @@ class ScoutServiceTest extends TestCase
             'freegle.firstreply.scouts.quiet_minutes' => 0,
             'freegle.firstreply.scouts.max_per_post' => 10,
             'freegle.firstreply.scouts.min_score' => 1.0,
+            // The run() waking-hours gate (shared with the ripple) would zero
+            // every test that happens to execute overnight - CI runs at all
+            // hours. Hold the window open; the gate itself is pinned by
+            // test_scouts_sleep_outside_waking_hours.
+            'freegle.ripple.active_start_hour' => 0,
+            'freegle.ripple.active_end_hour' => 24,
         ]);
     }
 
@@ -360,6 +366,27 @@ class ScoutServiceTest extends TestCase
         $this->savedSearchFor($searcher);
 
         $this->assertSame(0, $this->service()->run()['mailed']);
+        $this->assertSame([], $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_scouts_sleep_outside_waking_hours(): void
+    {
+        // A frequent scout is a digest brought forward, and no digest goes out
+        // at 3am (observed live before the gate existed). Narrow the window to
+        // exclude the current hour and the run must not even look.
+        $hour = (int) now()->format('G');
+        config([
+            'freegle.ripple.active_start_hour' => ($hour + 2) % 24,
+            'freegle.ripple.active_end_hour' => ($hour + 3) % 24,
+        ]);
+
+        $message = $this->seedSilentOffer();
+        $searcher = $this->memberAt(51.9, 0.8);
+        $this->savedSearchFor($searcher);
+
+        $stats = $this->service()->run();
+
+        $this->assertSame(0, $stats['considered'], 'outside waking hours the run must not even look');
         $this->assertSame([], $this->scoutsFor((int) $message->id));
     }
 
