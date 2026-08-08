@@ -877,7 +877,11 @@ type postChatMessageModerationParams struct {
 // Get changes since timestamp
 //
 // Returns message changes (deleted, edited, promised, reneged, outcomes, approved/reposted),
-// user changes, and ratings since a given time. Requires partner key authentication.
+// user changes and ratings since a given time. Requires partner key authentication.
+//
+// Each user change carries a type: Modified means the profile has changed and should be
+// re-read; Deleted means the user has been forgotten or purged and their copy should be
+// removed, for which the id is all that is supplied.
 //
 // Parameters:
 //   + name: since

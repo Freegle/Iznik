@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Helpers\MailHelper;
 use App\Models\Message;
 use App\Models\User;
+use App\Models\UserDeletion;
 use App\Models\UserEmail;
 use App\Traits\ChunkedProcessing;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,15 @@ class UserManagementService
      * Chunk size for batch operations.
      */
     protected int $chunkSize = 1000;
+
+    /**
+     * How long we keep a users_deletions tombstone.
+     *
+     * Partners poll /api/changes for what has moved since a timestamp, typically
+     * every few minutes. Three months is far longer than any sane catch-up window
+     * after an outage, and keeps the table small enough to stay uninteresting.
+     */
+    public const DELETION_RETENTION_DAYS = 90;
 
     private LokiService $lokiService;
 
@@ -168,6 +178,7 @@ class UserManagementService
      *   2. Forget inactive users (no memberships, no activity in 6 months, no logs in 90 days)
      *   3. Process GDPR forgets (users deleted > 14 days ago)
      *   4. Hard-delete fully forgotten users with no remaining messages
+     *   5. Prune deletion tombstones older than any partner would poll for
      *
      * @param  bool  $dryRun  If true, count what would be affected but don't modify data.
      * @param  int|null  $limit  Max users to process per phase. Each forget is ~20 DB
@@ -181,12 +192,14 @@ class UserManagementService
             'inactive_users_forgotten' => 0,
             'gdpr_forgets_processed' => 0,
             'forgotten_users_deleted' => 0,
+            'deletion_records_pruned' => 0,
         ];
 
         $stats['yahoo_users_deleted'] = $this->deleteYahooGroupsUsers($dryRun);
         $stats['inactive_users_forgotten'] = $this->forgetInactiveUsers($dryRun, $limit);
         $stats['gdpr_forgets_processed'] = $this->processForgets($dryRun, $limit);
         $stats['forgotten_users_deleted'] = $this->deleteFullyForgottenUsers($dryRun, $limit);
+        $stats['deletion_records_pruned'] = $this->pruneDeletions($dryRun);
 
         Log::info('User cleanup completed', $stats);
 
@@ -218,6 +231,8 @@ class UserManagementService
 
                 // Hard delete the user.
                 DB::table('users')->where('id', $userId)->delete();
+
+                UserDeletion::record($userId, UserDeletion::TYPE_PURGED, 'Yahoo Groups user');
             }
         }
 
@@ -425,6 +440,9 @@ class UserManagementService
             'text' => $reason,
             'timestamp' => now(),
         ]);
+
+        // Tell partners, who mirror our users and can only find out by polling.
+        UserDeletion::record($userId, UserDeletion::TYPE_FORGOTTEN, $reason);
     }
 
     /**
@@ -460,6 +478,8 @@ class UserManagementService
                 // Hard delete the user.
                 DB::table('users')->where('id', $user->id)->delete();
 
+                UserDeletion::record($user->id, UserDeletion::TYPE_PURGED, 'Fully forgotten');
+
                 $processed++;
                 if ($processed % 1000 === 0) {
                     Log::info("Deleted {$processed} / {$count} fully forgotten users");
@@ -468,6 +488,24 @@ class UserManagementService
         }
 
         return $count;
+    }
+
+    /**
+     * Drop deletion tombstones that no partner could still be asking about.
+     *
+     * @return int Rows removed (or that would be removed, on a dry run).
+     */
+    public function pruneDeletions(bool $dryRun = FALSE): int
+    {
+        $cutoff = now()->subDays(self::DELETION_RETENTION_DAYS);
+
+        $query = UserDeletion::where('timestamp', '<', $cutoff);
+
+        if ($dryRun) {
+            return $query->count();
+        }
+
+        return $query->delete();
     }
 
     /**
