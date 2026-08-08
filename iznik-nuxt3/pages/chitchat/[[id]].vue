@@ -154,6 +154,7 @@
                 <NewsThread
                   :id="entry?.id"
                   :scroll-to="id"
+                  :context="id ? 'thread' : 'feed'"
                   :duplicate-count="getDuplicateCount(entry?.id)"
                   @rendered="rendered"
                   @expand-duplicates="expandDuplicates"
@@ -627,14 +628,10 @@ onMounted(() => {
   runCheck()
   initializeLocation()
 
-  // For feed view (not thread view), set up delayed seen marking.
-  if (!id) {
-    // Snapshot what was seen before visiting.
-    newsfeedStore.snapshotSeenBeforeVisit()
-
-    // Start 30s timer to mark as seen.
-    newsfeedStore.startDelayedSeen(30000)
-  }
+  // Start 30s timer to mark as seen. The baseline snapshot itself happens
+  // before the fetch dispatch below - on every view, not just the feed - so
+  // a notification deep link cannot instantly mark the whole thread seen.
+  newsfeedStore.startDelayedSeen(30000)
 })
 
 onBeforeUnmount(() => {
@@ -653,6 +650,12 @@ onBeforeUnmount(() => {
 // Initial data loading
 const settings = me.value?.settings
 distance.value = settings?.newsfeedarea || 0
+
+// Snapshot the seen baseline BEFORE any fetch is dispatched, on every view.
+// This flips delayedSeenMode on so the fetches below cannot fire an instant
+// Seen POST, and sets the fallback baseline that the first server
+// seenwatermark response then overwrites (see stores/newsfeed.js addItems).
+newsfeedStore.snapshotSeenBeforeVisit()
 
 // Fetch data if user is logged in
 if (me.value) {

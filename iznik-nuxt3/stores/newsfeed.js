@@ -29,6 +29,9 @@ export const useNewsfeedStore = defineStore({
 
     // Timer ID for delayed seen marking.
     delayedSeenTimer: null,
+    // Whether this visit's baseline has been set from a server seenwatermark.
+    // First-write-wins per visit; reset by snapshotSeenBeforeVisit().
+    watermarkCaptured: false,
   }),
   actions: {
     init(config) {
@@ -48,7 +51,22 @@ export const useNewsfeedStore = defineStore({
       this.count = ret?.count || 0
       return this.count
     },
-    addItems(items) {
+    addItems(items, fromRecursion) {
+      // The server stamps its per-user seen watermark on the top-level item of
+      // GET /newsfeed/<id>. The FIRST one to arrive this visit becomes the
+      // "new since your last visit" baseline - before the auto-seen POST below
+      // can advance the server watermark past it. Recursed calls (nested
+      // replies) never capture: the field is only meaningful on the top level.
+      if (!fromRecursion && !this.watermarkCaptured) {
+        for (const item of items) {
+          if (typeof item.seenwatermark === 'number') {
+            this.seenBeforeVisit = item.seenwatermark
+            this.watermarkCaptured = true
+            break
+          }
+        }
+      }
+
       const prevMax = this.maxSeen
 
       items.forEach((item) => {
@@ -61,7 +79,7 @@ export const useNewsfeedStore = defineStore({
         if (item.replies?.length) {
           item.replies.forEach((reply) => {
             if (typeof reply === 'object') {
-              this.addItems([reply])
+              this.addItems([reply], true)
             }
           })
         }
@@ -91,9 +109,14 @@ export const useNewsfeedStore = defineStore({
     },
     snapshotSeenBeforeVisit() {
       // Capture what was seen before visiting the page.
-      // This is used to show the "you're up to date" divider.
+      // This is used to show the "you're up to date" divider and per-reply
+      // "New" pills. The session maxSeen is only a fallback baseline: the
+      // first server seenwatermark to arrive (see addItems) overwrites it,
+      // which is what makes "new since your last visit" survive a fresh page
+      // load, where maxSeen starts at 0.
       this.seenBeforeVisit = this.maxSeen
       this.delayedSeenMode = true
+      this.watermarkCaptured = false
     },
     startDelayedSeen(delayMs = 30000) {
       // Start a timer to mark items as seen after delay.

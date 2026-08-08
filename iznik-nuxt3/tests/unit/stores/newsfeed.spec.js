@@ -139,6 +139,70 @@ describe('newsfeed store', () => {
       await store.fetchCount('nearby', false)
       expect(mockCount).toHaveBeenCalledWith('nearby', false)
     })
+
+  })
+
+  describe('server watermark capture', () => {
+    let store
+
+    beforeEach(() => {
+      store = useNewsfeedStore()
+      store.init({ public: {} })
+    })
+
+    it('captures the first seenwatermark into seenBeforeVisit', () => {
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100, seenwatermark: 42 }])
+
+      expect(store.seenBeforeVisit).toBe(42)
+      expect(store.watermarkCaptured).toBe(true)
+    })
+
+    it('freezes the baseline after the first capture', () => {
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100, seenwatermark: 42 }])
+      store.addItems([{ id: 200, seenwatermark: 99 }])
+
+      expect(store.seenBeforeVisit).toBe(42)
+    })
+
+    it('leaves the snapshot fallback in place when no watermark arrives', () => {
+      store.maxSeen = 55
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100 }])
+
+      expect(store.seenBeforeVisit).toBe(55)
+    })
+
+    it('does not treat a watermark on a nested reply as the baseline', () => {
+      store.snapshotSeenBeforeVisit()
+      store.addItems([
+        { id: 100, replies: [{ id: 101, seenwatermark: 42 }] },
+      ])
+
+      expect(store.seenBeforeVisit).toBe(0)
+      expect(store.watermarkCaptured).toBe(false)
+    })
+
+    it('captures before the auto-seen POST can fire', () => {
+      // Not in delayed mode: addItems would normally POST seen immediately.
+      // The capture must still win the race and set the baseline first.
+      mockSeen.mockResolvedValue({})
+      mockCount.mockResolvedValue({ count: 0 })
+      store.addItems([{ id: 100, seenwatermark: 42 }])
+
+      expect(store.seenBeforeVisit).toBe(42)
+      expect(mockSeen).toHaveBeenCalledWith(100)
+    })
+
+    it('snapshotSeenBeforeVisit resets the capture flag for a new visit', () => {
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100, seenwatermark: 42 }])
+      expect(store.watermarkCaptured).toBe(true)
+
+      store.snapshotSeenBeforeVisit()
+      expect(store.watermarkCaptured).toBe(false)
+    })
   })
 
   describe('addItems', () => {
