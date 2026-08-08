@@ -135,6 +135,17 @@ class ScoutService
             return $stats;
         }
 
+        // Same waking-hours window the ripple's own expansion respects (and
+        // for the same reason): a frequent scout is somebody's daily digest
+        // brought FORWARD, and no digest goes out at half past midnight -
+        // observed live before this gate existed. An overnight silent post
+        // simply waits for 06:00, which still beats the digest it replaces.
+        $hour = (int) now()->format('G');
+        if ($hour < (int) config('freegle.ripple.active_start_hour', 6)
+            || $hour >= (int) config('freegle.ripple.active_end_hour', 23)) {
+            return $stats;
+        }
+
         $cfg = $this->scoutConfig();
 
         foreach ($this->silentPosts($cfg) as $post) {
