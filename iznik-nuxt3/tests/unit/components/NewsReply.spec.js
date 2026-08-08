@@ -241,6 +241,10 @@ describe('NewsReply', () => {
             template: '<span class="user-name"></span>',
             props: ['id', 'intro'],
           },
+          'nuxt-link': {
+            template: '<a class="nuxt-link-stub" :href="to"><slot /></a>',
+            props: ['to'],
+          },
         },
       },
     })
@@ -518,20 +522,68 @@ describe('NewsReply', () => {
   })
 
   describe('scroll to', () => {
-    it('highlights when scrollTo matches id', () => {
+    it('highlights the deep-link target', () => {
       const wrapper = createWrapper({ scrollTo: '100' })
-      expect(wrapper.find('.bg-info').exists()).toBe(true)
+      expect(wrapper.find('.deep-link-target').exists()).toBe(true)
     })
 
     it('does not highlight when scrollTo does not match', () => {
       const wrapper = createWrapper({ scrollTo: '200' })
-      expect(wrapper.find('.bg-info').exists()).toBe(false)
+      expect(wrapper.find('.deep-link-target').exists()).toBe(false)
+    })
+
+    it('highlights when the target is a later message in a combined block', () => {
+      const combinedReply = {
+        ...mockReply,
+        isCombined: true,
+        combinedIds: [100, 102],
+      }
+      const wrapper = createWrapper(
+        { scrollTo: '102', replyData: combinedReply },
+        combinedReply
+      )
+      expect(wrapper.find('.deep-link-target').exists()).toBe(true)
     })
 
     it('does not start a pin itself - NewsThread owns the deep-link pin', async () => {
       const wrapper = createWrapper({ scrollTo: '' })
       await wrapper.setProps({ scrollTo: '100' })
       expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('suppressed children (feed context)', () => {
+    it('replaces its nested list with a counted link', () => {
+      const withNested = { ...mockReply, replies: [{ id: 456 }, { id: 457 }] }
+      const wrapper = createWrapper({ suppressChildren: true }, withNested)
+
+      expect(wrapper.find('.news-replies').exists()).toBe(false)
+      const link = wrapper.find('.view-child-replies')
+      expect(link.exists()).toBe(true)
+      expect(link.text()).toContain('View 2 replies')
+      expect(link.attributes('href')).toBe('/chitchat/100')
+    })
+
+    it('uses the singular for one nested reply', () => {
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({ suppressChildren: true }, withNested)
+
+      expect(wrapper.find('.view-child-replies').text()).toContain(
+        'View 1 reply'
+      )
+    })
+
+    it('reports its subtree complete on mount when children are suppressed', () => {
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({ suppressChildren: true }, withNested)
+
+      expect(wrapper.emitted('subtree-rendered')).toBeTruthy()
+      expect(wrapper.emitted('subtree-rendered')[0]).toEqual([100])
+    })
+
+    it('shows no link when there are no children', () => {
+      const wrapper = createWrapper({ suppressChildren: true })
+      expect(wrapper.find('.view-child-replies').exists()).toBe(false)
     })
   })
 
@@ -576,6 +628,21 @@ describe('NewsReply', () => {
       const wrapper = createWrapper()
       expect(wrapper.emitted('rendered')).toBeTruthy()
       expect(wrapper.emitted('rendered')[0]).toEqual([100])
+    })
+
+    it('announces every id in a combined block on mount', () => {
+      // The deep-link pin in NewsThread listens for the target id. A combined
+      // block only mounts one component (keyed by its first id), so it must
+      // announce the later ids too or a deep link to them never pins.
+      const combinedReply = {
+        ...mockReply,
+        isCombined: true,
+        combinedIds: [100, 102],
+      }
+      const wrapper = createWrapper({ replyData: combinedReply }, combinedReply)
+      const announced = wrapper.emitted('rendered').map((args) => args[0])
+      expect(announced).toContain(100)
+      expect(announced).toContain(102)
     })
 
     it('forwards rendered events from nested replies (depth 2+)', async () => {

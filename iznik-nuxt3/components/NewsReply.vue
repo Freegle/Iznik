@@ -1,5 +1,5 @@
 <template>
-  <div :class="{ 'bg-info': scrollToThis }">
+  <div :class="{ 'deep-link-target': scrollToThis }">
     <div v-if="mod || myid === reply.userid || !reply.hidden" class="reply">
       <!-- More actions dropdown - positioned at top right of reply -->
       <button
@@ -173,7 +173,7 @@
          depth 2+ replies mounting. When the nested list reports that its
          whole subtree has mounted, this reply's subtree is complete too. -->
     <NewsReplies
-      v-if="reply?.replies?.length"
+      v-if="reply?.replies?.length && !suppressChildren"
       :id="id"
       :threadhead="threadhead"
       :scroll-to="scrollTo"
@@ -182,6 +182,13 @@
       @rendered="$emit('rendered', $event)"
       @subtree-rendered="$emit('subtree-rendered', id)"
     />
+    <nuxt-link
+      v-else-if="reply?.replies?.length && suppressChildren"
+      :to="'/chitchat/' + id"
+      class="view-child-replies"
+    >
+      View {{ childCount }} {{ childCount === 1 ? 'reply' : 'replies' }}
+    </nuxt-link>
     <div v-if="showReplyBox" class="mb-2 pb-1 ms-4">
       <div v-if="enterNewLine" class="w-100">
         <OurAtTa
@@ -386,6 +393,13 @@ const props = defineProps({
     type: Number,
     required: true,
   },
+  // Feed cards keep nested conversations behind a counted link instead of
+  // rendering them inline (set by NewsReplies in feed context).
+  suppressChildren: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
 const emit = defineEmits(['rendered', 'subtree-rendered', 'expand-combined'])
@@ -497,8 +511,26 @@ const threadUsers = computed(() => {
 })
 
 const scrollToThis = computed(() => {
-  return parseInt(props.scrollTo) === props.id
+  const target = parseInt(props.scrollTo)
+  if (!target) return false
+  if (target === props.id) return true
+  // A combined block renders as one component keyed by its first id; a deep
+  // link to any of the later messages must still light this row up.
+  return !!reply.value?.combinedIds?.includes(target)
 })
+
+// Recursive size of this reply's nested conversation, for the counted link
+// shown when children are suppressed (feed context).
+function countNested(r) {
+  let total = 0
+  for (const kid of r?.replies || []) {
+    const child = typeof kid === 'object' ? kid : newsfeedStore.byId(kid)
+    total += 1 + countNested(child)
+  }
+  return total
+}
+
+const childCount = computed(() => countNested(reply.value))
 
 const isNew = computed(() => {
   const seenBefore = newsfeedStore.seenBeforeVisit
@@ -546,10 +578,19 @@ onMounted(() => {
   // rendered.  The deep-link scroll in NewsThread is driven by these events.
   emit('rendered', props.id)
 
+  // A combined block mounts once, keyed by its first id. Announce the later
+  // ids too, or a deep link to one of them never triggers the pin.
+  for (const cid of reply.value?.combinedIds || []) {
+    if (cid !== props.id) {
+      emit('rendered', cid)
+    }
+  }
+
   // Completion signal for the deep-link pin: a reply with no children IS its
   // whole subtree. With children, the nested <NewsReplies> reports when all
   // of them (recursively) have mounted - forwarded below in the template.
-  if (!reply.value?.replies?.length) {
+  // Suppressed children (feed context) never mount, so nothing to wait for.
+  if (!reply.value?.replies?.length || props.suppressChildren) {
     emit('subtree-rendered', props.id)
   }
 })
@@ -1008,5 +1049,50 @@ function showReplyPhotoModal() {
   vertical-align: middle;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+
+/* Counted stand-in for a suppressed nested conversation (feed context).
+   Full-width and comfortably tappable. */
+.view-child-replies {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  width: 100%;
+  padding: 0.25rem 0 0.25rem 1rem;
+  color: $color-success;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $color-success;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+/* The reply a notification deep link points at. A brief flash draws the eye
+   on arrival, settling to a soft resting tint so the row stays identifiable.
+   Under reduced motion the flash is skipped but the resting cue remains. */
+.deep-link-target {
+  background-color: rgba($color-success-bg, 0.6);
+  border-radius: 4px;
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: deep-link-flash 2.4s ease-out;
+  }
+}
+
+@keyframes deep-link-flash {
+  0% {
+    background-color: $color-success-border;
+  }
+  100% {
+    background-color: rgba($color-success-bg, 0.6);
+  }
 }
 </style>
