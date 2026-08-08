@@ -169,9 +169,36 @@ func TestFirstReplyPassthrough_RespectsTheRolloutPercentage(t *testing.T) {
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
 	assert.True(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
 
-	// A partial rollout agrees with msgid % 100, the same bucket the batch app uses.
+	// A partial rollout agrees with the SHARED bucket, not with msgid % 100.
+	//
+	// This used to assert msgid % 100 < 50. Bucketing moved to
+	// CRC32(msgid|firstreply) % 100 in d4a069215 so the arms do not collide with
+	// other experiments split on the same id, and the assertion was left behind.
+	// The two expressions agree for about half of all ids, so the test passed or
+	// failed on whichever auto-increment id the fixture happened to get - a coin
+	// flip that looked like flakiness rather than a stale assertion.
 	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "50")
-	assert.Equal(t, msgID%100 < 50, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
+	assert.Equal(t, firstreply.RolloutBucket(msgID) < 50,
+		firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
+}
+
+// The bucket is a CROSS-STACK contract: Laravel's Rollout::includes uses
+// crc32($msgid . '|firstreply') % 100 and MySQL's CRC32() is the same
+// polynomial. If Go's expression drifts, a post lands in the trial for an
+// emailed reply and out of it for an in-app one, and the arms quietly stop
+// meaning anything - which no test comparing Go against Go would notice.
+//
+// So pin known values. These were computed independently of the Go code.
+func TestRolloutBucketMatchesTheOtherStacks(t *testing.T) {
+	for msgid, want := range map[uint64]int{
+		1:      69,
+		2:      93,
+		12345:  36,
+		999999: 99,
+	} {
+		assert.Equal(t, want, firstreply.RolloutBucket(msgid),
+			"bucket for msgid %d must match crc32('%d|firstreply') %% 100", msgid, msgid)
+	}
 }
 
 // The sysadmin metrics endpoint must actually answer, against the real schema.

@@ -1556,6 +1556,61 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		}
 	}
 
+	// The community the post being discussed actually lives on.
+	//
+	// The `groupid` on each row is the group through which the MODERATOR can act
+	// - the one the other member belongs to. That is not the same thing as where
+	// the post is, and moderators of many communities were having to click into
+	// each chat to work out whether it was theirs to handle: Discourse #10004,
+	// "I usually prefer to leave that for the mods on the group for the post.
+	// But I need to do a lot of clicking to work that out."
+	//
+	// Ordered rippled_in first so a rippled post reports the community it
+	// STARTED on rather than one it spread to - that origin group's moderators
+	// are the ones who know the post.
+	refmsgids := make([]uint64, 0, len(msgs))
+	seenRef := make(map[uint64]bool)
+	for _, m := range msgs {
+		if m.Refmsgid != nil && *m.Refmsgid > 0 && !seenRef[*m.Refmsgid] {
+			seenRef[*m.Refmsgid] = true
+			refmsgids = append(refmsgids, *m.Refmsgid)
+		}
+	}
+	type refGroupRow struct {
+		Msgid     uint64 `gorm:"column:msgid"`
+		ID        uint64 `gorm:"column:id"`
+		Nameshort string `gorm:"column:nameshort"`
+		Namefull  string `gorm:"column:namefull"`
+	}
+	refGroups := make(map[uint64][]fiber.Map)
+	if len(refmsgids) > 0 {
+		var refRows []refGroupRow
+		db.Table("messages_groups mg").
+			Select("mg.msgid, g.id, g.nameshort, COALESCE(g.namefull, '') AS namefull").
+			Joins("INNER JOIN `groups` g ON g.id = mg.groupid").
+			Where("mg.msgid IN ? AND mg.deleted = 0", refmsgids).
+			Order("mg.msgid, mg.rippled_in, mg.arrival").
+			Scan(&refRows)
+		// ALL the communities the post is on, not just the first. A rippled post
+		// is genuinely on several, and a moderator deciding whether a chat is
+		// theirs needs to see whether ANY of them is one of theirs - showing only
+		// the origin hides exactly the case where it is theirs by ripple. The
+		// ORDER carries the meaning instead: origin first (the query sorts on
+		// rippled_in, then arrival), so the community that knows the post reads
+		// first, the way group lists are shown elsewhere.
+		for _, r := range refRows {
+			namedisplay := r.Namefull
+			if namedisplay == "" {
+				namedisplay = r.Nameshort
+			}
+			refGroups[r.Msgid] = append(refGroups[r.Msgid], fiber.Map{
+				"id":          r.ID,
+				"nameshort":   r.Nameshort,
+				"namedisplay": namedisplay,
+			})
+		}
+	}
+
 	// Build response with inline chatroom info.
 	result := make([]fiber.Map, 0, len(msgs))
 	for _, m := range msgs {
@@ -1611,6 +1666,15 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		// Add msgid if the message came via email.
 		if m.Msgid != nil {
 			msg["msgid"] = *m.Msgid
+		}
+
+		// The communities the post itself is on, so a moderator can see at a
+		// glance whether a chat is theirs to handle (Discourse #10004). Origin
+		// first; a rippled post lists every community it reached.
+		if m.Refmsgid != nil {
+			if g, ok := refGroups[*m.Refmsgid]; ok && len(g) > 0 {
+				msg["refmsggroups"] = g
+			}
 		}
 
 		// Add held info if message is held by a moderator.
