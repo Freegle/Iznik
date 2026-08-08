@@ -492,6 +492,62 @@ describe('NewsReplies', () => {
       ).toBe('16')
     })
 
+    it('sits above an OLD parent that carries new nested replies', () => {
+      // Scattered case: someone replied to an old comment partway up the
+      // thread. The divider has to sit above that old parent, or it would
+      // claim "everything below is new" while new replies sat above it.
+      const replies = makeReplies(10, { startId: 10 })
+      const nestedNew = {
+        id: 99,
+        userid: 300,
+        displayname: 'Nested User',
+        message: 'New nested reply',
+        added: '2024-01-15T12:00:00Z',
+        deleted: false,
+        type: 'Reply',
+      }
+      replies[2].replies = [99] // id 12, old itself, new child
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        if (id === 99) return nestedNew
+        return replies.find((r) => r.id === id)
+      })
+      mockNewsfeedStore.seenBeforeVisit = 20
+
+      const wrapper = createWrapper()
+      const divider = wrapper.find('[data-unread-divider]')
+      expect(divider.exists()).toBe(true)
+      expect(
+        divider.element.nextElementSibling.getAttribute('data-reply-id')
+      ).toBe('12')
+    })
+
+    it('counts nested new replies so the total matches the feed link', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      const nestedNew = {
+        id: 99,
+        userid: 300,
+        displayname: 'Nested User',
+        message: 'New nested reply',
+        added: '2024-01-15T12:00:00Z',
+        deleted: false,
+        type: 'Reply',
+      }
+      replies[2].replies = [99]
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        if (id === 99) return nestedNew
+        return replies.find((r) => r.id === id)
+      })
+      // 18 and 19 are new at top level, plus the nested 99 = 3.
+      mockNewsfeedStore.seenBeforeVisit = 17
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('[data-unread-divider]').text()).toContain(
+        '3 new replies since your last visit'
+      )
+    })
+
     it('describes how many replies are new', () => {
       const replies = makeReplies(10, { startId: 10 })
       withReplies(replies)

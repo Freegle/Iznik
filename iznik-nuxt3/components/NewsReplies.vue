@@ -426,19 +426,19 @@ const feedMode = computed(() => {
   )
 })
 
-// The ONE unread divider (WhatsApp convention): before the first top-level
-// entry that is new, only when there is a genuine old/new split. Nested new
-// activity still gets pills and collapse exemptions, but never a divider.
+// The ONE unread divider (WhatsApp convention). It promises "everything new is
+// below here", so it sits above the first entry whose SUBTREE contains anything
+// new - not merely the first new top-level reply. Replies to an old comment
+// partway up the thread are new but live under an old parent, so anchoring on
+// the parent keeps that promise true and keeps the parent visible as context.
 const firstNewIndex = computed(() => {
   if (!seenBeforeVisit.value) return -1
-  return combinedReplies.value.findIndex((r) => isReplyNew(r))
+  return combinedReplies.value.findIndex((r) => subtreeHasNew(r))
 })
 
-const newCount = computed(() =>
-  firstNewIndex.value >= 0
-    ? combinedReplies.value.length - firstNewIndex.value
-    : 0
-)
+// Every new reply in the thread, nested ones included, so this number agrees
+// with the "View all N replies - M new" link that brought the reader here.
+const newCount = computed(() => treeCounts.value.fresh)
 
 const showDivider = computed(() => props.depth === 1 && firstNewIndex.value > 0)
 
