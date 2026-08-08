@@ -1,8 +1,10 @@
 ---
-last_reviewed: 2026-08-05
+last_reviewed: 2026-08-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/settings/**
+  - iznik-nuxt3/modtools/components/ModSettingsModConfig.vue
+  - iznik-nuxt3/modtools/composables/useModConfigPdf.js
   - iznik-nuxt3/modtools/pages/members/stories.vue
   - iznik-nuxt3/modtools/pages/communityevents/**
   - iznik-nuxt3/modtools/pages/admins.vue
@@ -53,6 +55,12 @@ A message can mark part of its wording as something you must fill in each time, 
 something optional, using `<editthis>` and `<optional>` tags. See
 [fill-in boxes and optional bits](02-moderating-posts.md#fill-in-boxes-and-optional-bits)
 for what a moderator then sees when they send it.
+
+**Export PDF** produces the whole set as one document: the general settings, the BCC
+settings for each queue, and every standard message with its wording and what sending it
+does. Useful for reviewing a set away from the screen, agreeing wording with your fellow
+volunteers, or handing a community over. It works on locked sets too, since you can
+already read and copy those.
 
 ## Stories and newsletters
 

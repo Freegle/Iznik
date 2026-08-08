@@ -163,6 +163,7 @@
     "floating-vue": "^5.2.2",
     "heic-to": "^1.5.2",
     "isomorphic-dompurify": "^3.18.0",
+    "jspdf": "^4.2.1",
     "jwt-decode": "^3.1.2",
     "leaflet": "^1.8.0",
     "leaflet-control-geocoder": "^1.13.0",
