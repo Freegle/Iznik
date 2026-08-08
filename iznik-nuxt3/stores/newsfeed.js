@@ -118,6 +118,18 @@ export const useNewsfeedStore = defineStore({
       this.delayedSeenMode = true
       this.watermarkCaptured = false
     },
+    ensureSeenBaselineForThreadView() {
+      // Thread and deep-link views need delayed-seen protection like the feed,
+      // but must NOT re-snapshot when the session already has a baseline: on a
+      // feed-to-thread navigation the store holds every fetched id, so a fresh
+      // snapshot from maxSeen would wipe the New pills the reader came to see.
+      this.delayedSeenMode = true
+
+      if (this.seenBeforeVisit === null) {
+        this.seenBeforeVisit = this.maxSeen
+        this.watermarkCaptured = false
+      }
+    },
     startDelayedSeen(delayMs = 30000) {
       // Start a timer to mark items as seen after delay.
       if (this.delayedSeenTimer) {

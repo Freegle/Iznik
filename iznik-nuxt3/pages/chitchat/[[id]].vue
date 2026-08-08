@@ -651,11 +651,17 @@ onBeforeUnmount(() => {
 const settings = me.value?.settings
 distance.value = settings?.newsfeedarea || 0
 
-// Snapshot the seen baseline BEFORE any fetch is dispatched, on every view.
-// This flips delayedSeenMode on so the fetches below cannot fire an instant
-// Seen POST, and sets the fallback baseline that the first server
-// seenwatermark response then overwrites (see stores/newsfeed.js addItems).
-newsfeedStore.snapshotSeenBeforeVisit()
+// Secure the seen baseline BEFORE any fetch is dispatched. This flips
+// delayedSeenMode on so the fetches below cannot fire an instant Seen POST.
+// The feed re-snapshots per visit (existing behaviour); a thread or deep-link
+// view keeps any session baseline so New pills survive feed-to-thread
+// navigation, and only snapshots on a cold load, where the first server
+// seenwatermark response then overwrites it (see stores/newsfeed.js).
+if (id) {
+  newsfeedStore.ensureSeenBaselineForThreadView()
+} else {
+  newsfeedStore.snapshotSeenBeforeVisit()
+}
 
 // Fetch data if user is logged in
 if (me.value) {

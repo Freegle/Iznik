@@ -202,6 +202,38 @@ describe('newsfeed store', () => {
     })
   })
 
+  describe('ensureSeenBaselineForThreadView', () => {
+    let store
+
+    beforeEach(() => {
+      store = useNewsfeedStore()
+      store.init({ public: {} })
+    })
+
+    it('keeps an existing session baseline so New pills survive feed-to-thread navigation', () => {
+      // The user read the feed (baseline captured), items filled the store,
+      // then they clicked "View all replies". Re-snapshotting from maxSeen
+      // here would wipe every New pill they came to see.
+      store.seenBeforeVisit = 19
+      store.watermarkCaptured = true
+      store.maxSeen = 28
+
+      store.ensureSeenBaselineForThreadView()
+
+      expect(store.seenBeforeVisit).toBe(19)
+      expect(store.watermarkCaptured).toBe(true)
+      expect(store.delayedSeenMode).toBe(true)
+    })
+
+    it('snapshots on a cold load so the server watermark can be captured', () => {
+      store.ensureSeenBaselineForThreadView()
+
+      expect(store.seenBeforeVisit).toBe(0)
+      expect(store.watermarkCaptured).toBe(false)
+      expect(store.delayedSeenMode).toBe(true)
+    })
+  })
+
   describe('addItems', () => {
     let store
 

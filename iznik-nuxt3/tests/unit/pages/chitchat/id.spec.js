@@ -57,6 +57,7 @@ const mockNewsfeedStore = {
   send: vi.fn(),
   byId: vi.fn(),
   snapshotSeenBeforeVisit: vi.fn(),
+  ensureSeenBaselineForThreadView: vi.fn(),
   startDelayedSeen: vi.fn(),
   markAllSeen: vi.fn(),
 }
@@ -336,18 +337,22 @@ describe('chitchat/[[id]].vue loadMore', () => {
   })
 
   describe('seen baseline', () => {
-    it('snapshots the baseline before dispatching the thread fetch on a deep link', async () => {
+    it('secures the baseline before dispatching the thread fetch on a deep link', async () => {
       routeState.params = { id: '456' }
       mountComponent()
       await flushPromises()
 
-      expect(mockNewsfeedStore.snapshotSeenBeforeVisit).toHaveBeenCalled()
+      expect(mockNewsfeedStore.ensureSeenBaselineForThreadView).toHaveBeenCalled()
       expect(mockNewsfeedStore.fetch).toHaveBeenCalled()
       // Order matters: delayedSeenMode must be on before the fetch's addItems
       // could fire an instant Seen POST for everything in the thread.
       expect(
-        mockNewsfeedStore.snapshotSeenBeforeVisit.mock.invocationCallOrder[0]
+        mockNewsfeedStore.ensureSeenBaselineForThreadView.mock
+          .invocationCallOrder[0]
       ).toBeLessThan(mockNewsfeedStore.fetch.mock.invocationCallOrder[0])
+      // The feed's own per-visit re-snapshot must NOT run here: it would wipe
+      // the baseline a feed-to-thread navigation is relying on.
+      expect(mockNewsfeedStore.snapshotSeenBeforeVisit).not.toHaveBeenCalled()
     })
 
     it('starts the delayed seen timer on a thread deep link', async () => {
