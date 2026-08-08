@@ -1764,6 +1764,12 @@ class User extends Model implements Auditable
         if (!$dryRun) {
             $log->save();
         }
+
+        // --- Tell partners, who mirror our users and can only find out by polling ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_deletions op=insert set=userid={$this->id},type=Forgotten");
+        if (!$dryRun) {
+            UserDeletion::record($this->id, UserDeletion::TYPE_FORGOTTEN, $reason);
+        }
     }
 
     /**

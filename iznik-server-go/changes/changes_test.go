@@ -78,6 +78,36 @@ func TestUserChange_NonNilLastUpdatedMarshal(t *testing.T) {
 	assert.Equal(t, val, m["lastupdated"])
 }
 
+func TestUserChange_TypeIsAlwaysPresent(t *testing.T) {
+	// Partners branch on type, so the key must be in the JSON even if we ever
+	// forget to set it.
+	b, err := json.Marshal(UserChange{ID: 7})
+	assert.NoError(t, err)
+
+	var m map[string]interface{}
+	assert.NoError(t, json.Unmarshal(b, &m))
+	_, present := m["type"]
+	assert.True(t, present, "type key must always be present in the JSON object")
+}
+
+func TestUserChange_DeletedTypeMarshal(t *testing.T) {
+	ts := "2026-03-15T14:30:00Z"
+	b, err := json.Marshal(UserChange{ID: 8, LastUpdated: &ts, Type: UserChangeDeleted})
+	assert.NoError(t, err)
+
+	var m map[string]interface{}
+	assert.NoError(t, json.Unmarshal(b, &m))
+	assert.Equal(t, float64(8), m["id"], "the id is all a partner needs to remove their copy")
+	assert.Equal(t, "Deleted", m["type"])
+}
+
+func TestUserChangeTypeValues(t *testing.T) {
+	// These strings are part of the partner API contract — changing them breaks
+	// TrashNothing's handling silently.
+	assert.Equal(t, "Modified", UserChangeModified)
+	assert.Equal(t, "Deleted", UserChangeDeleted)
+}
+
 // ---------------------------------------------------------------------------
 // Rating JSON marshaling
 // ---------------------------------------------------------------------------

@@ -1,3 +1,12 @@
+---
+last_reviewed: 2026-08-08
+owner: Freegle dev team
+covers:
+  - iznik-server-go/changes/**
+  - iznik-batch/app/Console/Commands/TrashNothing/**
+  - iznik-batch/app/Models/UserDeletion.php
+---
+
 # TrashNothing Integration Documentation
 
 This document describes how Freegle integrates with TrashNothing (TN), including technical details, user experience differences, synchronization mechanisms, and areas for improvement.
@@ -94,6 +103,42 @@ Syncs:
 - Username changes
 - Location updates
 - Account removal notifications
+
+### Changes Feed (TN pulls from Freegle)
+
+The traffic above goes TN to Freegle. The other direction is a single polling endpoint,
+`GET /api/changes?partner={key}&since={timestamp}` (Go, `iznik-server-go/changes/`),
+authenticated with a row in `partners_keys`. It answers "what has moved since?" with
+three arrays: `messages`, `users` and `ratings`. `since` defaults to an hour ago.
+
+Each entry in `users` carries a `type`:
+
+| type | Means | What the partner should do |
+|------|-------|----------------------------|
+| `Modified` | The user's profile has changed (`users.lastupdated` moved) | Re-read the user |
+| `Deleted` | The user has been forgotten or hard-deleted | Delete their copy - the `id` is all they get |
+
+`Deleted` entries are read from `users_deletions`, a tombstone table written by every
+path that destroys a user:
+
+- `UserManagementService::forgetUser()` - the GDPR wipe, reached from the 14-day limbo
+  expiry (`processForgets`), the inactive-user sweep, and support purges queued as
+  `user_forget` background tasks.
+- `User::forget()` - the Eloquent equivalent, used by the TN sync when TN tells us one
+  of their accounts has gone.
+- `UserManagementService::deleteFullyForgottenUsers()` and `deleteYahooGroupsUsers()` -
+  the hard deletes, where the `users` row itself goes.
+
+The tombstone exists precisely because `users` entries are otherwise derived from
+`users.lastupdated`, which needs a row to read. Without it a purged member simply stops
+appearing in the feed, and the partner keeps a copy of someone who asked to be gone.
+Rows have no foreign key to `users` for the same reason, and are pruned after
+`UserManagementService::DELETION_RETENTION_DAYS` (90 days), far longer than any partner
+catch-up window.
+
+Deletions are appended after the modified users, so a partner applying the array in
+order ends on the deletion rather than resurrecting a user who was also edited inside
+the same window.
 
 ### LoveJunk Offer Syndication
 
