@@ -10,6 +10,11 @@ const mockShowAboutMe = vi.fn()
 const mockMaybeReload = vi.fn()
 const mockBackButton = vi.fn()
 
+// Varied per test: the back button replaces the bell, so these two together
+// decide whether an unread notification is visible at all on a sub-page.
+const mockShowBackButton = ref(false)
+const mockBackButtonCount = ref(0)
+
 vi.mock('~/composables/useNavbar', () => ({
   useNavbar: () => ({
     online: ref(true),
@@ -20,8 +25,8 @@ vi.mock('~/composables/useNavbar', () => ({
     browseCount: ref(10),
     chatCount: ref(5),
     showAboutMeModal: ref(false),
-    showBackButton: ref(false),
-    backButtonCount: ref(0),
+    showBackButton: mockShowBackButton,
+    backButtonCount: mockBackButtonCount,
     requestLogin: mockRequestLogin,
     logout: mockLogout,
     showAboutMe: mockShowAboutMe,
@@ -139,8 +144,13 @@ vi.mock('vue', async (importOriginal) => {
 })
 
 describe('NavbarMobile', () => {
+  // Wrappers are shared-ref driven, so one left mounted after its test will try
+  // to re-render when the next test resets those refs - patching a torn-down
+  // tree throws inside Vue rather than in any test. Unmount them all instead.
+  const wrappers = []
+
   function createWrapper(props = {}) {
-    return mount(NavbarMobile, {
+    const wrapper = mount(NavbarMobile, {
       global: {
         stubs: {
           'b-navbar': {
@@ -149,8 +159,11 @@ describe('NavbarMobile', () => {
             props: ['type', 'fixed'],
           },
           'b-badge': {
-            template:
-              '<span class="b-badge" :class="variant">{{ $slots.default?.() }}</span>',
+            // Render the slot, don't interpolate it: {{ $slots.default?.() }}
+            // stringifies VNodes, and a VNode is circular, so any badge with
+            // content threw "Converting circular structure to JSON" instead of
+            // showing its count.
+            template: '<span class="b-badge" :class="variant"><slot /></span>',
             props: ['variant'],
           },
           'b-dropdown': {
@@ -206,6 +219,9 @@ describe('NavbarMobile', () => {
       },
       ...props,
     })
+
+    wrappers.push(wrapper)
+    return wrapper
   }
 
   beforeEach(() => {
@@ -219,6 +235,8 @@ describe('NavbarMobile', () => {
     mockBreakpoint.value = 'md'
     mockStickyAdRendered.value = false
     mockRoute.path = '/browse'
+    mockShowBackButton.value = false
+    mockBackButtonCount.value = 0
 
     // Mock window.scrollY
     Object.defineProperty(window, 'scrollY', { value: 0, writable: true })
@@ -229,6 +247,9 @@ describe('NavbarMobile', () => {
   })
 
   afterEach(() => {
+    while (wrappers.length) {
+      wrappers.pop().unmount()
+    }
     vi.restoreAllMocks()
   })
 
@@ -370,6 +391,36 @@ describe('NavbarMobile', () => {
     it('hides back button by default', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.nav-back-btn').exists()).toBe(false)
+    })
+
+    it('badges the back button with unread notifications, since the bell is gone', () => {
+      // A sub-page shows the back button INSTEAD of the bell, so this badge is
+      // the only sign a notification arrived - and the button carrying it is
+      // the way back to reading it.
+      mockShowBackButton.value = true
+      mockBackButtonCount.value = 4
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('.nav-back-btn').exists()).toBe(true)
+      expect(wrapper.find('.back-badge').text()).toBe('4')
+      expect(wrapper.find('.notification-options').exists()).toBe(false)
+    })
+
+    it('leaves the back button bare when nothing is unread', () => {
+      mockShowBackButton.value = true
+      mockBackButtonCount.value = 0
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('.nav-back-btn').exists()).toBe(true)
+      expect(wrapper.find('.back-badge').exists()).toBe(false)
+    })
+
+    it('shows the bell, not a back-button badge, on a home route', () => {
+      mockShowBackButton.value = false
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('.notification-options').exists()).toBe(true)
+      expect(wrapper.find('.back-badge').exists()).toBe(false)
     })
   })
 
