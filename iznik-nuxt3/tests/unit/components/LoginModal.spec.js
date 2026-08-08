@@ -646,7 +646,7 @@ describe('LoginModal', () => {
       mockForceLogin.value = true
     })
 
-    it('calls authStore.signUp with fullname, email and password', async () => {
+    it('calls authStore.signUp with displayname, email and password', async () => {
       const wrapper = createWrapper()
       await flushPromises()
 
@@ -666,8 +666,13 @@ describe('LoginModal', () => {
       })
       await flushPromises()
 
+      // The wire key must be "displayname" - PutUser's UserPutRequest
+      // (iznik-server-go/user/user.go) only reads json:"displayname". Sending
+      // "fullname" here left every native signup with an empty stored name,
+      // silently falling back to an invented name (see
+      // tests/e2e/test-profile-page.spec.js).
       expect(mockSignUp).toHaveBeenCalledWith({
-        fullname: 'Test User',
+        displayname: 'Test User',
         email: 'test@example.com',
         password: 'password123',
       })
