@@ -170,8 +170,10 @@
       <p class="text-muted small ms-2">
         A handful of likely-interested members told early about a post nobody
         has replied to. The three signals are shown separately on purpose:
-        <strong>wanted</strong> and <strong>search</strong> are things a member
-        asked for, <strong>frequent</strong> is only a guess, and if it does not
+        <strong>wanted</strong> is an outstanding post of theirs on the other
+        side of the trade, <strong>search</strong> is something they searched for
+        in the last six months - both things a member asked for -
+        <strong>frequent</strong> is only a guess, and if it does not
         convert it should not be spending mail. Each scout is counted under the
         <em>strongest</em> signal that picked them, so the frequent row means
         "frequent and nothing else" - which is the right denominator for deciding
@@ -341,9 +343,15 @@ const unsizedPassthroughs = computed(() =>
   stats.value ? stats.value.passthrough.unsized : 0
 )
 
+// "Recent search", not "saved search": nobody saves anything. Every search a
+// logged-in member runs writes a users_searches row (message.go's Search
+// handler), and SearchMatchesForPost matches against those, bounded to the last
+// six months. Labelled "saved search" this row read as a feature few people use,
+// so the page looked like it ignored what members had actually been searching
+// for - when that is exactly what this signal is.
 const SIGNAL_LABELS = {
-  wanted: 'Matching WANTED or OFFER',
-  search: 'Matching saved search',
+  wanted: 'Matching their WANTED or OFFER',
+  search: 'Matching a recent search',
   frequent: 'Frequent replier nearby',
 }
 
