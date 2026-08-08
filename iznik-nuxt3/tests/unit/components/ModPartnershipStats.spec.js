@@ -198,6 +198,35 @@ describe('ModPartnershipStats', () => {
     expect(store.fetchStatsJobs).toHaveBeenCalledTimes(1)
   })
 
+  it('says so when a download fails, rather than saving a broken spreadsheet', async () => {
+    store.statsJobs = [
+      {
+        id: 5,
+        authorityids: '10',
+        quarter: '3 months ago',
+        status: 'Ready',
+        requested: '2026-08-08 10:00:00',
+        files: [
+          { id: 1, filename: 'Freegle-Statistics-Northshire.xlsx', size: 2048 },
+        ],
+      },
+    ]
+
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 403 })
+
+    const wrapper = mountStats()
+    await flushPromises()
+
+    const link = wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('Freegle-Statistics'))
+    await link.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Could not download')
+    expect(wrapper.text()).toContain('403')
+  })
+
   it('deletes a job', async () => {
     store.statsJobs = [
       {

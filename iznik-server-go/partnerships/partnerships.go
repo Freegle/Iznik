@@ -884,8 +884,9 @@ func Summary(c *fiber.Ctx) error {
 	})
 }
 
-// detectGroups fills partnerships_groups from the authority's boundary overlap. Existing
-// rows are left alone, so groups added or removed by hand survive a later re-detect.
+// detectGroups fills partnerships_groups from the authority's boundary overlap. Groups added
+// by hand from outside the boundary are left alone; a group removed by hand that is still
+// inside the boundary does come back, which is the point of asking for a re-detect.
 func detectGroups(db *gorm.DB, partnershipid uint64, authorityid uint64) {
 	for _, g := range authority.GroupsForAuthority(authorityid) {
 		addGroup(db, partnershipid, g.ID)

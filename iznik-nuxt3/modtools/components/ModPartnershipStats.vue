@@ -31,6 +31,10 @@
       </b-col>
     </b-row>
 
+    <NoticeMessage v-if="downloadError" variant="danger" class="mb-2">
+      {{ downloadError }}
+    </NoticeMessage>
+
     <NoticeMessage v-if="!councilOptions.length" variant="info">
       Add a partnership first - the councils you have deals with are the ones
       you can generate statistics for here.
@@ -111,6 +115,7 @@ const runtimeConfig = useRuntimeConfig()
 const selected = ref([])
 const quarter = ref('3 months ago')
 const timer = ref(null)
+const downloadError = ref(null)
 
 const jobs = computed(() => partnershipsStore.statsJobs)
 
@@ -188,6 +193,14 @@ async function download(file) {
     { headers }
   )
 
+  if (!response.ok) {
+    // Without this an error response saves as a .xlsx that Excel then refuses to open,
+    // which looks like a broken spreadsheet rather than a failed download.
+    downloadError.value = `Could not download ${file.filename} (${response.status}).`
+    return
+  }
+
+  downloadError.value = null
   const url = URL.createObjectURL(await response.blob())
 
   try {
