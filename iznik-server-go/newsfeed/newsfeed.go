@@ -102,6 +102,11 @@ type Newsfeed struct {
 	Replies        []Newsfeed        `json:"replies" gorm:"-"`
 	Lovelist       []NewsLove        `json:"lovelist" gorm:"-"`
 	Previews       []NewsfeedPreview `json:"previews" gorm:"-"`
+	// The user's newsfeed_users high-water mark, set only on the top-level item
+	// returned by Single() so the client can baseline "new since my last visit"
+	// on any entry path (feed card or notification deep link) without an extra
+	// request. Never populated on nested replies.
+	SeenWatermark uint64 `json:"seenwatermark,omitempty" gorm:"-"`
 }
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
@@ -641,6 +646,20 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 	return ret
 }
 
+// seenWatermarkFor returns the user's newsfeed_users high-water mark - the
+// highest newsfeed id they have marked seen - or 0 when logged out or never
+// recorded. One-row indexed SELECT, shared by Single() and Count().
+func seenWatermarkFor(myid uint64) uint64 {
+	var seen uint64
+
+	if myid > 0 {
+		db := database.DBConn
+		db.Table("newsfeed_users").Select("newsfeedid").Where("userid = ?", myid).Row().Scan(&seen)
+	}
+
+	return seen
+}
+
 func Single(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
@@ -652,10 +671,12 @@ func Single(c *fiber.Ctx) error {
 		var wg sync.WaitGroup
 		var newsfeed Newsfeed
 		var replies = []Newsfeed{}
+		var seenWatermark uint64
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			seenWatermark = seenWatermarkFor(myid)
 		}()
 
 		wg.Add(1)
@@ -683,6 +704,7 @@ func Single(c *fiber.Ctx) error {
 
 		if newsfeed.ID > 0 {
 			newsfeed.Replies = replies
+			newsfeed.SeenWatermark = seenWatermark
 
 			if newsfeed.Replyto > 0 {
 				// We need to find the thread head.
@@ -1027,12 +1049,11 @@ func Count(c *fiber.Ctx) error {
 		ret = getFeed(myid, gotDistance, distance)
 	}()
 
-	db := database.DBConn
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
-		db.Table("newsfeed_users").Select("newsfeedid").Where("userid = ?", myid).Row().Scan(&seen)
+		seen = seenWatermarkFor(myid)
 	}()
 
 	wg.Wait()
