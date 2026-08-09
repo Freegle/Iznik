@@ -267,6 +267,18 @@ class GroupPostIngestionService
                 $locationId = $this->findClosestPostcodeId((float) $lat, (float) $lng);
             }
 
+            // The id came from the spatial index, which is a separate store and can
+            // outlive the row it points at - a purged or renumbered location leaves a
+            // stale entry behind. users.lastlocation is a foreign key, so writing an id
+            // that is no longer in `locations` throws, and because that happens inside
+            // createMessage the whole post is lost rather than just its location. A
+            // post with no location is still worth having, so verify before trusting it.
+            if ($locationId !== null && !DB::table('locations')->where('id', $locationId)->exists()) {
+                Log::info('TN-SYNC-TRACE [LOCATION-STALE] spatial index returned locationid=' . $locationId
+                    . ' which is not in locations; ingesting without a location');
+                $locationId = null;
+            }
+
             if ($locationId && $user->id) {
                 Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
                 if (!$this->dryRun) {
