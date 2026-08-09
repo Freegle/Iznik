@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-05
+last_reviewed: 2026-08-09
 owner: Freegle dev team
 covers:
   - iznik-server-go/message/postmatches.go
