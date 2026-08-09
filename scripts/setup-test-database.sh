@@ -73,6 +73,67 @@ if ! docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik iznik < /tmp/t
 fi
 echo "Fixtures loaded"
 
+# 3a. Roll the fixture posts forward so they are recent.
+#
+# test-fixtures.sql is a mysqldump, so every message carries the ABSOLUTE date it
+# had when the dump was taken. The browse/explore feed only returns posts from the
+# last 31 days (group/groupMessages.go: `then := now.AddDate(0, 0, -31)`), so the
+# seeded posts silently drop out of the feed 31 days after the dump was captured —
+# and every test that browses for a pre-seeded post starts failing, on every branch
+# at once, with no code change to blame.
+#
+# That is not hypothetical: the fixtures were dated 2026-07-09 10:01, and on
+# 2026-08-09 the suite went from green at 07:58 to five failures at 10:30. The
+# 31-day boundary fell at 10:02. Tests that CREATE a post and then browse for it
+# kept passing throughout, which is what made it look like a flake.
+#
+# Shifting by a whole number of days preserves the relative ages and the ordering
+# the fixtures encode, and lands the newest post one day old. It is self-limiting:
+# once the newest post is a day old the delta is 0, so re-running is a no-op.
+# `deadline` is deliberately NOT shifted — some fixtures carry a deliberately
+# expired deadline, which is the point of the tests that use them.
+echo "Rolling fixture post dates forward so they stay inside the feed's 31-day window..."
+if ! docker exec -i "${PREFIX}-percona" sh -c "mysql -u root -piznik iznik" <<'SQL'
+SET @delta := (
+  SELECT GREATEST(DATEDIFF(NOW(), MAX(arrival)) - 1, 0)
+  FROM messages_groups
+  WHERE arrival <= NOW()
+);
+
+UPDATE messages_groups
+   SET arrival     = arrival     + INTERVAL @delta DAY,
+       approvedat  = approvedat  + INTERVAL @delta DAY,
+       rejectedat  = rejectedat  + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+
+UPDATE messages
+   SET arrival = arrival + INTERVAL @delta DAY,
+       date    = date    + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+
+SELECT CONCAT('Fixture posts shifted forward by ', @delta, ' day(s); newest is now ',
+              IFNULL((SELECT MAX(arrival) FROM messages_groups), 'n/a')) AS result;
+SQL
+then
+  echo "Fixture date roll-forward FAILED — aborting (the feed tests would fail with no obvious cause)"
+  exit 1
+fi
+
+# Assert it worked. If the newest seeded post is outside the feed window the browse
+# and reply-flow specs will all fail on an empty feed, and the cause is invisible
+# from the test output — it looks like a flake on whichever branch happens to run.
+# Fail here instead, where the message names the actual problem.
+FEED_WINDOW_DAYS=31
+NEWEST_AGE=$(docker exec "${PREFIX}-percona" sh -c \
+  "mysql -u root -piznik iznik -N -B -e \"SELECT DATEDIFF(NOW(), MAX(arrival)) FROM messages_groups WHERE arrival <= NOW()\"" 2>/dev/null | tr -d '[:space:]')
+if [ -n "$NEWEST_AGE" ] && [ "$NEWEST_AGE" -ge "$FEED_WINDOW_DAYS" ] 2>/dev/null; then
+  echo "Newest seeded post is ${NEWEST_AGE} days old, outside the ${FEED_WINDOW_DAYS}-day feed window"
+  echo "(group/groupMessages.go). Browse and explore would return nothing and every"
+  echo "test that browses for a seeded post would fail. Aborting."
+  exit 1
+fi
+echo "Newest seeded post is ${NEWEST_AGE:-?} day(s) old — inside the ${FEED_WINDOW_DAYS}-day feed window"
+
 # 4. Create iznik_go_test by cloning schema (no data) from the migrated iznik DB.
 # Go tests create their own fixture data at runtime, so only the schema is needed.
 echo "Setting up iznik_go_test database for Go tests..."
