@@ -556,9 +556,24 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 		Lastactive *string
 	}
 
+	// MAX(arrival) rather than ORDER BY approvedat DESC LIMIT 1: the covering
+	// index is lastapproved (approvedby, groupid, arrival), so MAX over its
+	// suffix resolves each membership's subquery as a single index seek.
+	// Sorting by approvedat - which is NOT in any index - forced a read and
+	// filesort of the mod's entire approval history PER MEMBERSHIP ROW: a
+	// support dashboard spanning ~450 groups (~1,200 rows) ran 8-12 MINUTES,
+	// and reloads stacked 19+ copies, pinning db3's CPU (recurring monit
+	// alerts, worst captured 725s). For "when was this mod last active",
+	// the arrival of the last message they approved is the same signal.
+	//
+	// The 30s ceiling is the backstop: if this ever regresses, the query dies
+	// instead of stacking - a missing widget beats a downed write node.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	var mods []ModRow
-	db.Table("memberships").
-		Select("userid, (SELECT messages_groups.approvedat FROM messages_groups WHERE messages_groups.approvedby = memberships.userid AND messages_groups.groupid = memberships.groupid ORDER BY messages_groups.approvedat DESC LIMIT 1) AS lastactive").
+	db.WithContext(ctx).Table("memberships").
+		Select("userid, (SELECT MAX(messages_groups.arrival) FROM messages_groups WHERE messages_groups.approvedby = memberships.userid AND messages_groups.groupid = memberships.groupid) AS lastactive").
 		Where("groupid IN (?) AND role IN (?, ?)", groupIDs, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 		Having("lastactive IS NOT NULL").
 		Scan(&mods)
