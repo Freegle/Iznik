@@ -49,61 +49,63 @@ const partnership = (overrides = {}) => ({
   ...overrides,
 })
 
-function mountPage() {
-  return mount(PartnershipsPage, {
-    global: {
-      stubs: {
-        'client-only': { template: '<div><slot /></div>' },
-        'b-badge': {
-          template: '<span class="badge"><slot /></span>',
-          props: ['variant'],
-        },
-        // emits must be declared, or the parent's @click also falls through to the root
-        // <button> as a native listener and every click fires the handler twice.
-        'b-button': {
-          template: '<button @click="$emit(\'click\')"><slot /></button>',
-          props: ['variant', 'size'],
-          emits: ['click'],
-        },
-        NoticeMessage: {
-          name: 'NoticeMessage',
-          template: '<div class="notice"><slot /></div>',
-          props: ['variant'],
-        },
-        GChart: {
-          name: 'GChart',
-          template: '<div class="gchart" />',
-          props: ['data', 'options', 'type'],
-        },
-        ModPartnershipTotal: {
-          name: 'ModPartnershipTotal',
-          template: '<div class="total">{{ label }}:{{ value }}</div>',
-          props: ['label', 'value', 'money', 'variant'],
-        },
-        ModPartnershipDetail: {
-          name: 'ModPartnershipDetail',
-          template: '<div class="detail" />',
-          props: ['id'],
-        },
-        ModPartnershipStats: {
-          name: 'ModPartnershipStats',
-          template: '<div class="stats" />',
-          props: ['partnerships'],
-        },
-        ModPartnershipEditModal: {
-          name: 'ModPartnershipEditModal',
-          template: '<div class="editmodal" />',
-          props: ['partnership'],
-        },
-        ConfirmModal: {
-          name: 'ConfirmModal',
-          template: '<div class="confirm" />',
-          props: ['title', 'message'],
-        },
-        'v-icon': { template: '<i />' },
-      },
+// A fresh object each time, so a test can drop one stub and check the real component
+// resolves.
+function stubs() {
+  return {
+    'client-only': { template: '<div><slot /></div>' },
+    'b-badge': {
+      template: '<span class="badge"><slot /></span>',
+      props: ['variant'],
     },
-  })
+    // emits must be declared, or the parent's @click also falls through to the root
+    // <button> as a native listener and every click fires the handler twice.
+    'b-button': {
+      template: '<button @click="$emit(\'click\')"><slot /></button>',
+      props: ['variant', 'size'],
+      emits: ['click'],
+    },
+    NoticeMessage: {
+      name: 'NoticeMessage',
+      template: '<div class="notice"><slot /></div>',
+      props: ['variant'],
+    },
+    GChart: {
+      name: 'GChart',
+      template: '<div class="gchart" />',
+      props: ['data', 'options', 'type'],
+    },
+    ModPartnershipTotal: {
+      name: 'ModPartnershipTotal',
+      template: '<div class="total">{{ label }}:{{ value }}</div>',
+      props: ['label', 'value', 'money', 'variant'],
+    },
+    ModPartnershipDetail: {
+      name: 'ModPartnershipDetail',
+      template: '<div class="detail" />',
+      props: ['id'],
+    },
+    ModPartnershipStats: {
+      name: 'ModPartnershipStats',
+      template: '<div class="stats" />',
+      props: ['partnerships'],
+    },
+    ModPartnershipEditModal: {
+      name: 'ModPartnershipEditModal',
+      template: '<div class="editmodal" />',
+      props: ['partnership'],
+    },
+    ConfirmModal: {
+      name: 'ConfirmModal',
+      template: '<div class="confirm" />',
+      props: ['title', 'message'],
+    },
+    'v-icon': { template: '<i />' },
+  }
+}
+
+function mountPage() {
+  return mount(PartnershipsPage, { global: { stubs: stubs() } })
 }
 
 describe('modtools partnerships page', () => {
@@ -342,5 +344,38 @@ describe('modtools partnerships page', () => {
     await flushPromises()
 
     expect(store.remove).toHaveBeenCalledWith(1)
+  })
+
+  // Stubbing GChart hid the fact that the page never imported it, so the real page logged
+  // "Failed to resolve component" and rendered no graph at all. Mount without that stub.
+  it('resolves the chart component it renders', async () => {
+    const warnings = []
+    const warn = console.warn
+    console.warn = (...args) => warnings.push(args.join(' '))
+
+    try {
+      store.list = [partnership()]
+      store.summary = {
+        agreed: 6000,
+        total: 6000,
+        invoiced: 3000,
+        paid: 3000,
+        outstanding: 0,
+        active: 1,
+        years: [{ label: '2026/27', agreed: 6000, pipeline: 0 }],
+      }
+
+      const withoutChart = stubs()
+      delete withoutChart.GChart
+
+      mount(PartnershipsPage, { global: { stubs: withoutChart } })
+      await flushPromises()
+    } finally {
+      console.warn = warn
+    }
+
+    expect(
+      warnings.filter((w) => w.includes('Failed to resolve component'))
+    ).toEqual([])
   })
 })

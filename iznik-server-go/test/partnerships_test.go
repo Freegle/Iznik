@@ -102,10 +102,17 @@ func defaultBody(authorityID uint64) string {
 		`"linkurl":"https://example.gov.uk/reuse","agreed":true}`, authorityID)
 }
 
+// A refusal has to withhold the data as well as set the status. Checking only the status
+// code missed a bypass where the handler ran anyway and overwrote the refusal with the
+// deals, so every one of these asserts on the body too.
 func TestPartnershipRequiresLogin(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/partnership", nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 401, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.NotContains(t, result, "partnerships")
 }
 
 func TestPartnershipRequiresTeamMembership(t *testing.T) {
@@ -116,6 +123,46 @@ func TestPartnershipRequiresTeamMembership(t *testing.T) {
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/partnership?jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 403, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.NotContains(t, result, "partnerships")
+}
+
+func TestPartnershipSummaryRequiresLogin(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/partnership/summary", nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.NotContains(t, result, "summary")
+}
+
+func TestPartnershipStatsJobsRequireLogin(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/partnership/statsjob", nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.NotContains(t, result, "jobs")
+}
+
+// A refused write must not write. The bypass let the handler run on, so a logged-out
+// caller could have created a deal.
+func TestPartnershipCreateRefusedWithoutLoginCreatesNothing(t *testing.T) {
+	prefix := uniquePrefix("PartnershipNoCreate")
+	authorityID := createPartnershipAuthority(t, prefix)
+
+	req := httptest.NewRequest("POST", "/api/partnership", strings.NewReader(defaultBody(authorityID)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode)
+
+	var count int64
+	database.DBConn.Table("partnerships").Where("authorityid = ?", authorityID).Count(&count)
+	assert.Equal(t, int64(0), count)
 }
 
 func TestPartnershipTeamMemberIsAllowed(t *testing.T) {

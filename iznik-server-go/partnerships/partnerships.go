@@ -103,15 +103,19 @@ func CanUse(myid uint64) bool {
 }
 
 // requireUser rejects the request unless the caller may manage partnerships. It returns the
-// caller's id, or an error already shaped as a JSON response.
+// caller's id, or an error for the handler to return straight back.
+//
+// These must be real errors rather than c.Status(...).JSON(...): that writes a response but
+// returns nil, so the caller's `err != nil` check passes and the handler carries on and
+// overwrites the refusal with the data it was meant to be withholding.
 func requireUser(c *fiber.Ctx) (uint64, error) {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
-		return 0, c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
+		return 0, fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
 	if !CanUse(myid) {
-		return 0, c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 2, "status": "Permission denied"})
+		return 0, fiber.NewError(fiber.StatusForbidden, "Permission denied")
 	}
 
 	return myid, nil

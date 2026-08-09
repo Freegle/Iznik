@@ -175,6 +175,7 @@
 </template>
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { GChart } from 'vue-google-charts'
 import { useRoute, useRuntimeConfig, useHead } from '#imports'
 import { usePartnershipsStore } from '~/stores/partnerships'
 import { useMe } from '~/composables/useMe'

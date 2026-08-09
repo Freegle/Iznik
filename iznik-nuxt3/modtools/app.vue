@@ -77,6 +77,7 @@ import { computed } from '#imports'
 import { useModGroupStore } from '~/stores/modgroup'
 import { useSystemConfigStore } from '~/stores/systemconfig'
 import { useEmailTrackingStore } from '~/modtools/stores/emailtracking'
+import { usePartnershipsStore } from '~/modtools/stores/partnerships'
 
 // We're having trouble accessing the Nuxt config from within a Pinia store.  So instead we access it here, then
 // pass it in to each store via an init() action.
@@ -133,6 +134,7 @@ const spammerStore = useSpammerStore()
 const stdmsgStore = useStdmsgStore()
 const systemConfigStore = useSystemConfigStore()
 const emailTrackingStore = useEmailTrackingStore()
+const partnershipsStore = usePartnershipsStore()
 
 miscStore.init(runtimeConfig)
 groupStore.init(runtimeConfig)
@@ -175,6 +177,7 @@ spammerStore.init(runtimeConfig)
 stdmsgStore.init(runtimeConfig)
 systemConfigStore.init(runtimeConfig)
 emailTrackingStore.init(runtimeConfig)
+partnershipsStore.init(runtimeConfig)
 
 miscStore.modtools = true
 mobileStore.init(runtimeConfig)

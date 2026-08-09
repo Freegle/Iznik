@@ -40,10 +40,28 @@ spreadsheets.
 | 5 | Laravel: stats job runner command + tests | ✅ | `partnerships:stats:run` |
 | 6 | Laravel: expiry reminder command + mail + tests | ✅ | `partnerships:reminders`, 18 Laravel tests green |
 | 7 | Frontend: API + store + page + components + menu | ✅ | |
-| 8 | Vitest tests | ✅ | 83 green |
-| 9 | Run Go / Laravel / vitest suites | ✅ | Go 3992✓, Laravel 18✓, vitest 84✓ |
+| 8 | Vitest tests | ✅ | 87 |
+| 9 | Run Go / Laravel / vitest suites | ✅ | vitest 15058✓ full suite |
 | 10 | Live DB | ✅ | Tables created; team + members + logins already existed - see below |
 | 11 | Docs + PR | ✅ | PR #1291 |
+| 12 | Drive the page in a browser + screenshots | ✅ | Found three bugs unit tests missed - see below |
+
+## Bugs found by driving the real page
+
+Unit tests mock the API and stub the components, so they passed while the page was broken
+end to end. Loading it in a browser against the worktree's own containers found three
+things at once, each now fixed with a test that fails without the fix:
+
+- **`requireUser` refused the request but the handler carried on.** `c.Status(...).JSON(...)`
+  writes a response and returns `nil`, so the caller's `err != nil` check passed and the
+  handler ran anyway - overwriting the refusal with the very data it was withholding. Every
+  partnerships endpoint served its payload to anyone, under a 401. Now a real
+  `fiber.NewError`, and the permission tests assert on the body, not just the status.
+- **The partnerships store never got the runtime config.** `modtools/app.vue` hands each
+  store the Nuxt config via `init()`, and the new one was missing from that list, so the
+  first API call died on `Cannot read properties of undefined (reading 'public')`.
+- **The page never imported `GChart`**, so the income graph silently did not render. The
+  page test stubbed the component, which hid it.
 
 ## Bugs this turned up along the way
 
