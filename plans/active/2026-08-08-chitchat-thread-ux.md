@@ -96,5 +96,22 @@ flash-fade arrival highlight, combined-block pin fix.
 | F2 | Full vitest suite via status API | ✅ | 709 files / 15,016 passed / 0 failed |
 | F3 | Browser verify in worktree (before/after, mobile+desktop) | ✅ | seeded 27-reply thread; feed card, divider landing, deep-link flash, CTA nav all verified; screenshots in scratchpad |
 | F4 | Docs freshness | ✅ | OK, 47 pages checked, no covered path touched |
-| G1 | Go suite GREEN | ✅ | 3,941 passed / 0 failed; TestNewsfeedSingleReturnsSeenWatermark PASS |
+| G1 | Go suite GREEN | ✅ | 3,992 passed / 0 failed on the merged tree |
 | G2 | Push + PR with before/after screenshots | ✅ | PR #1292; true A/B captured by swapping master components into the container |
+| H1 | Divider must cover NESTED new replies | ✅ | Found via a scattered/nested fixture: it read "2 new" on a thread with 5 and sat BELOW three of them. Now anchors on first subtree-with-new; counts all. |
+| H2 | `#new` anchor declares the jump-to-new intent | ✅ | Feed CTA -> /chitchat/<id>#new; plain URL opens at top again. RED proven. |
+| H3 | Scroll anchoring on "Show N older replies" | ✅ | Browser caught what the unit test missed: the row after the expander can be the DIVIDER, so the anchor lookup bailed and no correction ran. Walks past non-reply rows now. |
+| H4 | Final suites on merged tree | ✅ | vitest 712 files / 15,075 pass; Go 3,992 pass; docs freshness OK; eslint clean |
+
+## Deliberately NOT built (researched, for a later decision)
+
+A pair-aware nudge for two people going many rounds with each other. Discourse is
+the only product that does this: `get_a_room_threshold` (default 3) counts replies
+to the SAME person in a topic and privately suggests a personal message instead;
+verified in discourse/discourse `site_settings.yml` + `server.en.yml`. Distinct
+from `max_consecutive_replies` (same-author hard block) and
+`dominating_topic_minimum_percent` (whole-topic 40%). Nobody else is pair-aware:
+Reddit's "Continue this thread" is purely depth; FB/IG/YouTube cap nesting at one
+level so a volley becomes a flat run; X groups only SELF-threads; Slack's answer is
+the thread pane, user-invoked. Transfers well to Freegle because it needs no
+nesting and Freegle already has private chat to point at.
