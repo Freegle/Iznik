@@ -1477,6 +1477,12 @@ class ExpandService
         }
 
         // first() not value(): a NULL approvedby and a missing row must be distinguishable.
+        //
+        // Earliest arrival is the origin row in the ordinary case, but not always - approval
+        // and reposting both reset arrival, so a repost can leave a rippled-in copy holding
+        // the oldest one. That does not change the answer: rippled-in rows are inserted with
+        // approvedby NULL, so picking one only matters if the true origin HAS an approvedby -
+        // and modLooked() below inspects every row, so it catches exactly that case.
         $originRow = DB::table('messages_groups')
             ->where('msgid', $msgid)->orderBy('arrival')->first(['approvedby']);
 
