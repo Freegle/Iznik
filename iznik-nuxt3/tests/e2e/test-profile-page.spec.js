@@ -110,9 +110,11 @@ test.describe('Profile page (/profile/[id])', () => {
       timeout: timeouts.ui.appearance,
     })
 
-    // The poster's active OFFER is listed in the posts grid.
+    // The poster's active OFFER is listed in the posts grid. The card renders the
+    // subject twice - .title-subject carries the location suffix, .content-subject
+    // does not - so match the one that is just the item.
     await expect(
-      page.locator('.posts-grid').getByText(uniqueItem)
+      page.locator('.posts-grid .content-subject').getByText(uniqueItem)
     ).toBeVisible({ timeout: timeouts.ui.appearance })
 
     // No WANTEDs, so that section shows the empty state.
