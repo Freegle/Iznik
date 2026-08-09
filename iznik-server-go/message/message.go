@@ -2449,15 +2449,21 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 	ctx.Groupid = authorizedGroups[0]
 
-	// Only groups where this message is currently Pending can be rejected/deleted via
-	// this action. If it has since been (re-)approved to live, this click is a no-op
-	// (Discourse 9815): we must not move a non-pending row and - for a reject-with-
-	// explanation - must not log a phantom rejection or email the poster a "rejected"
-	// notice while the post stays live.
+	// Only groups where this message is still awaiting moderation - Pending, or
+	// auto-flagged into Spam (which ModTools presents in the same queue with the
+	// same Reject action) - can be rejected/deleted here. If it has since been
+	// (re-)approved to live, this click is a no-op (Discourse 9815): we must not
+	// move a non-pending row and - for a reject-with-explanation - must not log
+	// a phantom rejection or email the poster a "rejected" notice while the post
+	// stays live. Spam was originally omitted, which made Reject on a
+	// spam-flagged post a SILENT no-op: the API answered ret=1, ModTools
+	// swallowed it, and mods concluded the button was broken (Vale of White
+	// Horse, msgid 121384453 - ten identical attempts across three browsers).
+	moderatable := []string{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
 	var pendingGroups []uint64
 	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND groupid IN ? AND collection = ? AND deleted = 0",
-			req.ID, authorizedGroups, utils.COLLECTION_PENDING).Scan(&pendingGroups)
+		Where("msgid = ? AND groupid IN ? AND collection IN ? AND deleted = 0",
+			req.ID, authorizedGroups, moderatable).Scan(&pendingGroups)
 
 	if subject != "" && len(pendingGroups) == 0 {
 		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not rejected"})
@@ -2467,13 +2473,13 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Without a subject (plain delete), mark as deleted.
 	if subject != "" {
 		if result := db.Table("messages_groups").
-			Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, pendingGroups, utils.COLLECTION_PENDING).
+			Where("msgid = ? AND groupid IN ? AND collection IN ?", req.ID, pendingGroups, moderatable).
 			Updates(map[string]interface{}{"collection": utils.COLLECTION_REJECTED, "rejectedat": gorm.Expr("NOW()"), "heldby": gorm.Expr("NULL")}); result.Error != nil {
 			log.Printf("Failed to reject message %d: %v", req.ID, result.Error)
 		}
 	} else {
 		if result := db.Table("messages_groups").
-			Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, authorizedGroups, utils.COLLECTION_PENDING).
+			Where("msgid = ? AND groupid IN ? AND collection IN ?", req.ID, authorizedGroups, moderatable).
 			Updates(map[string]interface{}{"deleted": gorm.Expr("1"), "heldby": gorm.Expr("NULL")}); result.Error != nil {
 			log.Printf("Failed to delete pending message %d: %v", req.ID, result.Error)
 		}

@@ -1454,3 +1454,19 @@ Schedule::command('community-news:discover-sources')
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('community-news:discover-sources'))
     ->runInBackground();
+
+// Render the authority statistics spreadsheets the Partnerships page has queued. Each run
+// takes one job so a long report never blocks the next request for minutes on end.
+Schedule::command('partnerships:stats:run')
+    ->everyMinute()
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('partnerships:stats:run'))
+    ->runInBackground();
+
+// Chase council sponsorships three months out from expiry. Daily, but each partnership is
+// only ever chased once per window, so this is a no-op on most days.
+Schedule::command('partnerships:reminders')
+    ->dailyAt('08:00')
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('partnerships:reminders'))
+    ->runInBackground();

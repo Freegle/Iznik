@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-06
+last_reviewed: 2026-08-09
 covers:
   - iznik-batch/app/Services/FirstReply/**
   - iznik-batch/app/Console/Commands/FirstReply/**
@@ -168,6 +168,59 @@ the same class of error that left the matched-posts email at 0.60 with a precisi
 re-embeds anything written by an older model rather than silently mixing scales. **Until that
 has run the `search` signal matches nothing** - it fails closed, which is the right direction,
 but it is inert rather than obviously off.
+
+### Post views are NOT a signal, and the reason is not what you would guess
+
+Views look like the obvious fourth signal - a weaker `search`. There is plenty of data (1.5M
+genuine page-opens a week from ~18k members), `messages_likes.pageview` already separates a real
+page-open from a list-scroll impression, and viewed posts already carry embeddings, so no new
+table or embedding job would be needed. **It was measured on live and it does not work.** Do not
+rebuild it without new evidence.
+
+**A single view is far too weak to mail on.** Of genuine page-opens, **0.29%** are followed by
+that member replying to that post - about 1 in 345.
+
+**Repeat viewing looks much stronger, and is misleading.** Conversion by how many times a member
+opened the same post:
+
+| Views of that post | Sampled | Replied | Rate |
+|---|---|---|---|
+| 1 | 207,824 | 527 | 0.25% |
+| 2 | 4,046 | 57 | 1.41% |
+| 3 | 202 | 14 | 6.93% |
+| 4 | 97 | 11 | 11.34% |
+
+That is ~28x better at 3+ views, but it is largely reverse causation: people re-open a post
+*because* they are about to reply to it. It says nothing about what they want NEXT, which is what
+an interest profile would need.
+
+**The decisive test kills the idea.** For members who replied to a post, take the best cosine
+between that post and their prior *repeat-viewed* posts, and compare against the same posts
+shuffled between members - which controls for the fact that all Freegle items resemble each other
+somewhat:
+
+| Best prior repeat-viewed post vs the post actually replied to | median | p90 | >=0.85 |
+|---|---|---|---|
+| Real view history (n=1,142 reply events) | **0.596** | 0.685 | 0.3% |
+| Shuffled (same posts, wrong owners) | **0.597** | 0.675 | 0.2% |
+
+**Indistinguishable from random**, to three decimal places. View history is not a weak semantic
+signal, it is an empty one. The likely reason is that Freegle replying is driven by proximity and
+timing far more than by what an item resembles: somebody views a sofa and replies to a bookcase,
+because the bookcase is two streets away and free now.
+
+Limits of that measurement, so a future attempt knows what was and was not covered: a 21-day
+window, only posts carrying embeddings, and it tests *best-of* their repeat-viewed posts rather
+than a centroid of them. A centroid formulation is untested - though a median identical to
+shuffled leaves it little to rescue. The embeddings are the subject-only 256-dim ones, but those
+are exactly what the scout matcher uses, so a signal invisible here is not available to the
+feature either.
+
+To re-run it: sample `(userid, refmsgid)` from `chat_messages` where `type='Interested'`, join
+`messages_likes` on the same member with `type='View' AND pageview=1 AND count >= 2` and
+`timestamp < chat_messages.date`, pull `messages_embeddings.subject_embedding` for both sides
+(little-endian float32, already unit-norm, so cosine is a dot product), and compare the real
+pairing against a shuffled one.
 
 ### A scout is someone the ripple has NOT reached yet
 

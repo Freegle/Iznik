@@ -8,4 +8,8 @@ export default class AuthorityAPI extends BaseAPI {
   async fetchMessages(id) {
     return await this.$getv2('/authority/' + id + '/message')
   }
+
+  async search(search, limit = 20) {
+    return await this.$getv2('/authority', { search, limit })
+  }
 }

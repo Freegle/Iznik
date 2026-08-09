@@ -42,6 +42,19 @@ export function useModMe() {
   const hasPermissionClearance = computed(() => {
     return hasPermission('Clearance')
   })
+  // Some pages are gated on team membership rather than a permission flag. Support and
+  // Admin get in regardless, matching what the API allows.
+  function onTeam(name) {
+    const { me, supportOrAdmin } = useMe()
+    if (supportOrAdmin.value) {
+      return true
+    }
+    const teams = me.value ? me.value.teams : null
+    return Boolean(teams && teams.includes(name))
+  }
+  const onPartnershipsTeam = computed(() => {
+    return onTeam('Partnerships')
+  })
   // Needed for some modtoolstasks but /mixins/me.js/myGroups() OK for most mod tasks as it is a copy of modgroup.list
   const myModGroups = computed(() => {
     // But do we need to do other stuff in myGroups() eg sorting?
@@ -150,6 +163,8 @@ export function useModMe() {
     hasPermissionSpamAdmin,
     hasPermissionGiftAid,
     hasPermissionClearance,
+    onTeam,
+    onPartnershipsTeam,
     myModGroups,
     myModGroup,
     amAModOn,

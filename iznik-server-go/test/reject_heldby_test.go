@@ -126,3 +126,47 @@ func TestRejectHeldCopyLeavesOtherGroupUnheld(t *testing.T) {
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collB)
 	assert.Equal(t, "Pending", collB, "group B still has its own copy to moderate")
 }
+
+// The live failure behind this test (Vale of White Horse, msgid 121384453):
+// a post auto-flagged into the Spam collection appears in ModTools' pending
+// queue with the same Reject action, but handleReject's awaiting-moderation
+// gate only accepted Pending - so Reject answered ret=1 and did NOTHING,
+// silently, across every browser the mods tried. A spam-flagged post is still
+// awaiting moderation; rejecting it must work exactly as for Pending. The
+// (re-)approved-to-live no-op (Discourse 9815) is unaffected: Approved is
+// still outside the gate.
+func TestRejectWorksOnSpamCollection(t *testing.T) {
+	prefix := uniquePrefix("RejectSpamColl")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	b, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"subject": prefix + " rejected: not suitable",
+		"body":    "Please see the group rules.",
+	})
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"], "rejecting a spam-flagged post must succeed, not silently no-op")
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Rejected", collection, "the spam-flagged copy should be Rejected")
+}
