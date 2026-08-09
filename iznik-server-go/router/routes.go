@@ -1352,14 +1352,13 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		rg.Post("/shortlink", shortlink.PostShortlink)
 
-		// System Status
-		// @Router /status [get]
-		// @Summary Get system status
-		// @Description Returns the system status from /tmp/iznik.status
+		// Deployed version
+		// @Router /version [get]
+		// @Summary Get API version info
+		// @Description Returns git commit hashes for the Go API and the Laravel batch server
 		// @Tags status
 		// @Produce json
 		// @Success 200 {object} map[string]interface{}
-		rg.Get("/status", status.GetStatus)
 		rg.Get("/version", status.GetVersion)
 
 		// Logs

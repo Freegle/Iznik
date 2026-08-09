@@ -110,26 +110,6 @@ func readGitHead(dir string) string {
 	return ""
 }
 
-// GetStatus reads the system status file and returns its contents.
-//
-// @Summary Get system status
-// @Description Returns the contents of /tmp/iznik.status, which is written by the batch system
-// @Tags status
-// @Produce json
-// @Success 200 {object} map[string]interface{}
-// @Router /api/status [get]
-func GetStatus(c *fiber.Ctx) error {
-	data, err := os.ReadFile("/tmp/iznik.status")
-	if err != nil {
-		return c.JSON(fiber.Map{
-			"ret":    1,
-			"status": "Cannot access status file",
-		})
-	}
-	c.Set("Content-Type", "application/json")
-	return c.Send(data)
-}
-
 // GetVersion returns the deployed commit of the Go API binary and the Laravel batch server.
 //
 // @Summary Get API version info
@@ -152,8 +132,8 @@ func GetVersion(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"build":           BuildDate,
-		"commit":          GitCommit,
-		"laravel_commit":  laravelCommit,
+		"build":          BuildDate,
+		"commit":         GitCommit,
+		"laravel_commit": laravelCommit,
 	})
 }

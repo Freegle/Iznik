@@ -16,7 +16,6 @@
           alt="Home"
           @click="clicklogo"
         />
-        <ModStatus class="status" />
       </b-navbar-brand>
       <!--ModZoomStock class="d-none d-md-block text-white" /-->
       <b-navbar-nav class="d-flex align-items-center">
@@ -706,12 +705,6 @@ body.modal-open {
 .fw {
   width: 2rem;
   height: 2rem;
-}
-
-.status {
-  left: -13px;
-  position: relative;
-  top: 1px;
 }
 
 .leftanddown {

@@ -176,7 +176,6 @@ Generated 2026-02-07. Updated as part of Phase 0B of the V1-to-V2 API migration 
 | SimulationAPI.js | 3 | Low |
 | SocialActionsAPI.js | 5 | Medium |
 | SpammersAPI.js | 2 | Medium (moderation) |
-| StatusAPI.js | 1 | Low |
 | TeamAPI.js | 1 | Low |
 | TrystAPI.js | 3 | Low |
 | VisualiseAPI.js | 1 | Low |

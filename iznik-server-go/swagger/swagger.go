@@ -3120,10 +3120,10 @@ type shortlinksResponse struct {
 // Status
 // ============================================================================
 
-// swagger:route GET /status status getStatus
-// Get system status
+// swagger:route GET /version status getVersion
+// Get API version info
 //
-// Returns the system status from /tmp/iznik.status
+// Returns git commit hashes for the Go API and the Laravel batch server.
 //
 // Responses:
 //
