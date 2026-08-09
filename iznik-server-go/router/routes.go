@@ -63,6 +63,7 @@ import (
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/partnerships"
 	"github.com/freegle/iznik-server-go/recommendations"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
@@ -1377,6 +1378,25 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/team", deprecation.Marker("POST /team", "2026-08-01"), team.PostTeam)
 		rg.Patch("/team", team.PatchTeam)
 		rg.Delete("/team", deprecation.Marker("DELETE /team", "2026-08-01"), team.DeleteTeam)
+
+		// Partnerships (ModTools). The literal paths must be registered before
+		// /partnership/:id, or "summary" and "statsjob" would be matched as ids.
+		rg.Get("/partnership/summary", partnerships.Summary)
+		rg.Get("/partnership/statsjob", partnerships.ListStatsJobs)
+		rg.Post("/partnership/statsjob", partnerships.CreateStatsJob)
+		rg.Delete("/partnership/statsjob/:id", partnerships.DeleteStatsJob)
+		rg.Get("/partnership/statsfile/:id", partnerships.DownloadStatsFile)
+		rg.Get("/partnership", partnerships.List)
+		rg.Post("/partnership", partnerships.Create)
+		rg.Get("/partnership/:id", partnerships.Single)
+		rg.Patch("/partnership/:id", partnerships.Update)
+		rg.Delete("/partnership/:id", partnerships.Delete)
+		rg.Get("/partnership/:id/group", partnerships.Groups)
+		rg.Patch("/partnership/:id/group", partnerships.PatchGroups)
+		rg.Put("/partnership/:id/year", partnerships.PutYears)
+		rg.Post("/partnership/:id/payment", partnerships.CreatePayment)
+		rg.Patch("/partnership/:id/payment/:paymentid", partnerships.UpdatePayment)
+		rg.Delete("/partnership/:id/payment/:paymentid", partnerships.DeletePayment)
 
 		// Mod Configs
 		rg.Get("/modtools/modconfig", modconfig.GetModConfig)
