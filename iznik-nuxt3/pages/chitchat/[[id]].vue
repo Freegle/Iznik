@@ -154,6 +154,8 @@
                 <NewsThread
                   :id="entry?.id"
                   :scroll-to="id"
+                  :context="id ? 'thread' : 'feed'"
+                  :jump-to-new="jumpToNew"
                   :duplicate-count="getDuplicateCount(entry?.id)"
                   @rendered="rendered"
                   @expand-duplicates="expandDuplicates"
@@ -233,6 +235,10 @@ definePageMeta({
 const runtimeConfig = useRuntimeConfig()
 const route = useRoute()
 const id = route.params.id
+
+// The feed's "N new" link ends in #new, meaning "take me to what I have not
+// read". Anything else that opens a thread just opens it at the top.
+const jumpToNew = route.hash === '#new'
 
 useHead(
   buildHead(
@@ -627,14 +633,10 @@ onMounted(() => {
   runCheck()
   initializeLocation()
 
-  // For feed view (not thread view), set up delayed seen marking.
-  if (!id) {
-    // Snapshot what was seen before visiting.
-    newsfeedStore.snapshotSeenBeforeVisit()
-
-    // Start 30s timer to mark as seen.
-    newsfeedStore.startDelayedSeen(30000)
-  }
+  // Start 30s timer to mark as seen. The baseline snapshot itself happens
+  // before the fetch dispatch below - on every view, not just the feed - so
+  // a notification deep link cannot instantly mark the whole thread seen.
+  newsfeedStore.startDelayedSeen(30000)
 })
 
 onBeforeUnmount(() => {
@@ -653,6 +655,18 @@ onBeforeUnmount(() => {
 // Initial data loading
 const settings = me.value?.settings
 distance.value = settings?.newsfeedarea || 0
+
+// Secure the seen baseline BEFORE any fetch is dispatched. This flips
+// delayedSeenMode on so the fetches below cannot fire an instant Seen POST.
+// The feed re-snapshots per visit (existing behaviour); a thread or deep-link
+// view keeps any session baseline so New pills survive feed-to-thread
+// navigation, and only snapshots on a cold load, where the first server
+// seenwatermark response then overwrites it (see stores/newsfeed.js).
+if (id) {
+  newsfeedStore.ensureSeenBaselineForThreadView()
+} else {
+  newsfeedStore.snapshotSeenBeforeVisit()
+}
 
 // Fetch data if user is logged in
 if (me.value) {

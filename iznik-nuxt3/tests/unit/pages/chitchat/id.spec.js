@@ -32,7 +32,11 @@ vi.mock('~/components/InfiniteLoading', () => ({
   },
 }))
 vi.mock('~/components/NewsThread.vue', () => ({
-  default: { template: '<div />', props: ['id', 'scrollTo', 'duplicateCount'] },
+  default: {
+    name: 'NewsThread',
+    template: '<div class="news-thread" />',
+    props: ['id', 'scrollTo', 'duplicateCount', 'context'],
+  },
 }))
 vi.mock('~/components/MessageListUpToDate.vue', () => ({
   default: { template: '<div />' },
@@ -53,6 +57,7 @@ const mockNewsfeedStore = {
   send: vi.fn(),
   byId: vi.fn(),
   snapshotSeenBeforeVisit: vi.fn(),
+  ensureSeenBaselineForThreadView: vi.fn(),
   startDelayedSeen: vi.fn(),
   markAllSeen: vi.fn(),
 }
@@ -84,8 +89,9 @@ vi.mock('~/composables/useMe', () => ({
   }),
 }))
 
-vi.hoisted(() => {
+const routeState = vi.hoisted(() => {
   vi.resetModules()
+  return { params: {} }
 })
 
 vi.mock('#imports', async () => {
@@ -93,7 +99,7 @@ vi.mock('#imports', async () => {
   return {
     ...actual,
     useRoute: () => ({
-      params: {},
+      params: routeState.params,
       query: {},
       path: '/',
       name: 'chitchat',
@@ -165,6 +171,7 @@ describe('chitchat/[[id]].vue loadMore', () => {
     setActivePinia(createPinia())
     mockMe.value = { id: 1, displayname: 'Test User', settings: {} }
     mockNewsfeedStore.feed = []
+    routeState.params = {}
   })
 
   afterEach(() => {
@@ -302,5 +309,66 @@ describe('chitchat/[[id]].vue loadMore', () => {
     const shown = wrapper.vm.newsfeedToShow
     expect(shown).toHaveLength(3)
     expect(shown.map((s) => s.id)).toEqual([3, 2, 1])
+  })
+
+  describe('thread rendering context', () => {
+    it('renders feed cards in feed context', async () => {
+      mockNewsfeedStore.feed = [{ id: 7, userid: 100, message: 'Hi' }]
+      mountComponent()
+      wrapper.vm.show = 1
+      await flushPromises()
+
+      const thread = wrapper.findComponent('.news-thread')
+      expect(thread.exists()).toBe(true)
+      expect(thread.props('context')).toBe('feed')
+    })
+
+    it('renders a deep-linked thread in thread context', async () => {
+      routeState.params = { id: '456' }
+      mockNewsfeedStore.fetch.mockResolvedValue({ id: 456, threadhead: 456 })
+      mockNewsfeedStore.byId.mockReturnValue({ id: 456, userid: 100 })
+      mountComponent()
+      await flushPromises()
+
+      const thread = wrapper.findComponent('.news-thread')
+      expect(thread.exists()).toBe(true)
+      expect(thread.props('context')).toBe('thread')
+    })
+  })
+
+  describe('seen baseline', () => {
+    it('secures the baseline before dispatching the thread fetch on a deep link', async () => {
+      routeState.params = { id: '456' }
+      mountComponent()
+      await flushPromises()
+
+      expect(mockNewsfeedStore.ensureSeenBaselineForThreadView).toHaveBeenCalled()
+      expect(mockNewsfeedStore.fetch).toHaveBeenCalled()
+      // Order matters: delayedSeenMode must be on before the fetch's addItems
+      // could fire an instant Seen POST for everything in the thread.
+      expect(
+        mockNewsfeedStore.ensureSeenBaselineForThreadView.mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(mockNewsfeedStore.fetch.mock.invocationCallOrder[0])
+      // The feed's own per-visit re-snapshot must NOT run here: it would wipe
+      // the baseline a feed-to-thread navigation is relying on.
+      expect(mockNewsfeedStore.snapshotSeenBeforeVisit).not.toHaveBeenCalled()
+    })
+
+    it('starts the delayed seen timer on a thread deep link', async () => {
+      routeState.params = { id: '456' }
+      mountComponent()
+      await flushPromises()
+
+      expect(mockNewsfeedStore.startDelayedSeen).toHaveBeenCalledWith(30000)
+    })
+
+    it('still snapshots and delays on the feed view', async () => {
+      mountComponent()
+      await flushPromises()
+
+      expect(mockNewsfeedStore.snapshotSeenBeforeVisit).toHaveBeenCalled()
+      expect(mockNewsfeedStore.startDelayedSeen).toHaveBeenCalledWith(30000)
+    })
   })
 })

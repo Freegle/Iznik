@@ -185,7 +185,7 @@ vi.mock('~/components/NewsReplies', () => ({
   default: {
     name: 'NewsReplies',
     template: '<div class="news-replies"></div>',
-    props: ['id', 'threadhead', 'scrollTo', 'replyTo', 'depth'],
+    props: ['id', 'threadhead', 'scrollTo', 'replyTo', 'depth', 'context'],
     emits: ['rendered', 'subtree-rendered'],
   },
 }))
@@ -1133,6 +1133,131 @@ describe('NewsThread', () => {
       await flushPromises()
 
       expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+
+    it('forwards the rendering context to the reply list', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ context: 'feed' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      expect(replies.props('context')).toBe('feed')
+    })
+
+    it('finds a combined row that carries the target id', async () => {
+      // A combined block renders one row keyed by its FIRST id, advertising
+      // the rest via data-combined-ids. The pin selector must match both.
+      mockNewsfeed.value.replies = [455]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl] = mockScrollToAndPin.mock.calls[0]
+
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '455')
+      row.setAttribute('data-combined-ids', '455 456')
+      document.body.appendChild(row)
+      expect(getEl()).toBe(row)
+      row.remove()
+    })
+  })
+
+  describe('jump to new replies', () => {
+    it('pins the unread divider when the caller asked for the new replies', async () => {
+      // Declared intent (the feed's "#new" link), not inferred from the route.
+      const divider = document.createElement('div')
+      divider.setAttribute('data-unread-divider', '')
+      document.body.appendChild(divider)
+
+      mockNewsfeed.value.replies = [456]
+      await createWrapper({ scrollTo: '1', jumpToNew: true })
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl, opts] = mockScrollToAndPin.mock.calls[0]
+      expect(opts.block).toBe('start')
+      expect(getEl()).toBe(divider)
+      divider.remove()
+    })
+
+    it('does not scroll when simply opening the thread', async () => {
+      // No "#new" in the URL: opening a thread is not a request to skip to
+      // the end of it, so it opens at the top like any other page.
+      const divider = document.createElement('div')
+      divider.setAttribute('data-unread-divider', '')
+      document.body.appendChild(divider)
+
+      mockNewsfeed.value.replies = [456]
+      await createWrapper({ scrollTo: '1' })
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+      divider.remove()
+    })
+
+    it('does not scroll when asked for new replies but there is no divider', async () => {
+      mockNewsfeed.value.replies = [456]
+      await createWrapper({ scrollTo: '1', jumpToNew: true })
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+
+    it('never fires the divider pin when a specific reply pin already ran', async () => {
+      const divider = document.createElement('div')
+      divider.setAttribute('data-unread-divider', '')
+      document.body.appendChild(divider)
+
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456', jumpToNew: true })
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      expect(mockScrollToAndPin.mock.calls[0][1].block).toBe('center')
+      divider.remove()
+    })
+  })
+
+  describe('removed deep-link target', () => {
+    it('explains when the target reply never renders', async () => {
+      // Deleted replies are filtered out for non-mods, so a stale notification
+      // can point at a row that will never mount. Say so instead of silently
+      // landing at the top.
+      mockNewsfeed.value.replies = [455]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('That reply has been removed')
+    })
+
+    it('shows no notice when the target renders normally', async () => {
+      // The component's authority is the DOM: the target's row being present
+      // (as it is on any live reply) suppresses the notice.
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '456')
+      document.body.appendChild(row)
+
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('That reply has been removed')
+      row.remove()
+    })
+
+    it('shows no notice on a general thread landing', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '1' })
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('That reply has been removed')
     })
   })
 
