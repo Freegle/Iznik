@@ -49,6 +49,14 @@ mountpoint -q "$YLVM_STAGE_MNT"  || ylvm_die "$YLVM_STAGE_MNT not mounted — ru
 ylvm_log "===== Nightly LVM refresh -> $DATE8 (was: ${CURRENT:-none}) ====="
 ylvm_set_restore_status "preparing" "Refreshing to latest backup $DATE8…" "$DATE8"
 
+# 0. Make room before we need it, and refuse to start if there isn't enough.
+#    Staging and the in-place apply both write into the same thin pool, and a
+#    pool that runs out mid-apply stalls into out-of-data-space mode rather
+#    than returning an error anyone can see: the 7-9 Aug 2026 restores each
+#    polled at 0% for four hours and died on ENOSPC. Reclaim first, then check.
+ylvm_prune_snapshots
+ylvm_require_pool_headroom
+
 # 1. Prepare the full backup in staging (percona still serving the current day).
 ylvm_prepare_to_stage "$DATE8"
 

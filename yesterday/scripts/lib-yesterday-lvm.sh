@@ -18,7 +18,17 @@ export YLVM_STAGE="${YLVM_STAGE:-iznik_stage}"      # transient prepare area
 export YLVM_ACTIVE_MNT="${YLVM_ACTIVE_MNT:-/mnt/iznik-active}"
 export YLVM_STAGE_MNT="${YLVM_STAGE_MNT:-/mnt/iznik-stage}"
 export YLVM_SNAP_PREFIX="${YLVM_SNAP_PREFIX:-snap_}"
-export YLVM_KEEP="${YLVM_KEEP:-7}"                  # retain N daily snapshots
+export YLVM_KEEP="${YLVM_KEEP:-7}"                  # CEILING on daily snapshots, not a promise
+
+# The pool, not the day count, is the real constraint. active+stage occupy most
+# of it before a single snapshot exists, and each day's rsync makes the previous
+# day's snapshot diverge, so "keep 7" quietly over-commits: on 2026-08-09 the
+# pool hit 100% with only FOUR snapshots present, which meant pruning (which
+# only starts removing at the 8th) had never run, and every restore from 7 Aug
+# onwards died on ENOSPC after polling at 0% for four hours.
+export YLVM_POOL_HIGH_WATER="${YLVM_POOL_HIGH_WATER:-80}"  # prune down to below this data%
+export YLVM_KEEP_MIN="${YLVM_KEEP_MIN:-2}"                 # never prune below this many days
+export YLVM_POOL_MIN_FREE="${YLVM_POOL_MIN_FREE:-15}"      # refuse to start an apply below this % free
 
 export YLVM_BUCKET="${YLVM_BUCKET:-gs://freegle_backup_uk}"
 export YLVM_COMPOSE_DIR="${YLVM_COMPOSE_DIR:-/var/www/FreegleDocker}"
@@ -127,19 +137,85 @@ ylvm_snapshot_active() {
     ylvm_log "✅ Snapshot $snap created"
 }
 
-# Keep only the newest $YLVM_KEEP dated snapshots; remove older ones.
+# Current data utilisation of the thin pool, as a whole-number percentage.
+# Empty if it cannot be read, so callers must treat "" as "do not know".
+ylvm_pool_data_percent() {
+    lvs --noheadings -o data_percent "$YLVM_VG/$YLVM_POOL" 2>/dev/null \
+        | tr -d ' ' | awk -F. 'NF{print $1}'
+}
+
+# List dated snapshots, oldest first.
+ylvm_snapshots_oldest_first() {
+    lvs --noheadings -o lv_name "$YLVM_VG" 2>/dev/null \
+        | tr -d ' ' | grep "^${YLVM_SNAP_PREFIX}" | sort
+}
+
+# Refuse to begin an apply that the pool cannot absorb. rsync onto the active
+# volume forces a copy-on-write of every changed block against every snapshot
+# holding the old one, so starting with almost no free data space does not
+# degrade — it stalls the pool into out-of-data-space mode and takes percona
+# with it. Failing here is loud, instant and explains itself; failing halfway
+# through is a four-hour poll at 0% and a datadir in an unknown state.
+ylvm_require_pool_headroom() {
+    local used; used="$(ylvm_pool_data_percent)"
+    if [ -z "$used" ]; then
+        ylvm_log "⚠️  Could not read thin pool utilisation; continuing."
+        return 0
+    fi
+
+    local free=$((100 - used))
+    if [ "$free" -lt "$YLVM_POOL_MIN_FREE" ]; then
+        ylvm_die "Thin pool $YLVM_VG/$YLVM_POOL is ${used}% full (need ${YLVM_POOL_MIN_FREE}% free to apply a backup). Snapshots present: $(ylvm_snapshots_oldest_first | tr '\n' ' '). Remove older snapshots with lvremove, or grow the pool."
+    fi
+
+    ylvm_log "Thin pool ${used}% used, ${free}% free — enough to apply."
+}
+
+# Retention. $YLVM_KEEP is a ceiling on how many days we would LIKE; the pool
+# decides how many we can actually afford. Drop the oldest beyond the ceiling,
+# then keep dropping the oldest while utilisation is above the high-water mark,
+# never going below $YLVM_KEEP_MIN — losing switchable days is bad, but filling
+# the pool loses tomorrow's restore entirely, and then every one after it.
 ylvm_prune_snapshots() {
-    local snaps; snaps="$(lvs --noheadings -o lv_name "$YLVM_VG" 2>/dev/null \
-        | tr -d ' ' | grep "^${YLVM_SNAP_PREFIX}" | sort -r)"
-    local i=0
+    local snaps; snaps="$(ylvm_snapshots_oldest_first)"
+    local total; total="$(printf '%s\n' "$snaps" | grep -c .)"
+
+    local snap
     while IFS= read -r snap; do
         [ -z "$snap" ] && continue
-        i=$((i+1))
-        if [ "$i" -gt "$YLVM_KEEP" ]; then
-            ylvm_log "Pruning old snapshot $snap"
-            lvremove -fy "$YLVM_VG/$snap" || true
-        fi
+        [ "$total" -le "$YLVM_KEEP" ] && break
+        ylvm_log "Pruning old snapshot $snap (over the $YLVM_KEEP-day ceiling)"
+        lvremove -fy "$YLVM_VG/$snap" || true
+        total=$((total-1))
     done <<< "$snaps"
+
+    local used; used="$(ylvm_pool_data_percent)"
+    if [ -n "$used" ] && [ "$used" -gt "$YLVM_POOL_HIGH_WATER" ]; then
+        ylvm_log "Thin pool ${used}% used, above the ${YLVM_POOL_HIGH_WATER}% high-water mark — pruning further."
+
+        while IFS= read -r snap; do
+            [ -z "$snap" ] && continue
+            [ "$total" -le "$YLVM_KEEP_MIN" ] && break
+            lvs "$YLVM_VG/$snap" >/dev/null 2>&1 || continue
+
+            used="$(ylvm_pool_data_percent)"
+            [ -n "$used" ] && [ "$used" -le "$YLVM_POOL_HIGH_WATER" ] && break
+
+            ylvm_log "Pruning $snap to reclaim pool space (${used}% used)"
+            lvremove -fy "$YLVM_VG/$snap" || true
+            total=$((total-1))
+        done <<< "$snaps"
+
+        used="$(ylvm_pool_data_percent)"
+        if [ -n "$used" ] && [ "$used" -gt "$YLVM_POOL_HIGH_WATER" ]; then
+            # Down to the floor and still over. Not fatal right now, but the
+            # next apply will fail the headroom check, so say so while someone
+            # is still reading the nightly log.
+            ylvm_log "⚠️  Thin pool still ${used}% used with only $total snapshot(s) left. The pool is too small for this database; grow it or reduce YLVM_KEEP_MIN."
+        fi
+    fi
+
+    ylvm_log "Retention: $total snapshot(s) kept, pool $(ylvm_pool_data_percent)% used."
     ylvm_write_snapshot_manifest
 }
 
