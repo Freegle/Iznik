@@ -1356,7 +1356,7 @@ func SetupRoutes(app *fiber.App) {
 		// System Status
 		// @Router /status [get]
 		// @Summary Get system status
-		// @Description Returns the system status from /tmp/iznik.status
+		// @Description Returns the platform status published by the batch system's outcome monitoring
 		// @Tags status
 		// @Produce json
 		// @Success 200 {object} map[string]interface{}

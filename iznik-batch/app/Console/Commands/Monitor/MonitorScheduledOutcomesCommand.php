@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Monitor;
 
+use App\Monitoring\PlatformStatusWriter;
 use App\Monitoring\ScheduledOutcomeRegistry;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
@@ -18,6 +19,10 @@ use Illuminate\Support\Facades\Log;
  * the breach shows as a red badge in the cron-jobs sysadmin tab. SKIPPED
  * results (precondition unmet / outside active window) never fail the command.
  *
+ * A full pass also publishes its verdict for ModTools' platform status dot (see
+ * PlatformStatusWriter). The dot therefore reports exactly what the monitoring
+ * decided, and cannot drift away from it, because there is only one evaluation.
+ *
  * See docs/scheduled-outcome-monitoring.md.
  */
 class MonitorScheduledOutcomesCommand extends Command
@@ -26,7 +31,7 @@ class MonitorScheduledOutcomesCommand extends Command
 
     protected $description = 'Asserts scheduled tasks did their work; alerts Sentry on outcome breaches';
 
-    public function handle(ScheduledOutcomeRegistry $registry): int
+    public function handle(ScheduledOutcomeRegistry $registry, PlatformStatusWriter $statusWriter): int
     {
         if (! config('freegle.monitoring.enabled', true)) {
             $this->info('Scheduled-outcome monitoring disabled (freegle.monitoring.enabled=false).');
@@ -48,9 +53,11 @@ class MonitorScheduledOutcomesCommand extends Command
         }
 
         $breaches = [];
+        $results = [];
 
         foreach ($checks as $check) {
             $result = $check->evaluate($now);
+            $results[] = $result;
             $line = "[{$result->status}] {$check->slug()} — {$result->message}";
 
             if ($result->isBreach()) {
@@ -59,6 +66,13 @@ class MonitorScheduledOutcomesCommand extends Command
             } else {
                 $this->info($line);
             }
+        }
+
+        // Publish for ModTools' status dot — but only on a FULL pass. With
+        // --only we have evaluated one check, and writing that would report
+        // every other subsystem as fine on no evidence.
+        if ($only === null || $only === '') {
+            $statusWriter->write($results, $now);
         }
 
         if (! empty($breaches)) {
