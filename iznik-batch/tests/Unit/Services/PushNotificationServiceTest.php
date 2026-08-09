@@ -1479,4 +1479,41 @@ class PushNotificationServiceTest extends TestCase
         $this->assertEquals(1, $notifcount,
             'Whitelisted is not a spam collection and must not exclude the notification');
     }
+
+    /**
+     * Every spelling FCM uses for a permanently dead token must trigger the
+     * purge. Regression: a rejected send reports the legacy name
+     * 'NotRegistered', which the old case-sensitive match ('UNREGISTERED')
+     * missed - so dead tokens were never cleaned up and every subsequent push
+     * to them failed silently (2,162 such errors on 2026-08-09 alone).
+     */
+    public function test_dead_token_errors_are_recognised_in_all_spellings(): void
+    {
+        foreach ([
+            'NotRegistered',
+            'UNREGISTERED',
+            'Requested entity was not found.',
+            'NOT_FOUND',
+            'SENDER_ID_MISMATCH',
+            'MismatchSenderId',
+            'The registration token is not a valid FCM registration token',
+            'Invalid registration token',
+            'InvalidRegistration',
+        ] as $error) {
+            $this->assertTrue(PushNotificationService::isDeadTokenError($error), "'$error' must be treated as a dead token");
+        }
+    }
+
+    public function test_transient_errors_do_not_kill_the_token(): void
+    {
+        foreach ([
+            'Deadline exceeded',
+            'Internal server error',
+            'QUOTA_EXCEEDED',
+            'The service is currently unavailable',
+            'APNs device token is disabled.',
+        ] as $error) {
+            $this->assertFalse(PushNotificationService::isDeadTokenError($error), "'$error' must NOT delete the subscription");
+        }
+    }
 }
