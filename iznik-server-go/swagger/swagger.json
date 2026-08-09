@@ -4885,21 +4885,6 @@
         }
       }
     },
-    "/status": {
-      "get": {
-        "description": "Returns the system status from /tmp/iznik.status",
-        "tags": [
-          "status"
-        ],
-        "summary": "Get system status",
-        "operationId": "getStatus",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/genericResponse"
-          }
-        }
-      }
-    },
     "/story": {
       "get": {
         "description": "Returns all stories",
@@ -5771,6 +5756,21 @@
           },
           "401": {
             "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/version": {
+      "get": {
+        "description": "Returns git commit hashes for the Go API and the Laravel batch server.",
+        "tags": [
+          "status"
+        ],
+        "summary": "Get API version info",
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
           }
         }
       }
