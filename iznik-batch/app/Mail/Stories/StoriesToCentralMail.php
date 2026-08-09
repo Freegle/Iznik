@@ -8,6 +8,14 @@ use Illuminate\Mail\Mailables\Envelope;
 
 class StoriesToCentralMail extends MjmlMailable
 {
+    /**
+     * Transactional - an internal report to volunteers - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public readonly array $stories,
         public readonly string $previewText,

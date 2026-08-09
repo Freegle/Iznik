@@ -88,7 +88,6 @@ func Update(c *fiber.Ctx) error {
 
 	// Check ownership
 	var ownerID uint64
-	// ORM migration site c9552d1439f7 (wave 1).
 	db.Table("users_addresses").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 
 	if ownerID == 0 {
@@ -101,19 +100,15 @@ func Update(c *fiber.Ctx) error {
 
 	// Update settable attributes
 	if req.Instructions != nil {
-		// ORM migration site 8d9bcc14ce4f (wave 2).
 		db.Table("users_addresses").Where("id = ?", req.ID).Update("instructions", *req.Instructions)
 	}
 	if req.Lat != nil {
-		// ORM migration site 47ad28590287 (wave 2).
 		db.Table("users_addresses").Where("id = ?", req.ID).Update("lat", *req.Lat)
 	}
 	if req.Lng != nil {
-		// ORM migration site 339b4832d0ee (wave 2).
 		db.Table("users_addresses").Where("id = ?", req.ID).Update("lng", *req.Lng)
 	}
 	if req.PafID != nil {
-		// ORM migration site 34929e307f19 (wave 2).
 		db.Table("users_addresses").Where("id = ?", req.ID).Update("pafid", *req.PafID)
 	}
 
@@ -135,7 +130,6 @@ func Delete(c *fiber.Ctx) error {
 
 	// Check ownership
 	var ownerID uint64
-	// ORM migration site e5e485de6a36 (wave 1).
 	db.Table("users_addresses").Select("userid").Where("id = ?", id).Scan(&ownerID)
 
 	if ownerID == 0 {
@@ -146,7 +140,6 @@ func Delete(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not your address")
 	}
 
-	// ORM migration site 57a5e9a51661 (wave 2).
 	db.Table("users_addresses").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"success": true})
@@ -181,7 +174,6 @@ func ListForUser(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// ORM migration site b9b602714ff9 (wave 4).
 	db.Table("users_addresses").
 		Select("users_addresses.id, users_addresses.userid, instructions,"+
 			"COALESCE(users_addresses.lat, locations.lat) AS lat, "+
@@ -221,7 +213,6 @@ func GetAddress(c *fiber.Ctx) error {
 		// We have to check that the address is referenced by a chat message in a chat to which we have access, or
 		// which we own, or where we are a moderator of the group associated with the chat, or if we have Support/Admin rights.
 		db := database.DBConn
-		// ORM migration site 608507c3053f (wave 4).
 		db.Table("users_addresses").
 			Select("users_addresses.id, users_addresses.userid, instructions,"+
 				"COALESCE(users_addresses.lat, locations.lat) AS lat, "+

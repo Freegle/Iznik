@@ -154,6 +154,36 @@ Schedule::command('ripple:release-replies')
     ->sendOutputTo(cronLog('ripple:release-replies'))
     ->runInBackground();
 
+// First reply: getting one in quickly, and making the wait bearable when there isn't one.
+// All three are gated by freegle.firstreply.* and are no-ops until those are switched on.
+if (config('freegle.firstreply.enabled')) {
+    // Fill in each rippling post's EVENTUAL reach. Kept out of ripple:expand because that is
+    // the hot single-writer loop and this occasionally has to call the routing server.
+    Schedule::command('firstreply:maxreach')
+        ->everyMinute()
+        ->withoutOverlapping(15)
+        ->sendOutputTo(cronLog('firstreply:maxreach'))
+        ->runInBackground();
+
+    // Tell a handful of likely-interested people about posts nobody has replied to. Every
+    // minute, because the whole point is speed and a post is now scouted as soon as it is
+    // seen (scouts.quiet_minutes = 0). Cheap in steady state: a post is only ever scouted
+    // once, so each run only does real work for whatever arrived in the last minute.
+    Schedule::command('firstreply:scout')
+        ->everyMinute()
+        ->withoutOverlapping(15)
+        ->sendOutputTo(cronLog('firstreply:scout'))
+        ->runInBackground();
+
+    // Freegle's own messages to the poster. Nothing here is due sooner than an hour after
+    // posting, so five minutes is as often as it could possibly matter.
+    Schedule::command('firstreply:engage')
+        ->everyFiveMinutes()
+        ->withoutOverlapping(15)
+        ->sendOutputTo(cronLog('firstreply:engage'))
+        ->runInBackground();
+}
+
 // Best-effort "quicker to get to" moderator notes for rippled-in posts, computed out of the hot
 // ripple:expand cron so its routing/KNN calls can't slow rippling (freegle.ripple.proximity_notes
 // gates it; withoutOverlapping keeps a slow run from stacking).
@@ -1193,6 +1223,16 @@ Schedule::command('embeddings:generate')
     ->sendOutputTo(cronLog('embeddings:generate'))
     ->runInBackground();
 
+// The same for saved search terms, so the scout "search" signal can match them
+// by vector at the matched-posts threshold rather than by keyword. Hourly, not
+// every five minutes: a saved search is created far less often than a post, and
+// nothing downstream is time-critical to the minute.
+Schedule::command('embeddings:searches')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('embeddings:searches'))
+    ->runInBackground();
+
 // =============================================================================
 // NOT YET ENABLED - pending review / sign-off
 // Index unindexed messages for search.
@@ -1413,4 +1453,20 @@ Schedule::command('community-news:discover-sources')
     ->when(fn () => config('freegle.communitynews.enabled', false))
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('community-news:discover-sources'))
+    ->runInBackground();
+
+// Render the authority statistics spreadsheets the Partnerships page has queued. Each run
+// takes one job so a long report never blocks the next request for minutes on end.
+Schedule::command('partnerships:stats:run')
+    ->everyMinute()
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('partnerships:stats:run'))
+    ->runInBackground();
+
+// Chase council sponsorships three months out from expiry. Daily, but each partnership is
+// only ever chased once per window, so this is a no-op on most days.
+Schedule::command('partnerships:reminders')
+    ->dailyAt('08:00')
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('partnerships:reminders'))
     ->runInBackground();

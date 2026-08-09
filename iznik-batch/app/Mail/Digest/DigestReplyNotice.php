@@ -42,6 +42,14 @@ class DigestReplyNotice extends MjmlMailable
         );
     }
 
+    /**
+     * Transactional - a direct reply to something the member just did - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->recipientUserId;

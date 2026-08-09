@@ -5,7 +5,7 @@ namespace Tests\Support\OrmHarness;
 /**
  * Loads tools/orm-migration/services/laravel/manifest.json - the same
  * manifest tools/orm-migration/php-extractor/extract.php generates and
- * ci-ratchet.sh's gate (q) checks. This is the ONE place the harness reads
+ * the extractor writes. This is the ONE place the harness reads
  * it from, so GoldenSql and ResultParity agree on the path and on caching.
  *
  * READS FROM A CONTAINER BIND MOUNT, NOT A RELATIVE PATH ESCAPE - found the
@@ -20,7 +20,7 @@ namespace Tests\Support\OrmHarness;
  * honest one team lead specified rather than a workaround: docker-compose.yml
  * now bind-mounts tools/orm-migration/services/laravel read-only into the
  * batch container at /var/www/orm-migration-manifest, so the SAME file the
- * extractor writes and gate (q) checks is what the harness reads - not a
+ * extractor writes is what the harness reads - not a
  * copy that could drift from the source of truth. A copy into
  * iznik-batch/tests/fixtures/ was considered and rejected for exactly that
  * reason (see the corpus-file precedent's own 3-copy-plus-sync-check design
@@ -34,12 +34,11 @@ namespace Tests\Support\OrmHarness;
  * monorepo present) - but if NEITHER resolves, this fails LOUDLY with a
  * clear RuntimeException naming both paths it tried, rather than letting a
  * PHP warning silently produce an empty site list. A Layer 1/2 test that
- * cannot find its golden must never quietly no-op; that is precisely the
- * "reports green while checking nothing" failure gate (q) itself exists to
- * rule out.
+ * cannot find its golden must never quietly no-op; "reports green while
+ * checking nothing" is the failure this whole harness exists to rule out.
  *
- * Not embedded the way iznik-server-go/ormharness embeds its manifest.json
- * via go:embed: that embedding exists because the Go binary is compiled and
+ * Not embedded the way the (now removed) Go harness embedded its manifest.json
+ * via go:embed: that embedding existed because the Go binary is compiled and
  * shipped into a container where nothing above iznik-server-go exists at
  * all, even via a mount - there is no equivalent "just bind-mount it" option
  * for a compiled binary. PHPUnit reads the filesystem at test-run time, so a

@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest'
 // pattern in ChatFooterDraftPersistence.spec.js.
 const chatPaneSource = readFileSync(
   resolve(__dirname, '../../../components/ChatPane.vue'),
-  'utf-8'
+  'utf-8',
 )
 
 describe('ChatPane empty-chat footer position (Discourse 9918)', () => {
@@ -26,7 +26,7 @@ describe('ChatPane empty-chat footer position (Discourse 9918)', () => {
     // between the busy branch and the footer.
     const between = chatPaneSource.slice(
       chatPaneSource.indexOf('chatBusy'),
-      chatPaneSource.indexOf('<ChatFooter')
+      chatPaneSource.indexOf('<ChatFooter'),
     )
     expect(between).toMatch(/v-else\b/)
     expect(between).toMatch(/chatContentEmpty/)
@@ -40,6 +40,40 @@ describe('ChatPane empty-chat footer position (Discourse 9918)', () => {
     expect(rule, '.chatContentEmpty CSS rule must exist').not.toBeNull()
     expect(rule[0]).toMatch(/flex-grow:\s*1/)
     expect(rule[0]).toMatch(/order:\s*3/)
+  })
+})
+
+describe('ChatPane Freegle system chat header', () => {
+  // Freegle talks to members in an ordinary User2User room, so without this the
+  // member gets the full stranger header for it: a rating widget, "last seen",
+  // "replies in", Block and Report - all aimed at an account that is not a
+  // person and never reads what you send it.
+  const header = chatPaneSource.slice(
+    chatPaneSource.indexOf('desktop-profile-header'),
+    chatPaneSource.indexOf('<ChatBlockModal'),
+  )
+
+  it("uses a different header for Freegle's own chat", () => {
+    expect(header).toMatch(/v-if="chat\.systemchat"/)
+    expect(header).toMatch(/v-else/)
+  })
+
+  it('says once, in the header, that the messages are automated', () => {
+    // Rather than repeating it on every single message.
+    const systemBranch = header.slice(0, header.indexOf('v-else'))
+    expect(systemBranch).toContain('Automated messages about your posts')
+    expect(systemBranch).toContain("Freegle doesn't read")
+  })
+
+  it('offers only Mark read and Hide, and keeps Hide', () => {
+    // Hide matters: someone who finds these annoying needs a way out that is
+    // not "ignore the unread badge for ever".
+    const systemBranch = header.slice(0, header.indexOf('v-else'))
+    expect(systemBranch).toContain('Mark read')
+    expect(systemBranch).toMatch(/Unhide' : 'Hide'/)
+    expect(systemBranch).not.toContain('showreport')
+    expect(systemBranch).not.toContain('showblock')
+    expect(systemBranch).not.toContain('UserRatings')
   })
 })
 

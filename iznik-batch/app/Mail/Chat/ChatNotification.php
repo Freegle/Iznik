@@ -19,6 +19,7 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 use Symfony\Component\Mime\Email;
+use App\Services\UnsubscribeService;
 
 class ChatNotification extends MjmlMailable implements RetryableMailable
 {
@@ -212,6 +213,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             ],
             $hasAmp
         );
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_CHAT;
     }
 
     /**
@@ -437,6 +443,14 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 'ampIncluded' => $ampIncluded,
                 'isOwnMessage' => $this->isOwnMessage,
                 'otherUserName' => $otherUserName,
+                // A Freegle prompt asks a question whose answers are buttons, and
+                // buttons cannot live in email: a one-click answer in a mail is
+                // answerable by anyone who ever sees that mail, including a
+                // forwarded copy, and these answers change what the member's post
+                // says. So the mail carries the question and sends them to the
+                // chat to answer it - which the call to action has to be honest
+                // about, rather than saying "Reply to Freegle".
+                'isPrompt' => $this->message->type === ChatMessage::TYPE_PROMPT,
             ], $this->getTrackingData()), 'emails.text.chat.notification');
 
         // Render AMP version if enabled, User2User chat, and recipient's domain supports AMP.
@@ -494,12 +508,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             // Add mail type header for tracking.
             $headers->addTextHeader('X-Freegle-Mail-Type', 'ChatNotification');
 
-            // Add List-Unsubscribe headers for RFC 8058 one-click unsubscribe.
-            // Only for persisted users with valid IDs.
-            if ($this->recipient->exists && $this->recipient->id) {
-                $headers->addTextHeader('List-Unsubscribe', $this->recipient->listUnsubscribe());
-                $headers->addTextHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
-            }
+            // List-Unsubscribe is added by MjmlMailable::addListUnsubscribeHeaders() from
+            // the category this mailable declares. It used to be added here as well,
+            // pointing at the one-click page that deletes the account - so the mail
+            // carried two conflicting List-Unsubscribe headers, one of which answered
+            // "stop emailing me about chats" by removing the member's account.
 
             // Add referenced message IDs if available.
             if ($this->refMessage) {

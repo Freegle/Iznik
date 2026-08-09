@@ -395,6 +395,19 @@ export const useChatStore = defineStore({
       await api(this.config).chat.nudge(id)
       this.fetchMessages(id)
     },
+    async answerPrompt(chatid, chatmsgid, answer) {
+      const ret = await api(this.config).chat.answerPrompt(
+        chatid,
+        chatmsgid,
+        answer
+      )
+
+      // Refetch so the prompt comes back in its answered state rather than us
+      // guessing what the server did with it.
+      await this.fetchMessages(chatid, true)
+
+      return ret
+    },
     async typing(chatid) {
       await api(this.config).chat.typing(chatid)
     },

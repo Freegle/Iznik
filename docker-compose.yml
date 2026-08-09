@@ -599,6 +599,15 @@ services:
       - DISCOURSE_API_USER=${DISCOURSE_API_USER:-Edward_Hibbert}
       # Audit trail (who investigated whom, with what) - durable on the audit volume.
       - AUDIT_LOG_PATH=/app/audit/audit.jsonl
+      # "Refer to geeks" email. The SMTP default is the local mailpit, so a
+      # referral sent while developing lands at mailpit.localhost and never
+      # reaches the real geeks list; edge/prod sets SUPPORT_SMTP_* to a relay.
+      - GEEKS_EMAIL=${GEEKS_EMAIL:-geeks@ilovefreegle.org}
+      - SUPPORT_REFERRAL_FROM=${SUPPORT_REFERRAL_FROM:-support@ilovefreegle.org}
+      - SUPPORT_SMTP_HOST=${SUPPORT_SMTP_HOST:-mailpit}
+      - SUPPORT_SMTP_PORT=${SUPPORT_SMTP_PORT:-1025}
+      - SUPPORT_SMTP_USER=${SUPPORT_SMTP_USER:-}
+      - SUPPORT_SMTP_PASS=${SUPPORT_SMTP_PASS:-}
     volumes:
       # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
       # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This
@@ -782,8 +791,6 @@ services:
       # no-auth port (SPATIAL_INTERNAL_PORT=8194) — NOT spatial-knn, NOT the 8196
       # auth port. Explicit so the drive-time analytics don't silently misroute.
       - ROUTING_EVAL_URL=${ROUTING_EVAL_URL:-http://spatial:8194}
-      # Groq API key for the voice-posting endpoint (streaming transcription + tidy-up).
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
     volumes:
       - apiv2_logs:/var/log/freegle
       - embedding_model_cache:/app/model-cache
@@ -963,8 +970,6 @@ services:
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
-      # Groq API key for the voice-posting endpoint (streaming transcription + tidy-up).
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
       - SPATIAL_SERVER_URL=${SPATIAL_SERVER_URL:-http://spatial:8196}
     volumes:
       - apiv2_logs:/var/log/freegle
@@ -1558,16 +1563,15 @@ services:
       # Read-only monorepo .git so deploy:record-commit can read HEAD via the
       # RecordCommitCommand walk-up from base_path() (= /var/www/html).
       - ./.git:/var/www/.git:ro
-      # Read-only: the ORM migration harness (tests/Support/OrmHarness/) needs
-      # to read the raw-SQL inventory this manifest is the single source of
-      # truth for. iznik-batch alone is otherwise all this container can see,
-      # so a relative path from inside tests/ trying to escape upward to
-      # tools/orm-migration/ resolves to nothing - found the hard way, the
-      # harness's Layer 1/2 tests erroring with "file_get_contents(...):
-      # Failed to open stream" before this mount existed. A bind mount of the
-      # real manifest is the honest fix (not a copy into iznik-batch/tests/
-      # fixtures/, which would fork the contract this whole programme rests
-      # on and drift from the source of truth silently).
+      # Read-only: the Laravel ORM harness (iznik-batch/tests/Support/OrmHarness/)
+      # reads the raw-SQL inventory this manifest is the single source of truth
+      # for. iznik-batch alone is otherwise all this container can see, so a
+      # relative path from inside tests/ escaping upward to tools/orm-migration/
+      # resolves to nothing - found the hard way, the harness's Layer 1/2 tests
+      # erroring with "file_get_contents(...): Failed to open stream" before this
+      # mount existed. A bind mount of the real manifest is the honest fix (not a
+      # copy into iznik-batch/tests/fixtures/, which would fork the contract and
+      # drift from the source of truth silently).
       - ./tools/orm-migration/services/laravel:/var/www/orm-migration-manifest:ro
       - apiv2_logs:/var/log/freegle
     depends_on:

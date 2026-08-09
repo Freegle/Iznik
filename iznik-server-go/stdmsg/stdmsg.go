@@ -35,9 +35,7 @@ func canModifyConfig(myid uint64, configid uint64) bool {
 
 	var createdby *uint64
 	var protected int
-	// ORM migration site a1df6eefdf33 (wave 1).
 	database.DBConn.Table("mod_configs").Select("createdby").Where("id = ?", configid).Scan(&createdby)
-	// ORM migration site 22a63b0ac626 (wave 1).
 	database.DBConn.Table("mod_configs").Select("protected").Where("id = ?", configid).Scan(&protected)
 
 	if createdby != nil && *createdby == myid {
@@ -75,7 +73,6 @@ func GetStdMsg(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var msg StdMsg
-	// ORM migration site ae1076412fce (wave 1).
 	db.Table("mod_stdmsgs").Where("id = ?", id).Scan(&msg)
 	if msg.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
@@ -141,7 +138,7 @@ func PostStdMsg(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site 132b1f639e73 (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT (subjpref/subjsuff are fixed empty-string literals); id read back via
 	// GORM's map-Create "@id" writeback.
 	row := map[string]interface{}{
@@ -159,27 +156,21 @@ func PostStdMsg(c *fiber.Ctx) error {
 
 	// Apply optional attributes.
 	if req.Action != "" {
-		// ORM migration site 46c5fb361ea2 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("action", req.Action)
 	}
 	if req.Subjpref != "" {
-		// ORM migration site 116e92a68ac4 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("subjpref", req.Subjpref)
 	}
 	if req.Subjsuff != "" {
-		// ORM migration site 46bebb6b38be (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("subjsuff", req.Subjsuff)
 	}
 	if req.Body != "" {
-		// ORM migration site 8ad8c1589208 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("body", req.Body)
 	}
 	if req.Rarelyused != 0 {
-		// ORM migration site 948c386a078b (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("rarelyused", req.Rarelyused)
 	}
 	if req.Autosend != 0 {
-		// ORM migration site 2ba672ef4292 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("autosend", req.Autosend)
 	}
 
@@ -231,7 +222,6 @@ func PatchStdMsg(c *fiber.Ctx) error {
 
 	// Get the stdmsg to find its configid.
 	var configid uint64
-	// ORM migration site 102535ad9bab (wave 1).
 	db.Table("mod_stdmsgs").Select("configid").Where("id = ?", req.ID).Scan(&configid)
 	if configid == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
@@ -242,47 +232,36 @@ func PatchStdMsg(c *fiber.Ctx) error {
 	}
 
 	if req.Title != nil {
-		// ORM migration site 0d06dc492d55 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Action != nil {
-		// ORM migration site cef43692b937 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("action", *req.Action)
 	}
 	if req.Subjpref != nil {
-		// ORM migration site f29e07819b1a (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("subjpref", *req.Subjpref)
 	}
 	if req.Subjsuff != nil {
-		// ORM migration site f9fc836339e6 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("subjsuff", *req.Subjsuff)
 	}
 	if req.Body != nil {
-		// ORM migration site 5e8a95612260 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("body", *req.Body)
 	}
 	if req.Rarelyused != nil {
-		// ORM migration site 82fe128d30d3 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("rarelyused", *req.Rarelyused)
 	}
 	if req.Autosend != nil {
-		// ORM migration site 6a8c185c8d22 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("autosend", *req.Autosend)
 	}
 	if req.Newmodstatus != nil {
-		// ORM migration site 8e96c309ddf2 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("newmodstatus", *req.Newmodstatus)
 	}
 	if req.Newdelstatus != nil {
-		// ORM migration site 7ab15f7bfb8f (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("newdelstatus", *req.Newdelstatus)
 	}
 	if req.Edittext != nil {
-		// ORM migration site 4dcf8ff38c9f (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("edittext", *req.Edittext)
 	}
 	if req.Insert != nil {
-		// ORM migration site 2379cd419502 (wave 2).
 		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("insert", *req.Insert)
 	}
 
@@ -322,7 +301,6 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var configid uint64
-	// ORM migration site d6c28a45c7b1 (wave 1).
 	db.Table("mod_stdmsgs").Select("configid").Where("id = ?", req.ID).Scan(&configid)
 	if configid == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
@@ -332,7 +310,6 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
 	}
 
-	// ORM migration site 3157418b1d37 (wave 2).
 	db.Table("mod_stdmsgs").Where("id = ?", req.ID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

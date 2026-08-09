@@ -36,12 +36,14 @@ Read these directly; the pages above link into them rather than copy them:
 | Logging and observability | [../ops/reference/logging.md](../ops/reference/logging.md) |
 | Spatial services (plain English) | [./reference/spatial-servers.md](./reference/spatial-servers.md) |
 | Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |
+| Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |
+| Unsubscribing from email (List-Unsubscribe) | [./reference/unsubscribe.md](./reference/unsubscribe.md) |
 | Browser testing with Chrome DevTools | [./reference/browser-testing.md](./reference/browser-testing.md) |
 | Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |
 | SEO: how posts get found | [./reference/seo.md](./reference/seo.md) |
 | ModTools AI Support Helper | [./reference/ai-support-helper.md](./reference/ai-support-helper.md) |
-| ORM migration harness (shadow reads, write replay) | [./reference/orm-migration-harness.md](./reference/orm-migration-harness.md) |
+| Chat prompts (Freegle's tappable questions) | [./reference/chat-prompts.md](./reference/chat-prompts.md) |
 
 Each component also has its own README (`iznik-nuxt3/README.md`, `iznik-server-go/README.md`,
 `iznik-batch/README.md`, `iznik-routing-go/README.md`, `iznik-spatial-go/README.md`), and

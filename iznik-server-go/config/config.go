@@ -62,7 +62,6 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 			Systemrole string `json:"systemrole"`
 		}
 
-		// ORM migration site a2a6a74e67d6 (wave 4).
 		db.Table("sessions").
 			Select("users.id, users.systemrole").
 			Joins("INNER JOIN users ON users.id = sessions.userid").
@@ -86,7 +85,7 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 // GET /config/:key endpoint. The config store is admin-writable and holds
 // operational keys that must not be world-readable; anything else has to go through
 // the Support/Admin-gated /config/admin routes. Only client-facing values are
-// exposed: two feature flags (ads_enabled, voicepost_rollout_pct) plus the app
+// exposed: the ads_enabled feature flag plus the app
 // version metadata under the app_fd_version_* / app_mt_version_* namespaces, which
 // the web and mobile clients poll to decide rollout and update prompts. The version
 // keys are matched by prefix so adding a new version field (a new platform, a new
@@ -94,7 +93,7 @@ func RequireSupportOrAdminMiddleware() fiber.Handler {
 // against every configStore.fetch()/config.fetchv2() call site in iznik-nuxt3.
 func isPublicConfigKey(key string) bool {
 	switch key {
-	case "ads_enabled", "voicepost_rollout_pct":
+	case "ads_enabled":
 		return true
 	}
 	return strings.HasPrefix(key, "app_fd_version_") || strings.HasPrefix(key, "app_mt_version_")
@@ -111,7 +110,6 @@ func Get(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site 1f790095e709 (wave 1).
 	db.Table("config").Where("`key` = ?", key).Scan(&items)
 
 	if len(items) > 0 {

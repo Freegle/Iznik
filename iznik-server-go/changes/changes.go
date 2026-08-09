@@ -15,10 +15,22 @@ type MessageChange struct {
 	Type      string `json:"type"`
 }
 
+// UserChange is one user a partner should re-read - or, when Type is
+// UserChangeDeleted, stop holding altogether.
 type UserChange struct {
 	ID          uint64  `json:"id"`
 	LastUpdated *string `json:"lastupdated" gorm:"column:lastupdated"`
+	Type        string  `json:"type"`
 }
+
+const (
+	// UserChangeModified - the user's profile has changed; re-read it.
+	UserChangeModified = "Modified"
+
+	// UserChangeDeleted - the user has been forgotten or purged. Delete your
+	// copy: the id is all you get, because everything else about them is gone.
+	UserChangeDeleted = "Deleted"
+)
 
 type Rating struct {
 	ID         uint64  `json:"id"`
@@ -49,7 +61,7 @@ type ChangesResponse struct {
 // GetChanges returns message changes, user changes, and optionally ratings since a given time.
 // Requires partner key authentication via the partner query parameter.
 // @Summary Get changes since a timestamp
-// @Description Returns message changes (deleted, edited, promised, reneged, outcomes, approved/reposted), user changes, and ratings since a given time. Requires partner key authentication.
+// @Description Returns message changes (deleted, edited, promised, reneged, outcomes, approved/reposted), user changes (type Modified for a profile to re-read, type Deleted for a user who has been forgotten or purged and should be removed), and ratings since a given time. Requires partner key authentication.
 // @Tags changes
 // @Produce json
 // @Param since query string false "ISO8601 or MySQL datetime timestamp (defaults to 1 hour ago)" example("2026-03-04T12:00:00Z")
@@ -68,7 +80,6 @@ func GetChanges(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var partnerID uint64
-	// ORM migration site baf96c48b316 (wave 1).
 	db.Table("partners_keys").Select("id").Where("`key` = ?", partner).Scan(&partnerID)
 
 	if partnerID == 0 {
@@ -98,14 +109,15 @@ func GetChanges(c *fiber.Ctx) error {
 	// Fetch message changes, user changes, and ratings in parallel.
 	var messages []MessageChange
 	var users []UserChange
+	var deletions []UserChange
 	var ratings []Rating
 	var wg sync.WaitGroup
 
-	wg.Add(3)
+	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
-		// ORM migration site 19b190d43a85 (Tier 2 keep-raw review). Top-level
+		// Top-level
 		// UNION, nothing wrapping it: BuildClauses={"SELECT"} suppresses the
 		// FROM GORM would otherwise inject once .Table() is called, so the
 		// whole "SELECT ... UNION SELECT ..." text can be given to .Select()
@@ -128,13 +140,21 @@ func GetChanges(c *fiber.Ctx) error {
 
 	go func() {
 		defer wg.Done()
-		// ORM migration site 9e34a0df6578 (wave 1).
-		db.Table("users").Select("id, lastupdated").Where("lastupdated IS NOT NULL AND lastupdated >= ?", mysqlTime).Scan(&users)
+		db.Table("users").Select("id, lastupdated, ? AS `type`", UserChangeModified).
+			Where("lastupdated IS NOT NULL AND lastupdated >= ?", mysqlTime).Scan(&users)
 	}()
 
 	go func() {
 		defer wg.Done()
-		// ORM migration site 82b4c19c846e (wave 1).
+		// Users we have destroyed. Read from a tombstone table rather than from
+		// users, because the point at which a partner most needs to know is the
+		// point at which the row itself has gone.
+		db.Table("users_deletions").Select("userid AS id, timestamp AS lastupdated, ? AS `type`", UserChangeDeleted).
+			Where("timestamp >= ?", mysqlTime).Scan(&deletions)
+	}()
+
+	go func() {
+		defer wg.Done()
 		db.Table("ratings").
 			Select("id, rater, ratee, rating, timestamp, visible, tn_rating_id, text, reason").
 			Where("timestamp >= ? AND visible = 1", mysqlTime).
@@ -142,6 +162,11 @@ func GetChanges(c *fiber.Ctx) error {
 	}()
 
 	wg.Wait()
+
+	// Deletions go last so that a partner applying the list in order finishes on
+	// the deletion, rather than resurrecting someone whose profile also changed
+	// within the window.
+	users = append(users, deletions...)
 
 	// Format timestamps to ISO8601.
 	for i := range messages {

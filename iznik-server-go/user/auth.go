@@ -33,7 +33,6 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 		if partnerkey != "" {
 			// Find in partners_keys table
 			var partnername string
-			// ORM migration site aaaa357f296a (wave 1).
 			db.Table("partners_keys").Select("partner").Where("`key`= ?", partnerkey).Scan(&partnername)
 
 			// Change partnername to lower case
@@ -43,7 +42,6 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 			if strings.Contains(partnername, "lovejunk") {
 				// We have a valid partner key.  See if we have a user with this ljuserid.
 				var ljuser User
-				// ORM migration site 90690330271c (wave 1).
 				db.Table("users").Where("ljuserid = ?", ljuserid).Scan(&ljuser)
 
 				if ljuser.ID > 0 {
@@ -68,7 +66,6 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 
 					// Create avatar from LoveJunk profile URL if provided.
 					if profileurl != nil && *profileurl != "" {
-						// ORM migration site 5bd4b2e2c8ff (wave 2).
 						db.Table("users_images").Create(map[string]interface{}{
 							"userid":      myid,
 							"url":         *profileurl,
@@ -82,7 +79,6 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 					// We have an approximate location.  This should be the first part of the postcode.
 					// Update the user's location if needed.
 					var locations []location.Location
-					// ORM migration site 22a2af60d1b3 (wave 1).
 					db.Table("locations").Select("id").
 						Where("name LIKE ? AND type = ?", *postcodeprefix+"%", location.TYPE_POSTCODE).
 						Limit(1).Scan(&locations)
@@ -90,7 +86,6 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 					if len(locations) > 0 && locations[0].ID > 0 && (ljuser.Lastlocation == nil || locations[0].ID != *ljuser.Lastlocation) {
 						// We have a location.
 						// Update user table with location.
-						// ORM migration site 90c56d7f4ab1 (wave 2).
 						db.Table("users").Where("id = ?", myid).Update("lastlocation", locations[0].ID)
 					}
 				}

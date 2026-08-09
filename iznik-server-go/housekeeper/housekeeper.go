@@ -116,7 +116,6 @@ func upsertRegistry(registry []TaskInfo) {
 			continue
 		}
 
-		// ORM migration site 9bf0aed4b060 (wave 3).
 		db.Table("housekeeper_tasks").Clauses(clause.OnConflict{
 			DoUpdates: clause.Set{
 				{Column: clause.Column{Name: "name"}, Value: clause.Column{Table: "excluded", Name: "name"}},
@@ -142,7 +141,6 @@ func upsertRegistry(registry []TaskInfo) {
 func upsertLastRun(taskKey, status, summary string) {
 	db := database.DBConn
 
-	// ORM migration site dbbe018930e1 (wave 3).
 	db.Table("housekeeper_tasks").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "last_run_at"}, Value: gorm.Expr("NOW()")},
@@ -181,7 +179,6 @@ func CompleteTask(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site aae1a88f63f1 (wave 2).
 	result := db.Table("housekeeper_tasks").Where("task_key = ? AND placeholder = 1", taskKey).
 		Updates(map[string]interface{}{
 			"last_run_at":  gorm.Expr("NOW()"),
@@ -221,7 +218,6 @@ func ListTasks(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var tasks []HousekeeperTask
-	// ORM migration site 2c37feb50055 (wave 1).
 	result := db.Table("housekeeper_tasks").Order("task_key").Scan(&tasks)
 
 	if result.Error != nil {
@@ -509,7 +505,6 @@ func ListCronJobs(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var statuses []cronJobStatus
-	// ORM migration site e574518b4ebd (wave 1).
 	statusResult := db.Table("cron_job_status").Scan(&statuses)
 
 	if statusResult.Error != nil {

@@ -7,6 +7,7 @@ use App\Mail\Traits\TrackableEmail;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Str;
+use App\Services\UnsubscribeService;
 
 /**
  * The weekly Community News digest email for one area, to one member.
@@ -41,6 +42,11 @@ class CommunityNewsMail extends MjmlMailable
     protected function getSubject(): string
     {
         return 'Community News for ' . $this->areaName;
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_NEWSLETTER;
     }
 
     protected function getRecipientUserId(): ?int

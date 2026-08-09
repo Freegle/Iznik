@@ -2,6 +2,7 @@ package userdump
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -65,4 +66,74 @@ func TestInClause(t *testing.T) {
 		assert.Equal(t, "(?,?,?)", ph)
 		assert.Equal(t, ids, args)
 	})
+}
+
+// findSpec returns the spec for a table, or nil.
+func findSpec(specs []dbSpec, table string) *dbSpec {
+	for i := range specs {
+		if specs[i].table == table {
+			return &specs[i]
+		}
+	}
+	return nil
+}
+
+// chat_messages is the one extraction that could not be pulled for every chat a
+// member is in. A moderator sits in the roster of every Mod2Mod and User2Mod
+// chat on their groups - one real admin is in 18,664 rooms - and pulling all of
+// their messages with no date bound could not finish inside the caller's
+// timeout, so that member could never be investigated at all. Room membership
+// stays complete; only the message bodies are anchored on the rooms that were
+// active inside the dump's own ?since= window.
+func TestBuildDBSpecs_ChatMessagesAreWindowed(t *testing.T) {
+	since := time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)
+	allChats := []interface{}{int64(1), int64(2), int64(3)}
+	recentChats := []interface{}{int64(3)}
+
+	specs := buildDBSpecs(42, allChats, recentChats, nil, nil, since)
+
+	msgs := findSpec(specs, "chat_messages")
+	assert.NotNil(t, msgs)
+	assert.Equal(t, "chatid IN (?) AND date >= ?", msgs.where,
+		"anchored on the recent rooms only, and bounded by the window")
+	assert.Equal(t, []interface{}{int64(3), since}, msgs.args)
+
+	// Which conversations someone is in is cheap and support needs all of it.
+	rooms := findSpec(specs, "chat_rooms")
+	assert.NotNil(t, rooms)
+	assert.Equal(t, "id IN (?,?,?)", rooms.where)
+	assert.Equal(t, allChats, rooms.args)
+
+	roster := findSpec(specs, "chat_roster")
+	assert.NotNil(t, roster)
+	assert.Equal(t, "chatid IN (?,?,?)", roster.where)
+
+	// Held records are keyed on the member only: chat_messages_held has no
+	// chatid column (its msgid references chat_messages.id), so the previous
+	// chatid-anchored spec was invalid SQL and 1054'd on every real dump.
+	held := findSpec(specs, "chat_messages_held")
+	assert.NotNil(t, held)
+	assert.Equal(t, "userid = ?", held.where)
+}
+
+// A member with rooms but none active in the window gets no chat_messages spec
+// at all, rather than an "IN ()" that would be invalid SQL.
+func TestBuildDBSpecs_NoRecentChatsMeansNoMessageSpec(t *testing.T) {
+	since := time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)
+	specs := buildDBSpecs(42, []interface{}{int64(1)}, nil, nil, nil, since)
+
+	assert.Nil(t, findSpec(specs, "chat_messages"))
+	assert.NotNil(t, findSpec(specs, "chat_rooms"), "membership is still collected")
+}
+
+// A member with no chats at all still gets their own held messages.
+func TestBuildDBSpecs_NoChatsAtAll(t *testing.T) {
+	since := time.Date(2026, 5, 7, 0, 0, 0, 0, time.UTC)
+	specs := buildDBSpecs(42, nil, nil, nil, nil, since)
+
+	assert.Nil(t, findSpec(specs, "chat_rooms"))
+	assert.Nil(t, findSpec(specs, "chat_messages"))
+	held := findSpec(specs, "chat_messages_held")
+	assert.NotNil(t, held)
+	assert.Equal(t, "userid = ?", held.where)
 }

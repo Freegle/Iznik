@@ -54,7 +54,6 @@ func GetAdmin(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var admin Admin
-	// ORM migration site 0ddc492f685c (wave 1).
 	db.Table("admins").Select("id, createdby, groupid, subject, text, ctatext, ctalink, created, complete, heldby, pending, essential, template, editprotected").Where("id = ?", id).Scan(&admin)
 
 	if admin.ID == 0 {
@@ -88,13 +87,13 @@ func ListAdmins(c *fiber.Ctx) error {
 	// stale, approved-but-never-sent admins on show (Discourse 9816). Matches V1
 	// Admin::listForGroup, which returned all admins for a group ordered by created DESC.
 	// The frontend partitions pending vs previous client-side by the `pending` flag.
-	// ORM migration site 3d5506803f0c (Tier 3 keep-raw review). The WHERE is
+	// The WHERE is
 	// assembled from two fixed toggles: which groupid scope applies (admin/
 	// support with an explicit groupid vs the caller's own active mod groups,
 	// optionally further narrowed to one groupid), and the pending filter
-	// (absent/true/false) - 3 x 3 = 9 possible rendered forms, all declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_3d5506803f0c
-	// (iznik-server-go/test).
+	// (absent/true/false) - 3 x 3 = 9 possible rendered forms, all proven by
+	// the retired ormharness (shapes.json / TestTier3Shapes_3d5506803f0c,
+	// removed in d22ba1d6c).
 	tx := db.Table("admins a").Select("a.id, a.createdby, a.groupid, a.subject, a.text, a.ctatext, " +
 		"a.ctalink, a.created, a.complete, a.heldby, a.pending, a.essential, a.template, a.editprotected")
 
@@ -179,7 +178,6 @@ func PostAdmin(c *fiber.Ctx) error {
 
 		// Check mod of the admin's group.
 		var adminGroupID uint64
-		// ORM migration site 6eb1be4ff453 (wave 1).
 		db.Table("admins").Select("COALESCE(groupid, 0)").Where("id = ?", req.ID).Scan(&adminGroupID)
 
 		if !user.IsModOfGroup(myid, adminGroupID) {
@@ -191,7 +189,6 @@ func PostAdmin(c *fiber.Ctx) error {
 			return heldByAnotherResponse(c, holder, name)
 		}
 
-		// ORM migration site 758cc8542da6 (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("heldby", myid)
 		return c.JSON(fiber.Map{"success": true})
 
@@ -201,14 +198,12 @@ func PostAdmin(c *fiber.Ctx) error {
 		}
 
 		var adminGroupID uint64
-		// ORM migration site 0ebce3bdec81 (wave 1).
 		db.Table("admins").Select("COALESCE(groupid, 0)").Where("id = ?", req.ID).Scan(&adminGroupID)
 
 		if !user.IsModOfGroup(myid, adminGroupID) {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
 		}
 
-		// ORM migration site 392f5063e394 (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		return c.JSON(fiber.Map{"success": true})
 
@@ -254,8 +249,7 @@ func PostAdmin(c *fiber.Ctx) error {
 
 		// Table()+map Create reads the generated id back from the same
 		// sql.Result the INSERT returned, under the map key "@id" - see
-		// test/orm_insertid_test.go.
-		// ORM migration site 88399aa73e56 (insertid-conv).
+		// test/insertid_gorm_writeback_test.go.
 		row := map[string]interface{}{
 			"createdby":     myid,
 			"groupid":       utils.NilIfZero(req.GroupID),
@@ -308,13 +302,11 @@ type PatchAdminRequest struct {
 // admin message, or 0 if it is free to act on.
 func adminHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
 	var holder uint64
-	// ORM migration site be61683f2a10 (wave 1).
 	db.Table("admins").Select("COALESCE(heldby, 0)").Where("id = ?", id).Scan(&holder)
 	if holder == 0 || holder == myid {
 		return 0, ""
 	}
 	var name string
-	// ORM migration site 619fb338bc20 (wave 1).
 	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&name)
 	return holder, name
 }
@@ -348,7 +340,6 @@ func PatchAdmin(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var adminGroupID uint64
-	// ORM migration site 8607a46d5c6f (wave 1).
 	db.Table("admins").Select("COALESCE(groupid, 0)").Where("id = ?", req.ID).Scan(&adminGroupID)
 
 	if !user.IsModOfGroup(myid, adminGroupID) {
@@ -362,18 +353,15 @@ func PatchAdmin(c *fiber.Ctx) error {
 	}
 
 	if req.Subject != nil {
-		// ORM migration site 410038882811 (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("subject", *req.Subject)
 	}
 	if req.Text != nil {
-		// ORM migration site 3a093ace39bb (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("text", *req.Text)
 	}
 	if req.Complete != nil {
 		// Completing is terminal, so drop the hold with it. Leaving it set pinned the
 		// message as "Held" indefinitely, so it stayed locked to a mod who had already
 		// finished with it and only a manual Release cleared it.
-		// ORM migration site 4848bb7140d6 (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"complete": gorm.Expr("NOW()"), "heldby": gorm.Expr("NULL")})
 	}
@@ -382,32 +370,25 @@ func PatchAdmin(c *fiber.Ctx) error {
 		if *req.Pending {
 			val = 1
 		}
-		// ORM migration site a6f6b67bbf10 (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("pending", val)
 	}
 	if req.CTA_Text != nil {
-		// ORM migration site ff2cd33b1601 (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("ctatext", *req.CTA_Text)
 	}
 	if req.CTA_Link != nil {
-		// ORM migration site aeab343d2b29 (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("ctalink", *req.CTA_Link)
 	}
 	if req.Essential != nil {
-		// ORM migration site dfb2e5f3ddfb (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("essential", *req.Essential)
 	}
 	if req.Template != nil {
-		// ORM migration site 4129ec17482b (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("template", *req.Template)
 	}
 	if req.Editprotected != nil {
-		// ORM migration site 339f96b301b3 (wave 2).
 		db.Table("admins").Where("id = ?", req.ID).Update("editprotected", *req.Editprotected)
 	}
 
 	// Track who edited and when.
-	// ORM migration site e833309ff21a (wave 2).
 	db.Table("admins").Where("id = ?", req.ID).
 		Updates(map[string]interface{}{"editedat": gorm.Expr("NOW()"), "editedby": myid})
 
@@ -447,14 +428,12 @@ func DeleteAdmin(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var adminGroupID uint64
-	// ORM migration site a1ff219a08d7 (wave 1).
 	db.Table("admins").Select("COALESCE(groupid, 0)").Where("id = ?", id).Scan(&adminGroupID)
 
 	if !user.IsModOfGroup(myid, adminGroupID) {
 		return fiber.NewError(fiber.StatusForbidden, "Must be a moderator of the admin's group")
 	}
 
-	// ORM migration site c6a830b48e43 (wave 2).
 	db.Table("admins").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"success": true})

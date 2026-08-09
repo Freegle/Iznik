@@ -69,6 +69,12 @@ class EngageEmailService
                 continue;
             }
 
+            // Honour the "Encouragement emails" setting, which is also what the
+            // `engagement` unsubscribe category turns off.
+            if (!$force && !$user->wantsEngagementMail()) {
+                continue;
+            }
+
             // Check the user has a Freegle group membership
             $hasMembership = DB::table('memberships')
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')

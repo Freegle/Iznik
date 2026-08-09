@@ -77,7 +77,6 @@ func interestIsActive(state string) bool {
 // column with a separate join table so the core attachments table is untouched.
 // One attachment belongs to at most one item (unique attachmentid).
 func linkBulkItemAttachment(db *gorm.DB, bulkitemid uint64, attachmentid uint64) {
-	// ORM migration site 48b8f4df0768 (wave 3).
 	db.Table("messages_bulk_item_attachments").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "bulkitemid"}, Value: clause.Column{Table: "excluded", Name: "bulkitemid"}},
@@ -93,13 +92,11 @@ func linkBulkItemAttachment(db *gorm.DB, bulkitemid uint64, attachmentid uint64)
 // core messages table untouched.
 func loadAccessInstructions(db *gorm.DB, msgid uint64) string {
 	var ai string
-	// ORM migration site 0c576c0140ff (wave 1).
 	db.Table("messages_bulk_access").Select("COALESCE(accessinstructions, '')").Where("msgid = ?", msgid).Scan(&ai)
 	return ai
 }
 
 func saveAccessInstructions(db *gorm.DB, msgid uint64, instructions string) {
-	// ORM migration site a3b40fe84086 (wave 3).
 	db.Table("messages_bulk_access").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "accessinstructions"}, Value: clause.Column{Table: "excluded", Name: "accessinstructions"}},
@@ -117,7 +114,6 @@ func saveAccessInstructions(db *gorm.DB, msgid uint64, instructions string) {
 // non-bulk message so the JSON field is omitted.
 func LoadBulkItems(db *gorm.DB, msgid uint64, myid uint64, canSeeInterest bool, attachments []MessageAttachment) []BulkItem {
 	var items []BulkItem
-	// ORM migration site 6d41381ea61b (wave 1).
 	db.Table("messages_bulk_items").
 		Select("id, msgid, position, name, quantity, available, `condition`, dimensions, photourl, description").
 		Where("msgid = ?", msgid).
@@ -129,7 +125,6 @@ func LoadBulkItems(db *gorm.DB, msgid uint64, myid uint64, canSeeInterest bool, 
 	}
 
 	var interest []BulkItemInterest
-	// ORM migration site 4b13c81d7f07 (wave 1).
 	db.Table("messages_bulk_items_interest").
 		Select("id, bulkitemid, msgid, userid, quantity, cancollect, state, chatid").
 		Where("msgid = ?", msgid).
@@ -182,7 +177,6 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	}
 
 	var fromuser uint64
-	// ORM migration site 644035e792fd (wave 1).
 	db.Table("messages").Select("fromuser").Where("id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
@@ -217,7 +211,6 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		var itemName string
 		var available uint
 		var itemMsgid uint64
-		// ORM migration site b169ddebf3b7 (wave 1).
 		db.Table("messages_bulk_items").Select("name, quantity, msgid").Where("id = ?", in.Bulkitemid).
 			Row().Scan(&itemName, &available, &itemMsgid)
 		if itemMsgid != req.ID {
@@ -237,7 +230,6 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 
 	// Withdraw interest (keep the row for history). No chat room needed.
 	for _, id := range withdraw {
-		// ORM migration site 2403316ebe7c (wave 2).
 		db.Table("messages_bulk_items_interest").Where("bulkitemid = ? AND userid = ?", id, target).
 			Updates(map[string]interface{}{"state": gorm.Expr("'Withdrawn'"), "quantity": gorm.Expr("0")})
 	}
@@ -250,7 +242,6 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		for _, p := range picked {
 			// Preserve an offerer-set state (Reserved/Collected/Rejected) — a
 			// replier re-expressing interest must not reset their allocation.
-			// ORM migration site fde42951834d (wave 3).
 			db.Table("messages_bulk_items_interest").Clauses(clause.OnConflict{
 				DoUpdates: clause.Set{
 					{Column: clause.Column{Name: "quantity"}, Value: clause.Column{Table: "excluded", Name: "quantity"}},
@@ -276,7 +267,6 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		// Freegle Helper / AI can map each line straight back to the offer.
 		type orderedItem struct{ ID uint64 }
 		var ordered []orderedItem
-		// ORM migration site 4c3f0662bf60 (wave 1).
 		db.Table("messages_bulk_items").Select("id").Where("msgid = ?", req.ID).
 			Order("position ASC, id ASC").Scan(&ordered)
 		refByItem := make(map[uint64]int, len(ordered))
@@ -311,16 +301,14 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 			body += "\n\n" + strings.TrimSpace(*req.Comment)
 		}
 		var existingID uint64
-		// ORM migration site b3c3cfed62ed (wave 1).
 		db.Table("chat_messages").Select("id").
 			Where("chatid = ? AND userid = ? AND refmsgid = ? AND type = ?", chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).
 			Order("id DESC").Limit(1).Scan(&existingID)
 		if existingID > 0 {
-			// ORM migration site 35ec3910a568 (wave 2).
 			db.Table("chat_messages").Where("id = ?", existingID).
 				Updates(map[string]interface{}{"message": body, "date": time.Now()})
 		} else {
-			// ORM migration site 1fec19922ea6 (wave 2). Identical to 54b1921a63a5
+			// Identical to 54b1921a63a5
 			// (sendAccessInstructions, below); converted together per gate (h).
 			db.Table("chat_messages").Create(map[string]interface{}{
 				"chatid": chatid, "userid": target, "type": utils.CHAT_MESSAGE_INTERESTED,
@@ -328,7 +316,6 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 				"processingrequired": gorm.Expr("1"),
 			})
 		}
-		// ORM migration site 0a3ffbf56687 (wave 2).
 		db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
 	}
 
@@ -354,7 +341,6 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 
 	// Resolve the owning message and check permission.
 	var msgid, fromuser uint64
-	// ORM migration site 2fb353882afe (wave 4).
 	db.Table("messages_bulk_items bi").
 		Select("bi.msgid, m.fromuser").
 		Joins("INNER JOIN messages m ON m.id = bi.msgid").
@@ -368,11 +354,9 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	}
 
 	var priorState string
-	// ORM migration site 14de6b4b23b0 (wave 1).
 	db.Table("messages_bulk_items_interest").Select("COALESCE(state, '')").
 		Where("bulkitemid = ? AND userid = ?", *req.Bulkitemid, *req.Userid).Scan(&priorState)
 
-	// ORM migration site b51c93157bcf (wave 2).
 	result := db.Table("messages_bulk_items_interest").Where("bulkitemid = ? AND userid = ?", *req.Bulkitemid, *req.Userid).
 		Update("state", *req.State)
 	if result.RowsAffected == 0 {
@@ -394,13 +378,11 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 	// recompute reflects the collected units.
 	if *req.State == "Collected" && priorState != "Collected" {
 		var qty int
-		// ORM migration site a1b05269552d (wave 1).
 		db.Table("messages_bulk_items_interest").Select("COALESCE(quantity, 1)").
 			Where("bulkitemid = ? AND userid = ?", *req.Bulkitemid, *req.Userid).Scan(&qty)
 		if qty < 1 {
 			qty = 1
 		}
-		// ORM migration site 35b87def61f8 (wave 3).
 		db.Table("messages_by").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{
 				"count": gorm.Expr("count + VALUES(count)"),
@@ -410,12 +392,10 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 			"userid": *req.Userid,
 			"count":  qty,
 		})
-		// ORM migration site e42129621a05 (wave 2).
 		db.Table("messages_bulk_items").Where("id = ?", *req.Bulkitemid).
 			Update("quantity", gorm.Expr("GREATEST(0, quantity - ?)", qty))
 		// If collecting cleared the remaining stock, mark the line unavailable so
 		// the external-owner page reflects it and updated_at bumps for flip-day arms.
-		// ORM migration site 3904aaac34be (wave 2).
 		db.Table("messages_bulk_items").Where("id = ? AND quantity = 0", *req.Bulkitemid).
 			Update("available", gorm.Expr("0"))
 		recomputeBulkAvailableNow(db, msgid)
@@ -437,7 +417,6 @@ func handleBulkEditLink(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	}
 
 	var fromuser uint64
-	// ORM migration site 6f136c99e5de (wave 1).
 	db.Table("messages").Select("fromuser").Where("id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
@@ -448,7 +427,6 @@ func handleBulkEditLink(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 
 	// Only a bulk offer (one with catalogue items) can have an update link.
 	var items int64
-	// ORM migration site bec9f1bec5e5 (wave 1).
 	db.Table("messages_bulk_items").Where("msgid = ?", req.ID).Count(&items)
 	if items == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Not a bulk offer")
@@ -476,14 +454,13 @@ func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser u
 		return
 	}
 	body := "Access instructions for collection:\n" + ai
-	// ORM migration site 54b1921a63a5 (wave 2). Identical to 1fec19922ea6
+	// Identical to 1fec19922ea6
 	// (handleBulkInterest); converted together per gate (h).
 	db.Table("chat_messages").Create(map[string]interface{}{
 		"chatid": chatid, "userid": fromuser, "type": utils.CHAT_MESSAGE_DEFAULT,
 		"refmsgid": msgid, "date": time.Now(), "message": body,
 		"processingrequired": gorm.Expr("1"),
 	})
-	// ORM migration site dcb4fcaa8406 (wave 2).
 	db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
 }
 
@@ -491,13 +468,11 @@ func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser u
 // two users, creating it if necessary.
 func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 	var chatID uint64
-	// ORM migration site 24edbdb077a3 (wave 1).
 	db.Table("chat_rooms").Select("id").
 		Where("chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))", utils.CHAT_TYPE_USER2USER, a, b, b, a).
 		Limit(1).Scan(&chatID)
 
 	if chatID == 0 {
-		// ORM migration site 050e3574aa6f (tier4).
 		res := gorm.WithResult()
 		tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
 			DoUpdates: clause.Set{
@@ -529,7 +504,6 @@ func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 	// this bulk-offer-interest path previously created the room WITHOUT them, which
 	// stranded the offerer's reply as un-clearable unread. Idempotent
 	// (ON DUPLICATE KEY UPDATE no-op) so it also heals a pre-existing roster-less room.
-	// ORM migration site 239d2cb0036e (wave 3).
 	db.Table("chat_roster").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "date"}, Value: clause.Column{Name: "date"}},
@@ -540,7 +514,6 @@ func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
 		"status": utils.CHAT_STATUS_ONLINE,
 		"date":   gorm.Expr("NOW()"),
 	})
-	// ORM migration site 9e4c6da913a4 (wave 3).
 	db.Table("chat_roster").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "date"}, Value: clause.Column{Name: "date"}},
@@ -583,17 +556,16 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 		var itemID uint64
 		if in.ID > 0 {
 			itemID = in.ID
-			// ORM migration site b26bbbd1f279 (wave 2).
 			db.Table("messages_bulk_items").Where("id = ? AND msgid = ?", itemID, msgid).
 				Updates(map[string]interface{}{
 					"position": pos, "name": name, "quantity": qty, "condition": condition,
 					"dimensions": in.Dimensions, "photourl": in.Photourl, "description": in.Description,
 				})
 		} else {
-			// ORM migration site faa9018435a3 (insertid-conv). Table()+map
+			// Table()+map
 			// Create reads the generated id back from the same sql.Result
 			// the INSERT returned, under the map key "@id" - see
-			// test/orm_insertid_test.go.
+			// test/insertid_gorm_writeback_test.go.
 			row := map[string]interface{}{
 				"msgid":       msgid,
 				"position":    pos,
@@ -620,7 +592,6 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 			// item linkage lives in the separate messages_bulk_item_attachments
 			// table (no schema change to messages_attachments).
 			for _, attID := range in.Attachments {
-				// ORM migration site 85e640a5f97f (wave 2).
 				db.Table("messages_attachments").Where("id = ? AND (msgid IS NULL OR msgid = ?)", attID, msgid).
 					Update("msgid", msgid)
 				linkBulkItemAttachment(db, itemID, attID)
@@ -630,10 +601,8 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 
 	// Remove items no longer present.
 	if len(keepIDs) > 0 {
-		// ORM migration site 2cacf9e0d85d (wave 2).
 		db.Table("messages_bulk_items").Where("msgid = ? AND id NOT IN (?)", msgid, keepIDs).Delete(nil)
 	} else {
-		// ORM migration site d022d4abb6ce (wave 2).
 		db.Table("messages_bulk_items").Where("msgid = ?", msgid).Delete(nil)
 	}
 
@@ -798,7 +767,6 @@ func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
 		Photourl string
 	}
 	var rows []prow
-	// ORM migration site 086a07072de1 (wave 5).
 	db.Table("messages_bulk_items bi").
 		Select("bi.id, bi.photourl").
 		Where("bi.msgid = ? AND bi.photourl IS NOT NULL AND bi.photourl != '' AND NOT EXISTS (SELECT 1 FROM messages_bulk_item_attachments x WHERE x.bulkitemid = bi.id)", msgid).
@@ -815,7 +783,6 @@ func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
 			log.Printf("bulk photo ingest: upload failed for %s: %v", r.Photourl, err)
 			continue
 		}
-		// ORM migration site fb88302d28cb (insertid-conv).
 		row := map[string]interface{}{"msgid": msgid, "externaluid": uid}
 		if err := db.Table("messages_attachments").Create(row).Error; err != nil {
 			log.Printf("bulk photo ingest: attachment insert failed for %s: %v", r.Photourl, err)
@@ -834,7 +801,6 @@ var IngestBulkItemPhotosSync = ingestBulkItemPhotos
 // in display order. Returns nil when none are set.
 func LoadBulkSlots(db *gorm.DB, msgid uint64) []string {
 	var slots []string
-	// ORM migration site 7fd0b7c845d2 (wave 1).
 	db.Table("messages_bulk_slots").Select("slot").Where("msgid = ?", msgid).
 		Order("position ASC, id ASC").Scan(&slots)
 	if len(slots) == 0 {
@@ -846,7 +812,6 @@ func LoadBulkSlots(db *gorm.DB, msgid uint64) []string {
 // upsertBulkSlots replaces the collection windows for a message from the supplied
 // list (blank entries ignored). An empty/nil slice clears them.
 func upsertBulkSlots(db *gorm.DB, msgid uint64, slots []string) {
-	// ORM migration site 6acdc6efc5f0 (wave 2).
 	db.Table("messages_bulk_slots").Where("msgid = ?", msgid).Delete(nil)
 	pos := 0
 	for _, s := range slots {
@@ -854,7 +819,6 @@ func upsertBulkSlots(db *gorm.DB, msgid uint64, slots []string) {
 		if s == "" {
 			continue
 		}
-		// ORM migration site c29f7adf11f7 (wave 2).
 		db.Table("messages_bulk_slots").Create(map[string]interface{}{
 			"msgid":    msgid,
 			"position": pos,

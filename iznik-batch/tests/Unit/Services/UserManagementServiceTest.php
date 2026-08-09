@@ -6,6 +6,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Membership;
 use App\Models\User;
+use App\Models\UserDeletion;
 use App\Models\UserEmail;
 use App\Services\LokiService;
 use App\Services\UserManagementService;
@@ -61,6 +62,7 @@ class UserManagementServiceTest extends TestCase
         $this->assertArrayHasKey('inactive_users_forgotten', $stats);
         $this->assertArrayHasKey('gdpr_forgets_processed', $stats);
         $this->assertArrayHasKey('forgotten_users_deleted', $stats);
+        $this->assertArrayHasKey('deletion_records_pruned', $stats);
     }
 
     public function test_merge_duplicates_with_no_duplicates(): void
@@ -307,6 +309,21 @@ class UserManagementServiceTest extends TestCase
         ]);
     }
 
+    public function test_forget_user_records_deletion_for_partners(): void
+    {
+        // Partners mirror our users and only learn about changes by polling, so a
+        // forget has to leave a tombstone they can see.
+        $user = $this->createTestUser();
+
+        $this->service->forgetUser($user->id, 'Test reason');
+
+        $this->assertDatabaseHas('users_deletions', [
+            'userid' => $user->id,
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+            'reason' => 'Test reason',
+        ]);
+    }
+
     public function test_delete_fully_forgotten_users(): void
     {
         // Create a forgotten user with no messages.
@@ -344,6 +361,104 @@ class UserManagementServiceTest extends TestCase
 
         // User should NOT be deleted because they still have messages.
         $this->assertDatabaseHas('users', ['id' => $user->id]);
+    }
+
+    public function test_delete_fully_forgotten_users_records_purge(): void
+    {
+        // The users row goes for good here, so the tombstone is the only trace
+        // left for a partner to act on.
+        $user = User::create([
+            'firstname' => NULL,
+            'lastname' => NULL,
+            'fullname' => 'Deleted User #997',
+            'added' => now()->subYears(2),
+            'lastaccess' => now()->subYears(1),
+            'forgotten' => now()->subDays(30),
+        ]);
+
+        $this->service->deleteFullyForgottenUsers();
+
+        $this->assertDatabaseMissing('users', ['id' => $user->id]);
+        $this->assertDatabaseHas('users_deletions', [
+            'userid' => $user->id,
+            'type' => UserDeletion::TYPE_PURGED,
+        ]);
+    }
+
+    public function test_delete_fully_forgotten_users_dry_run_records_nothing(): void
+    {
+        $user = User::create([
+            'firstname' => NULL,
+            'lastname' => NULL,
+            'fullname' => 'Deleted User #996',
+            'added' => now()->subYears(2),
+            'lastaccess' => now()->subYears(1),
+            'forgotten' => now()->subDays(30),
+        ]);
+
+        $this->service->deleteFullyForgottenUsers(TRUE);
+
+        $this->assertDatabaseHas('users', ['id' => $user->id]);
+        $this->assertDatabaseMissing('users_deletions', ['userid' => $user->id]);
+    }
+
+    public function test_delete_yahoo_groups_users_records_purge(): void
+    {
+        $user = User::create([
+            'firstname' => 'Yahoo',
+            'lastname' => 'Purged',
+            'fullname' => 'Yahoo Purged',
+            'added' => now()->subYears(2),
+            'lastaccess' => now()->subYears(1),
+        ]);
+
+        DB::table('users_emails')->insert([
+            'userid' => $user->id,
+            'email' => 'purgedgroup@yahoogroups.com',
+            'added' => now()->subYears(2),
+        ]);
+
+        $this->service->deleteYahooGroupsUsers();
+
+        $this->assertDatabaseMissing('users', ['id' => $user->id]);
+        $this->assertDatabaseHas('users_deletions', [
+            'userid' => $user->id,
+            'type' => UserDeletion::TYPE_PURGED,
+        ]);
+    }
+
+    public function test_prune_deletions_removes_records_older_than_retention(): void
+    {
+        $stale = UserDeletion::create([
+            'userid' => 999001,
+            'timestamp' => now()->subDays(UserManagementService::DELETION_RETENTION_DAYS + 1),
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+        ]);
+
+        $fresh = UserDeletion::create([
+            'userid' => 999002,
+            'timestamp' => now()->subDays(1),
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+        ]);
+
+        $pruned = $this->service->pruneDeletions();
+
+        $this->assertGreaterThanOrEqual(1, $pruned);
+        $this->assertDatabaseMissing('users_deletions', ['id' => $stale->id]);
+        $this->assertDatabaseHas('users_deletions', ['id' => $fresh->id]);
+    }
+
+    public function test_prune_deletions_dry_run_keeps_records(): void
+    {
+        $stale = UserDeletion::create([
+            'userid' => 999003,
+            'timestamp' => now()->subDays(UserManagementService::DELETION_RETENTION_DAYS + 1),
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+        ]);
+
+        $this->service->pruneDeletions(TRUE);
+
+        $this->assertDatabaseHas('users_deletions', ['id' => $stale->id]);
     }
 
     public function test_merge_users_for_email_with_single_user(): void

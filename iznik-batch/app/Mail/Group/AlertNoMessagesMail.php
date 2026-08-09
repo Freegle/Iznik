@@ -12,6 +12,14 @@ use Illuminate\Mail\Mailables\Envelope;
  */
 class AlertNoMessagesMail extends MjmlMailable
 {
+    /**
+     * Transactional - a moderator alert about their own community - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public readonly string $recipientEmail,
         public readonly int $count,

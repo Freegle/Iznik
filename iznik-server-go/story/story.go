@@ -46,7 +46,6 @@ func Single(c *fiber.Ctx) error {
 	var s Story
 
 	db := database.DBConn
-	// ORM migration site 34430e199ad1 (wave 4).
 	db.Table("users_stories").
 		Select("users_stories.*, users_stories_images.id AS imageid, users_stories_images.archived AS imagearchived, users_stories_images.externaluid AS imageuid, users_stories_images.externalmods AS imagemods").
 		Joins("LEFT JOIN users_stories_images ON users_stories_images.storyid = users_stories.id").
@@ -106,12 +105,12 @@ func List(c *fiber.Ctx) error {
 	reviewed := c.Query("reviewed", "1")
 	public := c.Query("public", "1")
 
-	// ORM migration site 0ca4810292dc (Tier 3 keep-raw review). Three
+	// Three
 	// mutually-exclusive branches (authority / review-with-groups / plain)
 	// times an optional newsletterreviewed filter (not reachable on the
 	// authority branch) give 1 + 2 + 2 = 5 possible rendered forms, all
-	// declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_0ca4810292dc (iznik-server-go/test).
+	// proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_0ca4810292dc, removed in d22ba1d6c).
 	// Each branch's WHERE is built as a single string and passed to ONE
 	// Where() call: GORM's clause.Where wraps any fragment containing
 	// "AND"/"OR" in an extra paren pair once there is more than one Where
@@ -187,7 +186,6 @@ func Group(c *fiber.Ctx) error {
 
 	var ids []uint64
 
-	// ORM migration site a77da0b559f8 (wave 4).
 	db.Table("users_stories").
 		Select("DISTINCT users_stories.id").
 		Joins("INNER JOIN memberships ON memberships.userid = users_stories.userid").
@@ -212,7 +210,6 @@ func canModStory(myid uint64, storyID uint64) bool {
 	db := database.DBConn
 
 	var authorID uint64
-	// ORM migration site bedf24ad52b9 (wave 1).
 	db.Table("users_stories").Select("userid").Where("id = ?", storyID).Scan(&authorID)
 
 	if authorID == 0 {
@@ -229,7 +226,6 @@ func canModStory(myid uint64, storyID uint64) bool {
 
 	// Check if moderator/owner on a group the story author is a member of.
 	var count int64
-	// ORM migration site 27f1e940eddd (wave 4).
 	db.Table("memberships m1").
 		Joins("INNER JOIN memberships m2 ON m2.groupid = m1.groupid").
 		Where("m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?) AND m1.collection = ? AND m2.collection = ?",
@@ -251,7 +247,6 @@ func createStoryNewsfeedEntry(userid uint64, storyID uint64) {
 			Lng *float64
 		}
 		var ul UserLoc
-		// ORM migration site 4186ffeeb13b (wave 4).
 		db.Table("users u").
 			Select("l.lat, l.lng").
 			Joins("LEFT JOIN locations l ON l.id = u.lastlocation").
@@ -265,7 +260,6 @@ func createStoryNewsfeedEntry(userid uint64, storyID uint64) {
 		return
 	}
 
-	// ORM migration site 9263f0bb43fb (wave 3).
 	result := db.Table("newsfeed").Create(map[string]interface{}{
 		"type":           gorm.Expr("'Story'"),
 		"userid":         userid,
@@ -304,7 +298,7 @@ func CreateStory(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// ORM migration site f6190b74d8d5 (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback. (An earlier
 	// review cited this site as already converted using this exact pattern - it
 	// wasn't; this is the first real conversion of it.)
@@ -321,7 +315,6 @@ func CreateStory(c *fiber.Ctx) error {
 	id := uint64(idInt)
 
 	if req.Photo > 0 && id > 0 {
-		// ORM migration site cd54b640d303 (wave 2).
 		db.Table("users_stories_images").Where("id = ?", req.Photo).Update("storyid", id)
 	}
 
@@ -390,7 +383,6 @@ func UpdateStory(c *fiber.Ctx) error {
 		Fromnewsfeed bool
 	}
 	var before StoryState
-	// ORM migration site cb4e17982644 (wave 1).
 	db.Table("users_stories").
 		Select("reviewed, public, userid, COALESCE(fromnewsfeed, 0) AS fromnewsfeed").
 		Where("id = ?", req.ID).
@@ -398,29 +390,23 @@ func UpdateStory(c *fiber.Ctx) error {
 
 	// Update settable attributes.
 	if p := toBoolInt(req.Public); p != nil {
-		// ORM migration site 1e5a7a00c4ae (wave 2).
 		db.Table("users_stories").Where("id = ?", req.ID).Update("public", *p)
 	}
 	if req.Headline != nil {
-		// ORM migration site 3e4a98f99f9a (wave 2).
 		db.Table("users_stories").Where("id = ?", req.ID).Update("headline", *req.Headline)
 	}
 	if req.Story != nil {
-		// ORM migration site df4d580584c7 (wave 2).
 		db.Table("users_stories").Where("id = ?", req.ID).Update("story", *req.Story)
 	}
 	if r := toBoolInt(req.Reviewed); r != nil {
-		// ORM migration site d2a597ecda56 (wave 2).
 		db.Table("users_stories").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"reviewed": *r, "reviewedby": myid})
 	}
 	if nr := toBoolInt(req.Newsletterreviewed); nr != nil {
-		// ORM migration site 2036212f3e48 (wave 2).
 		db.Table("users_stories").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"newsletterreviewed": *nr, "newsletterreviewedby": myid})
 	}
 	if n := toBoolInt(req.Newsletter); n != nil {
-		// ORM migration site f79c7ee2991c (wave 2).
 		db.Table("users_stories").Where("id = ?", req.ID).Update("newsletter", *n)
 	}
 
@@ -428,7 +414,6 @@ func UpdateStory(c *fiber.Ctx) error {
 	newsfeedBefore := before.Reviewed && before.Public
 
 	var after StoryState
-	// ORM migration site 88a8f87abcde (wave 1).
 	db.Table("users_stories").
 		Select("reviewed, public, userid, COALESCE(fromnewsfeed, 0) AS fromnewsfeed").
 		Where("id = ?", req.ID).
@@ -464,7 +449,7 @@ func LikeStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// ORM migration site 713e8b8dab08 (wave 3). Converted together with its
+	// Converted together with its
 	// identical twin at PostStory's Like case (0d3865cbb34e): a half-converted
 	// pair renumbers the survivor's site ID, so gate (h) refuses the split
 	// state.
@@ -496,7 +481,6 @@ func UnlikeStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// ORM migration site 171408a9703d (wave 2).
 	db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -528,11 +512,10 @@ func PostStory(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Like":
-		// ORM migration site 0d3865cbb34e (wave 3). Twin of 713e8b8dab08 above.
+		// Twin of 713e8b8dab08 above.
 		db.Table("users_stories_likes").Clauses(clause.Insert{Modifier: "IGNORE"}).
 			Create(map[string]interface{}{"storyid": req.ID, "userid": myid})
 	case "Unlike":
-		// ORM migration site 941fa556061a (wave 2).
 		db.Table("users_stories_likes").Where("storyid = ? AND userid = ?", req.ID, myid).Delete(nil)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
@@ -560,7 +543,6 @@ func DeleteStory(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	// ORM migration site 74b27430dc33 (wave 2).
 	db.Table("users_stories").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

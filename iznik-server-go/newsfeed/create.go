@@ -37,7 +37,7 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Lng *float64
 		}
 		var ul UserLoc
-		// ORM migration site 1a6871aa02b9 (wave 4). The LEFT JOIN matters: a
+		// The LEFT JOIN matters: a
 		// user with no lastlocation must still yield a row, with NULL lat/lng,
 		// which is why both fields are pointers.
 		db.Table("users u").
@@ -56,7 +56,6 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Lng *float64
 		}
 		var gl GroupLoc
-		// ORM migration site f615ed45438f (wave 1).
 		db.Table("groups").Select("lat, lng").Where("id = ?", groupid).Scan(&gl)
 		lat = gl.Lat
 		lng = gl.Lng
@@ -71,11 +70,9 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 	hidden := "NULL"
 	if userid > 0 {
 		var modStatus string
-		// ORM migration site 9c0779fdc3cc (wave 1).
 		db.Table("users").Select("COALESCE(newsfeedmodstatus, 'Unmoderated')").Where("id = ?", userid).Scan(&modStatus)
 
 		var spamCount int64
-		// ORM migration site 606016a06713 (wave 1).
 		db.Table("spam_users").Where("userid = ? AND collection = ?", userid, utils.SPAM_COLLECTION_SPAMMER).Count(&spamCount)
 
 		if modStatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED || spamCount > 0 {
@@ -89,7 +86,6 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Type *string
 		}
 		var last LastEntry
-		// ORM migration site 94168ea2d29c (wave 1).
 		db.Table("newsfeed").Select("`type`").Where("userid = ?", userid).Order("id DESC").Limit(1).Scan(&last)
 
 		if last.Type != nil && *last.Type == nfType {
@@ -102,14 +98,13 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 	var location *string
 	if groupid > 0 {
 		var groupName string
-		// ORM migration site def955a54c71 (wave 1).
 		db.Table("groups").Select("nameshort").Where("id = ?", groupid).Scan(&groupName)
 		if groupName != "" {
 			location = &groupName
 		}
 	}
 
-	// ORM migration site 90b0f0bb3029 (tier6). Same zero-precision-change
+	// Same zero-precision-change
 	// conversion as newsfeed.go's createRefer/createPost (10bcbd6a6404,
 	// f961504c334d): the WKT text is built exactly as before via
 	// fmt.Sprintf("POINT(%f %f)", ...), then bound as a genuine ST_GeomFromText

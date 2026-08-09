@@ -12,7 +12,6 @@ import (
 // cleanly rather than leaving the merge half-applied.
 func MergeUserAccounts(db *gorm.DB, survivor uint64, loser uint64) error {
 	return db.Transaction(func(tx *gorm.DB) error {
-		// ORM migration site d7333aa6fdae (wave 2).
 		if err := tx.Table("messages").Where("fromuser = ?", loser).Update("fromuser", survivor).Error; err != nil {
 			return err
 		}
@@ -21,29 +20,24 @@ func MergeUserAccounts(db *gorm.DB, survivor uint64, loser uint64) error {
 			return err
 		}
 
-		// ORM migration site 14cccaf3f10c (wave 2).
 		if err := tx.Table("chat_messages").Where("userid = ?", loser).Update("userid", survivor).Error; err != nil {
 			return err
 		}
 
-		// ORM migration site ea1047806312 (wave 2).
 		if err := tx.Table("users_emails").Where("userid = ?", loser).Update("userid", survivor).Error; err != nil {
 			return err
 		}
 
 		// The survivor may already belong to some of the loser's groups —
 		// IGNORE skips those, then the leftovers are removed.
-		// ORM migration site e3d91cc664c5 (wave 2).
 		if err := tx.Table("memberships").Clauses(clause.Update{Modifier: "IGNORE"}).
 			Where("userid = ?", loser).Update("userid", survivor).Error; err != nil {
 			return err
 		}
-		// ORM migration site 191766b7cd39 (wave 2).
 		if err := tx.Table("memberships").Where("userid = ?", loser).Delete(nil).Error; err != nil {
 			return err
 		}
 
-		// ORM migration site 5060d022dfe8 (wave 2).
 		return tx.Table("users").Where("id = ?", loser).Update("deleted", gorm.Expr("NOW()")).Error
 	})
 }
@@ -63,7 +57,6 @@ func MergeUserAccounts(db *gorm.DB, survivor uint64, loser uint64) error {
 //  3. Reassign whatever remains, which can no longer collide.
 func mergeChatRooms(tx *gorm.DB, survivor uint64, loser uint64) error {
 	// 1. Direct rooms between the two users, plus any degenerate self-rooms.
-	// ORM migration site 787b2eadea22 (wave 2).
 	if err := tx.Table("chat_rooms").
 		Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
 			survivor, loser, loser, survivor, loser, loser).Delete(nil).Error; err != nil {
@@ -80,7 +73,6 @@ func mergeChatRooms(tx *gorm.DB, survivor uint64, loser uint64) error {
 		LoserID    uint64
 		SurvivorID uint64
 	}
-	// ORM migration site 721c27468383 (wave 4).
 	if err := tx.Table("chat_rooms lr").
 		Select("lr.id AS loser_id, MIN(sr.id) AS survivor_id").
 		Joins(`JOIN chat_rooms sr ON sr.chattype = lr.chattype AND ( (sr.user1 = ? AND sr.user2 = IF(lr.user1 = ?, lr.user2, lr.user1)) OR (sr.user2 = ? AND sr.user1 = IF(lr.user1 = ?, lr.user2, lr.user1)))`,
@@ -94,31 +86,28 @@ func mergeChatRooms(tx *gorm.DB, survivor uint64, loser uint64) error {
 	for _, p := range pairs {
 		// Move the history before deleting the room — chat_messages.chatid
 		// cascades on room deletion.
-		// ORM migration site 90a890072eab (wave 2).
 		if err := tx.Table("chat_messages").Where("chatid = ?", p.LoserID).Update("chatid", p.SurvivorID).Error; err != nil {
 			return err
 		}
-		// ORM migration site d820bc9bf511 (wave 2).
 		if err := tx.Table("chat_messages").Where("refchatid = ?", p.LoserID).Update("refchatid", p.SurvivorID).Error; err != nil {
 			return err
 		}
 		// Carry roster presence (unread pointers etc.) across where the
 		// surviving room doesn't already have a row for that user.
-		// ORM migration site 2c505360400e (wave 2).
 		if err := tx.Table("chat_roster").Clauses(clause.Update{Modifier: "IGNORE"}).
 			Where("chatid = ?", p.LoserID).Update("chatid", p.SurvivorID).Error; err != nil {
 			return err
 		}
 		// Surface the merged history's recency in chat list ordering.
-		// ORM migration site bf1cd8bf4627 (Tier 2 keep-raw review). Genuine
+		// Genuine
 		// multi-table UPDATE...JOIN: the whole "table JOIN table ON ..." text
 		// goes to Table() verbatim (it contains a space, so GORM never
 		// quotes it, and its own bind arg travels through Table()'s
 		// variadic args), and the column-to-column SET assignment is an
 		// explicit clause.Set - Updates(map) can't express "SET a = b" for
-		// two real columns, only "SET a = ?" for a bound value. Proven in
-		// ormharness/updatejoin_replace_test.go
-		// (TestUpdateJoin_SelfJoinSimpleAssignment).
+		// two real columns, only "SET a = ?" for a bound value. Proven by the
+		// retired ormharness's updatejoin_replace_test.go
+		// TestUpdateJoin_SelfJoinSimpleAssignment (removed in d22ba1d6c).
 		if err := tx.Table("chat_rooms surv JOIN chat_rooms lose ON lose.id = ?", p.LoserID).
 			Clauses(clause.Set{
 				{Column: clause.Column{Table: "surv", Name: "latestmessage"},
@@ -128,7 +117,6 @@ func mergeChatRooms(tx *gorm.DB, survivor uint64, loser uint64) error {
 			Updates(map[string]interface{}{}).Error; err != nil {
 			return err
 		}
-		// ORM migration site e91e1b857064 (wave 2).
 		if err := tx.Table("chat_rooms").Where("id = ?", p.LoserID).Delete(nil).Error; err != nil {
 			return err
 		}
@@ -137,22 +125,18 @@ func mergeChatRooms(tx *gorm.DB, survivor uint64, loser uint64) error {
 	// 3. The remaining rooms can't collide: colliding counterparties were
 	// consolidated above, and User2Mod-style rooms have a NULL column the
 	// unique key doesn't enforce over.
-	// ORM migration site e5c1d288cbae (wave 2).
 	if err := tx.Table("chat_rooms").Where("user1 = ?", loser).Update("user1", survivor).Error; err != nil {
 		return err
 	}
-	// ORM migration site 3b4c210e4a12 (wave 2).
 	if err := tx.Table("chat_rooms").Where("user2 = ?", loser).Update("user2", survivor).Error; err != nil {
 		return err
 	}
 
 	// Move the loser's roster presence to the survivor; where the survivor
 	// already sits in a room, keep theirs and drop the loser's.
-	// ORM migration site f370eb323bd4 (wave 2).
 	if err := tx.Table("chat_roster").Clauses(clause.Update{Modifier: "IGNORE"}).
 		Where("userid = ?", loser).Update("userid", survivor).Error; err != nil {
 		return err
 	}
-	// ORM migration site 8a7c730e0d5c (wave 2).
 	return tx.Table("chat_roster").Where("userid = ?", loser).Delete(nil).Error
 }

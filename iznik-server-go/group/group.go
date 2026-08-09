@@ -193,7 +193,6 @@ func GetGroup(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			// ORM migration site 21406c23a191 (wave 1).
 			db.Table("groups_sponsorship").
 				Where("groupid = ? AND startdate <= NOW() AND enddate >= DATE(NOW()) AND visible = 1", id).
 				Order("amount DESC").
@@ -215,7 +214,7 @@ func GetGroup(c *fiber.Ctx) error {
 			q = q.Preload("GroupSponsors")
 		}
 
-		// ORM migration site 2811b4d3acf7 (tier6). Converted from
+		// Converted from
 		// Raw(...).First(&group) to Table()/Select()/Where().Find(&group).
 		// First() unconditionally adds an ORDER BY + LIMIT 1 clause and sets
 		// RaiseErrorOnNotFound - but on a Raw()-based statement those clauses
@@ -288,7 +287,6 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				// ORM migration site 7c5c81bc5dc0 (wave 1).
 				db.Table("groups").Select("poly, polyofficial").Where("id = ?", id).Scan(&polyResult)
 			}()
 		}
@@ -297,7 +295,6 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				// ORM migration site 06597ffa764d (wave 1).
 				db.Table("memberships").Select("role").
 					Where("userid = ? AND groupid = ? AND collection = ?", myid, id, utils.COLLECTION_APPROVED).
 					Scan(&myrole)
@@ -308,7 +305,6 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				// ORM migration site 01adb146166c (wave 1).
 				db.Table("users_emails").Select("email").
 					Where("userid = ?", myid).
 					Order("preferred DESC, id ASC").
@@ -418,7 +414,7 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 		go func(idx int, gid uint64) {
 			defer wg.Done()
 
-			// ORM migration site 547458a591ae (tier6). Same First()->Find()
+			// Same First()->Find()
 			// conversion as GetGroup (2811b4d3acf7) above, for the same
 			// reason: see that site's comment.
 			var g Group
@@ -453,7 +449,6 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 
 			if myid > 0 {
 				var myrole string
-				// ORM migration site 3f55e9081ae4 (wave 1).
 				db.Table("memberships").Select("role").
 					Where("userid = ? AND groupid = ? AND collection = ?", myid, gid, utils.COLLECTION_APPROVED).
 					Scan(&myrole)
@@ -509,7 +504,6 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 		}
 
 		var polyRows []PolyRow
-		// ORM migration site 9494e3480fa0 (wave 1).
 		db.Table("groups").Select("id, poly, polyofficial").Where("id IN ?", polyIDs).Scan(&polyRows)
 
 		polyMap := make(map[uint64]*PolyRow, len(polyRows))
@@ -548,7 +542,6 @@ func ListGroups(c *fiber.Ctx) error {
 
 	if isAdminOrSupport {
 		// Support mode: return all groups (not just published/onhere) with extra fields.
-		// ORM migration site 1a4bd532caa4 (wave 1).
 		db.Table("groups").
 			Select("id, nameshort, namefull, lat, lng, altlat, altlng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, "+
 				"CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, "+
@@ -557,7 +550,6 @@ func ListGroups(c *fiber.Ctx) error {
 			Where("type = ?", FREEGLE).
 			Scan(&groups)
 	} else {
-		// ORM migration site d7629b3fa332 (wave 1).
 		db.Table("groups").
 			Select("id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin").
 			Where("publish = 1 AND onhere = 1 AND type = ?", FREEGLE).
@@ -588,7 +580,6 @@ func ListGroups(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			// ORM migration site f207e41516c4 (wave 1).
 			db.Table("logs").Select("COUNT(*) AS count, groupid").
 				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Autoapproved").
 				Group("groupid").
@@ -597,7 +588,6 @@ func ListGroups(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			// ORM migration site a1d28f99a959 (wave 1).
 			db.Table("logs").Select("COUNT(*) AS count, groupid").
 				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Approved").
 				Group("groupid").
@@ -609,7 +599,6 @@ func ListGroups(c *fiber.Ctx) error {
 			// Count messages where a moderator manually approved (approvedby IS NOT NULL)
 			// vs total messages arriving in the past 30 days, grouped by community.
 			// Uses arrival rather than approvedat so the denominator is consistent.
-			// ORM migration site 9ab327a70a09 (wave 1).
 			db.Table("messages_groups").
 				Select("groupid, SUM(approvedby IS NOT NULL) AS moderated_count, COUNT(*) AS total_count").
 				Where("arrival >= ?", start30).
@@ -677,7 +666,7 @@ func ListGroups(c *fiber.Ctx) error {
 		}
 
 		var polyRows []PolyRow
-		// ORM migration site a7496f46878c (wave 1). Converted together with its
+		// Converted together with its
 		// identical sibling above: leaving one of two textually identical
 		// statements raw is the configuration that renumbers site IDs.
 		db.Table("groups").Select("id, poly, polyofficial").Where("id IN ?", ids).Scan(&polyRows)
@@ -729,10 +718,11 @@ func validateGeometry(wkt string) bool {
 	db := database.DBConn
 
 	var valid *int
-	// ORM migration site 6d0982e798b5 (Tier 2 keep-raw review). Bare scalar
+	// Bare scalar
 	// SELECT with no FROM at all - same BuildClauses={"SELECT"} mechanism as
-	// amp.go's bare-EXISTS conversions (see the comment there and
-	// ormharness/bareexists_test.go). .Table(...) is still required even
+	// amp.go's bare-EXISTS conversions (see the comment there and the retired
+	// ormharness's bareexists_test.go (removed in d22ba1d6c)). .Table(...) is
+	// still required even
 	// though it never renders: without it GORM's schema-parse-failure branch
 	// rejects the statement for having no table set. "groups" is used purely
 	// to satisfy that check - it never appears in the rendered SQL, since
@@ -751,7 +741,6 @@ func validateGeometry(wkt string) bool {
 // logGroupEdit inserts an audit log entry for group edit operations.
 func logGroupEdit(groupid uint64, byuser uint64, text string) {
 	db := database.DBConn
-	// ORM migration site cbad92a90c0d (wave 2).
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log.LOG_TYPE_GROUP,
@@ -811,7 +800,6 @@ func PatchGroup(c *fiber.Ctx) error {
 
 	// Verify group exists
 	var groupCount int64
-	// ORM migration site 88ec4f8b3364 (wave 1).
 	db.Table("groups").Where("id = ?", req.ID).Count(&groupCount)
 	if groupCount == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
@@ -826,23 +814,18 @@ func PatchGroup(c *fiber.Ctx) error {
 
 	// Apply mod/owner settable fields
 	if req.Tagline != nil {
-		// ORM migration site b1c25f5b67a9 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("tagline", *req.Tagline)
 	}
 	if req.Namefull != nil {
-		// ORM migration site bc7de11031d3 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("namefull", *req.Namefull)
 	}
 	if req.Welcomemail != nil {
-		// ORM migration site 7a9e12196036 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("welcomemail", *req.Welcomemail)
 	}
 	if req.Description != nil {
-		// ORM migration site fb4e48c03bee (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Region != nil {
-		// ORM migration site 4fd65f2418a6 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("region", *req.Region)
 	}
 	if req.AffiliationConfirmed != nil {
@@ -853,50 +836,39 @@ func PatchGroup(c *fiber.Ctx) error {
 				break
 			}
 		}
-		// ORM migration site b7a7c29b7611 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).
 			Updates(map[string]interface{}{"affiliationconfirmed": affConfirmed, "affiliationconfirmedby": myid})
 	}
 	if req.Onhere != nil {
-		// ORM migration site 0510fa1a8a85 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("onhere", *req.Onhere)
 	}
 	if req.Publish != nil {
-		// ORM migration site fd0917d06441 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("publish", *req.Publish)
 	}
 	if req.Microvolunteering != nil {
-		// ORM migration site 2e011a3ca233 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("microvolunteering", *req.Microvolunteering)
 	}
 	if req.Microvolunteeringoptions != nil {
-		// ORM migration site 11cd46e11f5a (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("microvolunteeringoptions", string(*req.Microvolunteeringoptions))
 	}
 	if req.Mentored != nil {
-		// ORM migration site dbd2165e28c7 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("mentored", *req.Mentored)
 	}
 	if req.Ontn != nil {
-		// ORM migration site 5a1f3cd17397 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("ontn", *req.Ontn)
 	}
 	if req.Onlovejunk != nil {
-		// ORM migration site 1e4d0a106c72 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("onlovejunk", *req.Onlovejunk)
 	}
 	if req.Profile != nil {
-		// ORM migration site 23cf0e34c542 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("profile", *req.Profile)
 		logGroupEdit(req.ID, myid, "Profile")
 	}
 	if req.Settings != nil {
-		// ORM migration site 585a51354a68 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("settings", string(*req.Settings))
 		logGroupEdit(req.ID, myid, "Settings")
 	}
 	if req.Rules != nil {
-		// ORM migration site 6de535f15717 (wave 2).
 		db.Table("groups").Where("id = ?", req.ID).Update("rules", string(*req.Rules))
 		logGroupEdit(req.ID, myid, "Rules")
 	}
@@ -904,32 +876,28 @@ func PatchGroup(c *fiber.Ctx) error {
 	// Admin/Support only fields
 	if isAdmin {
 		if req.Lat != nil {
-			// ORM migration site cf14153e46ac (wave 2). Converted together with
+			// Converted together with
 			// its identical twin in CreateGroup: a half-converted pair renumbers
 			// the survivor's site ID, so gate (h) refuses the split state.
 			db.Table("groups").Where("id = ?", req.ID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
-			// ORM migration site 6a4f5b776c87 (wave 2). Converted together with
+			// Converted together with
 			// its identical twin in CreateGroup (adbbb9dadd0c): a half-converted
 			// pair renumbers the survivor's site ID, so gate (h) refuses the
 			// split state.
 			db.Table("groups").Where("id = ?", req.ID).Update("lng", *req.Lng)
 		}
 		if req.Altlat != nil {
-			// ORM migration site 0e9905e6f0ce (wave 2).
 			db.Table("groups").Where("id = ?", req.ID).Update("altlat", *req.Altlat)
 		}
 		if req.Altlng != nil {
-			// ORM migration site 22727b8ed343 (wave 2).
 			db.Table("groups").Where("id = ?", req.ID).Update("altlng", *req.Altlng)
 		}
 		if req.Nameshort != nil {
-			// ORM migration site e5fa7f0e05bd (wave 2).
 			db.Table("groups").Where("id = ?", req.ID).Update("nameshort", *req.Nameshort)
 		}
 		if req.Licenserequired != nil {
-			// ORM migration site dd57ad0485df (wave 2).
 			db.Table("groups").Where("id = ?", req.ID).Update("licenserequired", *req.Licenserequired)
 		}
 		// poly (DPA) / polyofficial (CGA). An empty string means "clear this area" - it must be
@@ -938,26 +906,22 @@ func PatchGroup(c *fiber.Ctx) error {
 		polyChanged := false
 		if req.Poly != nil {
 			if *req.Poly == "" {
-				// ORM migration site 7993248ef4e6 (wave 2).
 				db.Table("groups").Where("id = ?", req.ID).Update("poly", gorm.Expr("NULL"))
 			} else {
 				if !validateGeometry(*req.Poly) {
 					return fiber.NewError(fiber.StatusBadRequest, "Invalid poly geometry")
 				}
-				// ORM migration site 450c5b5fca94 (wave 2).
 				db.Table("groups").Where("id = ?", req.ID).Update("poly", *req.Poly)
 			}
 			polyChanged = true
 		}
 		if req.Polyofficial != nil {
 			if *req.Polyofficial == "" {
-				// ORM migration site cff1d8adacf1 (wave 2).
 				db.Table("groups").Where("id = ?", req.ID).Update("polyofficial", gorm.Expr("NULL"))
 			} else {
 				if !validateGeometry(*req.Polyofficial) {
 					return fiber.NewError(fiber.StatusBadRequest, "Invalid polyofficial geometry")
 				}
-				// ORM migration site e4f0bcf9f2eb (wave 2).
 				db.Table("groups").Where("id = ?", req.ID).Update("polyofficial", *req.Polyofficial)
 			}
 			polyChanged = true
@@ -965,7 +929,6 @@ func PatchGroup(c *fiber.Ctx) error {
 		if polyChanged {
 			// Recompute the spatial index so the poly/polyofficial change takes effect. When the DPA
 			// (poly) is cleared the group falls back to the CGA (polyofficial), then to POINT(0 0).
-			// ORM migration site 548090e97d00 (Tier 1 spatial review, round 3).
 			// SRID is folded into the gorm.Expr string via fmt.Sprintf, the
 			// same shipped idiom location.go's locations_spatial REPLACE
 			// sites use (25b7b92e33fd/6f1d6543e5c0).
@@ -974,7 +937,6 @@ func PatchGroup(c *fiber.Ctx) error {
 				Update("polyindex", gorm.Expr(fmt.Sprintf("ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), %d)", utils.SRID)))
 		}
 		if req.Showonyahoo != nil {
-			// ORM migration site 34c2c6e9128b (wave 2).
 			db.Table("groups").Where("id = ?", req.ID).Update("showonyahoo", *req.Showonyahoo)
 		}
 	}
@@ -1022,14 +984,13 @@ func CreateGroup(c *fiber.Ctx) error {
 
 	if !isAdmin {
 		var modCount int64
-		// ORM migration site fcf7a3fd9364 (wave 1).
 		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Count(&modCount)
 		if modCount == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator to create groups")
 		}
 	}
 
-	// ORM migration site 8cbeeeb7e32f (Tier 1 batch review). GORM's map-Create
+	// GORM's map-Create
 	// reads the id back from the same sql.Result the INSERT returned (under
 	// the map key "@id"), the same write-connection guarantee the old
 	// sqlDB.Exec()+LastInsertId() call had. SRID folded into the gorm.Expr
@@ -1056,11 +1017,10 @@ func CreateGroup(c *fiber.Ctx) error {
 	// Admin/support can set lat/lng.
 	if isAdmin {
 		if req.Lat != nil {
-			// ORM migration site 194062f24f48 (wave 2).
 			db.Table("groups").Where("id = ?", newID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
-			// ORM migration site adbbb9dadd0c (wave 2). Converted together with
+			// Converted together with
 			// its identical twin in PatchGroup (6a4f5b776c87): a half-converted
 			// pair renumbers the survivor's site ID, so gate (h) refuses the
 			// split state.
@@ -1069,7 +1029,6 @@ func CreateGroup(c *fiber.Ctx) error {
 	}
 
 	// Creator becomes Owner.
-	// ORM migration site ea603dbc3fe0 (wave 2).
 	db.Table("memberships").Create(map[string]interface{}{
 		"userid":     myid,
 		"groupid":    newID,

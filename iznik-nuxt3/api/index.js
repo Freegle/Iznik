@@ -8,9 +8,9 @@
  *    --- DO NOT EDIT ---
  */
 
+import AIImagesAPI from './AIImagesAPI.js'
 import AddressAPI from './AddressAPI.js'
 import AdminsAPI from './AdminsAPI.js'
-import AIImagesAPI from './AIImagesAPI.js'
 import AlertAPI from './AlertAPI.js'
 import AuthorityAPI from './AuthorityAPI.js'
 import BanditAPI from './BanditAPI.js'
@@ -25,6 +25,7 @@ import DomainAPI from './DomainAPI.js'
 import DonationsAPI from './DonationsAPI.js'
 import EmailTrackingAPI from './EmailTrackingAPI.js'
 import ExportAPI from './ExportAPI.js'
+import FirstReplyAPI from './FirstReplyAPI.js'
 import GiftAidAPI from './GiftAidAPI.js'
 import GroupAPI from './GroupAPI.js'
 import HousekeeperAPI from './HousekeeperAPI.js'
@@ -41,9 +42,9 @@ import ModConfigsAPI from './ModConfigsAPI.js'
 import NewsAPI from './NewsAPI.js'
 import NoticeboardAPI from './NoticeboardAPI.js'
 import NotificationAPI from './NotificationAPI.js'
+import PartnershipsAPI from './PartnershipsAPI.js'
 import RecommendationsAPI from './RecommendationsAPI.js'
 import RipplingAPI from './RipplingAPI.js'
-import TownAPI from './TownAPI.js'
 import SessionAPI from './SessionAPI.js'
 import ShortlinksAPI from './ShortlinksAPI.js'
 import SpammersAPI from './SpammersAPI.js'
@@ -51,19 +52,19 @@ import StatusAPI from './StatusAPI.js'
 import StoriesAPI from './StoriesAPI.js'
 import SystemLogsAPI from './SystemLogsAPI.js'
 import TeamAPI from './TeamAPI.js'
+import TownAPI from './TownAPI.js'
 import TrystAPI from './TrystAPI.js'
 import UserAPI from './UserAPI.js'
 import UserSearchAPI from './UserSearchAPI.js'
 import VisualiseAPI from './VisualiseAPI.js'
-import VoicePostAPI from './VoicePostAPI.js'
 import VolunteeringAPI from './VolunteeringAPI.js'
 
 export default (config) => {
   const options = config
   return {
+    aiimages: new AIImagesAPI(options),
     address: new AddressAPI(options),
     admins: new AdminsAPI(options),
-    aiimages: new AIImagesAPI(options),
     alert: new AlertAPI(options),
     authority: new AuthorityAPI(options),
     bandit: new BanditAPI(options),
@@ -78,6 +79,7 @@ export default (config) => {
     donations: new DonationsAPI(options),
     emailtracking: new EmailTrackingAPI(options),
     export: new ExportAPI(options),
+    firstreply: new FirstReplyAPI(options),
     giftaid: new GiftAidAPI(options),
     group: new GroupAPI(options),
     housekeeper: new HousekeeperAPI(options),
@@ -94,9 +96,9 @@ export default (config) => {
     news: new NewsAPI(options),
     noticeboard: new NoticeboardAPI(options),
     notification: new NotificationAPI(options),
+    partnerships: new PartnershipsAPI(options),
     recommendations: new RecommendationsAPI(options),
     rippling: new RipplingAPI(options),
-    town: new TownAPI(options),
     session: new SessionAPI(options),
     shortlinks: new ShortlinksAPI(options),
     spammers: new SpammersAPI(options),
@@ -104,11 +106,11 @@ export default (config) => {
     stories: new StoriesAPI(options),
     systemlogs: new SystemLogsAPI(options),
     team: new TeamAPI(options),
+    town: new TownAPI(options),
     tryst: new TrystAPI(options),
     user: new UserAPI(options),
     usersearch: new UserSearchAPI(options),
     visualise: new VisualiseAPI(options),
-    voicepost: new VoicePostAPI(options),
     volunteering: new VolunteeringAPI(options),
   }
 }

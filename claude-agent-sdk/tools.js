@@ -132,23 +132,48 @@ async function lokiQuery({ query, start = '1h', end, limit = 100, metric = false
   return out
 }
 
-// 3-pass user log search (user_id is a JSON body field, not a label).
+// The unlabelled sources that carry user_id only inside the JSON line, minus
+// api_headers — that source is ~67GB per 7 days on prod and dominates any scan
+// that includes it (it is what made the old whole-app passes always hit the
+// 20s abort and error out). user_id IS an indexed stream label on api,
+// chat_reply and client, so those are covered by cheap label selectors.
+const LOKI_SLIM_SOURCES = 'batch|batch_event|email|incoming_mail|similar_posts|vector_search'
+
+// 3-pass user log search. Every parse/regex stage sits behind a `|=` substring
+// prefilter — the JSON parser is the expensive part, and each of these values
+// appears verbatim in the raw line, so only candidate lines get parsed.
 async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200 }) {
   const passes = {}
+  // Labelled sources: an index lookup, ~0.5s over 30d.
   passes.byUserId = await lokiQuery({
-    query: `{app="freegle"} | json | user_id="${userid}"`,
+    query: `{app="freegle", user_id="${userid}"}`,
     start: window,
     limit,
   })
+  // Slim unlabelled sources: prefilter, then the exact JSON post-filter.
+  try {
+    const slim = await lokiQuery({
+      query: `{app="freegle", source=~"${LOKI_SLIM_SOURCES}"} |= "${userid}" | json | user_id="${userid}"`,
+      start: window,
+      limit,
+    })
+    passes.byUserId.push(...slim)
+  } catch (e) {
+    console.error('[lokiUserSearch] slim-source pass failed:', e.message)
+  }
   passes.byEmail = []
   for (const email of emails.slice(0, 5)) {
     const esc = email.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const hits = await lokiQuery({
-      query: `{app="freegle"} |~ "(?i)${esc}"`,
-      start: window,
-      limit: Math.floor(limit / 2),
-    })
-    passes.byEmail.push(...hits)
+    try {
+      const hits = await lokiQuery({
+        query: `{app="freegle", source=~"${LOKI_SLIM_SOURCES}"} |= "${email.toLowerCase()}" |~ "(?i)${esc}"`,
+        start: window,
+        limit: Math.floor(limit / 2),
+      })
+      passes.byEmail.push(...hits)
+    } catch (e) {
+      console.error('[lokiUserSearch] email pass failed:', e.message)
+    }
   }
   // Harvest session ids from api lines for the client-side pass.
   const sids = new Set()
@@ -158,12 +183,25 @@ async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200
   }
   passes.bySession = []
   for (const sid of Array.from(sids).slice(0, 25)) {
-    const hits = await lokiQuery({
-      query: `{app="freegle",source="client"} | json | session_id="${sid}"`,
-      start: window,
-      limit: 50,
-    })
-    passes.bySession.push(...hits)
+    try {
+      // Two legs: the indexed user_id label (cheap at any window), plus the
+      // anonymous pre-login streams — capped at 7d, the client source's
+      // retention, beyond which there is nothing to find.
+      const labelled = await lokiQuery({
+        query: `{app="freegle", source="client", user_id="${userid}"} |= "${sid}" | json | session_id="${sid}"`,
+        start: window,
+        limit: 50,
+      })
+      const anonWindow = /d$/.test(window) && parseInt(window, 10) > 7 ? '7d' : window
+      const anon = await lokiQuery({
+        query: `{app="freegle", source="client", user_id=""} |= "${sid}" | json | session_id="${sid}"`,
+        start: anonWindow,
+        limit: 50,
+      })
+      passes.bySession.push(...labelled, ...anon)
+    } catch (e) {
+      console.error('[lokiUserSearch] session pass failed:', e.message)
+    }
   }
   return passes
 }
@@ -175,16 +213,92 @@ async function lokiUserSearch({ userid, emails = [], window = '24h', limit = 200
 // token/timeout win vs many separate queries.
 // ---------------------------------------------------------------------------
 const API_URL = process.env.API_URL || 'http://apiv2.localhost:8192'
-async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry' }) {
-  const url = `${API_URL}/api/modtools/user/${userId}/dump?format=raw&include=${encodeURIComponent(
+
+// The framed dump protocol (iznik-server-go/userdump/frame.go): each frame is
+// a 5-byte header (1 type byte + uint32 big-endian payload length) then the
+// payload. 0x01 progress (JSON), 0x02 raw SQLite bytes, 0x03 end (JSON with
+// bytes/sha256/warnings). We use framed rather than raw because the server
+// flushes a frame after every collection section, so bytes keep flowing and
+// the API LB's idle timeout (50s on prod HAProxy) never fires mid-build — the
+// raw format goes silent for the whole build, which is exactly how big dumps
+// died: HAProxy cut them at 50s, the model retried, and the retries piled
+// more concurrent builds onto the server.
+async function fetchUserDump({ userId, jwt, since = '90d', include = 'db,loki,sentry', onProgress }) {
+  const url = `${API_URL}/api/modtools/user/${userId}/dump?format=framed&include=${encodeURIComponent(
     include
   )}&since=${encodeURIComponent(since)}&jwt=${encodeURIComponent(jwt || '')}`
-  const res = await fetch(url, { signal: AbortSignal.timeout(120000) })
-  if (!res.ok) throw new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
-  const buf = Buffer.from(await res.arrayBuffer())
-  const file = path.join(os.tmpdir(), `dump-${userId}-${process.pid}-${buf.length}.sqlite`)
-  fs.writeFileSync(file, buf, { mode: 0o600 }) // member PII snapshot — owner-only
-  return file
+
+  // Inactivity-based abort, not a fixed overall deadline: a healthy framed
+  // dump is never silent for long, while total build time legitimately varies
+  // with the member's size.
+  const ctrl = new AbortController()
+  let idleTimer
+  const armIdle = () => {
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => ctrl.abort(new Error('dump stalled: no frame for 90s')), 90000)
+  }
+  armIdle()
+
+  try {
+    // identity: undici advertises gzip by default, and any compression layer
+    // that buffers the response would hold the heartbeat frames off the wire
+    // until the build completes - exactly the LB-timeout failure the framed
+    // protocol exists to prevent. The SQLite payload is worth compressing one
+    // day, but only via a layer proven to flush per frame.
+    const res = await fetch(url, { signal: ctrl.signal, headers: { 'accept-encoding': 'identity' } })
+    if (!res.ok) throw new Error(`dump ${res.status}: ${(await res.text()).slice(0, 200)}`)
+
+    const crypto = require('crypto')
+    const hash = crypto.createHash('sha256')
+    const reader = res.body.getReader()
+    const dataChunks = []
+    let buf = Buffer.alloc(0)
+    let end = null
+
+    while (!end) {
+      const { done, value } = await reader.read()
+      if (done) break
+      armIdle()
+      buf = Buffer.concat([buf, Buffer.from(value)])
+      while (buf.length >= 5) {
+        const type = buf[0]
+        const len = buf.readUInt32BE(1)
+        if (buf.length < 5 + len) break
+        // Copy the payload out so the ever-growing parse buffer can be GC'd.
+        const payload = Buffer.from(buf.subarray(5, 5 + len))
+        buf = buf.subarray(5 + len)
+        if (type === 0x01) {
+          try {
+            onProgress && onProgress(JSON.parse(payload.toString()))
+          } catch {}
+        } else if (type === 0x02) {
+          hash.update(payload)
+          dataChunks.push(payload)
+        } else if (type === 0x03) {
+          end = JSON.parse(payload.toString())
+          break
+        }
+      }
+    }
+
+    if (!end) throw new Error('dump stream ended without an end frame')
+    const data = Buffer.concat(dataChunks)
+    if (!data.length) {
+      throw new Error('dump produced no data: ' + ((end.warnings || []).join('; ') || 'no warnings'))
+    }
+    if (end.bytes && Number(end.bytes) !== data.length) {
+      throw new Error(`dump truncated: got ${data.length} of ${end.bytes} bytes`)
+    }
+    if (end.sha256 && hash.digest('hex') !== end.sha256) {
+      throw new Error('dump checksum mismatch')
+    }
+
+    const file = path.join(os.tmpdir(), `dump-${userId}-${process.pid}-${data.length}.sqlite`)
+    fs.writeFileSync(file, data, { mode: 0o600 }) // member PII snapshot — owner-only
+    return file
+  } finally {
+    clearTimeout(idleTimer)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +403,29 @@ function buildTools(ctx) {
           p('tool', `Reusing snapshot for user ${id} (built ${ageS}s ago)…`)
         } else {
           p('tool', `Downloading full snapshot for user ${id}…`)
-          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since })
+          // Structured progress for the UI's progress bar: forward the framed
+          // per-section updates (throttled to ~1/s), and let heartbeats
+          // refresh elapsed time so a slow section still visibly ticks. A big
+          // member's snapshot takes minutes - a silent wait reads as broken.
+          let lastEmit = 0
+          let lastPct = 0
+          let lastSection = ''
+          const onProgress = (pr) => {
+            if (pr.section) lastSection = pr.section
+            if (typeof pr.percent === 'number' && pr.percent > lastPct) lastPct = pr.percent
+            const now = Date.now()
+            if (now - lastEmit < 1000) return
+            lastEmit = now
+            p('progress', {
+              tool: 'get_user_dump',
+              percent: Math.round(lastPct),
+              section: lastSection,
+              elapsedMs: pr.elapsed_ms || 0,
+              etaMs: pr.eta_ms > 1000 ? pr.eta_ms : null,
+            })
+          }
+          const file = await fetchUserDump({ userId: id, jwt: ctx.jwt, since, onProgress })
+          p('progress', { tool: 'get_user_dump', percent: 100, section: 'complete', done: true })
           if (cached && cached.file !== file) {
             try {
               fs.unlinkSync(cached.file)

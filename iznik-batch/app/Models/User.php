@@ -610,6 +610,20 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Whether this user wants "encouragement" mail: donation asks, gift-aid chase-ups
+     * and re-engagement nudges.
+     *
+     * Backs the "Encouragement emails" toggle in Settings (users.settings.engagement) and
+     * the `engagement` unsubscribe category. Absent means on, as for the other settings.
+     */
+    public function wantsEngagementMail(): bool
+    {
+        $settings = $this->settings ?? [];
+
+        return ($settings['engagement'] ?? TRUE) !== FALSE;
+    }
+
+    /**
      * Check if a notification type is enabled for this user.
      *
      * @param string $type The notification type (email, emailmine, push)
@@ -984,17 +998,12 @@ class User extends Model implements Auditable
     }
 
     /**
-     * Generate List-Unsubscribe header value for RFC 8058 one-click unsubscribe.
+     * The account-level unsubscribe link used in email bodies: it lands on the page that
+     * offers leaving communities and deleting the account.
      *
-     * @return string The unsubscribe URL in angle brackets
-     */
-    public function listUnsubscribe(): string
-    {
-        return "<{$this->listUnsubscribeUrl()}>";
-    }
-
-    /**
-     * Generate the one-click unsubscribe URL for use in email links.
+     * This is NOT what goes in the List-Unsubscribe header - that is built by
+     * MjmlMailable::addListUnsubscribeHeaders() and turns off one category of email
+     * rather than removing the account. See docs/developers/reference/unsubscribe.md.
      *
      * @return string The unsubscribe URL
      */
@@ -1754,6 +1763,12 @@ class User extends Model implements Auditable
         Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Deleted,user={$this->id},text=len=" . strlen($reason));
         if (!$dryRun) {
             $log->save();
+        }
+
+        // --- Tell partners, who mirror our users and can only find out by polling ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_deletions op=insert set=userid={$this->id},type=Forgotten");
+        if (!$dryRun) {
+            UserDeletion::record($this->id, UserDeletion::TYPE_FORGOTTEN, $reason);
         }
     }
 

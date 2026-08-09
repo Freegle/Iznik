@@ -224,7 +224,7 @@ app.post('/api/log-analysis', async (req, res) => {
 // gated and audited.
 // ---------------------------------------------------------------------------
 const { lokiQuery, audit } = require('./tools')
-const { parseSessionStart, buildDeviceSummary } = require('./device-summary')
+const { parseSessionStart, dedupeSessions, buildDeviceSummary } = require('./device-summary')
 
 // The deployed web/app version to compare a member's loaded version against, so
 // we can flag "needs a refresh". Read from the cloned frontend config (kept
@@ -262,15 +262,10 @@ app.get('/api/device-summary', async (req, res) => {
       limit: 500,
     })
 
-    const seen = new Set()
-    const records = []
-    for (const r of rows) {
-      const d = parseSessionStart(r.line)
-      if (!d) continue
-      if (d.sessionId && seen.has(d.sessionId)) continue
-      if (d.sessionId) seen.add(d.sessionId)
-      records.push(d)
-    }
+    // The app logs session_start twice per session (the second one carries the
+    // native app version and Capacitor device info), so merge duplicates rather
+    // than keeping whichever Loki happened to return first.
+    const records = dedupeSessions(rows.map((r) => parseSessionStart(r.line)))
     const currentVersion = currentMobileVersion()
     const devices = buildDeviceSummary(records, currentVersion)
 
@@ -314,6 +309,82 @@ app.get('/api/device-summary', async (req, res) => {
   } catch (error) {
     console.error('[DeviceSummary] Error:', error)
     res.status(500).json({ error: 'DEVICE_SUMMARY_FAILED', message: error.message })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Refer to geeks — hand a whole investigation over by email.
+//
+// A support volunteer gets as far as they can in the helper and then refers it
+// on. The email has to carry everything that was on their screen (which member,
+// what devices, every question and every answer) so the geeks don't have to ask
+// them to repeat it, plus the volunteer's own words about why they are passing
+// it over. Every referral gets a short reference (SR-YYMMDD-XXXX) which goes in
+// the subject, the body, a header and the audit trail, so it can be tracked and
+// quoted.
+// ---------------------------------------------------------------------------
+const { sendReferral, newReferralRef, GEEKS_EMAIL } = require('./referral-email')
+
+// A referral is a transcript, not a document upload — big enough to need its
+// own limit, small enough that this is a real bound.
+const REFERRAL_BODY_LIMIT = '4mb'
+
+app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), async (req, res) => {
+  const mod = await verifyModerator(req)
+  if (!mod) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Support or Admin authentication required.' })
+  }
+
+  const { member, note, deviceSummary, messages, totals, modToolsUrl } = req.body || {}
+
+  if (!Array.isArray(messages) || !messages.length) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'There is no investigation to refer yet.' })
+  }
+  if (!note || !String(note).trim()) {
+    return res.status(400).json({
+      error: 'BAD_REQUEST',
+      message: 'Please say why you are referring this so the geeks know what to look at.',
+    })
+  }
+
+  const ref = newReferralRef()
+  const referral = {
+    ref,
+    member: member || {},
+    // Identity comes from the verified JWT, never from the body: the referral
+    // says who sent it and the reply goes back to them.
+    referredBy: { id: mod.id, email: mod.email, name: (member && member.referredByName) || mod.email },
+    note: String(note).trim().slice(0, 5000),
+    deviceSummary: deviceSummary || null,
+    messages,
+    totals: totals || {},
+    generatedAt: new Date().toISOString(),
+    modToolsUrl,
+  }
+
+  // Record the referral itself: who handed what over, and under which reference.
+  audit({
+    mod: mod.id,
+    modEmail: mod.email,
+    target: (member && member.id) || 0,
+    tool: 'refer_to_geeks',
+    ref,
+    messages: messages.length,
+  })
+
+  try {
+    const sent = await sendReferral(referral)
+    console.log(`[Referral] ${ref} -> ${sent.to} (${messages.length} messages) by ${mod.email}`)
+    res.json({ ok: true, ref, to: sent.to })
+  } catch (error) {
+    console.error(`[Referral] ${ref} FAILED:`, error.message)
+    res.status(502).json({
+      error: 'REFERRAL_FAILED',
+      // The volunteer needs to know it did NOT go, and still has the reference
+      // if they want to chase it.
+      message: `Could not send the referral to ${GEEKS_EMAIL}: ${error.message}`,
+      ref,
+    })
   }
 })
 

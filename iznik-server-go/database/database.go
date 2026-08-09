@@ -55,16 +55,6 @@ func InitDatabase() {
 		Logger: newLogger,
 	})
 
-	// REPLACE INTO and INSERT ... SELECT conversions (database.InsertSelect,
-	// clause.Insert{Modifier: "REPLACE"}) both need a ClauseBuilders override
-	// registered on the connection they run against - see clausebuilders.go.
-	// Config (and so ClauseBuilders) is shared by reference with every
-	// Session()/dbresolver replica this DB ever produces, so registering it
-	// once here, before either is set up below, is sufficient.
-	if err == nil {
-		RegisterCustomClauseBuilders(DBConn)
-	}
-
 	// This rocketlaunchr/mysql-go package allows genuine cancellation of the MySQL query, which doesn't happen in
 	// the standard library. See https://medium.com/@rocketlaunchr.cloud/canceling-mysql-in-go-827ed8f83b30.
 	//
@@ -122,6 +112,26 @@ func InitDatabase() {
 			panic("failed to register read replica: " + resolverErr.Error())
 		}
 	}
+
+	// REPLACE INTO and INSERT ... SELECT conversions (database.InsertSelect,
+	// clause.Insert{Modifier: "REPLACE"}) both need a ClauseBuilders override
+	// registered on the connection they run against - see clausebuilders.go.
+	//
+	// This MUST happen after dbresolver registration, not before gorm.Open's
+	// plugins are done: dbresolver.Register initializes each replica dialector
+	// against this same *gorm.DB, and the mysql driver's Initialize re-installs
+	// its default builders over ours (mysql.go: `for k, v := range
+	// dialector.ClauseBuilders() { db.ClauseBuilders[k] = v }`). Registering
+	// before the resolver therefore silently loses the "VALUES" override
+	// wherever MYSQL_HOST_READ is set - which is production and nowhere else,
+	// so CI stayed green while every production InsertSelect rendered the
+	// placeholder INSERT and failed with Error 1054 (shipped 2026-08-06,
+	// caught by the deploy canary on AllSeen's chat_roster backfill). The
+	// "INSERT" override (REPLACE INTO) survived only because the mysql
+	// dialector does not install a builder under that key. Nothing re-runs
+	// dialector.Initialize later - replica failover swaps connectors, never
+	// dialectors (failover.go) - so registering here is stable.
+	RegisterCustomClauseBuilders(DBConn)
 
 	// We want lots of connections for parallelisation, but must stay below
 	// MySQL's max_connections (500 in percona-my.cnf).  Leave headroom for

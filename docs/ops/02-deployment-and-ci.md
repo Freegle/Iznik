@@ -15,10 +15,9 @@ This describes how code reaches production. The CI reference is
 ## The web pipeline
 
 1. **Push to `master`.** CircleCI runs the full test suite (Go, PHPUnit, Laravel, Vitest,
-   Playwright) via a shared reusable orb. A fast **ORM migration inventory ratchet** runs
-   first, before any container starts, and fails the build if raw SQL was added to the Go
-   API without a matching manifest entry. See
-   [the harness reference](../developers/reference/orm-migration-harness.md).
+   Playwright) via a shared reusable orb. New raw SQL is kept out at authoring time by the
+   `.claude/check-raw-sql.sh` hook rather than by a CI gate - the ORM migration inventory
+   ratchet that used to run here was retired once the Go migration reached zero raw sites.
 2. **On green, `master` auto-merges to `production`.** This is automatic only when all
    tests pass.
 3. **`production` deploys the frontends.** Two Netlify sites build from the same

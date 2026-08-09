@@ -36,7 +36,6 @@ func IsModOfUser(myid, targetid uint64) bool {
 	var count int64
 
 	// Check active memberships.
-	// ORM migration site 662ae0563eeb (wave 4).
 	result := db.Table("memberships m1").
 		Joins("INNER JOIN memberships m2 ON m2.groupid = m1.groupid").
 		Where("m1.userid = ? AND m2.userid = ? AND m1.role IN (?, ?)",
@@ -52,7 +51,6 @@ func IsModOfUser(myid, targetid uint64) bool {
 
 	// Also check users_banned — banning deletes the memberships row,
 	// so banned users won't appear in the query above.
-	// ORM migration site 4b1829c352b9 (wave 4).
 	result = db.Table("memberships m1").
 		Joins("INNER JOIN users_banned b ON b.groupid = m1.groupid").
 		Where("m1.userid = ? AND b.userid = ? AND m1.role IN (?, ?)",

@@ -175,7 +175,8 @@ func ReplySourceSplitSQL(wide bool, srcGroup string) string {
 // 568a5645fba7): the attribution-channel CASE expression lives in exactly
 // this one place either way, so pulling the outer aggregation out into a
 // real .Table()/.Select()/.Group()/.Order() chain does not duplicate it -
-// see ormharness/bareexists_test.go's distinction between a legitimate
+// see the distinction drawn by the retired ormharness's bareexists_test.go
+// (removed in d22ba1d6c) between a legitimate
 // .Table() subquery (this) and relocating a whole statement into .Select()
 // (not this). Master's ripple_join derivation lives here for the same reason.
 func ReplySourceInnerFrom(wide bool, srcGroup string) string {
@@ -247,7 +248,6 @@ func attributionCaptureFrom(db *gorm.DB) (string, error) {
 	}
 
 	var day string
-	// ORM migration site 8240fc74654f (wave 5).
 	err := db.Table("rippling_reply_attribution").
 		Select("COALESCE(DATE_FORMAT(MIN(replied_at), '%Y-%m-%d'), '')").
 		Where("in_origin_catchment IS NOT NULL OR in_reach IS NOT NULL OR client_source IS NOT NULL").
@@ -398,7 +398,6 @@ func Metrics(c *fiber.Ctx) error {
 
 	// §15 raw event counters.
 	section("totals", func() error {
-		// ORM migration site 7b13019b71cf (wave 1).
 		return db.Table("rippling_event_metrics").
 			Select("'' AS day, event, COALESCE(SUM(count), 0) AS count").
 			Group("event").
@@ -407,7 +406,6 @@ func Metrics(c *fiber.Ctx) error {
 	})
 
 	section("recent", func() error {
-		// ORM migration site bd7c7b0064fb (wave 5).
 		return db.Table("rippling_event_metrics").
 			Select("DATE_FORMAT(day, '%Y-%m-%d') AS day, event, count").
 			Where("day >= CURDATE() - INTERVAL 30 DAY").
@@ -417,7 +415,6 @@ func Metrics(c *fiber.Ctx) error {
 
 	// §16 tuner hotspots – defensive; empty until PR G ships the table.
 	section("hotspots", func() error {
-		// ORM migration site 8aaa3043bf0c (wave 5).
 		return db.Table("rippling_hotspots").
 			Select("DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, area_type, area_id, COALESCE(area_name, '') AS area_name, metric, value, baseline, deviation, direction, severity").
 			Where("detected_at >= NOW() - INTERVAL 30 DAY").
@@ -427,7 +424,6 @@ func Metrics(c *fiber.Ctx) error {
 	})
 
 	section("proposed_params", func() error {
-		// ORM migration site d0a9e5f17cff (wave 5).
 		return db.Table("rippling_params").
 			Select("ons_category, max_minutes, COALESCE(rationale, '') AS rationale, DATE_FORMAT(proposed_at, '%Y-%m-%d %H:%i') AS proposed_at").
 			Where("status = 'proposed'").
@@ -439,7 +435,6 @@ func Metrics(c *fiber.Ctx) error {
 	// Returns the two most recent weekly periods' overall rows so the dashboard can show a
 	// trend. Defensive: returns empty if rippling_live_metrics doesn't exist yet.
 	section("live_metrics", func() error {
-		// ORM migration site 72175873186c (wave 5).
 		return db.Table("rippling_live_metrics").
 			Select("DATE_FORMAT(period_start, '%Y-%m-%d') AS period_start, metric, value, sample_size").
 			Where("stratum_type = 'overall' AND period_type = 'weekly' AND period_start >= CURDATE() - INTERVAL 14 DAY").
@@ -451,7 +446,6 @@ func Metrics(c *fiber.Ctx) error {
 	// Live aggregate of rippling_held_replies by status, with median hold duration for
 	// released rows. Defensive: returns empty if rippling_held_replies doesn't exist yet.
 	section("held_reply_summary", func() error {
-		// ORM migration site 7059261a513c (wave 5).
 		return db.Table("rippling_held_replies").
 			Select("status, COUNT(*) AS count, COALESCE(AVG(TIMESTAMPDIFF(SECOND, created_at, COALESCE(releasedat, NOW())) / 3600.0), 0) AS median_hold_hours").
 			Group("status").
@@ -463,7 +457,6 @@ func Metrics(c *fiber.Ctx) error {
 	// column is added by migration 2026_07_08_000001 — before it runs the query errors and the
 	// slice stays empty (the panel just omits the breakdown), which is fine.
 	section("held_reply_by_source", func() error {
-		// ORM migration site 7a72ebd3ef4b (wave 1).
 		return db.Table("rippling_held_replies").
 			Select("source, status, COUNT(*) AS count").
 			Group("source, status").
@@ -476,7 +469,6 @@ func Metrics(c *fiber.Ctx) error {
 	// ripple_algorithm_metrics by migration 2026_06_18_000002). Returns zero struct if the
 	// table is empty or doesn't exist yet.
 	section("capture_summary", func() error {
-		// ORM migration site 939fde07a522 (wave 5).
 		return db.Table("rippling_algorithm_metrics").
 			Select("DATE_FORMAT(week_start, '%Y-%m-%d') AS week_start, curve, pairs_total, pairs_in_time, pairs_late, COALESCE(reply_p50_hours, 0) AS reply_p50_hours, COALESCE(reply_p75_hours, 0) AS reply_p75_hours").
 			Where("`group` = 'all'").
@@ -498,7 +490,7 @@ func Metrics(c *fiber.Ctx) error {
 	//       are not derivable retrospectively (locations drift, polygons grow) so they read 0
 	//       and those replies sit in unknown - attribution_channels_available tells the
 	//       dashboard to say so.
-	// ORM migration site 568a5645fba7 (research review). The attribution-
+	// The attribution-
 	// channel CASE expression is built once, in ReplySourceInnerFrom, and
 	// shared by ReplySourceSplitSQL's raw-SQL form (rippling/metrics_test.go
 	// exercises that function directly) and this GORM chain - so converting
@@ -507,7 +499,8 @@ func Metrics(c *fiber.Ctx) error {
 	// names) into real Select/Group/Order clauses. .Table() holds only the
 	// derived-table subquery, a documented legitimate use of Table() for a
 	// FROM-clause subquery - not the whole statement relocated into
-	// .Select() (see ormharness/bareexists_test.go).
+	// .Select() (proven by the retired ormharness's bareexists_test.go,
+	// removed in d22ba1d6c).
 	section("reply_source_split", func() error {
 		return db.Table(ReplySourceInnerFrom(attributionWide, srcGroup), gargs()...).
 			Select("day, COUNT(*) AS replies, SUM(bucket = 'home') AS home, SUM(bucket = 'ripple_notified') AS ripple_notified, SUM(bucket = 'ripple_group') AS ripple_group, SUM(bucket = 'ripple_join') AS ripple_join, SUM(bucket = 'ripple_reach') AS ripple_reach, SUM(bucket = 'organic_local') AS organic_local, SUM(bucket = 'unknown') AS unknown").
@@ -519,11 +512,11 @@ func Metrics(c *fiber.Ctx) error {
 	// (1b) Client-reported reply surfaces over the same window (wide schema only - the column
 	//      arrives with the graded-attribution migration). Advisory cross-check of (1).
 	//
-	// ORM migration site 10ee37c98574 (Tier 3 keep-raw review). srcGroup is
+	// srcGroup is
 	// the only toggle reachable here (this section only runs when
-	// attributionWide is true) - 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_10ee37c98574
-	// (iznik-server-go/test).
+	// attributionWide is true) - 2 possible rendered forms, both proven by
+	// the retired ormharness (shapes.json / TestTier3Shapes_10ee37c98574,
+	// removed in d22ba1d6c).
 	section("client_source_summary", func() error {
 		if !attributionWide {
 			return nil
@@ -559,7 +552,6 @@ func Metrics(c *fiber.Ctx) error {
 	// so groups that did not ripple in the window have nothing to filter to. Defensive: empty
 	// while rippling is dark.
 	section("groups", func() error {
-		// ORM migration site a046c8fa9413 (wave 4).
 		return db.Table("rippling_reach rr").
 			Select("DISTINCT g.id AS id, g.nameshort AS name").
 			Joins("JOIN messages_groups mg ON mg.msgid = rr.msgid AND mg.rippled_in = 0 AND mg.deleted = 0").

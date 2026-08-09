@@ -62,6 +62,14 @@ class VerifyEmailMail extends MjmlMailable
             ->applyLogging('VerifyEmail');
     }
 
+    /**
+     * Transactional - they asked for it seconds ago - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->userId;

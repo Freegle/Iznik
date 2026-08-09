@@ -80,6 +80,15 @@ class CommunityNewsChitChatService
             $items = CommunityNewsItem::where('areaid', $area->id)
                 ->whereNull('posted_at')
                 ->where('researched_at', '>', now()->subDays($freshDays))
+                // Same rule as the newsletter: never tell people about something
+                // that has already happened. An item stays eligible for days after
+                // it was researched, so an event found last week can easily be over
+                // by the time it reaches the top of the queue. Undated items are
+                // unaffected; today's events still count.
+                ->where(function ($q) {
+                    $q->whereNull('event_date')
+                        ->orWhere('event_date', '>=', now()->startOfDay());
+                })
                 ->orderBy('id')
                 ->limit($perPost)
                 ->get();

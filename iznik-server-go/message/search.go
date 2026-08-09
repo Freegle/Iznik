@@ -236,7 +236,6 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	key := reachUniverseKey(myid, lat, lng)
 	reachIDs, hit := cachedReachUniverse(key, now)
 	if !hit {
-		// ORM migration site ff00b3ba45a3 (Tier 1 spatial review, round 3).
 		// The extractor now resolves utils.AuthorReachCapWhere to a single
 		// fixed golden with no unresolved gap (the manifest's stale,
 		// presentInCode=false 7ef7f895e8bf is the pre-fix snapshot), so this
@@ -259,7 +258,6 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 
 	// Own arm: always fresh (cheap indexed query), never cached.
 	var ownIDs []uint64
-	// ORM migration site 17a182469755 (Tier 1 spatial review, round 3).
 	db.Table("messages_spatial ms").
 		Select("ms.msgid").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").
@@ -330,7 +328,7 @@ func boxFilter(nelatf float32, nelngf float32, swlatf float32, swlngf float32) s
 // behaviour-preserving refactor) so the per-word bind count (n =
 // len(words), unbounded - a search query can contain any number of terms)
 // can be proven correct for any n via
-// ormharness.AssertGoldenParametrizedShape (search_tier9_test.go) rather
+// the retired ormharness (search_tier9_test.go, removed in d22ba1d6c) rather
 // than sampled at one or two word counts - see keep-raw site 849c08b687c3
 // and plans/active/orm-keepraw-adversarial-review.md §4.
 func buildGetWordsExactQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
@@ -370,10 +368,19 @@ func buildGetWordsExactQuery(words []string, limit int64, groupids []uint64, msg
 }
 
 func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) []SearchResult {
-	sql, args := buildGetWordsExactQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
-
 	var res []SearchResult
-	db.Raw(sql, args...).Scan(&res)
+
+	// Empty words would render "word IN ()", which is invalid SQL (Error
+	// 1064 in production whenever a search reduced to zero indexed words).
+	// GetWordsTypo/Starts/Sounds all carry this same guard; Exact was the
+	// one sibling missing it.
+	if len(words) > 0 {
+		sql, args := buildGetWordsExactQuery(words, limit, groupids, msgids, msgtype, nelat, nelng, swlat, swlng)
+
+		// keep-raw: site 849c08b687c3 - unbounded per-word bind count in a
+		// hand-built word-IN shape; see buildGetWordsExactQuery.
+		db.Raw(sql, args...).Scan(&res)
+	}
 
 	return processResults("Exact", res)
 }
@@ -381,7 +388,7 @@ func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, 
 // buildGetWordsTypoQuery is a pure SQL-builder - see buildGetWordsExactQuery
 // above for the convention and the reason (keep-raw site 97b0cc9dd792): the
 // per-word bind count (n = len(words), unbounded) is proven for any n via
-// ormharness.AssertGoldenParametrizedShape (search_tier9_test.go). Extracted
+// the retired ormharness (search_tier9_test.go, removed in d22ba1d6c). Extracted
 // from GetWordsTypo, a pure behaviour-preserving refactor.
 func buildGetWordsTypoQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
 	bf := boxFilter(nelat, nelng, swlat, swlng)
@@ -432,7 +439,7 @@ func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, m
 // buildGetWordsStartsQuery is a pure SQL-builder - see
 // buildGetWordsExactQuery above for the convention and the reason (keep-raw
 // site 7b1697ea1d18): the per-word bind count (n = len(words), unbounded) is
-// proven for any n via ormharness.AssertGoldenParametrizedShape
+// proven for any n by the retired ormharness (removed in d22ba1d6c)
 // (search_tier9_test.go). Extracted from GetWordsStarts, a pure
 // behaviour-preserving refactor.
 func buildGetWordsStartsQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
@@ -486,7 +493,7 @@ func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64,
 // buildGetWordsSoundsQuery is a pure SQL-builder - see
 // buildGetWordsExactQuery above for the convention and the reason (keep-raw
 // site feb5e1180e5a): the per-word bind count (n = len(words), unbounded) is
-// proven for any n via ormharness.AssertGoldenParametrizedShape
+// proven for any n by the retired ormharness (removed in d22ba1d6c)
 // (search_tier9_test.go). Extracted from GetWordsSounds, a pure
 // behaviour-preserving refactor.
 func buildGetWordsSoundsQuery(words []string, limit int64, groupids []uint64, msgids []uint64, msgtype string, nelat float32, nelng float32, swlat float32, swlng float32) (string, []interface{}) {
@@ -543,10 +550,10 @@ func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64,
 func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult {
 	var results []SearchResult
 
-	// ORM migration site a5e382bd3536 (Tier 3 keep-raw review). len(groupids)>0
-	// is the only toggle - 2 possible rendered forms, both declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_a5e382bd3536
-	// (iznik-server-go/test). Unlike groupFilter (still used unchanged by
+	// len(groupids)>0
+	// is the only toggle - 2 possible rendered forms, both proven by the
+	// retired ormharness (shapes.json / TestTier3Shapes_a5e382bd3536,
+	// removed in d22ba1d6c). Unlike groupFilter (still used unchanged by
 	// GetWords*), the group-id list here is bound via GORM's native IN (?)
 	// slice-bind rather than spliced as literal text (plan 7.5), so an
 	// arbitrary-length group list is a single well-defined bind, not an

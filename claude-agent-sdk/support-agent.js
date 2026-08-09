@@ -68,7 +68,9 @@ function systemPrompt(userId) {
     `- **"Oh dear, something went wrong"** has two surfaces. Full-page (Nuxt error.vue) → Sentry tag ` +
     `\`source:error-page-mount\` or the SSR stderr line "SSR error on <method> <url>". Toast (SomethingWentWrong.vue) ` +
     `→ an APIError from a failed backend call → find the APIError in Sentry, or take the X-Trace-ID and run ` +
-    `loki_search with query \`{app="freegle"} | json | trace_id="<id>"\`. Note: Go API 500s may be absent from logs ` +
+    `loki_search with query \`{app="freegle"} |= "<id>" | json | trace_id="<id>"\`. In ANY LogQL you write, always ` +
+    `put a \`|=\` substring filter for the value BEFORE \`| json\` (the parse is the expensive stage), and add a ` +
+    `\`source\` label when you know it. Note: Go API 500s may be absent from logs ` +
     `unless the handler logged them.\n` +
     `- **Not getting emails / notifications / "unsubscribe"** — users.bouncing says it's suppressed; bounces_emails.reason/permanent ` +
     `says WHY; logs_emails.status is free text — an SMTP 250 / "queued for delivery" means the recipient's mail server ` +

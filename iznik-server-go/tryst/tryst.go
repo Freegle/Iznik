@@ -100,7 +100,6 @@ func GetTryst(c *fiber.Ctx) error {
 	if id > 0 {
 		// Single tryst.
 		var t Tryst
-		// ORM migration site eb5bf7b5109a (wave 1).
 		db.Table("trysts").Where("id = ?", id).Scan(&t)
 		if !canSee(myid, &t) {
 			return fiber.NewError(fiber.StatusForbidden, "Permission denied")
@@ -122,7 +121,6 @@ func GetTryst(c *fiber.Ctx) error {
 
 	// List all future trysts for user.
 	var trysts []Tryst
-	// ORM migration site 488c92a4f115 (wave 1).
 	db.Table("trysts").Where("(user1 = ? OR user2 = ?) AND arrangedfor >= NOW()", myid, myid).Scan(&trysts)
 
 	result := make([]map[string]interface{}, len(trysts))
@@ -193,7 +191,7 @@ func CreateTryst(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Verify a chat exists between the two users.
-	// ORM migration site f06281f794b9 (Tier 1 batch review). An ordinary
+	// An ordinary
 	// literal-WHERE COUNT, swept into the "INSERT id read back" category by
 	// this function also containing CreateTryst's INSERT (site b0e6f29b54bd,
 	// was 938d9dc56c71 before its bug fix) further down - this statement
@@ -287,7 +285,6 @@ func PatchTryst(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var t Tryst
-	// ORM migration site 5ab7247c7c0c (wave 1).
 	db.Table("trysts").Where("id = ?", req.ID).Scan(&t)
 
 	if !canSee(myid, &t) {
@@ -295,7 +292,6 @@ func PatchTryst(c *fiber.Ctx) error {
 	}
 
 	if req.Arrangedfor != "" {
-		// ORM migration site 31ca1c3e3e7a (wave 2).
 		db.Table("trysts").Where("id = ?", req.ID).Update("arrangedfor", req.Arrangedfor)
 	}
 
@@ -336,7 +332,6 @@ func PostTryst(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var t Tryst
-	// ORM migration site f01a084039fd (wave 1).
 	db.Table("trysts").Where("id = ?", req.ID).Scan(&t)
 
 	if !canSee(myid, &t) {
@@ -348,20 +343,16 @@ func PostTryst(c *fiber.Ctx) error {
 
 	if req.Confirm {
 		if isUser1 {
-			// ORM migration site a692d161ad11 (wave 2).
 			db.Table("trysts").Where("id = ?", req.ID).Update("user1confirmed", gorm.Expr("NOW()"))
 		} else {
-			// ORM migration site e7862c3da563 (wave 2).
 			db.Table("trysts").Where("id = ?", req.ID).Update("user2confirmed", gorm.Expr("NOW()"))
 		}
 	}
 
 	if req.Decline {
 		if isUser1 {
-			// ORM migration site 4d017739e5ae (wave 2).
 			db.Table("trysts").Where("id = ?", req.ID).Update("user1declined", gorm.Expr("NOW()"))
 		} else {
-			// ORM migration site b6d802da0733 (wave 2).
 			db.Table("trysts").Where("id = ?", req.ID).Update("user2declined", gorm.Expr("NOW()"))
 		}
 	}
@@ -400,14 +391,12 @@ func DeleteTryst(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var t Tryst
-	// ORM migration site ae0478d1c57d (wave 1).
 	db.Table("trysts").Where("id = ?", id).Scan(&t)
 
 	if !canSee(myid, &t) {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 	}
 
-	// ORM migration site 8d87c99d21c7 (wave 2).
 	db.Table("trysts").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

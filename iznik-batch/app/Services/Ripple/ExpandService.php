@@ -892,21 +892,26 @@ class ExpandService
                         json_encode($this->tickReachableIds($entry, $schedule)),
                         $next, $status,
                     ];
-                    $initHead = [$row->msgid, $lat, $lng, $storeWkt];
-                    try {
-                        DB::statement(
-                            $initSql(ReachBoundsService::outerExpr($poly), ReachBoundsService::innerExpr($poly)),
-                            array_merge($initHead, $ready ? [$storeWkt, $storeWkt] : [], $initTail)
-                        );
-                    } catch (\Throwable $e) {
-                        if (!$ready) {
-                            throw $e; // same failure the legacy statement would have had
+                    $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $poly): void {
+                        $head = [$row->msgid, $lat, $lng, $wkt];
+                        try {
+                            // keep-raw: upsert with ST_GeomFromText/derived-bounds SQL expressions in the column list - the builder cannot render these
+                            DB::statement(
+                                $initSql(ReachBoundsService::outerExpr($poly), ReachBoundsService::innerExpr($poly)),
+                                array_merge($head, $ready ? [$wkt, $wkt] : [], $initTail)
+                            );
+                        } catch (\Throwable $e) {
+                            if (!$ready) {
+                                throw $e; // same failure the legacy statement would have had
+                            }
+                            // keep-raw: envelope-fallback variant of the same spatial upsert
+                            DB::statement(
+                                $initSql('ST_Envelope(' . $poly . ')', 'NULL'),
+                                array_merge($head, [$wkt], $initTail)
+                            );
                         }
-                        DB::statement(
-                            $initSql('ST_Envelope(' . $poly . ')', 'NULL'),
-                            array_merge($initHead, [$storeWkt], $initTail)
-                        );
-                    }
+                    };
+                    $storeWkt = $this->storeWithUndoLogShrink($initStore, $storeWkt, (int) $row->msgid);
                     // Routing-provided bounds (tighter than derived) upgrade the columns,
                     // verified against the stored polygon.
                     if ($tickGeom['outer'] !== null) {
@@ -1002,6 +1007,16 @@ class ExpandService
                 $total = (int) $row->total_ticks;
                 $target = min($this->reach->tickForElapsedHours($elapsedHours), $total);
 
+                // A floor set by something we have LEARNED, as opposed to the clock.
+                // A scout who replied was outside the reach at the time, so their
+                // reply is evidence the item is wanted that far out - and the people
+                // around them should get the same chance rather than waiting for the
+                // schedule to arrive. Never lowers the target, and never exceeds the
+                // post's own schedule length.
+                if ($row->min_tick !== null) {
+                    $target = min(max($target, (int) $row->min_tick), $total);
+                }
+
                 if ($target <= (int) $row->tick) {
                     // Not actually due for a new tick yet — reschedule and move on.
                     if (!$dryRun) {
@@ -1036,22 +1051,37 @@ class ExpandService
                     $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
                     // Polygon + derived bounds in ONE statement (no stale-bounds window);
                     // envelope retry if the derivation throws on pathological geometry.
-                    [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
                     $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
                          SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
                          WHERE msgid = ?';
                     $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
-                    try {
-                        DB::statement($advanceSql($boundsSet), array_merge([$storeWkt], $boundsParams, $advanceTail));
-                    } catch (\Throwable $e) {
-                        if ($boundsSet === '') {
-                            throw $e; // same failure the legacy statement would have had
+                    $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $row): void {
+                        [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
+                        try {
+                            try {
+                                // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
+                                DB::statement($advanceSql($boundsSet), array_merge([$wkt], $boundsParams, $advanceTail));
+                            } catch (\Throwable $e) {
+                                // 1713 depends only on the OLD values of the updated
+                                // columns, so the envelope variant (same columns) can
+                                // only fail the same way - skip straight to the split.
+                                if ($boundsSet === '' || $this->isUndoLogTooBig($e)) {
+                                    throw $e; // same failure the legacy statement would have had
+                                }
+                                [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
+                                // keep-raw: envelope-fallback variant of the same spatial UPDATE
+                                DB::statement($advanceSql($envSet), array_merge([$wkt], $envParams, $advanceTail));
+                            }
+                        } catch (\Throwable $e) {
+                            if (!$this->isUndoLogTooBig($e)) {
+                                throw $e;
+                            }
+                            $this->advanceSplitForUndoLog($wkt, $advanceSql, $advanceTail, (int) $row->msgid);
                         }
-                        [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
-                        DB::statement($advanceSql($envSet), array_merge([$storeWkt], $envParams, $advanceTail));
-                    }
+                    };
+                    $storeWkt = $this->storeWithUndoLogShrink($advanceStore, $storeWkt, (int) $row->msgid);
                     // The polygon was just overwritten from the cached schedule, which does NOT
                     // include any secondary-group rejection clips. Re-subtract every rejected
                     // group so a secondary "out of area" rejection survives expansion (#9).
@@ -1584,11 +1614,21 @@ class ExpandService
 
             $groupWkt = $groupRow->group_wkt;
 
+            // ST_Intersection of two polygons that touch along a line or at a
+            // point yields a GEOMETRYCOLLECTION, and ST_Area on that throws
+            // error 3516. CASE evaluates lazily, so guarding on the geometry
+            // type means ST_Area only ever sees polygonal input; a NULL frac
+            // simply fails the >= 0.90 test below and the WKT passes through
+            // unchanged - the same outcome the exception path produced, minus
+            // the exception.
             $result = DB::selectOne(
-                'SELECT ST_Area(ST_Intersection(iso, grp)) / NULLIF(ST_Area(grp), 0) AS frac,
+                'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
+                             THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
+                        END AS frac,
                         ST_AsText(ST_Union(iso, grp)) AS u
-                 FROM (SELECT ST_GeomFromText(?, ' . self::SRID . ') AS iso,
-                              ST_GeomFromText(?, ' . self::SRID . ') AS grp) t',
+                 FROM (SELECT ST_Intersection(iso, grp) AS inter, iso, grp
+                       FROM (SELECT ST_GeomFromText(?, ' . self::SRID . ') AS iso,
+                                    ST_GeomFromText(?, ' . self::SRID . ') AS grp) s) t',
                 [$wkt, $groupWkt]
             );
 
@@ -1619,10 +1659,13 @@ class ExpandService
                 $groupWkt = $groupRow->group_wkt;
 
                 $result = DB::selectOne(
-                    'SELECT ST_Area(ST_Intersection(iso, grp)) / NULLIF(ST_Area(grp), 0) AS frac,
+                    'SELECT CASE WHEN ST_GeometryType(inter) IN (\'POLYGON\', \'MULTIPOLYGON\')
+                                 THEN ST_Area(inter) / NULLIF(ST_Area(grp), 0)
+                            END AS frac,
                             ST_AsText(ST_Union(iso, grp)) AS u
-                     FROM (SELECT ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS iso,
-                                  ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS grp) t',
+                     FROM (SELECT ST_Intersection(iso, grp) AS inter, iso, grp
+                           FROM (SELECT ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS iso,
+                                        ST_Buffer(ST_GeomFromText(?, ' . self::SRID . '), 0) AS grp) s) t',
                     [$wkt, $groupWkt]
                 );
 
@@ -1635,6 +1678,165 @@ class ExpandService
 
             return $wkt;
         }
+    }
+
+    /**
+     * Advance a post where polygon and bounds cannot share one UPDATE. MySQL
+     * error 1713 is about the UNDO record, which holds the OLD values of every
+     * updated column - and polygon + outer_bound are both SPATIAL-indexed, so
+     * their old geometries are logged in full. Together they can exceed the
+     * 16KB undo page even when each alone fits (the posts stuck since late
+     * July: old polygon ~7KB + old outer_bound ~19KB; verified each column
+     * updates fine alone, and simplifying the NEW polygon - the first fix -
+     * cannot touch old-value size at all). Split so each statement carries
+     * only one spatial column. The bounds lag the polygon by one statement,
+     * which is acceptable for a post that otherwise never advances; if the
+     * bounds statement still fails, keep the fresh polygon with stale bounds
+     * rather than failing the whole advance.
+     */
+    private function advanceSplitForUndoLog(string $wkt, callable $advanceSql, array $advanceTail, int $msgid): void
+    {
+        // keep-raw: the advance UPDATE without the bounds SET - builder cannot render ST_GeomFromText
+        DB::statement($advanceSql(''), array_merge([$wkt], $advanceTail));
+
+        [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
+
+        if ($boundsSet === '') {
+            return;
+        }
+
+        try {
+            try {
+                // keep-raw: bounds-only spatial UPDATE, split from the advance
+                DB::statement('UPDATE rippling_reach SET updated_at = NOW()' . $boundsSet . ' WHERE msgid = ?', array_merge($boundsParams, [$msgid]));
+            } catch (\Throwable $e) {
+                [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
+                // keep-raw: envelope fallback of the bounds-only UPDATE
+                DB::statement('UPDATE rippling_reach SET updated_at = NOW()' . $envSet . ' WHERE msgid = ?', array_merge($envParams, [$msgid]));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('ripple: split advance stored polygon but bounds update failed', [
+                'msgid' => $msgid,
+                'error' => substr($e->getMessage(), 0, 200),
+            ]);
+
+            return;
+        }
+
+        Log::info('ripple: advance split to fit undo log', ['msgid' => $msgid]);
+    }
+
+    /**
+     * True when the failure is MySQL error 1713, "Undo log record is too big" -
+     * the row image for the polygon update cannot fit an undo record. Checked
+     * via the driver's structured errorInfo where available; the message
+     * fallback matches the specific 1713 phrase, which cannot collide with
+     * polygon coordinate digits the way a bare error-number match would.
+     */
+    private function isUndoLogTooBig(\Throwable $e): bool
+    {
+        for ($t = $e; $t !== null; $t = $t->getPrevious()) {
+            if ($t instanceof \PDOException && isset($t->errorInfo[1]) && (int) $t->errorInfo[1] === 1713) {
+                return true;
+            }
+        }
+
+        return str_contains(strtolower($e->getMessage()), 'undo log record is too big');
+    }
+
+    /**
+     * One Douglas-Peucker simplification pass over a polygon WKT, with a
+     * ST_Buffer(geom, 0) repair (plain ST_Simplify can emit self-intersecting
+     * output). Returns the simplified WKT only when it is still polygonal and
+     * actually smaller; null tells the caller to try a coarser tolerance.
+     */
+    private function simplifyPolygonWkt(string $wkt, float $tolerance): ?string
+    {
+        try {
+            // keep-raw: pure spatial-function computation (no tables) - nothing for the builder to build
+            $row = DB::selectOne(
+                'SELECT ST_AsText(ST_Buffer(ST_Simplify(ST_GeomFromText(?, ' . self::SRID . '), ?), 0)) AS w',
+                [$wkt, $tolerance]
+            );
+            $out = $row->w ?? null;
+
+            if ($out !== null
+                && (str_starts_with($out, 'POLYGON') || str_starts_with($out, 'MULTIPOLYGON'))
+                && strlen($out) < strlen($wkt)) {
+                return $out;
+            }
+        } catch (\Throwable $e) {
+            // Fall through - the caller tries the next tolerance.
+        }
+
+        return null;
+    }
+
+    /**
+     * Run $store($wkt); if MySQL rejects it with error 1713 (undo log record
+     * too big - seen once reach polygons grow into the multi-megabyte range,
+     * which left posts permanently stuck: every expand run retried the same
+     * oversized UPDATE and failed), progressively simplify the polygon and
+     * retry, so the post stores a slightly coarser reach instead of never
+     * advancing. Returns the WKT actually stored, which the caller must use
+     * for anything downstream (group targeting reads the stored polygon).
+     * Non-1713 failures propagate unchanged, as does 1713 if even the
+     * coarsest simplification cannot fit.
+     */
+    private function storeWithUndoLogShrink(callable $store, string $wkt, int $msgid): string
+    {
+        try {
+            $store($wkt);
+
+            return $wkt;
+        } catch (\Throwable $e) {
+            if (!$this->isUndoLogTooBig($e)) {
+                throw $e;
+            }
+        }
+
+        // The geometry is tagged SRID 3857 but its coordinates are lon/lat
+        // DEGREES (a site-wide quirk - see the routing/spatial services, which
+        // carry the same mislabel). Tolerances must therefore be degree-scale:
+        // at UK latitudes 0.0003 is roughly 25m, 0.002 roughly 160m, 0.01
+        // roughly 800m. A metre-scale ladder (40/160/1000) exceeds the whole
+        // polygon's extent, and MySQL's ST_Simplify just returns NULL for
+        // every rung - which is how the first version of this fix silently
+        // never simplified anything.
+        foreach ([0.0003, 0.002, 0.01] as $tolerance) {
+            $shrunk = $this->simplifyPolygonWkt($wkt, $tolerance);
+
+            if ($shrunk === null) {
+                continue;
+            }
+
+            try {
+                $store($shrunk);
+
+                Log::info('ripple: polygon simplified to fit undo log', [
+                    'msgid' => $msgid,
+                    'tolerance' => $tolerance,
+                    'bytes_before' => strlen($wkt),
+                    'bytes_after' => strlen($shrunk),
+                ]);
+
+                return $shrunk;
+            } catch (\Throwable $e) {
+                if (!$this->isUndoLogTooBig($e)) {
+                    throw $e;
+                }
+            }
+        }
+
+        // Every rung either failed to simplify or still would not fit. Say so
+        // before rethrowing - the first version of this ladder failed silently
+        // on every rung and looked identical to never having run.
+        Log::warning('ripple: undo-log shrink exhausted all tolerances', [
+            'msgid' => $msgid,
+            'bytes' => strlen($wkt),
+        ]);
+
+        throw $e;
     }
 
     /**

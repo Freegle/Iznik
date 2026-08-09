@@ -38,11 +38,10 @@ func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
 	}
 	var err error
 	if rippling.ReachBoundsReady(db) {
-		// ORM migration site ff9be67577e8 (Tier 3 keep-raw review).
 		// ReachInReachExpr always returns the same expression text (only the
 		// bind args vary per call), so this has exactly one rendered form,
-		// declared in ormharness/shapes.json and proven by
-		// TestTier3Shapes_ff9be67577e8 (iznik-server-go/test).
+		// proven by the retired ormharness (shapes.json /
+		// TestTier3Shapes_ff9be67577e8, removed in d22ba1d6c).
 		// WHERE built as a single string for ONE Where() call: GORM's
 		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 		// paren pair once there is more than one Where expression to
@@ -55,7 +54,6 @@ func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
 			Where("rr.msgid IN (?) AND NOT "+expr, whereArgs...).
 			Scan(&rows).Error
 	} else {
-		// ORM migration site 7e7e69fa2f85 (Tier 1 spatial review).
 		err = db.Table("rippling_reach").
 			Select("msgid").
 			Where("msgid IN ? AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0", msgids, lng, lat, utils.SRID).
@@ -135,7 +133,6 @@ func Reach(c *fiber.Ctx) error {
 
 	// Confirm the post exists (and is on a group at all).
 	var groupids []uint64
-	// ORM migration site 52c8694fa39b (wave 1).
 	db.Table("messages_groups").Select("groupid").Where("msgid = ? AND deleted = 0", id).Scan(&groupids)
 	if len(groupids) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
@@ -155,7 +152,6 @@ func Reach(c *fiber.Ctx) error {
 	// coordinates are lng/lat degrees (the SRID label notwithstanding), which is exactly
 	// GeoJSON's [lng, lat] order, so no transform is needed.
 	var row reachRow
-	// ORM migration site 388f473a3332 (Tier 1 spatial review).
 	found := db.Table("rippling_reach").
 		Select("tick, total_ticks, status, arrival, next_expansion_at, ST_AsGeoJSON(polygon, 5) AS polygon").
 		Where("msgid = ?", id).
@@ -169,7 +165,7 @@ func Reach(c *fiber.Ctx) error {
 			reason = "disabled"
 		} else {
 			var inSpatial int
-			// ORM migration site 0be1f2f8556d (wave 1). inSpatial is int, not
+			// inSpatial is int, not
 			// int64, so this keeps Row().Scan rather than GORM's Count, which
 			// requires *int64.
 			db.Table("messages_spatial").Select("COUNT(*)").Where("msgid = ?", id).Row().Scan(&inSpatial)

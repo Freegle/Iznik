@@ -56,12 +56,14 @@ import (
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
 
+	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/partnerships"
 	"github.com/freegle/iznik-server-go/recommendations"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
@@ -80,7 +82,6 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/userdump"
 	"github.com/freegle/iznik-server-go/visualise"
-	"github.com/freegle/iznik-server-go/voicepost"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
 )
@@ -332,6 +333,21 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} chat.ChatMessage
 		rg.Post("/chat/:id/message", chat.CreateChatMessage)
 
+		// Answer a Freegle prompt
+		// @Router /chat/{id}/message/{mid}/prompt [post]
+		// @Summary Answer a Freegle chat prompt
+		// @Description Records the member's answer to a type='Prompt' chat message and applies
+		// @Description it to the posts the prompt covers. Only the member the prompt was sent
+		// @Description to may answer, and only once.
+		// @Tags chat
+		// @Accept json
+		// @Produce json
+		// @Param id path integer true "Chat ID"
+		// @Param mid path integer true "Chat message ID"
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/chat/:id/message/:mid/prompt", chat.AnswerChatPrompt)
+
 		// Patch Chat Message
 		// @Router /chatmessages [patch]
 		// @Summary Update chat message
@@ -425,7 +441,7 @@ func SetupRoutes(app *fiber.App) {
 		// Changes
 		// @Router /changes [get]
 		// @Summary Get changes since timestamp
-		// @Description Returns message changes, user changes, and ratings since a given time. Requires partner key.
+		// @Description Returns message changes, user changes (Modified or Deleted), and ratings since a given time. Requires partner key.
 		// @Tags changes
 		// @Produce json
 		// @Param since query string false "ISO8601 timestamp (defaults to 1 hour ago)"
@@ -552,6 +568,11 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/config/:key", config.Get)
 
 		// Rippling-out live event counters, read-only, Support/Admin only (sysadmin §15/§16).
+		// First-reply effectiveness, per lever. Same Support/Admin gate as rippling.
+		firstReplyAdmin := rg.Group("/firstreply")
+		firstReplyAdmin.Use(config.RequireSupportOrAdminMiddleware())
+		firstReplyAdmin.Get("/metrics", firstreply.Metrics)
+
 		ripplingAdmin := rg.Group("/rippling")
 		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
 		ripplingAdmin.Get("/metrics", rippling.Metrics)
@@ -763,21 +784,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Post("/image", image.Post)
-
-		// Voice posting: stream audio chunks in while recording, then finalise.
-		// @Router /voicepost/chunk [post]
-		// @Summary Stream a chunk of voice-post audio; returns the transcript so far
-		// @Tags VoicePost
-		// @Accept octet-stream
-		// @Produce json
-		// @Success 200 {object} map[string]interface{}
-		rg.Post("/voicepost/chunk", voicepost.Chunk)
-		// @Router /voicepost/finish [post]
-		// @Summary Finalise a voice post: full transcript plus tidied title/description
-		// @Tags VoicePost
-		// @Produce json
-		// @Success 200 {object} voicepost.FinishResult
-		rg.Post("/voicepost/finish", voicepost.Finish)
 
 		// Legacy image URL resolution
 		// @Router /image [get]
@@ -999,6 +1005,11 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} message.SimilarResult
 		rg.Get("/message/:id/matches", message.PostMatches)
 
+		// Members whose SAVED SEARCH matches this post, at the same
+		// MinMatchedPostScore the matched-posts email uses - both compare stored
+		// document embeddings, so the number means the same thing on both.
+		rg.Get("/message/:id/searchmatches", message.SearchMatchesForPost)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen
@@ -1087,6 +1098,12 @@ func SetupRoutes(app *fiber.App) {
 		// @Router /user/relevantoff [get]
 		rg.Get("/user/relevantoff", user.RelevantOff)
 		rg.Post("/user/relevantoff", user.RelevantOff)
+		// Category opt-out, the HTTPS arm of the List-Unsubscribe header on bulk mail.
+		// Key-authenticated like relevantoff, and registered before /user/:id? for the
+		// same reason: so "unsubscribe" is not treated as a user id.
+		// @Router /user/unsubscribe [post]
+		rg.Get("/user/unsubscribe", user.Unsubscribe)
+		rg.Post("/user/unsubscribe", user.Unsubscribe)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)
@@ -1361,6 +1378,25 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/team", deprecation.Marker("POST /team", "2026-08-01"), team.PostTeam)
 		rg.Patch("/team", team.PatchTeam)
 		rg.Delete("/team", deprecation.Marker("DELETE /team", "2026-08-01"), team.DeleteTeam)
+
+		// Partnerships (ModTools). The literal paths must be registered before
+		// /partnership/:id, or "summary" and "statsjob" would be matched as ids.
+		rg.Get("/partnership/summary", partnerships.Summary)
+		rg.Get("/partnership/statsjob", partnerships.ListStatsJobs)
+		rg.Post("/partnership/statsjob", partnerships.CreateStatsJob)
+		rg.Delete("/partnership/statsjob/:id", partnerships.DeleteStatsJob)
+		rg.Get("/partnership/statsfile/:id", partnerships.DownloadStatsFile)
+		rg.Get("/partnership", partnerships.List)
+		rg.Post("/partnership", partnerships.Create)
+		rg.Get("/partnership/:id", partnerships.Single)
+		rg.Patch("/partnership/:id", partnerships.Update)
+		rg.Delete("/partnership/:id", partnerships.Delete)
+		rg.Get("/partnership/:id/group", partnerships.Groups)
+		rg.Patch("/partnership/:id/group", partnerships.PatchGroups)
+		rg.Put("/partnership/:id/year", partnerships.PutYears)
+		rg.Post("/partnership/:id/payment", partnerships.CreatePayment)
+		rg.Patch("/partnership/:id/payment/:paymentid", partnerships.UpdatePayment)
+		rg.Delete("/partnership/:id/payment/:paymentid", partnerships.DeletePayment)
 
 		// Mod Configs
 		rg.Get("/modtools/modconfig", modconfig.GetModConfig)

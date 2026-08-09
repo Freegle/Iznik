@@ -7,6 +7,7 @@ const mockFetchMembers = vi.fn()
 const mockMergeAsk = vi.fn().mockResolvedValue()
 const mockMergeIgnore = vi.fn().mockResolvedValue()
 const mockMembershipsUpdate = vi.fn().mockResolvedValue({ ret: 0 })
+const mockMembershipsSave = vi.fn().mockResolvedValue({ ret: 0 })
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -15,6 +16,7 @@ vi.mock('~/api', () => ({
       remove: mockRemoveMember,
       fetchMembers: mockFetchMembers,
       update: mockMembershipsUpdate,
+      save: mockMembershipsSave,
     },
     merge: {
       ask: mockMergeAsk,
@@ -453,6 +455,24 @@ describe('member store', () => {
       expect(mockUserStoreFetch).not.toHaveBeenCalled()
     })
 
+    it('force-refreshes on an ourPostingStatus change too (Discourse 10008/1)', async () => {
+      // ModSupportMembership.vue changes a member's posting status through this
+      // action. Like the role case above, the cached userStore entry is not
+      // otherwise invalidated, so a pending message's Approve button (gated on
+      // membership.ourpostingstatus !== 'PROHIBITED') keeps reading the stale
+      // pre-change value.
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({
+        userid: 42,
+        groupid: 7,
+        ourPostingStatus: 'MODERATED',
+      })
+
+      expect(mockUserStoreFetch).toHaveBeenCalledWith(42, true)
+    })
+
     it('does NOT force-refresh when role is set but userid is missing (defensive: bad caller, nothing to invalidate)', async () => {
       const store = useMemberStore()
       store.config = {}
@@ -477,6 +497,65 @@ describe('member store', () => {
       })
 
       expect(data).toEqual({ ret: 0, status: 'Success' })
+    })
+  })
+
+  /*
+   * Regression — Discourse #10008 post 1. A mod on a pending message's own page
+   * used ModModeration.vue (embedded via ModMessageUserInfo.vue) to change a TN
+   * member's posting status from PROHIBITED ("Can't Post") to MODERATED. That
+   * control calls memberStore.updateMembership (a separate action from update(),
+   * though both PATCH the same /memberships endpoint) which never force-refreshed
+   * the cached userStore entry. ModMessage.vue's own `membership` computed reads
+   * that same cached entry to decide whether to show the Approve button
+   * (:cantpost="membership.ourpostingstatus === 'PROHIBITED'"), so it kept
+   * reading the stale PROHIBITED value and hid Approve until something unrelated
+   * (e.g. a full page reload) eventually re-fetched the user.
+   */
+  describe('updateMembership — force-refresh userStore on posting-status change (Discourse 10008/1)', () => {
+    it('calls userStore.fetch(userid, true) when params include ourPostingStatus', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.updateMembership({
+        userid: 42,
+        groupid: 7,
+        ourPostingStatus: 'MODERATED',
+      })
+
+      expect(mockMembershipsSave).toHaveBeenCalledWith({
+        userid: 42,
+        groupid: 7,
+        ourPostingStatus: 'MODERATED',
+      })
+      expect(mockUserStoreFetch).toHaveBeenCalledTimes(1)
+      expect(mockUserStoreFetch).toHaveBeenCalledWith(42, true)
+    })
+
+    it('does NOT force-refresh when params lack ourPostingStatus (e.g. an emailfrequency-only patch from ModStdMessageModal)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.updateMembership({
+        userid: 42,
+        groupid: 7,
+        emailfrequency: 24,
+      })
+
+      expect(mockMembershipsSave).toHaveBeenCalled()
+      expect(mockUserStoreFetch).not.toHaveBeenCalled()
+    })
+
+    it('does NOT force-refresh when ourPostingStatus is set but userid is missing (defensive: bad caller, nothing to invalidate)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.updateMembership({
+        groupid: 7,
+        ourPostingStatus: 'MODERATED',
+      })
+
+      expect(mockUserStoreFetch).not.toHaveBeenCalled()
     })
   })
 })

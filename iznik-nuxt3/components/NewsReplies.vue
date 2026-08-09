@@ -1,5 +1,5 @@
 <template>
-  <div class="replies-container" :class="'depth-' + depth">
+  <div ref="container" class="replies-container" :class="'depth-' + depth">
     <!--
       Ordered render plan. When collapsed, middle replies WITHOUT new activity in
       their subtree hide behind one expander; a parent whose nested replies contain
@@ -17,10 +17,21 @@
           {{ expanderLabel }}
         </button>
       </div>
+      <NewsUnreadDivider v-else-if="entry.divider" :count="entry.count" />
+      <nuxt-link
+        v-else-if="entry.feedCta"
+        :to="feedCtaLink(entry)"
+        class="view-all-replies"
+      >
+        {{ feedCtaLabel(entry) }}
+      </nuxt-link>
       <div
         v-else
         class="reply-thread"
         :data-reply-id="entry.reply.id"
+        :data-combined-ids="
+          entry.reply.combinedIds ? entry.reply.combinedIds.join(' ') : null
+        "
         :class="{ 'reply-thread--new': isReplyNew(entry.reply) }"
       >
         <NewsRefer
@@ -38,6 +49,7 @@
           :scroll-to="scrollTo"
           class="reply-content"
           :depth="depth"
+          :suppress-children="feedMode"
           @rendered="rendered"
           @subtree-rendered="childSubtreeRendered"
           @expand-combined="expandCombined"
@@ -47,10 +59,18 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue'
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  nextTick,
+  defineAsyncComponent,
+} from 'vue'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import NewsRefer from '~/components/NewsRefer'
+import NewsUnreadDivider from '~/components/NewsUnreadDivider'
 
 const NewsReply = defineAsyncComponent(() =>
   import('~/components/NewsReply.vue')
@@ -84,12 +104,21 @@ const props = defineProps({
     type: Number,
     required: true,
   },
+  // 'thread' renders the full conversation with head/tail collapsing.
+  // 'feed' keeps cards short: post + the two most recent replies + one
+  // honestly-counted "View all N replies" link to the thread page.
+  context: {
+    type: String,
+    required: false,
+    default: 'thread',
+  },
 })
 
 const emit = defineEmits(['rendered', 'subtree-rendered'])
 
 const newsfeedStore = useNewsfeedStore()
 const authStore = useAuthStore()
+const container = ref(null)
 const showAllReplies = ref(false)
 const expandedCombinedIds = ref(new Set())
 
@@ -255,10 +284,11 @@ const filteredReplies = computed(() => {
 })
 
 // Collapse only at depth 1 (top-level replies), not for nested reply trees.
+// A deep link (scrollTo set) collapses too: the target's own row is exempted
+// below, so a notification lands on a focused view rather than the full wall.
 const shouldCollapse = computed(() => {
   return (
     !showAllReplies.value &&
-    !props.scrollTo &&
     !props.replyTo &&
     combinedReplies.value.length > COLLAPSE_THRESHOLD
   )
@@ -292,8 +322,37 @@ function subtreeHasNew(entry) {
   return childrenHaveNew(entry)
 }
 
-// Ordered render plan: hide only middle entries whose whole subtree is old.
-// A single expander sits where the first hidden entry was.
+// The reply a deep link (notification click) points at. Never hide it, or
+// anything on the path to it: the whole point of the landing is to see it.
+const scrollTargetId = computed(() => parseInt(props.scrollTo) || 0)
+
+function replyTreeContains(reply, target) {
+  if (!reply) return false
+  if (reply.id === target) return true
+  for (const kid of reply.replies || []) {
+    const child = resolveReply(kid)
+    if (child && replyTreeContains(child, target)) return true
+  }
+  return false
+}
+
+function subtreeHasScrollTarget(entry) {
+  const target = scrollTargetId.value
+  if (!target) return false
+  if (entry.id === target) return true
+  if (entry.combinedIds) {
+    if (entry.combinedIds.includes(target)) return true
+    for (const cid of entry.combinedIds) {
+      if (replyTreeContains(newsfeedStore.byId(cid), target)) return true
+    }
+    return false
+  }
+  return replyTreeContains(entry, target)
+}
+
+// Ordered render plan: hide only middle entries whose whole subtree is old
+// and does not contain the deep-link target. A single expander sits where
+// the first hidden entry was.
 const collapsePlan = computed(() => {
   const list = combinedReplies.value
   const passthrough = { entries: list.map((r) => ({ reply: r })), hidden: [] }
@@ -305,7 +364,7 @@ const collapsePlan = computed(() => {
 
   list.forEach((r, idx) => {
     const inMiddle = idx >= HEAD_COUNT && idx < list.length - TAIL_COUNT
-    if (inMiddle && !subtreeHasNew(r)) {
+    if (inMiddle && !subtreeHasNew(r) && !subtreeHasScrollTarget(r)) {
       hidden.push(r)
       if (!expanderPlaced) {
         entries.push({ expander: true })
@@ -319,7 +378,107 @@ const collapsePlan = computed(() => {
   return hidden.length ? { entries, hidden } : passthrough
 })
 
-const renderEntries = computed(() => collapsePlan.value.entries)
+// Feed cards must stay short. Above this many replies (counted across the
+// whole tree) the card switches to a view-all link plus the two most recent
+// top-level entries; at or below it, small threads render exactly as before.
+const FEED_TOTAL_THRESHOLD = 3
+const FEED_VISIBLE_TAIL = 2
+
+// Recursive {total, fresh} for one combined entry: how many reply rows its
+// subtree holds, and how many of them are newer than the visit baseline.
+function countDescendants(reply) {
+  let total = 0
+  let fresh = 0
+  for (const kid of reply?.replies || []) {
+    const child = resolveReply(kid)
+    if (!child) continue
+    total++
+    if (seenBeforeVisit.value && child.id > seenBeforeVisit.value) fresh++
+    const nested = countDescendants(child)
+    total += nested.total
+    fresh += nested.fresh
+  }
+  return { total, fresh }
+}
+
+function countEntry(entry) {
+  if (entry.combinedIds) {
+    // Combined blocks never have children (combining requires none).
+    const total = entry.combinedIds.length
+    const fresh = seenBeforeVisit.value
+      ? entry.combinedIds.filter((cid) => cid > seenBeforeVisit.value).length
+      : 0
+    return { total, fresh }
+  }
+  const own = seenBeforeVisit.value && entry.id > seenBeforeVisit.value ? 1 : 0
+  const nested = countDescendants(entry)
+  return { total: 1 + nested.total, fresh: own + nested.fresh }
+}
+
+const treeCounts = computed(() => {
+  let total = 0
+  let fresh = 0
+  for (const entry of combinedReplies.value) {
+    const c = countEntry(entry)
+    total += c.total
+    fresh += c.fresh
+  }
+  return { total, fresh }
+})
+
+const feedMode = computed(() => {
+  return (
+    props.context === 'feed' &&
+    props.depth === 1 &&
+    treeCounts.value.total > FEED_TOTAL_THRESHOLD
+  )
+})
+
+// The ONE unread divider (WhatsApp convention). It promises "everything new is
+// below here", so it sits above the first entry whose SUBTREE contains anything
+// new - not merely the first new top-level reply. Replies to an old comment
+// partway up the thread are new but live under an old parent, so anchoring on
+// the parent keeps that promise true and keeps the parent visible as context.
+const firstNewIndex = computed(() => {
+  if (!seenBeforeVisit.value) return -1
+  return combinedReplies.value.findIndex((r) => subtreeHasNew(r))
+})
+
+// Every new reply in the thread, nested ones included, so this number agrees
+// with the "View all N replies - M new" link that brought the reader here.
+const newCount = computed(() => treeCounts.value.fresh)
+
+const showDivider = computed(() => props.depth === 1 && firstNewIndex.value > 0)
+
+const renderEntries = computed(() => {
+  let entries
+
+  if (feedMode.value) {
+    // Feed card: view-all link first, then only the most recent entries.
+    entries = [
+      {
+        feedCta: true,
+        total: treeCounts.value.total,
+        fresh: treeCounts.value.fresh,
+      },
+      ...combinedReplies.value
+        .slice(-FEED_VISIBLE_TAIL)
+        .map((r) => ({ reply: r })),
+    ]
+  } else {
+    entries = [...collapsePlan.value.entries]
+  }
+
+  if (showDivider.value) {
+    const first = combinedReplies.value[firstNewIndex.value]
+    const idx = entries.findIndex((e) => e.reply && e.reply.id === first.id)
+    if (idx >= 0) {
+      entries.splice(idx, 0, { divider: true, count: newCount.value })
+    }
+  }
+
+  return entries
+})
 
 // Deterministic completion for the deep-link scroll: this list's subtree is
 // rendered once every NewsReply row in the current render plan has reported
@@ -341,7 +500,7 @@ function isReferNotice(reply) {
 
 function expectedSubtreeIds() {
   return renderEntries.value
-    .filter((e) => !e.expander && !isReferNotice(e.reply))
+    .filter((e) => e.reply && !isReferNotice(e.reply))
     .map((e) => e.reply.id)
 }
 
@@ -378,11 +537,59 @@ const expanderLabel = computed(() => {
 })
 
 function entryKey(entry) {
-  return entry.expander ? 'reply-expander' : 'newsfeed-' + entry.reply.id
+  if (entry.expander) return 'reply-expander'
+  if (entry.divider) return 'unread-divider'
+  if (entry.feedCta) return 'feed-cta'
+  return 'newsfeed-' + entry.reply.id
 }
 
-function expandReplies() {
+function feedCtaLabel(entry) {
+  const replyWord = entry.total === 1 ? 'reply' : 'replies'
+  let label = `View all ${entry.total} ${replyWord}`
+  if (entry.fresh > 0) {
+    label += ` · ${entry.fresh} new`
+  }
+  return label
+}
+
+// When the link is offering new replies, say so in the URL. The thread page
+// then knows to land on the unread divider without inferring it, and the
+// link still means that after a reload or if it is shared.
+function feedCtaLink(entry) {
+  const path = '/chitchat/' + props.threadhead
+  return entry.fresh > 0 ? path + '#new' : path
+}
+
+// Expanding inserts the hidden replies ABOVE the ones already on screen, and
+// the browser holds the scroll position, so without a correction whatever the
+// reader was looking at slides down the page by the height of everything
+// revealed. Measure a row that survives the expansion, then put it back where
+// it was: the page grows upwards, out of sight, and nothing appears to move.
+async function expandReplies(e) {
+  // The first reply row below the expander is the anchor. Walk past anything
+  // that is not one - the unread divider sits there whenever the new activity
+  // begins right after the hidden replies.
+  let anchor = e?.currentTarget?.parentElement?.nextElementSibling
+  while (anchor && !anchor.getAttribute?.('data-reply-id')) {
+    anchor = anchor.nextElementSibling
+  }
+
+  const anchorId = anchor?.getAttribute?.('data-reply-id')
+  const before = anchorId ? anchor.getBoundingClientRect().top : null
+
   showAllReplies.value = true
+
+  if (before === null) return
+
+  await nextTick()
+
+  const moved = container.value?.querySelector(`[data-reply-id="${anchorId}"]`)
+  if (!moved) return
+
+  const delta = moved.getBoundingClientRect().top - before
+  if (delta) {
+    window.scrollBy(0, delta)
+  }
 }
 
 function rendered(id) {
@@ -422,6 +629,30 @@ function expandCombined(combinedIds) {
 
 .show-more-replies {
   margin: 0.25rem 0;
+}
+
+/* Full-width, comfortably tappable row (44px+) linking to the thread page. */
+.view-all-replies {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  width: 100%;
+  padding: 0.25rem 0;
+  color: $color-success;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+    color: $color-success-hover;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $color-success;
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
 }
 
 .show-more-btn {

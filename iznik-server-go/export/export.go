@@ -35,7 +35,6 @@ func PostExport(c *fiber.Ctx) error {
 	// Check for existing pending export to prevent abuse.
 	db := database.DBConn
 	var pendingCount int64
-	// ORM migration site b6628daeeaf7 (wave 1).
 	db.Table("users_exports").Where("userid = ? AND completed IS NULL", myid).Count(&pendingCount)
 	if pendingCount > 0 {
 		return fiber.NewError(fiber.StatusConflict, "Export already in progress")
@@ -49,10 +48,11 @@ func PostExport(c *fiber.Ctx) error {
 	}
 	tag := hex.EncodeToString(tagBytes)
 
-	// ORM migration site da7e48606815 (tier1). Plain, isolated, literal single-row
+	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback, which - like the
 	// raw sql.Result this replaces - reads the id back from the write connection
-	// that ran the INSERT (proven in test/orm_insertid_test.go). A SELECT here
+	// that ran the INSERT (proven in test/insertid_gorm_writeback_test.go). A
+	// SELECT here
 	// would be routed to a read replica by the read/write split and, under
 	// Galera's cross-node apply window, may not yet see the just-inserted row
 	// (returning id=0).
@@ -111,7 +111,6 @@ func GetExport(c *fiber.Ctx) error {
 	}
 
 	var row ExportRow
-	// ORM migration site 407acfe2232b (wave 1).
 	db.Table("users_exports").
 		Select("id, userid, requested, started, completed, data").
 		Where("userid = ? AND id = ? AND tag = ?", myid, id, tag).
@@ -147,7 +146,6 @@ func GetExport(c *fiber.Ctx) error {
 
 	// Not completed yet — return queue position.
 	var infront int64
-	// ORM migration site 796077395eca (wave 1).
 	db.Table("users_exports").Where("id < ? AND completed IS NULL", id).Count(&infront)
 
 	return c.JSON(fiber.Map{

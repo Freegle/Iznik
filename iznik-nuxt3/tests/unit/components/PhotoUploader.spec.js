@@ -3,6 +3,12 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { Camera } from '@capacitor/camera'
 import PhotoUploader from '~/components/PhotoUploader.vue'
+// The full-screen viewer is a defineAsyncComponent inside PhotoUploader; the
+// viewer tests assert against the REAL component (slides, counter), so it is
+// not stubbed. Importing it here warms the module cache, making the dynamic
+// import resolve instantly - on a loaded CI runner the first cold import of
+// its chain could exceed the tests' waitFor window and flake (seen live).
+import '~/components/MessagePhotosModal'
 
 // Mock defineAsyncComponent to return a stub for vuedraggable
 vi.stubGlobal('defineAsyncComponent', (fn) => {
@@ -1711,6 +1717,64 @@ describe('PhotoUploader', () => {
         expect.objectContaining({ attempt: 3 })
       )
       consoleError.mockRestore()
+    })
+  })
+
+  // You should be able to check a photo is any good before you post it, not
+  // after - so tapping it opens the same full-screen zoomable viewer as a photo
+  // on a live post.
+  describe('viewing a photo full screen', () => {
+    // The viewer teleports to the body, so it is not inside the wrapper.
+    function viewer() {
+      return document.body.querySelector('.fullscreen-viewer')
+    }
+
+    it('opens the viewer when the featured photo is tapped', async () => {
+      createWrapper({
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+
+      // The viewer is loaded on demand, so give the import a moment.
+      await vi.waitFor(() => expect(viewer()).not.toBeNull(), { timeout: 5000 })
+
+      // Every photo, so you can page through them, starting on the one shown.
+      expect(viewer().querySelectorAll('.image-slide')).toHaveLength(2)
+      expect(viewer().querySelector('.image-counter').textContent.trim()).toBe(
+        '1 / 2'
+      )
+    })
+
+    it('does not open for a photo that is still uploading', async () => {
+      createWrapper({
+        modelValue: [{ id: 1, tempId: 't1', uploading: true, progress: 40 }],
+      })
+      await flushPromises()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
+    })
+
+    it('closes again when the viewer is dismissed', async () => {
+      createWrapper({ modelValue: [{ id: 1, ouruid: 'uid1' }] })
+      await flushPromises()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+      await vi.waitFor(() => expect(viewer()).not.toBeNull(), { timeout: 5000 })
+
+      viewer().querySelector('.back-button').click()
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
     })
   })
 })

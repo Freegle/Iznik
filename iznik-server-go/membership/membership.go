@@ -42,7 +42,6 @@ func getRoleForGroup(myid uint64, groupid uint64) string {
 	}
 	db := database.DBConn
 	var role string
-	// ORM migration site b93b47daeb87 (wave 1).
 	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?",
 		myid, groupid, utils.COLLECTION_APPROVED).Scan(&role)
 	return role
@@ -65,7 +64,6 @@ func isModOfGroup(myid uint64, groupid uint64) bool {
 	}
 
 	var role string
-	// ORM migration site 57cbae19bf26 (wave 1).
 	result := db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?",
 		myid, groupid, utils.COLLECTION_APPROVED).Scan(&role)
 	if result.Error != nil {
@@ -135,12 +133,10 @@ func PostMemberships(c *fiber.Ctx) error {
 	switch req.Action {
 	case "Approve", "Reject", "Delete Approved Member", "Ban", "Hold", "ReviewHold", "ReviewIgnore":
 		var holder uint64
-		// ORM migration site e472a5457ade (wave 1).
 		db.Table("memberships").Select("COALESCE(heldby, 0)").Where("userid = ? AND groupid = ?",
 			req.Userid, req.Groupid).Scan(&holder)
 		if holder != 0 && holder != myid {
 			var holderName string
-			// ORM migration site 8c02651afe8b (wave 1).
 			db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&holderName)
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 				"ret":        1,
@@ -153,7 +149,6 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Hold":
-		// ORM migration site 7301cba96a50 (wave 2).
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Update("heldby", myid); result.Error != nil {
 			stdlog.Printf("Failed to hold membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
@@ -162,7 +157,6 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Release":
-		// ORM migration site 19356cdf20b2 (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Update("heldby", gorm.Expr("NULL"))
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_RELEASE, req.Groupid, req.Userid, myid, "")
@@ -183,9 +177,11 @@ func PostMemberships(c *fiber.Ctx) error {
 		if req.Stdmsgid != nil {
 			stdmsgid = *req.Stdmsgid
 		}
-		// ORM migration site 3b43ce5f3f6c (wave 2). normaliseColumnOrder handles
+		// normaliseColumnOrder handled
 		// the map-Create column reorder (data, task_type) against a JSON_OBJECT
-		// value; see ormharness/normalise_test.go TestNormaliseColumnOrder_InsertWithNestedFunctionArgs.
+		// value; see the retired ormharness's normalise_test.go
+		// TestNormaliseColumnOrder_InsertWithNestedFunctionArgs (removed in
+		// d22ba1d6c).
 		db.Table("background_tasks").Create(map[string]interface{}{
 			"task_type": "email_mod_stdmsg",
 			"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
@@ -195,7 +191,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Approve":
-		// ORM migration site eeb78024d807 (wave 2). Map keys "collection" and
+		// Map keys "collection" and
 		// "heldby" already sort alphabetically in that order, so Updates(map)
 		// emits the same SET order as the golden without needing an approved diff.
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
@@ -213,7 +209,6 @@ func PostMemberships(c *fiber.Ctx) error {
 			body = *req.Body
 		}
 		if subject != "" || body != "" {
-			// ORM migration site a7dec15999b7 (wave 2).
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
 				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
@@ -224,7 +219,6 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "Reject", "Delete Approved Member":
-		// ORM migration site dd9f2b939bce (wave 2).
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection IN (?, ?)",
 			req.Userid, req.Groupid, utils.COLLECTION_PENDING, utils.COLLECTION_APPROVED).Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to reject membership user %d group %d: %v", req.Userid, req.Groupid, result.Error)
@@ -244,7 +238,6 @@ func PostMemberships(c *fiber.Ctx) error {
 			stdmsgid = *req.Stdmsgid
 		}
 		if subject != "" || body != "" {
-			// ORM migration site 8d3cfe20b403 (wave 2).
 			db.Table("background_tasks").Create(map[string]interface{}{
 				"task_type": "email_mod_stdmsg",
 				"data": gorm.Expr("JSON_OBJECT('userid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
@@ -257,14 +250,14 @@ func PostMemberships(c *fiber.Ctx) error {
 	case "Ban":
 		// V1 parity: removeMembership($ban=true) deletes the memberships row entirely, then
 		// writes to users_banned. There is no memberships.collection='Banned' row in V1.
-		// ORM migration site 98ee705a8a74 (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin in DeleteMemberships (d60d7b2e0f2a): a half-converted
 		// pair renumbers the survivor's site ID, so gate (h) refuses the split state.
 		if result := db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Delete(nil); result.Error != nil {
 			stdlog.Printf("Failed to delete membership for ban user %d group %d: %v", req.Userid, req.Groupid, result.Error)
 		}
-		// ORM migration site dfc985e8ea67 (wave 3). Converted together with its
+		// Converted together with its
 		// identical twin in DeleteMemberships (d788d299a578): a half-converted
 		// pair renumbers the survivor's site ID, so gate (h) refuses the split
 		// state.
@@ -282,21 +275,18 @@ func PostMemberships(c *fiber.Ctx) error {
 
 	case "Unban":
 		// V1 parity: unban() deletes from users_banned only — there is no memberships row to delete.
-		// ORM migration site 3747c49ac43e (wave 2).
 		db.Table("users_banned").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).Delete(nil)
 		// V1 parity: unban() does not log.
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewHold":
 		// ReviewHold is used in the chat review context - sets heldby on the membership.
-		// ORM migration site 39aa0175d3ce (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Update("heldby", myid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewRelease":
 		// ReviewRelease clears the heldby on the membership (chat review context).
-		// ORM migration site 8190a1ccc42c (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", req.Userid, req.Groupid).
 			Update("heldby", gorm.Expr("NULL"))
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -308,7 +298,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		// held again the next time they are flagged. Only this group's row is touched,
 		// so a hold on an adjacent community is left alone.
 		//
-		// ORM migration site 93875f6e74f0 (wave 2). Updates(map) emits the SET
+		// Updates(map) emits the SET
 		// list alphabetically, which is not the golden's order; the harness
 		// normalises column order on both sides, moving each column with its
 		// value, so the pairing is still proved.
@@ -329,7 +319,6 @@ func PostMemberships(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, "happiness must be a valid ID")
 		}
-		// ORM migration site f15eacecdc43 (wave 2).
 		db.Table("messages_outcomes").Where("id = ?", happinessID).Update("reviewed", gorm.Expr("1"))
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
@@ -424,10 +413,10 @@ func GetMemberships(c *fiber.Ctx) error {
 	// V1's getBanned() queries users_banned directly and synthesises 'Banned' as the collection.
 	// Cursor-based pagination uses b.userid (returned as id) so callers can page through all bans.
 	if filter == 5 {
-		// ORM migration site 2c3b155f346b (Tier 3 keep-raw review). contextID>0
-		// is the only toggle - 2 possible rendered forms, both declared in
-		// ormharness/shapes.json and proven by TestTier3Shapes_2c3b155f346b
-		// (iznik-server-go/test).
+		// contextID>0
+		// is the only toggle - 2 possible rendered forms, both proven by the
+		// retired ormharness (shapes.json / TestTier3Shapes_2c3b155f346b,
+		// removed in d22ba1d6c).
 		var members []GetMembershipsMember
 		bannedTx := db.Table("users_banned b").
 			Select("b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
@@ -462,7 +451,6 @@ func GetMemberships(c *fiber.Ctx) error {
 		// users:update-modmails cron, so an INNER JOIN on it silently drops members whose
 		// only modmails are older than ~30 days.  The logs table is not pruned and is the
 		// authoritative source; criteria match the modmailsonly filter in logs/logs.go.
-		// ORM migration site 4a525e0d44db (wave 4).
 		db.Table("memberships m").
 			Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 				"u.fullname, u.firstname, u.lastname, m.settings, "+
@@ -543,10 +531,10 @@ func GetMemberships(c *fiber.Ctx) error {
 		// Otherwise do LIKE search on name/email.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			// ORM migration site 836dc8807739 (Tier 3 keep-raw review). groupid==0
+			// groupid==0
 			// and the filter (0-3) give 2x4 = 8 possible rendered forms, all
-			// declared in ormharness/shapes.json and proven by
-			// TestTier3Shapes_836dc8807739 (iznik-server-go/test).
+			// proven by the retired ormharness (shapes.json /
+			// TestTier3Shapes_836dc8807739, removed in d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() + " AND m.userid = ?"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection, searchID)
 			baseTx().Where(whereSQL, whereArgs...).
@@ -558,10 +546,11 @@ func GetMemberships(c *fiber.Ctx) error {
 			// so a fullname-only LIKE silently excludes them from name search even though
 			// enrichMembers builds their displayname from those columns. (Discourse 9518/371)
 			//
-			// ORM migration site 5f742c0fcf1f (Tier 3 keep-raw review). Same
+			// Same
 			// groupid==0 x filter toggles as 836dc8807739 above - 8 possible
-			// rendered forms, all declared in ormharness/shapes.json and proven
-			// by TestTier3Shapes_5f742c0fcf1f (iznik-server-go/test).
+			// rendered forms, all proven by the retired ormharness
+			// (shapes.json / TestTier3Shapes_5f742c0fcf1f, removed in
+			// d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() +
 				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?)"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
@@ -574,10 +563,10 @@ func GetMemberships(c *fiber.Ctx) error {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
 		// ORDER BY m.id DESC for deterministic per-page slicing consistent with the cursor.
 		//
-		// ORM migration site bbc55cf96110 (Tier 3 keep-raw review). groupid==0,
+		// groupid==0,
 		// the filter (0-3), and contextID>0 give 2x4x2 = 16 possible rendered
-		// forms, all declared in ormharness/shapes.json and proven by
-		// TestTier3Shapes_bbc55cf96110 (iznik-server-go/test).
+		// forms, all proven by the retired ormharness (shapes.json /
+		// TestTier3Shapes_bbc55cf96110, removed in d22ba1d6c).
 		groupWhere, groupArgs := groupFilterSQL()
 		whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL()
 		whereArgs := append(append([]interface{}{}, groupArgs...), collection)
@@ -605,10 +594,10 @@ func GetMemberships(c *fiber.Ctx) error {
 
 	// When a filter is active, include the total matching count so the UI can display it.
 	//
-	// ORM migration site 5f6ca1b9022f (Tier 3 keep-raw review). groupid==0 and
+	// groupid==0 and
 	// the filter (0-3, though this block only ever runs for filter>0) give
-	// 2x4 = 8 possible rendered forms, all declared in ormharness/shapes.json
-	// and proven by TestTier3Shapes_5f6ca1b9022f (iznik-server-go/test).
+	// 2x4 = 8 possible rendered forms, all proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_5f6ca1b9022f, removed in d22ba1d6c).
 	if filter > 0 {
 		var filterCount int64
 
@@ -699,11 +688,11 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 	// exactly, preventing "no buttons" where the backend returns a member but the
 	// frontend considers them already reviewed.
 	//
-	// ORM migration site fdd14a1656c7 (Tier 3 keep-raw review). GORM's native
+	// GORM's native
 	// "IN ?" slice-bind already normalizes the group-id list regardless of
-	// length, so this has exactly one rendered form, declared in
-	// ormharness/shapes.json and proven by TestTier3Shapes_fdd14a1656c7
-	// (iznik-server-go/test).
+	// length, so this has exactly one rendered form, proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_fdd14a1656c7, removed in
+	// d22ba1d6c).
 	var members []GetMembershipsMember
 	result := db.Table("memberships m").
 		Select("m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
@@ -757,7 +746,7 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	}
 
 	var rows []relatedRow
-	// ORM migration site 70059ac9a4bb (wave 5). Derived-table trick: GORM's
+	// Derived-table trick: GORM's
 	// Table() passes its name argument through verbatim (no quoting) once it
 	// contains a space, so a parenthesized UNION subquery can be given as the
 	// "table name" with its own bind args in Table()'s variadic args.
@@ -800,7 +789,6 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		Count  int    `gorm:"column:count"`
 	}
 	var loginCounts []loginCount
-	// ORM migration site 193930b7821a (wave 1).
 	db.Table("users_logins").Select("userid, COUNT(*) as count").Where("userid IN ?", uidList).
 		Group("userid").Scan(&loginCounts)
 	hasLogins := make(map[uint64]bool)
@@ -814,7 +802,6 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 	for _, r := range rows {
 		if !hasLogins[r.User1] || !hasLogins[r.User2] {
 			// Auto-mark as notified since these are not actionable.
-			// ORM migration site 0477a681ffd6 (wave 2).
 			db.Table("users_related").Where("id = ?", r.ID).Update("notified", gorm.Expr("1"))
 			continue
 		}
@@ -945,10 +932,10 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	// Only show recent outcomes (last 31 days).
 	start := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
 
-	// ORM migration site 3119115f3abe (Tier 3 keep-raw review). filter
-	// (none/Happy/Unhappy/Fine) gives 4 possible rendered forms, all declared
-	// in ormharness/shapes.json and proven by TestTier3Shapes_3119115f3abe
-	// (iznik-server-go/test).
+	// filter
+	// (none/Happy/Unhappy/Fine) gives 4 possible rendered forms, all proven
+	// by the retired ormharness (shapes.json / TestTier3Shapes_3119115f3abe,
+	// removed in d22ba1d6c).
 	//
 	// rippled_in = 0: only Feedback for posts that ORIGINATED on the
 	// group, not copies that rippled in from elsewhere (the badge count
@@ -1005,7 +992,6 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	}
 	var users []userInfo
 	if len(userIDs) > 0 {
-		// ORM migration site 4d11adfa11a8 (wave 1).
 		db.Table("users").Select("id, fullname").Where("id IN ?", userIDs).Scan(&users)
 	}
 	userMap := make(map[uint64]*userInfo)
@@ -1021,7 +1007,6 @@ func getHappinessMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) e
 	}
 	var emails []emailInfo
 	if len(userIDs) > 0 {
-		// ORM migration site 6110f539c46b (wave 1).
 		db.Table("users_emails").Select("userid, email, preferred").Where("userid IN ?", userIDs).
 			Order("preferred DESC").Scan(&emails)
 	}
@@ -1086,11 +1071,11 @@ func getVisibleRatings(db *gorm.DB, groupIDs []uint64) []Rating {
 
 	since := time.Now().AddDate(0, 0, -7).Format("2006-01-02")
 
-	// ORM migration site 1a000d04649b (Tier 3 keep-raw review). Both group-id
-	// lists are GORM's native "IN (?)" slice-bind, which the harness's
-	// collapseInLists normalizes regardless of length, so this has exactly one
-	// rendered form, declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_1a000d04649b (iznik-server-go/test).
+	// Both group-id
+	// lists are GORM's native "IN (?)" slice-bind, which the retired
+	// harness's collapseInLists normalized regardless of length, so this
+	// has exactly one rendered form, proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_1a000d04649b, removed in d22ba1d6c).
 	var rows []ratingRow
 	db.Table("ratings").
 		Select("ratings.id, ratings.rater, ratings.ratee, ratings.rating, ratings.reason, "+
@@ -1227,19 +1212,29 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 
 	// Check the group exists.
 	var groupExists int64
-	// ORM migration site cf56bf438429 (wave 1).
 	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
 	if groupExists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
 
-	// Find or create the user.
-	userid := user.FindByTNIdOrEmail(db, tnuserid, email)
+	// Find or create the user. This is TN's routine sync call, so it is the
+	// place divergence gets stopped: twin accounts (tnuserid stamp on one,
+	// email on another) are merged, and whichever identifier the surviving
+	// account lacks is back-filled - after a TN username rename, attaching
+	// the new alias here stops the mail ingest minting a twin for it.
+	candidates := user.FindTNCandidates(db, tnuserid, email)
+	candidates = user.HealTNDivergence(db, candidates)
+	var userid uint64
+	if len(candidates) > 0 {
+		userid = candidates[0]
+	}
 	if userid == 0 {
 		userid, err = user.CreatePartnerUser(db, tnuserid, email)
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
 		}
+	} else {
+		user.EnsurePartnerIdentifiers(db, userid, tnuserid, email)
 	}
 
 	// Check if banned. V1 parity: User::addMembership returns FALSE for
@@ -1249,7 +1244,6 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// or log row anywhere, so a banned member's join attempt vanishes with
 	// nothing for a moderator to find while the partner is told it worked.
 	var bannedCount int64
-	// ORM migration site dd226f0cacca (wave 1).
 	db.Table("users_banned").Where("userid = ? AND groupid = ?",
 		userid, groupid).Count(&bannedCount)
 	if bannedCount > 0 {
@@ -1258,7 +1252,6 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 
 	// Check if already a member.
 	var existingRole string
-	// ORM migration site 553e621a63b0 (wave 1).
 	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
@@ -1267,8 +1260,9 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 
 	// Insert membership. ORM migration site 759766c83c01 (wave 2). Golden column
 	// order (userid, groupid, role, collection) is not alphabetical, but
-	// normaliseColumnOrder sorts both sides' columns together with their values
-	// before comparing (ormharness/normalise_test.go TestNormaliseColumnOrder_Insert),
+	// normaliseColumnOrder sorted both sides' columns together with their
+	// values before comparing (the retired ormharness's normalise_test.go
+	// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c),
 	// so the map-Create reorder is harmless. Identical twin: addMemberToGroup (27aa0e237120).
 	db.Table("memberships").Create(map[string]interface{}{
 		"userid":     userid,
@@ -1281,7 +1275,7 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	// Laravel batch (memberships:process) sends the group welcome email,
 	// runs spam checks, and applies review flags. Without this row the
 	// cron has nothing to do and welcomes are silently dropped.
-	// ORM migration site 32d907621f09 (wave 2). processingrequired is a literal
+	// processingrequired is a literal
 	// 1 in the golden, not a bind, so it goes through gorm.Expr. Identical twin:
 	// addMemberToGroup (2f0c55ec88d6).
 	db.Table("memberships_history").Create(map[string]interface{}{
@@ -1301,7 +1295,6 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool) error {
 	// Check the group exists.
 	var groupExists int64
-	// ORM migration site 927556278e70 (wave 1).
 	db.Table("groups").Where("id = ?", groupid).Count(&groupExists)
 	if groupExists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
@@ -1309,7 +1302,6 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 
 	// Check if already a member.
 	var existingRole string
-	// ORM migration site 5b811f0c2cc6 (wave 1).
 	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?",
 		userid, groupid).Scan(&existingRole)
 	if existingRole != "" {
@@ -1323,7 +1315,6 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 	// like TrashNothing, or a moderator using the Add button) is told it worked. Return
 	// a real failure so the join doesn't silently disappear.
 	var bannedCount int64
-	// ORM migration site 4651063e075b (wave 1).
 	db.Table("users_banned").Where("userid = ? AND groupid = ?",
 		userid, groupid).Count(&bannedCount)
 	if bannedCount > 0 {
@@ -1345,7 +1336,7 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		// Laravel batch (memberships:process) sends the group welcome email,
 		// runs spam checks, and applies review flags. Without this row the
 		// cron has nothing to do and welcomes are silently dropped.
-		// ORM migration site 2f0c55ec88d6 (wave 2). Identical twin of
+		// Identical twin of
 		// putMembershipsPartner's insert (32d907621f09).
 		db.Table("memberships_history").Create(map[string]interface{}{
 			"userid":             userid,
@@ -1428,10 +1419,10 @@ func DeleteMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 		}
-		// ORM migration site d60d7b2e0f2a (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin in PostMemberships's Ban action (98ee705a8a74).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).Delete(nil)
-		// ORM migration site d788d299a578 (wave 3). Twin of dfc985e8ea67 above.
+		// Twin of dfc985e8ea67 above.
 		db.Table("users_banned").Clauses(clause.OnConflict{
 			DoUpdates: clause.Set{
 				{Column: clause.Column{Name: "byuser"}, Value: clause.Column{Table: "excluded", Name: "byuser"}},
@@ -1456,7 +1447,7 @@ func DeleteMemberships(c *fiber.Ctx) error {
 	}
 
 	// Remove the membership.
-	// ORM migration site 535641088fb3 (wave 2). Converted together with its
+	// Converted together with its
 	// identical twin in deleteMembershipsPartner (0fe2da6629e8).
 	result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
 		userid, req.Groupid, utils.COLLECTION_APPROVED).Delete(nil)
@@ -1501,14 +1492,17 @@ func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) erro
 		}
 	}
 
-	// Find the user.
-	userid := user.FindByTNIdOrEmail(db, tnuserid, email)
-	if userid == 0 {
+	// Find the user - healing any twin-account divergence first, same as the
+	// add path, so the removal lands on the single surviving account.
+	candidates := user.FindTNCandidates(db, tnuserid, email)
+	candidates = user.HealTNDivergence(db, candidates)
+	if len(candidates) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "User not found")
 	}
+	userid := candidates[0]
 
 	// Remove the membership.
-	// ORM migration site 0fe2da6629e8 (wave 2). Converted together with its
+	// Converted together with its
 	// identical twin in DeleteMemberships (535641088fb3).
 	result := db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
 		userid, groupid, utils.COLLECTION_APPROVED).Delete(nil)
@@ -1577,7 +1571,6 @@ func PatchMemberships(c *fiber.Ctx) error {
 
 	// Verify the membership exists.
 	var membershipExists int64
-	// ORM migration site d52f362bd794 (wave 1).
 	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?",
 		userid, req.Groupid, utils.COLLECTION_APPROVED).Count(&membershipExists)
 	if membershipExists == 0 {
@@ -1586,7 +1579,6 @@ func PatchMemberships(c *fiber.Ctx) error {
 
 	// Update whichever settings were provided.
 	if req.Emailfrequency != nil {
-		// ORM migration site c3cff12ce730 (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("emailfrequency", int(*req.Emailfrequency))
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_EMAIL_FREQUENCY, req.Groupid, userid, myid,
@@ -1594,13 +1586,11 @@ func PatchMemberships(c *fiber.Ctx) error {
 	}
 
 	if req.Eventsallowed != nil {
-		// ORM migration site 02963d1e570a (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("eventsallowed", int(*req.Eventsallowed))
 	}
 
 	if req.Volunteeringallowed != nil {
-		// ORM migration site 54535c67055f (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("volunteeringallowed", int(*req.Volunteeringallowed))
 	}
@@ -1625,7 +1615,6 @@ func PatchMemberships(c *fiber.Ctx) error {
 				}
 			}
 		}
-		// ORM migration site 3d8f2d88b42d (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("settings", string(*req.Settings))
 	}
@@ -1638,12 +1627,10 @@ func PatchMemberships(c *fiber.Ctx) error {
 		}
 		// Verify the config exists.
 		var configID uint64
-		// ORM migration site a35651ab9f60 (wave 1).
 		db.Table("mod_configs").Select("id").Where("id = ?", *req.Configid).Scan(&configID)
 		if configID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Config not found")
 		}
-		// ORM migration site 683e16a0d881 (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("configid", *req.Configid)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_CONFIG_CHANGE, req.Groupid, userid, myid,
@@ -1655,7 +1642,6 @@ func PatchMemberships(c *fiber.Ctx) error {
 		if !isModOfGroup(myid, req.Groupid) {
 			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change posting status")
 		}
-		// ORM migration site 5a436bd174af (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ?", userid, req.Groupid).
 			Update("ourPostingStatus", *req.OurPostingStatus)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_OUR_POSTING_STATUS, req.Groupid, userid, myid,
@@ -1682,7 +1668,6 @@ func PatchMemberships(c *fiber.Ctx) error {
 			}
 		}
 
-		// ORM migration site 948119564065 (wave 2).
 		db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", userid, req.Groupid, utils.COLLECTION_APPROVED).
 			Update("role", targetRole)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_ROLE_CHANGE, req.Groupid, userid, myid, targetRole)
@@ -1701,7 +1686,6 @@ func PatchMemberships(c *fiber.Ctx) error {
 			// Promote: only flip 'User' to 'Moderator'. V1 used the same
 			// guard (UPDATE … WHERE systemrole = 'User') so Support / Admin
 			// users are never silently demoted to Moderator.
-			// ORM migration site 58a93e92bdd0 (wave 2).
 			db.Table("users").Where("id = ? AND systemrole = ?", userid, utils.SYSTEMROLE_USER).
 				Update("systemrole", utils.SYSTEMROLE_MODERATOR)
 		} else {
@@ -1709,12 +1693,10 @@ func PatchMemberships(c *fiber.Ctx) error {
 			// longer holds Moderator / Owner on ANY other approved group.
 			// Otherwise they're still a mod elsewhere and stay Moderator.
 			var remaining int64
-			// ORM migration site 01aaf9fe55ea (wave 1).
 			db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?",
 				userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
 				Count(&remaining)
 			if remaining == 0 {
-				// ORM migration site e28d4a7241be (wave 2).
 				db.Table("users").Where("id = ? AND systemrole = ?", userid, utils.SYSTEMROLE_MODERATOR).
 					Update("systemrole", utils.SYSTEMROLE_USER)
 			}

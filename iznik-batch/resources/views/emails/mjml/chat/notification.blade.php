@@ -222,7 +222,9 @@
     <mj-section background-color="#ffffff" padding="25px 20px">
       <mj-column>
         <mj-button href="{{ $chatUrl }}" mj-class="{{ ($isModerator ?? false) ? 'btn-modtools' : 'btn-success' }}" font-size="18px" padding="14px 40px">
-          @if($isOwnMessage ?? false)
+          @if($isPrompt ?? false)
+          Answer this
+          @elseif($isOwnMessage ?? false)
           View conversation
           @elseif($isMod2Mod ?? false)
           Reply to volunteers

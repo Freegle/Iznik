@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -67,7 +68,6 @@ func GetUserDump(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cnt int64
-	// ORM migration site 3777f46262ba (wave 1).
 	db.Table("users").Where("id = ?", targetID).Count(&cnt)
 	if cnt == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "User not found")
@@ -161,7 +161,6 @@ func dumpTimeRange(c *fiber.Ctx) (int64, int64) {
 	return start.UnixNano(), end.UnixNano()
 }
 
-// ORM migration site 823b16eb87c6 (userdump keep-raw review, revisited).
 // Same correction as collect_db.go's existingTables/scanIDs/runDBSpec: this
 // reads users_emails from the Percona cluster via the same *gorm.DB
 // everything else uses, not a separate connection or a SQLite file.
@@ -177,19 +176,53 @@ func gatherEmails(gdb *gorm.DB, userID int64) []string {
 	return emails
 }
 
-// buildPlan assembles the ordered list of collection sections for this dump.
-func buildPlan(gdb *gorm.DB, targetID int64, emails []string, include map[string]bool, startNs, endNs int64) []section {
+// maxChatAnchors bounds how many chat rooms we pull message bodies for, even
+// after the time window has been applied. The window alone takes the worst real
+// case from 18,664 rooms to 332, but a busy moderator in a big enough community
+// could still push past what one query should carry - and a dump that silently
+// runs for minutes is worse than one that says what it left out. When this
+// bites, buildPlan returns a warning that lands in the dump's _sections table,
+// so whoever reads the snapshot can see the messages are not complete.
+const maxChatAnchors = 2000
+
+// buildPlan assembles the ordered list of collection sections for this dump,
+// plus any warnings raised while working out what to collect.
+func buildPlan(gdb *gorm.DB, targetID int64, emails []string, include map[string]bool, startNs, endNs int64) ([]section, []string) {
 	tables := existingTables(gdb)
 	var plan []section
+	var warnings []string
 
 	if include["db"] {
+		since := time.Unix(0, startNs)
+
 		chatIDs := scanIDs(gdb,
 			"SELECT id FROM chat_rooms WHERE user1 = ? OR user2 = ? UNION SELECT chatid FROM chat_roster WHERE userid = ?",
 			targetID, targetID, targetID)
+
+		// Rooms with activity inside the window, newest first, so that if the
+		// cap bites we keep the most recent conversations rather than an
+		// arbitrary slice. See the comment on the chat specs in collect_db.go
+		// for why message bodies have to be anchored on this smaller set.
+		recentChatIDs := scanIDs(gdb,
+			"SELECT id FROM ("+
+				"SELECT c.id AS id, c.latestmessage AS lm FROM chat_rooms c "+
+				"WHERE (c.user1 = ? OR c.user2 = ?) AND c.latestmessage >= ? "+
+				"UNION "+
+				"SELECT c.id AS id, c.latestmessage AS lm FROM chat_rooms c "+
+				"INNER JOIN chat_roster r ON r.chatid = c.id "+
+				"WHERE r.userid = ? AND c.latestmessage >= ?"+
+				") x ORDER BY x.lm DESC LIMIT ?",
+			targetID, targetID, since, targetID, since, maxChatAnchors+1)
+		if len(recentChatIDs) > maxChatAnchors {
+			recentChatIDs = recentChatIDs[:maxChatAnchors]
+			warnings = append(warnings, fmt.Sprintf(
+				"chat_messages: only the %d most recently active chats in this window were included", maxChatAnchors))
+		}
+
 		msgIDs := scanIDs(gdb, "SELECT id FROM messages WHERE fromuser = ?", targetID)
 		trackIDs := scanIDs(gdb, "SELECT id FROM email_tracking WHERE userid = ?", targetID)
 
-		for _, spec := range buildDBSpecs(targetID, chatIDs, msgIDs, trackIDs) {
+		for _, spec := range buildDBSpecs(targetID, chatIDs, recentChatIDs, msgIDs, trackIDs, since) {
 			if !tables[strings.ToLower(spec.table)] {
 				continue
 			}
@@ -224,7 +257,7 @@ func buildPlan(gdb *gorm.DB, targetID int64, emails []string, include map[string
 		})
 	}
 
-	return plan
+	return plan, warnings
 }
 
 // onSection is called after each section completes, for progress reporting.
@@ -235,14 +268,20 @@ type onSection func(done, total, totalWeight, doneWeight int, sec section, rows 
 func buildDump(b *Builder, targetID int64, include map[string]bool, startNs, endNs int64, cb onSection) []string {
 	gdb := database.DBConn
 	emails := gatherEmails(gdb, targetID)
-	plan := buildPlan(gdb, targetID, emails, include, startNs, endNs)
+	plan, warnings := buildPlan(gdb, targetID, emails, include, startNs, endNs)
 
 	totalWeight := 0
 	for _, s := range plan {
 		totalWeight += s.weight
 	}
 
-	var warnings []string
+	// Anything the plan itself had to bound is recorded as a section too, so a
+	// reader of the raw SQLite (which only gets a warning COUNT in meta) can see
+	// what was left out rather than assuming the snapshot is complete.
+	for _, w := range warnings {
+		b.AddSection("plan", "warning", 0, w, 0)
+	}
+
 	doneWeight := 0
 	for i, sec := range plan {
 		t0 := time.Now()
@@ -288,6 +327,35 @@ func runFramedDump(w *bufio.Writer, targetID uint64, include map[string]bool, st
 	}
 	defer b.Remove()
 
+	// Frames only flush between sections, but a single slow section (Loki
+	// historically ran for minutes) leaves the connection silent long enough
+	// for an LB idle timeout (50s on prod HAProxy) to cut it mid-build. A
+	// heartbeat frame during the build keeps bytes flowing whatever one
+	// section costs. The mutex serialises the heartbeat goroutine against the
+	// per-section progress writes.
+	var wmu sync.Mutex
+	emit := func(p progressFrame) {
+		wmu.Lock()
+		_ = writeProgress(w, p)
+		wmu.Unlock()
+	}
+	heartbeatDone := make(chan struct{})
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-heartbeatDone:
+				return
+			case <-t.C:
+				emit(progressFrame{
+					Phase: "collect", Status: "running",
+					ElapsedMs: time.Since(start).Milliseconds(),
+				})
+			}
+		}
+	}()
+
 	warnings := buildDump(b, int64(targetID), include, startNs, endNs,
 		func(done, total, totalWeight, doneWeight int, sec section, rows int, secErr error) {
 			elapsed := time.Since(start).Milliseconds()
@@ -303,12 +371,13 @@ func runFramedDump(w *bufio.Writer, targetID uint64, include map[string]bool, st
 			if secErr != nil {
 				status, msg = "warning", secErr.Error()
 			}
-			_ = writeProgress(w, progressFrame{
+			emit(progressFrame{
 				Phase: "collect", Section: sec.name, Status: status,
 				Done: done, Total: total, Percent: pct,
 				ElapsedMs: elapsed, EtaMs: eta, Rows: rows, Message: msg,
 			})
 		})
+	close(heartbeatDone)
 
 	b.SetMeta("warnings", strconv.Itoa(len(warnings)))
 	if err := b.Finalize(); err != nil {

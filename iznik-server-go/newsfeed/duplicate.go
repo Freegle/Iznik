@@ -76,7 +76,6 @@ func Duplicate(c *fiber.Ctx) error {
 		Message string
 		Type    string
 	}
-	// ORM migration site ac4a5e5f4cf9 (wave 1).
 	db.Table("newsfeed").Select("userid, COALESCE(message, '') AS message, type").Where("id = ?", id).Scan(&nf)
 
 	if nf.Userid == 0 {

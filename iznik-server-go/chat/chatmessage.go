@@ -11,6 +11,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
@@ -63,9 +64,14 @@ type ChatMessage struct {
 	// message) and for a normal caller on their OWN held reply, so the sender can show a
 	// "waiting to send" indicator. It is NOT set on the poster's view (the delivery gate
 	// removes held replies from their fetch entirely).
-	HeldByRippling bool    `json:"heldbyrippling,omitempty" gorm:"-"`
-	Addressid      *uint64 `json:"addressid" gorm:"-"`
-	Modnote        bool    `json:"modnote" gorm:"-"`
+	HeldByRippling bool `json:"heldbyrippling,omitempty" gorm:"-"`
+	// Prompt is the answerable part of a type='Prompt' message - the tappable
+	// options, and the answer once one is chosen. Nil on every other message
+	// type, which is nearly all of them, so it costs an omitted field rather
+	// than a null on the wire.
+	Prompt    *ChatPrompt `json:"prompt,omitempty" gorm:"-"`
+	Addressid *uint64     `json:"addressid" gorm:"-"`
+	Modnote   bool        `json:"modnote" gorm:"-"`
 	// Replysource is the client-reported surface an Interested reply came from (browse,
 	// search, message_page, notification, ...). Advisory reply-provenance evidence for the
 	// rippling attribution capture - sanitised there, stored in rippling_reply_attribution,
@@ -195,11 +201,11 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 	// the PHP GetMessages query had no users.deleted filter). Regular users only
 	// see their own messages when the sender has been deleted.
 	//
-	// ORM migration site f557717fbfce (Tier 3 keep-raw review). Four independent
+	// Four independent
 	// toggles - modAccess (which also drives the deleted-sender filter),
 	// excludeID>0, descending, and limit>0 - give 2x2x2x2 = 16 possible rendered
-	// forms, all declared in ormharness/shapes.json and proven by
-	// TestTier3Shapes_f557717fbfce (iznik-server-go/test). The WHERE is built
+	// forms, all proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_f557717fbfce, removed in d22ba1d6c). The WHERE is built
 	// as a single string and passed to ONE Where() call rather than chained:
 	// GORM's clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
@@ -253,7 +259,7 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 		type ripplingHeld struct {
 			Chatmsgid uint64 `gorm:"column:chatmsgid"`
 		}
-		// ORM migration site 7470288c95b7 (tier9). msgIDs is bound directly
+		// msgIDs is bound directly
 		// as a []uint64 slice rather than formatted as decimal text and
 		// joined into the SQL string.
 		var held []ripplingHeld
@@ -269,6 +275,10 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 			}
 		}
 	}
+
+	// Fill in the tappable part of any Freegle prompt in this fetch. No-op (and no
+	// query) unless the fetch actually contains one, which is nearly never.
+	attachPrompts(db, messages)
 
 	// Process images and deleted messages
 	for ix, a := range messages {
@@ -321,7 +331,6 @@ func GetChatMessages(c *fiber.Ctx) error {
 		Groupid uint64
 	}
 	var room roomInfo
-	// ORM migration site 3ae5a9640854 (wave 1).
 	db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
 
 	if room.User1 == 0 && room.User2 == 0 {
@@ -402,9 +411,10 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	// predates this reply by more than the join grace (300s)? A join made to reply
 	// (added ~ now) is excluded, and so is a membership rippling itself created - see
 	// wasRippleJoin below.
-	// ORM migration site 848af7d73bfe (Tier 2 keep-raw review). BuildClauses
+	// BuildClauses
 	// override: see amp.go's ValidateToken for the mechanism and
-	// ormharness/bareexists_test.go for the proof.
+	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c) for
+	// the proof.
 	var wasHome int
 	tx848af7d73bfe := db.Table("messages_groups").Select(
 		"EXISTS(SELECT 1 FROM messages_groups mg "+
@@ -416,7 +426,6 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	tx848af7d73bfe.Scan(&wasHome)
 
 	if !rippling.AttributionSchemaReady(db) {
-		// ORM migration site 49e43e92d1e5 (wave 3).
 		db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"msgid":           refmsgid,
 			"userid":          myid,
@@ -428,7 +437,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 
 	// Did we send this user the ripple "new post near you" mail for this post? Keyed lookup on
 	// the notified ledger - the strongest direct ripple-delivery evidence.
-	// ORM migration site 582f5b4bb7ce (Tier 2 keep-raw review). Same
+	// Same
 	// BuildClauses mechanism as above.
 	var wasNotified int
 	tx582f5b4bb7ce := db.Table("rippling_reach_notified").Select(
@@ -442,7 +451,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	// feed/digest because of the ripple. The cut is the copy's arrival, NOT the 300s grace:
 	// the join-to-reply flow can join the rippled copy's group, and a pre-arrival membership
 	// is the only sound "they were already there" test.
-	// ORM migration site fc0c6fd4f6df (Tier 2 keep-raw review). Same
+	// Same
 	// BuildClauses mechanism as above.
 	var wasRippleGroup int
 	txfc0c6fd4f6df := db.Table("messages_groups").Select(
@@ -461,24 +470,24 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	// as wasHome. Both bits can be set at once on a cross-post (one origin group joined
 	// ordinarily, another via a ripple); the ladder gives home precedence, because the ordinary
 	// membership alone would have shown them the post.
-	// Converted to the same BuildClauses form as its wasHome sibling above: the
-	// statement arrived from master as db.Raw, and this branch's Go inventory
-	// holds raw at 0.
+	// Converted to the same BuildClauses form
+	// as its wasHome sibling above; the statement arrived from master as
+	// db.Raw, and the Go inventory holds raw at 0.
 	var wasRippleJoin int
-	txWasRippleJoin := db.Table("messages_groups").Select(
+	tx9894f2a0d95d := db.Table("messages_groups").Select(
 		"EXISTS(SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ? "+
 			"AND mem.collection = ? AND mem.added < NOW() - INTERVAL 300 SECOND AND mem.rippled = 1 "+
 			"WHERE mg.msgid = ? AND mg.rippled_in = 0 AND mg.deleted = 0)",
 		myid, utils.COLLECTION_APPROVED, refmsgid)
-	txWasRippleJoin.Statement.BuildClauses = []string{"SELECT"}
-	txWasRippleJoin.Scan(&wasRippleJoin)
+	tx9894f2a0d95d.Statement.BuildClauses = []string{"SELECT"}
+	tx9894f2a0d95d.Scan(&wasRippleJoin)
 
 	// Had the post rippled AT ALL by reply time (a rippled-in copy, or a reach row)? This is
 	// the ladder's hard guard: when 0, the reply can never be ripple-attributed. Reuse the
 	// gate's reach lookup when it ran; only query rippling_reach (which may not exist yet -
 	// best-effort) when it didn't.
-	// ORM migration site 461f55d25b16 (Tier 2 keep-raw review). Same
+	// Same
 	// BuildClauses mechanism as above.
 	var postHadRippled int
 	tx461f55d25b16 := db.Table("messages_groups").Select(
@@ -490,7 +499,7 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 		postHadRippled = 1
 	}
 	if postHadRippled == 0 && !reach.checked {
-		// ORM migration site a4250aa0ada3 (Tier 2 keep-raw review). Same
+		// Same
 		// BuildClauses mechanism as above.
 		var hasReach int
 		txa4250aa0ada3 := db.Table("rippling_reach").Select(
@@ -533,7 +542,6 @@ func recordReplyAttribution(db *gorm.DB, myid uint64, refmsgid uint64, reach rep
 	attribution := rippling.DeriveAttribution(wasHome, wasNotified, wasRippleGroup, wasRippleJoin,
 		postHadRippled, inOrigin, inReach)
 
-	// ORM migration site db03a274a8a2 (wave 3).
 	db.Table("rippling_reply_attribution").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 		"msgid":                   refmsgid,
 		"userid":                  myid,
@@ -592,10 +600,11 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	chatid := []ChatRoomListEntry{}
 
 	// Allow user1, user2, or (for User2Mod chats) a moderator of the chat's group.
-	// ORM migration site 33ad97a3417c (Tier 2 keep-raw review). Top-level
+	// Top-level
 	// UNION, nothing wrapping it - same BuildClauses={"SELECT"} mechanism as
-	// amp.go's bare-EXISTS conversions (see the comment there and
-	// ormharness/bareexists_test.go); the whole "SELECT ... UNION SELECT ..."
+	// amp.go's bare-EXISTS conversions (see the comment there and the retired
+	// ormharness's bareexists_test.go (removed in d22ba1d6c)); the whole
+	// "SELECT ... UNION SELECT ..."
 	// text goes to .Select() as one fragment.
 	tx33ad97a3417c := db.Table("chat_rooms").Select(
 		"id FROM chat_rooms WHERE id = ? AND user1 = ? "+
@@ -616,7 +625,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			Groupid uint64
 		}
 		var room roomBasic
-		// ORM migration site 3194998a3535 (wave 1).
 		db.Table("chat_rooms").Select("user1, user2, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
 
 		if room.User1 == 0 && room.User2 == 0 || !canSeeChatRoom(myid, room.User1, room.User2, room.Groupid) {
@@ -632,7 +640,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// the client can show "this post is no longer available" instead. (CreateChatMessageLoveJunk
 	// already does the equivalent check; the in-app path never had it.)
 	if payload.Refmsgid != nil {
-		// ORM migration site a74101bfbfa2 (Tier 2 keep-raw review). Same
+		// Same
 		// BuildClauses mechanism as recordReplyAttribution's conversions above.
 		var refExists int
 		txa74101bfbfa2 := db.Table("messages").Select(
@@ -662,7 +670,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	reach := replyReachEvidence{}
 	holdReply := false
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		// ORM migration site 79c2ce2c99fc (wave 1).
 		db.Table("chat_rooms").Select("chattype").Where("id = ?", id).Scan(&roomType)
 		if roomType == utils.CHAT_TYPE_USER2USER {
 			latlng := user.GetLatLng(myid)
@@ -685,13 +692,12 @@ func CreateChatMessage(c *fiber.Ctx) error {
 				}
 				var gateErr error
 				if rippling.ReachBoundsReady(db) {
-					// ORM migration site 67cd5e1cc4ec (Tier 3 keep-raw review).
 					// ReachInReachExpr always returns the same expression text
 					// (only the bind args vary per call) - the extractor
 					// couldn't fold that across a function call, but there is
-					// exactly one rendered form. Declared (as a single shape)
-					// in ormharness/shapes.json and proven by
-					// TestTier3Shapes_67cd5e1cc4ec (iznik-server-go/test).
+					// exactly one rendered form. Proven (as a single shape)
+					// by the retired ormharness (shapes.json /
+					// TestTier3Shapes_67cd5e1cc4ec, removed in d22ba1d6c).
 					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
 					// Select takes ONLY the expression's own binds. Appending
 					// Refmsgid here as well - while Where binds it too - sent one
@@ -706,7 +712,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 						Where("rr.msgid = ?", *payload.Refmsgid).
 						Scan(&rc).Error
 				} else {
-					// ORM migration site f31ae2ffe181 (wave 5).
 					gateErr = db.Table("rippling_reach").
 						Select("COUNT(*) AS reach_rows, COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach",
 							latlng.Lng, latlng.Lat, utils.SRID).
@@ -722,8 +727,36 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// isn't notified until the post ripples to the replier. The existing
 					// ripple:release-replies cron then delivers it (or 'taken-gone' if the post goes
 					// first). Mirrors IncomingMailService::holdReplyIfOutsideReach for the web path.
+					//
+					// Unless this is the post's FIRST reply and the replier is inside the reach the
+					// post will eventually have (see firstreply.ShouldPassThrough). Holding that
+					// reply delays a poster who currently has nothing, to protect an ordering the
+					// replier was going to be allowed to cross anyway.
 					if rc.ReachRows > 0 && rc.InReach == 0 {
-						holdReply = true
+						holdReply = !firstreply.ShouldPassThrough(db, *payload.Refmsgid, reach.lng, reach.lat)
+						if !holdReply {
+							db.Table("firstreply_event_metrics").Clauses(clause.OnConflict{
+								DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+							}).Create(map[string]interface{}{
+								"day":   gorm.Expr("CURDATE()"),
+								"event": gorm.Expr("'passthrough_web'"),
+								"count": gorm.Expr("1"),
+							})
+							// Record it individually too, with where the replier was, so the batch
+							// sweep can work out how long THIS reply would otherwise have waited.
+							// The counter says the lever fired; only that says what firing bought.
+							// Deliberately just an INSERT: working out which tick would have covered
+							// them means parsing the reach schedule, and doing that here as well as
+							// in the batch app would be the same geometry in two languages.
+							db.Table("firstreply_passthroughs").Create(map[string]interface{}{
+								"msgid":      *payload.Refmsgid,
+								"userid":     myid,
+								"source":     "web",
+								"lat":        reach.lat,
+								"lng":        reach.lng,
+								"created_at": gorm.Expr("NOW()"),
+							})
+						}
 					}
 				}
 			}
@@ -759,7 +792,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// sender still sees their own message. The 'held' metric mirrors RippleReplyService::recordEvent
 	// so web holds appear in the sysadmin rippling dashboard alongside email/TN holds.
 	if holdReply {
-		// ORM migration site e9be2e263367 (wave 2).
 		db.Table("rippling_held_replies").Create(map[string]interface{}{
 			"chatid":        id,
 			"chatmsgid":     newid,
@@ -771,7 +803,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			"status":        gorm.Expr("'held'"),
 			"created_at":    gorm.Expr("NOW()"),
 		})
-		// ORM migration site ac238fc96e7e (wave 3).
 		db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
 			DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
 		}).Create(map[string]interface{}{
@@ -802,7 +833,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// hiccup must never fail the reply.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
 		var refGroup uint64
-		// ORM migration site 649b3df011ed (wave 1).
 		db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
 		if refGroup > 0 {
 			user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
@@ -822,7 +852,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 			Chattype string
 			Groupid  uint64
 		}
-		// ORM migration site d825142662c8 (wave 1).
 		db.Table("chat_rooms").Select("chattype, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&reportRoom)
 		if reportRoom.Chattype == utils.CHAT_TYPE_USER2MOD {
 			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, reportRoom.Groupid, payload.Message)
@@ -832,7 +861,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	if payload.Imageid != nil {
 		// Update the chat image to link it to this chat message.  This also stops it being purged in
 		// purge_chats.
-		// ORM migration site b443c0f36dd2 (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin in CreateChatMessageLoveJunk (8eddd54c5c0b): a half-
 		// converted pair renumbers the survivor's site ID, so gate (h) refuses
 		// the split state.
@@ -841,7 +870,6 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 	// If anyone has closed this chat, reopen it so it reappears in their list.
 	// Blocked chats are left as-is.  Only applies to User2User and User2Mod chats.
-	// ORM migration site 739b42667028 (wave 5).
 	result := db.Table("chat_roster").
 		Where("chatid = ? AND status = ? AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?))",
 			id, utils.CHAT_STATUS_CLOSED, id, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD).
@@ -887,7 +915,6 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	var m msgInfo
 
-	// ORM migration site 1f5fe9f4e306 (wave 4).
 	db.Table("messages").
 		Select("fromuser, groupid").
 		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
@@ -901,7 +928,6 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	// Find any groups in users_banned for this user and group.  If we find one, we can't reply.
 	var banned uint64
-	// ORM migration site e32ed86d4150 (wave 1).
 	db.Table("users_banned").Select("userid").Where("userid = ? AND groupid = ?", myid, m.Groupid).Scan(&banned)
 
 	if banned > 0 {
@@ -916,7 +942,6 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	// Find the chat between m.Fromuser and myid (check both user orderings -
 	// older rooms may not be normalized so user1/user2 can be in either order)
 	var chat ChatRoom
-	// ORM migration site 8137d3d33011 (wave 1).
 	db.Table("chat_rooms").Where("chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))",
 		utils.CHAT_TYPE_USER2USER, myid, m.Fromuser, m.Fromuser, myid).Scan(&chat)
 
@@ -960,7 +985,6 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 	if payload.Offerid != nil {
 		// Update the offer id in the chat room, which we need to be able to send back replies.  LoveJunk only allows
 		// one offer per Freegle user and hence this can be stored in the chat room.
-		// ORM migration site d0743f528af9 (wave 2).
 		db.Table("chat_rooms").Where("id = ?", chat.ID).Update("ljofferid", *payload.Offerid)
 	}
 
@@ -994,7 +1018,7 @@ func CreateChatMessageLoveJunk(c *fiber.Ctx) error {
 
 	if payload.Imageid != nil {
 		// Link the chat image to this message, matching CreateChatMessage behaviour.
-		// ORM migration site 8eddd54c5c0b (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin in CreateChatMessage (b443c0f36dd2).
 		db.Table("chat_images").Where("id = ?", *payload.Imageid).Update("chatmsgid", newid)
 	}
@@ -1030,7 +1054,6 @@ func PatchChatMessage(c *fiber.Ctx) error {
 
 	// Operations require message ownership.
 	var msgUserid uint64
-	// ORM migration site 7b5ea85896db (wave 1).
 	db.Table("chat_messages").Select("userid").Where("id = ? AND chatid = ?", req.ID, req.Roomid).Scan(&msgUserid)
 
 	if msgUserid == 0 {
@@ -1043,7 +1066,6 @@ func PatchChatMessage(c *fiber.Ctx) error {
 
 	// Update replyexpected if provided.
 	if req.Replyexpected != nil {
-		// ORM migration site 89645312ccd2 (wave 2).
 		db.Table("chat_messages").Where("id = ?", req.ID).Update("replyexpected", *req.Replyexpected)
 	}
 
@@ -1070,7 +1092,6 @@ func DeleteChatMessage(c *fiber.Ctx) error {
 
 	// Verify the message exists and belongs to this user.
 	var msgUserid uint64
-	// ORM migration site 60bd6b1b9bb3 (wave 1).
 	db.Table("chat_messages").Select("userid").Where("id = ?", id).Scan(&msgUserid)
 
 	if msgUserid == 0 {
@@ -1082,10 +1103,8 @@ func DeleteChatMessage(c *fiber.Ctx) error {
 	}
 
 	// Soft-delete: set type to Default, deleted to 1, clear imageid, remove chat_images.
-	// ORM migration site 4c1209980f1f (wave 2).
 	db.Table("chat_messages").Where("id = ?", id).
 		Updates(map[string]interface{}{"type": utils.CHAT_MESSAGE_DEFAULT, "deleted": gorm.Expr("1"), "imageid": gorm.Expr("NULL")})
-	// ORM migration site 4b773363a4f4 (wave 2).
 	db.Table("chat_images").Where("chatmsgid = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1116,7 +1135,6 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 
 	// Check caller is a moderator on at least one group
 	var modCount int64
-	// ORM migration site 581be541e60b (wave 1).
 	result := db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 	if result.Error != nil {
 		stdlog.Printf("Failed to check moderator status for user %d: %v", myid, result.Error)
@@ -1165,7 +1183,6 @@ func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
 
 	if groupid > 0 {
 		var modCount int64
-		// ORM migration site 3ee1550efb1a (wave 1).
 		result := db.Table("memberships").Where("userid = ? AND groupid = ? AND role IN (?, ?)",
 			myid, groupid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 		if result.Error != nil {
@@ -1179,7 +1196,6 @@ func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
 
 	// Fallback: check if mod of any group where either participant is a member.
 	var modCount int64
-	// ORM migration site c49605990641 (wave 4).
 	result := db.Table("memberships m1").
 		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
 		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.userid IN (?, ?)",
@@ -1205,7 +1221,6 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		Chattype string
 	}
 	var room roomCheck
-	// ORM migration site 094f8f3b0e41 (wave 1).
 	db.Table("chat_rooms").Select("id, user1, user2, COALESCE(groupid, 0) AS groupid, chattype").Where("id = ?", roomid).Scan(&room)
 
 	if room.ID == 0 {
@@ -1245,11 +1260,11 @@ func getChatMessagesForRoom(c *fiber.Ctx, myid uint64, roomid uint64) error {
 		reviewFilter = "(chat_messages.reviewrejected = 0 OR chat_messages.userid = ?)"
 	}
 
-	// ORM migration site 07113a2db28b (Tier 3 keep-raw review). isParticipant
+	// isParticipant
 	// (which also drives the deleted-sender filter) and ctx>0 give 2x2 = 4
-	// possible rendered forms, all declared in ormharness/shapes.json and
-	// proven by TestTier3Shapes_07113a2db28b (iznik-server-go/test). The WHERE
-	// is built as a single string and passed to ONE Where() call: GORM's
+	// possible rendered forms, all proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_07113a2db28b, removed in d22ba1d6c).
+	// The WHERE is built as a single string and passed to ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra paren
 	// pair once there is more than one Where expression to combine
 	// (clause/where.go buildExprs), which would diverge from the golden.
@@ -1302,7 +1317,6 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 
 	// Get groups where user is a moderator.
 	var groupIDs []uint64
-	// ORM migration site 9617dfaa6475 (wave 1).
 	db.Table("memberships").Select("groupid").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&groupIDs)
 
 	if len(groupIDs) == 0 {
@@ -1365,9 +1379,10 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	// a mechanical rewrite: it changes the rendered statement text from
 	// "IN (1,2,3)" to native "IN (?,?,?)" placeholders (GORM's slice-bind
 	// expansion), same category as this file's own 62a2f6fa4bdb and
-	// isochrone/message.go's markPinned (site 032b7f1b9500) - each has an
-	// approved-diff entry in tools/orm-migration/approved-diffs.json
-	// recording exactly this kind of change; this site's two entries are
+	// isochrone/message.go's markPinned (site 032b7f1b9500) - each had an
+	// approved-diff entry in the retired
+	// tools/orm-migration/approved-diffs.json (removed in d22ba1d6c)
+	// recording exactly this kind of change; this site's two entries were
 	// 5da587b4234d (this branch) and 1ff296c8656c (the widerReview branch
 	// below, which shares this baseQuery). groupIDs here is always the
 	// calling moderator's own memberships (never external input), so this
@@ -1435,7 +1450,6 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"AND (cm.reportreason IS NULL OR cm.reportreason != 'User') " +
 			"AND NOT EXISTS (SELECT 1 FROM memberships m_check WHERE m_check.userid = " + recipientExpr + " AND m_check.groupid IN (?))" + ctxq
 
-		// ORM migration site 1ff296c8656c (Batch C keep-raw review, revisited).
 		// Top-level UNION wrapped as a derived table with a trailing GROUP
 		// BY/ORDER BY/LIMIT that applies to the combined result, not either
 		// arm - same BuildClauses={"SELECT"} mechanism as this file's other
@@ -1449,16 +1463,17 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		// truth for the query text, not two hand-maintained copies that
 		// could drift apart.
 		//
-		// The manifest's own extracted goldenSql for this site is
+		// The manifest's own extracted goldenSql for this site was
 		// "{{expr}}{{expr}}" (baseQuery/widerQuery are runtime-built Go
-		// variables, not extractor-foldable literals), so there is nothing
+		// variables, not extractor-foldable literals), so there was nothing
 		// for Layer 1 to compare against out of the box. Same fix as
 		// 62a2f6fa4bdb above (see that site's approved-diff entry): an
-		// approved-diff entry for 1ff296c8656c in
-		// tools/orm-migration/approved-diffs.json records the real
-		// post-conversion statement text, so Layer 1 (TestGolden_1ff296c8656c,
-		// test/orm_reviewqueue_test.go) proves this after all. It also has a
-		// Layer 2 result-parity test (TestLayer2_1ff296c8656c, same file) -
+		// approved-diff entry for 1ff296c8656c in the retired
+		// tools/orm-migration/approved-diffs.json recorded the real
+		// post-conversion statement text, so Layer 1
+		// (TestGolden_1ff296c8656c, test/orm_reviewqueue_test.go) proved this
+		// after all. It also had a Layer 2 result-parity test
+		// (TestLayer2_1ff296c8656c, same file; all removed in d22ba1d6c) -
 		// the manifest's own keep-raw reason asked for that extra scrutiny
 		// given the query's size, on top of the text match.
 		tx1ff296c8656c := db.Table("chat_messages").Select(
@@ -1478,13 +1493,14 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		// ORM migration site 5da587b4234d (Batch C keep-raw review,
 		// revisited). Non-wider twin of 1ff296c8656c above, sharing baseQuery
 		// - same BuildClauses={"SELECT"} mechanism, same reasoning: the
-		// manifest goldenSql for this site is "{{expr}} GROUP BY cm.id ORDER
-		// BY cm.id ASC LIMIT ?", so there is no fixed golden text to compare
+		// manifest goldenSql for this site was "{{expr}} GROUP BY cm.id ORDER
+		// BY cm.id ASC LIMIT ?", so there was no fixed golden text to compare
 		// against out of the box. An approved-diff entry for 5da587b4234d in
-		// tools/orm-migration/approved-diffs.json records the real
-		// post-conversion statement text, proved by Layer 1
+		// the retired tools/orm-migration/approved-diffs.json recorded the
+		// real post-conversion statement text, proved by Layer 1
 		// (TestGolden_5da587b4234d, test/orm_reviewqueue_test.go), plus a
-		// Layer 2 result-parity test (TestLayer2_5da587b4234d, same file).
+		// Layer 2 result-parity test (TestLayer2_5da587b4234d, same file; all
+		// removed in d22ba1d6c).
 		tx5da587b4234d := db.Table("chat_messages").Select(
 			strings.TrimPrefix(baseQuery, "SELECT ")+" GROUP BY cm.id ORDER BY cm.id ASC LIMIT ?",
 			groupIDs, groupIDs,
@@ -1519,7 +1535,7 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 	}
 	heldUsers := make(map[uint64]heldUserInfo)
 	if len(heldByUserIDs) > 0 {
-		// ORM migration site 62a2f6fa4bdb (Tier 1 batch review). Was a literal
+		// Was a literal
 		// (non-bind) IN-list, same shape markPinned had before it was
 		// switched to a bind (site 032b7f1b9500, isochrone/message.go) -
 		// swept into "INSERT id read back" only because getReviewQueue's
@@ -1537,6 +1553,61 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			Scan(&heldInfos)
 		for _, h := range heldInfos {
 			heldUsers[h.ID] = h
+		}
+	}
+
+	// The community the post being discussed actually lives on.
+	//
+	// The `groupid` on each row is the group through which the MODERATOR can act
+	// - the one the other member belongs to. That is not the same thing as where
+	// the post is, and moderators of many communities were having to click into
+	// each chat to work out whether it was theirs to handle: Discourse #10004,
+	// "I usually prefer to leave that for the mods on the group for the post.
+	// But I need to do a lot of clicking to work that out."
+	//
+	// Ordered rippled_in first so a rippled post reports the community it
+	// STARTED on rather than one it spread to - that origin group's moderators
+	// are the ones who know the post.
+	refmsgids := make([]uint64, 0, len(msgs))
+	seenRef := make(map[uint64]bool)
+	for _, m := range msgs {
+		if m.Refmsgid != nil && *m.Refmsgid > 0 && !seenRef[*m.Refmsgid] {
+			seenRef[*m.Refmsgid] = true
+			refmsgids = append(refmsgids, *m.Refmsgid)
+		}
+	}
+	type refGroupRow struct {
+		Msgid     uint64 `gorm:"column:msgid"`
+		ID        uint64 `gorm:"column:id"`
+		Nameshort string `gorm:"column:nameshort"`
+		Namefull  string `gorm:"column:namefull"`
+	}
+	refGroups := make(map[uint64][]fiber.Map)
+	if len(refmsgids) > 0 {
+		var refRows []refGroupRow
+		db.Table("messages_groups mg").
+			Select("mg.msgid, g.id, g.nameshort, COALESCE(g.namefull, '') AS namefull").
+			Joins("INNER JOIN `groups` g ON g.id = mg.groupid").
+			Where("mg.msgid IN ? AND mg.deleted = 0", refmsgids).
+			Order("mg.msgid, mg.rippled_in, mg.arrival").
+			Scan(&refRows)
+		// ALL the communities the post is on, not just the first. A rippled post
+		// is genuinely on several, and a moderator deciding whether a chat is
+		// theirs needs to see whether ANY of them is one of theirs - showing only
+		// the origin hides exactly the case where it is theirs by ripple. The
+		// ORDER carries the meaning instead: origin first (the query sorts on
+		// rippled_in, then arrival), so the community that knows the post reads
+		// first, the way group lists are shown elsewhere.
+		for _, r := range refRows {
+			namedisplay := r.Namefull
+			if namedisplay == "" {
+				namedisplay = r.Nameshort
+			}
+			refGroups[r.Msgid] = append(refGroups[r.Msgid], fiber.Map{
+				"id":          r.ID,
+				"nameshort":   r.Nameshort,
+				"namedisplay": namedisplay,
+			})
 		}
 	}
 
@@ -1597,6 +1668,15 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			msg["msgid"] = *m.Msgid
 		}
 
+		// The communities the post itself is on, so a moderator can see at a
+		// glance whether a chat is theirs to handle (Discourse #10004). Origin
+		// first; a rippled post lists every community it reached.
+		if m.Refmsgid != nil {
+			if g, ok := refGroups[*m.Refmsgid]; ok && len(g) > 0 {
+				msg["refmsggroups"] = g
+			}
+		}
+
 		// Add held info if message is held by a moderator.
 		if m.HeldBy > 0 {
 			held := fiber.Map{
@@ -1644,7 +1724,6 @@ type reviewMessage struct {
 
 func fetchReviewMessage(db *gorm.DB, msgID uint64) *reviewMessage {
 	var msg reviewMessage
-	// ORM migration site f3911b4339db (wave 4).
 	result := db.Table("chat_messages").
 		Select("chat_messages.id, chat_messages.chatid, chat_messages.userid, chat_messages.message, "+
 			"COALESCE(chat_messages_held.userid, 0) AS heldbyuser").
@@ -1673,12 +1752,11 @@ func checkHoldConflict(msg *reviewMessage, myid uint64) bool {
 // autoApproveModmails approves any ModMail messages after the given message in the same chat.
 func autoApproveModmails(db *gorm.DB, myid uint64, chatID uint64, afterMsgID uint64) {
 	var modmailIDs []uint64
-	// ORM migration site 6f05a9b2bdbb (wave 1).
 	db.Table("chat_messages").Select("id").Where("chatid = ? AND id > ? AND reviewrequired = 1 AND type = 'ModMail'",
 		chatID, afterMsgID).Scan(&modmailIDs)
 
 	for _, id := range modmailIDs {
-		// ORM migration site 7631a317a13b (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin in approveChatMessage (a2ab9aecba3e): a half-converted
 		// pair renumbers the survivor's site ID, so gate (h) refuses the split
 		// state.
@@ -1699,7 +1777,6 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 	// chat_messages.reviewrequired/reviewrejected on the source, and these recounted
 	// totals are written back to chat_rooms. A lagging replica read would persist
 	// stale valid/invalid counts that survive until the next approve/reject.
-	// ORM migration site 66c473c2545e (wave 1).
 	db.Clauses(dbresolver.Write).Table("chat_messages").
 		Select("CASE WHEN reviewrequired = 0 AND reviewrejected = 0 AND processingsuccessful = 1 THEN 1 ELSE 0 END AS valid, COUNT(*) AS count").
 		Where("chatid = ?", chatID).
@@ -1717,13 +1794,11 @@ func updateMessageCounts(db *gorm.DB, chatID uint64) {
 
 	// For Mod2Mod chats, force msginvalid to 0
 	var chattype string
-	// ORM migration site e74cc22cc352 (wave 1).
 	db.Table("chat_rooms").Select("chattype").Where("id = ?", chatID).Scan(&chattype)
 	if chattype == "Mod2Mod" {
 		msgInvalid = 0
 	}
 
-	// ORM migration site f4cc7314bea4 (wave 2).
 	db.Table("chat_rooms").Where("id = ?", chatID).
 		Updates(map[string]interface{}{"msgvalid": msgValid, "msginvalid": msgInvalid, "latestmessage": time.Now()})
 }
@@ -1739,7 +1814,7 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	}
 
 	// Approve the message
-	// ORM migration site a2ab9aecba3e (wave 2). Converted together with its
+	// Converted together with its
 	// identical twin in autoApproveModmails (7631a317a13b).
 	if result := db.Table("chat_messages").Where("id = ?", msgID).
 		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid}); result.Error != nil {
@@ -1747,7 +1822,7 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	}
 
 	// Log the approve action
-	// ORM migration site ef470baa050b (wave 2). Converted together with its
+	// Converted together with its
 	// identical twin in rejectChatMessage (b8fc832d50a0): a half-converted
 	// pair renumbers the survivor's site ID, so gate (h) refuses the split
 	// state.
@@ -1767,7 +1842,7 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	updateMessageCounts(db, msg.Chatid)
 
 	// Remove hold if it exists
-	// ORM migration site 2e5a6f9c7077 (wave 2). Converted together with its
+	// Converted together with its
 	// identical twins in rejectChatMessage (030c4c489394) and
 	// releaseChatMessage (91271beda4fa): a half-converted group renumbers the
 	// survivors' site IDs, so gate (h) refuses the split state.
@@ -1776,7 +1851,6 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 	// Whitelist the message text so similar messages aren't flagged again
 	//.
 	if msg.Message != "" {
-		// ORM migration site af7676dc1734 (wave 3).
 		db.Table("spam_whitelist_subjects").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"subject": msg.Message,
 			"comment": gorm.Expr("'Marked as not spam'"),
@@ -1785,7 +1859,7 @@ func approveChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64, ap
 
 	if approveAllFuture {
 		// Set user's chatmodstatus to Unmoderated
-		// ORM migration site 818065956105 (wave 2). Golden sets a literal
+		// Golden sets a literal
 		// 'Unmoderated', so it goes through gorm.Expr rather than as a bind,
 		// which would have rendered "chatmodstatus = ?".
 		db.Table("users").Where("id = ?", msg.Userid).Update("chatmodstatus", gorm.Expr("'Unmoderated'"))
@@ -1807,7 +1881,7 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	}
 
 	// Reject the message
-	// ORM migration site 09878cd3c660 (wave 2). Converted together with its
+	// Converted together with its
 	// identical twin below for the duplicate-message flood path (29b68b1db029):
 	// a half-converted pair renumbers the survivor's site ID, so gate (h)
 	// refuses the split state.
@@ -1817,7 +1891,7 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	}
 
 	// Log the reject action
-	// ORM migration site b8fc832d50a0 (wave 2). Converted together with its
+	// Converted together with its
 	// identical twin in approveChatMessage (ef470baa050b).
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
@@ -1839,7 +1913,6 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 		Chatid uint64
 	}
 	var dups []dupMsg
-	// ORM migration site 5e7534201c7c (wave 1).
 	db.Table("chat_messages").Select("id, chatid").Where("date >= ? AND reviewrequired = 1 AND message = ? AND id != ?",
 		cutoff, msg.Message, msgID).Scan(&dups)
 
@@ -1847,7 +1920,7 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	affectedChats := map[uint64]bool{msg.Chatid: true}
 
 	for _, dup := range dups {
-		// ORM migration site 29b68b1db029 (wave 2). Converted together with its
+		// Converted together with its
 		// identical twin above (09878cd3c660).
 		db.Table("chat_messages").Where("id = ?", dup.ID).
 			Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "reviewedby": myid, "reviewrejected": gorm.Expr("1")})
@@ -1860,7 +1933,7 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	}
 
 	// Remove hold if it exists
-	// ORM migration site 030c4c489394 (wave 2). Converted together with its
+	// Converted together with its
 	// identical twins in approveChatMessage (2e5a6f9c7077) and
 	// releaseChatMessage (91271beda4fa).
 	db.Table("chat_messages_held").Where("msgid = ?", msgID).Delete(nil)
@@ -1871,7 +1944,6 @@ func rejectChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
 	// Verify the message exists and requires review
 	var reviewRequired int
-	// ORM migration site f93f2b62ae60 (wave 1).
 	db.Table("chat_messages").Select("reviewrequired").Where("id = ?", msgID).Scan(&reviewRequired)
 	if reviewRequired != 1 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found or not requiring review")
@@ -1882,14 +1954,12 @@ func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error
 	// steal a hold rather than being told about it. Release is the deliberate way
 	// to break someone else's hold.
 	var currentHolder uint64
-	// ORM migration site 776feb15b77b (wave 1).
 	db.Table("chat_messages_held").Select("userid").Where("msgid = ?", msgID).Scan(&currentHolder)
 	if currentHolder != 0 && currentHolder != myid {
 		return fiber.NewError(fiber.StatusConflict, "Message is held by another moderator")
 	}
 
 	// REPLACE INTO handles re-holding your own hold, which is a harmless no-op.
-	// ORM migration site 67871ee12b8f (tier4).
 	db.Table("chat_messages_held").Clauses(clause.Insert{Modifier: "REPLACE"}).
 		Create(map[string]interface{}{"msgid": msgID, "userid": myid})
 
@@ -1898,7 +1968,7 @@ func holdChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error
 
 func releaseChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) error {
 	// Delete the hold record
-	// ORM migration site 91271beda4fa (wave 2). Converted together with its
+	// Converted together with its
 	// identical twins in approveChatMessage (2e5a6f9c7077) and
 	// rejectChatMessage (030c4c489394).
 	db.Table("chat_messages_held").Where("msgid = ?", msgID).Delete(nil)
@@ -1954,7 +2024,6 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		Exclude *string `gorm:"column:exclude"`
 	}
 	var keywords []spamWord
-	// ORM migration site 839103c648fe (wave 1).
 	db.Table("concern_keywords").
 		Select("keyword AS word, match_mode AS type, action, exclude").
 		Where("match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").
@@ -1997,7 +2066,6 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 	urls := urlRegexp.FindAllString(msg, -1)
 	if len(urls) > 0 {
 		var whitelist []string
-		// ORM migration site 1bd8efb9de20 (wave 1).
 		db.Table("spam_whitelist_links").
 			Select("domain").
 			Where("count >= 3 AND LENGTH(domain) > 5 AND domain NOT LIKE '%linkedin%' AND domain NOT LIKE '%goo.gl%' AND domain NOT LIKE '%bit.ly%' AND domain NOT LIKE '%tinyurl%'").
@@ -2070,7 +2138,6 @@ func redactChatMessage(c *fiber.Ctx, db *gorm.DB, myid uint64, msgID uint64) err
 	cleaned := emailRegexp.ReplaceAllString(msg.Message, "(email removed)")
 
 	if cleaned != msg.Message {
-		// ORM migration site 8e568332ecdb (wave 2).
 		db.Table("chat_messages").Where("id = ?", msgID).Update("message", cleaned)
 	}
 

@@ -133,10 +133,20 @@ describe('PhotoCard', () => {
       expect(wrapper.find('.control-delete').exists()).toBe(false)
     })
 
-    it('hides control buttons when uploading', () => {
+    // An upload that never settles used to leave the member with no way to
+    // get rid of the photo - no delete here, no Skip, and Next disabled - so
+    // keep delete reachable while uploading.  Rotate still needs a server-side
+    // photo, so it stays hidden.
+    it('keeps delete available while uploading, but hides rotate', () => {
       const wrapper = createWrapper({ selected: true, uploading: true })
       expect(wrapper.find('.control-rotate').exists()).toBe(false)
-      expect(wrapper.find('.control-delete').exists()).toBe(false)
+      expect(wrapper.find('.control-delete').exists()).toBe(true)
+    })
+
+    it('emits remove when deleting a photo that is still uploading', async () => {
+      const wrapper = createWrapper({ selected: true, uploading: true })
+      await wrapper.find('.control-delete').trigger('click')
+      expect(wrapper.emitted('remove')).toBeTruthy()
     })
 
     it('hides control buttons when error state', () => {

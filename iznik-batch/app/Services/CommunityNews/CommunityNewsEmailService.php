@@ -67,6 +67,17 @@ class CommunityNewsEmailService
             $items = CommunityNewsItem::where('areaid', $area->id)
                 ->whereNull('emailed_at')
                 ->where('researched_at', '>', now()->subDays($freshDays))
+                // Leave out events that have already happened. Research runs
+                // hourly but this email goes weekly, and an item stays fresh for
+                // days after we found it, so without this a Wednesday jumble sale
+                // found on Monday still went out on Friday. Undated items (most of
+                // them — a new cycle path, a library reopening) have no event_date
+                // and are unaffected. Today's events still count: someone reading
+                // on the morning of can still go.
+                ->where(function ($q) {
+                    $q->whereNull('event_date')
+                        ->orWhere('event_date', '>=', now()->startOfDay());
+                })
                 ->orderBy('id')
                 ->limit($maxItems)
                 ->get();

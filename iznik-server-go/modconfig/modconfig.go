@@ -93,7 +93,6 @@ func canSee(myid uint64, cfg *ModConfig) bool {
 	}
 	// Used by mods on groups they moderate.
 	var count int64
-	// ORM migration site 37e5bdcc1ee6 (wave 4).
 	database.DBConn.Table("memberships m1").
 		Select("COUNT(*)").
 		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
@@ -136,7 +135,6 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	// ORM migration site c1e1f7ddeb2d (wave 1).
 	db.Table("mod_configs").Select(configColumns).Where("id = ?", id).Scan(&cfg)
 	if cfg.ID == 0 {
 		// V1 parity: return 200 with ret:2. The frontend treats
@@ -151,7 +149,6 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	// Get standard messages.
 	var stdmsgs []StdMsg
-	// ORM migration site 2e87012dbaed (wave 1).
 	db.Table("mod_stdmsgs").Select(stdMsgColumns).Where("configid = ?", id).Scan(&stdmsgs)
 	if stdmsgs == nil {
 		stdmsgs = []StdMsg{}
@@ -173,7 +170,6 @@ func GetModConfig(c *fiber.Ctx) error {
 			Groupid uint64
 		}
 		var shared SharedInfo
-		// ORM migration site 4f2e91887c4f (wave 4).
 		db.Table("memberships m1").
 			Select("m2.userid, m2.groupid").
 			Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
@@ -191,7 +187,6 @@ func GetModConfig(c *fiber.Ctx) error {
 
 	// Compute "using" - user IDs of moderators currently using this config.
 	var usingUserIDs []uint64
-	// ORM migration site 683a3a4c4854 (wave 1).
 	db.Table("memberships m").
 		Distinct("m.userid").
 		Where("m.configid = ? AND m.role IN (?, ?)", cfg.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
@@ -262,7 +257,6 @@ func listModConfigs(c *fiber.Ctx) error {
 		// Admin/support can see all configs.  Non-admin users silently
 		// fall through to the per-moderator query below.
 		if auth.IsAdminOrSupport(myid) {
-			// ORM migration site 2d4f322cfd3f (wave 1).
 			db.Table("mod_configs").Select(configColumns).Order("name").Scan(&configs)
 		}
 	}
@@ -275,7 +269,7 @@ func listModConfigs(c *fiber.Ctx) error {
 		//
 		// Use UNION to avoid the expensive double LEFT JOIN on memberships
 		// which caused full table scans on the 4.7M row memberships table.
-		// ORM migration site e9ea468dab80 (Tier 2 keep-raw review). Top-level
+		// Top-level
 		// UNION with a trailing ORDER BY that applies to the whole union, not
 		// any one arm - BuildClauses={"SELECT"} means GORM renders only the
 		// SELECT clause, so ORDER BY has to be literal text inside the same
@@ -349,7 +343,6 @@ func PostModConfig(c *fiber.Ctx) error {
 	if req.ID > 0 {
 		// Verify the user can see the source config before copying.
 		var srcCfg ModConfig
-		// ORM migration site 87d36c5d843f (wave 1).
 		db.Table("mod_configs").Select(configColumns).Where("id = ?", req.ID).Scan(&srcCfg)
 		if srcCfg.ID == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Source config not found")
@@ -364,7 +357,6 @@ func PostModConfig(c *fiber.Ctx) error {
 		// never a separate SELECT LAST_INSERT_ID() - unsafe under parallel load,
 		// since GORM's connection pool could assign that SELECT a different
 		// connection.
-		// ORM migration site 6b9a23982cc9 (tier4).
 		res := gorm.WithResult()
 		tx := database.InsertSelect(db.Clauses(res), "mod_configs",
 			"(name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
@@ -388,15 +380,12 @@ func PostModConfig(c *fiber.Ctx) error {
 		if newID == 0 {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new config ID")
 		}
-		// ORM migration site 207260729430 (wave 2).
 		db.Table("mod_configs").Where("id = ?", newID).Update("createdby", myid)
 
 		// Copy stdmsgs.
 		var srcMsgs []StdMsg
-		// ORM migration site a74b7b022b84 (wave 1).
 		db.Table("mod_stdmsgs").Select(stdMsgColumns).Where("configid = ?", req.ID).Scan(&srcMsgs)
 		for _, m := range srcMsgs {
-			// ORM migration site ef309513694a (wave 2).
 			db.Table("mod_stdmsgs").Create(map[string]interface{}{
 				"configid":     newID,
 				"title":        m.Title,
@@ -420,7 +409,6 @@ func PostModConfig(c *fiber.Ctx) error {
 				"FROM mod_bulkops WHERE configid = ?", newID, req.ID)
 
 		// Log the creation.
-		// ORM migration site e07a25573e68 (wave 2).
 		db.Table("logs").Create(map[string]interface{}{
 			"timestamp": gorm.Expr("NOW()"),
 			"type":      log.LOG_TYPE_CONFIG,
@@ -434,8 +422,7 @@ func PostModConfig(c *fiber.Ctx) error {
 
 	// Simple create. Table()+map Create reads the generated id back from the
 	// same sql.Result the INSERT returned, under the map key "@id" - see
-	// test/orm_insertid_test.go.
-	// ORM migration site 181d8342ea4a (insertid-conv).
+	// test/insertid_gorm_writeback_test.go.
 	row := map[string]interface{}{
 		"name":           req.Name,
 		"createdby":      myid,
@@ -460,7 +447,6 @@ func PostModConfig(c *fiber.Ctx) error {
 	}
 
 	// Log the creation.
-	// ORM migration site b4d152ba261c (wave 2).
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log.LOG_TYPE_CONFIG,
@@ -523,7 +509,6 @@ func PatchModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	// ORM migration site 4bbe84a257f3 (wave 1).
 	db.Table("mod_configs").Select(configColumns).Where("id = ?", req.ID).Scan(&cfg)
 	if cfg.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid config id")
@@ -536,14 +521,15 @@ func PatchModConfig(c *fiber.Ctx) error {
 	// ORM migration site a7b00c5503b7 (fieldwise coverage, not exhaustive
 	// shapes). 17 independently-optional fields, each contributing its own
 	// fixed "col = ?" fragment(s) with no fragment's value referencing
-	// another assigned column - verified via
-	// ormharness.AssertGoldenFieldwise's precondition check, which reuses
-	// setOrderIsLoadBearing (the same rule check-set-order.sh enforces
-	// elsewhere) and refuses the site outright if that ever stops being
-	// true. That independence is what makes n+2 cases (each field alone,
-	// empty, all together) a real proof rather than exhaustive 2^17 shape
+	// another assigned column - verified via the retired ormharness's
+	// AssertGoldenFieldwise precondition check, which reused
+	// setOrderIsLoadBearing (the same rule the retired check-set-order.sh
+	// enforced elsewhere) and refused the site outright if that ever stopped
+	// being true. That independence is what makes n+2 cases (each field
+	// alone, empty, all together) a real proof rather than exhaustive 2^17 shape
 	// coverage, which AssertGoldenShapes could never practically declare.
-	// See test/orm_fieldwise_modconfig_test.go and ormharness/fieldwise.json
+	// See the retired test/orm_fieldwise_modconfig_test.go and
+	// ormharness/fieldwise.json (removed in d22ba1d6c)
 	// - and Protected below, which is the one field that contributes two
 	// fragments (protected, createdby) rather than one; fieldwise coverage
 	// only requires that ITS OWN two fragments don't reference any OTHER
@@ -612,7 +598,6 @@ func PatchModConfig(c *fiber.Ctx) error {
 	}
 
 	// Log the edit.
-	// ORM migration site d42d9aa90149 (wave 2).
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log.LOG_TYPE_CONFIG,
@@ -645,7 +630,6 @@ func DeleteModConfig(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var cfg ModConfig
-	// ORM migration site 9fc1bbefed72 (wave 1).
 	db.Table("mod_configs").Select(configColumns).Where("id = ?", id).Scan(&cfg)
 	if cfg.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid config id")
@@ -657,17 +641,14 @@ func DeleteModConfig(c *fiber.Ctx) error {
 
 	// Check if still in use.
 	var inUse int64
-	// ORM migration site 8a1e00c30243 (wave 1).
 	db.Table("memberships").Where("configid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&inUse)
 	if inUse > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 5, "status": "Config still in use"})
 	}
 
-	// ORM migration site 954d3085c050 (wave 2).
 	db.Table("mod_configs").Where("id = ?", id).Delete(nil)
 
 	// Log the deletion.
-	// ORM migration site e31c7ddcc714 (wave 2).
 	db.Table("logs").Create(map[string]interface{}{
 		"timestamp": gorm.Expr("NOW()"),
 		"type":      log.LOG_TYPE_CONFIG,

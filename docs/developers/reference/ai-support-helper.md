@@ -1,11 +1,16 @@
 ---
-last_reviewed: 2026-07-29
+last_reviewed: 2026-08-05
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
   - claude-agent-sdk/tools.js
   - claude-agent-sdk/server.js
   - claude-agent-sdk/auth.js
+  - claude-agent-sdk/device-summary.js
+  - iznik-nuxt3/stores/mobile.js
+  - iznik-nuxt3/composables/useClientLog.js
+  - claude-agent-sdk/referral-mjml.js
+  - claude-agent-sdk/referral-email.js
   - iznik-nuxt3/modtools/components/ModSupportAIAssistant.vue
 ---
 
@@ -81,6 +86,35 @@ The investigation playbook (held chat replies, duplicate conversations, purged a
 rippling auto-joins, stale-deploy chunks, etc.) lives in the system prompt in
 `support-agent.js`.
 
+### What the user dump does and does not contain
+
+`get_user_dump` is served by `iznik-server-go/userdump`, and `?since=` (default 90 days) is
+a real bound, not a hint:
+
+- **Chat membership is complete** — every room the member is in. **Message bodies are
+  windowed** to the rooms active inside `since`. A moderator is in the roster of every
+  Mod2Mod and User2Mod chat on their groups (one real admin: 18,664 rooms, of which 332
+  had any activity in 90 days), and pulling every message for all of them could not finish
+  inside the caller's timeout — so that member could not be investigated at all.
+- **Loki logs are clamped to 30 days** whatever `since` says, because production Loki
+  rejects any `query_range` longer than `30d1h` outright.
+- **Loki collection runs in value order under a time budget** (`userdump/loki.go`):
+  indexed `user_id` label first, then the slim unlabelled sources and email passes
+  (each `|=`-prefiltered before any `| json`/regex, in 15-day halves), then two-leg
+  session lookups, and finally `api_headers` — the ~67GB/7d firehose — newest-first in
+  budget-capped 1.5-day slices. Anything the caps drop is recorded in `_sections` as
+  `loki_bounds`. The same prefilter-before-parse rule applies to every LogQL the helper
+  or `systemlogs` builds.
+- Anything the dump had to bound is recorded in its **`_sections`** table with
+  `status='warning'` and a note. Read it before concluding "there is nothing there" — an
+  empty table can mean *not collected*, not *did not happen*.
+- The helper downloads the dump with **`format=framed`** (see
+  `iznik-server-go/userdump/frame.go`): the server flushes a progress frame per section
+  plus a 15s heartbeat during long sections, so the prod API LB's 50s idle timeout never
+  cuts a slow build the way the silent `format=raw` stream was cut. The client verifies
+  the end frame's byte count and SHA-256, and aborts only on 90s of *inactivity* rather
+  than a fixed overall deadline.
+
 ## Device summary panel
 
 `GET /api/device-summary?userId=` (`server.js`) is a deterministic, no-AI view shown as
@@ -92,6 +126,65 @@ it — so a member can be fully active with zero device sessions. When that happ
 endpoint falls back to the member's newest `source="api"` Loki line (`lastApiActivity`)
 and the panel says so explicitly, rather than showing a bare "no sessions" that misreads
 as "not active".
+
+**Freshness** answers two different questions. For the **web** it is the age of the loaded
+bundle (`build_date`): more than a couple of days old means a refresh will update them. For
+the **app** it is a version comparison of the member's installed version against
+`MOBILE_VERSION` in `iznik-nuxt3/config.js`, which is hand-bumped in step with each app
+release. Either input missing yields `unknown`, which shows no badge rather than a wrong one.
+
+**Where the app version comes from.** Only the native app knows its installed version, and
+only after Capacitor's `App.getInfo()` returns — long after the client-logging plugin starts.
+So the app logs `session_start` **twice** for one session: once immediately (no app version
+yet), then again from `stores/mobile.js` `logAppSession()` once `App.getInfo()` and
+`Device.getInfo()` have answered. Both carry the same `session_id`, so `dedupeSessions()`
+merges them into one record — keeping the session count honest and making the app version
+independent of the order Loki returns the lines in.
+
+## Refer to geeks
+
+When a volunteer gets as far as they can, **Refer to geeks** (in
+`ModSupportAIAssistant.vue`, shown as soon as there is a conversation) hands the whole
+investigation over by email, so nobody has to retype the story.
+
+`POST /api/refer-to-geeks` (Support/Admin gated and audited, like everything else) takes
+the member, the device summary, every message, the running totals and the volunteer's
+**referral text** — which is required, because a transcript with no statement of what the
+volunteer wants doing about it is not a referral. It emails `GEEKS_EMAIL`
+(`geeks@ilovefreegle.org`) with **Reply-To set to the referring volunteer**, so a reply
+goes back to the person who actually saw the problem.
+
+Every referral gets a short reference — `SR-XXXXX`, generated **server-side** so the client
+cannot choose or reuse one. It appears in the subject line, the email body, an
+`X-Freegle-Support-Referral` header, the audit trail, and back in the UI for the volunteer
+to quote. It is deliberately brief (eight characters, from an alphabet with `0/1/O/I/L`
+removed) so it can lead a subject line without crowding out what the referral is about, and
+survive being read aloud or retyped.
+
+**No money appears in the email.** The helper runs on a Claude subscription, so the SDK's
+`total_cost_usd` is a notional list price nobody is charged (see `billableCostUsd` in
+`auth.js`). Token counts are kept — they say how much work the investigation was — but the
+dollar figures are neither sent nor rendered.
+
+The email is **MJML** (`referral-mjml.js` builds it, `referral-email.js` compiles and
+sends it) and deliberately mirrors the helper's own screen — same header, member chip,
+device cards and green-you/blue-assistant chat bubbles — so reading the mail feels like
+looking at the tool. Two things follow from that:
+
+- **`referral-mjml.js` has no `require` at all.** CI runs the `claude-agent-sdk` specs
+  with no `node_modules`, so everything worth testing lives in the dependency-free module
+  and only the MJML compile and the SMTP send need libraries.
+- **Message bodies are the HTML the browser already rendered** —
+  `DOMPurify.sanitize(marked(...))`, the exact markup that was on screen. That is what
+  makes the email a faithful copy rather than a second, subtly different rendering.
+  `stripUnsafeHtml()` is a *second* belt over that already-sanitised HTML (script/style/
+  frame elements, inline handlers, `javascript:` URLs), not the primary sanitiser.
+  Everything else — names, emails, the referral text — is escaped, so a volunteer's typed
+  `<script>` shows as visible text and never as markup.
+
+SMTP defaults to the local **mailpit** (`SUPPORT_SMTP_HOST`), so a referral sent while
+developing lands at `mailpit.localhost` and never reaches the real geeks list; edge/prod
+points `SUPPORT_SMTP_*` at a real relay.
 
 ## Security controls
 

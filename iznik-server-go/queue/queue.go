@@ -57,7 +57,6 @@ func QueueTask(taskType string, data map[string]interface{}) error {
 		return err
 	}
 
-	// ORM migration site 1a41e1c07178 (wave 2).
 	result := db.Table("background_tasks").Create(map[string]interface{}{
 		"task_type": taskType,
 		"data":      string(jsonData),

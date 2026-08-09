@@ -6,6 +6,7 @@ use App\Mail\MjmlMailable;
 use App\Models\User;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
+use App\Services\UnsubscribeService;
 
 /**
  * The newsfeed ("chitchat") digest email.
@@ -29,6 +30,11 @@ class NewsfeedDigestMail extends MjmlMailable
         public readonly ?string $settingsUrl = null,
     ) {
         parent::__construct();
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_NOTIFICATIONS;
     }
 
     protected function getRecipientUserId(): ?int

@@ -4,10 +4,17 @@
 declare(strict_types=1);
 
 /**
- * extract.php builds the raw-SQL inventory for iznik-batch (Laravel), the PHP
- * counterpart to tools/orm-migration/extract.go (Go, for iznik-server-go). See
+ * extract.php builds the raw-SQL inventory for iznik-batch (Laravel). See
  * plans/database-migration-evaluation-2026-07.md section 7.1 for the "why":
- * the inventory is the contract a CI ratchet enforces, not anyone's memory.
+ * the inventory is a written contract, not anyone's memory.
+ *
+ * The Go half of this programme is FINISHED (iznik-server-go reached zero raw
+ * sites), so its extractor, manifest, parity harness and the ci-ratchet.sh gate
+ * that enforced them have all been removed - new raw SQL is now kept out at
+ * authoring time by .claude/check-raw-sql.sh, which covers both stacks. This
+ * tool and the Laravel manifest survive because the Laravel half has NOT
+ * started: 569 sites are still raw and nothing has been converted, so the
+ * inventory is the record of what that work is.
  *
  * WHY A SEPARATE STANDALONE TOOL, NOT A DEPENDENCY OF iznik-batch ITSELF
  * ------------------------------------------------------------------------
@@ -15,14 +22,9 @@ declare(strict_types=1);
  * but only as a transitive dev-dependency of phpunit/php-code-coverage and
  * psy/psysh - exactly the kind of thing that breaks silently on an unrelated
  * `composer update`. This tool requires it explicitly and pins its own
- * composer.lock (composer.json beside this file), the same way extract.go is
- * its own Go module (tools/orm-migration/go.mod) rather than borrowing
- * iznik-server-go's. The other reason is CI cost: the ratchet gate (Gate 1,
- * ci-ratchet.sh) runs on the CI machine image BEFORE any container -
- * including the batch container - has started (see the orb step's own
- * comment: "this runs before any container starts"), so it cannot lean on
- * iznik-batch's much larger Laravel dependency tree just to get one AST
- * parser.
+ * composer.lock (composer.json beside this file). Keeping it standalone also
+ * keeps it cheap to run: it needs one AST parser, not iznik-batch's whole
+ * Laravel dependency tree.
  *
  * THE RAW-SQL METHOD SURFACE, AND HOW IT WAS ENUMERATED
  * ------------------------------------------------------------------------

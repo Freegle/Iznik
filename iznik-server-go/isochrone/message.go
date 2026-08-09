@@ -148,7 +148,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// (via the sandwich-bounds prefilter — see reachContainmentSQL).
 	reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
 
-	// ORM migration site 5adca7e5928e (batch C). Two independent shape axes -
+	// Two independent shape axes -
 	// unseenFilter (a plain bool toggle) and reachWhere (a live-DB-gated
 	// choice between the legacy exact-polygon test and the sandwich-bounds
 	// form, see reachContainmentSQL/rippling.ReachBoundsReady) - are composed
@@ -158,8 +158,9 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// buildExprs): once more than one Where expression is being combined, any
 	// fragment whose text contains "AND"/"OR" gets wrapped in its own extra
 	// paren pair - which both reachWhere and authorReachCapWhere do - so it
-	// would diverge from the golden. Proven (both reachWhere shapes) in
-	// ormharness/reachcap_test.go and test/orm_batchc_test.go.
+	// would diverge from the golden. Proven (both reachWhere shapes) by the
+	// retired ormharness's reachcap_test.go and test/orm_batchc_test.go (both
+	// removed in d22ba1d6c).
 	whereSQL := "ms.successful = 0 " +
 		unseenFilter +
 		// held = the reach was frozen because the origin copy was pulled back
@@ -211,7 +212,7 @@ func markPinned(db *gorm.DB, res []message.MessageSummary) {
 		ids[i] = m.ID
 	}
 	var pinnedIDs []uint64
-	// ORM migration site 032b7f1b9500 (Tier 1 spatial review, round 2). The
+	// The
 	// ids used to be formatted as decimal text and joined directly into the
 	// SQL string - a variable number of literal integers, which the
 	// extractor could never fold to one fixed golden no matter how good its
@@ -313,7 +314,7 @@ func Messages(c *fiber.Ctx) error {
 		// yet; ReachRadiusMetres falls back to the configured default extent in that case.
 		start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
 		var ownCandidates []reachCandidateRow
-		// ORM migration site 29289246c69b (Tier 1 spatial review). Bind order
+		// Bind order
 		// mirrors clause build order: SELECT's own binds (OUTCOME_TAKEN/
 		// RECEIVED, then the two subqueries' MESSAGE_LIKES_VIEW/
 		// CHAT_MESSAGE_INTERESTED) land first, then the bound Joins ON clause
@@ -456,7 +457,6 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 	// COALESCE to '' so users who have never set browseView (JSON_EXTRACT -> SQL NULL) scan cleanly
 	// into the non-nullable string instead of erroring "converting NULL to string is unsupported"
 	// on every such request. NULL still falls through to the "nearby" default below.
-	// ORM migration site 7c6e312c8e3e (Tier 1 spatial review).
 	db.Table("users").
 		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseView')), '')").
 		Where("id = ?", myid).
@@ -481,7 +481,6 @@ func effectiveBrowseView(c *fiber.Ctx, db *gorm.DB, myid uint64) string {
 // never clear.
 func myGroupsMsgIDs(db *gorm.DB, myid uint64) []uint64 {
 	var ids []uint64
-	// ORM migration site 93c466090882 (Tier 1 spatial review).
 	db.Table("messages_spatial ms").
 		Select("DISTINCT ms.msgid").
 		Where("ms.successful = 0 "+
@@ -510,7 +509,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		// per-post views and reply counts, plus the post's reach row (LEFT JOINed — a member-group
 		// post need not have one) so toSummary can derive its distance and relevance score.
 		//
-		// ORM migration site cacb3cb38871 (batch C). msgIDs is bound directly
+		// msgIDs is bound directly
 		// as a slice via "IN ?" - it always travelled as real bind values
 		// (fmt.Sprintf only built the "?,?,?,..." placeholder-count text
 		// itself), so this needed only the native GORM IN-list form, not a
@@ -609,7 +608,6 @@ func Count(c *fiber.Ctx) error {
 // instead of sticking on rows the feed never renders.
 func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 	var count uint64 = 0
-	// ORM migration site 771b502217d0 (Tier 1 spatial review).
 	db.Table("messages_spatial ms").
 		Select("COUNT(DISTINCT ms.msgid)").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
@@ -644,7 +642,6 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 	// Haversine — the same measure the feed uses — so badge and list agree at the boundary.
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	var candidates []reachCandidateRow
-	// ORM migration site cf109e997b23 (Tier 1 spatial review).
 	db.Table("messages_spatial ms").
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
@@ -681,7 +678,6 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 	var raw string
 	// COALESCE to '' for the same reason as effectiveBrowseView: users who have never set
 	// browseMaxDistance scan cleanly into the non-nullable string instead of erroring.
-	// ORM migration site d533dd101d62 (Tier 1 spatial review).
 	db.Table("users").
 		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), '')").
 		Where("id = ?", myid).
@@ -721,14 +717,15 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		// the feed), so join the author and add authorReachCapWhere here too.
 		reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
 
-		// ORM migration site 73c548fa7cce (batch C). reachWhere is the same
+		// reachWhere is the same
 		// live-DB-gated shape as fetchReachCandidates' 5adca7e5928e above (it
 		// calls the same reachContainmentSQL) - one concatenated WHERE
 		// string, one Where() call, for the same reason: splitting reachWhere
 		// or authorReachCapWhere into their own Where() calls would trip
 		// GORM's extra-paren wrapping once multiple Where expressions are
-		// combined (clause/where.go buildExprs). Proven (both shapes) in
-		// ormharness/reachcap_test.go and test/orm_batchc_test.go.
+		// combined (clause/where.go buildExprs). Proven (both shapes) by the
+		// retired ormharness's reachcap_test.go and test/orm_batchc_test.go
+		// (both removed in d22ba1d6c).
 		whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " + reachWhere + authorReachCapWhere
 		whereArgs := append([]interface{}{}, pointArgs...)
 		whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)

@@ -3,6 +3,7 @@ package userdump
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -36,7 +37,7 @@ func redactColFor(table string) func(col string) bool {
 // existingTables returns the lowercased set of tables in the current database,
 // so specs for tables absent from this schema are skipped quietly.
 //
-// ORM migration site f0543b22c8e8 (userdump keep-raw review, revisited). The
+// The
 // prior reason ("consistent with the sqlite.go entries") was wrong: this
 // queries the Percona cluster, not the SQLite export file - gdb is the same
 // *gorm.DB every other converted site uses, not a separate connection.
@@ -86,7 +87,6 @@ func inClause(ids []interface{}) (string, []interface{}) {
 
 // runDBSpec executes one spec and copies the rows into the dump.
 //
-// ORM migration site 1722b492f85b (userdump keep-raw review, revisited).
 // spec.table and spec.where are never user input - they come from the fixed
 // literal list buildDBSpecs assembles (61 hardcoded table/where pairs) - so
 // .Table(spec.table) and .Where(spec.where, spec.args...) are the same
@@ -114,7 +114,7 @@ func runDBSpec(b *Builder, gdb *gorm.DB, spec dbSpec) (int, error) {
 // buildDBSpecs returns the full set of user-linked extractions — a superset of
 // the V1 GDPR export. chatIDs/msgIDs/trackIDs are anchor id sets gathered up
 // front so child tables can be pulled by IN clause (and both sides of chats).
-func buildDBSpecs(userID int64, chatIDs, msgIDs, trackIDs []interface{}) []dbSpec {
+func buildDBSpecs(userID int64, chatIDs, recentChatIDs, msgIDs, trackIDs []interface{}, since time.Time) []dbSpec {
 	u := []interface{}{userID}
 	uu := []interface{}{userID, userID}
 	var specs []dbSpec
@@ -156,7 +156,9 @@ func buildDBSpecs(userID int64, chatIDs, msgIDs, trackIDs []interface{}) []dbSpe
 		add("messages_items", "msgid IN "+in, args, 0)
 		add("messages_deadlines", "msgid IN "+in, args, 0)
 		add("messages_history", "fromuser = ? OR msgid IN "+in, withU(args), 0)
-		add("messages_outcomes", "userid = ? OR msgid IN "+in, withU(args), 0)
+		// messages_outcomes has no userid column - it is msgid-keyed only
+		// (id, timestamp, msgid, outcome, happiness, comments, reviewed).
+		add("messages_outcomes", "msgid IN "+in, args, 0)
 		add("messages_promises", "userid = ? OR msgid IN "+in, withU(args), 0)
 		add("messages_reneged", "userid = ? OR msgid IN "+in, withU(args), 0)
 		add("messages_likes", "userid = ? OR msgid IN "+in, withU(args), 0)
@@ -164,7 +166,8 @@ func buildDBSpecs(userID int64, chatIDs, msgIDs, trackIDs []interface{}) []dbSpe
 		add("messages_edits", "byuser = ? OR msgid IN "+in, withU(args), 0)
 	} else {
 		add("messages_history", "fromuser = ?", u, 0)
-		add("messages_outcomes", "userid = ?", u, 0)
+		// No messages_outcomes here: it is msgid-keyed and with no messages
+		// there is nothing to anchor on.
 		add("messages_promises", "userid = ?", u, 0)
 		add("messages_reneged", "userid = ?", u, 0)
 		add("messages_likes", "userid = ?", u, 0)
@@ -173,13 +176,31 @@ func buildDBSpecs(userID int64, chatIDs, msgIDs, trackIDs []interface{}) []dbSpe
 	}
 
 	// Chats — both sides of every room the user is in.
+	//
+	// Room membership is NOT windowed: which conversations someone is in is
+	// cheap to collect and support needs the whole picture. The message BODIES
+	// are, because they are not cheap. A moderator sits in the roster of every
+	// Mod2Mod and User2Mod chat on their groups - one real admin is in 18,664
+	// rooms - and "chat_messages WHERE chatid IN (18,664 ids)" with no date
+	// bound cannot finish: a bare COUNT of it against production ran for over
+	// two minutes, so the dump always blew the caller's timeout and that member
+	// could never be investigated at all. Only 332 of those rooms had any
+	// activity in the default 90-day window, so anchoring the messages on the
+	// rooms active within the window - the window the dump already documents
+	// via ?since= - collapses the query while losing nothing anyone asked for.
+	// The (chatid, date) index serves exactly this shape.
 	if in, args := inClause(chatIDs); in != "" {
 		add("chat_rooms", "id IN "+in, args, 0)
 		add("chat_roster", "chatid IN "+in, args, 0)
-		add("chat_messages", "chatid IN "+in, args, 0)
-		add("chat_messages_held", "chatid IN "+in+" OR userid = ?", append(append([]interface{}{}, args...), userID), 0)
-	} else {
-		add("chat_messages_held", "userid = ?", u, 0)
+	}
+	// chat_messages_held has no chatid - its msgid references chat_messages.id
+	// (which mod is holding a chat message for review). Anchor on userid: the
+	// holds the member placed as a mod. Holds ON the member's own chat messages
+	// would need a chat_messages.userid sweep, which is not worth a scan of the
+	// biggest table for mod-review state that expires in days.
+	add("chat_messages_held", "userid = ?", u, 0)
+	if in, args := inClause(recentChatIDs); in != "" {
+		add("chat_messages", "chatid IN "+in+" AND date >= ?", append(append([]interface{}{}, args...), since), 0)
 	}
 	add("users_chatlists", "userid = ?", u, 0)
 	add("users_expected", "expecter = ? OR expectee = ?", uu, 0)

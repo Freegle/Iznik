@@ -50,7 +50,6 @@ func GetDashboard(c *fiber.Ctx) error {
 		// weighting NaN and the map blank. Rounding also blurs exact locations (the page
 		// states locations are approximate for privacy) and shrinks the payload.
 		var points []HeatmapPoint
-		// ORM migration site 88aea8da62be (Tier 1 spatial review).
 		db.Table("messages_spatial").
 			Select("ROUND(ST_Y(point), 2) AS lat, ROUND(ST_X(point), 2) AS lng, COUNT(*) AS count").
 			Where("arrival > DATE_SUB(NOW(), INTERVAL 31 DAY) AND successful = 1").
@@ -89,7 +88,6 @@ func GetDashboard(c *fiber.Ctx) error {
 	isMod := false
 	if myid > 0 && len(groupIDs) > 0 {
 		var modCount int64
-		// ORM migration site db58dba433f8 (wave 1).
 		db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND groupid IN ?",
 			myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, groupIDs).Count(&modCount)
 		isMod = modCount > 0
@@ -131,7 +129,6 @@ func GetDashboard(c *fiber.Ctx) error {
 
 	if len(groupIDs) > 0 {
 		var msgCount int64
-		// ORM migration site 11558c0c6cd0 (wave 4).
 		db.Table("messages").
 			Select("COUNT(DISTINCT messages.id)").
 			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
@@ -140,7 +137,7 @@ func GetDashboard(c *fiber.Ctx) error {
 		dashboard["newmessages"] = msgCount
 
 		var memCount int64
-		// ORM migration site 770ce1ca6e09 (wave 1). Converted together with its
+		// Converted together with its
 		// identical sibling in getRecentCounts below: leaving one of two
 		// textually identical statements raw is the configuration that
 		// renumbers the survivor's site ID (ratchet gate h).
@@ -215,7 +212,6 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 	}
 
 	var newmessages, newmembers int64
-	// ORM migration site bce3018a21d7 (wave 4).
 	db.Table("messages").
 		Select("COUNT(DISTINCT messages.id)").
 		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
@@ -223,7 +219,7 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 			startQ, endQ, groupIDs, startQ, endQ).
 		Scan(&newmessages)
 
-	// ORM migration site 382a6666f320 (wave 1). Identical sibling of
+	// Identical sibling of
 	// 770ce1ca6e09 above in GetDashboard; converted together (ratchet gate h).
 	db.Table("memberships").Where("groupid IN ? AND added >= ? AND added <= ?",
 		groupIDs, startQ, endQ).Count(&newmembers)
@@ -263,7 +259,6 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 			}
 		}
 
-		// ORM migration site d9ea74465694 (wave 5).
 		db.Table("messages m").
 			Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject", utils.MESSAGE_LIKES_VIEW).
 			Where("m.arrival >= ? AND m.arrival <= ? AND m.deleted IS NULL", capStart, endQ).
@@ -282,7 +277,6 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 		// additionally collapses genuine multi-group (crossposted) origin rows so each
 		// post is listed once. Same native-only pattern as the stats/IP-abuse/edit-queue
 		// fixes (fa60c39b0, 4b6d7b3c3).
-		// ORM migration site 041e44afbfe5 (wave 5).
 		db.Table("messages_groups mg").
 			Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, mg.msgid AS id, MIN(m.subject) AS subject", utils.MESSAGE_LIKES_VIEW).
 			Joins("INNER JOIN messages m ON m.id = mg.msgid").
@@ -303,7 +297,6 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 	for i, p := range posts {
 		// Get reply count.
 		var replies int
-		// ORM migration site ed34569d9b36 (wave 1).
 		db.Table("chat_messages").Select("COUNT(*)").Where("refmsgid = ?", p.ID).Scan(&replies)
 
 		result[i] = map[string]interface{}{
@@ -329,7 +322,6 @@ func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interf
 	}
 
 	var users []UserCount
-	// ORM migration site 57978ae039a2 (wave 5).
 	db.Table("messages").
 		Select("COUNT(*) AS count, messages.fromuser").
 		Where("id IN (SELECT msgid FROM messages_groups WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?)) AND messages.arrival >= ? AND messages.arrival <= ?",
@@ -342,7 +334,6 @@ func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interf
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
 		var displayname string
-		// ORM migration site 3efc6311d1fb (wave 1).
 		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", u.Fromuser).Scan(&displayname)
 		result[i] = map[string]interface{}{
 			"id":          u.Fromuser,
@@ -395,7 +386,6 @@ func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]inter
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
 		var displayname string
-		// ORM migration site afe6a06e35d5 (wave 1).
 		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", u.Userid).Scan(&displayname)
 		result[i] = map[string]interface{}{
 			"id":          u.Userid,
@@ -566,10 +556,24 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 		Lastactive *string
 	}
 
+	// MAX(arrival) rather than ORDER BY approvedat DESC LIMIT 1: the covering
+	// index is lastapproved (approvedby, groupid, arrival), so MAX over its
+	// suffix resolves each membership's subquery as a single index seek.
+	// Sorting by approvedat - which is NOT in any index - forced a read and
+	// filesort of the mod's entire approval history PER MEMBERSHIP ROW: a
+	// support dashboard spanning ~450 groups (~1,200 rows) ran 8-12 MINUTES,
+	// and reloads stacked 19+ copies, pinning db3's CPU (recurring monit
+	// alerts, worst captured 725s). For "when was this mod last active",
+	// the arrival of the last message they approved is the same signal.
+	//
+	// The 30s ceiling is the backstop: if this ever regresses, the query dies
+	// instead of stacking - a missing widget beats a downed write node.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
 	var mods []ModRow
-	// ORM migration site 285861d7b37c (wave 5).
-	db.Table("memberships").
-		Select("userid, (SELECT messages_groups.approvedat FROM messages_groups WHERE messages_groups.approvedby = memberships.userid AND messages_groups.groupid = memberships.groupid ORDER BY messages_groups.approvedat DESC LIMIT 1) AS lastactive").
+	db.WithContext(ctx).Table("memberships").
+		Select("userid, (SELECT MAX(messages_groups.arrival) FROM messages_groups WHERE messages_groups.approvedby = memberships.userid AND messages_groups.groupid = memberships.groupid) AS lastactive").
 		Where("groupid IN (?) AND role IN (?, ?)", groupIDs, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 		Having("lastactive IS NOT NULL").
 		Scan(&mods)
@@ -577,7 +581,6 @@ func getModeratorsActive(groupIDs []uint64) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(mods))
 	for _, m := range mods {
 		var displayname string
-		// ORM migration site 1f7c9782b252 (wave 1).
 		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", m.Userid).Scan(&displayname)
 		entry := map[string]interface{}{
 			"id":          m.Userid,
@@ -605,7 +608,6 @@ func getMessageBreakdown(groupIDs []uint64, startQ, endQ string) map[string]int6
 	}
 
 	var rows []BreakdownRow
-	// ORM migration site 42a6b16c1a09 (wave 1).
 	db.Table("stats").Select("breakdown").
 		Where("type = 'MessageBreakdown' AND groupid IN ? AND date >= ? AND date <= ?",
 			groupIDs, startQ, endQ).Scan(&rows)
@@ -657,7 +659,6 @@ func getStatsTimeSeries(component string, groupIDs []uint64, startQ, endQ string
 	}
 
 	var rows []StatsRow
-	// ORM migration site 114e3d2c526c (wave 1).
 	db.Table("stats").Select("date, SUM(count) AS count").
 		Where("type = ? AND groupid IN ? AND date >= ? AND date <= ?", statsType, groupIDs, startQ, endQ).
 		Group("date").Order("date ASC").Scan(&rows)
@@ -687,7 +688,6 @@ func getDonations(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 
 	var rows []DonRow
 	if systemwide {
-		// ORM migration site 43bd10f45284 (wave 1).
 		db.Table("users_donations").
 			Select("SUM(GrossAmount) AS count, DATE(timestamp) AS date").
 			Where("timestamp >= ? AND timestamp <= ?", startQ, endQ).
@@ -695,7 +695,6 @@ func getDonations(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 			Order("date ASC").
 			Scan(&rows)
 	} else if len(groupIDs) > 0 {
-		// ORM migration site 93937ea4340f (wave 5).
 		db.Table("users_donations").
 			Select("SUM(GrossAmount) AS count, DATE(timestamp) AS date").
 			Where("userid IN (SELECT DISTINCT userid FROM memberships WHERE groupid IN (?)) AND timestamp >= ? AND timestamp <= ?",
@@ -725,7 +724,6 @@ func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 
 	var rows []HappyRow
 	if systemwide {
-		// ORM migration site 0fdf3ccacd34 (wave 1).
 		db.Table("messages_outcomes").
 			Select("COUNT(*) AS count, happiness").
 			Where("timestamp >= ? AND timestamp <= ? AND happiness IS NOT NULL", startQ, endQ).
@@ -733,7 +731,6 @@ func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 			Order("count DESC").
 			Scan(&rows)
 	} else if len(groupIDs) > 0 {
-		// ORM migration site d313fe02593e (wave 4).
 		db.Table("messages_outcomes").
 			Select("COUNT(*) AS count, happiness").
 			Joins("INNER JOIN messages ON messages.id = messages_outcomes.msgid").
@@ -794,10 +791,8 @@ func resolveGroupIDs(myid uint64, groupID uint64, systemwide, allgroups bool) []
 	if groupID > 0 {
 		groupIDs = []uint64{groupID}
 	} else if systemwide {
-		// ORM migration site 7b7dd94d9688 (wave 1).
 		database.DBConn.Table("groups").Select("id").Where("publish = 1 AND onhere = 1").Scan(&groupIDs)
 	} else if allgroups && myid > 0 {
-		// ORM migration site b9033fc5427a (wave 1).
 		database.DBConn.Table("memberships").Select("groupid").
 			Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
 			Scan(&groupIDs)

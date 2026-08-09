@@ -105,8 +105,8 @@ func handleChargeSucceeded(c *fiber.Ctx, event *stripe.Event) error {
 	// Read the new donation id from the write result, not a read-split-routable SELECT
 	// (9832 class). Here it only feeds the log line below, but keep it correct anyway.
 	// Table()+map Create reads it back from the same sql.Result the INSERT
-	// returned, under the map key "@id" - see test/orm_insertid_test.go.
-	// ORM migration site 1d13aa15278e (insertid-conv).
+	// returned, under the map key "@id" - see
+	// test/insertid_gorm_writeback_test.go.
 	row := map[string]interface{}{
 		"userid":           userIDPtr,
 		"Payer":            userEmail,
@@ -151,7 +151,6 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 			uid, err := strconv.ParseUint(uidStr, 10, 64)
 			if err == nil && uid > 0 {
 				var exists uint64
-				// ORM migration site 015d0fcc34c4 (wave 1).
 				gdb.Table("users").Select("id").Where("id = ?", uid).Scan(&exists)
 				if exists > 0 {
 					userID = uid
@@ -178,7 +177,6 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 					uid, err := strconv.ParseUint(uidStr, 10, 64)
 					if err == nil && uid > 0 {
 						var exists uint64
-						// ORM migration site 83599f80cec3 (wave 1).
 						gdb.Table("users").Select("id").Where("id = ?", uid).Scan(&exists)
 						if exists > 0 {
 							userID = uid
@@ -189,7 +187,6 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 
 				// Try customer email.
 				if userID == 0 && cust.Email != "" {
-					// ORM migration site 3c00a7ee8fd9 (wave 1).
 					gdb.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", cust.Email).Limit(1).Scan(&userID)
 					if userID > 0 {
 						log.Printf("[StripeIPN] Matched user %d from customer email %s", userID, cust.Email)
@@ -202,7 +199,6 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 	// 3. Try billing_details.email from the charge.
 	if userID == 0 && charge.BillingDetails != nil && charge.BillingDetails.Email != "" {
 		billingEmail := charge.BillingDetails.Email
-		// ORM migration site 7104e922999e (wave 1).
 		gdb.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", billingEmail).Limit(1).Scan(&userID)
 		if userID > 0 {
 			log.Printf("[StripeIPN] Matched user %d from billing email %s", userID, billingEmail)
@@ -226,9 +222,7 @@ func matchDonorUser(charge *stripe.Charge) (uint64, string, string) {
 
 	// Get user name and email for the matched user.
 	if userID > 0 {
-		// ORM migration site c1cf9529710a (wave 1).
 		gdb.Table("users_emails").Select("email").Where("userid = ?", userID).Order("preferred DESC").Limit(1).Scan(&userEmail)
-		// ORM migration site 9b52d8bd115c (wave 1).
 		gdb.Table("users").Select("fullname").Where("id = ?", userID).Scan(&userName)
 		log.Printf("[StripeIPN] User %d: name=%s email=%s", userID, userName, userEmail)
 	} else {
@@ -252,12 +246,10 @@ func handleGiftAidNotification(userID uint64) {
 	}
 
 	var giftaid GiftAidRecord
-	// ORM migration site 433192020fab (wave 1).
 	gdb.Table("giftaid").Select("period").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&giftaid)
 
 	if giftaid.Period == "" || giftaid.Period == PERIOD_THIS {
 		// No gift aid declaration or only a temporary one — prompt them.
-		// ORM migration site a827fcf725a7 (wave 3).
 		gdb.Table("users_notifications").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
 			"fromuser":  gorm.Expr("NULL"),
 			"touser":    userID,

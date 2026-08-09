@@ -198,7 +198,6 @@ func reconstructAvatarURL(userID uint64, width int) string {
 		ImageURL *string
 		Email    *string
 	}
-	// ORM migration site ded0ef5a98c8 (wave 4).
 	db.Table("users u").
 		Select("ui.id AS image_id, ui.url AS image_url, ue.email AS email").
 		Joins("LEFT JOIN users_images ui ON ui.userid = u.id").

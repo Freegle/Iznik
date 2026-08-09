@@ -11,6 +11,14 @@ class AIImageReviewDigestMail extends MjmlMailable
 {
     use LoggableEmail;
 
+    /**
+     * Transactional - an internal review digest for volunteers - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public int $todayVerdicts,
         public int $totalReviewed,

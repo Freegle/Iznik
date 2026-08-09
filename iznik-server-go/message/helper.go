@@ -127,7 +127,6 @@ func (HelperSentMessage) TableName() string { return "helper_sent_messages" }
 // helperAuthForMsg returns the message's offerer and whether the caller may manage
 // the Helper for it. found is false when the message doesn't exist.
 func helperAuthForMsg(db *gorm.DB, myid uint64, msgid uint64) (offerer uint64, allowed bool, found bool) {
-	// ORM migration site 21a605961dab (wave 1).
 	db.Table("messages").Select("fromuser").Where("id = ? AND deleted IS NULL", msgid).Scan(&offerer)
 	if offerer == 0 {
 		return 0, false, false
@@ -141,14 +140,12 @@ func helperAuthForMsg(db *gorm.DB, myid uint64, msgid uint64) (offerer uint64, a
 // so an action that references a child row can be authorised against the message.
 func msgidForBatch(db *gorm.DB, batchid uint64) uint64 {
 	var msgid uint64
-	// ORM migration site c035008cb1fd (wave 1).
 	db.Table("helper_batches").Select("msgid").Where("id = ?", batchid).Scan(&msgid)
 	return msgid
 }
 
 func msgidForReplier(db *gorm.DB, replierid uint64) uint64 {
 	var msgid uint64
-	// ORM migration site e6d298a3c77e (wave 4).
 	db.Table("helper_repliers r").
 		Select("b.msgid").
 		Joins("INNER JOIN helper_batches b ON b.id = r.batchid").
@@ -159,7 +156,6 @@ func msgidForReplier(db *gorm.DB, replierid uint64) uint64 {
 
 func msgidForProposal(db *gorm.DB, proposalid uint64) uint64 {
 	var msgid uint64
-	// ORM migration site 5ccbc340f539 (wave 4).
 	db.Table("helper_proposals p").
 		Select("b.msgid").
 		Joins("INNER JOIN helper_batches b ON b.id = p.batchid").
@@ -194,7 +190,6 @@ func GetHelper(c *fiber.Ctx) error {
 
 	var batch *HelperBatch
 	var b HelperBatch
-	// ORM migration site aa389db67fc8 (wave 1).
 	db.Table("helper_batches").
 		Select("id, msgid, offereruserid, status, COALESCE(automode,'automatic') AS automode, briefing, lastpolledat, lastrunat, pausedat").
 		Where("msgid = ?", msgid).Scan(&b)
@@ -205,7 +200,6 @@ func GetHelper(c *fiber.Ctx) error {
 	batch = &b
 
 	var repliers []HelperReplier
-	// ORM migration site 6b0609403867 (wave 1).
 	db.Table("helper_repliers").
 		Select("id, batchid, userid, chatid, state, collection_ok, criteria_met, transport_ok, distance_miles, "+
 			"is_connector, related_to, escalation_reason, parked_reason, next_action, other_items_mentioned, "+
@@ -215,7 +209,6 @@ func GetHelper(c *fiber.Ctx) error {
 		Scan(&repliers)
 
 	var itemStates []HelperItemState
-	// ORM migration site 3ad68615e84c (wave 4).
 	db.Table("helper_item_states s").
 		Select("s.id, s.replierid, s.bulkitemid, s.state, s.qty_wanted, s.qty_allocated, s.score, s.score_breakdown").
 		Joins("INNER JOIN helper_repliers r ON r.id = s.replierid").
@@ -230,7 +223,6 @@ func GetHelper(c *fiber.Ctx) error {
 	}
 
 	var proposals []HelperProposal
-	// ORM migration site 2e78b7d10b8c (wave 1).
 	db.Table("helper_proposals").
 		Select("id, batchid, type, replierid, bulkitemid, summary, proposed_text, payload, rationale, status, "+
 			"resolved_text, resolvedat, resolvedby").
@@ -239,7 +231,6 @@ func GetHelper(c *fiber.Ctx) error {
 		Scan(&proposals)
 
 	var sent []HelperSentMessage
-	// ORM migration site c0f8da161e8c (wave 1).
 	db.Table("helper_sent_messages").
 		Select("id, batchid, chatmsgid, chatid, replierid, kind, auto, proposalid").
 		Where("batchid = ?", b.ID).
@@ -275,7 +266,6 @@ func GetHelperEscalated(c *fiber.Ctx) error {
 	}
 	db := database.DBConn
 	var rows []HelperEscalatedRow
-	// ORM migration site b7f56ac149be (wave 4).
 	db.Table("helper_repliers r").
 		Select("r.id, r.batchid, b.msgid, b.offereruserid, r.userid, r.chatid, r.escalation_reason, m.subject").
 		Joins("INNER JOIN helper_batches b ON b.id = r.batchid").
@@ -392,11 +382,12 @@ func authMsg(c *fiber.Ctx, db *gorm.DB, myid, msgid uint64) (uint64, error) {
 
 // ensureBatchRow creates the batch row for a message if absent and returns its id.
 func ensureBatchRow(db *gorm.DB, msgid, offerer uint64) uint64 {
-	// ORM migration site 7e3e5f4d0b36 (tier4). Clauses(gorm.WithResult())
+	// Clauses(gorm.WithResult())
 	// reads the id from the same sql.Result the write returned, which - unlike
 	// GORM's own "@id" map writeback - is not skipped when RowsAffected is 0
 	// (guaranteed on every duplicate-key hit): see
-	// test/orm_insertid_test.go's WithResultBeatsTheRowsAffectedZeroTrap.
+	// test/insertid_gorm_writeback_test.go's
+	// WithResultBeatsTheRowsAffectedZeroTrap.
 	res := gorm.WithResult()
 	tx := db.Table("helper_batches").Clauses(res, clause.OnConflict{
 		DoUpdates: clause.Set{
@@ -425,10 +416,8 @@ func helperEnsureBatch(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest
 	// The driver pings EnsureBatch every loop cycle, so lastpolledat doubles as a
 	// heartbeat: the page treats a pause as confirmed once lastpolledat advances
 	// past pausedat (the loop has observed the pause and gone idle).
-	// ORM migration site 257f269f3d36 (wave 2).
 	db.Table("helper_batches").Where("id = ?", batchid).Update("lastpolledat", gorm.Expr("NOW()"))
 	if req.Briefing != nil {
-		// ORM migration site da66ba09e8cf (wave 2).
 		db.Table("helper_batches").Where("id = ?", batchid).Update("briefing", *req.Briefing)
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "batchid": batchid})
@@ -449,11 +438,9 @@ func helperSetStatus(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest) 
 	offerer, _, _ := helperAuthForMsg(db, myid, req.Msgid)
 	batchid := ensureBatchRow(db, req.Msgid, offerer)
 	if *req.Status == "paused" {
-		// ORM migration site e7cb0b1990d3 (wave 2).
 		db.Table("helper_batches").Where("id = ?", batchid).
 			Updates(map[string]interface{}{"status": *req.Status, "pausedat": gorm.Expr("NOW()")})
 	} else {
-		// ORM migration site fb65a4932547 (wave 2).
 		db.Table("helper_batches").Where("id = ?", batchid).
 			Updates(map[string]interface{}{"status": *req.Status, "pausedat": gorm.Expr("NULL")})
 	}
@@ -462,7 +449,6 @@ func helperSetStatus(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest) 
 	if req.Automode != nil {
 		switch *req.Automode {
 		case "automatic", "approve":
-			// ORM migration site b7320249a46d (wave 2).
 			db.Table("helper_batches").Where("id = ?", batchid).Update("automode", *req.Automode)
 		default:
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid automode")
@@ -481,7 +467,6 @@ func helperUpsertReplier(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReque
 	}
 	batchid := ensureBatchRow(db, req.Msgid, offerer)
 
-	// ORM migration site 4aef5392a01f (tier4).
 	res := gorm.WithResult()
 	tx := db.Table("helper_repliers").Clauses(res, clause.OnConflict{
 		DoUpdates: clause.Set{
@@ -501,14 +486,14 @@ func helperUpsertReplier(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReque
 	// Only update the fields the caller actually supplied, so partial updates from
 	// the driver don't clobber other knowledge.
 	//
-	// ORM migration site 7ba4875e8aec (Tier 2 keep-raw review). col is a
+	// col is a
 	// per-call constant from a fixed set of literal call sites below, never
 	// caller-controlled, so this is GORM's ordinary per-field Update(col, val)
 	// pattern - already proven a few lines up in this same file
 	// (helper_batches "automode", line 461) - not a SQL-injection-shaped
-	// dynamic column. Every column this closure can be called with is
-	// declared as its own shape in ormharness/shapes.json and proven by
-	// TestTier2_7ba4875e8aec (iznik-server-go/test).
+	// dynamic column. Every column this closure can be called with was proven
+	// (as its own shape) by the retired ormharness (shapes.json /
+	// TestTier2_7ba4875e8aec, removed in d22ba1d6c).
 	set := func(col string, val interface{}) {
 		db.Table("helper_repliers").Where("id = ?", replierid).Update(col, val)
 	}
@@ -575,7 +560,6 @@ func helperSetItemState(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReques
 		return err
 	}
 
-	// ORM migration site dfc3d2fdb2ba (tier4).
 	res := gorm.WithResult()
 	tx := db.Table("helper_item_states").Clauses(res, clause.OnConflict{
 		DoUpdates: clause.Set{
@@ -592,11 +576,11 @@ func helperSetItemState(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReques
 		}
 	}
 
-	// ORM migration site b48b319835d0 (Tier 2 keep-raw review). Same reasoning
+	// Same reasoning
 	// as helperUpsertReplier's "set" above: col is a per-call constant from a
 	// fixed set of literal call sites below. Every column this closure can be
-	// called with is declared as its own shape in ormharness/shapes.json and
-	// proven by TestTier2_b48b319835d0 (iznik-server-go/test).
+	// called with was proven (as its own shape) by the retired ormharness
+	// (shapes.json / TestTier2_b48b319835d0, removed in d22ba1d6c).
 	set := func(col string, val interface{}) {
 		db.Table("helper_item_states").Where("id = ?", stateid).Update(col, val)
 	}
@@ -633,11 +617,11 @@ func helperCreateProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequ
 	}
 	batchid := ensureBatchRow(db, req.Msgid, offerer)
 
-	// ORM migration site 7394291c903d (insertid-conv). Table()+map Create
+	// Table()+map Create
 	// reads the generated id back from the same sql.Result the INSERT
 	// returned (gorm.io/gorm/callbacks/create.go), writing it into the map
 	// under "@id" - proven against the real database in
-	// test/orm_insertid_test.go, not merely reasoned about.
+	// test/insertid_gorm_writeback_test.go, not merely reasoned about.
 	row := map[string]interface{}{
 		"batchid":       batchid,
 		"type":          *req.Type,
@@ -660,7 +644,7 @@ func helperCreateProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequ
 // records it in helper_sent_messages (AI badge + outbound dedupe). Returns the new
 // chat message id.
 func insertHelperChat(db *gorm.DB, batchid, chatid, offerer, msgid, replierid uint64, body, kind string, auto bool, proposalid *uint64) uint64 {
-	// ORM migration site d3790f53ec52 (insertid-conv). See 7394291c903d
+	// See 7394291c903d
 	// above for why Table()+map Create's "@id" writeback is a safe read of
 	// this same INSERT's generated id, not a second connection-scoped query.
 	row := map[string]interface{}{
@@ -676,13 +660,11 @@ func insertHelperChat(db *gorm.DB, batchid, chatid, offerer, msgid, replierid ui
 		return 0
 	}
 	cmid, _ := row["@id"].(int64)
-	// ORM migration site 1f1db38c17ab (wave 2).
 	db.Table("chat_rooms").Where("id = ?", chatid).Update("latestmessage", gorm.Expr("NOW()"))
 	var rid interface{}
 	if replierid > 0 {
 		rid = replierid
 	}
-	// ORM migration site 82f73ff0af1b (wave 3).
 	db.Table("helper_sent_messages").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "kind"}, Value: clause.Column{Table: "excluded", Name: "kind"}},
@@ -716,7 +698,6 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 	// is mid-cycle. This closes the timing window where an in-flight run could
 	// message a replier after the human stepped in.
 	var status string
-	// ORM migration site 62b930561c93 (wave 1).
 	db.Table("helper_batches").Select("status").Where("id = ?", batchid).Scan(&status)
 	if status != "active" {
 		return fiber.NewError(fiber.StatusConflict, "Helper is paused — auto-send refused")
@@ -730,10 +711,8 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 	// recorded one) and link the chat. A valid replierid is needed so the
 	// first-message disclosure can be deduped per replier.
 	var replierid uint64
-	// ORM migration site 992730fc5688 (wave 1).
 	db.Table("helper_repliers").Select("id").Where("batchid = ? AND userid = ?", batchid, *req.Userid).Scan(&replierid)
 	if replierid == 0 {
-		// ORM migration site 123512413259 (tier4).
 		res := gorm.WithResult()
 		tx := db.Table("helper_repliers").Clauses(res, clause.OnConflict{
 			DoUpdates: clause.Set{
@@ -747,7 +726,6 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 			}
 		}
 	} else {
-		// ORM migration site 80634b30b8a9 (wave 2).
 		db.Table("helper_repliers").Where("id = ?", replierid).Update("chatid", chatid)
 	}
 	kind := "other"
@@ -764,14 +742,12 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 	// proposal sends the offerer's (possibly edited) text via helperResolveProposal,
 	// so it counts as a human send and gets no automated-message disclosure.
 	var automode string
-	// ORM migration site c34cf9a8b19c (wave 1).
 	db.Table("helper_batches").Select("COALESCE(automode, 'automatic')").Where("id = ?", batchid).Scan(&automode)
 	if automode == "approve" {
 		var ridArg interface{}
 		if replierid > 0 {
 			ridArg = replierid
 		}
-		// ORM migration site 7ec60cde5d39 (insertid-conv).
 		row := map[string]interface{}{
 			"batchid":       batchid,
 			"type":          gorm.Expr("'message'"),
@@ -792,7 +768,7 @@ func helperSendAction(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperRequest)
 	// own words).
 	if auto && replierid > 0 {
 		var priorAuto int
-		// ORM migration site 85dff277e409 (wave 1). priorAuto is int, not int64,
+		// priorAuto is int, not int64,
 		// so this keeps Row().Scan (database/sql converts a numeric COUNT(*) into
 		// int) rather than GORM's Count, which requires *int64.
 		db.Table("helper_sent_messages").Select("COUNT(*)").
@@ -825,7 +801,6 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 	}
 
 	var p HelperProposal
-	// ORM migration site 12e5ba92ff74 (wave 1).
 	db.Table("helper_proposals").
 		Select("id, batchid, type, replierid, bulkitemid, summary, proposed_text, payload, rationale, status").
 		Where("id = ?", *req.Proposalid).Scan(&p)
@@ -847,7 +822,6 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 	finalText = strings.TrimSpace(finalText)
 
 	if *req.Decision == "dismiss" {
-		// ORM migration site 0a2d7de8a9b7 (wave 2).
 		db.Table("helper_proposals").Where("id = ?", *req.Proposalid).
 			Updates(map[string]interface{}{"status": gorm.Expr("'dismissed'"), "resolvedat": gorm.Expr("NOW()"), "resolvedby": myid})
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -859,7 +833,6 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 	// Resolve the replier (userid) for side effects + messaging.
 	var replierUserid uint64
 	if p.Replierid != nil && *p.Replierid > 0 {
-		// ORM migration site 3b97c08e324f (wave 1).
 		db.Table("helper_repliers").Select("userid").Where("id = ?", *p.Replierid).Scan(&replierUserid)
 	}
 
@@ -869,13 +842,11 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 	case "allocation":
 		if replierUserid > 0 && p.Bulkitemid != nil && *p.Bulkitemid > 0 {
 			var prior string
-			// ORM migration site 128798d274f6 (wave 1).
 			db.Table("messages_bulk_items_interest").Select("COALESCE(state,'')").
 				Where("bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid).Scan(&prior)
-			// ORM migration site a03b9302bbb8 (wave 2).
 			db.Table("messages_bulk_items_interest").Where("bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid).
 				Update("state", gorm.Expr("'Reserved'"))
-			// ORM migration site 8d359d691beb (tier4). REPLACE INTO via
+			// REPLACE INTO via
 			// clause.Insert{Modifier: "REPLACE"} - see
 			// database.RegisterCustomClauseBuilders for why the plain
 			// Modifier field alone is not enough.
@@ -885,10 +856,8 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 				sendAccessInstructions(db, msgid, offerer, replierUserid)
 			}
 			if p.Replierid != nil {
-				// ORM migration site 362515fa583b (wave 2).
 				db.Table("helper_item_states").Where("replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid).
 					Update("state", gorm.Expr("'ALLOCATED'"))
-				// ORM migration site 100ebe4c33c8 (wave 2).
 				db.Table("helper_repliers").
 					Where("id = ? AND state IN ('QUALIFIED','GATHERING','NEW','ESCALATED','PARKED_REPLIED','PARKED_QUIET','TIMED_OUT')", *p.Replierid).
 					Update("state", gorm.Expr("'ALLOCATED'"))
@@ -896,19 +865,18 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 		}
 	case "rejection":
 		if p.Replierid != nil && p.Bulkitemid != nil {
-			// ORM migration site 17c08ee0c835 (wave 2). Identical to 15b15ae11812
+			// Identical to 15b15ae11812
 			// (withdrawal_notice, below); converted together per gate (h).
 			db.Table("helper_item_states").Where("replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid).
 				Update("state", gorm.Expr("'REJECTED'"))
 		}
 		if replierUserid > 0 && p.Bulkitemid != nil {
-			// ORM migration site e2d465d97cf9 (wave 2).
 			db.Table("messages_bulk_items_interest").Where("bulkitemid = ? AND userid = ?", *p.Bulkitemid, replierUserid).
 				Update("state", gorm.Expr("'Rejected'"))
 		}
 	case "withdrawal_notice":
 		if p.Replierid != nil && p.Bulkitemid != nil {
-			// ORM migration site 15b15ae11812 (wave 2). Identical to 17c08ee0c835
+			// Identical to 17c08ee0c835
 			// (rejection, above); converted together per gate (h).
 			db.Table("helper_item_states").Where("replierid = ? AND bulkitemid = ?", *p.Replierid, *p.Bulkitemid).
 				Update("state", gorm.Expr("'REJECTED'"))
@@ -922,7 +890,6 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 			if p.Summary != nil {
 				reason = *p.Summary
 			}
-			// ORM migration site a416584a1903 (wave 2).
 			db.Table("helper_repliers").Where("id = ?", *p.Replierid).
 				Updates(map[string]interface{}{"state": gorm.Expr("'ESCALATED'"), "escalation_reason": reason})
 		}
@@ -938,7 +905,6 @@ func helperResolveProposal(c *fiber.Ctx, db *gorm.DB, myid uint64, req HelperReq
 		}
 	}
 
-	// ORM migration site 78e5a64166c8 (wave 2).
 	db.Table("helper_proposals").Where("id = ?", *req.Proposalid).
 		Updates(map[string]interface{}{"status": gorm.Expr("'sent'"), "resolved_text": finalText, "resolvedat": gorm.Expr("NOW()"), "resolvedby": myid})
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "chatmsgid": chatmsgid})

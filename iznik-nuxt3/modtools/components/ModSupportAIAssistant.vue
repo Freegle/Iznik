@@ -32,6 +32,43 @@
       </ul>
     </b-modal>
 
+    <!-- Refer to geeks. The referral text is required, not optional: without it
+         the geeks get a transcript and no idea what the volunteer wants doing
+         about it. -->
+    <b-modal
+      v-model="showReferralModal"
+      title="Refer to geeks"
+      :ok-disabled="!referralNote.trim() || referring"
+      ok-variant="warning"
+      :ok-title="referring ? 'Sending...' : 'Send to geeks'"
+      cancel-title="Cancel"
+      centered
+      @ok.prevent="sendReferral"
+    >
+      <p class="small text-muted">
+        This sends everything on screen to
+        <strong>geeks@ilovefreegle.org</strong>: the member, their recent
+        devices, and every question and answer in this investigation. Replies
+        come back to you.
+      </p>
+      <b-form-group
+        label="Why are you referring this?"
+        label-for="referral-note"
+      >
+        <b-form-textarea
+          id="referral-note"
+          v-model="referralNote"
+          rows="4"
+          max-rows="10"
+          :disabled="referring"
+          placeholder="e.g. 'The diagnosis looks right but the badge showing to the sender keeps generating support mail - can we stop showing it to them?'"
+        />
+      </b-form-group>
+      <NoticeMessage v-if="referralError" variant="danger" class="mt-2">
+        {{ referralError }}
+      </NoticeMessage>
+    </b-modal>
+
     <!-- Header -->
     <div class="log-analysis-header">
       <div
@@ -366,12 +403,68 @@
               <p v-else class="text-muted mb-2">
                 Starting investigation&hellip;
               </p>
+              <!-- Live progress for a long tool run (the member snapshot can
+                   take minutes on a big account) - a moving bar with elapsed
+                   time is the difference between "working" and "broken". -->
+              <div v-if="toolProgress" class="dump-progress mb-2" data-testid="dump-progress">
+                <div class="small text-muted mb-1">
+                  Building member snapshot: {{ toolProgress.section || 'starting' }}
+                  ({{ toolProgress.percent }}%<span v-if="toolProgress.etaMs">, ~{{ Math.round(toolProgress.etaMs / 1000) }}s left</span><span v-else-if="toolProgress.elapsedMs">, {{ Math.round(toolProgress.elapsedMs / 1000) }}s elapsed</span>)
+                </div>
+                <b-progress
+                  :value="toolProgress.percent"
+                  :max="100"
+                  height="0.5rem"
+                  :animated="toolProgress.percent < 100"
+                />
+              </div>
               <b-button variant="outline-danger" size="sm" @click="cancelQuery">
                 Cancel
               </b-button>
             </div>
           </div>
         </div>
+
+        <!-- Refer to geeks. Prominent once there is something to refer: the
+             point of the tool is that a volunteer gets as far as they can and
+             then hands over cleanly, rather than retyping the story into an
+             email. Hidden while the assistant is still working - "not solved?"
+             is premature (and distracting) mid-investigation. -->
+        <div
+          v-if="!isProcessing"
+          class="referral-bar p-3 d-flex flex-wrap align-items-center justify-content-between gap-2"
+        >
+          <div class="small">
+            <strong>Not solved, or found a bug?</strong>
+            Send this whole investigation to the geeks.
+          </div>
+          <b-button
+            variant="warning"
+            :disabled="isProcessing || referring"
+            @click="openReferral"
+          >
+            <v-icon icon="paper-plane" />
+            Refer to geeks
+          </b-button>
+        </div>
+
+        <!-- Hidden while the assistant is busy, like the referral bar: a
+             stale "Sent to the geeks" notice sitting under a running
+             investigation reads as if the new question was referred too. -->
+        <NoticeMessage
+          v-if="referralResult && !isProcessing"
+          :variant="referralResult.ok ? 'success' : 'danger'"
+          class="m-3"
+        >
+          <template v-if="referralResult.ok">
+            Sent to the geeks. Your reference is
+            <strong>{{ referralResult.ref }}</strong> - quote it if you need to
+            chase this up.
+          </template>
+          <template v-else>
+            {{ referralResult.message }}
+          </template>
+        </NoticeMessage>
 
         <!-- Follow-up input -->
         <div class="chat-input-area p-3">
@@ -458,10 +551,20 @@ const query = ref('')
 const isProcessing = ref(false)
 const claudeSessionId = ref(null) // For Claude Code conversation continuity
 const transcript = ref([]) // Running transcript of thinking/tool/status steps
+// Live progress of a long-running tool (the member snapshot): {percent,
+// section, etaMs, elapsedMs} from 'progress' SSE events, null when idle.
+const toolProgress = ref(null)
 
 // Conversation
 const messages = ref([])
 const debugLog = ref([])
+
+// Refer to geeks
+const showReferralModal = ref(false)
+const referralNote = ref('')
+const referring = ref(false)
+const referralError = ref('')
+const referralResult = ref(null)
 
 // Template refs
 const messagesContainer = ref(null)
@@ -550,6 +653,10 @@ function changeUser() {
   userSearch.value = ''
   deviceSummary.value = null
   deviceError.value = ''
+  referralNote.value = ''
+  referralError.value = ''
+  referralResult.value = null
+  showReferralModal.value = false
 }
 
 // Fetch the recent-device summary for a member from the AI support helper.
@@ -692,6 +799,7 @@ async function submitQuery() {
 
   isProcessing.value = true
   transcript.value = []
+  toolProgress.value = null
 
   try {
     const result = await queryLogsForUser(queryText)
@@ -714,6 +822,7 @@ async function submitQuery() {
   } finally {
     isProcessing.value = false
     transcript.value = []
+    toolProgress.value = null
   }
 }
 
@@ -799,6 +908,11 @@ async function queryLogsForUser(userQuery) {
               transcript.value = []
             } else if (event.type === 'error') {
               throw new Error(event.message)
+            } else if (event.type === 'progress') {
+              // Structured tool progress (the member snapshot) - drives the
+              // progress bar rather than the transcript.
+              toolProgress.value =
+                event.message && !event.message.done ? event.message : null
             } else if (
               event.type === 'thinking' ||
               event.type === 'tool' ||
@@ -858,6 +972,78 @@ async function queryLogsForUser(userQuery) {
   }
 }
 
+function openReferral() {
+  referralError.value = ''
+  referralResult.value = null
+  showReferralModal.value = true
+}
+
+// Hand the whole investigation to the geeks by email.
+//
+// The message bodies are sent as the HTML this component already rendered -
+// the same DOMPurify.sanitize(marked(...)) output that is on screen - so the
+// email is a faithful copy of what the volunteer was looking at rather than a
+// second, subtly different rendering. The server strips active content again
+// before it goes anywhere near an inbox.
+async function sendReferral() {
+  const note = referralNote.value.trim()
+  if (!note || referring.value) return
+
+  referring.value = true
+  referralError.value = ''
+
+  try {
+    const authStore = useAuthStore()
+    const jwt = authStore.auth?.jwt
+
+    const res = await fetch(`${AI_SUPPORT_URL}/api/refer-to-geeks`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+      },
+      body: JSON.stringify({
+        note,
+        member: {
+          id: selectedUser.value?.id,
+          displayname: selectedUser.value?.displayname,
+          email: selectedUser.value?.email,
+        },
+        deviceSummary: deviceSummary.value,
+        // Tokens, not money: the helper runs on a Claude subscription, so a
+        // per-query dollar figure is a notional list price nobody is charged
+        // and has no business in a referral email.
+        messages: messages.value.map((m) => ({
+          role: m.role,
+          content: m.content,
+          html: formatMessageContent(m),
+          usage: m.usage,
+        })),
+        totals: {
+          inputTokens: totalTokens.value.inputTokens,
+          outputTokens: totalTokens.value.outputTokens,
+        },
+        modToolsUrl: window.location.origin,
+      }),
+    })
+
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      referralError.value =
+        data.message || `Could not send the referral (${res.status}).`
+      return
+    }
+
+    referralResult.value = { ok: true, ref: data.ref }
+    showReferralModal.value = false
+    referralNote.value = ''
+  } catch (e) {
+    referralError.value = `Could not reach the support helper: ${e.message}`
+  } finally {
+    referring.value = false
+  }
+}
+
 function formatMessageContent(msg) {
   if (!msg.content) return ''
   // The answer is Claude's markdown, but it can quote member-supplied data
@@ -885,6 +1071,7 @@ function formatDebugData(data) {
 function cancelQuery() {
   isProcessing.value = false
   transcript.value = []
+  toolProgress.value = null
 }
 
 function formatDate(dateStr) {
@@ -988,6 +1175,14 @@ function formatDate(dateStr) {
 .chat-input-area {
   background: #ffffff;
   border-top: 1px solid #dee2e6;
+}
+
+/* Referral bar - deliberately stands out from the chat so handing over is an
+   obvious next step rather than a hidden one. */
+.referral-bar {
+  background: #fff3cd;
+  border-top: 1px solid #dee2e6;
+  border-bottom: 1px solid #ffe69c;
 }
 
 .message-content {

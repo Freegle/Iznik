@@ -47,10 +47,10 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 				// ORM migration sites 4853849663f1 and e04bf70e7bee (Tier 3
 				// keep-raw review). Both call sites render the same fixed
 				// text - the extractor just could not fold it across the two
-				// call sites - so each has exactly one rendered form, declared
-				// in ormharness/shapes.json and proven by
-				// TestTier3Shapes_4853849663f1 / TestTier3Shapes_e04bf70e7bee
-				// (iznik-server-go/test).
+				// call sites - so each has exactly one rendered form, proven
+				// by the retired ormharness (shapes.json /
+				// TestTier3Shapes_4853849663f1 /
+				// TestTier3Shapes_e04bf70e7bee, removed in d22ba1d6c).
 				sessionQuery := func(tx *gorm.DB) *gorm.DB {
 					return tx.Table("sessions").
 						Select("users.id, users.lastaccess, users.systemrole").
@@ -109,7 +109,6 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// statement at all when the auth SELECT already saw a fresh value.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 && (userIdInDB.Lastaccess.IsZero() || userIdInDB.Lastaccess.Before(time.Now().Add(-10*time.Minute))) {
 			db := database.DBConn
-			// ORM migration site 4319778ec12f (wave 2).
 			db.Table("users").Where("id = ? AND (lastaccess IS NULL OR lastaccess < DATE_SUB(NOW(), INTERVAL 10 MINUTE))", userIdInDB.Id).
 				Update("lastaccess", gorm.Expr("NOW()"))
 		}
@@ -120,7 +119,6 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// active sessions 31 days after login regardless of recent use.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 {
 			db := database.DBConn
-			// ORM migration site 397a8f863bd8 (wave 2).
 			db.Table("sessions").Where("id = ? AND lastactive < DATE_SUB(NOW(), INTERVAL 10 MINUTE)", sessionIdInJWT).
 				Update("lastactive", gorm.Expr("NOW()"))
 		}

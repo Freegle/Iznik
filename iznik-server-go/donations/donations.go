@@ -96,7 +96,6 @@ func MatchUserByEmailOrPriorDonation(email string) uint64 {
 	// 1. Registered address, exact or canonical (reuses the shared util so the
 	//    canon form matches how addresses are stored).
 	canon := user.CanonicalizeEmail(email)
-	// ORM migration site 5ae46192a944 (wave 1).
 	gdb.Table("users_emails").Select("userid").
 		Where("(email = ? OR canon = ?) AND userid IS NOT NULL", email, canon).
 		Limit(1).
@@ -106,7 +105,6 @@ func MatchUserByEmailOrPriorDonation(email string) uint64 {
 	}
 
 	// 2. Prior donation from the same Payer, linked to a still-valid user.
-	// ORM migration site 36a30e931616 (wave 4).
 	gdb.Table("users_donations ud").
 		Select("ud.userid").
 		Joins("JOIN users u ON u.id = ud.userid").
@@ -139,7 +137,6 @@ func GetDonations(c *fiber.Ctx) error {
 	target = getDonationTarget()
 	if groupID != "" {
 		var fundingtarget *int
-		// ORM migration site e05d3c7dc0c1 (wave 1).
 		db.Table("groups").Select("fundingtarget").Where("id = ?", groupID).Scan(&fundingtarget)
 		if fundingtarget != nil && *fundingtarget > 0 {
 			target = *fundingtarget
@@ -151,13 +148,13 @@ func GetDonations(c *fiber.Ctx) error {
 	// Exclude certain payers (eBay partnerships, PayPal Giving Fund) from totals
 	excludedPayers := getExcludedPayers()
 
-	// ORM migration site 31fea9e6f321 (Tier 3 keep-raw review). groupID != ""
+	// groupID != ""
 	// is the only toggle that changes the statement's SHAPE (it drives
 	// whether the memberships join is present); the number of excluded
 	// payers is env-configured (DONATIONS_EXCLUDE), not per-request user
 	// input, so it is effectively fixed at the default count in practice -
-	// 2 possible rendered forms, both declared in ormharness/shapes.json
-	// and proven by TestTier3Shapes_31fea9e6f321 (iznik-server-go/test).
+	// 2 possible rendered forms, both proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_31fea9e6f321, removed in d22ba1d6c).
 	// WHERE built as a single string for ONE Where() call: GORM's
 	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
 	// paren pair once there is more than one Where expression to combine
@@ -218,7 +215,6 @@ func AddDonation(c *fiber.Ctx) error {
 	// Permission check: need GiftAid permission for non-zero amounts.
 	if req.Amount > 0 {
 		var permissions *string
-		// ORM migration site 86e67ec8afc4 (wave 1).
 		db.Table("users").Select("permissions").Where("id = ?", myid).Scan(&permissions)
 
 		hasGiftAid := false
@@ -243,7 +239,6 @@ func AddDonation(c *fiber.Ctx) error {
 		ID   uint64
 		Name string
 	}
-	// ORM migration site 8f09f277831b (wave 1).
 	db.Table("users").
 		Select("id, COALESCE(NULLIF(fullname, ''), NULLIF(TRIM(CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, ''))), ''), '') AS name").
 		Where("id = ?", req.UserID).
@@ -264,7 +259,6 @@ func AddDonation(c *fiber.Ctx) error {
 	//
 	// Second pass: if no external address exists (e.g. social-login-only users whose
 	// only email is the alias), fall back to any email including the alias.
-	// ORM migration site 9330b7d3045a (wave 1).
 	db.Table("users_emails").
 		Select("email").
 		Where("userid = ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE ? AND email NOT LIKE '%@yahoogroups.%'",
@@ -280,7 +274,6 @@ func AddDonation(c *fiber.Ctx) error {
 
 	if preferredEmail == "" {
 		// Second pass: no external email found; accept any email including our-domain aliases.
-		// ORM migration site 3b4f1c2cf9eb (wave 1).
 		db.Table("users_emails").
 			Select("email").
 			Where("userid = ?", req.UserID).
@@ -298,7 +291,6 @@ func AddDonation(c *fiber.Ctx) error {
 		req.UserID, time.Now().UTC().Format("2006-01-02 15:04:05"), SOURCE_BANK_TRANSFER)
 
 	// Insert donation with ON DUPLICATE KEY UPDATE (TransactionID is unique).
-	// ORM migration site 6204c4ea5ebe (wave 3).
 	result := db.Table("users_donations").Clauses(clause.OnConflict{
 		DoUpdates: clause.Set{
 			{Column: clause.Column{Name: "userid"}, Value: clause.Column{Table: "excluded", Name: "userid"}},
@@ -322,7 +314,6 @@ func AddDonation(c *fiber.Ctx) error {
 
 	// Get the inserted ID.
 	var donationID uint64
-	// ORM migration site e2d485938df9 (wave 1).
 	db.Table("users_donations").Select("id").Where("TransactionID = ?", transactionID).Scan(&donationID)
 
 	if donationID == 0 {
@@ -333,12 +324,10 @@ func AddDonation(c *fiber.Ctx) error {
 	// the daily mail:donations:thank-prep digest, not a per-donation email.
 	if req.Amount > 0 {
 		var giftAidPeriod *string
-		// ORM migration site 21e8dbdd136c (wave 1).
 		db.Table("giftaid").Select("period").Where("userid = ? AND deleted IS NULL", req.UserID).Limit(1).Scan(&giftAidPeriod)
 
 		if giftAidPeriod == nil || *giftAidPeriod == PERIOD_THIS {
 			// Create a GiftAid notification for the user.
-			// ORM migration site dcb461443c86 (wave 2).
 			db.Table("users_notifications").Create(map[string]interface{}{
 				"touser":    req.UserID,
 				"type":      gorm.Expr("'GiftAid'"),
@@ -433,7 +422,6 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 		var userID *uint64
 		if d.Email != "" {
 			var uid uint64
-			// ORM migration site 16c4a7f6e566 (wave 1).
 			db.Table("users_emails").Select("userid").Where("email = ? AND userid IS NOT NULL", d.Email).Limit(1).Scan(&uid)
 			if uid > 0 {
 				userID = &uid
@@ -443,7 +431,6 @@ func BulkUploadDonations(c *fiber.Ctx) error {
 		// PayPal Giving Fund donations: type=PayPal, source from program mapping.
 		// Gift Aid is already claimed by PayPal — giftaidconsent defaults to 0
 		// which means GiftAidClaimService will never try to reclaim it.
-		// ORM migration site e71c28654c59 (wave 3).
 		result := db.Table("users_donations").Clauses(clause.OnConflict{
 			DoUpdates: clause.Set{
 				{Column: clause.Column{Name: "userid"}, Value: clause.Column{Table: "excluded", Name: "userid"}},

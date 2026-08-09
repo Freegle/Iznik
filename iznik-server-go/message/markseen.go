@@ -102,7 +102,7 @@ func MarkSeen(c *fiber.Ctx) error {
 		// so different users never conflict; only concurrent same-user mark-seens can.
 		if err := insertViewBatch(db, chunk, myid, source); err != nil && database.IsDeadlockOrLockTimeout(err) {
 			for _, msgID := range chunk {
-				// ORM migration site 61e26594c74d (insertid-conv). No id is
+				// No id is
 				// read back here, so this is a plain ODKU upsert - no
 				// LAST_INSERT_ID/WithResult needed. Uses database.RetryGorm
 				// rather than a bare GORM chain so this per-row degrade-
@@ -140,8 +140,9 @@ func MarkSeen(c *fiber.Ctx) error {
 // behaviour-preserving refactor - insertViewBatch's runtime SQL and
 // database.RetryExec call are unchanged) so the number-of-VALUE-tuples
 // parametrization (n = len(chunk), 1..markSeenChunk) can be proven correct
-// for any n via ormharness.AssertGoldenParametrizedShape
-// (markseen_tier9_test.go) rather than sampled at one or two chunk sizes -
+// for any n via the retired ormharness's AssertGoldenParametrizedShape
+// (markseen_tier9_test.go, removed in d22ba1d6c) rather than sampled at one
+// or two chunk sizes -
 // see keep-raw site 40368b5c844a and
 // plans/active/orm-keepraw-adversarial-review.md §4.
 func buildInsertViewBatchQuery(chunk []uint64, myid uint64, source interface{}) (string, []interface{}) {

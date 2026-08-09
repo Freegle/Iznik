@@ -96,7 +96,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 				Count           int    `gorm:"column:count"`
 			}
 
-			// ORM migration site f3d569f16f75 (wave 4).
 			if err := writer().Table("pc").
 				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
 				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
@@ -128,7 +127,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 				Count           int    `gorm:"column:count"`
 			}
 
-			// ORM migration site 296f97f33779 (wave 5).
 			if err := writer().Table("pc").
 				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
 				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
@@ -156,7 +154,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 				Count           int    `gorm:"column:count"`
 			}
 
-			// ORM migration site 5a510c1a72cd (wave 4).
 			if err := writer().Table("pc").
 				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
 				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
@@ -185,7 +182,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 				Count           int    `gorm:"column:count"`
 			}
 
-			// ORM migration site 9381e335515c (wave 5).
 			if err := writer().Table("pc").
 				Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) as count").
 				Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
@@ -213,7 +209,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		// ORM migration site 7c9ca3ba712a (wave 5).
 		if err := writer().Table("pc").
 			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) AS count").
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
@@ -240,7 +235,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		// ORM migration site 02b7865c1d55 (wave 4).
 		if err := writer().Table("pc").
 			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, CAST(SUM(bi.quantity) AS SIGNED) AS count").
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
@@ -270,7 +264,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		// ORM migration site e37b20384491 (wave 4).
 		if err := writer().Table("pc").
 			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, CAST(SUM(mbii.quantity) AS SIGNED) AS count").
 			Joins("INNER JOIN messages ON messages.locationid = pc.locationid").
@@ -295,7 +288,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 		var avgResult struct {
 			Average *float64 `gorm:"column:average"`
 		}
-		// ORM migration site a496537bc045 (wave 1).
 		if err := writer().Table("items").Select("SUM(popularity * weight) / SUM(popularity) AS average").Where("weight IS NOT NULL AND weight != 0").Scan(&avgResult).Error; err != nil {
 			return err
 		}
@@ -312,7 +304,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Weight          float64 `gorm:"column:weight"`
 		}
 
-		// ORM migration site 6d50d3895aa7 (tier6). The WHERE/JOIN structure was
+		// The WHERE/JOIN structure was
 		// always an ordinary fixed toggle - the real blocker was avg, a
 		// live-recomputed aggregate, spliced in via fmt.Sprintf("%f", avg) as
 		// literal text rather than a bind. Moved onto a genuine bind
@@ -359,7 +351,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Weight          float64 `gorm:"column:weight"`
 		}
 
-		// ORM migration site f281cfe83025 (tier6). Same avg-precision fix as
+		// Same avg-precision fix as
 		// 6d50d3895aa7 above; see that site's comment and
 		// authority/stats_precision_test.go.
 		if err := writer().Table("pc").
@@ -389,7 +381,7 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Weight          float64 `gorm:"column:weight"`
 		}
 
-		// ORM migration site 3ecb2fba572f (tier6). Same avg-precision fix as
+		// Same avg-precision fix as
 		// 6d50d3895aa7 above; see that site's comment and
 		// authority/stats_precision_test.go.
 		if err := writer().Table("pc").
@@ -419,7 +411,6 @@ func GetStatsByAuthority(authorityID uint64, start, end string) (map[string]Post
 			Count           int    `gorm:"column:count"`
 		}
 
-		// ORM migration site 077cd04df2db (wave 4).
 		if err := writer().Table("pc").
 			Select("SUBSTRING(locations.name, 1, LENGTH(locations.name) - 2) AS PartialPostcode, COUNT(*) AS count").
 			Joins("INNER JOIN search_history ON search_history.locationid = pc.locationid").

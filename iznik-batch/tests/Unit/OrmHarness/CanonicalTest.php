@@ -38,7 +38,7 @@ class CanonicalTest extends TestCase
     // remains the file to actually EDIT; this copy and
     // iznik-server-go/ormharness/canonical-corpus.json are kept
     // byte-identical to it by tools/orm-migration/check-canonical-corpus-sync.sh,
-    // wired into gate (q).
+    // wired into the harness.
     private const CORPUS_PATH = __DIR__.'/../../Support/OrmHarness/canonical-corpus.json';
 
     /**

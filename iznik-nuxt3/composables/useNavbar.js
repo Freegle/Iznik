@@ -152,7 +152,13 @@ export function useNavbar() {
       return chatCount.value - chat?.unseen
     }
 
-    return 0
+    // Everywhere else the back button REPLACES the notification bell - NavbarMobile
+    // only renders NotificationOptions when there's no back button. So on any
+    // sub-page (an individual post, an event, Volunteering) a notification arriving
+    // has nowhere to show itself, and you'd only find it by happening to navigate
+    // back. Put the count on the back button instead: it's the way back to the bell,
+    // so the badge is both the news and the route to it.
+    return Math.min(99, notificationStore.count || 0)
   })
 
   const newsCount = computed(() => {
