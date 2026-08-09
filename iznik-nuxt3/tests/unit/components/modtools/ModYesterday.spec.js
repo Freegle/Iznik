@@ -167,6 +167,21 @@ describe('ModYesterday', () => {
       expect(wrapper.find('.alert-danger').exists()).toBe(true)
       expect(wrapper.text()).toContain('Latest restore attempt failed')
     })
+
+    // The production case on 2026-08-09: a restore died mid-flight, so the
+    // loaded backup went stale as well. Reporting only staleness hides the
+    // CAUSE, which is the thing that actually needs fixing, so both have to
+    // show at once rather than the age check winning and silencing the rest.
+    it('shows both the stale warning and the failure when a failed restore left the backup old', async () => {
+      mockFetch
+        .mockResolvedValueOnce(mockRestoreResponse({ status: 'failed' }))
+        .mockResolvedValueOnce(mockCurrentBackupResponse({ date: '20240110' }))
+      const wrapper = mountComponent()
+      await flushPromises()
+      expect(wrapper.find('.alert-danger').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Backup is over 2 days old')
+      expect(wrapper.text()).toContain('Latest restore attempt failed')
+    })
   })
 
   describe('error handling', () => {
