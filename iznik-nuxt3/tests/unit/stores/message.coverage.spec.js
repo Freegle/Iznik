@@ -21,7 +21,6 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const mockApiFetch = vi.fn()
 const mockFetchByUser = vi.fn()
 const mockSave = vi.fn()
-const mockFetch = vi.fn()
 const mockSearch = vi.fn()
 const mockSimilar = vi.fn()
 const mockMatches = vi.fn()
@@ -133,14 +132,7 @@ describe('message store - fetch() cache/batch behaviour', () => {
     expect(mockApiFetch).not.toHaveBeenCalled()
   })
 
-  // TODO: latent bug - fetch() correctly identifies an expired-but-unforced
-  // cache entry as needing a refresh and routes it into the batch, but
-  // fetchMultiple() re-derives its own "needs fetching" filter from
-  // `force || !this.list[id]` alone (it isn't told which ids were expired
-  // vs merely missing). Since the id IS cached and force is false, it never
-  // makes the API call - the stale entry is silently kept forever and the
-  // 10-minute refetch documented at stores/message.js:64-68 never fires.
-  it.skip('re-fetches when the cached entry expired more than 10 minutes ago', async () => {
+  it('re-fetches when the cached entry expired more than 10 minutes ago', async () => {
     const store = useMessageStore()
     store.init({})
     store.list[6] = {
@@ -255,7 +247,10 @@ describe('message store - handleFetchError()', () => {
     store.init({})
 
     expect(() =>
-      store.handleFetchError(30, new APIError({ response: { status: 500 } }, 'x'))
+      store.handleFetchError(
+        30,
+        new APIError({ response: { status: 500 } }, 'x')
+      )
     ).toThrow()
   })
 
@@ -1135,7 +1130,13 @@ describe('message store - reply()/spam()/move()', () => {
     store.list[400] = { id: 400 }
     mockReply.mockResolvedValue({})
 
-    await store.reply({ id: 400, groupid: 1, subject: 's', stdmsgid: 2, body: 'b' })
+    await store.reply({
+      id: 400,
+      groupid: 1,
+      subject: 's',
+      stdmsgid: 2,
+      body: 'b',
+    })
 
     expect(mockReply).toHaveBeenCalledWith(400, 1, 's', 2, 'b')
     expect(store.list[400]).toBeDefined()
@@ -1228,14 +1229,7 @@ describe('message store - remaining getters', () => {
     expect(store.helperById(900)).toEqual({ batch: {} })
   })
 
-  // TODO: latent bug - the inBounds getter is `(state) => (...) => key in
-  // this.bounds ? ... `, but the returned closure is an arrow function so
-  // `this` is never rebound to the store; it resolves to whatever `this` is
-  // in the module's lexical scope (undefined in strict ESM), so any real
-  // call throws "Cannot use 'in' operator ... in undefined" instead of
-  // reading state.bounds. Nothing in the app currently calls .inBounds(),
-  // which is presumably why this has gone unnoticed.
-  it.skip('inBounds returns the cached array for a matching key', () => {
+  it('inBounds returns the cached array for a matching key', () => {
     const store = useMessageStore()
     store.init({})
     store.bounds['1:2:3:4:5'] = [{ id: 1 }]
@@ -1243,7 +1237,7 @@ describe('message store - remaining getters', () => {
     expect(store.inBounds(1, 2, 3, 4, 5)).toEqual([{ id: 1 }])
   })
 
-  it.skip('inBounds returns an empty array when the key is not cached', () => {
+  it('inBounds returns an empty array when the key is not cached', () => {
     const store = useMessageStore()
     store.init({})
 

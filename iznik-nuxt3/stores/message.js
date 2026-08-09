@@ -11,6 +11,9 @@ import { useMiscStore } from '~/stores/misc'
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
 
+// Refetch a cached message after this long, in case its state has changed.
+const CACHE_TTL_SECONDS = 600
+
 export const useMessageStore = defineStore({
   id: 'message',
   state: () => ({
@@ -58,14 +61,18 @@ export const useMessageStore = defineStore({
       this.count = ret?.count || 0
       return this.count
     },
+    // Whether a cached entry is old enough to be refetched. Every "do we need to
+    // go to the API" decision must use this - fetch(), processMessageBatch() and
+    // fetchMultiple() each make that call independently, and if they disagree an
+    // id can be routed into a batch by one and silently dropped by the next.
+    expired(id, now = Math.round(Date.now() / 1000)) {
+      const addedToCache = this.list[id]?.addedToCache
+      return addedToCache ? now - addedToCache > CACHE_TTL_SECONDS : false
+    },
     async fetch(id, force) {
       id = parseInt(id)
 
-      // Refetch after 10 minutes in case the state has changed.
-      const now = Math.round(Date.now() / 1000)
-      const expired = this.list[id]?.addedToCache
-        ? now - this.list[id].addedToCache > 600
-        : false
+      const expired = this.expired(id)
 
       // If already cached and not forcing/expired, return immediately
       if (!force && this.list[id] && !expired) {
@@ -130,11 +137,10 @@ export const useMessageStore = defineStore({
       const now = Math.round(Date.now() / 1000)
 
       for (const { id, force } of pending) {
-        const expired = this.list[id]?.addedToCache
-          ? now - this.list[id].addedToCache > 600
-          : false
-
-        if ((force || !this.list[id] || expired) && !this.fetching[id]) {
+        if (
+          (force || !this.list[id] || this.expired(id, now)) &&
+          !this.fetching[id]
+        ) {
           if (!idsToFetch.includes(id)) {
             idsToFetch.push(id)
           }
@@ -161,11 +167,15 @@ export const useMessageStore = defineStore({
     },
     async fetchMultiple(ids, force) {
       const left = []
+      const now = Math.round(Date.now() / 1000)
 
       ids.forEach((id) => {
         id = parseInt(id)
 
-        if ((force || !this.list[id]) && !this.fetching[id]) {
+        if (
+          (force || !this.list[id] || this.expired(id, now)) &&
+          !this.fetching[id]
+        ) {
           left.push(id)
         }
       })
@@ -896,7 +906,7 @@ export const useMessageStore = defineStore({
       const key =
         swlat + ':' + swlng + ':' + nelat + ':' + nelng + ':' + groupid
 
-      return key in this.bounds ? this.bounds[key] : []
+      return key in state.bounds ? state.bounds[key] : []
     },
     all: (state) => Object.values(state.list),
     byUser: (state) => (userid) => {
