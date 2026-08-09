@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // MarkCheckedRequest is the request body for marking auto-published posts as
@@ -102,7 +103,18 @@ func MarkChecked(c *fiber.Ctx) error {
 			// advanceDue only advances status='expanding' rows, so this is a hard stop;
 			// the rippled-in copies themselves are retracted by the engine's existing
 			// stale-post retraction on its next tick.
-			db.Exec("UPDATE rippling_reach SET status = 'stopped' WHERE msgid = ?", h.Msgid)
+			//
+			// The earned-reach await clock is settled in the same statement: a post the
+			// gate had paused stops waiting for review the moment a moderator rejects it,
+			// so the time waited is banked and the stamp cleared. Leaving the stamp set
+			// would keep this dead row in the SysAdmin "awaiting review now" count for ever.
+			db.Table("rippling_reach").Where("msgid = ?", h.Msgid).
+				Updates(map[string]interface{}{
+					"status": gorm.Expr("'stopped'"),
+					"awaiting_review_seconds": gorm.Expr(
+						"awaiting_review_seconds + IFNULL(TIMESTAMPDIFF(SECOND, awaiting_review_since, NOW()), 0)"),
+					"awaiting_review_since": gorm.Expr("NULL"),
+				})
 		}
 
 		return c.JSON(fiber.Map{"success": true, "rejected": r.RowsAffected})

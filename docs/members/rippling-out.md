@@ -18,6 +18,19 @@ it, it reaches further afield automatically - you do not need to do anything ext
 If enough people nearby reply to your post, it stops spreading further - it already has
 plenty of interest, so there is no need to show it to people further away.
 
+### How fast a post spreads
+
+How quickly your post travels can depend on how it was published. A post a volunteer
+moderator has looked at spreads on the normal schedule straight away. On communities
+where posts publish automatically after the safety checks, an automatically published
+post starts a little more carefully: it stays with your own community for
+about the first hour, and it then spreads at the pace people are actually seeing it -
+each step further out needs a few people to have seen the post without anyone raising a
+concern. For a normal post this is invisible: your neighbours see it immediately and it
+still works outwards over the following hours. If somebody does report a post to the
+moderators, it quietly stops spreading any further until a volunteer has taken a look -
+people who could already see it still can.
+
 ---
 
 ## What happens when your post ripples into a new community?

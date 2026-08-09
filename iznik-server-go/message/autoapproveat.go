@@ -32,6 +32,18 @@ func cleanPathEnabledFor(gid uint64) bool {
 	return false
 }
 
+// dangerLogDays mirrors AutoApproveCleanService::dangerLogDays() - how far back a
+// negative moderation action against the poster vetoes auto-approval. Configurable on
+// the cron side (FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS, default 90); read here from the
+// same variable so the countdown cannot disagree with what the cron will actually do.
+func dangerLogDays() int {
+	if v, err := strconv.Atoi(strings.TrimSpace(os.Getenv("FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS"))); err == nil && v > 0 {
+		return v
+	}
+
+	return 90
+}
+
 // phpTruthy mirrors PHP's !empty(): nil, false, 0, "" and "0" are falsy; everything
 // else is truthy. Used so the Go group-allows check matches AutoApproveCleanService's
 // PHP getSetting()/empty() semantics exactly.
@@ -87,12 +99,18 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 	idNum, _ := strconv.ParseUint(idStr, 10, 64)
 
 	// Danger signals — mirror AutoApproveCleanService::hasDangerSignals exactly. One
-	// combined query: danger=1 if ANY signal fires for this poster/message/groups.
+	// combined query: danger=1 if ANY signal fires for this poster/message/groups. The
+	// log window is the cron's own configurable one (see dangerLogDays): hardcoding 90
+	// here would show "no countdown" for a post the cron is about to publish, or the
+	// reverse, whenever ops tuned it.
+	//
+	// keep-raw: five independent EXISTS subqueries combined into one boolean projection
+	// with no FROM clause — GORM's chain builder cannot render this shape.
 	var danger bool
 	db.Raw(`SELECT (
 		EXISTS (SELECT 1 FROM microactions WHERE msgid = ? AND actiontype = 'CheckMessage' AND result = 'Reject')
 		OR EXISTS (SELECT 1 FROM users_comments WHERE userid = ?)
-		OR EXISTS (SELECT 1 FROM logs WHERE user = ? AND timestamp >= NOW() - INTERVAL 90 DAY
+		OR EXISTS (SELECT 1 FROM logs WHERE user = ? AND timestamp >= NOW() - INTERVAL ? DAY
 			AND (byuser != user OR byuser IS NULL)
 			AND ((type = 'Message' AND subtype IN ('Rejected','Deleted','Replied'))
 			  OR (type = 'User' AND subtype IN ('Mailed','Rejected','Deleted','Suspect','ClassifiedSpam'))))
@@ -101,11 +119,16 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 			AND reviewrequestedat IS NOT NULL
 			AND (reviewedat IS NULL OR reviewedat < reviewrequestedat))
 	) AS danger`,
-		idNum, message.Fromuser, message.Fromuser, message.Fromuser, message.Fromuser, gids,
+		idNum, message.Fromuser, message.Fromuser, dangerLogDays(), message.Fromuser, message.Fromuser, gids,
 	).Scan(&danger)
 	if danger {
 		return
 	}
+
+	// The cron also excludes a post whose MESSAGE-level spam reason is set (not just the
+	// per-group one). The Message payload does not carry that column, so read it once.
+	var msgSpamreason bool
+	db.Table("messages").Select("spamreason IS NOT NULL").Where("id = ?", idNum).Scan(&msgSpamreason)
 
 	for _, i := range pendingIdx {
 		mg := &groups[i]
@@ -153,12 +176,19 @@ func computeAutoapproveat(db *gorm.DB, message *Message, groups []MessageGroup, 
 			}
 		}
 
+		// rippled_in and spamreason mirror the cron's candidate query: a rippled-in copy
+		// belongs to AutoApproveService (the clean path structurally never sees it), and a
+		// row with a spam reason is excluded even when it is not in the Spam collection. A
+		// countdown for either would promise an auto-approval that cannot happen.
 		onCleanPath := cleanPathEnabledFor(mg.Groupid) &&
 			groupAllows &&
 			row.OurPostingStatus == nil &&
 			mg.ContentcheckCheckedAt != nil &&
 			mg.ContentcheckReasons == nil &&
-			mg.QualitySample == 0
+			mg.QualitySample == 0 &&
+			mg.RippledIn == 0 &&
+			mg.Spamreason == nil &&
+			!msgSpamreason
 
 		// delay_minutes / quality_check_percent from settings.autoapprove (0/absent => default).
 		delayMinutes := 20

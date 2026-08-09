@@ -115,6 +115,39 @@ func TestAutoapproveatPendingModGating(t *testing.T) {
 }
 
 
+// The danger-signal log window is configurable for the cron
+// (FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS, default 90). The countdown must honour the
+// same setting, or the two disagree about whether a post will auto-approve: a
+// hardcoded 90 in the countdown shows "no countdown" for a post the cron is about
+// to publish.
+func TestAutoapproveatDangerLogDaysConfigurable(t *testing.T) {
+	t.Setenv("FREEGLE_AUTOAPPROVE_ENABLED", "true")
+	t.Setenv("FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS", "7")
+	prefix := uniquePrefix("aadangerdays")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, poster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", poster, groupID)
+	_, modToken := CreateTestSession(t, modID)
+
+	msg := CreateTestMessage(t, poster, groupID, prefix+" clean pending", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Pending', arrival=NOW() - INTERVAL 5 MINUTE, contentcheck_checked_at=NOW() - INTERVAL 4 MINUTE, contentcheck_reasons=NULL, autoapprove_hold_until=NULL WHERE msgid=?", msg)
+
+	// A negative moderation log 30 days old: inside the default 90-day window,
+	// outside the configured 7-day one - so it must NOT suppress the countdown.
+	db.Exec("INSERT INTO logs (type, subtype, user, byuser, timestamp) VALUES ('Message', 'Rejected', ?, ?, NOW() - INTERVAL 30 DAY)", poster, modID)
+	defer db.Exec("DELETE FROM logs WHERE user=? AND type='Message' AND subtype='Rejected'", poster)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid=?", msg)
+	defer db.Exec("DELETE FROM messages WHERE id=?", msg)
+
+	assert.NotNil(t, getAutoapproveatField(t, msg, groupID, modToken),
+		"a negative log outside the configured danger window must not suppress the countdown")
+}
+
 // The rollout gate (FREEGLE_AUTOAPPROVE_ENABLED / FREEGLE_AUTOAPPROVE_TRIAL_GROUPS)
 // mirrors AutoApproveCleanService::enabledGroupIds. With the gate off (the default) a
 // clean pending post must NOT show the 20-minute countdown — the clean path will not
@@ -260,9 +293,12 @@ func TestMarkCheckedReject(t *testing.T) {
 	// group. The reject must hard-stop the reach and must NOT touch the rippled-in copy
 	// (the engine's own retraction handles those).
 	groupB := CreateTestGroup(t, prefix+"_b")
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival) "+
+	// Mid-pause when rejected: the awaiting stamp must be banked and cleared by the
+	// reject, or the "posts awaiting review" metric counts this dead row forever.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, awaiting_review_since) "+
 		"VALUES (?, 52.0, -1.0, ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857), "+
-		"ST_Envelope(ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857)), NOW())", approved)
+		"ST_Envelope(ST_GeomFromText('POLYGON((-1.2 51.9,-0.8 51.9,-0.8 52.1,-1.2 52.1,-1.2 51.9))', 3857)), NOW(), "+
+		"NOW() - INTERVAL 10 MINUTE)", approved)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", approved, groupB)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid=?", approved)
@@ -300,6 +336,13 @@ func TestMarkCheckedReject(t *testing.T) {
 	var reachStatus string
 	db.Raw("SELECT status FROM rippling_reach WHERE msgid=?", approved).Scan(&reachStatus)
 	assert.Equal(t, "stopped", reachStatus, "reject must stop the reach row synchronously")
+
+	// The await-review pause is settled by the reject: time banked, stamp cleared.
+	var awaitOpen, awaitBanked int64
+	db.Raw("SELECT COUNT(*) FROM rippling_reach WHERE msgid=? AND awaiting_review_since IS NOT NULL", approved).Scan(&awaitOpen)
+	db.Raw("SELECT awaiting_review_seconds FROM rippling_reach WHERE msgid=?", approved).Scan(&awaitBanked)
+	assert.Equal(t, int64(0), awaitOpen, "reject must clear the awaiting stamp")
+	assert.GreaterOrEqual(t, awaitBanked, int64(590), "reject must bank the paused time")
 
 	// The rippled-in copy on the other group is untouched (the engine retracts those).
 	var rippledCopy int64

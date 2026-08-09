@@ -51,8 +51,10 @@ Some posts on your community will have started on another community and rippled 
 yours. You will see a small notice on the post making this clear ("This post has rippled
 in from a neighbouring community").
 
-A post only ripples after it has already been approved on the community where it started,
-so it has already been vetted. We therefore do not make it sit out a full review again.
+A post only ripples after it has gone live on the community where it started, so it has
+already been vetted there - by a moderator, or (where
+[post-moderation](post-moderation.md) is switched on) by the automated checks plus the
+exposure gate described below. We therefore do not make it sit out a full review again.
 **With the default settings it is approved on your community straight away** - it appears
 among your approved posts with the rippled-in notice, not in your pending list. You can
 still reject it for the usual reasons (spam, breaks the rules, wrong sort of thing) - see
@@ -62,6 +64,28 @@ still reject it for the usual reasons (spam, breaks the rules, wrong sort of thi
 set above zero - a rippled-in post instead waits in your pending list for that many hours
 and auto-approves if nobody rejects it first. Either way, "they're not from round here" is
 never a reason to reject.)
+
+#### Posts that published without a human look ripple on a leash
+
+Where **[post-moderation](post-moderation.md)** is switched on, some posts go live via
+the automated checks rather than a moderator's click. Those posts do not ripple freely
+(this part is controlled by its own switch, off by default):
+
+- They wait about **an hour** after publishing before they start rippling at all, so
+  their home community gets first look.
+- After that, **reach is earned by clean exposure**: spreading into each additional
+  community requires that a number of members have already seen the post with nobody
+  objecting - a member report to the mods or a microvolunteer rejection **pauses all
+  further spread**, including the visible reach area, until a moderator looks.
+- **Your look settles it**: checking the post (see the oversight queues in the
+  post-moderation guide) clears the gate entirely; rejecting it pulls it back.
+- Posts a moderator approved by hand are exempt and ripple exactly as this guide
+  describes.
+
+So a rippled-in post on your community has either been approved by a human on its origin
+community, or has earned its way to you by being seen without complaint - and if anyone
+objects on the way, it stops spreading until a moderator decides. The practical rule for
+you is unchanged: reject it for real reasons, never for being out of area.
 
 ### 2. A reach/map view on posts
 

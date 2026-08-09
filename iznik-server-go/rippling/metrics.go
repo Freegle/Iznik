@@ -585,11 +585,22 @@ func Metrics(c *fiber.Ctx) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// Only LIVE rows can be waiting: a post whose reach was stopped (oversight reject)
+		// or frozen for moderation ('held') is not awaiting review, it is finished with —
+		// counting a stamped dead row would leave it in "awaiting review now" for ever, and
+		// its banked seconds would masquerade as a post that resumed. Reject clears the
+		// stamp as it stops the row; this predicate is the backstop for rows stopped by
+		// any other path.
+		//
+		// keep-raw: three conditional aggregates (SUM/AVG over CASE with TIMESTAMPDIFF) in
+		// one pass — GORM's chain builder cannot render a multi-aggregate projection.
 		db.Raw(`SELECT
-			COALESCE(SUM(CASE WHEN awaiting_review_since IS NOT NULL THEN 1 ELSE 0 END), 0) AS awaiting_count,
-			COALESCE(AVG(CASE WHEN awaiting_review_since IS NOT NULL
+			COALESCE(SUM(CASE WHEN awaiting_review_since IS NOT NULL AND status = 'expanding'
+			               THEN 1 ELSE 0 END), 0) AS awaiting_count,
+			COALESCE(AVG(CASE WHEN awaiting_review_since IS NOT NULL AND status = 'expanding'
 			                  THEN TIMESTAMPDIFF(SECOND, awaiting_review_since, NOW()) END), 0) AS median_await_seconds,
 			COALESCE(SUM(CASE WHEN awaiting_review_since IS NULL AND awaiting_review_seconds > 0
+			                   AND status IN ('expanding', 'done')
 			               THEN 1 ELSE 0 END), 0) AS resumed_count
 		FROM rippling_reach`).Scan(&rdSnap)
 	}()

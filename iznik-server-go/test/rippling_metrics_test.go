@@ -648,6 +648,51 @@ func TestRipplingMetricsReviewDelayAwaiting(t *testing.T) {
 	assert.GreaterOrEqual(t, rd["median_await_seconds"].(float64), float64(0), "median_await_seconds non-negative")
 }
 
+// A stamped row whose reach is no longer running (status stopped - e.g. rejected from
+// the oversight queue, or retracted) must not appear in the "awaiting review now"
+// snapshot, and its banked seconds must not count it as "resumed" - it did not resume,
+// it died. Only live (expanding) rows can be awaiting; only live-or-completed rows can
+// have resumed.
+func TestRipplingMetricsReviewDelayIgnoresDeadRows(t *testing.T) {
+	prefix := uniquePrefix("ripplerddead")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
+	_, token := CreateTestSession(t, adminID)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	db := database.DBConn
+	db.Exec("ALTER TABLE rippling_reach ADD COLUMN awaiting_review_since TIMESTAMP NULL")
+	db.Exec("ALTER TABLE rippling_reach ADD COLUMN awaiting_review_seconds INT UNSIGNED NOT NULL DEFAULT 0")
+
+	fetch := func() (float64, float64) {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/rippling/metrics?jwt=%s", token), nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result map[string]interface{}
+		json.Unmarshal(rsp(resp), &result)
+		rd, _ := result["review_delay"].(map[string]interface{})
+		return rd["awaiting_count"].(float64), rd["resumed_count"].(float64)
+	}
+	beforeAwaiting, beforeResumed := fetch()
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" dead stamped row", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+
+	// Stopped AND stamped AND with banked seconds: must move neither figure.
+	db.Exec(
+		"INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, status, awaiting_review_since, awaiting_review_seconds) "+
+			"VALUES (?, 51.5, -0.1, ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+			"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
+			"NOW() - INTERVAL 2 HOUR, 'stopped', NOW() - INTERVAL 30 MINUTE, 600) "+
+			"ON DUPLICATE KEY UPDATE status = 'stopped', awaiting_review_since = NOW() - INTERVAL 30 MINUTE, awaiting_review_seconds = 600",
+		msgID)
+
+	afterAwaiting, afterResumed := fetch()
+	assert.Equal(t, beforeAwaiting, afterAwaiting, "a stopped row must not count as awaiting review")
+	assert.Equal(t, beforeResumed, afterResumed, "a stopped row's banked seconds must not count as resumed")
+}
+
 // A reach row with awaiting_review_seconds accumulated and arrival in the default window lifts
 // post_hours_delayed (7200s / 3600 = 2 post-hours).
 func TestRipplingMetricsReviewDelayPostHours(t *testing.T) {

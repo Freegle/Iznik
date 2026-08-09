@@ -370,6 +370,35 @@ For each due post, `ripple:expand`:
 ripple-join (`logs.text = 'Rippled'`) and they then left, rippling does not re-add them: they
 opted out of a rippled membership. A later ordinary join-then-leave does not block rippling.
 
+### The earned-reach gate (`RIPPLE_EARNED_REACH_ENABLED`, dark by default)
+
+With post-moderation (see
+[../../moderators/post-moderation.md](../../moderators/post-moderation.md)) a post can be
+live without any human look (origin `approvedby` NULL, no `checkedat` anywhere). The gate
+stops such posts spreading ahead of scrutiny:
+
+- **Hold**: `initialiseNew` skips an unreviewed post until it is
+  `RIPPLE_AUTOAPPROVE_HOLD_SECONDS` (default 1h) old. No reach row exists during the hold,
+  so the post is absent from every reach consumer (§7). A mod look (approve/check) lifts
+  it; `--msgid` runs bypass it like the arrival cutoff.
+- **Exposure cap**: before `advanceDue` persists a tick's polygon, the gate requires
+  `RIPPLE_CLEAN_VIEWS_PER_GROUP` (default 5) distinct non-poster viewers
+  (`messages_likes` type View) per community the post would then be on (already rippled-in
+  + this tick's candidates), and no flag - a flag being any `User2Mod` chat message
+  referencing the post from a non-poster, or a microvolunteer Reject. A capped tick is
+  **not consumed**: the polygon, `tick` and `status` stay put (so every §7 consumer of the
+  polygon freezes with it), `awaiting_review_since` is stamped, and `next_expansion_at` is
+  pushed a few minutes out for re-evaluation. When exposure catches up, a mod looks, or
+  the gate is switched off, the paused time is banked into `awaiting_review_seconds`, the
+  stamp cleared, and the advance proceeds from the tick where it stopped. The same
+  verdict gates the tick-0 ripple-in inside `rippleIntoNewGroups`.
+- **Consumers must respect the pause**: anything that pushes a post to people beyond its
+  current polygon has to check the gate itself. `firstreply` scouts do this by skipping
+  unreviewed posts entirely while the gate is on (a scout is a hand-picked invitation to
+  someone beyond the edge, and a scout reply raises `min_tick`).
+- The oversight **reject** (Go `markchecked.go`) sets the reach row `status = 'stopped'`
+  and settles the await stamp in the same statement.
+
 ## 6. Retraction
 
 As a capped reach shrinks or the reachable set changes, `retractOutOfReachCopies`
@@ -647,6 +676,9 @@ Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-d
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+- `earned_reach_enabled` (`RIPPLE_EARNED_REACH_ENABLED`), `autoapprove_hold_seconds`
+  (`RIPPLE_AUTOAPPROVE_HOLD_SECONDS`, 3600), `clean_views_per_group`
+  (`RIPPLE_CLEAN_VIEWS_PER_GROUP`, 5) - the earned-reach gate (§5).
 
 Per-community rather than config: `groups.settings.rippling.{out,in}` switches rippling off for
 one community in either direction (§4a), set only via `php artisan ripple:opt-out`.
@@ -658,9 +690,11 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   exact polygon (see §7; `outer_bound` is NOT NULL + spatially indexed and drives the
   browse R-tree), cached slim `schedule` (per-tick drive-time / audience / reached-group
   ids, no geometry), `tick`, `status` (expanding / stopped / done / held),
-  `reachable_group_ids` (the current tick's set, used by retraction), and the sizing decision
-  the post was built under - `density_band`, `density_radius_miles`, `max_minutes_cap` (§3a).
-  Bounds maintained in the same statements as the polygon writes; prod schema migrated via
+  `reachable_group_ids` (the current tick's set, used by retraction), the sizing decision
+  the post was built under - `density_band`, `density_radius_miles`, `max_minutes_cap` (§3a)
+  - and the earned-reach instrumentation `awaiting_review_since` / `awaiting_review_seconds`
+  (§5: stamp while cap-paused, lifetime accumulator once resumed or settled). Bounds
+  maintained in the same statements as the polygon writes; prod schema migrated via
   `ripple:migrate-reach-bounds-schema` (shadow copy + swap).
 - `rippling_held_replies` - one row per reply held for being outside the reach, with `dueat`
   (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes

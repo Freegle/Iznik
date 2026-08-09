@@ -28,6 +28,11 @@ class ExpandService
     /** Metres to blur a poster's origin before it drives the reach (matches Utils::BLUR_USER). */
     private const BLUR_USER = 400;
 
+    /** How soon a post paused by the earned-reach gate is re-evaluated. Its inputs (views,
+     *  flags, a mod look) move on human timescales, so re-checking every minute would be
+     *  pure load; the tick is not consumed while paused, so nothing is lost by waiting. */
+    private const REVIEW_RECHECK_MINUTES = 5;
+
     /** Maintains the sandwich-bounds columns alongside every polygon write. */
     private ReachBoundsService $bounds;
 
@@ -1279,6 +1284,39 @@ class ExpandService
                     }
                     $tickWkt = $tickGeom['wkt'];
                     $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
+
+                    // Targeting ids for THIS tick: prefer the stored slim schedule's per-tick
+                    // set (exact for this drive-time); fall back to the cached column
+                    // (schedules stored before per-tick ids existed). Resolved BEFORE the
+                    // write because the earned-reach gate needs them to see which communities
+                    // this tick would actually add.
+                    $cachedReachable = null;
+                    if ($this->reachableGateEnabled()) {
+                        $cachedReachable = is_array($entry['reachable_group_ids'] ?? null)
+                            ? array_map('intval', $entry['reachable_group_ids'])
+                            : null;
+                        if ($cachedReachable === null) {
+                            $raw = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('reachable_group_ids');
+                            $cachedReachable = $raw ? json_decode($raw, true) : null;
+                        }
+                    }
+
+                    // EARNED-REACH GATE (dark unless RIPPLE_EARNED_REACH_ENABLED), evaluated
+                    // BEFORE the polygon is written. The polygon is what the nearby browse
+                    // feed, search and the reach mailer read, so a post held for review has to
+                    // freeze its reach, not just its community placements - otherwise it keeps
+                    // reaching further-away members while "paused". The tick is deliberately
+                    // NOT consumed: nothing advances, the post is re-checked shortly, and it
+                    // resumes from here once exposure catches up or a moderator looks.
+                    if ($this->advanceCappedByReview((int) $row->msgid, $storeWkt, $cachedReachable)) {
+                        $this->pauseForReview((int) $row->msgid);
+                        $stats['reach_capped']++;
+                        $this->logEvent($row->msgid, 'review_capped', (int) $row->tick, []);
+                        continue;
+                    }
+                    // Not (or no longer) held: settle the await-review clock before advancing.
+                    $this->bankAwaitingReview((int) $row->msgid);
+
                     // Polygon + derived bounds in ONE statement (no stale-bounds window);
                     // envelope retry if the derivation throws on pathological geometry.
                     $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
@@ -1322,19 +1360,7 @@ class ExpandService
                     if ($tickGeom['outer'] !== null) {
                         $this->bounds->sync((int) $row->msgid, $tickGeom['outer'], $tickGeom['inner']);
                     }
-                    // Targeting ids for THIS tick: prefer the stored slim schedule's
-                    // per-tick set (exact for this drive-time); fall back to the cached
-                    // column (schedules stored before per-tick ids existed).
-                    $cachedReachable = null;
-                    if ($this->reachableGateEnabled()) {
-                        $cachedReachable = is_array($entry['reachable_group_ids'] ?? null)
-                            ? array_map('intval', $entry['reachable_group_ids'])
-                            : null;
-                        if ($cachedReachable === null) {
-                            $raw = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('reachable_group_ids');
-                            $cachedReachable = $raw ? json_decode($raw, true) : null;
-                        }
-                    }
+                    // ($cachedReachable was resolved before the write, for the review gate.)
                     $this->rippleIntoNewGroups((int) $row->msgid, $storeWkt, $stats, $cachedReachable);
                     // Reach mail decoupled into `mail:digest:unified --mode=reach` — see
                     // initialiseNew and UnifiedDigestService::sendReachDigests.
@@ -1403,10 +1429,16 @@ class ExpandService
      */
     private function isFlagged(int $msgid, int $fromuser): bool
     {
+        // cm.userid = cr.user1 restricts this to the MEMBER side of the conversation. A
+        // User2Mod room is one member talking to a mod team, so anything from another
+        // userid is the team itself - and a moderator discussing a post with a member
+        // (or replying to an unrelated report that mentions it) is not a complaint about
+        // it. Without this, a mod's own message froze the post's spread until another
+        // mod checked it.
         $reported = (int) DB::selectOne(
             "SELECT COUNT(*) AS n FROM chat_messages cm
              INNER JOIN chat_rooms cr ON cr.id = cm.chatid AND cr.chattype = 'User2Mod'
-             WHERE cm.refmsgid = ? AND cm.userid != ?",
+             WHERE cm.refmsgid = ? AND cm.userid = cr.user1 AND cm.userid != ?",
             [$msgid, $fromuser]
         )->n;
         if ($reported > 0) {
@@ -1428,6 +1460,226 @@ class ExpandService
              WHERE msgid = ? AND (approvedby IS NOT NULL OR checkedat IS NOT NULL)',
             [$msgid]
         )->n > 0;
+    }
+
+    /**
+     * Does the earned-reach gate apply to this post at all? Only to a post that went live
+     * without a human look: gate switched on, origin row auto-published (approvedby NULL),
+     * no mod look anywhere, and a non-zero exposure requirement configured.
+     */
+    private function earnedReachApplies(int $msgid): bool
+    {
+        if (!config('freegle.ripple.earned_reach_enabled', false)) {
+            return false;
+        }
+        if ((int) config('freegle.ripple.clean_views_per_group', 5) <= 0) {
+            return false;
+        }
+
+        // first() not value(): a NULL approvedby and a missing row must be distinguishable.
+        $originRow = DB::table('messages_groups')
+            ->where('msgid', $msgid)->orderBy('arrival')->first(['approvedby']);
+
+        return $originRow !== null && $originRow->approvedby === null && !$this->modLooked($msgid);
+    }
+
+    /**
+     * The gate's verdict for a step that would put the post on $candidateCount NEW
+     * communities: pause unless nobody has flagged it AND it has clean_views_per_group
+     * distinct clean views for every community it would then be on.
+     *
+     * Callers must have established earnedReachApplies() first.
+     */
+    private function earnedReachCapped(int $msgid, int $fromuser, int $candidateCount): bool
+    {
+        if ($this->isFlagged($msgid, $fromuser)) {
+            // A complaint pauses spread outright, however quietly the post has been seen -
+            // and it pauses the reach polygon too, not merely the community placements.
+            return true;
+        }
+
+        $alreadyRippledIn = (int) DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('rippled_in', 1)->where('deleted', 0)->count();
+        $requiredViews = (int) config('freegle.ripple.clean_views_per_group', 5)
+            * ($alreadyRippledIn + $candidateCount);
+
+        return $this->cleanViews($msgid, $fromuser) < $requiredViews;
+    }
+
+    /** Start (or leave running) the await-review clock for a post the gate has paused. */
+    private function stampAwaitingReview(int $msgid): void
+    {
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'awaiting_review_since' => DB::raw('IF(awaiting_review_since IS NULL, NOW(), awaiting_review_since)'),
+            'updated_at' => now(),
+        ]);
+    }
+
+    /**
+     * Settle the await-review clock: bank the time waited into the lifetime accumulator and
+     * clear the stamp. Called whenever the gate stops holding the post - exposure caught up,
+     * a moderator looked, or the gate was switched off - so "posts awaiting review now" never
+     * counts a post that is no longer waiting. No-op when it was not paused.
+     */
+    private function bankAwaitingReview(int $msgid): void
+    {
+        DB::table('rippling_reach')
+            ->where('msgid', $msgid)
+            ->whereNotNull('awaiting_review_since')
+            ->update([
+                'awaiting_review_seconds' => DB::raw(
+                    'awaiting_review_seconds + TIMESTAMPDIFF(SECOND, awaiting_review_since, NOW())'
+                ),
+                'awaiting_review_since' => null,
+                'updated_at' => now(),
+            ]);
+    }
+
+    /**
+     * Hold this post's expansion for another few minutes without consuming the tick: the
+     * polygon, tick and status are left exactly as they are, so every consumer of the reach
+     * (browse, search, reach mail, retraction) freezes with it, and the post resumes from
+     * where it stopped once exposure catches up or a moderator looks. Re-checked soon rather
+     * than every minute, because the inputs (views, flags) move on human timescales.
+     */
+    private function pauseForReview(int $msgid): void
+    {
+        $this->stampAwaitingReview($msgid);
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'next_expansion_at' => now()->addMinutes(self::REVIEW_RECHECK_MINUTES),
+            'updated_at' => now(),
+        ]);
+    }
+
+    /**
+     * The groups a post would ripple into for a given reach polygon: covered by the polygon
+     * (and, when the reachable gate is on, actually reachable by road), not already carrying
+     * the post, not opted out of by the poster, not banning them.
+     *
+     * Extracted so the earned-reach gate can count the candidates a step WOULD add before
+     * the polygon is written, rather than discovering them afterwards.
+     *
+     * @return array<int,object> rows with an ->id
+     */
+    private function rippleTargetsFor(int $msgid, int $fromuser, string $reachWkt, ?array $reachableGroupIds): array
+    {
+        // Reachable-gate (plan 2026-07-06): when enabled AND the routing server sent a
+        // reachable-group set, restrict targets to groups containing a road node
+        // reachable from the origin - so a reach polygon that overshoots water can't
+        // ripple across an uncrossable barrier. The polygon ST_Intersects stays as the
+        // cheap spatial-index prefilter; this is an AND gate on top. IDs are
+        // server-sourced int64s, cast via (int) so they can't inject. Empty set or gate
+        // off => clause omitted => unchanged behaviour (fall back to polygon only).
+        $reachableGate = ($this->reachableGateEnabled() && !empty($reachableGroupIds))
+            ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
+            : '';
+
+        // Ripple-IN opt-out (groups.settings.rippling.in): never crosspost into a community
+        // that has switched rippling off. The `%playground%` name test below predates this
+        // and stays as belt-and-braces for a playground community created before anyone gives
+        // it the setting; the setting is the deliberate, per-community mechanism (set by
+        // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
+        $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
+
+        // Resolve the target groups with a plain, NON-LOCKING snapshot SELECT first, then
+        // insert each membership row on its own. The previous single INSERT ... SELECT took
+        // shared next-key locks on EVERY source row it read - the groups scan, the
+        // messages_groups dup check and the triple-nested `logs` "rippled-then-left" scan
+        // (100k-2.6M rows) - and held them for the whole statement under REPEATABLE READ. Run
+        // concurrently (the scheduler piled up dozens of overlapping runs) those locks collided
+        // on the messages_groups msgid index and on `logs`, starving the serial background
+        // worker's audit inserts (2026-06-26 1205 lock-wait storm + backlog). A read SELECT
+        // takes no row locks; each per-row INSERT IGNORE locks only the row it writes, briefly,
+        // and is Galera-safe (one row per statement). Mirrors addPosterMembershipToRippledGroups.
+        //
+        // keep-raw: spatial ST_Intersects/ST_GeometryType predicates over a WKT literal, a
+        // dynamic reachable-id IN fragment, a dynamic ripple-in opt-out fragment, and
+        // correlated NOT EXISTS subqueries with their own nested most-recent-join logic -
+        // the builder cannot render this shape.
+        return DB::select(
+            "SELECT g.id
+             FROM `groups` g
+             WHERE g.publish = 1
+               AND g.type = 'Freegle'
+               AND g.onhere = 1
+               AND g.nameshort NOT LIKE '%playground%'" . $inOptOut . "
+               AND g.polyindex IS NOT NULL
+               AND ST_GeometryType(g.polyindex) <> 'POINT'
+               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "
+               AND NOT EXISTS (
+                   SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
+               )
+               AND NOT EXISTS (
+                   -- Suppress re-rippling only when the poster's MOST RECENT Group/Joined log
+                   -- for this group is a ripple-join (text='Rippled') AND they then LEFT it -
+                   -- i.e. the membership they last opted out of was a rippled one. Most recent
+                   -- join wins: the NOT EXISTS lj2 makes lj the latest Joined, so a later
+                   -- manual/ordinary join (then leave) means they treated it as a normal group
+                   -- and rippling is NOT blocked; ll.id > lj.id requires the leave to follow
+                   -- that ripple-join. Sites B/C apply the identical rule.
+                   SELECT 1 FROM logs lj
+                   WHERE lj.user = ? AND lj.groupid = g.id
+                     AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM logs lj2
+                         WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
+                           AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
+                           AND lj2.id > lj.id
+                     )
+                     AND EXISTS (
+                         SELECT 1 FROM logs ll
+                         WHERE ll.user = lj.user AND ll.groupid = lj.groupid
+                           AND ll.type = 'Group' AND ll.subtype = 'Left'
+                           AND ll.id > lj.id
+                     )
+               )
+               AND NOT EXISTS (
+                   -- A ban is an explicit mod ejection: it withdraws the poster's live posts
+                   -- and (modern ban) deletes their membership while recording a users_banned
+                   -- row. Never ripple a poster's post into a group they are banned from - that
+                   -- would silently re-insert the post (and, via addPosterMembershipToRippledGroups,
+                   -- re-join the banned poster). Cover both representations: the users_banned
+                   -- table (authoritative, no expiry) and a legacy collection='Banned' membership.
+                   SELECT 1 FROM users_banned ub
+                   WHERE ub.userid = ? AND ub.groupid = g.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM memberships mb
+                   WHERE mb.userid = ? AND mb.groupid = g.id AND mb.collection = 'Banned'
+               )",
+            [$reachWkt, $msgid, $fromuser, $fromuser, $fromuser]
+        );
+    }
+
+    /**
+     * The earned-reach verdict for an expansion step that has NOT been written yet: would
+     * this tick's polygon put the post on new communities it has not earned?
+     *
+     * Evaluated against the prospective polygon, before the write, so a paused post freezes
+     * its reach as well as its community placements. The prospective polygon is the pre-clip
+     * one; rejected-group clips only ever SHRINK it, so the candidate count here is an upper
+     * bound and a step that passes this check cannot be capped again after the write.
+     */
+    private function advanceCappedByReview(int $msgid, string $prospectiveWkt, ?array $reachableGroupIds): bool
+    {
+        if (!$this->earnedReachApplies($msgid)) {
+            return false;
+        }
+
+        $msg = DB::table('messages')->where('id', $msgid)->first(['fromuser']);
+        if (!$msg) {
+            return false;
+        }
+
+        $candidates = $this->rippleTargetsFor($msgid, (int) $msg->fromuser, $prospectiveWkt, $reachableGroupIds);
+        if (count($candidates) === 0) {
+            // This step reaches no new community, so there is no spread to earn. A flag still
+            // matters - it must stop the post widening towards the next one - so an unflagged
+            // post is allowed through and a flagged one is held.
+            return $this->isFlagged($msgid, (int) $msg->fromuser);
+        }
+
+        return $this->earnedReachCapped($msgid, (int) $msg->fromuser, count($candidates));
     }
 
     private function rippleIntoNewGroups(int $msgid, string $reachWkt, array &$stats, ?array $reachableGroupIds = null): void
@@ -1478,127 +1730,22 @@ class ExpandService
                 return;
             }
 
-            // Reachable-gate (plan 2026-07-06): when enabled AND the routing server sent a
-            // reachable-group set, restrict targets to groups containing a road node
-            // reachable from the origin - so a reach polygon that overshoots water can't
-            // ripple across an uncrossable barrier. The polygon ST_Intersects stays as the
-            // cheap spatial-index prefilter; this is an AND gate on top. IDs are
-            // server-sourced int64s, cast via (int) so they can't inject. Empty set or gate
-            // off => clause omitted => unchanged behaviour (fall back to polygon only).
-            $reachableGate = ($this->reachableGateEnabled() && !empty($reachableGroupIds))
-                ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
-                : '';
+            $targetGroups = $this->rippleTargetsFor($msgid, (int) $msg->fromuser, $reachWkt, $reachableGroupIds);
 
-            // Ripple-IN opt-out (groups.settings.rippling.in): never crosspost into a community
-            // that has switched rippling off. The `%playground%` name test below predates this
-            // and stays as belt-and-braces for a playground community created before anyone gives
-            // it the setting; the setting is the deliberate, per-community mechanism (set by
-            // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
-            $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
+            // EARNED-REACH CAP (dark unless RIPPLE_EARNED_REACH_ENABLED) for the paths that
+            // reach here WITHOUT advanceDue's pre-write gate: the tick-0 ripple from
+            // initialiseNew, and manual `ripple:expand --msgid=` runs. advanceDue evaluates the
+            // same verdict before it writes the polygon (so a paused post freezes its reach as
+            // well as its placements) and never calls this method when it paused, so a post is
+            // counted at most once per run.
+            if ($this->earnedReachApplies($msgid) && count($targetGroups) > 0) {
+                if ($this->earnedReachCapped($msgid, (int) $msg->fromuser, count($targetGroups))) {
+                    $this->stampAwaitingReview($msgid);
+                    $stats['reach_capped']++;
 
-            // keep-raw: ST_Intersects/ST_GeometryType plus the correlated logs/ban NOT EXISTS arms the builder cannot render
-            $targetGroups = DB::select(
-                "SELECT g.id
-                 FROM `groups` g
-                 WHERE g.publish = 1
-                   AND g.type = 'Freegle'
-                   AND g.onhere = 1
-                   AND g.nameshort NOT LIKE '%playground%'" . $inOptOut . "
-                   AND g.polyindex IS NOT NULL
-                   AND ST_GeometryType(g.polyindex) <> 'POINT'
-                   AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "
-                   AND NOT EXISTS (
-                       SELECT 1 FROM messages_groups mg WHERE mg.msgid = ? AND mg.groupid = g.id
-                   )
-                   AND NOT EXISTS (
-                       -- Suppress re-rippling only when the poster's MOST RECENT Group/Joined log
-                       -- for this group is a ripple-join (text='Rippled') AND they then LEFT it -
-                       -- i.e. the membership they last opted out of was a rippled one. Most recent
-                       -- join wins: the NOT EXISTS lj2 makes lj the latest Joined, so a later
-                       -- manual/ordinary join (then leave) means they treated it as a normal group
-                       -- and rippling is NOT blocked; ll.id > lj.id requires the leave to follow
-                       -- that ripple-join. Sites B/C apply the identical rule.
-                       SELECT 1 FROM logs lj
-                       WHERE lj.user = ? AND lj.groupid = g.id
-                         AND lj.type = 'Group' AND lj.subtype = 'Joined' AND lj.text = 'Rippled'
-                         AND NOT EXISTS (
-                             SELECT 1 FROM logs lj2
-                             WHERE lj2.user = lj.user AND lj2.groupid = lj.groupid
-                               AND lj2.type = 'Group' AND lj2.subtype = 'Joined'
-                               AND lj2.id > lj.id
-                         )
-                         AND EXISTS (
-                             SELECT 1 FROM logs ll
-                             WHERE ll.user = lj.user AND ll.groupid = lj.groupid
-                               AND ll.type = 'Group' AND ll.subtype = 'Left'
-                               AND ll.id > lj.id
-                         )
-                   )
-                   AND NOT EXISTS (
-                       -- A ban is an explicit mod ejection: it withdraws the poster's live posts
-                       -- and (modern ban) deletes their membership while recording a users_banned
-                       -- row. Never ripple a poster's post into a group they are banned from - that
-                       -- would silently re-insert the post (and, via addPosterMembershipToRippledGroups,
-                       -- re-join the banned poster). Cover both representations: the users_banned
-                       -- table (authoritative, no expiry) and a legacy collection='Banned' membership.
-                       SELECT 1 FROM users_banned ub
-                       WHERE ub.userid = ? AND ub.groupid = g.id
-                   )
-                   AND NOT EXISTS (
-                       SELECT 1 FROM memberships mb
-                       WHERE mb.userid = ? AND mb.groupid = g.id AND mb.collection = 'Banned'
-                   )",
-                [$reachWkt, $msgid, $msg->fromuser, $msg->fromuser, $msg->fromuser]
-            );
-
-            // EARNED-REACH CAP (dark unless RIPPLE_EARNED_REACH_ENABLED). An auto-published post
-            // (approvedby IS NULL on its origin row) may be rippled into at most N communities
-            // while it has clean_views_per_group distinct clean views per community and nobody
-            // has flagged it. A flag (member report / microvol Reject) pauses spread outright;
-            // a moderator look (approvedby or checkedat anywhere) clears the gate entirely.
-            // While capped: insert nothing, stamp awaiting_review_since, count it, return. When
-            // exposure later catches up (or a mod looks) the wait is banked into
-            // awaiting_review_seconds and the stamp is cleared.
-            if (config('freegle.ripple.earned_reach_enabled', false)) {
-                $originRow = DB::selectOne(
-                    'SELECT approvedby FROM messages_groups WHERE msgid = ? ORDER BY arrival ASC LIMIT 1',
-                    [$msgid]
-                );
-                $viewsPerGroup = (int) config('freegle.ripple.clean_views_per_group', 5);
-                if ($originRow !== null && $originRow->approvedby === null
-                    && $viewsPerGroup > 0 && !$this->modLooked($msgid)) {
-                    $candidateCount = count($targetGroups);
-
-                    if ($candidateCount > 0) {
-                        $alreadyRippledIn = (int) DB::table('messages_groups')
-                            ->where('msgid', $msgid)->where('rippled_in', 1)->where('deleted', 0)->count();
-                        $requiredViews = $viewsPerGroup * ($alreadyRippledIn + $candidateCount);
-
-                        if ($this->isFlagged($msgid, (int) $msg->fromuser)
-                            || $this->cleanViews($msgid, (int) $msg->fromuser) < $requiredViews) {
-                            DB::statement(
-                                'UPDATE rippling_reach
-                                 SET awaiting_review_since = IF(awaiting_review_since IS NULL, NOW(), awaiting_review_since),
-                                     updated_at = NOW()
-                                 WHERE msgid = ?',
-                                [$msgid]
-                            );
-                            $stats['reach_capped']++;
-
-                            return;
-                        }
-
-                        // Sufficient exposure: if we were paused, bank the waited time and clear the stamp.
-                        DB::statement(
-                            'UPDATE rippling_reach
-                             SET awaiting_review_seconds = awaiting_review_seconds
-                                     + TIMESTAMPDIFF(SECOND, awaiting_review_since, NOW()),
-                                 awaiting_review_since = NULL, updated_at = NOW()
-                             WHERE msgid = ? AND awaiting_review_since IS NOT NULL',
-                            [$msgid]
-                        );
-                    }
+                    return;
                 }
+                $this->bankAwaitingReview($msgid);
             }
 
             $n = 0;
