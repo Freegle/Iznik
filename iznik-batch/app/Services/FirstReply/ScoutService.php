@@ -407,7 +407,7 @@ class ScoutService
         $maxFrequent = max(0, (int) ($cfg['max_per_post'] ?? 10));
         $maxStrong = max(0, (int) ($cfg['max_strong_per_post'] ?? 50));
 
-        // Nearest to the current reach edge first, score as the tiebreak. Every
+        // Nearest to the current reach edge first, then score, then SPEED. Every
         // candidate is outside today's polygon by construction (inside it the
         // ordinary ripple already tells them), but the reach will have grown by
         // the time a scout reads their mail - so the slots should go to the
@@ -415,10 +415,24 @@ class ScoutService
         // not to the strongest signal ten miles out. Strong signals lose nothing
         // by this: their cap is a never-binding backstop, so ordering only
         // decides who gets the rationed `frequent` slots.
+        // Speed is the last word, and it only ever speaks among `frequent`
+        // candidates - they all carry the same score, so that tiebreak was a
+        // no-op for exactly the group whose slots are rationed. Reply COUNT is
+        // no use here: measured on live over 14 days, members with 3+ replies
+        // average 4.5 of them if they answer within half an hour and 5.0 if they
+        // take over two days, so volume is flat across every latency band while
+        // latency itself spans two orders of magnitude. For a lever whose whole
+        // purpose is a FAST first reply, mailing a three-day replier buys
+        // nothing the ripple would not have delivered anyway.
         uasort($candidates, static function ($a, $b) {
             $cmp = ($a['dist'] ?? INF) <=> ($b['dist'] ?? INF);
+            if ($cmp !== 0) {
+                return $cmp;
+            }
 
-            return $cmp !== 0 ? $cmp : $b['score'] <=> $a['score'];
+            $cmp = $b['score'] <=> $a['score'];
+
+            return $cmp !== 0 ? $cmp : ($a['speed'] ?? INF) <=> ($b['speed'] ?? INF);
         });
 
         $chosen = [];
@@ -638,12 +652,18 @@ class ScoutService
             $scores[$userId] = ['score' => self::SCORE_SEARCH, 'reason' => 'search'];
         }
 
-        foreach ($this->frequentRepliersOnPost($msgid, $cfg, $limit) as $userId) {
+        foreach ($this->frequentRepliersOnPost($msgid, $cfg, $limit) as $userId => $avgMinutes) {
             if (isset($scores[$userId])) {
                 $scores[$userId]['score'] += self::SCORE_FREQUENT;
+                // Somebody who ALSO asked for this is already being mailed on the
+                // stronger signal; speed only rations the propensity-only slots.
                 continue;
             }
-            $scores[$userId] = ['score' => self::SCORE_FREQUENT, 'reason' => 'frequent'];
+            $scores[$userId] = [
+                'score' => self::SCORE_FREQUENT,
+                'reason' => 'frequent',
+                'speed' => $avgMinutes,
+            ];
         }
 
         unset($scores[$poster]);
@@ -670,7 +690,7 @@ class ScoutService
         $out = [];
         foreach ($eligible as $userId => $dist) {
             if (isset($scores[$userId])) {
-                $out[$userId] = $scores[$userId] + ['dist' => $dist];
+                $out[$userId] = $scores[$userId] + ['dist' => $dist, 'speed' => null];
             }
         }
 
@@ -770,17 +790,45 @@ class ScoutService
      * useful, because it reaches the daily-digest majority today instead of
      * tomorrow.
      *
-     * @return int[]
+     * Ordered by how FAST they reply, not how often. Reply count was the old
+     * ordering and it turns out to carry no information about speed at all -
+     * measured on live over 14 days, members with 3+ replies average 4.5 replies
+     * if they answer within half an hour and 5.0 if they take over two days. The
+     * volume is flat across every latency band, so ranking on it was ranking on
+     * the axis that does not matter.
+     *
+     * Speed, by contrast, spans two orders of magnitude across that same
+     * population: 53 members average under 30 minutes, 1,018 average over two
+     * days. Mailing the slow ones is close to pointless for a lever whose whole
+     * purpose is a fast first reply - the ripple would have reached them before
+     * they got round to it.
+     *
+     * Count still qualifies (frequent_replier_min proves they engage at all);
+     * speed then decides who of those we actually spend the mail on. The speed
+     * is RETURNED rather than merely ordered on, because the ordering that
+     * survives is scoutPost's - candidates are re-sorted there by distance from
+     * the reach edge, so an ORDER BY here would be silently discarded.
+     *
+     * @return array<int,float|null> userid => average minutes from post arrival to their reply
      */
     private function frequentRepliersOnPost(int $msgid, array $cfg, int $limit): array
     {
         $minReplies = max(1, (int) ($cfg['frequent_replier_min'] ?? 3));
 
-        return array_map('intval', collect(DB::select(
-            'SELECT cm.userid AS userid, COUNT(DISTINCT cm.refmsgid) AS replies
+        // keep-raw: TIMESTAMPDIFF plus HAVING and ORDER BY on aggregate aliases.
+        // The builder has no form for any of the three, so a chain would need
+        // selectRaw + havingRaw + orderByRaw - measured previously on this very
+        // method, that turns one raw site into three and takes the manifest count
+        // UP. Relocating raw SQL is not converting it.
+        $rows = DB::select(
+            'SELECT cm.userid AS userid,
+                    COUNT(DISTINCT cm.refmsgid) AS replies,
+                    AVG(TIMESTAMPDIFF(MINUTE, src.arrival, cm.date)) AS avgminutes
              FROM chat_messages cm
+             JOIN messages src ON src.id = cm.refmsgid
              WHERE cm.type = ?
                AND cm.date > DATE_SUB(NOW(), INTERVAL 90 DAY)
+               AND cm.date >= src.arrival
                AND cm.userid IN (
                      SELECT m.userid FROM memberships m
                      JOIN messages_groups mg ON mg.groupid = m.groupid
@@ -789,12 +837,19 @@ class ScoutService
                    )
              GROUP BY cm.userid
              HAVING replies >= ?
-             ORDER BY replies DESC
+             ORDER BY avgminutes ASC
              LIMIT ?',
             [
                 'Interested', $msgid, 'Approved', Membership::COLLECTION_APPROVED, $minReplies, $limit,
             ]
-        ))->pluck('userid')->all());
+        );
+
+        $out = [];
+        foreach ($rows as $r) {
+            $out[(int) $r->userid] = $r->avgminutes === null ? null : (float) $r->avgminutes;
+        }
+
+        return $out;
     }
 
     /**
