@@ -138,3 +138,37 @@ catches it). Deterministic so a message never oscillates.
 | 8 | ModSettingsGroup.vue settings controls | ✅ | delay_minutes + quality_check_percent |
 | 9 | Run all suites via worktree status API | ✅ | full Laravel 3962/3962 ✓; Go 3004/3004 ✓; Vitest modtools 4475/4475 ✓ |
 | 10 | Push + PR (Freegle/Iznik) | ✅ | PR #639 — https://github.com/Freegle/Iznik/pull/639 (awaiting CI; never merge) |
+
+## 2026-08-08 adversarial re-review vs master (worktree autoapprove-review)
+
+Master moved 35 commits past the last rebase, including firstreply scouts/maxreach
+(dc88ef714, 993a85b7b, 30d8ae929) which ride rippling_reach and know nothing about the
+earned-reach gate. Findings fixed on the branch (master merged in first, cleanly):
+
+1. **Cap did not stop member-facing spread.** advanceDue persisted the enlarged polygon
+   (what Nearby browse, search and reach mails read) BEFORE rippleIntoNewGroups ran the
+   cap, which only skipped community placements; tick marched to 'done', after which a
+   capped post could never resume, and awaiting_review_since was never cleared on the
+   mod-look path. Fix: gate evaluated before the polygon write; a capped tick is not
+   consumed (polygon/tick/status frozen, next_expansion_at pushed ~5min); stamp banked
+   whenever the gate passes or stops applying.
+2. **Scouts bypassed the gate** (master-side feature, post-dated the gate design):
+   silentPosts/filterEligible are status-agnostic, so scouts mailed hand-picked people
+   beyond the frozen edge and a scout reply floored min_tick. Fix: silentPosts skips
+   unreviewed posts while RIPPLE_EARNED_REACH_ENABLED (mod look resumes scouting).
+   The 1h hold was already scout-safe by construction (no reach row = no eligible band).
+3. **Countdown lies (Go vs cron asymmetries)**: autoapproveat.go missed the cron's
+   spamreason (mg+m) and rippled_in=0 clean-path filters, and hardcoded the 90-day
+   danger-log window the cron reads from FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS.
+4. **Await metrics counted dead rows**: oversight reject left awaiting_review_since set
+   on the stopped row; the SysAdmin snapshot counted any stamped row as "awaiting" and
+   any banked-seconds row as "resumed". Fix: reject banks+clears in the same statement;
+   snapshot counts awaiting only on status='expanding', resumed only on expanding/done.
+5. **Env wiring**: the five feature flags reached apiv2/apiv2-live but not the batch
+   container (dev) nor .env.background.example (prod checklist) - the "countdown live,
+   cron dark" split. All wired + documented; danger-log-days added to both apiv2 envs.
+
+Docs consolidated in the same round: AUTO-APPROVE-FOR-MODERATORS.md (stale link, root
+location) and the superseded weight-2xN spec deleted; docs/moderators/post-moderation.md
+is the single reference; rippling-out mod/member guides, 02-moderating-posts,
+01-getting-started and the rippling-algorithm reference updated to match.

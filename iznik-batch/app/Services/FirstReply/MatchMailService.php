@@ -487,6 +487,23 @@ class MatchMailService
         // shape in the process, since it was authored just before this fix
         // landed. Preserving the raw form during rebase keeps that fix
         // intact byte-for-byte; convert to a builder query as separate work.
+
+        // A scout is a hand-picked invitation to somebody BEYOND the post's current reach,
+        // and a scout who replies pulls the reach out to them (pullReachOutTo). Both bypass
+        // the earned-reach gate, which exists to stop a post nobody has reviewed spreading
+        // ahead of scrutiny - so while that gate is on, a post no human has looked at is not
+        // scouted at all. A moderator look (approvedby or checkedat anywhere, exactly the
+        // gate's own test) restores normal scouting. Gate off => clause omitted => unchanged.
+        $reviewGate = config('freegle.ripple.earned_reach_enabled', false)
+            ? " AND EXISTS (
+                     SELECT 1 FROM messages_groups mg_r
+                     WHERE mg_r.msgid = ms.msgid
+                       AND (mg_r.approvedby IS NOT NULL OR mg_r.checkedat IS NOT NULL)
+                   )"
+            : '';
+
+        // keep-raw: existing correlated NOT EXISTS chain plus the conditional review-gate
+        // fragment and the Rollout bucketing SQL - the builder cannot render this shape.
         return collect(DB::select(
             "SELECT ms.msgid AS msgid, ms.msgtype AS msgtype, ms.arrival AS arrival,
                     m.fromuser AS fromuser, m.subject AS subject
@@ -494,7 +511,7 @@ class MatchMailService
              JOIN messages m ON m.id = ms.msgid
              WHERE ms.arrival <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
                AND ms.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)
-               AND m.deleted IS NULL
+               AND m.deleted IS NULL" . $reviewGate . "
                AND NOT EXISTS (
                      SELECT 1 FROM chat_messages cm
                      WHERE cm.refmsgid = ms.msgid
