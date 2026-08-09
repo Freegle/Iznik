@@ -138,7 +138,6 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
 async function runPlaywrightTests(testFile: string | null, testName: string | null) {
   // Drives periodic background-task processing during the run (started/stopped below).
   let bgTasksInterval: ReturnType<typeof setInterval> | null = null
-  let spatialInterval: ReturnType<typeof setInterval> | null = null
   try {
     // Check both prod containers are running
     const pfx = process.env.COMPOSE_PROJECT_NAME || 'freegle'
@@ -291,30 +290,6 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     }, 5000)
     appendTestLogs('playwright', 'Started chats:process-incoming processor for the run\n')
 
-    // Index posts spatially throughout the run, for the same reason and by the same
-    // mechanism. A post only reaches messages_spatial via Laravel — ContentCheckService
-    // on approval, or messages:update-spatial-index as the reconciler — and with the
-    // scheduler disabled in CI neither runs, so a post created by a spec never gets a row.
-    //
-    // That is invisible to most specs, because browse and explore read messages_groups.
-    // It is fatal to any spec that views ANOTHER user's posts: GetMessagesForUser takes
-    // an INNER JOIN on messages_spatial for the other-user case (LEFT JOIN for your own),
-    // so their profile lists nothing and the spec waits out its timeout with no clue why.
-    //
-    // Slower cadence than the chat processor: this scans recent messages rather than a
-    // flagged queue, and no spec needs the row within five seconds of posting.
-    let spatialBusy = false
-    spatialInterval = setInterval(() => {
-      if (spatialBusy) return
-      spatialBusy = true
-      exec(
-        `docker exec ${pfx}-batch sh -c "php artisan messages:update-spatial-index"`,
-        { timeout: 60000 },
-        () => { spatialBusy = false }
-      )
-    }, 15000)
-    appendTestLogs('playwright', 'Started messages:update-spatial-index processor for the run\n')
-
     // Start from the same clean database CI does. Without this the local database
     // drifts run by run and specs fail here that pass in CI.
     //
@@ -337,7 +312,6 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           endTime: Date.now(),
         })
         if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
-        if (spatialInterval) { clearInterval(spatialInterval); spatialInterval = null }
         return
       }
     }
@@ -478,7 +452,6 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
     // Stop the background-task processor started for this run.
     if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
-    if (spatialInterval) { clearInterval(spatialInterval); spatialInterval = null }
 
     const state = getTestState('playwright')
     const p = state.progress
@@ -493,7 +466,6 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     console.log(`Playwright tests completed with code ${finalCode}`)
   } catch (error: any) {
     if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
-    if (spatialInterval) { clearInterval(spatialInterval); spatialInterval = null }
     setTestState('playwright', {
       status: 'failed',
       message: `Error: ${error.message}`,
