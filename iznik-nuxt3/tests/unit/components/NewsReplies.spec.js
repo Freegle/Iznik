@@ -822,6 +822,62 @@ describe('NewsReplies', () => {
       expect(wrapper.find('.view-all-replies').text()).toContain('3 new')
     })
 
+    it('names who replied, comma-separated and in the order they spoke', () => {
+      const replies = makeReplies(5, { startId: 10 })
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const cta = wrapper.find('.view-all-replies')
+      expect(cta.text()).toContain('View all 5 replies from')
+      expect(cta.find('.cta-names').text()).toBe(
+        'User 0, User 1, User 2, User 3, User 4'
+      )
+    })
+
+    it('names nested repliers too, since the count includes them', () => {
+      const replies = makeReplies(3, { startId: 10 })
+      replies[1].replies = [101]
+      replies[1].nestedObjects = [
+        {
+          id: 101,
+          userid: 300,
+          displayname: 'Nested One',
+          message: 'Nested reply',
+          added: '2024-01-15T12:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.cta-names').text()).toBe(
+        'User 0, User 1, Nested One, User 2'
+      )
+    })
+
+    it('names each person once however often they replied', () => {
+      const replies = makeReplies(10, { startId: 10, singleUser: true })
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.cta-names').text()).toBe('Same User')
+    })
+
+    it('drops the "from" when nobody can be named', () => {
+      const replies = makeReplies(5, { startId: 10 }).map((r) => ({
+        ...r,
+        displayname: null,
+      }))
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const cta = wrapper.find('.view-all-replies')
+      expect(cta.text()).toContain('View all 5 replies')
+      expect(cta.text()).not.toContain('from')
+      expect(cta.find('.cta-names').exists()).toBe(false)
+    })
+
     it('tells the visible rows to suppress their nested lists', () => {
       const replies = makeReplies(10, { startId: 10 })
       withReplies(replies)

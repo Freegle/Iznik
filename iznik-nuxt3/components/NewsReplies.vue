@@ -23,7 +23,16 @@
         :to="feedCtaLink(entry)"
         class="view-all-replies"
       >
-        {{ feedCtaLabel(entry) }}
+        <span class="cta-lead">{{ feedCtaLead(entry) }}</span>
+        <!-- Who is talking matters more than how many, so the names get the
+             flexible column and ellipsis away when the list is long; the
+             count and the new-badge either side never shrink. -->
+        <span v-if="replyNames.length" class="cta-names">{{
+          replyNames.join(', ')
+        }}</span>
+        <span v-if="entry.fresh > 0" class="cta-new"
+          >&middot; {{ entry.fresh }} new</span
+        >
       </nuxt-link>
       <div
         v-else
@@ -426,6 +435,41 @@ const treeCounts = computed(() => {
   return { total, fresh }
 })
 
+// Everyone who has spoken in this thread, in the order they first did, so the
+// feed card can say WHO is talking rather than only how many replies there are.
+// Walks the nested tree because a reply-to-a-reply is still someone replying,
+// and the count beside the names already includes them.
+function collectNames(reply, out) {
+  for (const kid of reply?.replies || []) {
+    const child = resolveReply(kid)
+    if (!child) continue
+    if (child.displayname && !out.includes(child.displayname)) {
+      out.push(child.displayname)
+    }
+    collectNames(child, out)
+  }
+  return out
+}
+
+const replyNames = computed(() => {
+  const out = []
+  for (const entry of combinedReplies.value) {
+    if (entry.displayname && !out.includes(entry.displayname)) {
+      out.push(entry.displayname)
+    }
+    // A combined block never has children of its own, so descend through the
+    // ids it swallowed rather than the block.
+    if (entry.combinedIds) {
+      for (const cid of entry.combinedIds) {
+        collectNames(newsfeedStore.byId(cid), out)
+      }
+    } else {
+      collectNames(entry, out)
+    }
+  }
+  return out
+})
+
 const feedMode = computed(() => {
   return (
     props.context === 'feed' &&
@@ -543,13 +587,10 @@ function entryKey(entry) {
   return 'newsfeed-' + entry.reply.id
 }
 
-function feedCtaLabel(entry) {
+function feedCtaLead(entry) {
   const replyWord = entry.total === 1 ? 'reply' : 'replies'
-  let label = `View all ${entry.total} ${replyWord}`
-  if (entry.fresh > 0) {
-    label += ` · ${entry.fresh} new`
-  }
-  return label
+  const label = `View all ${entry.total} ${replyWord}`
+  return replyNames.value.length ? `${label} from` : label
 }
 
 // When the link is offering new replies, say so in the URL. The thread page
@@ -635,6 +676,7 @@ function expandCombined(combinedIds) {
 .view-all-replies {
   display: flex;
   align-items: center;
+  gap: 0.25rem;
   min-height: 44px;
   width: 100%;
   padding: 0.25rem 0;
@@ -642,6 +684,7 @@ function expandCombined(combinedIds) {
   font-size: 0.9rem;
   font-weight: 600;
   text-decoration: none;
+  white-space: nowrap;
 
   &:hover {
     text-decoration: underline;
@@ -653,6 +696,21 @@ function expandCombined(combinedIds) {
     outline-offset: 2px;
     border-radius: 2px;
   }
+}
+
+/* The names are the only part allowed to shrink, and they ellipsis on one
+   line - a long cast list must not wrap the link into a second row. */
+.cta-lead,
+.cta-new {
+  flex: 0 0 auto;
+}
+
+.cta-names {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
 }
 
 .show-more-btn {
@@ -690,6 +748,16 @@ function expandCombined(combinedIds) {
   border-radius: 4px;
   padding-left: 0.25rem;
   margin-left: -0.25rem;
+}
+
+/* A deep-linked reply that is also new would otherwise stack two greens: the
+   new-tint on this box and the deep-link tint on the row inside it, offset by
+   the padding, giving a pale frame around a darker block. The deep-link cue
+   wins - it is the more specific thing to say about that row. */
+.reply-thread--new:has(.deep-link-target) {
+  background: none;
+  padding-left: 0;
+  margin-left: 0;
 }
 
 .reply-content {

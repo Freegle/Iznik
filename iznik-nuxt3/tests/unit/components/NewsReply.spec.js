@@ -573,6 +573,50 @@ describe('NewsReply', () => {
       )
     })
 
+    it('names who replied, comma-separated', () => {
+      const withNested = {
+        ...mockReply,
+        replies: [
+          { id: 456, displayname: 'Nested One' },
+          { id: 457, displayname: 'Nested Two' },
+        ],
+      }
+      const wrapper = createWrapper({ suppressChildren: true }, withNested)
+
+      const link = wrapper.find('.view-child-replies')
+      expect(link.text()).toContain('View 2 replies from')
+      expect(link.find('.cta-names').text()).toBe('Nested One, Nested Two')
+    })
+
+    it('names each person once and descends the nested tree', () => {
+      const withNested = {
+        ...mockReply,
+        replies: [
+          {
+            id: 456,
+            displayname: 'Nested One',
+            replies: [
+              { id: 458, displayname: 'Deeper' },
+              { id: 459, displayname: 'Nested One' },
+            ],
+          },
+        ],
+      }
+      const wrapper = createWrapper({ suppressChildren: true }, withNested)
+
+      expect(wrapper.find('.cta-names').text()).toBe('Nested One, Deeper')
+    })
+
+    it('drops the "from" when nobody can be named', () => {
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({ suppressChildren: true }, withNested)
+
+      const link = wrapper.find('.view-child-replies')
+      expect(link.text()).toContain('View 1 reply')
+      expect(link.text()).not.toContain('from')
+      expect(link.find('.cta-names').exists()).toBe(false)
+    })
+
     it('reports its subtree complete on mount when children are suppressed', () => {
       const withNested = { ...mockReply, replies: [{ id: 456 }] }
       const wrapper = createWrapper({ suppressChildren: true }, withNested)

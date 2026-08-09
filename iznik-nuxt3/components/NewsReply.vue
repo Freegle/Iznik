@@ -187,7 +187,13 @@
       :to="'/chitchat/' + id"
       class="view-child-replies"
     >
-      View {{ childCount }} {{ childCount === 1 ? 'reply' : 'replies' }}
+      <span class="cta-lead"
+        >View {{ childCount }} {{ childCount === 1 ? 'reply' : 'replies'
+        }}{{ childNames.length ? ' from' : '' }}</span
+      >
+      <span v-if="childNames.length" class="cta-names">{{
+        childNames.join(', ')
+      }}</span>
     </nuxt-link>
     <div v-if="showReplyBox" class="mb-2 pb-1 ms-4">
       <div v-if="enterNewLine" class="w-100">
@@ -531,6 +537,22 @@ function countNested(r) {
 }
 
 const childCount = computed(() => countNested(reply.value))
+
+// Who is behind that counted link. Distinct, in the order they first replied,
+// so the reader can tell a conversation they are part of from one they are not.
+function collectNested(r, out) {
+  for (const kid of r?.replies || []) {
+    const child = typeof kid === 'object' ? kid : newsfeedStore.byId(kid)
+    if (!child) continue
+    if (child.displayname && !out.includes(child.displayname)) {
+      out.push(child.displayname)
+    }
+    collectNested(child, out)
+  }
+  return out
+}
+
+const childNames = computed(() => collectNested(reply.value, []))
 
 const isNew = computed(() => {
   const seenBefore = newsfeedStore.seenBeforeVisit
@@ -1056,6 +1078,7 @@ function showReplyPhotoModal() {
 .view-child-replies {
   display: flex;
   align-items: center;
+  gap: 0.25rem;
   min-height: 44px;
   width: 100%;
   padding: 0.25rem 0 0.25rem 1rem;
@@ -1063,6 +1086,7 @@ function showReplyPhotoModal() {
   font-size: 0.85rem;
   font-weight: 600;
   text-decoration: none;
+  white-space: nowrap;
 
   &:hover {
     text-decoration: underline;
@@ -1075,11 +1099,28 @@ function showReplyPhotoModal() {
   }
 }
 
+/* Only the names shrink, ellipsised on a single line. */
+.cta-lead {
+  flex: 0 0 auto;
+}
+
+.cta-names {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
 /* The reply a notification deep link points at. A brief flash draws the eye
    on arrival, settling to a soft resting tint so the row stays identifiable.
-   Under reduced motion the flash is skipped but the resting cue remains. */
-.deep-link-target {
-  background-color: rgba($color-success-bg, 0.6);
+   Under reduced motion the flash is skipped but the resting cue remains.
+
+   Paint the reply ROW, not the component root: the root also wraps the nested
+   <NewsReplies>, the reply box and the uploader, so tinting it turned the whole
+   subtree green instead of marking the one reply the notification meant. */
+.deep-link-target > .reply {
+  background-color: rgba($color-success-bg, 0.35);
   border-radius: 4px;
 
   @media (prefers-reduced-motion: no-preference) {
@@ -1087,12 +1128,15 @@ function showReplyPhotoModal() {
   }
 }
 
+/* One hue start to finish. This used to open on $color-success-border (a mint
+   green) and settle on $color-success-bg (an olive one), so the flash read as
+   a colour change rather than a fade. */
 @keyframes deep-link-flash {
   0% {
-    background-color: $color-success-border;
+    background-color: rgba($color-success-bg, 0.9);
   }
   100% {
-    background-color: rgba($color-success-bg, 0.6);
+    background-color: rgba($color-success-bg, 0.35);
   }
 }
 </style>
