@@ -950,25 +950,10 @@ class User extends Model implements Auditable
      */
     public function getUserKey(): string
     {
-        // Check for existing LOGIN_LINK credential.
-        $login = UserLogin::where('userid', $this->id)
-            ->where('type', self::LOGIN_LINK)
-            ->first(['credentials']);
-
-        if ($login && $login->credentials) {
-            return $login->credentials;
-        }
-
-        // Create a new key.
-        $key = bin2hex(random_bytes(16));
-
-        UserLogin::create([
-            'userid' => $this->id,
-            'type' => self::LOGIN_LINK,
-            'credentials' => $key,
-        ]);
-
-        return $key;
+        // Delegates to LoginLinkService so there is exactly one implementation of
+        // get-or-create: this used to be a second copy, which both drifted (it never
+        // set uid) and raced the service's copy on the (userid, type) unique key.
+        return app(\App\Services\LoginLinkService::class)->getOrCreateKey((int) $this->id);
     }
 
     /**
