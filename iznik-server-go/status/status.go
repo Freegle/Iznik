@@ -1,9 +1,12 @@
 package status
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
@@ -110,24 +113,112 @@ func readGitHead(dir string) string {
 	return ""
 }
 
-// GetStatus reads the system status file and returns its contents.
+// StatusConfigKey is the config row that carries the published platform status.
+// Written by Laravel's monitor:scheduled-outcomes (App\Monitoring\PlatformStatusWriter).
+const StatusConfigKey = "status.platform"
+
+// StatusMaxAge is how old a published status may be before we stop presenting it
+// as current. The writer runs every ten minutes, so this tolerates three missed
+// passes; beyond that the feed itself is the thing that is broken.
+const StatusMaxAge = 30 * time.Minute
+
+// GetStatus returns the platform status published by the batch system.
+//
+// This used to read /tmp/iznik.status, written by iznik-server/scripts/cron/status.php.
+// That cron went with the V1 PHP removal and nothing replaced it, so the endpoint
+// returned "Cannot access status file" for a month and nothing noticed. A file on
+// this host cannot work now anyway: the writer is Laravel, in a different container
+// on a different host. The status therefore travels through the `config` table, the
+// same channel /api/version already uses for the Laravel deploy commit.
+//
+// A status older than StatusMaxAge is reported as a warning naming the staleness,
+// rather than served as though it were current. That is the specific failure that
+// went unnoticed last time: a dead writer must not look like a healthy platform.
 //
 // @Summary Get system status
-// @Description Returns the contents of /tmp/iznik.status, which is written by the batch system
+// @Description Returns the platform status published by the batch system's outcome monitoring. A status older than 30 minutes is downgraded to a warning about the status feed itself.
 // @Tags status
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /api/status [get]
 func GetStatus(c *fiber.Ctx) error {
-	data, err := os.ReadFile("/tmp/iznik.status")
-	if err != nil {
+	if database.DBConn == nil {
 		return c.JSON(fiber.Map{
 			"ret":    1,
-			"status": "Cannot access status file",
+			"status": "Cannot read platform status",
 		})
 	}
-	c.Set("Content-Type", "application/json")
-	return c.Send(data)
+
+	var value string
+	database.DBConn.Table("config").
+		Select("value").
+		Where("`key` = ?", StatusConfigKey).
+		Scan(&value)
+
+	if value == "" {
+		// Never published. Distinct from "published but stale": on a fresh
+		// deploy the monitor may simply not have run yet.
+		return c.JSON(fiber.Map{
+			"ret":    1,
+			"status": "Platform status has not been published yet",
+		})
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(value), &payload); err != nil {
+		return c.JSON(fiber.Map{
+			"ret":    1,
+			"status": "Platform status is not readable",
+		})
+	}
+
+	if age, ok := statusAge(payload); ok && age > StatusMaxAge {
+		markStatusStale(payload, age)
+	}
+
+	return c.JSON(payload)
+}
+
+// statusAge returns how long ago the payload was generated. The bool is false if
+// the payload carries no parseable generated_at, in which case we leave it alone
+// rather than guess — an unreadable timestamp is the writer's bug, not a staleness
+// signal, and inventing one would hide a status that is otherwise fine.
+func statusAge(payload map[string]interface{}) (time.Duration, bool) {
+	raw, ok := payload["generated_at"].(string)
+	if !ok || raw == "" {
+		return 0, false
+	}
+
+	generated, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return 0, false
+	}
+
+	return time.Since(generated), true
+}
+
+// markStatusStale rewrites a payload in place so a stale feed presents as a
+// warning in its own right. The existing contents are kept: the last known state
+// is still the best information available, it just cannot be trusted as current.
+func markStatusStale(payload map[string]interface{}, age time.Duration) {
+	payload["warning"] = true
+
+	info, ok := payload["info"].(map[string]interface{})
+	if !ok || info == nil {
+		info = map[string]interface{}{}
+		payload["info"] = info
+	}
+
+	info["Status feed"] = map[string]interface{}{
+		"warning": true,
+		"warningtext": fmt.Sprintf(
+			"Platform status was last published %d minutes ago (expected every 10). "+
+				"The monitoring that produces it may have stopped, so what follows may be out of date.",
+			int(age.Minutes()),
+		),
+		"error":     false,
+		"errortext": nil,
+	}
 }
 
 // GetVersion returns the deployed commit of the Go API binary and the Laravel batch server.

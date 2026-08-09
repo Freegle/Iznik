@@ -3123,7 +3123,8 @@ type shortlinksResponse struct {
 // swagger:route GET /status status getStatus
 // Get system status
 //
-// Returns the system status from /tmp/iznik.status
+// Returns the platform status published by the batch system's outcome monitoring.
+// A status older than 30 minutes is downgraded to a warning about the feed itself.
 //
 // Responses:
 //
