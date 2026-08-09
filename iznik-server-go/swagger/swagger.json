@@ -11483,6 +11483,13 @@
         }
       }
     },
+    "housekeeperTasksResponse": {
+      "description": "",
+      "schema": {
+        "type": "array",
+        "items": {}
+      }
+    },
     "illustrationResponse": {
       "description": "",
       "schema": {

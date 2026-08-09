@@ -22,10 +22,9 @@
           variant="warning"
           class="mb-2"
         >
-          There is a problem. If this just mentions
-          <strong>security patches or reboots</strong>, you can ignore it, but
-          if it's something else please alert geeks@ilovefreegle.org if this
-          persists for more than an hour.
+          There is a problem. Each line below names the scheduled job whose work
+          has not happened, and what is missing. Please alert
+          geeks@ilovefreegle.org if this persists for more than an hour.
         </NoticeMessage>
         <NoticeMessage v-else-if="error" variant="warning" class="mb-2">
           There's a problem, and parts of the system may not be working. The
@@ -85,38 +84,49 @@ const warning = computed(() => {
 const headline = computed(() => {
   if (outOfDate.value) {
     return 'Not sure'
-  } else if (warning.value) {
-    return 'Warning'
   } else if (error.value) {
     return 'Error'
+  } else if (warning.value) {
+    return 'Warning'
   } else {
     return 'Fine'
   }
 })
 
+// A status we could not obtain is worth showing, and worth showing WITH a reason.
+// The old code fell back to a bare warning flag, so the modal rendered "There is
+// a problem" above an empty info block and told nobody anything.
+function feedProblem(detail) {
+  return {
+    ret: 1,
+    error: false,
+    warning: true,
+    info: {
+      'Status feed': {
+        warning: true,
+        warningtext: detail || 'Platform status is currently unavailable.',
+      },
+    },
+  }
+}
+
 async function checkStatus() {
   try {
-    status.value = await $api.status.fetch()
+    const fetched = await $api.status.fetch()
 
-    tried.value = true
+    // Stamp whenever the API answered, whatever it said. outOfDate means "we
+    // cannot reach the status API", not "the API told us something we did not
+    // like". Conflating the two pinned the headline to "Not sure" for a month
+    // while the API was answering perfectly promptly, with ret 1.
+    updated.value = Date.now()
 
-    if (status.value.ret === 0) {
-      updated.value = Date.now()
-    }
+    status.value = fetched.ret === 0 ? fetched : feedProblem(fetched.status)
   } catch (err) {
     console.warn('Status API error:', err)
-    tried.value = true
-    status.value = {
-      ret: 1,
-      warning: true,
-      info: {
-        'Status API': {
-          warning: true,
-          warningtext: 'Cannot access status file - system status unknown',
-        },
-      },
-    }
+    status.value = feedProblem('Cannot reach the status API.')
   }
+
+  tried.value = true
 
   timer = setTimeout(checkStatus, 30000)
 }

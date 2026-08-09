@@ -472,10 +472,21 @@ app.get('/api/restore-status', async (req, res) => {
         });
       }
 
+      // We get here with a status file that is neither completed nor failed, and
+      // whose last update is older than the isRecent window. That is a restore
+      // that DIED mid-flight - it never wrote a terminal status. Reporting 'idle'
+      // here threw that away and made an abandoned restore look identical to one
+      // that never ran, so the only visible symptom was the backup quietly going
+      // stale days later. Surface it as failed, the same call the in-memory job
+      // expiry already makes, and keep the phase it died in so the logs can be
+      // aimed at the right place.
       return res.json({
         inProgress: false,
-        status: 'idle',
-        message: 'No active restore'
+        status: 'failed',
+        message: `Restore stalled during "${status.status}" - no progress update since ${status.timestamp}; check logs`,
+        backupDate: status.backupDate,
+        stalledPhase: status.status,
+        completedAt: status.timestamp
       });
 
     } catch (error) {

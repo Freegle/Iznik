@@ -196,6 +196,36 @@ class ScoutServiceTest extends TestCase
         return $user;
     }
 
+    /**
+     * Make this member's Interested replies land $minutes after the post arrived,
+     * so a test can say how FAST they are rather than only how often.
+     */
+    private function setReplyLatency(int $userId, int $minutes): void
+    {
+        DB::table('chat_messages')
+            ->join('messages', 'messages.id', '=', 'chat_messages.refmsgid')
+            ->where('chat_messages.userid', $userId)
+            ->where('chat_messages.type', \App\Models\ChatMessage::TYPE_INTERESTED)
+            ->update([
+                'chat_messages.date' => DB::raw(
+                    'DATE_ADD(messages.arrival, INTERVAL ' . (int) $minutes . ' MINUTE)'
+                ),
+            ]);
+    }
+
+    /** Average minutes between a post arriving and this member replying to it. */
+    private function replyLatencyOf(int $userId): ?float
+    {
+        $v = DB::table('chat_messages')
+            ->join('messages', 'messages.id', '=', 'chat_messages.refmsgid')
+            ->where('chat_messages.userid', $userId)
+            ->where('chat_messages.type', \App\Models\ChatMessage::TYPE_INTERESTED)
+            ->selectRaw('AVG(TIMESTAMPDIFF(MINUTE, messages.arrival, chat_messages.date)) AS m')
+            ->value('m');
+
+        return $v === null ? null : (float) $v;
+    }
+
     /** Pretend this member's daily digest already went out at $when. */
     private function digestSentAt(int $userId, \Carbon\Carbon $when): void
     {
@@ -401,6 +431,42 @@ class ScoutServiceTest extends TestCase
         $this->service()->run();
 
         $this->assertArrayHasKey($replier->id, $this->scoutsFor((int) $message->id));
+    }
+
+    public function test_a_fast_replier_is_chosen_over_a_slow_one(): void
+    {
+        // The whole point of the lever is a FAST first reply, and reply COUNT
+        // says nothing about speed: measured on live over 14 days, members with
+        // 3+ replies average ~4.5 of them if they answer within half an hour and
+        // ~5.0 if they take over two days. Volume is flat across every latency
+        // band, while latency itself spans two orders of magnitude. Ordering on
+        // volume therefore ranked the axis that does not matter - and mailing a
+        // three-day replier buys nothing the ripple would not have delivered.
+        config(['freegle.firstreply.scouts.max_per_post' => 1]);
+
+        $message = $this->seedSilentOffer();
+
+        $slow = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $fast = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+
+        $this->setReplyLatency((int) $slow->id, 3 * 24 * 60);
+        $this->setReplyLatency((int) $fast->id, 15);
+
+        // Prove the FIXTURE before trusting what the service does with it - if
+        // the latencies never landed, the assertion below would be testing the
+        // ordering of two identical rows.
+        $this->assertEqualsWithDelta(15, $this->replyLatencyOf((int) $fast->id), 1, 'fast fixture');
+        $this->assertEqualsWithDelta(4320, $this->replyLatencyOf((int) $slow->id), 1, 'slow fixture');
+
+        $this->service()->run();
+
+        $scouts = $this->scoutsFor((int) $message->id);
+        $this->assertSame(
+            [(int) $fast->id],
+            array_map('intval', array_keys($scouts)),
+            'expected only the member who answers in fifteen minutes; fast=' . $fast->id
+                . ' slow=' . $slow->id . ' got=' . json_encode($scouts)
+        );
     }
 
     // --- What justifies the mail decides whether it may be an extra one -------

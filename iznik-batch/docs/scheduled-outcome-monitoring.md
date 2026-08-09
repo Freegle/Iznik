@@ -75,6 +75,34 @@ correctness rules learned while populating the registry:
 4. **Cleanup/purge/in-place-update jobs are usually not monitorable** — zero
    output is the normal, healthy case (see the table below).
 
+## It also feeds the ModTools status dot
+
+Every full pass publishes its verdict through
+`App\Monitoring\PlatformStatusWriter` into the `config` row `status.platform`,
+which the Go API serves at `/api/status` (`iznik-server-go/status/status.go`)
+and `ModStatus.vue` renders as the platform status dot in the ModTools navbar.
+
+This is deliberately the *same* evaluation that alerts to Sentry, not a second
+opinion. The dot cannot drift away from the monitoring, and adding a check to
+the registry surfaces it in both places at once.
+
+Three properties are load-bearing, and each one exists because its absence
+caused a real month-long outage of the dot:
+
+- **The payload carries `generated_at`.** The Go reader turns a status older
+  than 30 minutes (three missed passes) into a warning naming the staleness,
+  instead of serving it as current. Before this, the dot's feed died with the
+  V1 PHP removal and showed green to ordinary mods for a month.
+- **Only breaches are published.** The modal renders one row per entry, so
+  carrying the healthy checks would bury the real problem.
+- **`--only` does not publish.** A single-check pass has no evidence about
+  anything else, and reporting the platform as fine on that basis would be a
+  lie. Monitoring being disabled does not publish either — the status then goes
+  stale and says so.
+
+`OutcomeResult` severity decides which half of the dot a breach lands in:
+`error` means part of the platform is not working, anything else is a warning.
+
 ## Implemented checks
 
 Eleven per-job checks across all four primitives:

@@ -161,6 +161,21 @@ if echo "$API_RESPONSE" | grep -q "Started loading"; then
 
         echo "[$(date +%H:%M:%S)] Status: $STATUS ($PERCENT%) - $MESSAGE"
 
+        # Ground truth beats the job record. The API container SHUTS DOWN during
+        # a restore, so its in-memory job can come back frozen at "starting" for
+        # a restore that has since finished perfectly well — on 2026-08-06 the
+        # load completed at 08:56 and this loop still reported "did not complete
+        # within 4 hours". current-backup is written by the restore itself, so
+        # if it names our date, we are done whatever the job says.
+        LOADED=$(curl -s http://localhost:8082/api/current-backup | jq -r '.date // ""')
+        if [ "$LOADED" = "$LATEST_DATE" ]; then
+            echo ""
+            echo "✅ Auto-restore completed successfully (confirmed by current-backup)"
+            echo "Yesterday environment now running backup from $LATEST_DATE"
+            COMPLETED=1
+            break
+        fi
+
         if [ "$STATUS" = "completed" ]; then
             echo ""
             echo "✅ Auto-restore completed successfully"
@@ -190,6 +205,16 @@ if echo "$API_RESPONSE" | grep -q "Started loading"; then
 
     if [ $COMPLETED -ne 1 ]; then
         echo "❌ Restore did not complete within 4 hours - giving up"
+        echo "   Last job status: ${STATUS:-unknown} (${PERCENT:-?}%) - ${MESSAGE:-none}"
+        echo "   Loaded backup is still: ${LOADED:-unknown}, wanted $LATEST_DATE"
+        # A restore that never leaves 0% is usually the thin pool being out of
+        # data space rather than a slow copy, and that is invisible from the
+        # API. Print it here so the log says why instead of just "gave up".
+        if command -v lvs >/dev/null 2>&1; then
+            echo "   Thin pool:"
+            lvs --noheadings -o lv_name,lv_attr,data_percent,metadata_percent \
+                "${YLVM_VG:-yesterday_vg}" 2>&1 | sed 's/^/     /'
+        fi
         exit 1
     fi
 
