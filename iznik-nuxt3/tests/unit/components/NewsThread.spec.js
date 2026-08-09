@@ -1165,16 +1165,15 @@ describe('NewsThread', () => {
     })
   })
 
-  describe('general thread landing', () => {
-    it('pins the unread divider when landing on the thread itself', async () => {
-      // scrollTo === the thread's own id: no single target reply, so land the
-      // reader on the unread divider instead.
+  describe('jump to new replies', () => {
+    it('pins the unread divider when the caller asked for the new replies', async () => {
+      // Declared intent (the feed's "#new" link), not inferred from the route.
       const divider = document.createElement('div')
       divider.setAttribute('data-unread-divider', '')
       document.body.appendChild(divider)
 
       mockNewsfeed.value.replies = [456]
-      await createWrapper({ scrollTo: '1' })
+      await createWrapper({ scrollTo: '1', jumpToNew: true })
       await flushPromises()
 
       expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
@@ -1184,9 +1183,24 @@ describe('NewsThread', () => {
       divider.remove()
     })
 
-    it('does not scroll at all when there is no divider', async () => {
+    it('does not scroll when simply opening the thread', async () => {
+      // No "#new" in the URL: opening a thread is not a request to skip to
+      // the end of it, so it opens at the top like any other page.
+      const divider = document.createElement('div')
+      divider.setAttribute('data-unread-divider', '')
+      document.body.appendChild(divider)
+
       mockNewsfeed.value.replies = [456]
       await createWrapper({ scrollTo: '1' })
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+      divider.remove()
+    })
+
+    it('does not scroll when asked for new replies but there is no divider', async () => {
+      mockNewsfeed.value.replies = [456]
+      await createWrapper({ scrollTo: '1', jumpToNew: true })
       await flushPromises()
 
       expect(mockScrollToAndPin).not.toHaveBeenCalled()
@@ -1198,7 +1212,7 @@ describe('NewsThread', () => {
       document.body.appendChild(divider)
 
       mockNewsfeed.value.replies = [456]
-      const wrapper = await createWrapper({ scrollTo: '456' })
+      const wrapper = await createWrapper({ scrollTo: '456', jumpToNew: true })
       const replies = wrapper.findComponent('.news-replies')
       replies.vm.$emit('rendered', 456)
       await flushPromises()

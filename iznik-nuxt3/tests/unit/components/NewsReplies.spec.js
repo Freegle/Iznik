@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import NewsReplies from '~/components/NewsReplies.vue'
 
 const { mockReplies, mockNewsfeed } = vi.hoisted(() => {
@@ -387,6 +387,123 @@ describe('NewsReplies', () => {
     })
   })
 
+  describe('scroll anchoring when expanding', () => {
+    // Expanding inserts rows ABOVE what you are reading, so without a
+    // correction the browser keeps scrollTop and your row slides down the
+    // page by the height of everything revealed.
+    function setupTenReplies() {
+      const replies = makeReplies(10)
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        return replies.find((r) => r.id === id)
+      })
+      return replies
+    }
+
+    it('scrolls by exactly the height the expansion added above the anchor', async () => {
+      setupTenReplies()
+      const wrapper = createWrapper()
+
+      const scrollBy = vi.fn()
+      window.scrollBy = scrollBy
+
+      // The row just below the expander is the anchor. Report it 100px down
+      // the viewport before expanding and 700px after, i.e. 600px was added.
+      let expanded = false
+      const anchorId = wrapper
+        .find('.show-more-replies')
+        .element.nextElementSibling.getAttribute('data-reply-id')
+
+      const origGetRect = Element.prototype.getBoundingClientRect
+      Element.prototype.getBoundingClientRect = function () {
+        if (this.getAttribute?.('data-reply-id') === anchorId) {
+          return { top: expanded ? 700 : 100 }
+        }
+        return origGetRect.call(this)
+      }
+
+      const btn = wrapper.find('.show-more-btn')
+      const promise = btn.trigger('click')
+      expanded = true
+      await promise
+      await flushPromises()
+
+      expect(scrollBy).toHaveBeenCalledWith(0, 600)
+
+      Element.prototype.getBoundingClientRect = origGetRect
+    })
+
+    it('does not scroll when the anchor did not move', async () => {
+      setupTenReplies()
+      const wrapper = createWrapper()
+
+      const scrollBy = vi.fn()
+      window.scrollBy = scrollBy
+
+      const origGetRect = Element.prototype.getBoundingClientRect
+      Element.prototype.getBoundingClientRect = function () {
+        if (this.getAttribute?.('data-reply-id')) return { top: 100 }
+        return origGetRect.call(this)
+      }
+
+      await wrapper.find('.show-more-btn').trigger('click')
+      await flushPromises()
+
+      expect(scrollBy).not.toHaveBeenCalled()
+
+      Element.prototype.getBoundingClientRect = origGetRect
+    })
+
+    it('anchors past the unread divider when that follows the expander', async () => {
+      // The row after the expander is not always a reply: when new activity
+      // starts right there, the divider sits between them. Anchoring on the
+      // divider (which carries no id) used to skip the correction entirely.
+      const replies = makeReplies(10, { startId: 10 })
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        return replies.find((r) => r.id === id)
+      })
+      mockNewsfeedStore.seenBeforeVisit = 14
+
+      const wrapper = createWrapper()
+      expect(
+        wrapper.find('.show-more-replies').element.nextElementSibling
+      ).toBe(wrapper.find('[data-unread-divider]').element)
+
+      const scrollBy = vi.fn()
+      window.scrollBy = scrollBy
+
+      let expanded = false
+      const origGetRect = Element.prototype.getBoundingClientRect
+      Element.prototype.getBoundingClientRect = function () {
+        if (this.getAttribute?.('data-reply-id') === '15') {
+          return { top: expanded ? 500 : 100 }
+        }
+        return origGetRect.call(this)
+      }
+
+      const promise = wrapper.find('.show-more-btn').trigger('click')
+      expanded = true
+      await promise
+      await flushPromises()
+
+      expect(scrollBy).toHaveBeenCalledWith(0, 400)
+
+      Element.prototype.getBoundingClientRect = origGetRect
+    })
+
+    it('still expands when there is no anchor to measure', async () => {
+      setupTenReplies()
+      const wrapper = createWrapper()
+      window.scrollBy = vi.fn()
+
+      await wrapper.find('.show-more-btn').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.findAll('.news-reply').length).toBe(10)
+    })
+  })
+
   describe('scrollTo behaviour', () => {
     it('still collapses on a deep link but exempts the target reply', () => {
       // A notification deep link used to disable collapsing entirely, so a
@@ -645,6 +762,30 @@ describe('NewsReplies', () => {
       expect(
         wrapper.find('.replies-container').element.firstElementChild.className
       ).toContain('view-all')
+    })
+
+    it('points the link at the new replies when there are some', () => {
+      // The link declares the intent in the URL, so the thread page knows
+      // where to land without inferring it, and the link survives a reload.
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 15
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.view-all-replies').attributes('href')).toBe(
+        '/chitchat/1#new'
+      )
+    })
+
+    it('links to the plain thread when nothing is new', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 100
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.view-all-replies').attributes('href')).toBe(
+        '/chitchat/1'
+      )
     })
 
     it('counts nested and new replies in the view-all link', () => {

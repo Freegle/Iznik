@@ -374,6 +374,13 @@ const props = defineProps({
     required: false,
     default: 'thread',
   },
+  // The reader asked to be taken to the new replies (the feed's "#new"
+  // link), rather than just opening the thread.
+  jumpToNew: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
   duplicateCount: {
     type: Number,
     required: false,
@@ -592,7 +599,7 @@ let deepLinkPinned = false
 const targetGone = ref(false)
 
 // scrollTo naming the thread itself means "open this thread", not "find this
-// reply": land the reader on the unread divider if there is one.
+// reply", so there is no target row to hunt for.
 const isGeneralLanding = computed(() => {
   return !!props.scrollTo && parseInt(props.scrollTo) === parseInt(props.id)
 })
@@ -604,7 +611,13 @@ onMounted(() => {
     if (deepLinkPinned) return
 
     if (isGeneralLanding.value) {
-      const divider = document.querySelector('[data-unread-divider]')
+      // Only jump to the new replies if the reader actually asked for them
+      // (the feed's "N new" link, which says so via #new). Opening a thread
+      // any other way should start at the top, like any other page.
+      const divider = props.jumpToNew
+        ? document.querySelector('[data-unread-divider]')
+        : null
+
       if (divider) {
         deepLinkPinned = true
         ownPin = scrollToAndPin(

@@ -1,5 +1,5 @@
 <template>
-  <div class="replies-container" :class="'depth-' + depth">
+  <div ref="container" class="replies-container" :class="'depth-' + depth">
     <!--
       Ordered render plan. When collapsed, middle replies WITHOUT new activity in
       their subtree hide behind one expander; a parent whose nested replies contain
@@ -20,7 +20,7 @@
       <NewsUnreadDivider v-else-if="entry.divider" :count="entry.count" />
       <nuxt-link
         v-else-if="entry.feedCta"
-        :to="'/chitchat/' + threadhead"
+        :to="feedCtaLink(entry)"
         class="view-all-replies"
       >
         {{ feedCtaLabel(entry) }}
@@ -59,7 +59,14 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, watch, onMounted, defineAsyncComponent } from 'vue'
+import {
+  ref,
+  computed,
+  watch,
+  onMounted,
+  nextTick,
+  defineAsyncComponent,
+} from 'vue'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import NewsRefer from '~/components/NewsRefer'
@@ -111,6 +118,7 @@ const emit = defineEmits(['rendered', 'subtree-rendered'])
 
 const newsfeedStore = useNewsfeedStore()
 const authStore = useAuthStore()
+const container = ref(null)
 const showAllReplies = ref(false)
 const expandedCombinedIds = ref(new Set())
 
@@ -544,8 +552,44 @@ function feedCtaLabel(entry) {
   return label
 }
 
-function expandReplies() {
+// When the link is offering new replies, say so in the URL. The thread page
+// then knows to land on the unread divider without inferring it, and the
+// link still means that after a reload or if it is shared.
+function feedCtaLink(entry) {
+  const path = '/chitchat/' + props.threadhead
+  return entry.fresh > 0 ? path + '#new' : path
+}
+
+// Expanding inserts the hidden replies ABOVE the ones already on screen, and
+// the browser holds the scroll position, so without a correction whatever the
+// reader was looking at slides down the page by the height of everything
+// revealed. Measure a row that survives the expansion, then put it back where
+// it was: the page grows upwards, out of sight, and nothing appears to move.
+async function expandReplies(e) {
+  // The first reply row below the expander is the anchor. Walk past anything
+  // that is not one - the unread divider sits there whenever the new activity
+  // begins right after the hidden replies.
+  let anchor = e?.currentTarget?.parentElement?.nextElementSibling
+  while (anchor && !anchor.getAttribute?.('data-reply-id')) {
+    anchor = anchor.nextElementSibling
+  }
+
+  const anchorId = anchor?.getAttribute?.('data-reply-id')
+  const before = anchorId ? anchor.getBoundingClientRect().top : null
+
   showAllReplies.value = true
+
+  if (before === null) return
+
+  await nextTick()
+
+  const moved = container.value?.querySelector(`[data-reply-id="${anchorId}"]`)
+  if (!moved) return
+
+  const delta = moved.getBoundingClientRect().top - before
+  if (delta) {
+    window.scrollBy(0, delta)
+  }
 }
 
 function rendered(id) {

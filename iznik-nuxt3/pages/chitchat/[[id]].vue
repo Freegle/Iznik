@@ -155,6 +155,7 @@
                   :id="entry?.id"
                   :scroll-to="id"
                   :context="id ? 'thread' : 'feed'"
+                  :jump-to-new="jumpToNew"
                   :duplicate-count="getDuplicateCount(entry?.id)"
                   @rendered="rendered"
                   @expand-duplicates="expandDuplicates"
@@ -234,6 +235,10 @@ definePageMeta({
 const runtimeConfig = useRuntimeConfig()
 const route = useRoute()
 const id = route.params.id
+
+// The feed's "N new" link ends in #new, meaning "take me to what I have not
+// read". Anything else that opens a thread just opens it at the top.
+const jumpToNew = route.hash === '#new'
 
 useHead(
   buildHead(
