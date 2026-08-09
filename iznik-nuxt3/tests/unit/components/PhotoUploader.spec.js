@@ -3,6 +3,12 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { Camera } from '@capacitor/camera'
 import PhotoUploader from '~/components/PhotoUploader.vue'
+// The full-screen viewer is a defineAsyncComponent inside PhotoUploader; the
+// viewer tests assert against the REAL component (slides, counter), so it is
+// not stubbed. Importing it here warms the module cache, making the dynamic
+// import resolve instantly - on a loaded CI runner the first cold import of
+// its chain could exceed the tests' waitFor window and flake (seen live).
+import '~/components/MessagePhotosModal'
 
 // Mock defineAsyncComponent to return a stub for vuedraggable
 vi.stubGlobal('defineAsyncComponent', (fn) => {
