@@ -171,7 +171,11 @@
     <!-- Forward rendered events from nested replies: without this the
          notification deep-link scroll in NewsThread never hears about
          depth 2+ replies mounting. When the nested list reports that its
-         whole subtree has mounted, this reply's subtree is complete too. -->
+         whole subtree has mounted, this reply's subtree is complete too.
+         In the feed the children are suppressed and nothing stands in for
+         them: the card's own "View all N replies" link already counts and
+         names the whole tree, so a second counted link here would only
+         offer a subset of the same conversation under a smaller number. -->
     <NewsReplies
       v-if="reply?.replies?.length && !suppressChildren"
       :id="id"
@@ -182,19 +186,6 @@
       @rendered="$emit('rendered', $event)"
       @subtree-rendered="$emit('subtree-rendered', id)"
     />
-    <nuxt-link
-      v-else-if="reply?.replies?.length && suppressChildren"
-      :to="'/chitchat/' + id"
-      class="view-child-replies"
-    >
-      <span class="cta-lead"
-        >View {{ childCount }} {{ childCount === 1 ? 'reply' : 'replies'
-        }}{{ childNames.length ? ' from' : '' }}</span
-      >
-      <span v-if="childNames.length" class="cta-names">{{
-        childNames.join(', ')
-      }}</span>
-    </nuxt-link>
     <div v-if="showReplyBox" class="mb-2 pb-1 ms-4">
       <div v-if="enterNewLine" class="w-100">
         <OurAtTa
@@ -524,35 +515,6 @@ const scrollToThis = computed(() => {
   // link to any of the later messages must still light this row up.
   return !!reply.value?.combinedIds?.includes(target)
 })
-
-// Recursive size of this reply's nested conversation, for the counted link
-// shown when children are suppressed (feed context).
-function countNested(r) {
-  let total = 0
-  for (const kid of r?.replies || []) {
-    const child = typeof kid === 'object' ? kid : newsfeedStore.byId(kid)
-    total += 1 + countNested(child)
-  }
-  return total
-}
-
-const childCount = computed(() => countNested(reply.value))
-
-// Who is behind that counted link. Distinct, in the order they first replied,
-// so the reader can tell a conversation they are part of from one they are not.
-function collectNested(r, out) {
-  for (const kid of r?.replies || []) {
-    const child = typeof kid === 'object' ? kid : newsfeedStore.byId(kid)
-    if (!child) continue
-    if (child.displayname && !out.includes(child.displayname)) {
-      out.push(child.displayname)
-    }
-    collectNested(child, out)
-  }
-  return out
-}
-
-const childNames = computed(() => collectNested(reply.value, []))
 
 const isNew = computed(() => {
   const seenBefore = newsfeedStore.seenBeforeVisit
@@ -1071,45 +1033,6 @@ function showReplyPhotoModal() {
   vertical-align: middle;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-}
-
-/* Counted stand-in for a suppressed nested conversation (feed context).
-   Full-width and comfortably tappable. */
-.view-child-replies {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-height: 44px;
-  width: 100%;
-  padding: 0.25rem 0 0.25rem 1rem;
-  color: $color-success;
-  font-size: 0.85rem;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-
-  &:hover {
-    text-decoration: underline;
-  }
-
-  &:focus-visible {
-    outline: 2px solid $color-success;
-    outline-offset: 2px;
-    border-radius: 2px;
-  }
-}
-
-/* Only the names shrink, ellipsised on a single line. */
-.cta-lead {
-  flex: 0 0 auto;
-}
-
-.cta-names {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 500;
 }
 
 /* The reply a notification deep link points at. A brief flash draws the eye

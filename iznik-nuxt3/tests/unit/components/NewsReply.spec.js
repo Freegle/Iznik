@@ -553,68 +553,17 @@ describe('NewsReply', () => {
   })
 
   describe('suppressed children (feed context)', () => {
-    it('replaces its nested list with a counted link', () => {
+    // The feed card carries one link, the "View all N replies from ..." row
+    // NewsReplies puts above the card's visible replies. It already counts and
+    // names the whole tree, so a nested stand-in link here would offer a
+    // subset of the same conversation under a smaller, confusing number.
+    it('drops its nested list without standing anything in its place', () => {
       const withNested = { ...mockReply, replies: [{ id: 456 }, { id: 457 }] }
       const wrapper = createWrapper({ suppressChildren: true }, withNested)
 
       expect(wrapper.find('.news-replies').exists()).toBe(false)
-      const link = wrapper.find('.view-child-replies')
-      expect(link.exists()).toBe(true)
-      expect(link.text()).toContain('View 2 replies')
-      expect(link.attributes('href')).toBe('/chitchat/100')
-    })
-
-    it('uses the singular for one nested reply', () => {
-      const withNested = { ...mockReply, replies: [{ id: 456 }] }
-      const wrapper = createWrapper({ suppressChildren: true }, withNested)
-
-      expect(wrapper.find('.view-child-replies').text()).toContain(
-        'View 1 reply'
-      )
-    })
-
-    it('names who replied, comma-separated', () => {
-      const withNested = {
-        ...mockReply,
-        replies: [
-          { id: 456, displayname: 'Nested One' },
-          { id: 457, displayname: 'Nested Two' },
-        ],
-      }
-      const wrapper = createWrapper({ suppressChildren: true }, withNested)
-
-      const link = wrapper.find('.view-child-replies')
-      expect(link.text()).toContain('View 2 replies from')
-      expect(link.find('.cta-names').text()).toBe('Nested One, Nested Two')
-    })
-
-    it('names each person once and descends the nested tree', () => {
-      const withNested = {
-        ...mockReply,
-        replies: [
-          {
-            id: 456,
-            displayname: 'Nested One',
-            replies: [
-              { id: 458, displayname: 'Deeper' },
-              { id: 459, displayname: 'Nested One' },
-            ],
-          },
-        ],
-      }
-      const wrapper = createWrapper({ suppressChildren: true }, withNested)
-
-      expect(wrapper.find('.cta-names').text()).toBe('Nested One, Deeper')
-    })
-
-    it('drops the "from" when nobody can be named', () => {
-      const withNested = { ...mockReply, replies: [{ id: 456 }] }
-      const wrapper = createWrapper({ suppressChildren: true }, withNested)
-
-      const link = wrapper.find('.view-child-replies')
-      expect(link.text()).toContain('View 1 reply')
-      expect(link.text()).not.toContain('from')
-      expect(link.find('.cta-names').exists()).toBe(false)
+      expect(wrapper.find('.view-child-replies').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('View 2 replies')
     })
 
     it('reports its subtree complete on mount when children are suppressed', () => {
@@ -625,9 +574,10 @@ describe('NewsReply', () => {
       expect(wrapper.emitted('subtree-rendered')[0]).toEqual([100])
     })
 
-    it('shows no link when there are no children', () => {
+    it('renders nothing extra when there are no children', () => {
       const wrapper = createWrapper({ suppressChildren: true })
       expect(wrapper.find('.view-child-replies').exists()).toBe(false)
+      expect(wrapper.find('.news-replies').exists()).toBe(false)
     })
   })
 
