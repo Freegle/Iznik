@@ -160,6 +160,7 @@
       centered
       @ok="continueWithPhoto"
       @cancel="retakePhoto"
+      @hidden="onQualityModalHidden"
     >
       <p>{{ qualityModalMessage }}</p>
       <template #footer="{}">
@@ -619,6 +620,20 @@ function continueWithPhoto() {
   pendingPhoto.value = null
 }
 
+// The quality modal can be dismissed without choosing either button - the
+// header X, the backdrop, or Esc. processPhoto has already put the photo in
+// the tray with uploading:true and is holding the upload back until a
+// decision, so a dismissal that ran neither handler would leave it pinned at
+// 0% with nothing in flight to ever clear the flag. That is not cosmetic: the
+// give flow gates Next on anyUploading, Skip only renders in the empty state,
+// and compose persists, so the photo comes back on the next visit and blocks
+// posting for good. Dismissing means "keep it", so treat it as Use This.
+function onQualityModalHidden() {
+  if (pendingPhoto.value) {
+    continueWithPhoto()
+  }
+}
+
 // Retake photo
 function retakePhoto() {
   showQualityModal.value = false
@@ -874,6 +889,19 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  // Navigating away with the quality modal still open leaves the held photo
+  // uploading:true with no upload running and no modal left to resolve it.
+  // Android's back gesture does exactly this: the app's backButton handler
+  // calls history.back() without closing open modals. Starting an upload from
+  // a component that is going away is not reliable, so surface it as a failure
+  // instead - that clears anyUploading and gives the card its Retry/Delete
+  // controls, which is recoverable rather than a permanent 0%.
+  if (pendingPhoto.value?.uploading) {
+    pendingPhoto.value.uploading = false
+    pendingPhoto.value.error = true
+  }
+  pendingPhoto.value = null
+
   compressTimers.clear()
   uploadRetries.clear()
   if (uppy.value && typeof uppy.value.close === 'function') {

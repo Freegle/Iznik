@@ -1170,6 +1170,74 @@ describe('PhotoUploader', () => {
       expect(wrapper.vm.photos.length).toBe(0)
       expect(wrapper.vm.showSourceModal).toBe(true)
     })
+
+    // A critical blur warning holds the upload back until the member chooses.
+    // Dismissing the modal without choosing (header X, backdrop, Esc) used to
+    // leave the photo uploading:true with nothing in flight, which disables
+    // Next for good - and compose persists it, so it blocked posting on the
+    // next visit too.
+    it('dismissing the quality modal uploads the held photo instead of stranding it', async () => {
+      mockMobileStore.isApp = true
+      mockAnalyzePhotoQuality.mockResolvedValue({
+        hasIssues: true,
+        overallSeverity: 'critical',
+        warnings: [{ type: 'blur', message: 'This photo is very blurry' }],
+      })
+      createWrapper()
+
+      await wrapper.vm.processPhoto('/blurry.jpg')
+      await flushPromises()
+
+      expect(wrapper.vm.showQualityModal).toBe(true)
+      expect(wrapper.vm.photos[0].uploading).toBe(true)
+      expect(mockTusUpload.start).not.toHaveBeenCalled()
+
+      wrapper.vm.onQualityModalHidden()
+      await flushPromises()
+
+      expect(mockTusUpload.start).toHaveBeenCalled()
+      expect(wrapper.vm.pendingPhoto).toBeNull()
+    })
+
+    it('hiding after a button choice does not upload a second time', async () => {
+      createWrapper()
+      wrapper.vm.showQualityModal = true
+      wrapper.vm.pendingPhoto = { preview: '/test.jpg', uploading: true }
+
+      wrapper.vm.continueWithPhoto()
+      await flushPromises()
+      expect(mockTusUpload.start).toHaveBeenCalledTimes(1)
+
+      wrapper.vm.onQualityModalHidden()
+      await flushPromises()
+
+      expect(mockTusUpload.start).toHaveBeenCalledTimes(1)
+      expect(wrapper.vm.pendingPhoto).toBeNull()
+    })
+
+    // Android's back gesture navigates instead of closing the modal, so the
+    // component unmounts with the photo still held.
+    it('navigating away with the modal open leaves the photo recoverable', async () => {
+      mockMobileStore.isApp = true
+      mockAnalyzePhotoQuality.mockResolvedValue({
+        hasIssues: true,
+        overallSeverity: 'critical',
+        warnings: [{ type: 'blur', message: 'This photo is very blurry' }],
+      })
+      createWrapper()
+
+      await wrapper.vm.processPhoto('/blurry.jpg')
+      await flushPromises()
+
+      const held = wrapper.vm.photos[0]
+      expect(held.uploading).toBe(true)
+
+      wrapper.unmount()
+      wrapper = null
+
+      expect(held.uploading).toBe(false)
+      expect(held.error).toBe(true)
+    })
   })
 
   describe('edge cases', () => {
