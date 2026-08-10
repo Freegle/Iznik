@@ -454,6 +454,36 @@ describe('PostMap', () => {
       await createWrapper()
       expect(loadLeaflet).toHaveBeenCalled()
     })
+
+    // ready() wraps its geocoder setup in try/catch precisely because leaflet throws
+    // here in practice. That containment is what keeps a geocoder failure from taking
+    // the whole map down, and it was only ever covered by accident — before the two
+    // dynamic imports above were mocked, the real modules threw in jsdom and hit this
+    // catch as a side effect. Asserted deliberately now.
+    it('keeps working when the geocoder fails to construct', async () => {
+      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
+      Geocoder.mockImplementationOnce(() => {
+        throw new Error('leaflet not ready')
+      })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      const wrapper = await createWrapper()
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+
+      // Swallowed, not propagated...
+      expect(
+        logSpy.mock.calls.some((c) => String(c[0]).includes('Ignore leaflet exception'))
+      ).toBe(true)
+
+      // ...and the map is still live: it framed itself and the parent was told it is ready.
+      const component = wrapper.findComponent(PostMap)
+      expect(component.emitted('update:ready')).toBeTruthy()
+      expect(map.vm.leafletObject.fitBounds).toHaveBeenCalled()
+
+      logSpy.mockRestore()
+    })
   })
 
   describe('map hidden behavior', () => {
