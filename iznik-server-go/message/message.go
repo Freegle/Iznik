@@ -3958,17 +3958,32 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 	// Subject, textbody, and item name are exactly the fields
 	// ContentCheckService::checkMessage() scans (concern keywords, per-group
-	// worry words, phone numbers, vague-item, not-an-item, URLs, ...).
-	// processUnprocessed() only re-scans messages_groups rows where
-	// contentcheck_checked_at IS NULL, so once a row has been checked, editing
-	// in new content otherwise leaves it unchecked forever - the automated
-	// moderation filters silently skip it and it can only be caught by a mod
-	// noticing manually. Clearing the stamp here re-queues the row for a fresh
-	// check, for both mods and owners: mods stripping an issue that triggered a
-	// flag also need the clean edit re-verified.
+	// worry words, phone numbers, vague-item, not-an-item, URLs, ...). A row
+	// that has already been checked is never re-scanned on its own, so editing
+	// in new content would otherwise leave the automated moderation filters
+	// silently skipped, catchable only by a mod noticing by hand. Mark the row
+	// for a fresh check, for both mods and owners: a mod stripping the issue
+	// that triggered a flag also needs the clean edit re-verified.
+	//
+	// Marking, NOT clearing contentcheck_checked_at. That stamp doubles as
+	// "safe to show a moderator": the Pending list (message_list.go) and the
+	// work counts (groupWork.go, session.go) hide rows that have never been
+	// checked, so a brand-new post is not shown before the checks have had
+	// their say. Clearing it on edit made the post the moderator had just
+	// edited vanish out of their own queue - card and badge together - until
+	// the batch re-stamped it half a minute later, reappearing only on a
+	// manual reload (Discourse 10001).
+	//
+	// The stored reasons still go, as they always did: they are what ModTools
+	// shows as "why is this pending", and a reason the mod has just edited out
+	// is worse than no reason at all - another mod could reject a post over a
+	// problem that is no longer there. The recheck writes the true set back.
 	if subjectChanged || textChanged || itemsChanged {
 		db.Table("messages_groups").Where("msgid = ?", req.ID).
-			Updates(map[string]interface{}{"contentcheck_checked_at": gorm.Expr("NULL"), "contentcheck_reasons": gorm.Expr("NULL")})
+			Updates(map[string]interface{}{
+				"contentcheck_reasons":    gorm.Expr("NULL"),
+				"contentcheck_recheck_at": gorm.Expr("NOW()"),
+			})
 	}
 
 	// The subject/body drive the search indexes (messages_index keyword search and

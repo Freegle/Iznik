@@ -25,6 +25,10 @@ class ContentCheckTest extends TestCase
         DB::table('messages_groups')
             ->whereNull('contentcheck_checked_at')
             ->update(['contentcheck_checked_at' => now()]);
+        // Same for rows an edit has marked for a recheck: they are candidates too.
+        DB::table('messages_groups')
+            ->whereNotNull('contentcheck_recheck_at')
+            ->update(['contentcheck_recheck_at' => null]);
     }
 
     // -------------------------------------------------------------------------
@@ -1039,6 +1043,58 @@ class ContentCheckTest extends TestCase
 
         $checkedAt = DB::table('messages_groups')->where('msgid', $msgid)->value('contentcheck_checked_at');
         $this->assertNotNull($checkedAt);
+    }
+
+    /**
+     * Editing a message that has already been checked marks it for a recheck rather than
+     * clearing its check stamp, because the stamp is what keeps a Pending post visible to
+     * moderators (Discourse 10001). The marked row must still be picked up here, and the
+     * marker cleared once it has been checked - otherwise every edit would be re-checked
+     * forever.
+     */
+    public function test_edited_message_marked_for_recheck_is_checked_again(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+            'lat'      => 51.50,
+            'lng'      => -0.13,
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        // Checked once, flagged, then edited: stamp intact, marker set - exactly what
+        // PATCH /message leaves behind.
+        DB::table('messages_groups')->insert([
+            'msgid'                   => $msgid,
+            'groupid'                 => $group->id,
+            'collection'              => 'Pending',
+            'arrival'                 => now(),
+            'deleted'                 => 0,
+            'contentcheck_checked_at' => now()->subMinutes(5),
+            'contentcheck_reasons'    => json_encode(['stale reason from before the edit']),
+            'contentcheck_recheck_at' => now(),
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals(1, $stats['approved'], 'A row marked for recheck must be re-checked');
+
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->first();
+        $this->assertEquals('Approved', $row->collection);
+        $this->assertNull($row->contentcheck_recheck_at, 'The recheck marker must be cleared once checked');
+        $this->assertNull($row->contentcheck_reasons, 'The stale pre-edit reason must be replaced');
     }
 
     public function test_promoted_message_with_location_is_added_to_spatial_index(): void

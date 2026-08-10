@@ -349,6 +349,7 @@ class ContentCheckService
                                         'approvedat'              => now(),
                                         'contentcheck_checked_at' => now(),
                                         'contentcheck_reasons'    => null,
+                                        'contentcheck_recheck_at' => null,
                                     ]);
 
                                 // Clearance/bulk-offer posts are excluded from freebiealerts.app.
@@ -377,6 +378,7 @@ class ContentCheckService
                                     'collection'              => MessageGroup::COLLECTION_SPAM,
                                     'contentcheck_checked_at' => now(),
                                     'contentcheck_reasons'    => json_encode($reasons),
+                                    'contentcheck_recheck_at' => null,
                                 ]);
 
                             $stats['blocked']++;
@@ -389,6 +391,7 @@ class ContentCheckService
                                     ->update([
                                         'contentcheck_checked_at' => now(),
                                         'contentcheck_reasons'    => empty($reasons) ? null : json_encode($reasons),
+                                        'contentcheck_recheck_at' => null,
                                     ]);
 
                                 DB::table('background_tasks')->insert([
@@ -418,7 +421,17 @@ class ContentCheckService
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
             ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
-            ->whereNull('mg.contentcheck_checked_at')
+            // Either never checked, or checked and then edited. Editing marks the row
+            // rather than clearing its stamp, because the stamp is also what lets a
+            // moderator see the post at all - clearing it made a post vanish from the
+            // queue of the moderator who had just edited it (Discourse 10001). Both
+            // cases need the same scan, so both are picked up here. The OR is not the
+            // driving predicate: each pass below leads with collection or arrival, so
+            // the index choice is unchanged and the row set is already small.
+            ->where(function ($q) {
+                $q->whereNull('mg.contentcheck_checked_at')
+                    ->orWhereNotNull('mg.contentcheck_recheck_at');
+            })
             ->where('mg.deleted', 0)
             // Held messages ARE checked - checking is not acting. Skipping them entirely
             // (the old "never fight a mod" rule, 9816/9815) left contentcheck_checked_at
@@ -433,10 +446,10 @@ class ContentCheckService
             ->orderBy('mg.msgid')
             ->orderBy('mg.groupid');
 
-        // Pending posts awaiting their first check. Served by the single-column
-        // `collection` index; being a secondary index it returns rows already
-        // ordered by the appended (msgid, groupid) clustered key, so no filesort,
-        // and Pending is the small live mod queue.
+        // Pending posts awaiting a check - their first, or a fresh one after an edit.
+        // Served by the single-column `collection` index; being a secondary index it
+        // returns rows already ordered by the appended (msgid, groupid) clustered key,
+        // so no filesort, and Pending is the small live mod queue.
         $base()
             ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
             ->chunk(100, $processChunk);
@@ -484,6 +497,7 @@ class ContentCheckService
                     ->update([
                         'contentcheck_checked_at' => now(),
                         'contentcheck_reasons'    => json_encode($reasons),
+                        'contentcheck_recheck_at' => null,
                     ]);
 
                 DB::table('background_tasks')->insert([
@@ -504,6 +518,7 @@ class ContentCheckService
             ->update([
                 'contentcheck_checked_at' => now(),
                 'contentcheck_reasons'    => null,
+                'contentcheck_recheck_at' => null,
             ]);
 
         $stats[$checkedKey]++;

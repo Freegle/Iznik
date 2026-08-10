@@ -3230,6 +3230,65 @@ func TestPatchMessageLocationName(t *testing.T) {
 	assert.Equal(t, locID, msgLocID, "locationid should be resolved from location name")
 }
 
+// A moderator editing a Pending post must not lose it. The content check has to run
+// again on the new text, but the stamp that records the last check is also what makes
+// the post visible to mods at all - the Pending list and the work counts both hide
+// rows that have never been checked. Clearing it on edit therefore took the post out
+// of the queue of the moderator who had just edited it, list and badge together, until
+// the batch re-stamped it half a minute later (Discourse 10001). The edit now marks
+// the row for a recheck instead, and leaves the stamp alone.
+func TestPatchMessageEditKeepsPendingVisibleAndQueuesRecheck(t *testing.T) {
+	prefix := uniquePrefix("msgpatch_recheck")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+
+	// The content check has run: stamped, and with a reason recorded.
+	db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NOW(), contentcheck_reasons = ?, contentcheck_recheck_at = NULL WHERE msgid = ? AND groupid = ?",
+		`["worryword"]`, msgID, groupID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":       msgID,
+		"textbody": "Edited by the moderator to take the worrying bit out",
+	})
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+modToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var stillChecked, recheckQueued, staleReasons int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND contentcheck_checked_at IS NOT NULL", msgID, groupID).Scan(&stillChecked)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND contentcheck_recheck_at IS NOT NULL", msgID, groupID).Scan(&recheckQueued)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND contentcheck_reasons IS NOT NULL", msgID, groupID).Scan(&staleReasons)
+	assert.EqualValues(t, 1, stillChecked, "Editing must not clear the check stamp - that is what makes the post visible")
+	assert.EqualValues(t, 1, recheckQueued, "Editing must queue a fresh content check on the new text")
+	assert.EqualValues(t, 0, staleReasons, "The reason the mod has just edited out must not stay on the card")
+
+	// The point of all that: the moderator can still see the post they just edited.
+	url := fmt.Sprintf("/api/modtools/messages?collection=Pending&jwt=%s", modToken)
+	listResp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, listResp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(listResp.Body).Decode(&result)
+	found := false
+	for _, id := range result["messages"].([]interface{}) {
+		if uint64(id.(float64)) == msgID {
+			found = true
+		}
+	}
+	assert.True(t, found, "An edited Pending message must stay in the mod's Pending list")
+}
+
 func TestPatchMessageExtendDeadlineClearsExpiredOutcome(t *testing.T) {
 	prefix := uniquePrefix("msgpatch_extend")
 	db := database.DBConn
@@ -7816,10 +7875,15 @@ func TestPatchMessageEditReviewRequiredGroupModerated(t *testing.T) {
 // automated content-check (contentcheck_checked_at stamped, e.g. because it was
 // approved) must be re-queued for a fresh check when the owner edits its textbody.
 // Without this, content added via an edit (worry words, phone numbers, banned
-// keywords, ...) is never scanned by ContentCheckService.processUnprocessed(),
-// which only picks up rows where contentcheck_checked_at IS NULL — so the automated
-// moderation filters silently skip edited content forever, and it can only be
-// caught by a mod noticing it manually.
+// keywords, ...) is never scanned by ContentCheckService.processUnprocessed() and
+// the automated moderation filters silently skip edited content forever, catchable
+// only by a mod noticing it manually.
+//
+// The re-queue is a mark (contentcheck_recheck_at), not a wipe of the stamp, which
+// is what it used to be. The stamp is also what makes a Pending post visible to
+// moderators, so clearing it took a post out of the queue of the moderator who had
+// just edited it until the batch pass re-stamped it (Discourse 10001). What the
+// batch picks up is now "never checked OR marked", so the re-check still happens.
 func TestPatchMessageTextEditResetsContentCheck(t *testing.T) {
 	prefix := uniquePrefix("msgedit_recheck_text")
 	db := database.DBConn
@@ -7848,11 +7912,12 @@ func TestPatchMessageTextEditResetsContentCheck(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
 
-	var checkedAtStillSet bool
+	var checkedAtStillSet, recheckQueued bool
 	var reasons *string
-	db.Raw("SELECT contentcheck_checked_at IS NOT NULL, contentcheck_reasons FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).
-		Row().Scan(&checkedAtStillSet, &reasons)
-	assert.False(t, checkedAtStillSet, "editing the textbody should clear contentcheck_checked_at so the batch job re-checks the new content")
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL, contentcheck_recheck_at IS NOT NULL, contentcheck_reasons FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).
+		Row().Scan(&checkedAtStillSet, &recheckQueued, &reasons)
+	assert.True(t, recheckQueued, "editing the textbody should mark the row so the batch job re-checks the new content")
+	assert.True(t, checkedAtStillSet, "the check stamp must survive the edit - it is what keeps a Pending post visible to mods")
 	assert.Nil(t, reasons, "stale contentcheck_reasons from the pre-edit check should be cleared too")
 }
 
@@ -7881,9 +7946,11 @@ func TestPatchMessageSubjectEditResetsContentCheck(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
 
-	var checkedAtStillSet bool
-	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtStillSet)
-	assert.False(t, checkedAtStillSet, "editing the subject should clear contentcheck_checked_at so the batch job re-checks the new content")
+	var checkedAtStillSet, recheckQueued bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL, contentcheck_recheck_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).
+		Row().Scan(&checkedAtStillSet, &recheckQueued)
+	assert.True(t, recheckQueued, "editing the subject should mark the row so the batch job re-checks the new content")
+	assert.True(t, checkedAtStillSet, "the check stamp must survive the edit - it is what keeps a Pending post visible to mods")
 }
 
 // TestPatchMessageNonContentEditKeepsContentCheck: editing a field that
@@ -7913,9 +7980,11 @@ func TestPatchMessageNonContentEditKeepsContentCheck(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
 
-	var checkedAtStillSet bool
-	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtStillSet)
+	var checkedAtStillSet, recheckQueued bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL, contentcheck_recheck_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).
+		Row().Scan(&checkedAtStillSet, &recheckQueued)
 	assert.True(t, checkedAtStillSet, "a non-content edit should not discard the existing content-check stamp")
+	assert.False(t, recheckQueued, "a non-content edit should not queue a re-check either - nothing it changed is scanned")
 }
 
 // --- tnpostid and expiresat tests ---
