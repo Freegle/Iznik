@@ -189,6 +189,13 @@ config.global.stubs = {
       '<label class="form-check"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked); $emit(\'change\', $event.target.checked)" /><slot /></label>',
     props: ['modelValue'],
   },
+  // b-form wraps the *-input/-select stubs below. Without it here, any component
+  // laying its controls out in a <b-form> logs "Failed to resolve component",
+  // which this file turns into a test failure.
+  'b-form': {
+    template: '<form @submit.prevent="$emit(\'submit\')"><slot /></form>',
+    props: ['inline'],
+  },
   'b-form-group': {
     template: '<div class="form-group"><slot /></div>',
     props: ['label', 'labelFor'],
