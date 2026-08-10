@@ -35,6 +35,19 @@ class ReachBoundsService
 {
     public const TOLERANCE = 0.002;
 
+    /**
+     * The least share of the polygon's area an inner bound may cover and still be worth
+     * keeping. Correctness (inner ⊆ polygon) is necessary but not sufficient: the routing
+     * grid's 3-cell erosion disintegrates ribbon-shaped rural reaches and ships the
+     * largest surviving fragment — a town-core blob covering 1–2% of the polygon. Such an
+     * inner verifies, but every viewer between it and the outer bound pays the full
+     * ~178KB polygon test, which is what saturated db3 in Aug 2026 (band 58% vs the
+     * designed 7–19%). Below this share the SQL derivation from the stored polygon
+     * (~90% coverage) is always the better inner. 0.5 rather than something tighter so
+     * legitimately-eroded urban inners (solid grids lose only their rim) never churn.
+     */
+    public const INNER_MIN_AREA_RATIO = 0.5;
+
     /** Cached column-existence check so a pre-migration deploy degrades to a no-op. */
     private static ?bool $columnsExist = null;
 
@@ -73,6 +86,11 @@ class ReachBoundsService
      * bounds are verified against the stored polygon — they bound the raw tick
      * isochrone, while the stored polygon may have been unioned with the origin
      * group's area and clipped by rejections, so verbatim trust would be wrong.
+     *
+     * The provided INNER is additionally held to a usefulness bar, not just a
+     * correctness one: a verified inner covering a sliver of the polygon (see
+     * INNER_MIN_AREA_RATIO) or no inner at all ends as a polygon-derived inner, never
+     * as NULL, because NULL sends every in-outer viewer to the full polygon test.
      */
     public function sync(int $msgid, ?string $outerWkt = null, ?string $innerWkt = null): void
     {
@@ -123,6 +141,74 @@ class ReachBoundsService
             // cheap accept, keep the verified outer.
             $this->nullInner($msgid);
         }
+
+        // The provided inner may be correct yet useless (see INNER_MIN_AREA_RATIO), or
+        // missing altogether, or just NULLed above. In all three cases a polygon-derived
+        // inner restores the cheap accept the sandwich exists for.
+        $this->ensureUsefulInner($msgid);
+    }
+
+    /**
+     * Replace a missing or uselessly small inner bound with one derived from the stored
+     * polygon; keep a useful one untouched. Degraded completed-post rows (POINT outer)
+     * are never resurrected. Returns 'kept', 'derived', 'nulled' or 'skipped' so the
+     * backfill command can report what happened.
+     */
+    public function ensureUsefulInner(int $msgid, float $minRatio = self::INNER_MIN_AREA_RATIO): string
+    {
+        if (!$this->ready()) {
+            return 'skipped';
+        }
+
+        try {
+            // keep-raw: ST_GeometryType/ST_Area GIS expressions; useReadPdo=false (own-write read)
+            $row = DB::select(
+                'SELECT ST_GeometryType(outer_bound) AS outer_type,
+                        inner_bound IS NULL AS missing,
+                        COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(polygon), 0), 0) AS ratio
+                   FROM rippling_reach
+                  WHERE msgid = ? AND polygon IS NOT NULL AND outer_bound IS NOT NULL',
+                [$msgid],
+                false
+            )[0] ?? null;
+
+            if ($row === null || $row->outer_type === 'POINT') {
+                return 'skipped';
+            }
+            if (!(int) $row->missing && (float) $row->ratio >= $minRatio) {
+                return 'kept';
+            }
+        } catch (\Throwable) {
+            // ST_Area can throw on invalid stored geometry; an unmeasurable inner is a
+            // suspect inner, so fall through and re-derive it.
+        }
+
+        try {
+            // keep-raw: embeds the innerExpr GIS derivation; updated_at preserved deliberately.
+            // The POINT guard repeats here because the check above can be skipped by its
+            // catch: a degraded completed-post row must never get an inner resurrected.
+            DB::update(
+                'UPDATE rippling_reach
+                    SET inner_bound = ' . self::innerExpr('polygon') . ',
+                        updated_at = updated_at
+                  WHERE msgid = ? AND ST_GeometryType(outer_bound) <> \'POINT\'',
+                [$msgid]
+            );
+        } catch (\Throwable $e) {
+            Log::warning("ripple: inner bound derivation failed for msg {$msgid}: {$e->getMessage()}");
+            $this->nullInner($msgid);
+
+            return 'nulled';
+        }
+
+        [, $innerOk] = $this->verifySandwich($msgid);
+        if ($innerOk !== 1) {
+            $this->nullInner($msgid);
+
+            return 'nulled';
+        }
+
+        return 'derived';
     }
 
     /**

@@ -276,10 +276,19 @@ retracted, so re-approval restores the copy without re-rippling.
   that margin, so superset/subset hold by construction), shipped as
   `catchment_outer`/`catchment_inner` on point-form `/v1/catchment`, and verified against
   the stored polygon on write (`Ripple\ReachBoundsService`); otherwise derived in SQL
-  (`ST_Buffer(ST_Simplify(polygon, tol), ±tol)`, tol 0.002°). A rejection clip that
-  shrinks the polygon NULLs `inner_bound` in the same statement
-  (`ClipReachForRejectedGroup`, `reapplyClips`), since a stale inner bound would keep
-  showing the post in the just-rejected area.
+  (`ST_Buffer(ST_Simplify(polygon, tol), ±tol)`, tol 0.002°). A provided inner is held to
+  a **usefulness** bar as well as a correctness one
+  (`ReachBoundsService::ensureUsefulInner`, `INNER_MIN_AREA_RATIO`): the routing grid's
+  erosion disintegrates ribbon-shaped rural reaches and ships a town-core fragment
+  covering 1–2% of the polygon, which verifies as a subset yet sends nearly every
+  in-outer viewer to the full polygon test (the Aug 2026 db3 saturation — the band ran
+  at ~58% against the designed 7–19%). An inner covering less than half the polygon's
+  area — or missing altogether — is replaced by the SQL derivation from the stored
+  polygon (~90% coverage); `ripple:backfill-inner-bounds` repairs rows written before
+  this guard existed. A rejection clip that shrinks the polygon NULLs `inner_bound` in
+  the same statement (`ClipReachForRejectedGroup`, `reapplyClips`), since a stale inner
+  bound would keep showing the post in the just-rejected area; the sync that follows the
+  clip then re-derives a safe inner from the clipped polygon.
 
   The single-point gates consult the same sandwich: `ReachQueryService::isWithinReach`
   (browse Nearby / reply-eligibility / held-reply release in batch), the message-list
