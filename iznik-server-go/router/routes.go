@@ -1212,6 +1212,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Description Returns newsfeed items
 		// @Tags newsfeed
 		// @Produce json
+		// @Param distance query string false "Feed radius in metres, or 'nearby'/'anywhere'"
+		// @Param newsletters query string false "Set to 'all' to see Community News posts from every area. ChitChat moderators only; ignored for anyone else."
 		// @Success 200 {array} newsfeed.Item
 		rg.Get("/newsfeed", newsfeed.Feed)
 		rg.Post("/newsfeed", newsfeed.Post)
