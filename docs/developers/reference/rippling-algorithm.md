@@ -165,6 +165,17 @@ the nearest road is on the wrong bank - a postcode centre sits on its own street
 are assumed not to span rivers or similar barriers. This is all server-side; only group ids
 ever leave the server.
 
+**The candidate members come from `users_approxlocs`** - the query in
+`iznik-routing-go/reachable_groups.go` drives off that table's spatial index and joins
+outwards, so a member with no row there is invisible to targeting whatever their postcode
+says. That table is a cache, refreshed nightly by `users:update-approx-locs`
+(`UserApproxLocService`), holding one ~400m-blurred point per member active in the last six
+months. Nothing else notices when the refresh stops: reach still computes, still looks
+plausible, and just quietly stops seeing newer members. It went unwritten from V1's removal
+until 2026-08-10, by which point 38,325 of 112,548 active members (34%) had no row. If reach
+ever looks like it is under-targeting, check `MAX(timestamp)` on that table first - and the
+job's row on the SysAdmin cron dashboard, where a missed run shows as overdue.
+
 The same decision is computed **per tick**: every entry in the ripple schedule carries
 `reachable_group_ids` for its drive-time (a threshold over the already-computed member
 drive-times - no extra routing). The Rippling Explorer tints groups from exactly this field,

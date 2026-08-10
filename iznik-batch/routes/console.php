@@ -898,6 +898,17 @@ Schedule::command('users:update-engagement')
     ->sendOutputTo(cronLog('users:update-engagement'))
     ->runInBackground();
 
+// Refresh users_approxlocs, the blurred point cloud of active members. It is the driving table
+// of the rippling reach query, so while it is not being written new members are invisible to
+// reach - which is what happened between V1's removal and this port (34% of active members were
+// missing by 2026-08-10).
+// V1: cron/nearby.php -> Nearby::updateLocations() (daily)
+Schedule::command('users:update-approx-locs')
+    ->dailyAt('04:45')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('users:update-approx-locs'))
+    ->runInBackground();
+
 // Remove search index entries for messages older than 30 days.
 // V1: cron/message_deindex.php (daily at 01:00)
 Schedule::command('messages:deindex')

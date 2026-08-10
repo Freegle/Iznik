@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -701,4 +702,38 @@ func TestBuildSingleTraceSummary_SingleLog(t *testing.T) {
 	assert.Equal(t, 1, summary.ChildCount)
 	assert.Equal(t, "2026-01-01T10:00:00Z", summary.FirstTimestamp)
 	assert.Equal(t, "2026-01-01T10:00:00Z", summary.LastTimestamp)
+}
+
+// ---------------------------------------------------------------------------
+// canViewGroupLogs — Support/Admin branches only. Those return before touching
+// database.DBConn, which is nil in this package's tests; the moderates-the-group
+// branch is covered by the DB-backed suite in test/.
+// ---------------------------------------------------------------------------
+
+func TestCanViewGroupLogs_SupportSeesAnyGroup(t *testing.T) {
+	assert.True(t, canViewGroupLogs(0, 12345, utils.SYSTEMROLE_SUPPORT))
+}
+
+func TestCanViewGroupLogs_AdminSeesAnyGroup(t *testing.T) {
+	assert.True(t, canViewGroupLogs(0, 12345, utils.SYSTEMROLE_ADMIN))
+}
+
+// ---------------------------------------------------------------------------
+// parseTimeRange — the 30-day clamp
+// ---------------------------------------------------------------------------
+
+// Production Loki 400-rejects a query range wider than 30d1h, so an over-wide
+// request returns NOTHING rather than less. The clamp is what keeps a "1000d"
+// request useful, and a regression in it would look like "logs have vanished".
+func TestParseTimeRange_ClampsRangeWiderThanThirtyDays(t *testing.T) {
+	startTs, endTs := parseTimeRange("1000d", "now")
+
+	assert.Equal(t, int64(30*24*time.Hour), endTs-startTs,
+		"a start older than 30 days must be clamped to exactly 30 days before the end")
+}
+
+func TestParseTimeRange_DoesNotClampRangeInsideThirtyDays(t *testing.T) {
+	startTs, endTs := parseTimeRange("29d", "now")
+
+	assert.Equal(t, int64(29*24*time.Hour), endTs-startTs, "29 days is inside the limit and must be left alone")
 }
