@@ -97,7 +97,10 @@ class PlatformStatusPublishingTest extends TestCase
             ),
         ]);
 
-        $this->artisan('monitor:scheduled-outcomes')->assertExitCode(1);
+        // Warnings turn the dot amber but do NOT fail the command: a
+        // long-standing warning (host awaiting reboot) must not pin the
+        // cron-jobs tab red or page Sentry every pass.
+        $this->artisan('monitor:scheduled-outcomes')->assertExitCode(0);
 
         $status = $this->publishedStatus();
 
