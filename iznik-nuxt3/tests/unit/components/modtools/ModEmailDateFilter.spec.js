@@ -87,4 +87,42 @@ describe('ModEmailDateFilter', () => {
 
     expect(wrapper.emitted('fetch')[0][0].preset).toBe('7days')
   })
+
+  it('falls back to a week for a preset it does not recognise', () => {
+    // The window is what the panel queries with, so an unknown preset must land on a
+    // sane range rather than an empty or undefined one.
+    const p = fetchPayload('sometime-last-tuesday')
+
+    expect(p.start).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect((new Date(p.end) - new Date(p.start)) / 86400000).toBe(7)
+  })
+
+  describe('changing the dropdown', () => {
+    async function selectPreset(wrapper, value) {
+      const select = wrapper.find('select.form-select')
+      await select.setValue(value)
+      return wrapper
+    }
+
+    it('refetches immediately for a fixed preset', async () => {
+      const wrapper = mount(ModEmailDateFilter)
+      expect(wrapper.emitted('fetch')).toHaveLength(1) // the mount fetch
+
+      await selectPreset(wrapper, 'day')
+
+      expect(wrapper.emitted('fetch')).toHaveLength(2)
+      expect(wrapper.emitted('fetch')[1][0].preset).toBe('day')
+    })
+
+    it('waits for the Fetch button when custom dates are chosen', async () => {
+      // Auto-fetching on 'custom' would fire with both date fields still empty, so the
+      // early return is what lets the moderator fill them in first.
+      const wrapper = mount(ModEmailDateFilter)
+      expect(wrapper.emitted('fetch')).toHaveLength(1)
+
+      await selectPreset(wrapper, 'custom')
+
+      expect(wrapper.emitted('fetch')).toHaveLength(1)
+    })
+  })
 })
