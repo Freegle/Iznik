@@ -190,28 +190,6 @@ class ReachBoundsServiceTest extends TestCase
         $this->assertSame(1, (int) $check->ie, 'verified provided inner is stored verbatim');
     }
 
-    public function test_sync_with_bad_provided_inner_nulls_it(): void
-    {
-        // A provided inner that pokes outside the stored polygon (possible after clips, or
-        // a routing bug) must fail write-time verification and be dropped — never shipped
-        // as a cheap-accept.
-        $msgid = $this->seedReach(self::WKT);
-        $outer = 'POLYGON((-0.21 51.39, 0.01 51.39, 0.01 51.61, -0.21 51.61, -0.21 51.39))';
-        $badInner = 'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))'; // ⊃ polygon
-
-        $this->service()->sync($msgid, $outer, $badInner);
-
-        $row = $this->boundsRow($msgid);
-        $this->assertNotNull($row);
-        $this->assertSame(1, (int) $row->inner_null, 'unverifiable provided inner is NULLed');
-        $ok = DB::selectOne(
-            'SELECT ST_Contains(outer_bound, polygon) AS o
-               FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
-        );
-        $this->assertSame(1, (int) $ok->o, 'the good provided outer is kept');
-    }
-
     public function test_sync_with_bad_provided_outer_falls_back_safely(): void
     {
         // A provided outer that does NOT contain the stored polygon (e.g. the polygon was
@@ -316,8 +294,11 @@ class ReachBoundsServiceTest extends TestCase
 
     public function test_sync_derives_inner_after_nulling_unverifiable_provided_inner(): void
     {
-        // An inner that pokes outside the polygon is dropped (correctness), and the
+        // An inner that pokes outside the polygon (possible after clips, or a routing
+        // bug) must fail write-time verification and never ship as a cheap-accept; the
         // replacement is derived from the polygon rather than left NULL (usefulness).
+        // Replaces the pre-guard test_sync_with_bad_provided_inner_nulls_it, whose
+        // "ends as NULL" assertion described the behaviour this guard exists to remove.
         $msgid = $this->seedReach(self::WKT);
         $outer = 'POLYGON((-0.21 51.39, 0.01 51.39, 0.01 51.61, -0.21 51.61, -0.21 51.39))';
         $badInner = 'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))'; // ⊃ polygon
@@ -326,12 +307,16 @@ class ReachBoundsServiceTest extends TestCase
 
         $check = DB::selectOne(
             'SELECT inner_bound IS NULL AS inner_null,
-                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i,
+                    ST_Equals(inner_bound, ST_GeomFromText(?, 3857)) AS still_bad,
+                    ST_Contains(outer_bound, polygon) AS o
                FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
+            [$badInner, $msgid]
         );
         $this->assertSame(0, (int) $check->inner_null, 'a safe inner is derived to replace the rejected one');
         $this->assertSame(1, (int) $check->i, 'the derived inner satisfies inner ⊆ polygon');
+        $this->assertSame(0, (int) $check->still_bad, 'the rejected provided inner is not what is stored');
+        $this->assertSame(1, (int) $check->o, 'the good provided outer is kept');
     }
 
     public function test_ensure_useful_inner_keeps_a_good_inner_untouched(): void
