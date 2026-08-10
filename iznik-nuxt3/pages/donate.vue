@@ -181,7 +181,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 import { useAuthStore } from '~/stores/auth'
@@ -232,8 +232,12 @@ const myid = computed(() => authStore.user?.id)
 // back until the login lands — or until it's clearly not going to.
 const AUTOLOGIN_WAIT_MS = 5000
 const awaitingAutoLogin = ref(false)
+let autoLoginTimer = null
 
 onMounted(() => {
+  // window.__initSearch is captured by an inline head script because Nuxt's
+  // router calls history.replaceState during hydration and wipes the query -
+  // same reason app.vue reads it rather than route.query.
   const params = new URLSearchParams(
     window.__initSearch || window.location.search || ''
   )
@@ -244,22 +248,34 @@ onMounted(() => {
 
   awaitingAutoLogin.value = true
 
+  const done = () => {
+    awaitingAutoLogin.value = false
+    if (autoLoginTimer) {
+      clearTimeout(autoLoginTimer)
+      autoLoginTimer = null
+    }
+    stop()
+  }
+
   const stop = watch(
     () => authStore.user,
     (user) => {
       if (user) {
-        awaitingAutoLogin.value = false
-        stop()
+        done()
       }
     }
   )
 
   // Don't strand the donor behind a spinner if the key has expired - let them
   // through and fall back to whatever the payment sheet can still do.
-  setTimeout(() => {
-    awaitingAutoLogin.value = false
-    stop()
-  }, AUTOLOGIN_WAIT_MS)
+  autoLoginTimer = setTimeout(done, AUTOLOGIN_WAIT_MS)
+})
+
+onBeforeUnmount(() => {
+  if (autoLoginTimer) {
+    clearTimeout(autoLoginTimer)
+    autoLoginTimer = null
+  }
 })
 
 function succeeded() {
