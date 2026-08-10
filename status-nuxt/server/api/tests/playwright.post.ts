@@ -106,44 +106,58 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
     `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
     { encoding: 'utf8', timeout: 120000 }
   )
-  // Roll the fixture post dates forward, exactly as scripts/setup-test-database.sh
-  // does after ITS fixture load.
+  // Roll the fixture post dates forward, exactly as scripts/setup-test-database.sh does
+  // when CI builds its database. The fixtures carry fixed 2026-07-09 dates, and the feed
+  // only shows posts from the last MessageSpatialService::RECENT_DAYS (31) days. Once
+  // they age past that, upsertRecentMessages stops re-adding them AND removeOldMessages
+  // deletes the rows the fixtures ship, so messages_spatial empties and browse/explore
+  // return nothing. Locally the batch scheduler runs the reconciler, so it happens within
+  // minutes of a reset; CI never runs it, which is why this reset path could stay broken
+  // while CI stayed green. Every spec that browses for a seeded post then fails on an
+  // empty feed with nothing in the output to say why.
   //
-  // The fixtures carry absolute dates (2026-07-08..2026-07-16). The browse and
-  // explore feeds only return posts from the last 31 days
-  // (group/groupMessages.go), so as wall-clock time moves past that window the
-  // seeded posts age out and every feed-dependent spec fails on an empty feed —
-  // on a date, not on a change. Reloading the fixtures here without re-applying
-  // the roll-forward silently undid the setup script's work, so a run that had
-  // been reseeded by hand beforehand still got stale dates.
-  //
-  // Shifting by a whole number of days preserves the relative ages and ordering
-  // the fixtures encode and lands the newest post a day old; it is self-limiting,
-  // since the delta is 0 once the newest post is already a day old. `deadline` is
-  // deliberately not shifted - some fixtures carry a deliberately expired one.
+  // Whole days preserve the relative ages the fixtures encode and land the newest post a
+  // day old. Self-limiting: once it is a day old the delta is 0 and re-running is a no-op.
+  appendTestLogs('playwright', `${label}Rolling fixture post dates into the feed window...\n`)
+  const rollForward = `
+SET @delta := (
+  SELECT GREATEST(DATEDIFF(NOW(), MAX(arrival)) - 1, 0)
+  FROM messages_groups
+  WHERE arrival <= NOW()
+);
+UPDATE messages_groups
+   SET arrival    = arrival    + INTERVAL @delta DAY,
+       approvedat = approvedat + INTERVAL @delta DAY,
+       rejectedat = rejectedat + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+UPDATE messages
+   SET arrival = arrival + INTERVAL @delta DAY,
+       date    = date    + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+UPDATE messages_spatial
+   SET arrival = arrival + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+`
   execSync(
-    `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -e \\"` +
-      `SET @delta := (SELECT GREATEST(DATEDIFF(NOW(), MAX(arrival)) - 1, 0) FROM messages_groups WHERE arrival <= NOW()); ` +
-      `UPDATE messages_groups SET arrival = arrival + INTERVAL @delta DAY, approvedat = approvedat + INTERVAL @delta DAY, rejectedat = rejectedat + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW(); ` +
-      `UPDATE messages SET arrival = arrival + INTERVAL @delta DAY, date = date + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW();\\""`,
-    { encoding: 'utf8', timeout: 120000 }
+    `docker exec -i ${pfx}-percona sh -c "mysql -u root -piznik iznik"`,
+    { encoding: 'utf8', timeout: 60000, input: rollForward }
   )
 
-  // Assert it worked, here rather than 20 minutes later in a spec: an empty feed
-  // is invisible in the test output and reads as a bug in whatever branch is
-  // running.
+  // Assert it worked. Without this the failure is invisible from the test output and
+  // reads as a flake on whichever branch happens to run.
   const FEED_WINDOW_DAYS = 31
   const newestAge = parseInt(
     execSync(
-      `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -N -B -e 'SELECT DATEDIFF(NOW(), MAX(arrival)) FROM messages_groups WHERE arrival <= NOW()'"`,
+      `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -N -B -e \\"SELECT DATEDIFF(NOW(), MAX(arrival)) FROM messages_groups WHERE arrival <= NOW()\\""`,
       { encoding: 'utf8', timeout: 30000 }
     ).trim(),
     10
   )
   if (Number.isFinite(newestAge) && newestAge >= FEED_WINDOW_DAYS) {
     throw new Error(
-      `Newest seeded post is ${newestAge} days old, outside the ${FEED_WINDOW_DAYS}-day feed window ` +
-        `(group/groupMessages.go). Browse and explore would return nothing.`
+      `Newest seeded post is ${newestAge} days old, outside the ${FEED_WINDOW_DAYS}-day feed ` +
+        `window (group/groupMessages.go, message/groups.go). Browse and explore would return ` +
+        `nothing and every test that browses for a seeded post would fail.`
     )
   }
   appendTestLogs(
