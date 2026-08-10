@@ -6,9 +6,9 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/location"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
-	"iznik-server-go/location"
 )
 
 // WhoAmI returns the authenticated user ID from the request, or 0 if not logged in.
