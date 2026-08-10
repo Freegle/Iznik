@@ -174,10 +174,37 @@ config.global.stubs = {
     template:
       '<div class="card"><slot /><slot name="header" /><slot name="footer" /></div>',
   },
+  // Renders the `options` prop as real <option>s. Without them the stubbed <select> has
+  // no matching option for any value, so setValue('x') lands as '' and a test cannot
+  // drive the control at all — it silently exercises the wrong branch instead of the one
+  // it names. The <slot> is kept for components that pass options as slot content.
+  // Declares `change` and emits it with the VALUE, as bootstrap-vue-next does. Without
+  // that declaration a parent's @change is treated as a native listener on the <select>
+  // and receives an Event object instead, so a handler like
+  // `onPresetChange(p) { if (p === 'custom') return }` can never take its early return in
+  // tests — it silently runs the other branch.
   'b-form-select': {
     template:
-      '<select class="form-select" :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><slot /></select>',
+      '<select class="form-select" :value="modelValue" @change="onStubChange">' +
+      '<option v-for="o in stubOptions" :key="o.value" :value="o.value">{{ o.text }}</option>' +
+      '<slot /></select>',
     props: ['modelValue', 'id', 'options'],
+    emits: ['update:modelValue', 'change'],
+    methods: {
+      onStubChange(e: { target: { value: unknown } }) {
+        this.$emit('update:modelValue', e.target.value)
+        this.$emit('change', e.target.value)
+      },
+    },
+    computed: {
+      stubOptions() {
+        return (this.options || []).map((o) =>
+          o !== null && typeof o === 'object'
+            ? { value: o.value, text: o.text ?? o.value }
+            : { value: o, text: o }
+        )
+      },
+    },
   },
   'b-form-input': {
     template:
@@ -188,6 +215,13 @@ config.global.stubs = {
     template:
       '<label class="form-check"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked); $emit(\'change\', $event.target.checked)" /><slot /></label>',
     props: ['modelValue'],
+  },
+  // b-form wraps the *-input/-select stubs below. Without it here, any component
+  // laying its controls out in a <b-form> logs "Failed to resolve component",
+  // which this file turns into a test failure.
+  'b-form': {
+    template: '<form @submit.prevent="$emit(\'submit\')"><slot /></form>',
+    props: ['inline'],
   },
   'b-form-group': {
     template: '<div class="form-group"><slot /></div>',

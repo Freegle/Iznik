@@ -7,6 +7,13 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event).catch(() => ({}))
   const filter = body?.filter || ''
 
+  // ?coverage=true writes coverage/lcov.info inside the container, mirroring the Go
+  // endpoint. Needed to diagnose coverage locally at all: CI archives a Go profile
+  // but no frontend one, so without this the only way to see a frontend coverage
+  // number is to push and read Coveralls.
+  const query = getQuery(event)
+  const withCoverage = query.coverage === 'true'
+
   if (isTestRunning('vitest')) {
     throw createError({
       statusCode: 409,
@@ -41,7 +48,8 @@ export default defineEventHandler(async (event) => {
   })
 
   const filterArg = filter ? ` --reporter=verbose "${filter}"` : ' --reporter=verbose'
-  const testCmd = `cd /app && npx vitest run${filterArg} 2>&1`
+  const coverageArg = withCoverage ? ' --coverage' : ''
+  const testCmd = `cd /app && npx vitest run${filterArg}${coverageArg} 2>&1`
 
   const testProcess = spawn('sh', ['-c', `
     docker exec -w /app ${container} sh -c '${testCmd}'
