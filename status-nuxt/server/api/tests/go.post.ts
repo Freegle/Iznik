@@ -1,7 +1,13 @@
 import { spawn, execSync } from 'child_process'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { checkContainersReady, containersNotReadyMessage } from '../../utils/requiredContainers'
 
 const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
+
+// The database, the container the tests compile and run inside, and the spatial-knn
+// finder the API calls. A missing spatial-knn does not fail fast - it stalls the
+// suite on connect timeouts until the whole run looks broken.
+const REQUIRED_CONTAINERS = ['percona', 'apiv2', 'spatial-knn']
 
 export default defineEventHandler(async (event) => {
   console.log('Starting Go tests...')
@@ -15,6 +21,22 @@ export default defineEventHandler(async (event) => {
       statusCode: 409,
       message: 'Go tests are already running'
     })
+  }
+
+  // Refuse to start rather than produce a red run that blames the code.
+  const readiness = checkContainersReady(prefix, REQUIRED_CONTAINERS)
+  if (!readiness.ok) {
+    const message = containersNotReadyMessage('Go', readiness)
+    setTestState('go', {
+      status: 'failed',
+      success: false,
+      message,
+      logs: message + '\n',
+      progress: { completed: 0, total: 0, passed: 0, failed: 0, current: '' },
+      startTime: Date.now(),
+      endTime: Date.now(),
+    })
+    throw createError({ statusCode: 503, message })
   }
 
   // Initialize test status
