@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
+import { ref, reactive } from 'vue'
 
 import ChitchatPage from '~/pages/chitchat/[[id]].vue'
 
@@ -66,11 +66,28 @@ vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => mockNewsfeedStore,
 }))
 
-vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => ({
-    get: vi.fn(),
-    set: vi.fn(),
+// Stateful AND reactive, because the newsletter review filter round-trips
+// through it: the real store is a Pinia getter over reactive state, so a plain
+// object here would leave the computed with nothing to track.
+const mockMiscState = reactive({})
+const mockMiscStore = {
+  get: vi.fn((key) => mockMiscState[key]),
+  set: vi.fn(({ key, value }) => {
+    mockMiscState[key] = value
   }),
+}
+
+vi.mock('~/stores/misc', () => ({
+  useMiscStore: () => mockMiscStore,
+}))
+
+const mockTeamStore = {
+  fetch: vi.fn().mockResolvedValue({}),
+  getTeam: vi.fn(),
+}
+
+vi.mock('~/stores/team', () => ({
+  useTeamStore: () => mockTeamStore,
 }))
 
 vi.mock('~/stores/location', () => ({
@@ -81,11 +98,13 @@ vi.mock('~/stores/location', () => ({
 
 // Mock useMe
 const mockMe = ref({ id: 1, displayname: 'Test User', settings: {} })
+const mockChitChatMod = ref(false)
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: mockMe,
     myGroups: ref([]),
+    chitChatMod: mockChitChatMod,
   }),
 }))
 
@@ -152,6 +171,12 @@ describe('chitchat/[[id]].vue loadMore', () => {
             template: '<select />',
             props: ['modelValue', 'options'],
           },
+          'b-form-checkbox': {
+            template:
+              '<label class="form-check"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)"><slot /></label>',
+            props: ['modelValue'],
+            emits: ['update:modelValue'],
+          },
           'b-spinner': { template: '<span />' },
           'v-icon': { template: '<i />' },
           OurUploader: { template: '<div />' },
@@ -170,6 +195,8 @@ describe('chitchat/[[id]].vue loadMore', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     mockMe.value = { id: 1, displayname: 'Test User', settings: {} }
+    mockChitChatMod.value = false
+    Object.keys(mockMiscState).forEach((k) => delete mockMiscState[k])
     mockNewsfeedStore.feed = []
     routeState.params = {}
   })
@@ -260,7 +287,86 @@ describe('chitchat/[[id]].vue loadMore', () => {
     await flushPromises()
 
     expect(mockNewsfeedStore.reset).toHaveBeenCalled()
-    expect(mockNewsfeedStore.fetchFeed).toHaveBeenCalledWith(12345)
+    expect(mockNewsfeedStore.fetchFeed).toHaveBeenCalledWith(12345, false)
+  })
+
+  describe('newsletter review filter', () => {
+    // Community News drips posts to one area at a time and the feed caps them,
+    // so support and the ChitChat Moderation team had no way to see what was
+    // going out nationally.
+    const checkbox = () => wrapper.find('.filter-newsletters input')
+
+    it('is not offered to an ordinary member', async () => {
+      mockChitChatMod.value = false
+      mountComponent()
+      await flushPromises()
+
+      expect(checkbox().exists()).toBe(false)
+    })
+
+    it('is offered to a ChitChat moderator', async () => {
+      mockChitChatMod.value = true
+      mountComponent()
+      await flushPromises()
+
+      expect(checkbox().exists()).toBe(true)
+    })
+
+    it('rebuilds the feed with the flag when switched on', async () => {
+      mockChitChatMod.value = true
+      mockMe.value = {
+        id: 1,
+        displayname: 'Test User',
+        settings: { newsfeedarea: 8046 },
+      }
+      mountComponent()
+      await flushPromises()
+      vi.clearAllMocks()
+
+      await checkbox().setValue(true)
+      await flushPromises()
+
+      expect(mockNewsfeedStore.reset).toHaveBeenCalled()
+      expect(mockNewsfeedStore.fetchFeed).toHaveBeenCalledWith(8046, true)
+    })
+
+    it('starts from the remembered setting on the next visit', async () => {
+      mockChitChatMod.value = true
+      mockMiscState.chitchatallnewsletters = true
+      mountComponent()
+      await flushPromises()
+
+      expect(mockNewsfeedStore.fetchFeed).toHaveBeenCalledWith(
+        expect.anything(),
+        true
+      )
+    })
+
+    it('fetches the moderation team so the filter can appear for a plain member of it', async () => {
+      mockMe.value = {
+        id: 1,
+        displayname: 'Test User',
+        settings: {},
+        teams: ['ChitChat Moderation'],
+      }
+      mountComponent()
+      await flushPromises()
+
+      expect(mockTeamStore.fetch).toHaveBeenCalledWith('ChitChat Moderation')
+    })
+
+    it('does not fetch the moderation team for an ordinary member', async () => {
+      mockMe.value = {
+        id: 1,
+        displayname: 'Test User',
+        settings: {},
+        teams: [],
+      }
+      mountComponent()
+      await flushPromises()
+
+      expect(mockTeamStore.fetch).not.toHaveBeenCalled()
+    })
   })
 
   it('does not hide consecutive posts from same user when message field is missing', () => {
@@ -342,7 +448,9 @@ describe('chitchat/[[id]].vue loadMore', () => {
       mountComponent()
       await flushPromises()
 
-      expect(mockNewsfeedStore.ensureSeenBaselineForThreadView).toHaveBeenCalled()
+      expect(
+        mockNewsfeedStore.ensureSeenBaselineForThreadView
+      ).toHaveBeenCalled()
       expect(mockNewsfeedStore.fetch).toHaveBeenCalled()
       // Order matters: delayedSeenMode must be on before the fetch's addItems
       // could fire an instant Seen POST for everything in the thread.

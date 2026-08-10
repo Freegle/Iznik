@@ -21,6 +21,10 @@ export const useNewsfeedStore = defineStore({
     // Most recently used distance.
     lastDistance: 0,
 
+    // Whether the last feed fetch asked for every area's newsletter posts
+    // (ChitChat moderators only).
+    lastAllNewsletters: false,
+
     // Track what was seen before visiting ChitChat page (for "you're up to date" divider).
     seenBeforeVisit: null,
 
@@ -167,10 +171,20 @@ export const useNewsfeedStore = defineStore({
       this.delayedSeenMode = false
       this.seenBeforeVisit = null
     },
-    async fetchFeed(distance) {
+    // allNewsletters defaults to whatever was last asked for so that a refetch
+    // triggered by something else - posting, for instance - doesn't silently
+    // drop a moderator out of the review view.
+    async fetchFeed(distance, allNewsletters = this.lastAllNewsletters) {
       this.lastDistance = distance
+      this.lastAllNewsletters = allNewsletters
       distance = distance || 'anywhere'
-      this.feed = await api(this.config).news.fetch(null, distance)
+      this.feed = await api(this.config).news.fetch(
+        null,
+        distance,
+        undefined,
+        undefined,
+        allNewsletters ? 'all' : undefined
+      )
       return this.feed
     },
     async fetch(id, force, lovelist) {

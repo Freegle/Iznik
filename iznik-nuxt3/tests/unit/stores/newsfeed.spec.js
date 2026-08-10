@@ -464,14 +464,56 @@ describe('newsfeed store', () => {
       expect(result).toEqual(feedData)
       expect(store.feed).toEqual(feedData)
       expect(store.lastDistance).toBe('nearby')
-      expect(mockFetchNews).toHaveBeenCalledWith(null, 'nearby')
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        'nearby',
+        undefined,
+        undefined,
+        undefined
+      )
     })
 
     it('defaults distance to anywhere when falsy', async () => {
       mockFetchNews.mockResolvedValue([])
 
       await store.fetchFeed(0)
-      expect(mockFetchNews).toHaveBeenCalledWith(null, 'anywhere')
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        'anywhere',
+        undefined,
+        undefined,
+        undefined
+      )
+    })
+
+    it('asks for every area when all newsletters are wanted', async () => {
+      mockFetchNews.mockResolvedValue([])
+
+      await store.fetchFeed('nearby', true)
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        'nearby',
+        undefined,
+        undefined,
+        'all'
+      )
+    })
+
+    it('keeps the newsletter flag across a refetch that does not pass it', async () => {
+      // Posting refetches the feed with no arguments; a moderator must not be
+      // silently dropped back to their own area.
+      mockFetchNews.mockResolvedValue([])
+
+      await store.fetchFeed('nearby', true)
+      await store.fetchFeed()
+
+      expect(mockFetchNews).toHaveBeenLastCalledWith(
+        null,
+        'anywhere',
+        undefined,
+        undefined,
+        'all'
+      )
     })
   })
 
@@ -603,7 +645,13 @@ describe('newsfeed store', () => {
         imageid: null,
       })
       // Should fetch feed for new thread
-      expect(mockFetchNews).toHaveBeenCalledWith(null, 'anywhere')
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        'anywhere',
+        undefined,
+        undefined,
+        undefined
+      )
     })
 
     it('sends reply and fetches threadhead', async () => {
