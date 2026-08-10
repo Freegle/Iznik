@@ -5,8 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"iznik-server-go/utils"
-
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
