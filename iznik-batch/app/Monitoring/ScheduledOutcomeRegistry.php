@@ -6,6 +6,7 @@ use App\Models\MessageGroup;
 use App\Monitoring\Checks\BacklogCheck;
 use App\Monitoring\Checks\CallbackCheck;
 use App\Monitoring\Checks\FreshnessCheck;
+use App\Monitoring\Checks\HostHealthCheck;
 use App\Monitoring\Checks\ProducedSinceCheck;
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
@@ -31,7 +32,7 @@ class ScheduledOutcomeRegistry
         $tz = config('freegle.timezone', 'Europe/London');
         $backlogMin = (int) config('freegle.monitoring.processing_backlog_max_age_minutes', 15);
 
-        return [
+        return array_merge([
             // ---- Fire-once: did it produce output this period? -------------
 
             // stats:generate-daily (daily 02:30) writes one `stats` row per
@@ -203,7 +204,35 @@ class ScheduledOutcomeRegistry
             )
                 ->describedAs('Monthly ONS CPI inflation data fetch')
                 ->inCategory('fire-once-output'),
-        ];
+        ], $this->hostHealthChecks());
+    }
+
+    /**
+     * Host-level OS/service checks (see HostHealthCheck), one per configured
+     * ssh target. The estate's topology deliberately lives ONLY in the
+     * environment (FREEGLE_MONITORING_HOSTS in the uncommitted
+     * .env.background), never in committed code; an empty list — dev, CI —
+     * yields no checks at all.
+     *
+     * @return list<HostHealthCheck>
+     */
+    private function hostHealthChecks(): array
+    {
+        $targets = array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) config('freegle.monitoring.hosts', ''))
+        )));
+
+        if (empty($targets)) {
+            return [];
+        }
+
+        $runner = app(HostCommandRunner::class);
+
+        return array_map(
+            fn (string $target) => new HostHealthCheck($target, $runner),
+            $targets,
+        );
     }
 
     /**

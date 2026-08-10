@@ -102,10 +102,43 @@ caused a real month-long outage of the dot:
 
 `OutcomeResult` severity decides which half of the dot a breach lands in:
 `error` means part of the platform is not working, anything else is a warning.
+Severity also decides the response: only `error` breaches escalate to Sentry
+and fail the command (red badge in the cron-jobs tab). A `warning` breach
+turns the dot amber and is logged, but a long-standing warning — a host
+awaiting a reboot for a fortnight — must not page Sentry every 10 minutes or
+pin the cron-jobs tab red; that alarm fatigue is how real errors get missed.
+
+## Host health checks (V1 status.php parity)
+
+V1's `scripts/cron/status.php` also ssh'd into every server and warned on
+pending security patches, `reboot-required` and monit failures. Those checks
+died with the V1 removal too, leaving the dot blind to host state (every host
+in the estate sat on "reboot required" with the dot green). `HostHealthCheck`
+ports them into this pipeline:
+
+| Probe | V1 equivalent | Severity |
+|---|---|---|
+| `/var/run/reboot-required` exists | "Server reboot required" | warning (names the packages) |
+| `apt-get upgrade -s` lists security packages | "Security patches to apply" | warning (with count) |
+| `monit summary -B` per-service status | per-line OK-pattern match | `Not monitored` / `Initializing` / `Resource limit matched` ⇒ warning; anything else non-OK (incl. a dead monit daemon) ⇒ **error** — monit restarts the API services, and a silent monit death has caused a real outage |
+| host unreachable over ssh | (implicit) | warning |
+
+One ssh round-trip per host gathers all three signals. V1's beanstalkd,
+exim-queue and V1-spool checks are deliberately not ported (dead tech /
+covered by `email:health`).
+
+**Topology never enters the codebase.** The ssh targets come from
+`FREEGLE_MONITORING_HOSTS` (comma-separated, in the uncommitted
+`.env.background`); the key is bind-mounted from `MONITORING_SSH_KEY_HOST_PATH`
+to `/etc/monitoring-ssh-key` (see `docker-compose.yml` and
+`.env.background.example`). Empty target list — dev, CI — registers no host
+checks at all. The batch image ships `openssh-client` for this
+(`docker/Dockerfile`).
 
 ## Implemented checks
 
-Eleven per-job checks across all four primitives:
+Eleven per-job checks across all four primitives, plus one `HostHealthCheck`
+per ssh target in `FREEGLE_MONITORING_HOSTS` (see "Host health checks" above):
 
 | Task | Primitive | Signal | Notes |
 |---|---|---|---|

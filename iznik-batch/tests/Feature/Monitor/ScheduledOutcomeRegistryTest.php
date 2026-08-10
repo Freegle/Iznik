@@ -211,4 +211,42 @@ class ScheduledOutcomeRegistryTest extends TestCase
             'An unheld stale Pending post must breach the contentcheck backlog'
         );
     }
+
+    /**
+     * Host health checks exist ONLY when ssh targets are configured — the
+     * estate's topology comes from the environment, never from code, and an
+     * empty list (dev, CI) must contribute nothing to the registry.
+     */
+    public function test_host_checks_come_from_config_and_default_to_none(): void
+    {
+        config(['freegle.monitoring.hosts' => '']);
+        $slugs = array_map(
+            fn (OutcomeCheck $c) => $c->slug(),
+            (new ScheduledOutcomeRegistry())->checks()
+        );
+        $this->assertEmpty(
+            array_filter($slugs, fn (string $s) => str_starts_with($s, 'host:')),
+            'No host checks may exist without configured targets'
+        );
+
+        // A fake runner so no ssh could ever happen under test.
+        $this->app->instance(
+            \App\Monitoring\HostCommandRunner::class,
+            new class implements \App\Monitoring\HostCommandRunner
+            {
+                public function run(string $target, string $script): ?string
+                {
+                    return null;
+                }
+            }
+        );
+
+        config(['freegle.monitoring.hosts' => 'root@host-a, root@host-b']);
+        $slugs = array_map(
+            fn (OutcomeCheck $c) => $c->slug(),
+            (new ScheduledOutcomeRegistry())->checks()
+        );
+        $this->assertContains('host:host-a', $slugs);
+        $this->assertContains('host:host-b', $slugs);
+    }
 }

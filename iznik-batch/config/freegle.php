@@ -963,6 +963,20 @@ return [
         // Master kill-switch. When false, monitor:scheduled-outcomes no-ops.
         'enabled' => env('FREEGLE_MONITORING_ENABLED', true),
 
+        // Host-level OS/service checks (HostHealthCheck — V1 status.php
+        // parity: security patches, reboot-required, monit). Comma-separated
+        // ssh targets, e.g. "root@10.0.0.1,root@10.0.0.2". The estate's
+        // topology must live ONLY in the environment (.env.background on the
+        // batch host), never in committed code. Empty = disabled (dev/CI).
+        'hosts' => env('FREEGLE_MONITORING_HOSTS', ''),
+        // Private key path INSIDE the container. docker-compose bind-mounts
+        // the real key from MONITORING_SSH_KEY_HOST_PATH (host-side var, same
+        // split-name pattern as FIREBASE_HOST_PATH so the host path never
+        // leaks into the container environment).
+        'host_ssh_key' => env('FREEGLE_MONITORING_SSH_KEY', '/etc/monitoring-ssh-key'),
+        // Per-host probe timeout. ConnectTimeout is 10s inside this budget.
+        'host_ssh_timeout_seconds' => (int) env('FREEGLE_MONITORING_SSH_TIMEOUT', 30),
+
         // stats:generate-daily — minimum per-group stats rows expected for
         // yesterday once the day's 02:30 run has had time to complete.
         'stats_daily_min_expected' => (int) env('FREEGLE_MONITORING_STATS_DAILY_MIN', 1),
