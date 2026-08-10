@@ -75,22 +75,26 @@
         </mj-column>
     </mj-group>
 </mj-section>
-@else
-<mj-section background-color="#ffffff" padding="0 20px 10px">
+{{-- The donate button now lands on our Stripe page rather than PayPal, so say
+     what's on offer there. Images are blocked by default in a lot of clients,
+     hence the alt text carries the same message. --}}
+<mj-section background-color="#F7F6EC" padding="0 16px 8px 16px">
     <mj-column>
-        <mj-divider border-color="#eeeeee" border-width="1px" padding="0 0 10px 0" />
-        <mj-button
-            href="{{ $donateUrl ?? 'https://freegle.in/paypal1510' }}"
-            background-color="{{ $accentColor }}"
-            color="#ffffff"
-            font-size="13px"
-            font-weight="600"
-            inner-padding="6px 14px"
-            border-radius="5px"
-            align="center"
-        >
-            Donating helps too!
-        </mj-button>
+        <mj-image src="{{ $donateMarksUrl ?? 'https://www.ilovefreegle.org/emailimages/paymethods.png' }}" alt="Donate with Apple Pay, Google Pay, PayPal or card" title="Donate with Apple Pay, Google Pay, PayPal or card" width="180px" align="center" padding="0" href="{{ $donateUrl }}" />
     </mj-column>
 </mj-section>
+@else
+<mj-section background-color="#ffffff" padding="0 20px 0">
+    <mj-column>
+        <mj-divider border-color="#eeeeee" border-width="1px" padding="0 0 10px 0" />
+    </mj-column>
+</mj-section>
+@include('emails.mjml.components.donate-ask', [
+    'compact' => true,
+    'donateLabel' => 'Donating helps too!',
+    'donateUrl' => $donateUrl,
+    'donateMarksUrl' => $donateMarksUrl ?? config('freegle.images.paymethods'),
+    'accentColor' => $accentColor,
+    'bgColor' => '#ffffff',
+])
 @endif

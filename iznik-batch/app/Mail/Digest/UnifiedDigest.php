@@ -11,6 +11,7 @@ use App\Mail\Traits\TrackableEmail;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\DonateLinkService;
 use App\Services\UnifiedDigestService;
 use App\Support\AmpEmailSupport;
 use App\Support\EmojiUtils;
@@ -464,7 +465,14 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         }
         $jobsUrl = $this->trackedUrl($this->userSite . '/jobs', 'jobs_view_more', 'jobs_view_more');
-        $donateUrl = $this->trackedUrl(config('freegle.donate.url', 'https://freegle.in/paypal1510'), 'donate', 'donate');
+        // Our own Stripe donate page (Apple Pay / Google Pay / PayPal / card)
+        // rather than the PayPal-only shortlink. See DonateLinkService.
+        $donateUrl = $this->trackedUrl(
+            app(DonateLinkService::class)->url($this->user, app(DonateLinkService::class)->defaultAmount(), 'digest'),
+            'donate',
+            'donate'
+        );
+        $donateMarksUrl = config('freegle.images.paymethods');
 
         // Per-group footer heading: "you're a member of {group}, set to
         // receive {frequency}". An immediate digest is about a single
@@ -530,6 +538,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             'jobAds' => $jobAds,
             'jobsUrl' => $jobsUrl,
             'donateUrl' => $donateUrl,
+            'donateMarksUrl' => $donateMarksUrl,
             'primaryGroupName' => $primaryGroupName,
             'frequencyText' => $frequencyText,
             'digestGroups' => $digestGroups,
@@ -642,6 +651,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'jobAds' => $jobAds,
                 'jobsUrl' => $jobsUrl,
                 'donateUrl' => $donateUrl,
+                'donateMarksUrl' => $donateMarksUrl,
                 'digestGroups' => $digestGroups,
             ]);
 
