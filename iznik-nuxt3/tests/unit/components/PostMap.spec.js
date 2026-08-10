@@ -126,6 +126,29 @@ vi.mock('nuxt/app', () => ({
 // Mock leaflet imports
 vi.mock('leaflet/dist/leaflet-src.esm', () => ({}))
 
+// ready() dynamically imports the geocoder control and the Photon geocoder. Left
+// unmocked they load the real modules, and whether that resolves before the test ends
+// is a race against real module-load time — so lines 700-753 of PostMap.vue were hit in
+// some runs and not others. That made this file's covered-line count vary between runs
+// of an IDENTICAL tree (559 vs 530 of 866), moving whole-repo coverage by ~0.024pp and
+// flapping the Coveralls gate on PRs that touch no frontend code at all. Mocking them —
+// as every other external in this file already is — makes the geocoder path resolve
+// deterministically. Verified by diffing two lcov reports from the same tree.
+vi.mock('leaflet-control-geocoder/src/control', () => ({
+  Geocoder: vi.fn().mockImplementation(() => {
+    // ready() chains .on('markgeocode', ...).addTo(map), so both must be chainable.
+    const control = {
+      on: vi.fn(() => control),
+      addTo: vi.fn(() => control),
+    }
+    return control
+  }),
+}))
+
+vi.mock('leaflet-control-geocoder/src/geocoders/photon', () => ({
+  Photon: vi.fn().mockImplementation(() => ({})),
+}))
+
 // Mock vue-leaflet components
 vi.mock('@vue-leaflet/vue-leaflet', () => ({
   LGeoJson: {
