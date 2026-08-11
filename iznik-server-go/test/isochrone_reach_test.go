@@ -434,3 +434,58 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 	assert.Less(t, cappedCount, countOf(),
 		"the fast-path unread count excludes the far post while the author caps distance, and re-includes it once uncapped - staying in lock-step with the feed")
 }
+
+// TestNearbyCountExcludesHeld: the unread badge (GET /message/count, nearby view) must skip
+// posts whose reach is held for moderation, exactly as the feed does
+// (TestNearbyReachFeedExcludesHeld) - without the same rr.status filter the badge counted a
+// held post the feed never rendered, so the count could never drain to zero by reading.
+// Asserted on BOTH count paths: the fast unlimited COUNT and the distance-limited walk.
+func TestNearbyCountExcludesHeld(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("nearbycountheld")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	group := CreateTestGroup(t, prefix)
+	live := CreateTestMessage(t, posterID, group, "OFFER: live reach for count (nearbycountheld)", 51.5, -0.1)
+	held := CreateTestMessage(t, posterID, group, "OFFER: held reach for count (nearbycountheld)", 51.5, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", live, held)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", live, held)
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	// Both reach polygons cover the viewer - only the status differs.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", live)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'held') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", held)
+
+	countOf := func(url string) float64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var body map[string]interface{}
+		json2.Unmarshal(rsp(resp), &body)
+		c, _ := body["count"].(float64)
+		return c
+	}
+
+	// Fast unlimited path: with the held row hidden, hiding the held post must drop the count by
+	// exactly one relative to both rows counting - measured by flipping the held row live and back
+	// rather than asserting absolute numbers, since parallel tests may add their own posts.
+	heldCount := countOf("/api/message/count?jwt=" + token)
+	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", held)
+	bothLiveCount := countOf("/api/message/count?jwt=" + token)
+	assert.Equal(t, heldCount+1, bothLiveCount,
+		"releasing the held reach adds exactly that post to the fast-path badge count")
+	db.Exec("UPDATE rippling_reach SET status = 'held' WHERE msgid = ?", held)
+
+	// Distance-limited path (the per-post blurred-Haversine walk) must skip held rows too.
+	heldLimited := countOf("/api/message/count?jwt=" + token + "&maxDistance=10")
+	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", held)
+	bothLimited := countOf("/api/message/count?jwt=" + token + "&maxDistance=10")
+	assert.Equal(t, heldLimited+1, bothLimited,
+		"releasing the held reach adds exactly that post to the distance-limited badge count")
+}
