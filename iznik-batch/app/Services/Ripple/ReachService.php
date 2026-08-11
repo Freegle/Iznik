@@ -119,8 +119,10 @@ class ReachService
      * is deterministic per origin, so de-duplicating origins before calling this turns
      * O(posts) routing calls into O(distinct origins).
      *
-     * Each origin may carry its own `max_minutes` (the density-conditional cap); absent
-     * means the configured flat cap.
+     * Each origin may carry its own `max_minutes`; absent means the configured flat cap.
+     * ExpandService passes DensityService::ceiling() - the widest budget any band earns -
+     * because the cap belongs to the recipient rather than the post, and each member is held
+     * to their own band on the way out (see DensityService's docblock).
      *
      * @param array<int,array{lat:float,lng:float,max_minutes?:float}> $origins
      * @return array<int,?array>

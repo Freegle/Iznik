@@ -3,7 +3,10 @@ last_reviewed: 2026-08-11
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
+  - iznik-batch/app/Console/Commands/Browse/**
   - iznik-server-go/rippling/**
+  - iznik-server-go/density/**
+  - iznik-nuxt3/composables/useReachDistance.js
   - iznik-nuxt3/modtools/components/ModSysAdminRipplingDensity.vue
   - iznik-nuxt3/modtools/components/ModSysAdminRipplingAnalytics.vue
 ---
@@ -145,10 +148,10 @@ ceiling applies unchanged. Two further stops:
   Interested repliers stops expanding - it has plenty of interest already.
 - **Outcome.** A taken, withdrawn or received post stops immediately.
 
-### 3a. The time budget is chosen from local density
+### 3a. The time budget belongs to the traveller, not to the post
 
-The governor normalises the AUDIENCE. The drive-time ceiling on top of it (`max_minutes`) is
-the other half, and a single national figure for it is wrong in both directions.
+The governor normalises the AUDIENCE. The drive-time ceiling on top of it is the other half,
+and a single national figure for it is wrong in both directions.
 
 Measured on live, conversion by drive-time behaves completely differently by place: in dense
 areas it collapses past about 20-25 minutes, and in sparse ones it does not fall at all out to
@@ -157,11 +160,11 @@ and too tight in the country, where the people who would come are still outside 
 
 `App\Services\Ripple\DensityService` measures the density directly rather than inferring it
 from the group or a population dataset: it asks the spatial KNN service for the **nearest K
-freeglers** (`RIPPLE_DENSITY_K`, default 400) to the post's blurred origin and takes the radius
-that contains them. That is the quantity the reach actually cares about - how far you have to
-go to find people - rather than a proxy for it.
+freeglers** (`RIPPLE_DENSITY_K`, default 400) to a point and takes the radius that contains
+them. That is the quantity the reach actually cares about - how far you have to go to find
+people - rather than a proxy for it.
 
-| Band | Nearest 400 within | `max_minutes` |
+| Band | Nearest 400 within | Travel-time budget |
 |---|---|---|
 | `dense` | ≤ 1.6 mi | 20 |
 | `medium` | ≤ 3.1 mi | 30 |
@@ -170,18 +173,51 @@ go to find people - rather than a proxy for it.
 The thresholds are the terciles of the live distribution, so the bands are roughly equal in
 posts to begin with. Per-band caps live in `freegle.ripple.density.max_minutes`.
 
-Two edge cases, both of which would otherwise size a post wrongly and silently:
+**Whose density decides.** Read the measurement again and it is about the person who would
+make the journey, not the item: it is the REPLIER's drive-time and the REPLIER's surroundings
+that predict a collection. Applying the cap at the post's origin gets that right only when both
+ends sit in the same kind of place, and where they differ it fails exactly backwards - on the
+commonest case there is. A rural member's nearest town is the town they already drive to, and
+its posts are the ones they most want. Measured on live for a member outside Spalding (nearest
+400 freeglers 16.1 miles out, so definitively sparse):
+
+- Peterborough, their nearest big town, is `medium` and so would cap at 30 minutes. They are
+  **38 minutes** from it, so sizing at the origin means the town's posts could never reach them
+  however far they were willing to go.
+- Of 191 posts within 21.6 miles of them over 14 days, **2** were inside a 30-minute drive.
+  **110** are inside 45 minutes. Their local supply sits almost entirely in the band a flat or
+  origin-sized cap cuts off.
+
+So the cap is applied to the RECIPIENT:
+
+1. **Every ripple grows to `DensityService::ceiling()`** - the widest budget any band earns
+   (45 by default; taken as the max over the configured bands so re-tuning one cannot leave the
+   ripple too small to serve it). A post cannot know which bands the members around it fall in,
+   only that the sparse ones travel furthest.
+2. **Each member is admitted on their own band**, through the travel-time preference that
+   already gates browse and mail - `settings.browseMaxMinutes` and the radius derived from it,
+   `browseMaxDistance` (§8). Their band is the DEFAULT for that preference, so a city member is
+   still not shown or mailed a post 40 minutes away, while the rural member finally gets the
+   town.
+
+The dense saving is therefore preserved while the rural gap closes: what changed is which end
+of the journey the number describes.
+
+Two edge cases, both of which would otherwise size a member wrongly and silently:
 
 - **Fewer than K found** inside the KNN service's search ceiling is *definitively* sparse -
   there genuinely are not 400 freeglers within reach - so the band is `sparse`, not unknown.
-- **Zero found**, or the service unreachable, is `unknown`, and an `unknown` post runs on the
-  flat cap. An empty or broken index must not stretch a London post to 45 minutes.
+- **Zero found**, or the service unreachable, is `unknown`, which keeps the flat cap and leaves
+  a member's stored preference untouched. An empty or broken index must not stretch a London
+  member to 45 minutes.
 
-The decision is stored on the post: `rippling_reach.density_band`, `density_radius_miles` and
-`max_minutes_cap`. Schedule reuse is cap-aware - a co-located earlier post computed under a
-different cap is not reused - so one post can never fix the budget for later ones.
+The origin's own band is still measured and stored on the post - `rippling_reach.density_band`
+and `density_radius_miles` - because it is what the density analytics read rows back by. It is
+a description of where the post is, not a limit on where it goes; `max_minutes_cap` records the
+ceiling the schedule was built under, and schedule reuse is cap-aware, so changing the ceiling
+takes effect everywhere rather than only where nobody had posted before.
 
-Killswitch `RIPPLE_DENSITY_ENABLED=false` reverts every post to the flat cap.
+Killswitch `RIPPLE_DENSITY_ENABLED=false` reverts every post and every member to the flat cap.
 
 **Instrumentation, because a lever nobody can read is a lever nobody can turn back.**
 `GET /rippling/density` (Support/Admin, `iznik-server-go/rippling/density.go`) reports per band:
@@ -313,6 +349,46 @@ retracted, so re-approval restores the copy without re-rippling.
   own distance) and OUTBOUND (a post is only shown/mailed to people within the *poster's*
   distance of it - the author-side cap in `isochrone/message.go`'s `authorReachCapWhere` and
   the digest's `DistancePreferenceFilter::passesBothPreferences`).
+
+  Since the ripple grows to the ceiling rather than to the origin's band (§3a), **this
+  preference is what holds each member to their own band** - it is no longer only a narrowing
+  the member opted into. A member who has never touched the slider must therefore still have
+  one, which is what `browse:backfill-max-distance` materialises: their band's cap in
+  `browseMaxMinutes`, and the routing-derived radius for it in `browseReachMaxDistance`. On
+  live only 2,900 of 121,000 recently-active members had ever set one, so without that pass
+  the wider ripple would reach a city member with everything inside 45 minutes of a post.
+
+  **`browseReachMaxDistance` is a separate key from `browseMaxDistance`, and the split is
+  load-bearing.** `browseMaxDistance` is the member's own choice and applies in BOTH
+  directions, so writing a band default into it would silently cap how far away other people
+  see that member's posts: a city member's band radius is ~4.8 miles, so their giveaways would
+  stop travelling almost immediately - the exact opposite of growing the ripple to the ceiling.
+  How far someone will travel to collect is not the same question as how far their own post
+  should travel to find a taker. So:
+
+  | Key | Set by | Inbound | Outbound |
+  |---|---|---|---|
+  | `browseMaxDistance` | the member, via the slider | yes | yes |
+  | `browseReachMaxDistance` | the backfill, from their band | yes (only when the member has not chosen) | **never** |
+
+  Readers: `DistancePreferenceFilter::maxDistanceMiles` (inbound, falls back to the default)
+  and `authorMaxDistanceMiles` (outbound, own choice only); Go `isochrone.resolveMaxDistance`
+  (inbound, same fallback) and `utils.AuthorReachCapWhere` (outbound, own choice only).
+
+  The command also RESCALES an explicit choice rather than carrying it across. The old slider
+  was a fixed 5-30, so a stored value said what FRACTION of the range the member wanted, not an
+  absolute travel time: 15 was two fifths of the way up, and two fifths of a rural member's 5-45
+  is 20. It rescales proportionally and snaps to the slider's 5-minute step, and at or above the
+  old top stop the member lands on their new cap. No location, or a failed density or routing
+  lookup, means the member is skipped and left untouched.
+
+  **The unlimited sentinel is no longer safe below the ceiling.** It means "defer to the
+  server's own reach", and the server's own reach is now the ceiling - so it only says "as far
+  as my band goes" for a member whose band earns it. A medium-band member left on the sentinel
+  would silently gain the widest band's reach (measured on live: a 33-mile radius around
+  Peterborough against the 30-minute band they should have). Below the ceiling, both the
+  backfill and the slider store a real derived radius at the top stop; only at the ceiling is
+  the sentinel written.
 
   **The viewer's own posts always come first.** A member's own open posts are included in the
   feed regardless of reach (`isochrone/message.go` own-posts arm) and flagged with `mine`

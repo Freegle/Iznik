@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-05
+last_reviewed: 2026-08-11
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**
@@ -48,6 +48,12 @@ There is also a weekly **Community Event Roundup** email (sent Thursdays) listin
 events. It is on by default and can be turned off in Settings.
 
 If you are in the app, you can also turn on a **daily push notification** of new posts.
+
+Above the email settings there is a **Feed** section with a "How far away" slider, marked
+Nearer at one end and Further at the other. It changes both what you see when browsing and
+what we email you about. How far "Further" actually reaches depends on how spread out
+freeglers are around your postcode, so it goes further in the countryside than in a city -
+[rippling out](rippling-out.md) explains why.
 
 ## Your communities
 

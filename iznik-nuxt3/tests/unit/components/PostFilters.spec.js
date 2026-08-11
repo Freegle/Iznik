@@ -49,7 +49,8 @@ const { mockNearbyMessageList, mockMyGroupsList, mockWhichPostsShow } =
 vi.mock('~/constants', () => ({
   BROWSE_DISTANCE_UNLIMITED: Number.MAX_SAFE_INTEGER,
   BROWSE_MINUTES_MIN: 5,
-  BROWSE_MINUTES_MAX: 30,
+  BROWSE_MINUTES_FALLBACK_MAX: 30,
+  BROWSE_MINUTES_MAX: 45,
   BROWSE_MINUTES_STEP: 5,
 }))
 
@@ -504,10 +505,11 @@ describe('PostFilters', () => {
       expect(wrapper.find('.range-slider-stub').exists()).toBe(true)
     })
 
-    // The slider is a fixed TRAVEL-TIME range in MINUTES (5-30, matching the reach system), not a
-    // miles scale tied to the feed - so the "Max X-Y miles by road" reach hint stays stable instead
-    // of jumping as the feed reloads (Discourse 9808).
-    it('is a fixed 5-30 minute travel-time range with 5-minute steps', () => {
+    // The slider is a TRAVEL-TIME range in MINUTES, not a miles scale tied to the feed - so the
+    // "Max X-Y miles by road" reach hint stays stable instead of jumping as the feed reloads
+    // (Discourse 9808). Its top is the member's own density-sized reach cap; until the server
+    // answers, the flat cap applies.
+    it('starts on the flat travel-time cap with 5-minute steps', () => {
       const wrapper = createWrapper({ forceShowFilters: true })
       const input = wrapper.find('.range-slider-stub')
       expect(Number(input.attributes('min'))).toBe(5)
@@ -546,20 +548,32 @@ describe('PostFilters', () => {
       expect(Number(input.element.value)).toBe(10)
     })
 
-    it('stores BROWSE_DISTANCE_UNLIMITED (and skips routing) when dragged to the rightmost stop', async () => {
+    // The sentinel defers to the server's own reach, which grows every post to the
+    // widest band's budget - so it only means "as far as I would go" for a member whose
+    // own band earns that ceiling. A sparse member at their top stop is exactly that case.
+    it('stores BROWSE_DISTANCE_UNLIMITED (and skips routing) at the top stop when the band is the ceiling', async () => {
+      mockFetchNear.mockResolvedValue({
+        cap_minutes: 45,
+        density_band: 'sparse',
+        reach_radius_miles: 4,
+        towns: [],
+      })
       const wrapper = createWrapper({ forceShowFilters: true })
+      await flushPromises()
+      mockFetchNear.mockClear()
+
       const input = wrapper.find('.range-slider-stub')
-      input.element.value = 30 // the max = "no limit"
+      input.element.value = 45 // their own max = "no limit"
       await input.trigger('change')
       await flushPromises()
-      expect(mockMe.value.settings.browseMaxMinutes).toBe(30)
+
+      expect(mockMe.value.settings.browseMaxMinutes).toBe(45)
       expect(mockMe.value.settings.browseMaxDistance).toBe(
         Number.MAX_SAFE_INTEGER
       )
-      expect(mockFetchNear).not.toHaveBeenCalled() // far right needs no reach lookup
-      expect(wrapper.emitted('update:selectedMaxDistance')[0]).toEqual([
-        Number.MAX_SAFE_INTEGER,
-      ])
+      expect(mockFetchNear).not.toHaveBeenCalled() // the top stop needs no reach lookup
+      const emitted = wrapper.emitted('update:selectedMaxDistance')
+      expect(emitted[emitted.length - 1]).toEqual([Number.MAX_SAFE_INTEGER])
     })
 
     // For any position left of max, the chosen MINUTES are stored (so the slider restores) and the

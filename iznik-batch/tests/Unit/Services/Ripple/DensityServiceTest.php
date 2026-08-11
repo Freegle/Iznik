@@ -149,4 +149,40 @@ class DensityServiceTest extends TestCase
         $this->assertSame(DensityService::BAND_SPARSE, DensityService::band(400, 400, 3.11));
         $this->assertSame(DensityService::BAND_UNKNOWN, DensityService::band(0, 400, null));
     }
+
+    /**
+     * A ripple grows to the ceiling, not to its origin's band, because the cap
+     * belongs to whoever would make the journey. If the ceiling were ever below a
+     * band's cap, members in that band could never be reached at the distance their
+     * own band says they would travel - which is the failure this replaced.
+     */
+    public function test_the_ceiling_covers_the_widest_band(): void
+    {
+        $this->assertSame(45.0, DensityService::ceiling());
+    }
+
+    public function test_the_ceiling_follows_a_retuned_band(): void
+    {
+        config(['freegle.ripple.density.max_minutes.sparse' => 50]);
+
+        $this->assertSame(50.0, DensityService::ceiling());
+    }
+
+    public function test_the_ceiling_never_drops_below_the_flat_cap(): void
+    {
+        config([
+            'freegle.ripple.density.max_minutes.dense' => 10,
+            'freegle.ripple.density.max_minutes.medium' => 15,
+            'freegle.ripple.density.max_minutes.sparse' => 20,
+        ]);
+
+        $this->assertSame(30.0, DensityService::ceiling());
+    }
+
+    public function test_the_killswitch_puts_the_ceiling_back_on_the_flat_cap(): void
+    {
+        config(['freegle.ripple.density.enabled' => false]);
+
+        $this->assertSame(30.0, DensityService::ceiling());
+    }
 }

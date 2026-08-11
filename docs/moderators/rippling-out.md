@@ -124,6 +124,15 @@ section above Email Settings. It is a **personal preference each member sets for
 themselves** - by default it is left at "Further" (no extra limit beyond their normal
 rippling reach), and moving it towards "Nearer" narrows how far away posts can be.
 
+**"Further" is not the same distance for everyone**, and this is deliberate. How far the slider
+reaches at its "Further" end depends on how spread out freeglers are around that member's
+postcode: in the countryside it goes further than in a city. The reason is that a rural
+member's nearest town is usually somewhere they already drive to, so its posts are exactly the
+ones worth showing them - whereas in a busy area there is nearly always someone closer, and
+reaching across town mostly generates email for journeys nobody makes. So if a rural member
+and a city member both say they are set to "Further", they are correctly seeing different
+distances, and the "Max ... miles by road" note under the slider will differ between them.
+
 Importantly, this preference now applies in **three** ways:
 
 - **What they see when browsing** - moving it "Nearer" hides posts from further away.
@@ -135,6 +144,26 @@ Importantly, this preference now applies in **three** ways:
 
 It still has **no effect on the rippling engine itself** (what it approves or joins, or how far
 it carries a post) **or on moderation**, and their choice is remembered between visits.
+
+**The third one only applies when the member moved the slider themselves.** This catches people
+out, so it is worth being clear about:
+
+| | What they see and are emailed | How far their own posts go |
+|---|---|---|
+| Member moved the slider | limited by their choice | limited by their choice |
+| Member never touched it | limited by the starting position Freegle works out for them | not limited |
+
+The starting position is Freegle's reading of the member's *area* - how spread out freeglers
+are around their postcode - not something the member has told us about themselves. So we use it
+to decide what is worth putting in front of them, but not to hold their own offers back. If we
+did, a member in a busy town would find their posts stopping a few miles out simply because
+they have a lot of neighbours, which would mean fewer things getting reused and would help
+nobody.
+
+So if a member asks "why do people further away see my post when I only see nearby ones?", the
+answer is that they have never set the slider: Freegle narrowed what it shows them, and left
+their giving alone. If they would rather their posts stayed local too, moving the slider to
+"Nearer" does exactly that, in both directions.
 
 A practical consequence worth knowing: a rippled-in post is shown to the members of your
 community who are **closest to the poster, whose own distance preference reaches that far, and

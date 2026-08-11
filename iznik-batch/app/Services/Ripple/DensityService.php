@@ -7,8 +7,8 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * How thinly freeglers are spread around a post, and therefore how far its ripple
- * should be allowed to grow.
+ * How thinly freeglers are spread around a point, and therefore how far someone
+ * there would travel for a free item.
  *
  * A single flat drive-time cap cannot fit the whole country. The chance that a
  * reply from drive-time D goes on to collect, measured over 887 posts split by
@@ -28,10 +28,34 @@ use Illuminate\Support\Facades\Log;
  * almost nothing but costs mail and crossposting) and too tight in the country (it
  * cuts off people who demonstrably do collect).
  *
+ * WHOSE density decides. Read the table again by row and it is about the person
+ * who would make the journey, not the item: it is the REPLIER's drive-time and
+ * the REPLIER's surroundings that predict a collection. Applying the cap at the
+ * post's origin gets this right only when both ends sit in the same kind of
+ * place. Where they differ it fails exactly backwards, and the case it fails on
+ * is the common one: a rural member's nearest town is the town they already
+ * drive to, and its posts are the ones they most want. A member outside Spalding
+ * (nearest 400 freeglers 16 miles out - definitively sparse) sits 38 minutes from
+ * Peterborough, which is medium and so caps at 30. Sizing at the origin means
+ * they can never be reached by the town's posts however far they would travel,
+ * while a Peterborough member who would not leave the city is reached by
+ * everything within 30 minutes of it.
+ *
+ * So the cap is applied to the RECIPIENT: a post's ripple grows to the widest
+ * budget any member might justify (Ceiling()), and each member is then admitted
+ * on their OWN band, via the travel-time preference that already gates browse and
+ * mail: settings.browseMaxMinutes, plus the radius in browseReachMaxDistance - an
+ * INBOUND-ONLY key, because browseMaxDistance also caps how far away others see the
+ * member's OWN posts and defaulting it would stop a city member's posts travelling.
+ *
+ * The dense saving is preserved - a city member is still not shown or mailed a post
+ * 40 minutes away, because their own band says 20 - while the rural member finally
+ * gets the town. See docs/developers/reference/rippling-algorithm.md.
+ *
  * Density is the radius of the circle that holds the nearest K freeglers (K=400)
- * to the post's origin. Distance is great-circle miles, computed here rather than
- * taken from the spatial server's `distance` field, which is a Euclidean distance
- * in DEGREES and so understates east-west separation by about a third at UK
+ * to the point. Distance is great-circle miles, computed here rather than taken
+ * from the spatial server's `distance` field, which is a Euclidean distance in
+ * DEGREES and so understates east-west separation by about a third at UK
  * latitudes.
  *
  * Fails soft in every direction: an unreachable spatial server, an empty result or
@@ -58,8 +82,35 @@ class DensityService
     }
 
     /**
-     * The reach budget for a post at this origin, plus the measurement behind it so
-     * every reach row can be read back against the decision that shaped it.
+     * The widest budget any band can earn. A ripple grows to this, because the cap
+     * belongs to the recipient and a post cannot know in advance which bands the
+     * members around it fall in - only that the sparse ones travel furthest. Members
+     * nearer the middle are then held to their own band on the way out.
+     *
+     * Taken as the max over the configured bands rather than hardcoding 'sparse', so
+     * re-tuning a band cannot silently leave the ripple too small to serve it.
+     */
+    public static function ceiling(): float
+    {
+        $flat = (float) config('freegle.ripple.max_minutes', 30);
+
+        if (!config('freegle.ripple.density.enabled', true)) {
+            return $flat;
+        }
+
+        $bands = (array) config('freegle.ripple.density.max_minutes', []);
+
+        return max($flat, ...array_map('floatval', array_values($bands) ?: [$flat]));
+    }
+
+    /**
+     * The travel-time budget someone at this point would justify, plus the
+     * measurement behind it so every decision can be read back against its reason.
+     *
+     * Used for the RECIPIENT (their slider default and the reach they are admitted
+     * on) and, for the post's origin, recorded on the reach row as the local
+     * description - not as its growth limit, which is ceiling(). See the class
+     * docblock for why the cap belongs to the traveller.
      *
      * @return array{band:string, radius_miles:?float, max_minutes:float}
      */

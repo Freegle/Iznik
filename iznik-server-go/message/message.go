@@ -1658,15 +1658,30 @@ func Search(c *fiber.Ctx) error {
 		if ll := user.GetLatLng(myid); ll.Lat != 0 || ll.Lng != 0 {
 			memberLat, memberLng = float64(ll.Lat), float64(ll.Lng)
 		}
-		var rawDist, rawSort string
+		// Same two-key resolution as isochrone.resolveMaxDistance: the member's own
+		// choice, else their density band default (browseReachMaxDistance, written by
+		// browse:backfill-max-distance). Browse-scoped search shares the feed's universe
+		// (Discourse 9933), so missing the fallback here would surface posts in search
+		// that the feed itself hides.
+		var rawDist, rawDefaultDist, rawSort string
 		db.Table("users").
 			Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), ''), "+
+				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseReachMaxDistance')), ''), "+
 				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseSort')), '')").
 			Where("id = ?", myid).
-			Row().Scan(&rawDist, &rawSort)
-		if rawDist != "" {
-			if v, err := strconv.ParseFloat(rawDist, 64); err == nil && v > 0 {
+			Row().Scan(&rawDist, &rawDefaultDist, &rawSort)
+		for _, raw := range []string{rawDist, rawDefaultDist} {
+			if raw == "" {
+				continue
+			}
+			// An unparseable value is treated as no value and falls through to the
+			// next key, matching isochrone.resolveMaxDistance and the Laravel
+			// DistancePreferenceFilter - all three must agree or the feed, its badge
+			// and search would disagree about the same member.
+			if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
 				browseMaxMiles = v
+
+				break
 			}
 		}
 		browseSort = rawSort
