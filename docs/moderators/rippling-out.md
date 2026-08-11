@@ -95,11 +95,18 @@ Sometimes a reply is held because the post has not yet rippled out to where that
 is. This now applies to replies made on the **website and app** as well as by email or
 TrashNothing - wherever a member replies from outside the post's current reach, the reply
 is accepted and held rather than turned away. Chat Review shows you it is held because of
-rippling (not because you chose to hold it). You do not need to do anything - the reply is
-released automatically once the post reaches that member's area, or once the post has
-finished spreading as far as it will go, so no reply is ever held indefinitely. The member
-who sent it sees their own message marked as "waiting to send"; the owner is not shown it
-until it is released.
+rippling (not because you chose to hold it).
+
+You do not need to do anything - the reply releases itself. Every hold has a **due time**,
+worked out from how far the member is from the item: roughly a quarter of an hour plus a
+few minutes per mile, so a typical held reply lands within the hour and none waits longer
+than three. If the post ripples out to that member before their time is up, it is released
+then instead. The wait exists to give closer people a head start, not to hold anybody back
+indefinitely - which matters, because most held repliers live somewhere the post would
+never have reached on its own.
+
+The member who sent it sees their own message marked as "waiting to send"; the owner is not
+shown it until it is released.
 
 ### 5. Members' Nearby feed is ordered by relevance, with their own distance preference
 
@@ -344,14 +351,13 @@ single origin community, those posts will ripple like any other.
 ## What to expect from members
 
 Members can now reply to any post they can see, even one that has not yet rippled out to
-their area. If they do, we **hold** the reply and deliver it automatically once the post
-reaches them - so instead of "why can't I reply?", a member might ask why their reply
-hasn't been answered yet, or notice their message marked **"waiting to send"**. The answer
-is reassuring:
+their area. If they do, we **hold** the reply for a short while and then deliver it - so
+instead of "why can't I reply?", a member might ask why their reply hasn't been answered
+yet, or notice their message marked **"waiting to send"**. The answer is reassuring:
 
-> *Your reply has been saved. The post just hasn't quite reached your area yet, so we're
-> holding your message and will pass it to the owner the moment it does - you do not need
-> to do anything.*
+> *Your reply has been saved. The post hasn't quite reached your area yet, so we're giving
+> people closer to it a short head start - usually less than an hour - and then passing
+> your message on. You do not need to do anything.*
 
 Worth knowing: on their default Nearby view, a member only ever sees posts that have
 already reached them, so a held reply usually only happens if they have switched to "All

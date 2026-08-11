@@ -499,8 +499,34 @@ return [
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.
         'mode' => env('RIPPLE_MODE', 'drive'),
-        // Maximum drive-time (minutes) the reach may grow to.
+        // Maximum drive-time (minutes) the reach may grow to. This is the FLAT cap, used
+        // when the density-conditional cap below is off or cannot measure.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // Density-conditional cap. Measured on 887 posts split by local freegler
+        // density, the chance a replier goes on to collect collapses past ~20-25
+        // minutes in dense areas and does not fall at all out to 45 in sparse ones, so
+        // no single flat cap fits both. See App\Services\Ripple\DensityService.
+        //
+        // Bands are terciles of "radius of the circle holding the nearest k freeglers".
+        // enabled=false puts every post back on the flat max_minutes above.
+        'density' => [
+            'enabled' => filter_var(env('RIPPLE_DENSITY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'k' => (int) env('RIPPLE_DENSITY_K', 400),
+            'dense_max_miles' => (float) env('RIPPLE_DENSITY_DENSE_MAX_MILES', 1.6),
+            'medium_max_miles' => (float) env('RIPPLE_DENSITY_MEDIUM_MAX_MILES', 3.1),
+            'timeout' => (int) env('RIPPLE_DENSITY_TIMEOUT', 5),
+            'max_minutes' => [
+                // Dense: 25-30 min converts at 7%, and 30-45 no better. The last third of
+                // a 30-minute budget buys almost nothing here but costs mail and crossposts.
+                'dense' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_DENSE', 20),
+                // Medium: unchanged, which is what makes it the comparison arm.
+                'medium' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_MEDIUM', 30),
+                // Sparse: 30-45 min converts at 20% against 18% for 0-10 min, and rural
+                // takers routinely drive 20-30. Cutting at 30 drops willing takers where
+                // the audience is thinnest to begin with.
+                'sparse' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_SPARSE', 45),
+            ],
+        ],
         // How many reach schedules to compute CONCURRENTLY (Http::pool fan-out in
         // ExpandService::initialiseNew). Each /v1/ripple-schedule request is CPU-bound on the
         // routing host (one Dijkstra + polygon rasterisations), so cap this near the routing
@@ -555,6 +581,33 @@ return [
         // exclusive end. Outside this window, due expansions wait.
         'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
         'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+
+        // Held replies are DELAYED: every hold has a due time of base + per_mile x
+        // miles from the item, capped at max_minutes.
+        //
+        // The hold gives people near the item first go, and a bounded delay is all
+        // that takes. Waiting for coverage instead is not a delay at all for most
+        // repliers: three in four of them live somewhere the reach NEVER covers, even
+        // fully grown, so their only exit is the max-reach backstop days later - and a
+        // quarter to a third of the time the item has gone by then. In 30 days 1,684
+        // posts had their FIRST reply held that way, so the poster saw silence while a
+        // willing taker sat in a queue.
+        //
+        // Distance is measured from the post's (blurred) origin to the replier - the
+        // only distance both rows already carry exactly, and the one the poster cares
+        // about (how far this person is coming). Everyone held is by definition outside
+        // the current reach, so among them "further from the item" is the right
+        // ordering: someone just past the boundary waits a little, someone two counties
+        // away waits longer, and nobody waits more than max_minutes.
+        //
+        // Coverage still wins: if the ripple reaches them before the due time they are
+        // released then. enabled=false makes coverage the only exit again.
+        'reply_delay' => [
+            'enabled' => filter_var(env('RIPPLE_REPLY_DELAY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'base_minutes' => (float) env('RIPPLE_REPLY_DELAY_BASE_MINUTES', 15),
+            'per_mile_minutes' => (float) env('RIPPLE_REPLY_DELAY_PER_MILE_MINUTES', 3),
+            'max_minutes' => (float) env('RIPPLE_REPLY_DELAY_MAX_MINUTES', 180),
+        ],
         // Audience-budget extent governor — Stage A (feed-forward). Caps reach at
         // the ~target_users NEAREST freeglers instead of letting a fixed drive-time
         // sweep density-blind: in dense areas (London) the cap binds at a small
@@ -614,8 +667,9 @@ return [
     | Four levers, each independently switchable:
     |   passthrough - never hold a post's FIRST reply if the replier is somewhere
     |                 the post's reach will eventually get to anyway.
-    |   scouts      - tell a handful of likely-interested people early, instead of
-    |                 waiting for their digest or for the ripple to arrive.
+    |   matchmail   - mail the people whose own open post or saved search matches
+    |                 a new post, instead of leaving them to wait for their digest
+    |                 or for the ripple to arrive.
     |   chat        - Freegle talks to the poster: asks the questions that make a
     |                 post more likely to succeed, and says what is happening.
     |
@@ -657,70 +711,46 @@ return [
         // different population than the matcher reads.
         'search_max_age_months' => (int) env('FIRSTREPLY_SEARCH_MAX_AGE_MONTHS', 6),
 
-        // Tell a few likely-interested people early about a post nobody has
-        // replied to yet.
-        'scouts' => [
-            'enabled' => filter_var(env('FIRSTREPLY_SCOUTS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
-            // How long a post gets to attract a reply on its own before we help.
-            // ZERO: scout as soon as the post is seen.
+        // Mail the people whose own open post or saved search matches a new post,
+        // individually, about that one item. Matches both ways round: a new OFFER
+        // finds the people with open WANTEDs for it, and a new WANTED finds the
+        // people sitting on open OFFERs. See App\Services\FirstReply\MatchMailService.
+        'matchmail' => [
+            'enabled' => filter_var(env('FIRSTREPLY_MATCHMAIL_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            // How long a post gets to attract a reply on its own first. ZERO: mail
+            // the matches as soon as the post is seen. Whatever holding back saves
+            // in mail is dwarfed by how long the recipient then takes to read it,
+            // so the wait adds itself to every reply and removes nothing. Kept as a
+            // knob because it is the natural lever if the mail ever needs rationing.
+            'quiet_minutes' => (int) env('FIRSTREPLY_MATCHMAIL_QUIET_MINUTES', 0),
+            // Give up after this: a day-old post is a job for reposting, not for
+            // more mail.
+            'max_age_hours' => (int) env('FIRSTREPLY_MATCHMAIL_MAX_AGE_HOURS', 24),
+            // Backstop on how many matches one post may mail. Everyone eligible
+            // asked for this item, so there is no good reason to tell the first ten
+            // and not the eleventh - this is a guard against something pathological
+            // and should essentially never bind. It is counted when it does.
             //
-            // An earlier version waited 45 minutes on the theory that it would
-            // avoid spending mail on posts that were about to get a reply anyway.
-            // That theory does not survive contact with the timings: whatever we
-            // save by holding back is dwarfed by how long the scout then takes to
-            // read their mail and reply. The wait removed nothing from the mail
-            // bill and added itself to every reply.
-            //
-            // Kept as a knob rather than deleted, because it is the natural lever
-            // if scout mail ever needs rationing.
-            'quiet_minutes' => (int) env('FIRSTREPLY_SCOUTS_QUIET_MINUTES', 0),
-            // Give up after this: a day-old silent post is a job for reposting and
-            // better post quality, not for more notifications.
-            'max_age_hours' => (int) env('FIRSTREPLY_SCOUTS_MAX_AGE_HOURS', 24),
-            // Cap on PROPENSITY scouts per post - the "you reply to a lot of
-            // things" ones. Small on purpose: that signal is a guess, and a guess
-            // is what should be rationed. Does NOT apply to people who actually
-            // asked for the item; see max_strong_per_post.
-            //
-            // OVERRIDABLE AT RUNTIME: a `firstreply_scouts_max_per_post` row in
+            // OVERRIDABLE AT RUNTIME: a `firstreply_matchmail_max_per_post` row in
             // the `config` table wins over this, so the mail bill can be turned
-            // down (or off, with 0) without waiting for a deploy. This env value
-            // is the default when that row is absent. See ScoutService::scoutConfig().
-            'max_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_PER_POST', 10),
-            // Backstop on wanted/search scouts - people with an open post for
-            // this item or a matching saved search. They asked, so the small cap
-            // above deliberately does not apply to them, and this number should
-            // essentially never bind.
-            //
-            // Sized from live: a rippled post reaches ~3,600 freeglers (0.14% of
-            // the network), and a common term is held by single-digit thousands
-            // network-wide, so the in-reach population for a common OFFER is of
-            // the order of ten people - before the not-yet-reached band, cooldown,
-            // weekly cap, consent and the 0.85 threshold cut it further. 50 is
-            // therefore a guard against something pathological, not a limit on
-            // the signal. Overridable at runtime via
-            // `firstreply_scouts_max_strong_per_post`; `scouts_strong_capped`
-            // counts the times it fires.
-            'max_strong_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_STRONG_PER_POST', 50),
+            // down (or off, with 0) without waiting for a deploy. This env value is
+            // the default when that row is absent. See MatchMailService::matchConfig().
+            'max_per_post' => (int) env('FIRSTREPLY_MATCHMAIL_MAX_PER_POST', 50),
             // Nobody should become Freegle's unpaid alerting service. A member is
-            // not scouted again within this many hours...
-            'user_cooldown_hours' => (int) env('FIRSTREPLY_SCOUTS_USER_COOLDOWN_HOURS', 24),
+            // not mailed again within this many hours...
+            'user_cooldown_hours' => (int) env('FIRSTREPLY_MATCHMAIL_USER_COOLDOWN_HOURS', 24),
             // ...nor more than this many times in a rolling week.
-            'user_max_per_week' => (int) env('FIRSTREPLY_SCOUTS_USER_MAX_PER_WEEK', 5),
+            'user_max_per_week' => (int) env('FIRSTREPLY_MATCHMAIL_USER_MAX_PER_WEEK', 5),
             // Minimum score to be worth mailing at all. A post with no good match
             // should mail nobody rather than pad the list out to max_per_post.
-            'min_score' => (float) env('FIRSTREPLY_SCOUTS_MIN_SCORE', 1.0),
-            // How many distinct Interested replies in the last 90 days make someone
-            // a "frequent replier" worth considering on propensity alone.
-            'frequent_replier_min' => (int) env('FIRSTREPLY_SCOUTS_FREQUENT_MIN', 3),
+            'min_score' => (float) env('FIRSTREPLY_MATCHMAIL_MIN_SCORE', 1.0),
             // Candidate pool size before scoring. Bounds the cost of the geo query.
-            'candidate_limit' => (int) env('FIRSTREPLY_SCOUTS_CANDIDATE_LIMIT', 500),
-            // Silent posts examined per run. Small on purpose: each post costs
-            // seconds, and a run must comfortably finish inside the DB's
-            // wait_timeout or its idle write connection is closed under it.
-            // The every-minute cadence means throughput is 25/min, far above
-            // the arrival rate of in-trial silent posts.
-            'posts_per_run' => (int) env('FIRSTREPLY_SCOUTS_POSTS_PER_RUN', 25),
+            'candidate_limit' => (int) env('FIRSTREPLY_MATCHMAIL_CANDIDATE_LIMIT', 500),
+            // Posts examined per run. Small on purpose: each post costs seconds, and
+            // a run must comfortably finish inside the DB's wait_timeout or its idle
+            // write connection is closed under it. The every-minute cadence means
+            // throughput is 25/min, far above the arrival rate of in-trial posts.
+            'posts_per_run' => (int) env('FIRSTREPLY_MATCHMAIL_POSTS_PER_RUN', 25),
         ],
 
         // The Freegle chat: Freegle itself talks to the poster.

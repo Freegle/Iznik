@@ -141,6 +141,71 @@ class ReleaseRepliesCommandTest extends TestCase
         $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
     }
 
+    /** A held reply OUTSIDE a still-expanding reach: the reach will never cover it. */
+    private function seedHeldOutsideReach(): array
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = $this->createTestMessage($user, $group);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::POLY, self::POLY]
+        );
+
+        $u1 = $this->createTestUser();
+        $u2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($u1, $u2);
+        $cm = $this->createTestChatMessage($room, $u1);
+        $rowId = app(RippleReplyService::class)->hold($room->id, $cm->id, $message->id, $u1->id, 52.0, 1.0);
+
+        return [$rowId, $cm->id, (int) $message->id];
+    }
+
+    public function test_a_reply_past_its_delay_is_delivered_even_though_the_reach_never_covers_it(): void
+    {
+        // Three in four held repliers are somewhere the ripple never gets to, so waiting
+        // for coverage means waiting for the backstop days later. The delay has to be its
+        // own exit from the hold.
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        [$rowId] = $this->seedHeldOutsideReach();
+        DB::table('rippling_held_replies')->where('id', $rowId)
+            ->update(['created_at' => now()->subDay(), 'dueat' => null]);
+
+        $this->artisan('ripple:release-replies')->assertExitCode(0);
+
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_a_reply_still_inside_its_delay_stays_held(): void
+    {
+        // Locals keep their head start: the delay is a delay, not an abolition of the hold.
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        [$rowId] = $this->seedHeldOutsideReach();
+
+        $this->artisan('ripple:release-replies')->assertExitCode(0);
+
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_a_gone_post_still_wins_over_a_due_delay(): void
+    {
+        // A due delay must never deliver a reply for an item that has already gone - the
+        // replier is told it has gone instead (the Discourse 9808/#555 rule, via the
+        // delay exit as well as the coverage one).
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        [$rowId, , $msgid] = $this->seedHeldOutsideReach();
+        DB::table('rippling_held_replies')->where('id', $rowId)
+            ->update(['created_at' => now()->subDay(), 'dueat' => null]);
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => 'Taken', 'timestamp' => now()]);
+
+        $this->artisan('ripple:release-replies')->assertExitCode(0);
+
+        $this->assertSame('taken-gone', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
     public function test_taken_post_with_lingering_done_reach_marks_gone_not_released(): void
     {
         // Discourse 9808/#555: a post can be marked Taken while its reach row lingers and only

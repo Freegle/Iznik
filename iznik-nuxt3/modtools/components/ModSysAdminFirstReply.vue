@@ -165,19 +165,18 @@
         without it every reply is held exactly as before.
       </NoticeMessage>
 
-      <!-- 2. Scouts -------------------------------------------------------->
-      <h3 class="ms-2">Scouting</h3>
+      <!-- 2. Match mail ---------------------------------------------------->
+      <h3 class="ms-2">Matches</h3>
       <p class="text-muted small ms-2">
-        A handful of likely-interested members told early about a post nobody
-        has replied to. The three signals are shown separately on purpose:
-        <strong>wanted</strong> is an outstanding post of theirs on the other
-        side of the trade, <strong>search</strong> is something they searched for
-        in the last six months - both things a member asked for -
-        <strong>frequent</strong> is only a guess, and if it does not
-        convert it should not be spending mail. Each scout is counted under the
-        <em>strongest</em> signal that picked them, so the frequent row means
-        "frequent and nothing else" - which is the right denominator for deciding
-        whether propensity on its own is worth anything.
+        Members told individually about a post nobody has replied to, because
+        they asked for that item. The two signals are shown separately on
+        purpose: <strong>wanted</strong> is an outstanding post of theirs on the
+        other side of the trade, <strong>search</strong> is something they
+        searched for in the last six months. Both are requests, which is what
+        justifies an extra mail rather than their digest arriving sooner. A
+        <strong>frequent</strong> row is propensity data from an earlier trial -
+        it converted 3 times in 7,902 mails, so it is no longer a signal and no
+        new rows are written under it.
       </p>
       <b-table-simple hover responsive small class="mb-4">
         <b-thead>
@@ -192,7 +191,7 @@
           </b-tr>
         </b-thead>
         <b-tbody>
-          <b-tr v-for="s in stats.scouts" :key="s.reason">
+          <b-tr v-for="s in stats.matches" :key="s.reason">
             <b-td>{{ signalLabel(s.reason) }}</b-td>
             <b-td>{{ s.mailed }}</b-td>
             <b-td>{{ s.replied }}</b-td>
@@ -203,9 +202,9 @@
             <b-td>{{ s.posts }}</b-td>
             <b-td>{{ s.taken }} ({{ rate(s.taken, s.posts) }})</b-td>
           </b-tr>
-          <b-tr v-if="!stats.scouts.length">
+          <b-tr v-if="!stats.matches.length">
             <b-td colspan="7" class="text-muted">
-              No scouts sent in this window.
+              No match mail sent in this window.
             </b-td>
           </b-tr>
         </b-tbody>

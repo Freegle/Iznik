@@ -165,14 +165,15 @@ if (config('freegle.firstreply.enabled')) {
         ->sendOutputTo(cronLog('firstreply:maxreach'))
         ->runInBackground();
 
-    // Tell a handful of likely-interested people about posts nobody has replied to. Every
-    // minute, because the whole point is speed and a post is now scouted as soon as it is
-    // seen (scouts.quiet_minutes = 0). Cheap in steady state: a post is only ever scouted
-    // once, so each run only does real work for whatever arrived in the last minute.
-    Schedule::command('firstreply:scout')
+    // Mail the people whose own open post or saved search matches a new post. Every
+    // minute, because the whole point is speed and a post is matched as soon as it is
+    // seen (matchmail.quiet_minutes = 0). Cheap in steady state: a post is only ever
+    // matched once, so each run only does real work for whatever arrived in the last
+    // minute.
+    Schedule::command('firstreply:matchmail')
         ->everyMinute()
         ->withoutOverlapping(15)
-        ->sendOutputTo(cronLog('firstreply:scout'))
+        ->sendOutputTo(cronLog('firstreply:matchmail'))
         ->runInBackground();
 
     // Freegle's own messages to the poster. Nothing here is due sooner than an hour after

@@ -577,6 +577,7 @@ func SetupRoutes(app *fiber.App) {
 		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
 		ripplingAdmin.Get("/metrics", rippling.Metrics)
 		ripplingAdmin.Get("/analytics", rippling.Analytics)
+		ripplingAdmin.Get("/density", rippling.Density)
 		ripplingAdmin.Get("/analytics/drivetime", rippling.AnalyticsDriveTimes)
 		ripplingAdmin.Post("/analytics/drivetime/score", rippling.AnalyticsDriveScore)
 		ripplingAdmin.Post("/analytics/drivetime/aggregate", rippling.AnalyticsDriveAggregate)

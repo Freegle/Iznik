@@ -90,6 +90,110 @@ class ExpandServiceTest extends TestCase
         ], 200)]);
     }
 
+    /**
+     * Stub the spatial server's nearest-freeglers lookup with $count people, the
+     * furthest $miles away - i.e. dictate which density band the origin falls in.
+     */
+    private function fakeDensity(int $count, float $miles, float $lat = 51.5, float $lng = -0.1): void
+    {
+        $results = [];
+        for ($i = 0; $i < $count; $i++) {
+            $offset = ($miles * ($i + 1) / $count) / 69.05;
+            $results[] = ['id' => $i + 1, 'extra' => ['lat' => $lat + $offset, 'lng' => $lng]];
+        }
+        Http::fake(['*userapproxlocs/knn*' => Http::response(['results' => $results], 200)]);
+    }
+
+    /** The max_minutes asked of the routing server on the first ripple-schedule call. */
+    private function requestedMaxMinutes(): ?string
+    {
+        foreach (Http::recorded() as [$request]) {
+            if (str_contains($request->url(), 'ripple-schedule')) {
+                parse_str(parse_url($request->url(), PHP_URL_QUERY) ?? '', $q);
+
+                return $q['max_minutes'] ?? null;
+            }
+        }
+
+        return null;
+    }
+
+    public function test_a_city_post_is_given_a_shorter_reach_budget_than_the_countryside(): void
+    {
+        // The flat 30 minutes came from a pooled bullseye that turned out to be city
+        // behaviour. Dense conversion collapses past 20-25 min; sparse does not fall at
+        // all out to 45. One cap cannot be right for both.
+        config(['freegle.ripple.density.enabled' => true, 'freegle.ripple.density.k' => 400]);
+        $this->fakeDensity(400, 1.0);   // 400 freeglers within a mile: a city
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('20', $this->requestedMaxMinutes(), 'the routing server is asked for the city budget');
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame('dense', $row->density_band);
+        $this->assertSame(20.0, (float) $row->max_minutes_cap);
+        $this->assertEqualsWithDelta(1.0, (float) $row->density_radius_miles, 0.05);
+    }
+
+    public function test_a_countryside_post_is_given_a_longer_reach_budget(): void
+    {
+        config(['freegle.ripple.density.enabled' => true, 'freegle.ripple.density.k' => 400]);
+        $this->fakeDensity(400, 6.0);   // it takes six miles to find 400 people
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('45', $this->requestedMaxMinutes());
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame('sparse', $row->density_band);
+        $this->assertSame(45.0, (float) $row->max_minutes_cap);
+    }
+
+    public function test_an_unmeasurable_origin_keeps_the_flat_cap_and_says_so_on_the_row(): void
+    {
+        config(['freegle.ripple.density.enabled' => true, 'freegle.ripple.max_minutes' => 30]);
+        Http::fake(['*userapproxlocs/knn*' => Http::response('boom', 500)]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(90));
+
+        $this->service()->process(false, 500);
+
+        $this->assertSame('30', $this->requestedMaxMinutes());
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame('unknown', $row->density_band, 'the row records that no measurement was made');
+        $this->assertNull($row->density_radius_miles);
+    }
+
+    public function test_a_co_located_post_does_not_inherit_a_schedule_sized_under_a_different_cap(): void
+    {
+        // Schedule reuse is keyed on the blurred origin, which is not enough on its own
+        // once the budget varies by density: the first post at an origin would fix the
+        // cap for everything that followed there, and retuning a band would only take
+        // effect where nobody had posted before.
+        config([
+            'freegle.ripple.density.enabled' => true,
+            'freegle.ripple.density.k' => 400,
+            'freegle.ripple.reuse_reach' => true,
+        ]);
+        $this->fakeDensity(400, 1.0);   // dense: 20 minutes
+        $this->fakeRouting(3);
+        $this->seedSpatialPost(now()->subMinutes(90));
+        $this->service()->process(false, 500);
+
+        // The band's budget is retuned; a new post at the SAME origin must be recomputed.
+        config(['freegle.ripple.density.max_minutes.dense' => 25]);
+        $this->fakeDensity(400, 1.0);
+        $this->fakeRouting(3);
+        $msgid2 = $this->seedSpatialPost(now()->subMinutes(90));
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid2)->first();
+        $this->assertSame(25.0, (float) $row->max_minutes_cap, 'recomputed under the new budget, not reused');
+    }
+
     /** Like fakeRouting(), but the schedule response also carries reachable_group_ids. */
     private function fakeRoutingWithReachable(array $reachableIds, int $ticks = 3): void
     {

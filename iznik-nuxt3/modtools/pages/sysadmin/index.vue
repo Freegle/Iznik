@@ -139,6 +139,10 @@
           <template #title>
             <h2 class="ms-2 me-2">Rippling</h2>
           </template>
+          <ModSysAdminRipplingDensity
+            v-if="showRippling"
+            :key="'rippling-density-' + ripplingBump"
+          />
           <ModSysAdminRipplingAnalytics
             v-if="showRippling"
             :key="'rippling-analytics-' + ripplingBump"

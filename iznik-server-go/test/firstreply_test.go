@@ -253,7 +253,7 @@ func TestFirstReplyMetricsEndpoint_CountsPostsFromTheGroupedSet(t *testing.T) {
 
 	// Every section the dashboard reads must be present - a query that errors
 	// leaves its key at a zero value rather than failing the request.
-	for _, key := range []string{"daily", "passthrough", "scouts", "prompts", "postsengaged"} {
+	for _, key := range []string{"daily", "passthrough", "matches", "prompts", "postsengaged"} {
 		_, ok := result[key]
 		assert.True(t, ok, "metrics payload must carry %s", key)
 	}
@@ -307,7 +307,7 @@ func TestFirstReplyMetrics_BareEndDateIncludesToday(t *testing.T) {
 // the arm that did not, counted on replies and on rehomes.
 //
 // Every other number on this dashboard can rise while this one does not - more
-// scouts mailed is not more items rehomed - so the split has to bucket on exactly
+// match mail sent is not more items rehomed - so the split has to bucket on exactly
 // the rule the levers bucket on, and it has to be honest at the ends.
 //
 // Asserted at the boundaries rather than on absolute counts. Other tests leave

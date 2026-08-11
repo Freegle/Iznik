@@ -85,13 +85,17 @@ class ReachService
      * — the container has no UK graph loaded). Callers treat null as "leave the
      * reach unchanged this run".
      *
+     * $maxMinutes overrides the configured flat cap for this one origin - that is
+     * how the density-conditional cap (DensityService) shortens city posts and
+     * lengthens country ones. Null keeps the flat cap.
+     *
      * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>,reachable_group_ids:int[]}|null
      */
-    public function computeSchedule(float $lat, float $lng): ?array
+    public function computeSchedule(float $lat, float $lng, ?float $maxMinutes = null): ?array
     {
         try {
             $response = Http::timeout($this->requestTimeout)
-                ->get("{$this->url}/v1/ripple-schedule", $this->scheduleParams($lat, $lng));
+                ->get("{$this->url}/v1/ripple-schedule", $this->scheduleParams($lat, $lng, $maxMinutes));
         } catch (\Throwable $e) {
             Log::warning("ripple: schedule fetch failed: {$e->getMessage()}", ['lat' => $lat, 'lng' => $lng]);
             return null;
@@ -102,7 +106,7 @@ class ReachService
             return null;
         }
 
-        return $this->parseScheduleResponse($response->json() ?? []);
+        return $this->parseScheduleResponse($response->json() ?? [], $maxMinutes);
     }
 
     /**
@@ -115,7 +119,10 @@ class ReachService
      * is deterministic per origin, so de-duplicating origins before calling this turns
      * O(posts) routing calls into O(distinct origins).
      *
-     * @param array<int,array{lat:float,lng:float}> $origins
+     * Each origin may carry its own `max_minutes` (the density-conditional cap); absent
+     * means the configured flat cap.
+     *
+     * @param array<int,array{lat:float,lng:float,max_minutes?:float}> $origins
      * @return array<int,?array>
      */
     public function computeSchedulesBatch(array $origins): array
@@ -128,7 +135,11 @@ class ReachService
         try {
             $responses = Http::pool(fn ($pool) => array_map(
                 fn ($o) => $pool->timeout($this->requestTimeout)
-                    ->get($url, $this->scheduleParams((float) $o['lat'], (float) $o['lng'])),
+                    ->get($url, $this->scheduleParams(
+                        (float) $o['lat'],
+                        (float) $o['lng'],
+                        isset($o['max_minutes']) ? (float) $o['max_minutes'] : null
+                    )),
                 array_values($origins)
             ));
         } catch (\Throwable $e) {
@@ -149,7 +160,10 @@ class ReachService
                 $out[$i] = null;
                 continue;
             }
-            $out[$i] = $this->parseScheduleResponse($resp->json() ?? []);
+            $out[$i] = $this->parseScheduleResponse(
+                $resp->json() ?? [],
+                isset($o['max_minutes']) ? (float) $o['max_minutes'] : null
+            );
         }
 
         return $out;
@@ -232,14 +246,14 @@ class ReachService
     }
 
     /** Query parameters for a /v1/ripple-schedule request at the given origin. */
-    private function scheduleParams(float $lat, float $lng): array
+    private function scheduleParams(float $lat, float $lng, ?float $maxMinutes = null): array
     {
         $params = [
             'lat' => $lat,
             'lng' => $lng,
             'mode' => $this->mode,
             'ticks' => $this->totalTicks(),
-            'max_minutes' => $this->maxMinutes,
+            'max_minutes' => $maxMinutes !== null && $maxMinutes > 0 ? $maxMinutes : $this->maxMinutes,
             'curve' => $this->curve,
             // Slim form: the batch needs per-tick drive_min / cumulative_users /
             // reachable_group_ids, not a ~20k-vertex polygon per tick (which made a
@@ -263,7 +277,7 @@ class ReachService
      *
      * @return array{total_freeglers:int,max_drive_min:float,ticks:array<int,array{tick:int,drive_min:float,cumulative_users:int,wkt:string}>,reachable_group_ids:int[]}|null
      */
-    public function parseScheduleResponse(array $body): ?array
+    public function parseScheduleResponse(array $body, ?float $maxMinutes = null): ?array
     {
         $schedule = $body['schedule'] ?? [];
         if (empty($schedule)) {
@@ -297,7 +311,9 @@ class ReachService
 
         return [
             'total_freeglers' => (int) ($body['total_freeglers'] ?? 0),
-            'max_drive_min' => (float) ($body['max_drive_min'] ?? $this->maxMinutes),
+            'max_drive_min' => (float) ($body['max_drive_min'] ?? (
+                $maxMinutes !== null && $maxMinutes > 0 ? $maxMinutes : $this->maxMinutes
+            )),
             'ticks' => $ticks,
             // Groups containing a road node reachable from the origin - the
             // water/toll-correct ripple-targeting signal. Empty when the server

@@ -6,8 +6,11 @@ use App\Models\ChatMessage;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FirstReply\Metrics;
 use App\Services\FirstReply\Rollout;
+use App\Support\GreatCircle;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Held external (email / TrashNothing) replies (#3 / PR C).
@@ -31,6 +34,9 @@ use Illuminate\Support\Facades\Log;
  */
 class RippleReplyService
 {
+    /** Memoized rippling_held_replies.dueat column check, so a pre-migration deploy is safe. */
+    private static ?bool $dueAtColumn = null;
+
     private ?MaxReachService $maxReach;
 
     /**
@@ -182,7 +188,8 @@ class RippleReplyService
      */
     public function hold(int $chatid, int $chatmsgid, int $msgid, int $replieruserid, float $lat, float $lng, string $source = 'email'): int
     {
-        $id = (int) DB::table('rippling_held_replies')->insertGetId([
+        $now = now();
+        $row = [
             'chatid' => $chatid,
             'chatmsgid' => $chatmsgid,
             'msgid' => $msgid,
@@ -191,11 +198,182 @@ class RippleReplyService
             'lat' => $lat,
             'lng' => $lng,
             'status' => 'held',
-            'created_at' => now(),
-        ]);
+            'created_at' => $now,
+        ];
+
+        // A hold is a delay, so it is stamped with when it comes off. Best-effort: an
+        // older schema (pre-migration) has no column to stamp, and that must not stop
+        // the hold - the sweep computes the due time from created_at either way.
+        $due = $this->dueAt($msgid, $now, $lat, $lng);
+        if ($due !== null && $this->dueAtAvailable()) {
+            $row['dueat'] = $due;
+        }
+
+        $id = (int) DB::table('rippling_held_replies')->insertGetId($row);
         $this->recordEvent('held');
 
         return $id;
+    }
+
+    /**
+     * How long a reply from $miles away from the item waits before it is delivered.
+     *
+     * The hold exists so people near the item get first go, and a bounded delay is
+     * the whole of it. Coverage cannot be the only exit: three in four held repliers
+     * live somewhere the reach never covers even fully grown, so an exit that waits
+     * for coverage strands them until the max-reach backstop days later, by which
+     * time a quarter to a third of items have gone.
+     *
+     * Distance is measured from the item, not from the edge of the reach, because both
+     * ends of it are stored exactly (the reach row's blurred origin and the replier's
+     * own location) and it needs no geometry. Everyone held is outside the current
+     * reach by definition, so within that set "further from the item" is the ordering
+     * that matters - and it is the one the poster cares about too.
+     */
+    public function delayMinutesForMiles(float $miles): float
+    {
+        $base = (float) config('freegle.ripple.reply_delay.base_minutes', 15);
+        $perMile = (float) config('freegle.ripple.reply_delay.per_mile_minutes', 3);
+        $max = (float) config('freegle.ripple.reply_delay.max_minutes', 180);
+
+        return min($max, $base + $perMile * max(0.0, $miles));
+    }
+
+    /**
+     * When a reply held at $heldAt from ($lat,$lng) is due, or null when the post has
+     * no reach row to measure the distance from (it is not rippling, so the ordinary
+     * paths deal with it).
+     */
+    private function dueAt(int $msgid, Carbon $heldAt, ?float $lat, ?float $lng): ?Carbon
+    {
+        $origin = $this->reachOrigin($msgid);
+
+        return $origin === null ? null : $this->dueFrom($origin, $heldAt, $lat, $lng);
+    }
+
+    /**
+     * As dueAt, with the reach origin already in hand - the sweep looks it up once per
+     * post rather than once per held reply.
+     *
+     * @param array{lat:float,lng:float} $origin
+     */
+    private function dueFrom(array $origin, Carbon $heldAt, ?float $lat, ?float $lng): Carbon
+    {
+        // Unknown replier location: the distance term is unmeasurable, so they get the
+        // base delay. That is the safe end - it never holds someone longer for being
+        // unlocatable, and coverage cannot release them either (that test needs a point).
+        $miles = ($lat === null || $lng === null)
+            ? 0.0
+            : GreatCircle::distanceMiles($origin['lat'], $origin['lng'], $lat, $lng);
+
+        return $heldAt->copy()->addMinutes($this->delayMinutesForMiles($miles));
+    }
+
+    /** @return array{lat:float,lng:float}|null */
+    private function reachOrigin(int $msgid): ?array
+    {
+        try {
+            $row = DB::table('rippling_reach')->where('msgid', $msgid)->first(['lat', 'lng']);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: reachOrigin failed for {$msgid}: {$e->getMessage()}");
+
+            return null;
+        }
+
+        if ($row === null || $row->lat === null || $row->lng === null) {
+            return null;
+        }
+
+        return ['lat' => (float) $row->lat, 'lng' => (float) $row->lng];
+    }
+
+    /** Has the dueat migration run? Without it the sweep still works, off created_at. */
+    private function dueAtAvailable(): bool
+    {
+        if (self::$dueAtColumn === null) {
+            try {
+                self::$dueAtColumn = Schema::hasColumn('rippling_held_replies', 'dueat');
+            } catch (\Throwable) {
+                self::$dueAtColumn = false;
+            }
+        }
+
+        return self::$dueAtColumn;
+    }
+
+    /** Test-only: forget the memoized column check. */
+    public static function forgetDueAtAvailability(): void
+    {
+        self::$dueAtColumn = null;
+    }
+
+    /**
+     * Release every held reply for $msgid whose delay has run out, and stamp the due
+     * time on any row that has not got one yet (the Go/web hold path does not compute
+     * it, so the policy lives here and only here).
+     *
+     * This is the exit the reach cannot provide: most held repliers are somewhere the
+     * reach never covers, so coverage alone leaves them waiting on the max-reach
+     * backstop days later. Returns the number released.
+     */
+    public function releaseDue(int $msgid): int
+    {
+        if (!config('freegle.ripple.reply_delay.enabled', true)) {
+            return 0;
+        }
+
+        $held = DB::table('rippling_held_replies')
+            ->where('msgid', $msgid)
+            ->where('status', 'held')
+            ->get();
+
+        if ($held->isEmpty()) {
+            return 0;
+        }
+
+        $origin = $this->reachOrigin($msgid);
+        if ($origin === null) {
+            // No reach row to measure from. The post is either not rippling or
+            // transiently missing its reach; either way the caller's other branches
+            // decide, and inventing a distance here would be guesswork.
+            return 0;
+        }
+
+        $now = now();
+        $canStamp = $this->dueAtAvailable();
+        $released = 0;
+
+        foreach ($held as $row) {
+            $due = $this->dueFrom(
+                $origin,
+                Carbon::parse($row->created_at),
+                $row->lat === null ? null : (float) $row->lat,
+                $row->lng === null ? null : (float) $row->lng
+            );
+
+            // Keep the stamp in step with the policy, so changing the config re-dates
+            // rows that have not come off hold rather than leaving a stale promise.
+            if ($canStamp) {
+                $stamped = $row->dueat === null ? null : Carbon::parse($row->dueat);
+                if ($stamped === null || !$stamped->equalTo($due)) {
+                    DB::table('rippling_held_replies')->where('id', $row->id)
+                        ->update(['dueat' => $due]);
+                }
+            }
+
+            if ($now->lt($due)) {
+                continue;
+            }
+
+            $this->release((int) $row->id, 'delayed');
+            $released++;
+        }
+
+        if ($released > 0) {
+            Log::info('ripple:released-delayed-replies', ['msgid' => $msgid, 'count' => $released]);
+        }
+
+        return $released;
     }
 
     /**
@@ -236,7 +414,7 @@ class RippleReplyService
             if (!$this->reach->isWithinReach($msgid, (float) $row->lat, (float) $row->lng)) {
                 continue;
             }
-            $this->release($row->id);
+            $this->release($row->id, 'covered');
             $released++;
         }
 
@@ -252,7 +430,7 @@ class RippleReplyService
      * the reach has maxed out without covering everyone (don't strand genuine
      * interest). Returns the number released.
      */
-    public function releaseAll(int $msgid): int
+    public function releaseAll(int $msgid, string $reason = 'maxed'): int
     {
         $held = DB::table('rippling_held_replies')
             ->where('msgid', $msgid)
@@ -260,7 +438,7 @@ class RippleReplyService
             ->get();
 
         foreach ($held as $row) {
-            $this->release($row->id);
+            $this->release($row->id, $reason);
         }
 
         return $held->count();
@@ -334,7 +512,15 @@ class RippleReplyService
         }
     }
 
-    private function release(int $ripplingRowId): void
+    /**
+     * $reason says which exit from the hold this was: 'covered' (the ripple arrived),
+     * 'delayed' (the delay ran out - the exit most held repliers only ever get),
+     * 'maxed' (the reach finished without covering them) or 'backfill' (a manual
+     * sweep). Counted separately as well as together, because "how many replies did
+     * the delay deliver that coverage never would have" is the question this change
+     * exists to answer.
+     */
+    private function release(int $ripplingRowId, string $reason = 'covered'): void
     {
         DB::table('rippling_held_replies')->where('id', $ripplingRowId)->update([
             'status' => 'released',
@@ -359,6 +545,7 @@ class RippleReplyService
         );
 
         $this->recordEvent('released');
+        $this->recordEvent("released_{$reason}");
     }
 
     /**
@@ -378,7 +565,7 @@ class RippleReplyService
             return 0;
         }
 
-        $this->release($ripplingRowId);
+        $this->release($ripplingRowId, 'backfill');
 
         return 1;
     }

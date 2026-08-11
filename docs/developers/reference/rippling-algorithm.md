@@ -1,3 +1,13 @@
+---
+last_reviewed: 2026-08-11
+covers:
+  - iznik-batch/app/Services/Ripple/**
+  - iznik-batch/app/Console/Commands/Ripple/**
+  - iznik-server-go/rippling/**
+  - iznik-nuxt3/modtools/components/ModSysAdminRipplingDensity.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminRipplingAnalytics.vue
+---
+
 # How Rippling Works - Technical Reference
 
 The technical companion to [../../moderators/rippling-out.md](../../moderators/rippling-out.md)
@@ -134,6 +144,64 @@ ceiling applies unchanged. Two further stops:
 - **Reply saturation.** A post with `reply_saturation_stop` (default **5**) distinct
   Interested repliers stops expanding - it has plenty of interest already.
 - **Outcome.** A taken, withdrawn or received post stops immediately.
+
+### 3a. The time budget is chosen from local density
+
+The governor normalises the AUDIENCE. The drive-time ceiling on top of it (`max_minutes`) is
+the other half, and a single national figure for it is wrong in both directions.
+
+Measured on live, conversion by drive-time behaves completely differently by place: in dense
+areas it collapses past about 20-25 minutes, and in sparse ones it does not fall at all out to
+45. A flat 30 is therefore too generous in cities - buying mail to people who will not come -
+and too tight in the country, where the people who would come are still outside it.
+
+`App\Services\Ripple\DensityService` measures the density directly rather than inferring it
+from the group or a population dataset: it asks the spatial KNN service for the **nearest K
+freeglers** (`RIPPLE_DENSITY_K`, default 400) to the post's blurred origin and takes the radius
+that contains them. That is the quantity the reach actually cares about - how far you have to
+go to find people - rather than a proxy for it.
+
+| Band | Nearest 400 within | `max_minutes` |
+|---|---|---|
+| `dense` | ≤ 1.6 mi | 20 |
+| `medium` | ≤ 3.1 mi | 30 |
+| `sparse` | > 3.1 mi | 45 |
+
+The thresholds are the terciles of the live distribution, so the bands are roughly equal in
+posts to begin with. Per-band caps live in `freegle.ripple.density.max_minutes`.
+
+Two edge cases, both of which would otherwise size a post wrongly and silently:
+
+- **Fewer than K found** inside the KNN service's search ceiling is *definitively* sparse -
+  there genuinely are not 400 freeglers within reach - so the band is `sparse`, not unknown.
+- **Zero found**, or the service unreachable, is `unknown`, and an `unknown` post runs on the
+  flat cap. An empty or broken index must not stretch a London post to 45 minutes.
+
+The decision is stored on the post: `rippling_reach.density_band`, `density_radius_miles` and
+`max_minutes_cap`. Schedule reuse is cap-aware - a co-located earlier post computed under a
+different cap is not reused - so one post can never fix the budget for later ones.
+
+Killswitch `RIPPLE_DENSITY_ENABLED=false` reverts every post to the flat cap.
+
+**Instrumentation, because a lever nobody can read is a lever nobody can turn back.**
+`GET /rippling/density` (Support/Admin, `iznik-server-go/rippling/density.go`) reports per band:
+posts, cap asked for against drive time actually reached, the measured radius, audience,
+replies, rehomes, and held replies. It is surfaced as the top panel of ModTools → SysAdmin →
+Rippling.
+
+Read it as four separate questions, because a band can move on one and not the others:
+
+| Column | Question |
+|---|---|
+| Cap asked vs drive time reached | did the cap bind at all? A band well under its cap was never constrained by it |
+| Got a reply | what a SHORTER cap risks - fewer people told, so fewer replies |
+| Rehomed | the only one that matters on its own. More replies without more rehoming has bought mail, not reuse |
+| Replies held | the cost side. A cap that is too short shows here first |
+
+One caveat travels with those numbers: a withdrawn or deleted post loses its reach row and
+drops out of every column, so the rehome rate is an overestimate in all bands. The rows are
+safe to compare with each other, not to read individually - and only for as long as nothing
+makes withdrawal differ by band.
 
 ## 4. Targeting: which groups receive the post
 
@@ -317,17 +385,61 @@ retracted, so re-approval restores the copy without re-rippling.
   migration (small tables).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
 - **Reach mail:** the join notification when a post ripples to within reach.
-- **Held replies:** replies to rippled posts held for moderator Chat Review where applicable.
-  One exception: a post's FIRST reply is not held when the replier is inside the reach the
-  post will eventually have (`rippling_reach.max_polygon`). They were always going to be
-  allowed to reply once the ripple got there, so holding them delays a poster who currently
-  has nothing without protecting local-first ordering in any lasting way. See
+- **Held replies:** a reply from outside the post's current reach is parked in
+  `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
+  is a **delay with a due time** rather than an open-ended wait - see §7a. One exception: a
+  post's FIRST reply is not held at all when the replier is inside the reach the post will
+  eventually have (`rippling_reach.max_polygon`). They were always going to be allowed to
+  reply once the ripple got there, so holding them delays a poster who currently has nothing
+  without protecting local-first ordering in any lasting way. See
   [first-reply.md](first-reply.md); gated by `freegle.firstreply.passthrough.enabled`, off by
   default.
 - **Rippling Explorer (ModTools `/rippling`):** draws the exact polygon and tints groups from
   the per-tick `reachable_group_ids`.
 
-### 7a. Relevance ranking (browse feed AND digest - same engine)
+### 7a. A held reply is delayed, not withheld
+
+Holding out-of-reach replies protects local-first ordering. The failure was in the exit: a hold
+ended when the ripple covered the replier, when the post's reach reached `done`, or when the
+post went. Measured on live, **three in four held repliers live somewhere the ripple will never
+reach**, so for them the only exit was the backstop - days later, by which time a quarter to a
+third of items have already gone. In practice their reply was not delayed, it was discarded.
+
+So every hold now carries a due time, computed at hold time from how far the replier is from
+the item:
+
+```
+delay = clamp(base_minutes + per_mile_minutes × milesFromOrigin, base_minutes, max_minutes)
+```
+
+Defaults (`freegle.ripple.reply_delay.*`): base **15** minutes, **3** minutes per mile, ceiling
+**180** minutes. A typical held replier sits about 18 miles out and so waits about an hour;
+nobody waits more than three. Somebody just past the boundary is delivered a little after the
+locals, which is the whole intent - they are not competing with people who have not been told
+yet, they are simply second.
+
+Distance is an exact haversine (`GreatCircle::distanceMiles`) between the post's blurred origin
+and the replier, both of which are already stored on the rows. Not `ST_Distance` on the reach
+geometry: that returns coordinate degrees, because the SRID 3857 tag is a site-wide mislabel,
+and degrees are anisotropic - the same "distance" means different things north-south and
+east-west. Degrees rank fine within one post, which is all the selection queries need, but they
+cannot be turned into minutes.
+
+Coverage still wins. `ripple:release-replies` runs `releaseCovered()` first and `releaseDue()`
+second, so a replier the ripple reaches early is released then rather than waiting out their
+timer.
+
+**The policy lives in PHP only.** The Go and web hold paths leave `dueat` NULL, and the
+every-minute sweep stamps it. That means one implementation of the rule rather than two that
+can drift, and it also means the pre-existing backlog gets a due time on the first sweep
+instead of staying stuck.
+
+Releases are counted by reason - `released_covered`, `released_delayed`, `released_maxed`,
+`released_backfill` - in `rippling_event_metrics`. Without the split, the delay would be
+invisible: every release looks the same in a single counter, so there would be no way to tell
+whether the new exit is doing anything.
+
+### 7b. Relevance ranking (browse feed AND digest - same engine)
 
 The browse/Nearby feed is **not** reverse-chronological. Both it and the unified digest order
 posts by a **rippling relevance score**, computed by one shared function
@@ -369,6 +481,11 @@ Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-d
 - `reachable_gate` - member-based reachability targeting (else polygon-only).
 - `proximity_notes` - the "quicker to get to" moderator note (independent).
 - `extent.*` (`target_users`, ...) - the audience governor.
+- `density.*` (`RIPPLE_DENSITY_ENABLED`, `k`, band thresholds, `max_minutes` per band) - the
+  per-post drive-time budget (§3a). Off reverts every post to the flat cap.
+- `reply_delay.*` (`RIPPLE_REPLY_DELAY_ENABLED`, `base_minutes`, `per_mile_minutes`,
+  `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
+  coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
 
 ## 9. Data model
@@ -378,9 +495,13 @@ Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-d
   exact polygon (see §7; `outer_bound` is NOT NULL + spatially indexed and drives the
   browse R-tree), cached slim `schedule` (per-tick drive-time / audience / reached-group
   ids, no geometry), `tick`, `status` (expanding / stopped / done / held),
-  `reachable_group_ids` (the current tick's set, used by retraction). Bounds maintained
-  in the same statements as the polygon writes; prod schema migrated via
+  `reachable_group_ids` (the current tick's set, used by retraction), and the sizing decision
+  the post was built under - `density_band`, `density_radius_miles`, `max_minutes_cap` (§3a).
+  Bounds maintained in the same statements as the polygon writes; prod schema migrated via
   `ripple:migrate-reach-bounds-schema` (shadow copy + swap).
+- `rippling_held_replies` - one row per reply held for being outside the reach, with `dueat`
+  (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes
+  due, `releasedat` is when it actually went.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.
