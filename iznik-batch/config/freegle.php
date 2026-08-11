@@ -76,6 +76,33 @@ return [
         'excluded_payers' => env('DONATIONS_EXCLUDE', 'ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com'),
     ],
 
+    // Where the "donate" buttons in emails send people.
+    //
+    // Historically every one of them went straight to the PayPal shortlink,
+    // which meant email donors could only pay by PayPal — no Apple Pay, no
+    // Google Pay, no Link, no card. Our own /donate page runs the Stripe
+    // Express Checkout Element, which offers all of those (and PayPal), so
+    // that is the default destination now. See DonateLinkService.
+    'donate' => [
+        // Path on the user site that renders the Stripe donate page.
+        'path' => env('FREEGLE_DONATE_PATH', '/donate'),
+
+        // Suggested amounts (£) offered as one-tap buttons in emails. The
+        // first is used where there is only room for a single button.
+        'amounts' => array_values(array_filter(array_map(
+            'intval',
+            explode(',', (string) env('FREEGLE_DONATE_AMOUNTS', '2,3,5'))
+        ))),
+
+        // Set to the PayPal shortlink to revert email donate buttons to the
+        // old PayPal-only behaviour without a code change.
+        'override_url' => env('FREEGLE_DONATE_OVERRIDE_URL'),
+
+        // Kept so the PayPal route is still reachable where we want it
+        // explicitly (e.g. "prefer PayPal?" links).
+        'paypal_url' => env('FREEGLE_DONATE_PAYPAL_URL', 'https://freegle.in/paypal1510'),
+    ],
+
     'branding' => [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
@@ -292,6 +319,11 @@ return [
         'email_assets' => env('FREEGLE_EMAIL_ASSETS_URL', 'https://www.ilovefreegle.org/emailimages'),
 
         // Rule images for welcome emails (from email_assets folder)
+        // Payment marks shown under donate buttons (Apple Pay / Google Pay /
+        // PayPal / card), so the low-friction options are visible before the
+        // click rather than only after it.
+        'paymethods' => env('FREEGLE_PAYMETHODS_IMAGE', 'https://www.ilovefreegle.org/emailimages/paymethods.png'),
+
         'rule_free' => env('FREEGLE_RULE_FREE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-free.png'),
         'rule_nice' => env('FREEGLE_RULE_NICE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-nice.png'),
         'rule_safe' => env('FREEGLE_RULE_SAFE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-safe.png'),

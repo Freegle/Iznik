@@ -94,12 +94,16 @@ _compute_container_info() {
             targets="$targets"$'\n'"${CN}-modtools-dev-live /app/${relative_path#iznik-nuxt3/} ModTools-Dev-Live"
         fi
         GCI_RESULT="$targets"
-    elif [[ "$relative_path" == iznik-nuxt3/plugins/* || "$relative_path" == iznik-nuxt3/composables/* || "$relative_path" == iznik-nuxt3/stores/* || "$relative_path" == iznik-nuxt3/utils/* || "$relative_path" == iznik-nuxt3/components/* || "$relative_path" == iznik-nuxt3/assets/* ]]; then
+    elif [[ "$relative_path" == iznik-nuxt3/plugins/* || "$relative_path" == iznik-nuxt3/composables/* || "$relative_path" == iznik-nuxt3/stores/* || "$relative_path" == iznik-nuxt3/utils/* || "$relative_path" == iznik-nuxt3/components/* || "$relative_path" == iznik-nuxt3/assets/* || "$relative_path" == iznik-nuxt3/pages/* || "$relative_path" == iznik-nuxt3/layouts/* || "$relative_path" == iznik-nuxt3/middleware/* ]]; then
         # Shared code used by both Freegle and ModTools - sync to all containers.
         # assets/ is here rather than in the generic iznik-nuxt3/* branch below because that
         # branch skips modtools-dev-local, which is where vitest runs: a unit test that reads
         # a stylesheet (e.g. for the feed card sizing constants) would otherwise see the
         # copy baked into the image rather than the edit on disk.
+        # pages/, layouts/ and middleware/ are here for the same reason: specs in
+        # tests/unit/pages import ~/pages/<x>.vue directly, so without this the
+        # spec syncs but the page under test does not, and vitest silently
+        # validates the copy baked into the image instead of the edit on disk.
         local targets="${CN}-dev-local /app/${relative_path#iznik-nuxt3/} Freegle-Dev-Local"
         if is_running "${CN}-dev-live"; then
             targets="$targets"$'\n'"${CN}-dev-live /app/${relative_path#iznik-nuxt3/} Freegle-Dev-Live"

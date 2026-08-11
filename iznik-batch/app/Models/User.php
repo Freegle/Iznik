@@ -943,6 +943,11 @@ class User extends Model implements Auditable
     public const LOGIN_LINK = 'Link';
 
     /**
+     * Memo for getUserKey(). Not an attribute — must never be persisted.
+     */
+    protected ?string $cachedUserKey = null;
+
+    /**
      * Get user's key for one-click unsubscribe/login links.
      * Creates one if it doesn't exist.
      *
@@ -950,10 +955,20 @@ class User extends Model implements Auditable
      */
     public function getUserKey(): string
     {
+        // Memoised on the instance: an email can want the key more than once
+        // (the unsubscribe footer and now the donate link), and the key never
+        // changes within the life of one model. Instance-scoped rather than
+        // static so a long-running digest worker doesn't accumulate keys for
+        // every user it has ever rendered.
+        if ($this->cachedUserKey !== null) {
+            return $this->cachedUserKey;
+        }
+
         // Delegates to LoginLinkService so there is exactly one implementation of
         // get-or-create: this used to be a second copy, which both drifted (it never
         // set uid) and raced the service's copy on the (userid, type) unique key.
-        return app(\App\Services\LoginLinkService::class)->getOrCreateKey((int) $this->id);
+        return $this->cachedUserKey = app(\App\Services\LoginLinkService::class)
+            ->getOrCreateKey((int) $this->id);
     }
 
     /**

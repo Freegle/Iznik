@@ -14,7 +14,7 @@
           <div v-else>
             <h2 class="donate-title">
               <v-icon icon="heart" class="heart-icon" />
-              Please donate £3
+              Please donate £{{ amount }}
             </h2>
             <p class="donate-subtitle">...or whatever you can give</p>
 
@@ -45,7 +45,13 @@
               </button>
             </div>
 
-            <div v-if="parseFloat(amount)" class="payment-section">
+            <div
+              v-if="awaitingAutoLogin"
+              class="payment-section text-center text-muted pulsate"
+            >
+              Signing you in...
+            </div>
+            <div v-else-if="parseFloat(amount)" class="payment-section">
               <DonationButton
                 v-if="payPalFallback && !isApp"
                 :key="amount + '-fallback'"
@@ -175,7 +181,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 import { useAuthStore } from '~/stores/auth'
@@ -191,12 +197,86 @@ const authStore = useAuthStore()
 const mobileStore = useMobileStore()
 
 const isApp = ref(mobileStore.isApp)
-const monthly = ref(false)
 const success = ref(false)
 const payPalFallback = ref(false)
-const amount = ref(3)
+
+// Donation asks in email carry ?amount= so the button someone tapped there is
+// the amount they're asked to confirm here. Stripe's floor for GBP is 30p and
+// the Go API rejects anything over £250, so clamp to what it will accept
+// rather than letting a hand-edited URL produce a payment that 400s.
+const DEFAULT_AMOUNT = 3
+const MIN_AMOUNT = 1
+const MAX_AMOUNT = 250
+
+function amountFromQuery(raw) {
+  const parsed = parseFloat(Array.isArray(raw) ? raw[0] : raw)
+
+  if (!isFinite(parsed) || parsed < MIN_AMOUNT) {
+    return DEFAULT_AMOUNT
+  }
+
+  return Math.min(parsed, MAX_AMOUNT)
+}
+
+const amount = ref(amountFromQuery(route.query.amount))
+const monthly = ref(
+  route.query.monthly === '1' || route.query.monthly === 'true'
+)
 
 const myid = computed(() => authStore.user?.id)
+
+// Auto-login from an email link (?u=&k=) is kicked off in app.vue's onMounted,
+// so it can still be in flight when this page renders. The Go API refuses to
+// create a PaymentIntent for a logged-out user, so a donor who taps Apple Pay
+// in that window gets a 401 and loses the donation. Hold the payment buttons
+// back until the login lands — or until it's clearly not going to.
+const AUTOLOGIN_WAIT_MS = 5000
+const awaitingAutoLogin = ref(false)
+let autoLoginTimer = null
+
+onMounted(() => {
+  // window.__initSearch is captured by an inline head script because Nuxt's
+  // router calls history.replaceState during hydration and wipes the query -
+  // same reason app.vue reads it rather than route.query.
+  const params = new URLSearchParams(
+    window.__initSearch || window.location.search || ''
+  )
+
+  if (!params.get('u') || !params.get('k') || authStore.user) {
+    return
+  }
+
+  awaitingAutoLogin.value = true
+
+  const done = () => {
+    awaitingAutoLogin.value = false
+    if (autoLoginTimer) {
+      clearTimeout(autoLoginTimer)
+      autoLoginTimer = null
+    }
+    stop()
+  }
+
+  const stop = watch(
+    () => authStore.user,
+    (user) => {
+      if (user) {
+        done()
+      }
+    }
+  )
+
+  // Don't strand the donor behind a spinner if the key has expired - let them
+  // through and fall back to whatever the payment sheet can still do.
+  autoLoginTimer = setTimeout(done, AUTOLOGIN_WAIT_MS)
+})
+
+onBeforeUnmount(() => {
+  if (autoLoginTimer) {
+    clearTimeout(autoLoginTimer)
+    autoLoginTimer = null
+  }
+})
 
 function succeeded() {
   success.value = true

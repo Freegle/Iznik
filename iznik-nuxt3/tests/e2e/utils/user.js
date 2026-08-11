@@ -379,7 +379,7 @@ async function waitForEnabledSignInButton(page) {
 
   // With SSR, buttons may be rendered disabled and only become enabled after
   // Vue hydration. Poll until we find an enabled button or timeout.
-  const hydrationTimeout = timeouts.ui.appearance
+  const hydrationTimeout = timeouts.ui.hydration
   const pollInterval = 200
   const startTime = Date.now()
   let signInButton = null
@@ -753,7 +753,19 @@ async function loginViaHomepage(
 
   const signInButton = await waitForEnabledSignInButton(page)
   if (!signInButton) {
-    return false
+    // Throw rather than return false. A false return means "those credentials
+    // did not work", which callers like unsubscribeManually legitimately treat
+    // as "not registered" and carry on from. Never getting a usable sign-in
+    // button is a different thing - the page did not hydrate - and carrying on
+    // runs the rest of the test logged out. That surfaces minutes later as an
+    // unrelated failure (the give flow stopping on its email step behind a
+    // signup dialog, timing out on a /myposts navigation that was never going
+    // to happen), which is what made this expensive to diagnose.
+    throw new Error(
+      `Login for ${email} could not start: no enabled .test-signinbutton after ` +
+        `${timeouts.ui.hydration}ms, so the page never hydrated. Failing here ` +
+        `rather than continuing logged out.`
+    )
   }
 
   console.log(`Found valid sign-in button, clicking...`)

@@ -4,6 +4,7 @@ namespace App\Mail\Volunteering;
 
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\TrackableEmail;
+use App\Services\DonateLinkService;
 use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
@@ -82,10 +83,20 @@ class VolunteeringDigestMail extends MjmlMailable
             'email'          => $this->recipientEmail,
             'jobAds'         => $jobAds,
             'jobsUrl'        => $this->trackedUrl("{$userSite}/jobs", 'jobs_link', 'jobs'),
-            // Keep the freegle.in PayPal short link — it is whitelisted in the Go
-            // API's isValidRedirectURL (domain allow-list), so the tracked redirect
-            // resolves it correctly. Don't replace the short link with a full URL.
-            'donateUrl'      => $this->trackedUrl('https://freegle.in/paypal1510', 'donate_link', 'donate'),
+            // Our own Stripe donate page rather than the PayPal-only shortlink,
+            // so Apple Pay / Google Pay / Link are on offer too. USER_SITE is on
+            // the Go API's isValidRedirectURL allow-list, so the tracked
+            // redirect still resolves. See DonateLinkService.
+            'donateUrl'      => $this->trackedUrl(
+                app(DonateLinkService::class)->urlForUserId(
+                    $this->userId,
+                    app(DonateLinkService::class)->defaultAmount(),
+                    'volunteeringdigest'
+                ),
+                'donate_link',
+                'donate'
+            ),
+            'donateMarksUrl' => config('freegle.images.paymethods'),
         ]);
     }
 }
