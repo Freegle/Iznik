@@ -130,3 +130,22 @@ db1/2/3 at :8194, co-located with apiv2) and serve point-in-reach from RAM:
     back meanwhile) + local spatial-knn container; deploy apiv2; then set
     SPATIAL_REACH_MODE=on on ONE node's apiv2 .env, compare counts + watch
     db3 mysqld digest for the au-join COUNT dropping, then enable the rest.
+- 2026-08-11 (evening): DEPLOYED AND LIVE on all three nodes + local
+  container, SPATIAL_REACH_MODE=on everywhere. Live parity harness
+  (/tmp/reach-parity.sh, scratchpad copy) reached 6/6 exact MATCH vs MySQL
+  ground truth after three delta-design fixes it surfaced (2178a2983 +
+  25ce7892d→3549a7ef7): sync point stamped at build/tick START (not end),
+  per-tick two-way id reconcile (hard deletes + gaps), sync point persisted
+  in an index meta table (restart resumption). RESULT on db3: the two
+  legacy badge COUNT digests went from ~150-230s per 90s window to ZERO
+  new executions; replacement IN-list count runs ~62ms avg at ~2/s; evening
+  load 12-20 spikes → 4-8 steady. Deploy gotchas hit: monit restart bind
+  race leaves OLD spatial binary serving (verify proc-mtime ≥ bin-mtime;
+  use unmonitor/kill/manual-start/monitor for first builds — listener binds
+  only AFTER startupLoad, and a flap mid-build leaves a corrupt 4KB
+  reach.db → SQLite 522 → rm reach.db* + admin-port rebuild).
+- REMAINING (tuning, not correctness): London-style dense-urban viewers
+  have fat partial bands (63% — tiny reaches spanning few raster cells), so
+  their exact-test residue is larger; option = finer grid for small
+  polygons, or skip rasterising polygons under ~N cells and mark all-partial
+  (they're cheap to exact-test anyway). Parity harness is the check.
