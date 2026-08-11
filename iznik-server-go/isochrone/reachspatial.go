@@ -42,18 +42,37 @@ func spatialReachIDs(latlng utils.LatLng) (in []int64, partial []int64, ok bool)
 	return in, partial, true
 }
 
-// reachCandidateQueryFromIDs is reachCandidateQuery with the containment
-// answered by id lists instead of geometry: same joins (minus rippling_reach
-// — its only jobs here were containment and the held filter), same unseen
-// and author-cap conjuncts, so membership is identical by construction.
-// Partial ids get the exact polygon test, by primary key, with the held
-// re-check folded in (a hold newer than the spatial delta cadence must still
-// hide the post).
+// reachCandidateQueryFromIDs is reachCandidateQuery with the CONTAINMENT
+// answered by id lists instead of geometry: same joins, same unseen and
+// author-cap conjuncts, so membership is identical by construction.
+//
+// Only containment comes from the raster. The reach row's live STATUS is still
+// read from MySQL for BOTH buckets, because the raster is rebuilt on a delta
+// cadence (iznik-spatial-go dataset_reach.go DeltaInterval, 2 minutes) and a
+// hold takes effect the instant a member reports a post or a moderator sends it
+// Back to Pending. For up to a delta cycle the index therefore still says a
+// held post covers this viewer.
+//
+// That matters because this query serves the badge COUNT while the feed is
+// always served by reachCandidateQuery, which joins rippling_reach and tests
+// rr.status != 'held' unconditionally. Any status the two disagree about is a
+// count that names a post the feed will not render - the "N new posts" sitting
+// above "you're up to date" with nothing in between. The partial bucket already
+// had this re-check folded into its exact polygon test; the in bucket had no
+// reference to rippling_reach at all, so it counted held posts. Requiring a live
+// non-held row for both closes that, and costs one primary-key lookup per id.
 func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64) *gorm.DB {
 	// One concatenated WHERE string in a single Where() call — same GORM
 	// extra-paren gotcha as reachCandidateQuery (see there).
+	//
+	// EXISTS rather than a join: it also means a reach row that has been deleted
+	// outright (retraction) drops the id, instead of it staying countable on the
+	// strength of a raster entry alone.
 	whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " +
-		"AND (ms.msgid IN (?) OR (ms.msgid IN (?) AND EXISTS (" +
+		"AND ((ms.msgid IN (?) AND EXISTS (" +
+		"SELECT 1 FROM rippling_reach r1 WHERE r1.msgid = ms.msgid " +
+		"AND r1.status != 'held')) " +
+		"OR (ms.msgid IN (?) AND EXISTS (" +
 		"SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = ms.msgid " +
 		"AND r2.status != 'held' " +
 		"AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?))))) " +
