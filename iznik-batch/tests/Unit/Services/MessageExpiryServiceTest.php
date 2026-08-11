@@ -604,6 +604,125 @@ class MessageExpiryServiceTest extends TestCase
         $this->assertDatabaseMissing('messages_spatial', ['msgid' => $wanted->id]);
     }
 
+    /**
+     * Regression: expiry must use the MOST GENEROUS group, matching the
+     * expiresat the Go API shows the poster. A rippled-in copy on a group
+     * with maxagetoshow=0 (18-day threshold) must not expire a message whose
+     * home group still gives it 90 days.
+     */
+    public function test_most_generous_group_governs_expiry(): void
+    {
+        $user = $this->createTestUser();
+
+        // Home group: default settings → threshold GREATEST(90, 3*(5+1)) = 90 days.
+        $home = $this->createTestGroup();
+        // Rippled-into group: maxagetoshow=0 → threshold 3*(5+1) = 18 days.
+        $short = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 0,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $home);
+        $this->createMembership($user, $short);
+
+        // 25 days old on both groups: past the short group's 18-day threshold,
+        // well within the home group's 90.
+        $message = $this->createTestMessage($user, $home, ['arrival' => now()->subDays(25)]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $short->id,
+            'collection' => 'Approved',
+            'arrival' => now()->subDays(25),
+            'rippled_in' => 1,
+        ]);
+
+        DB::table('messages_spatial')->insert([
+            'msgid' => $message->id,
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'successful' => 0,
+        ]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(0, $count);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $message->id]);
+        $this->assertDatabaseHas('messages_spatial', ['msgid' => $message->id]);
+
+        // Once the home group's threshold has passed too, it expires.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->update(['arrival' => now()->subDays(95)]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(1, $count);
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+    }
+
+    /**
+     * Regression: postings rippling has retracted (deleted=1, arrival frozen)
+     * or that are not Approved must not count towards expiry — a dead copy
+     * must never expire the live post.
+     */
+    public function test_deleted_and_non_approved_postings_ignored_for_expiry(): void
+    {
+        $user = $this->createTestUser();
+        $home = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 30,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $other = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 30,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $home);
+        $this->createMembership($user, $other);
+
+        // Live home posting is fresh; the retracted rippled copy is long past
+        // the threshold with its arrival frozen at retraction time.
+        $message = $this->createTestMessage($user, $home, ['arrival' => now()->subDays(5)]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $other->id,
+            'collection' => 'Approved',
+            'arrival' => now()->subDays(40),
+            'rippled_in' => 1,
+            'deleted' => 1,
+        ]);
+
+        DB::table('messages_spatial')->insert([
+            'msgid' => $message->id,
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'successful' => 0,
+        ]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(0, $count);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $message->id]);
+        $this->assertDatabaseHas('messages_spatial', ['msgid' => $message->id]);
+
+        // A message whose ONLY postings are deleted must not be expired here
+        // either — spatial cleanup owns that case.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->update(['deleted' => 1]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(0, $count);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $message->id]);
+    }
+
     public function test_process_expired_from_spatial_index_logs_progress(): void
     {
         $user = $this->createTestUser();
