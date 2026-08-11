@@ -467,7 +467,8 @@ describe('ModSupportUser', () => {
         { id: 2, chattype: 'User2User', lastdate: '2024-01-15' },
         { id: 3, chattype: 'User2Mod', lastdate: '2024-01-10' },
       ])
-      const wrapper = await mountComponent()
+      // Extras (including chatrooms) are only fetched on expansion.
+      const wrapper = await mountComponent({ expand: true })
       await flushPromises()
       const chats = wrapper.vm.chatsFiltered
       expect(chats).toHaveLength(2)
