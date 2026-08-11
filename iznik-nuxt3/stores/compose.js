@@ -46,6 +46,10 @@ export const useComposeStore = defineStore({
     // survives a refresh via this store's localStorage persistence — a clearance
     // holds far more (many items + photos) than a normal post, so losing it hurts.
     clearanceDraft: null,
+    // In-progress story (components/StoryAddModal.vue). Held here for the same
+    // reason: if we have to interrupt them to log in, app.vue rebuilds the whole
+    // app and the modal goes with it, so without this what they typed is gone.
+    storyDraft: null,
   }),
   actions: {
     init(config) {
@@ -58,6 +62,13 @@ export const useComposeStore = defineStore({
     },
     clearClearanceDraft() {
       this.clearanceDraft = null
+    },
+    // Save / clear the in-progress story draft (persisted to localStorage).
+    saveStoryDraft(draft) {
+      this.storyDraft = draft
+    },
+    clearStoryDraft() {
+      this.storyDraft = null
     },
     calculateSteps(type) {
       let steps = 0
