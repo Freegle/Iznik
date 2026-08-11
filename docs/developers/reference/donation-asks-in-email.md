@@ -89,11 +89,20 @@ the click.
 ## The payment marks
 
 `iznik-nuxt3/public/emailimages/paymethods.png` is a strip of the brand owners'
-own published marks (Apple Pay mark, Google Pay mark, PayPal logo) plus the word
-"card", scaled to a common height and not otherwise altered.
+own published marks (Apple Pay mark, Google Pay mark, PayPal logo), scaled to a
+common height and not otherwise altered, followed by a plain card glyph.
+
+The card is **drawn, not a scheme's mark and not an emoji**: a Visa or
+Mastercard mark would imply we take only those, and an emoji depends on which
+colour-emoji font the renderer happens to have. It is also not the word "card",
+which sat among three logos looking like a label rather than a fourth method.
 
 Many clients block images by default, so **the alt text carries the same
 message** ("Apple Pay, Google Pay, PayPal or card"). Do not drop it.
+
+The caption under the strip says "Apple Pay and Google Pay take just a tap".
+Keep it attributed to those two methods. It used to read "one tap — no card
+details to type", which is not true for the people paying by card.
 
 To regenerate the strip, compose the marks at 4x in a headless browser and
 screenshot with a transparent background — it sits on four different near-white
