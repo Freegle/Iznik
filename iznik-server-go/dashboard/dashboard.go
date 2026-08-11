@@ -245,10 +245,12 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 }
 
 func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []map[string]interface{} {
-	db := database.DBConn
 	if len(groupIDs) == 0 {
 		return []map[string]interface{}{}
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	defer cancel()
+	db := database.DBConn.WithContext(ctx)
 
 	type PostRow struct {
 		Views   int
@@ -256,13 +258,18 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 		Subject string
 	}
 
+	// Last of the dashboard components converted to the bounded windowed walk
+	// (see dashboardWindowDays): the single statement version computed the
+	// correlated views COUNT for EVERY post the whole date range matched
+	// before its ORDER BY views LIMIT 5 could apply — ~30s on a systemwide
+	// year range, the longest dashboard statement left after cc54e65c0.
+	// A post has exactly one arrival, so each window's top 5 is a superset
+	// candidate of the global top 5: run the same query per window and merge.
 	var posts []PostRow
 
 	if systemwide {
-		// For systemwide queries, skip the messages_groups join entirely since
-		// all groups are included. Use a correlated subquery on messages_likes
-		// instead of a JOIN to avoid scanning the 73M+ row messages_likes table.
-		// Cap at 90 days max to keep query time under ~5s.
+		// Systemwide skips the messages_groups join entirely (all groups are
+		// included) and keeps its historical 90-day cap on the range.
 		start, err1 := time.Parse("2006-01-02", startQ)
 		end, err2 := time.Parse("2006-01-02", endQ)
 		capStart := startQ
@@ -273,15 +280,26 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 			}
 		}
 
-		db.Table("messages m").
-			Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject", utils.MESSAGE_LIKES_VIEW).
-			Where("m.arrival >= ? AND m.arrival <= ? AND m.deleted IS NULL", capStart, endQ).
-			Order("views DESC").
-			Limit(5).
-			Scan(&posts)
+		for _, win := range arrivalWindows(capStart, endQ) {
+			arrivalCmp := "<"
+			if win.LastInclusive {
+				arrivalCmp = "<="
+			}
+			var winPosts []PostRow
+			// Correlated subquery on messages_likes rather than a JOIN, to
+			// avoid scanning the 73M+ row table (unchanged from the replaced
+			// statement).
+			db.Table("messages m").
+				Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject", utils.MESSAGE_LIKES_VIEW).
+				Where("m.arrival >= ? AND m.arrival "+arrivalCmp+" ? AND m.deleted IS NULL", win.Start, win.End).
+				Order("views DESC").
+				Limit(5).
+				Scan(&winPosts)
+			posts = append(posts, winPosts...)
+		}
 	} else {
-		// For specific groups, use correlated subquery with messages_groups filter.
-		// Uses existing groupid index on messages_groups.
+		// For specific groups, correlated subquery with messages_groups filter
+		// (existing groupid index).
 		//
 		// rippled_in = 0 restricts to each post's ORIGIN group row. Rippling-out adds
 		// an Approved messages_groups row (rippled_in = 1) per group a post reaches, so
@@ -290,17 +308,49 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 		// INTO a group would pollute that group's own popular list. GROUP BY mg.msgid
 		// additionally collapses genuine multi-group (crossposted) origin rows so each
 		// post is listed once. Same native-only pattern as the stats/IP-abuse/edit-queue
-		// fixes (fa60c39b0, 4b6d7b3c3).
-		db.Table("messages_groups mg").
-			Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, mg.msgid AS id, MIN(m.subject) AS subject", utils.MESSAGE_LIKES_VIEW).
-			Joins("INNER JOIN messages m ON m.id = mg.msgid").
-			Where("mg.arrival >= ? AND mg.arrival <= ? AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0",
-				startQ, endQ, groupIDs, utils.COLLECTION_APPROVED).
-			Group("mg.msgid").
-			Order("views DESC").
-			Limit(5).
-			Scan(&posts)
+		// fixes (fa60c39b0, 4b6d7b3c3). A crossposted origin can straddle two windows
+		// and surface in both; the merge below dedups by id.
+		for _, win := range arrivalWindows(startQ, endQ) {
+			arrivalCmp := "<"
+			if win.LastInclusive {
+				arrivalCmp = "<="
+			}
+			var winPosts []PostRow
+			db.Table("messages_groups mg").
+				Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, mg.msgid AS id, MIN(m.subject) AS subject", utils.MESSAGE_LIKES_VIEW).
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Where("mg.arrival >= ? AND mg.arrival "+arrivalCmp+" ? AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0",
+					win.Start, win.End, groupIDs, utils.COLLECTION_APPROVED).
+				Group("mg.msgid").
+				Order("views DESC").
+				Limit(5).
+				Scan(&winPosts)
+			posts = append(posts, winPosts...)
+		}
 	}
+
+	// Merge the per-window top-5s: dedup by id (a crossposted origin row can
+	// straddle windows), sort by views desc with id as a deterministic
+	// tie-break, keep 5 — replicating the replaced ORDER BY views DESC LIMIT 5.
+	seen := make(map[uint64]struct{}, len(posts))
+	merged := posts[:0]
+	for _, p := range posts {
+		if _, dup := seen[p.ID]; dup {
+			continue
+		}
+		seen[p.ID] = struct{}{}
+		merged = append(merged, p)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].Views != merged[j].Views {
+			return merged[i].Views > merged[j].Views
+		}
+		return merged[i].ID < merged[j].ID
+	})
+	if len(merged) > 5 {
+		merged = merged[:5]
+	}
+	posts = merged
 
 	userSite := os.Getenv("USER_SITE")
 	if userSite == "" {
