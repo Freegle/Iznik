@@ -170,7 +170,14 @@ func (srv *server) rebuild(name string) error {
 	}
 
 	state.swapIndex(live)
-	state.lastSync = time.Now()
+	// Stamp the sync point at build START, not completion: the Load query's
+	// InnoDB snapshot is from when it began, so rows created/updated while the
+	// build ran are NOT in the new index — stamping completion time would put
+	// them behind the delta horizon forever (a 96s build of the reach dataset
+	// permanently missed 65 rows this way, caught by parity checks 2026-08-11).
+	// Stamping the start makes the first delta re-fetch anything from during
+	// the build; upserts are idempotent so the overlap is harmless.
+	state.lastSync = start
 	// The index now matches the source as of this build. For drift-aware
 	// datasets, record that baseline so the next CheckDrift compares against the
 	// freshly-built state rather than re-triggering on the change we just healed.

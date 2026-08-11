@@ -79,6 +79,18 @@ func TestReachContaining(t *testing.T) {
 		t.Fatalf("boundary point lost: in=%v partial=%v", in, partial)
 	}
 
+	// ExtIDs (the reconcile's index-side view) reflects inserts and deletes.
+	ids, err := idx.ExtIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ids[1001]; !ok {
+		t.Fatal("ExtIDs missing 1001")
+	}
+	if _, ok := ids[1002]; !ok {
+		t.Fatal("ExtIDs missing 1002")
+	}
+
 	// A held reach delta-row builds as a removal marker, and removal works.
 	heldItem, ok := buildReachItem(1001, "held", nil)
 	if !ok || heldItem.Extra["status"] != "held" {

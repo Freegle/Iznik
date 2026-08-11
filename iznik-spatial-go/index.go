@@ -176,6 +176,25 @@ func (idx *Index) DeleteByExtID(extID int64) error {
 	return nil
 }
 
+// ExtIDs returns the set of all external IDs in the index. Used by datasets
+// that reconcile against their source table's full id list (cheap: ids only).
+func (idx *Index) ExtIDs() (map[int64]struct{}, error) {
+	rows, err := idx.db.Query(`SELECT extid FROM items`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids[id] = struct{}{}
+	}
+	return ids, rows.Err()
+}
+
 // CountRows returns the number of items in the index.
 func (idx *Index) CountRows() (int64, error) {
 	var n int64

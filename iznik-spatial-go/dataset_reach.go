@@ -166,6 +166,85 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 		log.Printf("reach delta: upserted=%d removed=%d skipped=%d since=%s",
 			upserted, removed, skipped, since.Format(time.RFC3339))
 	}
+
+	// Reconcile against the source's full id list. The updated_at delta above
+	// cannot see two kinds of change: hard DELETEs (a reach row is deleted when
+	// its post completes/purges — parity checks 2026-08-11 found deleted rows
+	// still claiming containment from the index), and rows changed while the
+	// server was DOWN (startup adopts an on-disk index with lastSync unset, so
+	// the first delta looks back only one interval). The id list is ~52k
+	// bigints ≈ 400KB per tick — cheap — and makes the index converge on the
+	// source within one delta interval regardless of what was missed.
+	return d.reconcile(mysqlDB, idx)
+}
+
+// reconcile diffs the index's extids against rippling_reach's live msgids:
+// index-only entries are deleted, source-only msgids are fetched and built.
+func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
+	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'`)
+	if err != nil {
+		return fmt.Errorf("reach reconcile ids: %w", err)
+	}
+	source := make(map[int64]struct{})
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("reach reconcile scan: %w", err)
+		}
+		source[id] = struct{}{}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// An empty source id list is almost certainly a failed query, not an empty
+	// table (same reasoning as the rebuild zero-row guard) — deleting the whole
+	// index on it would be destructive, so refuse.
+	if len(source) == 0 {
+		return fmt.Errorf("reach reconcile: source returned 0 ids; refusing to reconcile")
+	}
+
+	indexed, err := idx.ExtIDs()
+	if err != nil {
+		return fmt.Errorf("reach reconcile extids: %w", err)
+	}
+
+	var stale, missing int
+	for id := range indexed {
+		if _, ok := source[id]; !ok {
+			if err := idx.DeleteByExtID(id); err != nil {
+				log.Printf("reach reconcile: delete stale msgid=%d: %v", id, err)
+				continue
+			}
+			stale++
+		}
+	}
+	for id := range source {
+		if _, ok := indexed[id]; ok {
+			continue
+		}
+		row := mysqlDB.QueryRow(`SELECT msgid, status, ST_AsWKB(polygon) FROM rippling_reach WHERE msgid = ?`, id)
+		var msgid int64
+		var status string
+		var wkbRaw []byte
+		if err := row.Scan(&msgid, &status, &wkbRaw); err != nil {
+			// Row vanished between the id list and this fetch: fine, next tick.
+			continue
+		}
+		item, ok := buildReachItem(msgid, status, wkbRaw)
+		if !ok || status == "held" {
+			continue
+		}
+		if err := InsertItems(idx, []Item{item}, nil); err != nil {
+			log.Printf("reach reconcile: insert missing msgid=%d: %v", id, err)
+			continue
+		}
+		missing++
+	}
+	if stale+missing > 0 {
+		log.Printf("reach reconcile: removed %d stale, added %d missing", stale, missing)
+	}
 	return nil
 }
 
@@ -252,29 +331,7 @@ func (d *ReachDataset) Containing(idx *Index, lng, lat float64) (in []int64, par
 	return in, partial, nil
 }
 
-// CheckDrift: holds and deletes outside the updated_at window (e.g. a manual
-// prod DELETE, or clock skew) leave orphans the delta can't see. Compare
-// counts on the delta cadence, same pattern as jobs.
-func (d *ReachDataset) CheckDrift(mysqlDB *sql.DB, idx *Index) (bool, string, error) {
-	var srcCount int64
-	if err := mysqlDB.QueryRow(`SELECT COUNT(*) FROM rippling_reach WHERE status != 'held'`).Scan(&srcCount); err != nil {
-		return false, "", err
-	}
-	idxCount, err := idx.CountRows()
-	if err != nil {
-		return false, "", err
-	}
-	// The index can briefly exceed the source (row deleted between delta and
-	// this check) or trail it (insert mid-delta); only sustained divergence
-	// beyond noise warrants a rebuild.
-	diff := srcCount - idxCount
-	if diff < 0 {
-		diff = -diff
-	}
-	if diff > 500 {
-		return true, fmt.Sprintf("reach index has %d rows, source %d", idxCount, srcCount), nil
-	}
-	return false, "", nil
-}
-
-func (d *ReachDataset) NoteReconciled(_ *sql.DB) error { return nil }
+// No DriftChecker: the per-tick reconcile above is strictly stronger — it
+// heals deletes and gaps in place within one delta interval, where a drift
+// check could only trigger a full (minutes-long) rebuild once the count
+// diverged past a threshold.
