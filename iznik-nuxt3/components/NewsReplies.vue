@@ -90,6 +90,10 @@ const HEAD_COUNT = 2
 const TAIL_COUNT = 3
 const COLLAPSE_THRESHOLD = 6
 
+// Consecutive messages from one author inside this window read as one
+// utterance, so they render as a single block.
+const TEN_MINUTES = 10 * 60 * 1000
+
 const props = defineProps({
   id: {
     type: Number,
@@ -114,8 +118,9 @@ const props = defineProps({
     required: true,
   },
   // 'thread' renders the full conversation with head/tail collapsing.
-  // 'feed' keeps cards short: post + the two most recent replies + one
-  // honestly-counted "View all N replies" link to the thread page.
+  // 'feed' keeps cards short: post + the two most recent replies from
+  // anywhere in the thread + one honestly-counted "View all N replies" link
+  // to the thread page.
   context: {
     type: String,
     required: false,
@@ -175,12 +180,15 @@ const visiblereplies = computed(() => {
   return ret
 })
 
-const combinedReplies = computed(() => {
-  const TEN_MINUTES = 10 * 60 * 1000
+// Merge author runs. Serves both the thread's top-level list and the feed
+// card's time-ordered tail, so the same-parent guard matters: in the feed the
+// neighbouring row can be a reply to somebody else entirely, and two answers
+// to different people are not one utterance however close together they land.
+function combineRuns(list) {
   const combined = []
 
-  for (let i = 0; i < filteredReplies.value.length; i++) {
-    const currentReply = filteredReplies.value[i]
+  for (let i = 0; i < list.length; i++) {
+    const currentReply = list[i]
     const currentTime = new Date(currentReply.added).getTime()
     const lastCombined = combined[combined.length - 1]
 
@@ -195,6 +203,7 @@ const combinedReplies = computed(() => {
       !isExpanded &&
       lastCombined &&
       lastCombined.userid === currentReply.userid &&
+      lastCombined.replyto === currentReply.replyto &&
       !currentReply.image &&
       !lastCombined.image &&
       !currentReply.replies?.length &&
@@ -251,7 +260,25 @@ const combinedReplies = computed(() => {
   }
 
   return combined
-})
+}
+
+const combinedReplies = computed(() => combineRuns(filteredReplies.value))
+
+// A double-post says the same thing twice: keep the later one only. Copies the
+// list rather than splicing the caller's, which would corrupt a computed cache.
+function dropRepeatedMessages(list) {
+  const ret = [...list]
+  let lastMessage = null
+  let i = ret.length
+  while (i--) {
+    if (!(ret[i].message || '').localeCompare(lastMessage)) {
+      ret.splice(i, 1)
+    } else {
+      lastMessage = ret[i].message || ''
+    }
+  }
+  return ret
+}
 
 const filteredReplies = computed(() => {
   if (!visiblereplies.value.length) return []
@@ -279,17 +306,7 @@ const filteredReplies = computed(() => {
   }
 
   // Suppress replies where the message is identical to the previous.
-  let lastMessage = null
-  let i = ret.length
-  while (i--) {
-    if (!ret[i].message.localeCompare(lastMessage)) {
-      ret.splice(i, 1)
-    } else {
-      lastMessage = ret[i].message
-    }
-  }
-
-  return ret
+  return dropRepeatedMessages(ret)
 })
 
 // Collapse only at depth 1 (top-level replies), not for nested reply trees.
@@ -389,7 +406,7 @@ const collapsePlan = computed(() => {
 
 // Feed cards must stay short. Above this many replies (counted across the
 // whole tree) the card switches to a view-all link plus the two most recent
-// top-level entries; at or below it, small threads render exactly as before.
+// entries; at or below it, small threads render exactly as before.
 const FEED_TOTAL_THRESHOLD = 3
 const FEED_VISIBLE_TAIL = 2
 
@@ -470,6 +487,41 @@ const replyNames = computed(() => {
   return out
 })
 
+// Every reply in the tree as one list, parents before their children, with the
+// same deleted-unless-a-volunteer filter the top-level list applies.
+function flattenReplies(list, out) {
+  for (const r of list) {
+    const reply = resolveReply(r)
+    if (!reply) continue
+    if (reply.deleted && !mod.value) continue
+    out.push(reply)
+    flattenReplies(reply.replies || [], out)
+  }
+  return out
+}
+
+// The thread in the order things were said. ChitChat nests - 40% of replies are
+// replies-to-replies - so "the most recent replies" cannot be read off the
+// top-level rows: the newest thing anyone said is often a reply to a reply, and
+// a tail taken from top-level rows alone put an older reply forward as the last
+// word with nothing at all to say the newer one existed.
+// `added` is what the card displays; ids break ties so the order is defined even
+// when two replies share a timestamp.
+const chronologicalReplies = computed(() => {
+  const flat = flattenReplies(visiblereplies.value, [])
+  flat.sort(
+    (a, b) => new Date(a.added) - new Date(b.added) || (a.id || 0) - (b.id || 0)
+  )
+  return combineRuns(dropRepeatedMessages(flat))
+})
+
+// A nested reply shown here renders as a row of its own, so its parent must
+// still suppress its inline list or the card would show it twice. Older nested
+// replies stay behind the card's counted view-all link.
+const feedTail = computed(() =>
+  chronologicalReplies.value.slice(-FEED_VISIBLE_TAIL)
+)
+
 const feedMode = computed(() => {
   return (
     props.context === 'feed' &&
@@ -483,16 +535,24 @@ const feedMode = computed(() => {
 // new - not merely the first new top-level reply. Replies to an old comment
 // partway up the thread are new but live under an old parent, so anchoring on
 // the parent keeps that promise true and keeps the parent visible as context.
-const firstNewIndex = computed(() => {
-  if (!seenBeforeVisit.value) return -1
-  return combinedReplies.value.findIndex((r) => subtreeHasNew(r))
+// A feed card renders a slice of the thread, so it anchors on the first row IT
+// shows: an anchor row the card leaves out would take the line with it, and a
+// card showing new replies would carry no sign of where they start.
+const dividerAnchor = computed(() => {
+  if (!seenBeforeVisit.value || props.depth !== 1) return null
+  const rows = feedMode.value ? feedTail.value : combinedReplies.value
+  const anchor = rows.find((r) => subtreeHasNew(r))
+  if (!anchor) return null
+  // The thread opens with new activity: everything there is to see is already
+  // below the line, so there is nothing for the line to divide it from.
+  return anchor.id === combinedReplies.value[0]?.id ? null : anchor
 })
 
 // Every new reply in the thread, nested ones included, so this number agrees
 // with the "View all N replies - M new" link that brought the reader here.
 const newCount = computed(() => treeCounts.value.fresh)
 
-const showDivider = computed(() => props.depth === 1 && firstNewIndex.value > 0)
+const showDivider = computed(() => Boolean(dividerAnchor.value))
 
 const renderEntries = computed(() => {
   let entries
@@ -505,17 +565,15 @@ const renderEntries = computed(() => {
         total: treeCounts.value.total,
         fresh: treeCounts.value.fresh,
       },
-      ...combinedReplies.value
-        .slice(-FEED_VISIBLE_TAIL)
-        .map((r) => ({ reply: r })),
+      ...feedTail.value.map((r) => ({ reply: r })),
     ]
   } else {
     entries = [...collapsePlan.value.entries]
   }
 
   if (showDivider.value) {
-    const first = combinedReplies.value[firstNewIndex.value]
-    const idx = entries.findIndex((e) => e.reply && e.reply.id === first.id)
+    const anchorId = dividerAnchor.value.id
+    const idx = entries.findIndex((e) => e.reply && e.reply.id === anchorId)
     if (idx >= 0) {
       entries.splice(idx, 0, { divider: true, count: newCount.value })
     }

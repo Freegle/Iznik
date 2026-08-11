@@ -764,6 +764,116 @@ describe('NewsReplies', () => {
       ).toContain('view-all')
     })
 
+    it('shows the newest reply even when it is a reply to a reply', () => {
+      // ChitChat threads nest, so the newest thing said is often a nested
+      // reply. Picking the tail from top-level rows only left the card
+      // showing an older reply as the last word, with nothing at all to say
+      // the newer one existed.
+      const replies = makeReplies(5, { startId: 10 })
+      replies[4].replies = [200]
+      replies[4].nestedObjects = [
+        {
+          id: 200,
+          userid: 300,
+          displayname: 'Nested Newest',
+          message: 'Newest reply in the thread',
+          added: '2024-01-15T20:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const renderedIds = wrapper
+        .findAll('.reply-thread')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toEqual([14, 200])
+    })
+
+    it('renders a nested reply once when its parent is on the card too', () => {
+      // The parent still suppresses its own nested list - the child is a row
+      // in its own right here, so rendering both would show it twice.
+      const replies = makeReplies(5, { startId: 10 })
+      replies[4].replies = [200]
+      replies[4].nestedObjects = [
+        {
+          id: 200,
+          userid: 300,
+          displayname: 'Nested Newest',
+          message: 'Newest reply in the thread',
+          added: '2024-01-15T20:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const rows = wrapper.findAllComponents('.news-reply')
+      expect(rows.length).toBe(2)
+      expect(rows.map((r) => r.props('id'))).toEqual([14, 200])
+      expect(rows.every((r) => r.props('suppressChildren'))).toBe(true)
+    })
+
+    it('marks where the new replies start on the rows it shows', () => {
+      // The divider anchors on a row the card renders. Anchoring on the
+      // top-level parent instead would lose the line whenever that parent is
+      // not one of the rows the card had room for.
+      const replies = makeReplies(6, { startId: 10 })
+      replies[2].replies = [200]
+      replies[2].nestedObjects = [
+        {
+          id: 200,
+          userid: 300,
+          displayname: 'Nested Newest',
+          message: 'The newest thing anyone said',
+          added: '2024-01-15T20:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 199
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(
+        wrapper
+          .findAll('.reply-thread')
+          .map((n) => n.attributes('data-reply-id'))
+      ).toEqual(['15', '200'])
+      const divider = wrapper.find('[data-unread-divider]')
+      expect(divider.exists()).toBe(true)
+      expect(
+        divider.element.nextElementSibling.getAttribute('data-reply-id')
+      ).toBe('200')
+    })
+
+    it('keeps the tail in time order, not tree order', () => {
+      // An old nested reply under an early parent must not displace the
+      // genuinely recent top-level replies.
+      const replies = makeReplies(5, { startId: 10 })
+      replies[0].replies = [200]
+      replies[0].nestedObjects = [
+        {
+          id: 200,
+          userid: 300,
+          displayname: 'Nested Old',
+          message: 'Replied ages ago',
+          added: '2024-01-15T10:30:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const renderedIds = wrapper
+        .findAll('.reply-thread')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toEqual([13, 14])
+    })
+
     it('points the link at the new replies when there are some', () => {
       // The link declares the intent in the URL, so the thread page knows
       // where to land without inferring it, and the link survives a reload.
