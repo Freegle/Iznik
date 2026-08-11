@@ -2,16 +2,15 @@
 
 namespace Tests\Unit\Services\FirstReply;
 
-use App\Models\Membership;
 use App\Models\Message;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FreegleApiClient;
-use App\Services\FirstReply\ScoutService;
+use App\Services\FirstReply\MatchMailService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
-class ScoutServiceTest extends TestCase
+class MatchMailServiceTest extends TestCase
 {
     private const TICK1 = 'POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))';
 
@@ -21,9 +20,9 @@ class ScoutServiceTest extends TestCase
     {
         parent::setUp();
         MaxReachService::forgetAvailability();
-        // The scout mail really goes through the digest spool now, because the
-        // ledger and the digest-brought-forward stamp are both keyed on who was
-        // ACTUALLY mailed rather than who was picked.
+        // The match mail really goes through the digest spool, because the ledger
+        // and the reach-notified stamp are both keyed on who was ACTUALLY mailed
+        // rather than who was picked.
         Mail::fake();
         DB::statement('DELETE FROM firstreply_scouts');
         DB::statement('DELETE FROM rippling_reach');
@@ -39,14 +38,14 @@ class ScoutServiceTest extends TestCase
             'freegle.firstreply.enabled' => true,
             // Whole-network arm: the rollout percentage is exercised separately.
             'freegle.firstreply.rollout_percent' => 100,
-            'freegle.firstreply.scouts.enabled' => true,
-            'freegle.firstreply.scouts.quiet_minutes' => 0,
-            'freegle.firstreply.scouts.max_per_post' => 10,
-            'freegle.firstreply.scouts.min_score' => 1.0,
+            'freegle.firstreply.matchmail.enabled' => true,
+            'freegle.firstreply.matchmail.quiet_minutes' => 0,
+            'freegle.firstreply.matchmail.max_per_post' => 10,
+            'freegle.firstreply.matchmail.min_score' => 1.0,
             // The run() waking-hours gate (shared with the ripple) would zero
             // every test that happens to execute overnight - CI runs at all
             // hours. Hold the window open; the gate itself is pinned by
-            // test_scouts_sleep_outside_waking_hours.
+            // test_match_mail_sleeps_outside_waking_hours.
             'freegle.ripple.active_start_hour' => 0,
             'freegle.ripple.active_end_hour' => 24,
         ]);
@@ -97,18 +96,31 @@ class ScoutServiceTest extends TestCase
         $this->refreshApiFake();
     }
 
-    private function service(): ScoutService
+    private function service(): MatchMailService
     {
-        return app(ScoutService::class);
+        return app(MatchMailService::class);
     }
 
     /** A silent OFFER, rippling, with its eventual reach known. */
     private function seedSilentOffer(bool $populateMaxReach = true): Message
     {
+        return $this->seedSilentPost(Message::TYPE_OFFER, $populateMaxReach);
+    }
+
+    /** The mirror image: a silent WANTED, rippling, reach known. */
+    private function seedSilentWanted(bool $populateMaxReach = true): Message
+    {
+        return $this->seedSilentPost(Message::TYPE_WANTED, $populateMaxReach);
+    }
+
+    /** A silent post of either type, rippling, with its eventual reach known. */
+    private function seedSilentPost(string $type, bool $populateMaxReach = true): Message
+    {
         $poster = $this->createTestUser();
         $group = $this->createTestGroup(['lat' => 51.5, 'lng' => -0.1]);
         $message = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: Pine bookcase (TestLocation)',
+            'type' => $type,
+            'subject' => strtoupper($type) . ': Pine bookcase (TestLocation)',
             'lat' => 51.5,
             'lng' => -0.1,
         ]);
@@ -116,7 +128,7 @@ class ScoutServiceTest extends TestCase
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
              VALUES (?, ST_SRID(POINT(-0.1, 51.5), 3857), 0, 0, ?, ?, NOW())',
-            [$message->id, $group->id, Message::TYPE_OFFER]
+            [$message->id, $group->id, $type]
         );
 
         $schedule = json_encode([
@@ -152,78 +164,20 @@ class ScoutServiceTest extends TestCase
         return $user->fresh();
     }
 
-    /** Give this member a community, on a daily digest unless told otherwise. */
-    private function joinGroup(int $userId, int $groupId, int $emailFrequency = 24): void
-    {
-        Membership::create([
-            'userid' => $userId,
-            'groupid' => $groupId,
-            'collection' => Membership::COLLECTION_APPROVED,
-            'emailfrequency' => $emailFrequency,
-            'added' => now(),
-        ]);
-    }
-
     /**
-     * A frequent replier on this post's own community: the WEAK signal, which may
-     * only ever be their daily digest arriving early.
-     */
-    /**
-     * A frequent replier on the post's own group.
+     * A member with an open matching post, standing where callers put them.
      *
-     * Callers place them OUTSIDE the current reach polygon and inside the
-     * eventual one, because that is what a scout is. Being on the group and
-     * outside the current polygon is the normal case rather than a contrivance:
-     * a group covers a wide area and tick 1 is a five-minute drive from the post.
+     * The signal is the same whichever way round the match runs, so both the
+     * OFFER-finds-WANTED and WANTED-finds-OFFER tests build their people here.
      */
-    private function frequentReplierOn(int $msgid, float $lat, float $lng, int $emailFrequency = 24): \App\Models\User
+    private function matchHolderAt(float $lat, float $lng, string $type = Message::TYPE_WANTED): \App\Models\User
     {
-        config(['freegle.firstreply.scouts.frequent_replier_min' => 1]);
-
         $user = $this->memberAt($lat, $lng);
-        $groupid = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
-        $this->joinGroup((int) $user->id, $groupid, $emailFrequency);
-
-        // One Interested reply somewhere else, so they count as a replier.
-        $poster = $this->createTestUser();
-        $room = $this->createTestChatRoom($user, $poster);
-        $other = $this->createTestMessage($poster, $this->createTestGroup());
-        $this->createTestChatMessage($room, $user, [
-            'type' => \App\Models\ChatMessage::TYPE_INTERESTED,
-            'refmsgid' => $other->id,
-        ]);
+        $type === Message::TYPE_WANTED
+            ? $this->wantedAt($user, $lat, $lng)
+            : $this->offerAt($user, $lat, $lng);
 
         return $user;
-    }
-
-    /**
-     * Make this member's Interested replies land $minutes after the post arrived,
-     * so a test can say how FAST they are rather than only how often.
-     */
-    private function setReplyLatency(int $userId, int $minutes): void
-    {
-        DB::table('chat_messages')
-            ->join('messages', 'messages.id', '=', 'chat_messages.refmsgid')
-            ->where('chat_messages.userid', $userId)
-            ->where('chat_messages.type', \App\Models\ChatMessage::TYPE_INTERESTED)
-            ->update([
-                'chat_messages.date' => DB::raw(
-                    'DATE_ADD(messages.arrival, INTERVAL ' . (int) $minutes . ' MINUTE)'
-                ),
-            ]);
-    }
-
-    /** Average minutes between a post arriving and this member replying to it. */
-    private function replyLatencyOf(int $userId): ?float
-    {
-        $v = DB::table('chat_messages')
-            ->join('messages', 'messages.id', '=', 'chat_messages.refmsgid')
-            ->where('chat_messages.userid', $userId)
-            ->where('chat_messages.type', \App\Models\ChatMessage::TYPE_INTERESTED)
-            ->selectRaw('AVG(TIMESTAMPDIFF(MINUTE, messages.arrival, chat_messages.date)) AS m')
-            ->value('m');
-
-        return $v === null ? null : (float) $v;
     }
 
     /** Pretend this member's daily digest already went out at $when. */
@@ -242,13 +196,7 @@ class ScoutServiceTest extends TestCase
         return \Carbon\Carbon::now('Europe/London')->startOfDay()->addHours(8)->setTimezone('UTC');
     }
 
-    /** The last instant that still counts as yesterday in London. */
-    private function yesterday(): \Carbon\Carbon
-    {
-        return \Carbon\Carbon::now('Europe/London')->startOfDay()->subMinute()->setTimezone('UTC');
-    }
-
-    private function scoutsFor(int $msgid): array
+    private function mailedFor(int $msgid): array
     {
         return DB::table('firstreply_scouts')->where('msgid', $msgid)
             ->pluck('reason', 'userid')->all();
@@ -265,8 +213,28 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayHasKey($wanter->id, $this->scoutsFor((int) $message->id));
-        $this->assertSame('wanted', $this->scoutsFor((int) $message->id)[$wanter->id]);
+        $this->assertArrayHasKey($wanter->id, $this->mailedFor((int) $message->id));
+        $this->assertSame('wanted', $this->mailedFor((int) $message->id)[$wanter->id]);
+    }
+
+    public function test_a_wanted_finds_the_people_sitting_on_a_matching_offer(): void
+    {
+        // The mirror of the test above, and the reason it is a separate one: an
+        // exchange has two sides, and only one of them posted second. Somebody
+        // holding an unwanted bookcase should hear that a neighbour has asked for
+        // one, just as the asker hears when one is offered. Nothing about the
+        // match is different in this direction, so the whole value of it lies in
+        // running the pass over WANTEDs at all.
+        $message = $this->seedSilentWanted();
+
+        $offerer = $this->memberAt(51.9, 0.8);
+        $this->offerAt($offerer, 51.9, 0.8);
+
+        $this->service()->run();
+
+        $mailed = $this->mailedFor((int) $message->id);
+        $this->assertArrayHasKey($offerer->id, $mailed, 'both sides get the chance to start the exchange');
+        $this->assertSame('wanted', $mailed[$offerer->id]);
     }
 
     public function test_picks_someone_who_saved_a_matching_search(): void
@@ -278,7 +246,7 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+        $this->assertArrayHasKey($searcher->id, $this->mailedFor((int) $message->id));
     }
 
     public function test_ignores_someone_the_post_will_never_reach(): void
@@ -290,18 +258,18 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayNotHasKey($farAway->id, $this->scoutsFor((int) $message->id));
+        $this->assertArrayNotHasKey($farAway->id, $this->mailedFor((int) $message->id));
     }
 
-    public function test_a_member_is_not_scouted_twice_in_the_cooldown(): void
+    public function test_a_member_is_not_mailed_twice_in_the_cooldown(): void
     {
-        config(['freegle.firstreply.scouts.user_cooldown_hours' => 24]);
+        config(['freegle.firstreply.matchmail.user_cooldown_hours' => 24]);
 
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
         $this->savedSearchFor($searcher);
 
-        // Already scouted about something else an hour ago.
+        // Already mailed about something else an hour ago.
         $other = $this->seedSilentOffer();
         DB::table('firstreply_scouts')->insert([
             'msgid' => $other->id,
@@ -315,44 +283,45 @@ class ScoutServiceTest extends TestCase
 
         $this->assertArrayNotHasKey(
             $searcher->id,
-            $this->scoutsFor((int) $message->id),
+            $this->mailedFor((int) $message->id),
             'being good at replying must not turn into being mailed constantly'
         );
     }
 
-    public function test_a_post_is_only_scouted_once(): void
+    public function test_a_post_is_only_matched_once(): void
     {
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
         $this->savedSearchFor($searcher);
 
         $this->service()->run();
-        $before = count($this->scoutsFor((int) $message->id));
+        $before = count($this->mailedFor((int) $message->id));
         $this->service()->run();
 
-        $this->assertSame($before, count($this->scoutsFor((int) $message->id)));
+        $this->assertSame($before, count($this->mailedFor((int) $message->id)));
     }
 
     public function test_the_rationed_slots_go_to_whoever_stands_nearest_the_reach_edge(): void
     {
-        config(['freegle.firstreply.scouts.max_per_post' => 1]);
+        config(['freegle.firstreply.matchmail.max_per_post' => 1]);
 
         $message = $this->seedSilentOffer();
-        // Both sit outside today's reach and inside the eventual one. The far
-        // one is created first so an insertion-ordered tie (the old behaviour)
-        // would pick it - the slot must go to whoever is just past the edge,
-        // because that is who the reach is about to cover anyway.
-        $far = $this->frequentReplierOn((int) $message->id, 51.5, 0.8);
-        $near = $this->frequentReplierOn((int) $message->id, 51.5, 0.0);
+        // Both sit outside today's reach and inside the eventual one, and both
+        // want the item equally, so only distance can separate them. The far one
+        // is created first, so an insertion-ordered pick would take it: the slot
+        // must go to whoever is just past the edge, because that is who the reach
+        // is about to cover anyway.
+        $far = $this->matchHolderAt(51.5, 0.8);
+        $near = $this->matchHolderAt(51.5, 0.0);
 
         $this->service()->run();
 
-        $scouts = $this->scoutsFor((int) $message->id);
-        $this->assertArrayHasKey($near->id, $scouts, 'the rationed slot goes nearest-first');
-        $this->assertArrayNotHasKey($far->id, $scouts, 'the distant member waits for the reach itself');
+        $mailed = $this->mailedFor((int) $message->id);
+        $this->assertArrayHasKey($near->id, $mailed, 'the rationed slot goes nearest-first');
+        $this->assertArrayNotHasKey($far->id, $mailed, 'the distant member waits for the reach itself');
     }
 
-    public function test_scouted_members_are_marked_so_the_reach_mailer_does_not_repeat_the_post(): void
+    public function test_mailed_members_are_marked_so_the_reach_mailer_does_not_repeat_the_post(): void
     {
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
@@ -367,7 +336,7 @@ class ScoutServiceTest extends TestCase
         );
     }
 
-    public function test_never_scouts_the_poster_about_their_own_post(): void
+    public function test_never_mails_the_poster_about_their_own_post(): void
     {
         $message = $this->seedSilentOffer();
 
@@ -385,23 +354,23 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayNotHasKey((int) $message->fromuser, $this->scoutsFor((int) $message->id));
+        $this->assertArrayNotHasKey((int) $message->fromuser, $this->mailedFor((int) $message->id));
     }
 
     public function test_does_nothing_at_all_when_switched_off(): void
     {
-        config(['freegle.firstreply.scouts.enabled' => false]);
+        config(['freegle.firstreply.matchmail.enabled' => false]);
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
         $this->savedSearchFor($searcher);
 
         $this->assertSame(0, $this->service()->run()['mailed']);
-        $this->assertSame([], $this->scoutsFor((int) $message->id));
+        $this->assertSame([], $this->mailedFor((int) $message->id));
     }
 
-    public function test_scouts_sleep_outside_waking_hours(): void
+    public function test_match_mail_sleeps_outside_waking_hours(): void
     {
-        // A frequent scout is a digest brought forward, and no digest goes out
+        // Nothing Freegle sends about a post goes out
         // at 3am (observed live before the gate existed). Narrow the window to
         // exclude the current hour and the run must not even look.
         $hour = (int) now()->format('G');
@@ -417,94 +386,10 @@ class ScoutServiceTest extends TestCase
         $stats = $this->service()->run();
 
         $this->assertSame(0, $stats['considered'], 'outside waking hours the run must not even look');
-        $this->assertSame([], $this->scoutsFor((int) $message->id));
-    }
-
-    public function test_frequent_repliers_are_only_drawn_from_the_posts_own_communities(): void
-    {
-        // The frequent-replier signal says nothing about THIS item, so it is
-        // deliberately bounded to the communities the post is on rather than
-        // being cast across the whole eventual reach.
-        $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-
-        $this->service()->run();
-
-        $this->assertArrayHasKey($replier->id, $this->scoutsFor((int) $message->id));
-    }
-
-    public function test_a_fast_replier_is_chosen_over_a_slow_one(): void
-    {
-        // The whole point of the lever is a FAST first reply, and reply COUNT
-        // says nothing about speed: measured on live over 14 days, members with
-        // 3+ replies average ~4.5 of them if they answer within half an hour and
-        // ~5.0 if they take over two days. Volume is flat across every latency
-        // band, while latency itself spans two orders of magnitude. Ordering on
-        // volume therefore ranked the axis that does not matter - and mailing a
-        // three-day replier buys nothing the ripple would not have delivered.
-        config(['freegle.firstreply.scouts.max_per_post' => 1]);
-
-        $message = $this->seedSilentOffer();
-
-        $slow = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $fast = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-
-        $this->setReplyLatency((int) $slow->id, 3 * 24 * 60);
-        $this->setReplyLatency((int) $fast->id, 15);
-
-        // Prove the FIXTURE before trusting what the service does with it - if
-        // the latencies never landed, the assertion below would be testing the
-        // ordering of two identical rows.
-        $this->assertEqualsWithDelta(15, $this->replyLatencyOf((int) $fast->id), 1, 'fast fixture');
-        $this->assertEqualsWithDelta(4320, $this->replyLatencyOf((int) $slow->id), 1, 'slow fixture');
-
-        $this->service()->run();
-
-        $scouts = $this->scoutsFor((int) $message->id);
-        $this->assertSame(
-            [(int) $fast->id],
-            array_map('intval', array_keys($scouts)),
-            'expected only the member who answers in fifteen minutes; fast=' . $fast->id
-                . ' slow=' . $slow->id . ' got=' . json_encode($scouts)
-        );
+        $this->assertSame([], $this->mailedFor((int) $message->id));
     }
 
     // --- What justifies the mail decides whether it may be an extra one -------
-
-    public function test_a_frequent_replier_who_already_had_todays_digest_is_not_mailed_again(): void
-    {
-        // Nothing about this signal is about THIS item, so the mail can only be
-        // their daily digest arriving early. Theirs has already been.
-        $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $this->digestSentAt((int) $replier->id, $this->earlierToday());
-
-        $this->service()->run();
-
-        $this->assertArrayNotHasKey($replier->id, $this->scoutsFor((int) $message->id));
-    }
-
-    public function test_a_frequent_replier_whose_digest_has_not_been_today_is_mailed(): void
-    {
-        $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $this->digestSentAt((int) $replier->id, $this->yesterday());
-
-        $this->service()->run();
-
-        $this->assertArrayHasKey($replier->id, $this->scoutsFor((int) $message->id));
-    }
-
-    public function test_a_frequent_replier_who_takes_no_post_email_anywhere_is_skipped(): void
-    {
-        // emailfrequency 0 is "never". There is no digest to bring forward.
-        $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8, 0);
-
-        $this->service()->run();
-
-        $this->assertArrayNotHasKey($replier->id, $this->scoutsFor((int) $message->id));
-    }
 
     public function test_a_matching_search_may_be_an_extra_mail_even_after_todays_digest(): void
     {
@@ -517,13 +402,13 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+        $this->assertArrayHasKey($searcher->id, $this->mailedFor((int) $message->id));
     }
 
     public function test_a_match_still_respects_the_suggested_posts_consent(): void
     {
         // relevantallowed is the existing "Suggested posts for you" setting, and a
-        // match-driven scout mail is exactly a suggested post.
+        // match mail is exactly a suggested post.
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
         DB::table('users')->where('id', $searcher->id)->update(['relevantallowed' => 0]);
@@ -531,37 +416,49 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayNotHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+        $this->assertArrayNotHasKey($searcher->id, $this->mailedFor((int) $message->id));
     }
 
     public function test_a_skipped_candidate_is_replaced_rather_than_leaving_a_hole(): void
     {
-        // "If they have had one, find other scouts" - the slot goes to the next
+        // "If they have had one, find someone else" - the slot goes to the next
         // candidate rather than going unused, so the post still gets its full
         // complement. Filtering therefore has to happen before the cap.
-        config(['freegle.firstreply.scouts.max_per_post' => 1]);
+        config([
+            'freegle.firstreply.matchmail.max_per_post' => 1,
+            'freegle.firstreply.matchmail.user_cooldown_hours' => 24,
+        ]);
 
         $message = $this->seedSilentOffer();
-        $alreadyMailed = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $this->digestSentAt((int) $alreadyMailed->id, $this->earlierToday());
-        $available = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $alreadyMailed = $this->matchHolderAt(51.9, 0.8);
+        $available = $this->matchHolderAt(51.9, 0.8);
+
+        // Mailed about something else an hour ago, so inside the cooldown. The
+        // other post carries no spatial row, so it is not itself a candidate and
+        // cannot mail anybody during this run.
+        $elsewhere = $this->createTestMessage($this->createTestUser(), $this->createTestGroup());
+        DB::table('firstreply_scouts')->insert([
+            'msgid' => $elsewhere->id,
+            'userid' => $alreadyMailed->id,
+            'reason' => 'wanted',
+            'score' => 5,
+            'sent_at' => now()->subHour(),
+        ]);
 
         $this->service()->run();
 
-        $scouts = $this->scoutsFor((int) $message->id);
-        $this->assertArrayNotHasKey($alreadyMailed->id, $scouts);
-        $this->assertArrayHasKey($available->id, $scouts);
-        $this->assertCount(1, $scouts);
+        $mailed = $this->mailedFor((int) $message->id);
+        $this->assertArrayNotHasKey($alreadyMailed->id, $mailed);
+        $this->assertArrayHasKey($available->id, $mailed);
+        $this->assertCount(1, $mailed);
     }
 
-    public function test_people_who_asked_for_the_item_are_not_limited_by_the_scout_cap(): void
+    public function test_everyone_who_asked_for_the_item_is_mailed_not_just_a_handful(): void
     {
-        // The small cap rations the GUESS ("you reply to a lot of things"). It has
-        // no business rationing people who have a saved search for this exact
-        // thing - they asked, and there is no sense telling the first one and not
-        // the second.
-        config(['freegle.firstreply.scouts.max_per_post' => 1]);
-
+        // Everyone reaching this point asked for the item, so there is no sense
+        // telling the first and not the second. The ceiling sits far above the
+        // size of a normal match set (setUp holds it at 10) precisely so that it
+        // does not ration one, and this pins that: three matches, three mails.
         $message = $this->seedSilentOffer();
         $a = $this->memberAt(51.9, 0.8);
         $b = $this->memberAt(51.9, 0.8);
@@ -572,19 +469,16 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $scouts = $this->scoutsFor((int) $message->id);
-        $this->assertCount(3, $scouts, 'all three asked, so all three hear');
+        $mailed = $this->mailedFor((int) $message->id);
+        $this->assertCount(3, $mailed, 'all three asked, so all three hear');
     }
 
-    public function test_the_strong_ceiling_still_bounds_a_mailbomb(): void
+    public function test_the_ceiling_still_bounds_a_mailbomb(): void
     {
         // Uncapped is not safe either: a common term like "sofa" is held by
-        // hundreds of members on live, so there has to be SOME ceiling. It sits
-        // far above the normal case rather than at the propensity cap.
-        config([
-            'freegle.firstreply.scouts.max_per_post' => 10,
-            'freegle.firstreply.scouts.max_strong_per_post' => 2,
-        ]);
+        // hundreds of members on live, so there has to be SOME ceiling, and it has
+        // to bind when a post really does match that many people.
+        config(['freegle.firstreply.matchmail.max_per_post' => 2]);
 
         $message = $this->seedSilentOffer();
         $this->savedSearchFor($this->memberAt(51.9, 0.8));
@@ -593,114 +487,70 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertCount(2, $this->scoutsFor((int) $message->id));
+        $this->assertCount(2, $this->mailedFor((int) $message->id));
     }
 
-    public function test_propensity_scouts_do_not_eat_into_the_strong_allowance(): void
-    {
-        // Both kinds on one post: the frequent replier is capped at its own small
-        // number, the searchers are not, and neither cap consumes the other's
-        // budget.
-        config([
-            'freegle.firstreply.scouts.max_per_post' => 1,
-            'freegle.firstreply.scouts.max_strong_per_post' => 50,
-        ]);
-
-        $message = $this->seedSilentOffer();
-        $this->savedSearchFor($this->memberAt(51.9, 0.8));
-        $this->savedSearchFor($this->memberAt(51.9, 0.8));
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-
-        $this->service()->run();
-
-        // scoutsFor() is userid => reason, so the values are the reasons already.
-        $reasons = array_count_values($this->scoutsFor((int) $message->id));
-
-        $this->assertSame(2, $reasons['search'] ?? 0, 'both searchers hear');
-        $this->assertSame(1, $reasons['frequent'] ?? 0, 'the guess stays rationed');
-    }
-
-    public function test_the_number_of_scouts_can_be_changed_without_a_deploy(): void
+    public function test_the_number_mailed_can_be_changed_without_a_deploy(): void
     {
         // The cap is the whole mail bill of the feature, and the moment you want
         // to move it is the moment it is mailing too many people - which is the
         // worst possible time to be waiting for a release.
-        config(['freegle.firstreply.scouts.max_per_post' => 5]);
+        config(['freegle.firstreply.matchmail.max_per_post' => 5]);
         DB::table('config')->insert([
-            'key' => ScoutService::CONFIG_MAX_PER_POST,
+            'key' => MatchMailService::CONFIG_MAX_PER_POST,
             'value' => '1',
         ]);
 
         $message = $this->seedSilentOffer();
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $this->matchHolderAt(51.9, 0.8);
+        $this->matchHolderAt(51.9, 0.8);
+        $this->matchHolderAt(51.9, 0.8);
 
         $this->service()->run();
 
         $this->assertCount(
             1,
-            $this->scoutsFor((int) $message->id),
+            $this->mailedFor((int) $message->id),
             'the runtime override should win over the deployed default'
         );
     }
 
     public function test_without_an_override_the_deployed_default_stands(): void
     {
-        // An empty config table has to behave exactly as it did before this
-        // existed, otherwise the override is a behaviour change in itself.
-        config(['freegle.firstreply.scouts.max_per_post' => 2]);
+        // An empty config table means "no opinion", so the deployed default has
+        // to stand. Otherwise the override would be a behaviour change in itself.
+        config(['freegle.firstreply.matchmail.max_per_post' => 2]);
 
         $message = $this->seedSilentOffer();
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $this->matchHolderAt(51.9, 0.8);
+        $this->matchHolderAt(51.9, 0.8);
+        $this->matchHolderAt(51.9, 0.8);
 
         $this->service()->run();
 
-        $this->assertCount(2, $this->scoutsFor((int) $message->id));
+        $this->assertCount(2, $this->mailedFor((int) $message->id));
     }
 
     public function test_setting_the_number_to_zero_stops_the_mail(): void
     {
-        // Zero is the stop button. scoutPost() used to floor the cap at 1, so
-        // without this the one setting you would reach for to halt the mail
-        // still mailed somebody on every post.
+        // Zero is the stop button: the one setting you would reach for to halt the
+        // mail without touching a deploy. A candidate who would otherwise be
+        // mailed is seeded, so this fails if zero is read as "no opinion".
         DB::table('config')->insert([
-            'key' => ScoutService::CONFIG_MAX_PER_POST,
+            'key' => MatchMailService::CONFIG_MAX_PER_POST,
             'value' => '0',
         ]);
 
         $message = $this->seedSilentOffer();
-        $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
+        $this->matchHolderAt(51.9, 0.8);
 
         $stats = $this->service()->run();
 
         $this->assertSame(0, $stats['mailed']);
-        $this->assertCount(0, $this->scoutsFor((int) $message->id));
+        $this->assertCount(0, $this->mailedFor((int) $message->id));
     }
 
-    public function test_a_frequent_scout_has_their_digest_recorded_as_brought_forward(): void
-    {
-        // The mail they just got IS their digest, moved earlier, so today's must
-        // not also go out.
-        $message = $this->seedSilentOffer();
-        $replier = $this->frequentReplierOn((int) $message->id, 51.9, 0.8);
-
-        $this->service()->run();
-
-        $lastsent = DB::table('users_digests')
-            ->where('userid', $replier->id)->where('mode', 'daily')->value('lastsent');
-
-        $this->assertNotNull($lastsent, 'the digest should now be recorded as sent');
-        $this->assertTrue(
-            \Carbon\Carbon::parse($lastsent)->greaterThanOrEqualTo($this->londonDayStart()),
-            'and recorded as sent TODAY, so today\'s digest cron skips them'
-        );
-    }
-
-    public function test_a_match_scout_keeps_their_digest(): void
+    public function test_a_matched_member_keeps_their_digest(): void
     {
         // Their mail was an extra, justified by their own saved search. Taking
         // the digest away as well would be a straight loss to them.
@@ -710,23 +560,23 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+        $this->assertArrayHasKey($searcher->id, $this->mailedFor((int) $message->id));
         $this->assertNull(
             DB::table('users_digests')
                 ->where('userid', $searcher->id)->where('mode', 'daily')->value('lastsent'),
-            'a match-driven scout mail must not consume their digest'
+            'match mail is an extra, so it must not consume their digest'
         );
     }
 
-    public function test_a_scouted_reply_is_attributed_so_the_signal_can_be_judged(): void
+    public function test_a_reply_is_attributed_so_the_signal_can_be_judged(): void
     {
-        // Without this there is no way to tell whether scouting does anything.
+        // Without this there is no way to tell whether any of it does anything.
         $message = $this->seedSilentOffer();
         $searcher = $this->memberAt(51.9, 0.8);
         $this->savedSearchFor($searcher);
 
         $this->service()->run();
-        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+        $this->assertArrayHasKey($searcher->id, $this->mailedFor((int) $message->id));
 
         // They reply to the post we told them about.
         $poster = \App\Models\User::find($message->fromuser);
@@ -761,16 +611,11 @@ class ScoutServiceTest extends TestCase
         $this->assertSame(0, $this->service()->attributeReplies());
     }
 
-    private function londonDayStart(): \Carbon\Carbon
+    public function test_a_brand_new_post_is_matched_without_waiting_for_the_background_pass(): void
     {
-        return \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC');
-    }
-
-    public function test_a_brand_new_post_is_scouted_without_waiting_for_the_background_pass(): void
-    {
-        // Scouting fires as soon as a post is seen, so it regularly arrives before
+        // This fires as soon as a post is seen, so it regularly arrives before
         // firstreply:maxreach has worked out the eventual reach. Without that
-        // nobody is eligible, so the scout path fills it in itself rather than
+        // nobody is eligible, so this path fills it in itself rather than
         // making the post wait a minute for a different cron.
         $message = $this->seedSilentOffer(false);
 
@@ -784,36 +629,54 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayHasKey($searcher->id, $this->scoutsFor((int) $message->id));
+        $this->assertArrayHasKey($searcher->id, $this->mailedFor((int) $message->id));
     }
 
-    /** An open WANTED at (lat,lng) that matches the offer's keywords. */
+    /** An open WANTED at (lat,lng), declared to the matcher as a match. */
     private function wantedAt(\App\Models\User $user, float $lat, float $lng): void
     {
+        $this->openPostAt($user, $lat, $lng, Message::TYPE_WANTED);
+    }
+
+    /** An open OFFER at (lat,lng), declared to the matcher as a match. */
+    private function offerAt(\App\Models\User $user, float $lat, float $lng): void
+    {
+        $this->openPostAt($user, $lat, $lng, Message::TYPE_OFFER);
+    }
+
+    /**
+     * An open post of this member's own, of either type, that matches.
+     *
+     * Which type is a match for which is the matcher's rule, not this service's,
+     * so the fake is told the post matched and the type only has to be the one
+     * the test is talking about.
+     */
+    private function openPostAt(\App\Models\User $user, float $lat, float $lng, string $type): void
+    {
         $group = $this->createTestGroup();
-        $wanted = $this->createTestMessage($user, $group, [
-            'type' => Message::TYPE_WANTED,
-            'subject' => 'WANTED: Pine bookcase (TestLocation)',
+        $post = $this->createTestMessage($user, $group, [
+            'type' => $type,
+            'subject' => strtoupper($type) . ': Pine bookcase (TestLocation)',
         ]);
         DB::statement(
             'INSERT INTO messages_spatial (msgid, point, successful, promised, groupid, msgtype, arrival)
              VALUES (?, ST_SRID(POINT(?, ?), 3857), 0, 0, ?, ?, NOW())',
-            [$wanted->id, $lng, $lat, $group->id, Message::TYPE_WANTED]
+            [$post->id, $lng, $lat, $group->id, $type]
         );
 
-        $this->apiMatchIds[] = (int) $wanted->id;
+        $this->apiMatchIds[] = (int) $post->id;
         $this->refreshApiFake();
     }
 
     /**
-     * A scout is somebody the ripple has NOT reached yet.
+     * A recipient is somebody the ripple has NOT reached yet.
      *
      * Tick 1 is the reach the post has now. Someone inside it will be told anyway
-     * on the ordinary schedule, so scouting them spends a scout slot, a mail and
+     * on the ordinary schedule, so mailing them spends a slot, a mail and
      * a per-member cooldown to change nothing. Reaching past the current edge is
      * the entire point.
      */
-    public function test_does_not_scout_someone_already_inside_the_current_reach(): void
+    public function test_does_not_mail_someone_already_inside_the_current_reach(): void
     {
         $message = $this->seedSilentOffer();
 
@@ -825,32 +688,32 @@ class ScoutServiceTest extends TestCase
 
         $this->service()->run();
 
-        $scouts = $this->scoutsFor((int) $message->id);
-        $this->assertArrayNotHasKey($inside->id, $scouts, 'already in reach - the ripple has them');
-        $this->assertArrayHasKey($outside->id, $scouts, 'past the edge is the point of scouting');
+        $mailed = $this->mailedFor((int) $message->id);
+        $this->assertArrayNotHasKey($inside->id, $mailed, 'already in reach - the ripple has them');
+        $this->assertArrayHasKey($outside->id, $mailed, 'past the edge is the whole point');
     }
 
     /**
-     * A scout who replies pulls the reach out to cover them, so the people around
+     * A matched member who replies pulls the reach out to cover them, so the people around
      * them get the same chance instead of waiting on the clock.
      *
      * Recorded as a floor rather than written as a polygon: advancing reach means
      * tick geometry, the origin-group union, bounds and rejection clips, and
      * ExpandService already does all of it.
      */
-    public function test_a_scout_who_replies_pulls_the_reach_out_to_them(): void
+    public function test_a_matched_member_who_replies_pulls_the_reach_out_to_them(): void
     {
         $message = $this->seedSilentOffer();
 
-        $scout = $this->memberAt(51.90, 0.80);
-        $this->wantedAt($scout, 51.90, 0.80);
+        $matched = $this->memberAt(51.90, 0.80);
+        $this->wantedAt($matched, 51.90, 0.80);
 
         $this->service()->run();
-        $this->assertArrayHasKey($scout->id, $this->scoutsFor((int) $message->id));
+        $this->assertArrayHasKey($matched->id, $this->mailedFor((int) $message->id));
 
         DB::table('chat_messages')->insert([
-            'chatid' => $this->chatRoomFor((int) $scout->id),
-            'userid' => $scout->id,
+            'chatid' => $this->chatRoomFor((int) $matched->id),
+            'userid' => $matched->id,
             'refmsgid' => $message->id,
             'message' => 'Is this still available?',
             'type' => 'Interested',

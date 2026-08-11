@@ -155,6 +155,112 @@ class RippleReplyServiceTest extends TestCase
         $this->assertNotEquals($cmid, $sys->id, 'the notice is a new message, not the held reply');
     }
 
+    public function test_delay_grows_with_distance_from_the_item_and_is_capped(): void
+    {
+        config([
+            'freegle.ripple.reply_delay.base_minutes' => 15,
+            'freegle.ripple.reply_delay.per_mile_minutes' => 3,
+            'freegle.ripple.reply_delay.max_minutes' => 180,
+        ]);
+        $svc = $this->service();
+
+        // Someone on the doorstep still waits the base delay - locals go first.
+        $this->assertSame(15.0, $svc->delayMinutesForMiles(0.0));
+        // Just past the boundary of a 30-minute reach: a little after locals, not days.
+        $this->assertSame(15.0 + 3 * 16.0, $svc->delayMinutesForMiles(16.0));
+        // Two counties away: capped, so no reply is ever invisible for longer than that.
+        $this->assertSame(180.0, $svc->delayMinutesForMiles(500.0));
+        // Nonsense distance cannot produce a negative delay.
+        $this->assertSame(15.0, $svc->delayMinutesForMiles(-5.0));
+    }
+
+    public function test_hold_stamps_the_due_time_it_computed(): void
+    {
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        $msgid = $this->seedReachedPost();
+        [$rowId] = $this->seedHeldReply($msgid, self::OUTSIDE);
+
+        $row = DB::table('rippling_held_replies')->where('id', $rowId)->first();
+        $this->assertNotNull($row->dueat, 'a hold is a delay, so it has a due time');
+        $this->assertGreaterThan($row->created_at, $row->dueat);
+    }
+
+    public function test_release_due_delivers_a_reply_the_reach_will_never_cover(): void
+    {
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        $msgid = $this->seedReachedPost();
+        // OUTSIDE is well beyond the reach box and the reach is not growing, so before
+        // this existed the only exit was the max-reach backstop, days later.
+        [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
+
+        // Not due yet: still held.
+        $this->assertSame(0, $this->service()->releaseDue($msgid));
+        $this->assertTrue($this->service()->isDeliveryHeld($cmid));
+
+        // Wind the reply back past its due time.
+        DB::table('rippling_held_replies')->where('id', $rowId)->update([
+            'created_at' => now()->subDay(),
+            'dueat' => null,
+        ]);
+
+        $this->assertSame(1, $this->service()->releaseDue($msgid));
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+        $this->assertFalse($this->service()->isDeliveryHeld($cmid));
+    }
+
+    public function test_release_due_stamps_a_due_time_on_rows_held_by_the_web_path(): void
+    {
+        // The Go/web hold path does not compute the delay, so its rows arrive with a NULL
+        // due time. The sweep stamps them, which is what keeps the policy in one place.
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        $msgid = $this->seedReachedPost();
+        [$rowId] = $this->seedHeldReply($msgid, self::OUTSIDE);
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['dueat' => null]);
+
+        $this->service()->releaseDue($msgid);
+
+        $this->assertNotNull(
+            DB::table('rippling_held_replies')->where('id', $rowId)->value('dueat'),
+            'the sweep fills in what the web path could not compute'
+        );
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_release_due_does_nothing_when_the_delay_is_switched_off(): void
+    {
+        config(['freegle.ripple.reply_delay.enabled' => false]);
+        $msgid = $this->seedReachedPost();
+        [$rowId] = $this->seedHeldReply($msgid, self::OUTSIDE);
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['created_at' => now()->subDay()]);
+
+        $this->assertSame(0, $this->service()->releaseDue($msgid));
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_release_due_is_counted_separately_from_release_on_coverage(): void
+    {
+        // The whole point of the change is to see how many replies the delay delivers
+        // that coverage never would have, so the two exits cannot share one counter.
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        DB::table('rippling_event_metrics')
+            ->whereIn('event', ['released', 'released_delayed', 'released_covered'])->delete();
+        $count = fn ($e) => (int) DB::table('rippling_event_metrics')
+            ->where('day', now()->toDateString())->where('event', $e)->value('count');
+
+        $msgid = $this->seedReachedPost();
+        [$rowId] = $this->seedHeldReply($msgid, self::OUTSIDE);
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['created_at' => now()->subDay()]);
+        $this->service()->releaseDue($msgid);
+
+        $msgid2 = $this->seedReachedPost();
+        $this->seedHeldReply($msgid2, self::INSIDE);
+        $this->service()->releaseCovered($msgid2);
+
+        $this->assertSame(1, $count('released_delayed'));
+        $this->assertSame(1, $count('released_covered'));
+        $this->assertSame(2, $count('released'), 'both still count as a release overall');
+    }
+
     public function test_held_reply_state_transitions_are_counted(): void
     {
         // #3 / §15 instrumentation: hold → 'held', release → 'released', markGone → 'taken_gone'.

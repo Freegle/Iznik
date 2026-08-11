@@ -11,6 +11,26 @@ namespace App\Support;
  */
 class GreatCircle
 {
+    /** Mean Earth radius in statute miles. */
+    private const EARTH_MILES = 3958.7559;
+
+    /**
+     * Great-circle distance between two lat/lng points, in statute miles.
+     *
+     * Haversine, so it is stable for the short distances this is used at (a few
+     * miles) where the spherical law of cosines loses precision.
+     */
+    public static function distanceMiles(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+
+        $a = sin($dLat / 2) ** 2
+            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+        return self::EARTH_MILES * 2 * asin(min(1.0, sqrt($a)));
+    }
+
     private static function hav(float $x): float
     {
         return (1.0 - cos($x)) * 0.5;

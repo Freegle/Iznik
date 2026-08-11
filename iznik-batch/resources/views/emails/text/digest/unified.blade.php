@@ -4,6 +4,10 @@
      emoji-bearing strings render literally — Blade's default {{ }}
      runs htmlspecialchars, which turns "What's New" into the literal
      "What&#039;s New" in the text/plain MIME part. --}}
+@if(!empty($matchIntro))
+{!! $matchIntro !!}
+
+@endif
 {!! $heading !!}
 ====================================
 

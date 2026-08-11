@@ -2,11 +2,11 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import ModSysAdminFirstReply from '~/modtools/components/ModSysAdminFirstReply.vue'
 
-// The scouting table names the signal that picked each member, and the name has
+// The matches table names the signal that picked each member, and the name has
 // to match what the code behind it does - a sysadmin reads this page to decide
-// whether a lever earns its mail. "Saved search" read as a niche feature few
-// people use; the signal is actually every search a member ran in the last six
-// months, which is a different and much larger thing.
+// whether a lever earns its mail. "Saved search" reads as a niche feature few
+// people use; the signal is every search a member ran in the last six months,
+// which is a different and much larger thing.
 
 const fetchMetrics = vi.fn()
 
@@ -20,7 +20,7 @@ const STATS = {
     { arm: 'control', posts: 10, replied: 2, taken: 1 },
   ],
   passthrough: { web: 1, email: 1, unsized: 0 },
-  scouts: [
+  matches: [
     {
       reason: 'wanted',
       mailed: 10,
@@ -87,7 +87,7 @@ async function renderedText() {
   return wrapper.text().replace(/\s+/g, ' ')
 }
 
-describe('ModSysAdminFirstReply scouting signals', () => {
+describe('ModSysAdminFirstReply match signals', () => {
   it('calls the search signal what it is - a recent search, not a saved one', async () => {
     const text = await renderedText()
 
@@ -105,7 +105,14 @@ describe('ModSysAdminFirstReply scouting signals', () => {
     )
   })
 
-  it('still shows the third signal, so relabelling did not drop a row', async () => {
+  // A 90-day window still contains rows the propensity trial wrote. Dropping
+  // them would silently shrink the mail bill the page is there to report, and
+  // leaving them unlabelled would make the reason column read as a bug.
+  it('renders a propensity row from the trial rather than hiding it', async () => {
     expect(await renderedText()).toContain('Frequent replier nearby')
+  })
+
+  it('says propensity is no longer sent, so the row is not read as current', async () => {
+    expect(await renderedText()).toContain('no longer a signal')
   })
 })

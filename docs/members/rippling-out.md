@@ -179,8 +179,13 @@ On the default Nearby view, every post you see has already reached you, so your 
 goes straight to the owner. Only if you move away from that default - for example by
 switching to "All my communities", or widening what you are looking at - might you come
 across a post that has not rippled out to your area yet. You can still reply: we simply
-**hold your message and pass it on to the owner the moment the post reaches you**. You
-do not need to do anything or come back - it is delivered automatically, and your reply
+**hold your message for a short while, then pass it on**. That gives people closer to the
+item a head start, which is the whole point of rippling out, but it is a short wait rather
+than an open-ended one - usually under an hour, and never more than three. If the post
+ripples out to you sooner than that, your reply goes straight through at that moment
+instead.
+
+You do not need to do anything or come back. It is delivered automatically, and your reply
 shows as "waiting to send" until then. Nothing is lost.
 
 ---

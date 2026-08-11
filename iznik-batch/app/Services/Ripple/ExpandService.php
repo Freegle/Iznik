@@ -6,6 +6,7 @@ use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * The rippling-out reach engine.
@@ -30,9 +31,39 @@ class ExpandService
     /** Maintains the sandwich-bounds columns alongside every polygon write. */
     private ReachBoundsService $bounds;
 
-    public function __construct(private ReachService $reach, ?ReachBoundsService $bounds = null)
-    {
+    /** Chooses each post's reach budget from how thinly freeglers are spread around it. */
+    private DensityService $density;
+
+    /** Memoized rippling_reach density-column check, so a pre-migration deploy is a no-op. */
+    private static ?bool $densityColumns = null;
+
+    public function __construct(
+        private ReachService $reach,
+        ?ReachBoundsService $bounds = null,
+        ?DensityService $density = null
+    ) {
         $this->bounds = $bounds ?? new ReachBoundsService();
+        $this->density = $density ?? new DensityService();
+    }
+
+    /** Has the density-sizing migration run? Without it the cap still applies, unrecorded. */
+    private function densityColumnsReady(): bool
+    {
+        if (self::$densityColumns === null) {
+            try {
+                self::$densityColumns = Schema::hasColumn('rippling_reach', 'density_band');
+            } catch (\Throwable) {
+                self::$densityColumns = false;
+            }
+        }
+
+        return self::$densityColumns;
+    }
+
+    /** Test-only: forget the memoized density-column check. */
+    public static function forgetDensityColumns(): void
+    {
+        self::$densityColumns = null;
     }
 
     /**
@@ -171,8 +202,13 @@ class ExpandService
             return $stats; // cap not active — there is nothing smaller to shrink to
         }
 
+        $cols = ['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status'];
+        if ($this->densityColumnsReady()) {
+            $cols[] = 'max_minutes_cap';
+        }
         $q = DB::table('rippling_reach')
-            ->select(['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status'])
+            ->select($cols)
+            // keep-raw: ST_AsText is a spatial function the builder cannot render
             ->selectRaw('ST_AsText(polygon) AS cur_wkt')   // current footprint, for the crosspost-breadth stat
             ->where('status', '!=', 'rejected')            // active reach rows only
             ->where('total_freeglers', '>', $target);      // only rows that can exceed the cap
@@ -186,8 +222,16 @@ class ExpandService
 
             // Re-fetch the schedule from the stored (already-blurred) origin. With
             // the cap now configured ReachService sends target_users, so this comes
-            // back capped to the nearest ~target_users freeglers.
-            $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+            // back capped to the nearest ~target_users freeglers. The post keeps the
+            // reach BUDGET it was sized with - this pass shrinks the audience, and
+            // silently re-sizing to the flat cap here would undo the density decision.
+            $schedule = $this->reach->computeSchedule(
+                (float) $row->lat,
+                (float) $row->lng,
+                isset($row->max_minutes_cap) && $row->max_minutes_cap !== null
+                    ? (float) $row->max_minutes_cap
+                    : null
+            );
             if ($schedule === null || empty($schedule['ticks'])) {
                 $stats['skipped']++;
                 continue; // routing unreachable this run — safe to retry later
@@ -737,6 +781,15 @@ class ExpandService
             $distinctOrigins[$lat . ',' . $lng] = ['lat' => $lat, 'lng' => $lng];
         }
 
+        // How far each origin's reach is allowed to grow. A function of the origin
+        // alone, like the schedule itself, so it is measured once per DISTINCT origin
+        // and memoized inside DensityService for the run.
+        $capByKey = [];
+        foreach ($distinctOrigins as $k => $o) {
+            $capByKey[$k] = $this->density->capFor($o['lat'], $o['lng']);
+            $distinctOrigins[$k]['max_minutes'] = $capByKey[$k]['max_minutes'];
+        }
+
         $scheduleByKey = []; // "lat,lng" => parsed schedule | null
 
         // Reuse: a reach schedule is a deterministic function of the blurred origin (+ global ripple
@@ -755,8 +808,10 @@ class ExpandService
                 $reuseParams[] = $p['lat'];
                 $reuseParams[] = $p['lng'];
             }
+            $capCol = $this->densityColumnsReady() ? ', max_minutes_cap' : '';
+            // keep-raw: row-constructor `(lat, lng) IN ((?,?),(?,?)...)` - the builder cannot render a tuple IN
             $existing = DB::select(
-                'SELECT lat, lng, schedule, total_freeglers, max_drive_min
+                'SELECT lat, lng, schedule, total_freeglers, max_drive_min' . $capCol . '
                  FROM rippling_reach
                  WHERE schedule IS NOT NULL AND (lat, lng) IN (' . $placeholders . ')',
                 $reuseParams
@@ -767,6 +822,18 @@ class ExpandService
                 $k = round((float) $e->lat, 4) . ',' . round((float) $e->lng, 4);
                 if (!isset($distinctOrigins[$k]) || isset($scheduleByKey[$k])) {
                     continue; // not one of this batch's origins, or already reused
+                }
+                // A stored schedule computed under a DIFFERENT reach budget is not this
+                // post's schedule, however co-located the two posts are. Without this the
+                // first post at an origin would fix the cap for everything that followed,
+                // and changing a band's minutes would take effect only where nobody had
+                // posted before - the density change would look far weaker than it is.
+                if ($capCol !== '') {
+                    $storedCap = $e->max_minutes_cap === null ? null : (float) $e->max_minutes_cap;
+                    $wantCap = (float) ($capByKey[$k]['max_minutes'] ?? 0);
+                    if ($storedCap === null || abs($storedCap - $wantCap) > 0.001) {
+                        continue;
+                    }
                 }
                 $ticks = json_decode($e->schedule, true);
                 if (!is_array($ticks) || empty($ticks)) {
@@ -807,6 +874,10 @@ class ExpandService
                 $lat = $blurredByRow[$i]['lat'];
                 $lng = $blurredByRow[$i]['lng'];
 
+                $cap = $capByKey[$blurredByRow[$i]['key']]
+                    ?? ['band' => DensityService::BAND_UNKNOWN, 'radius_miles' => null,
+                        'max_minutes' => (float) config('freegle.ripple.max_minutes', 30)];
+
                 $schedule = $scheduleByKey[$blurredByRow[$i]['key']] ?? null;
                 if ($schedule === null) {
                     // The blurred origin can snap to a DISCONNECTED routing node (a driveway stub
@@ -818,7 +889,12 @@ class ExpandService
                     // against a 30-min drive isochrone (the innermost tick is already km-scale), so
                     // this does not meaningfully reduce origin privacy - it only rescues the posts
                     // the blur would otherwise lose. Costs one extra routing call per stranded post.
-                    $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+                    // Same reach budget as the blurred origin would have had: 400m cannot
+                    // move a post between density bands, so re-measuring would only add a
+                    // spatial call to the recovery path for the stranded posts.
+                    $schedule = $this->reach->computeSchedule(
+                        (float) $row->lat, (float) $row->lng, $cap['max_minutes']
+                    );
                     if ($schedule !== null) {
                         $lat = (float) $row->lat;
                         $lng = (float) $row->lng;
@@ -865,33 +941,41 @@ class ExpandService
                     // NOT NULL, and there must never be a window with stale/absent bounds);
                     // envelope retry if derivation throws on pathological geometry.
                     $ready = $this->bounds->ready();
+                    $withDensity = $this->densityColumnsReady();
                     $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
-                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $poly): string {
+                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $poly): string {
                         $cols = $ready ? ', outer_bound, inner_bound' : '';
                         $vals = $ready ? ", $outerExpr, $innerExpr" : '';
                         $dup = $ready ? ', outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)' : '';
+                        $dCols = $withDensity ? ', density_band, density_radius_miles, max_minutes_cap' : '';
+                        $dVals = $withDensity ? ', ?, ?, ?' : '';
+                        $dDup = $withDensity
+                            ? ', density_band = VALUES(density_band),
+                                density_radius_miles = VALUES(density_radius_miles),
+                                max_minutes_cap = VALUES(max_minutes_cap)'
+                            : '';
 
                         return 'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon' . $cols . ', arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
-                            next_expansion_at, status, created_at, updated_at)
-                         VALUES (?, ?, ?, ' . $poly . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                            next_expansion_at, status' . $dCols . ', created_at, updated_at)
+                         VALUES (?, ?, ?, ' . $poly . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
                             lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon)' . $dup . ',
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
                             reachable_group_ids = VALUES(reachable_group_ids),
-                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
+                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status)' . $dDup . ',
                             updated_at = NOW()';
                     };
-                    $initTail = [
+                    $initTail = array_merge([
                         $arrival, $this->reach->mode(), $tick, $total,
                         $schedule['total_freeglers'], $schedule['max_drive_min'],
                         json_encode($schedule['ticks']),
                         json_encode($this->tickReachableIds($entry, $schedule)),
                         $next, $status,
-                    ];
+                    ], $withDensity ? [$cap['band'], $cap['radius_miles'], $cap['max_minutes']] : []);
                     $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $poly): void {
                         $head = [$row->msgid, $lat, $lng, $wkt];
                         try {

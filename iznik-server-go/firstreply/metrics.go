@@ -19,9 +19,9 @@ import (
 //	passthrough - how many first replies skipped the hold, and (from the holds
 //	              that DID happen) how long a hold typically lasts. The second
 //	              number is the delay the first one avoided.
-//	scouts      - reply rate per signal, so wanted / search / frequent can be
+//	matches     - reply rate per signal, so `wanted` and `search` can be
 //	              compared directly, plus how many of those posts ended up taken.
-//	              If `frequent` never converts, it should be switched off.
+//	              A signal that never converts should be switched off.
 //	prompts     - answer rate per kind, and how often the answer actually changed
 //	              the post. A prompt nobody answers is a prompt to delete.
 //
@@ -42,10 +42,10 @@ type DayCount struct {
 	Count int64  `json:"count"`
 }
 
-// ScoutSignal is how one picking signal performed.
-type ScoutSignal struct {
+// MatchSignal is how one match signal performed.
+type MatchSignal struct {
 	Reason string `json:"reason"`
-	// Mailed is scouts sent; Replied is those who then replied to that post.
+	// Mailed is match mails sent; Replied is those who then replied to that post.
 	Mailed  int64 `json:"mailed"`
 	Replied int64 `json:"replied"`
 	// Posts is distinct posts this signal was used on, and Taken is how many of
@@ -79,7 +79,7 @@ type PromptKind struct {
 // better off than the ones we did not?
 //
 // This is the KPI the whole feature answers to. Everything else on this dashboard
-// is a lever's own counter - passthroughs fired, scouts mailed, prompts answered -
+// is a lever's own counter - passthroughs fired, match mails sent, prompts answered -
 // and every one of them can go up while the thing that matters does not move. More
 // mail sent is not more items rehomed.
 //
@@ -137,7 +137,7 @@ type PassthroughSummary struct {
 
 // @Router /firstreply/metrics [get]
 // @Summary First-reply effectiveness, per lever (sysadmin)
-// @Description Passthrough, scouting and Freegle-chat prompt effectiveness over a window.
+// @Description Passthrough, match-mail and Freegle-chat prompt effectiveness over a window.
 // @Tags firstreply
 // @Produce json
 // @Param start query string false "Start datetime, default 30 days ago"
@@ -218,7 +218,7 @@ func Metrics(c *fiber.Ctx) error {
 		Count(&heldReleased)
 	passthrough.HeldReleased = heldReleased
 
-	signals := []ScoutSignal{}
+	signals := []MatchSignal{}
 	db.Table("firstreply_scouts fs").
 		Select("fs.reason AS reason, "+
 			"COUNT(*) AS mailed, "+
@@ -310,7 +310,7 @@ func Metrics(c *fiber.Ctx) error {
 		"armsfrom":       armStart,
 		"daily":          daily,
 		"passthrough":    passthrough,
-		"scouts":         signals,
+		"matches":        signals,
 		"prompts":        prompts,
 		"postsengaged":   postsEngaged,
 		"arms":           arms,

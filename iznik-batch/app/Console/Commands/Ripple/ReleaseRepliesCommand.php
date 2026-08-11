@@ -13,7 +13,13 @@ use Illuminate\Support\Facades\Log;
  * as posts ripple out. For each post with held replies:
  *   - no reach row  → the post left messages_spatial (taken/withdrawn) → mark gone
  *   - reach 'done'  → max reach without covering everyone → release anyway
- *   - otherwise     → release the ones now inside reach
+ *   - otherwise     → release the ones now inside reach, AND the ones whose delay
+ *                     has run out
+ *
+ * That last clause is the one that matters most in practice. Coverage releases only
+ * the minority of held repliers the ripple eventually reaches - three in four of them
+ * live somewhere it never will - so the delay is the only exit the rest ever get
+ * short of the 'done' backstop days later. See RippleReplyService::releaseDue.
  *
  * Inert until the reach engine is live: until a reply is held there is nothing to
  * release, so this is a cheap no-op.
@@ -72,7 +78,7 @@ class ReleaseRepliesCommand extends Command
                     if ($dryRun) {
                         $wouldRelease += $this->heldCount($msgid);
                     } else {
-                        $released += $svc->releaseAll($msgid);
+                        $released += $svc->releaseAll($msgid, 'backfill');
                     }
                 }
 
@@ -114,7 +120,11 @@ class ReleaseRepliesCommand extends Command
                 if ($dryRun) {
                     $wouldRelease += $this->heldCount($msgid);
                 } else {
+                    // Coverage first, so a reply the ripple has genuinely reached is
+                    // counted as reached rather than as a delay expiring; then the
+                    // delay, which is the only exit most held repliers ever get.
                     $released += $svc->releaseCovered($msgid);
+                    $released += $svc->releaseDue($msgid);
                 }
             }
         }
