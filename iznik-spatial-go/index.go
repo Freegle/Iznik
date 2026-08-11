@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/peterstace/simplefeatures/geom"
 	_ "modernc.org/sqlite"
@@ -174,6 +175,36 @@ func (idx *Index) DeleteByExtID(extID int64) error {
 		return fmt.Errorf("delete item row %d: %w", rowID, err)
 	}
 	return nil
+}
+
+// SetMetaTime persists a named timestamp inside the index database itself, so
+// it survives restarts alongside the data it describes (used for last_sync:
+// an adopted on-disk index must resume deltas from where THEY left off, not
+// from "now minus one interval"). Creates the meta table lazily because
+// indexes built before this existed don't have it.
+func (idx *Index) SetMetaTime(key string, t time.Time) error {
+	if _, err := idx.db.Exec(`CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT)`); err != nil {
+		return fmt.Errorf("meta schema: %w", err)
+	}
+	_, err := idx.db.Exec(`INSERT OR REPLACE INTO meta(k, v) VALUES (?, ?)`, key, t.UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+// GetMetaTime reads a named timestamp persisted by SetMetaTime. Returns the
+// zero time (no error) when the table or key is absent — callers treat that
+// as "unknown" exactly as they treated the zero lastSync before.
+func (idx *Index) GetMetaTime(key string) (time.Time, error) {
+	var v string
+	err := idx.db.QueryRow(`SELECT v FROM meta WHERE k = ?`, key).Scan(&v)
+	if err != nil {
+		// Missing table or missing row both mean "unknown".
+		return time.Time{}, nil
+	}
+	t, perr := time.Parse(time.RFC3339Nano, v)
+	if perr != nil {
+		return time.Time{}, nil
+	}
+	return t, nil
 }
 
 // ExtIDs returns the set of all external IDs in the index. Used by datasets

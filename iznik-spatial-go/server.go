@@ -176,8 +176,12 @@ func (srv *server) rebuild(name string) error {
 	// them behind the delta horizon forever (a 96s build of the reach dataset
 	// permanently missed 65 rows this way, caught by parity checks 2026-08-11).
 	// Stamping the start makes the first delta re-fetch anything from during
-	// the build; upserts are idempotent so the overlap is harmless.
+	// the build; upserts are idempotent so the overlap is harmless. Persisted
+	// into the index so a restart resumes from here too.
 	state.lastSync = start
+	if err := live.SetMetaTime("last_sync", start); err != nil {
+		log.Printf("spatial-server: %s persist last_sync failed: %v", name, err)
+	}
 	// The index now matches the source as of this build. For drift-aware
 	// datasets, record that baseline so the next CheckDrift compares against the
 	// freshly-built state rather than re-triggering on the change we just healed.
@@ -260,7 +264,13 @@ func (srv *server) startupLoad(forceRebuild bool) {
 			// has rows; if not, discard it and rebuild from MySQL.
 			if n, cErr := existing.CountRows(); cErr == nil && n > 0 {
 				state.idx = existing
-				log.Printf("spatial-server: %s opened existing index from %s (%d rows)", name, idxPath, n)
+				// Resume deltas from the index's own persisted sync point (zero
+				// when the index predates the meta table — the old one-interval
+				// lookback then applies, unchanged).
+				if ls, mErr := existing.GetMetaTime("last_sync"); mErr == nil && !ls.IsZero() {
+					state.lastSync = ls
+				}
+				log.Printf("spatial-server: %s opened existing index from %s (%d rows, last_sync %s)", name, idxPath, n, state.lastSync.Format(time.RFC3339))
 			} else {
 				existing.Close()
 				log.Printf("spatial-server: existing index for %s is empty/unreadable (rows=%d err=%v), rebuilding...", name, n, cErr)
@@ -312,8 +322,21 @@ func (srv *server) startScheduler() {
 				if since.IsZero() {
 					since = time.Now().Add(-d)
 				}
+				// Capture the sync point BEFORE the delta query runs — stamping
+				// completion time would put rows updated during the query behind
+				// the horizon (same reasoning as rebuild's build-start stamp).
+				// Persist it into the index so a restart resumes deltas from here
+				// instead of "now minus one interval" (an adopted index otherwise
+				// silently misses everything that changed while the process was
+				// down or since its last delta — caught live on the reach dataset
+				// 2026-08-11: a polygon grew at 20:44, the process restarted at
+				// 20:53, and the row stayed stale despite ticking deltas).
+				tickStart := time.Now()
 				err := s.withIndex(func(idx *Index) error {
-					return s.ds.ApplyDelta(srv.mysqlDB, idx, since)
+					if err := s.ds.ApplyDelta(srv.mysqlDB, idx, since); err != nil {
+						return err
+					}
+					return idx.SetMetaTime("last_sync", tickStart)
 				})
 				switch {
 				case err == errIndexNotReady:
@@ -321,7 +344,7 @@ func (srv *server) startScheduler() {
 				case err != nil:
 					log.Printf("spatial-server: delta %s failed: %v", n, err)
 				default:
-					s.lastSync = time.Now()
+					s.lastSync = tickStart
 				}
 				// After applying the delta, check whether the source table has
 				// drifted from the index in a way the delta can't self-heal

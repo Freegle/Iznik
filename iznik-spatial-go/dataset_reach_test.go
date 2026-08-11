@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"github.com/peterstace/simplefeatures/geom"
 )
@@ -14,6 +15,41 @@ func wkbOf(t *testing.T, wkt string) []byte {
 		t.Fatalf("parse: %v", err)
 	}
 	return g.AsBinary()
+}
+
+// TestMetaTimeRoundTrip: the persisted sync point must round-trip, and read
+// back as zero (not error) from an index that has never written one — that is
+// what startup adoption relies on for pre-meta on-disk indexes.
+func TestMetaTimeRoundTrip(t *testing.T) {
+	idx, err := CreateIndex(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idx.Close()
+
+	got, err := idx.GetMetaTime("last_sync")
+	if err != nil || !got.IsZero() {
+		t.Fatalf("expected zero time from fresh index, got %v err %v", got, err)
+	}
+
+	want := time.Date(2026, 8, 11, 20, 44, 11, 123456789, time.UTC)
+	if err := idx.SetMetaTime("last_sync", want); err != nil {
+		t.Fatal(err)
+	}
+	got, err = idx.GetMetaTime("last_sync")
+	if err != nil || !got.Equal(want) {
+		t.Fatalf("round-trip mismatch: got %v err %v", got, err)
+	}
+
+	// Overwrite wins.
+	want2 := want.Add(time.Hour)
+	if err := idx.SetMetaTime("last_sync", want2); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = idx.GetMetaTime("last_sync")
+	if !got.Equal(want2) {
+		t.Fatalf("overwrite failed: got %v", got)
+	}
 }
 
 // TestReachContaining covers the query path end-to-end at the index level:
