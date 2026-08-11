@@ -16,6 +16,18 @@ export function fetchRetry(fetch) {
       return 10000
     }
 
+    if (response?.status === 429) {
+      // Rate limited.  The load balancer's rate window is short (per-second), so a couple of
+      // seconds is normally enough for a burst to clear.  Honour Retry-After if the server
+      // sent one.
+      const retryAfter = parseInt(response.headers?.get('Retry-After'))
+      if (!isNaN(retryAfter) && retryAfter > 0) {
+        return Math.min(retryAfter * 1000, 30000)
+      }
+
+      return 2000 * (attempt + 1)
+    }
+
     // Slowly back off for longer each time.
     return attempt * 1000
   }
@@ -67,6 +79,18 @@ export function fetchRetry(fetch) {
         null,
         new FetchError('Request failed with ' + response.status, response),
       ]
+    }
+
+    // Retry rate limiting (429) with backoff (see retryDelay).  Bursts trip the load
+    // balancer's per-second limits - e.g. ModTools firing parallel work checks at boot,
+    // before HAProxy has re-learned that the user is a privileged mod - and clear within
+    // seconds.  Until the LB error responses carried CORS headers these appeared to the
+    // browser as opaque network errors and were retried by the branch below; keep that
+    // resilience, but as deliberate policy.  Persistent 429s (real abuse) still fail via
+    // the overall attempt cap.
+    if (response?.status === 429) {
+      console.log('Rate limited - retry with backoff')
+      return [true, false]
     }
 
     // Retry on network errors or server errors (5xx).  Don't retry client errors (4xx) - these are legitimate

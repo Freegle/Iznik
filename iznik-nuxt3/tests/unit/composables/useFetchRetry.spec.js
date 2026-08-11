@@ -215,6 +215,82 @@ describe('useFetchRetry', () => {
       vi.useRealTimers()
     })
 
+    it('should retry a 429 with backoff and succeed once the burst clears', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 429,
+          statusText: 'Too Many Requests',
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+
+      // The 429 backoff is 2000 * (attempt + 1) = 2s on the first retry.
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(500)
+
+      const result = await promise
+      expect(result).toEqual([200, responseData])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it('should honour Retry-After on a 429', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 429,
+          statusText: 'Too Many Requests',
+          headers: { get: vi.fn().mockReturnValue('5') },
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const result = await promise
+      expect(result).toEqual([200, responseData])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it('should reject a persistent 429 via the overall attempt cap', async () => {
+      mockFetch.mockResolvedValue({
+        status: 429,
+        statusText: 'Too Many Requests',
+        json: vi.fn().mockRejectedValue(new Error('no body')),
+      })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+      promise.catch(() => {}) // Avoid unhandled rejection noise before we assert.
+
+      // Backoff is 2000 * (attempt + 1); 10 retries total ~= 110s.
+      await vi.advanceTimersByTimeAsync(150000)
+
+      await expect(promise).rejects.toThrow('Too many retries, give up')
+      expect(mockFetch).toHaveBeenCalledTimes(11)
+      vi.useRealTimers()
+    })
+
     it('should retry on "load failed" error message', async () => {
       const responseData = { success: true }
 
