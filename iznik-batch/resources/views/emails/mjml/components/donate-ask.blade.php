@@ -42,7 +42,7 @@
         </mj-button>
         <mj-image src="{{ $dMarks }}" alt="{{ $dMarksAlt }}" title="{{ $dMarksAlt }}" width="200px" align="center" padding="8px 0 0 0" href="{{ $dUrl }}" />
         <mj-text font-size="11px" color="#888888" align="center" line-height="1.4" padding="4px 0 0 0">
-            One tap {{ '—' }} no card details to type.
+            Apple Pay and Google Pay take just a tap.
         </mj-text>
     </mj-column>
 </mj-section>
@@ -79,7 +79,7 @@
     <mj-column>
         <mj-image src="{{ $dMarks }}" alt="{{ $dMarksAlt }}" title="{{ $dMarksAlt }}" width="220px" align="center" padding="10px 0 0 0" href="{{ $dUrl }}" />
         <mj-text font-size="12px" color="#777777" align="center" line-height="1.5" padding="6px 0 0 0">
-            One tap {{ '—' }} no card details to type.
+            Apple Pay and Google Pay take just a tap.
             <a href="{{ $dUrl }}" style="color:#777777;text-decoration:underline;font-weight:normal">Another amount</a>
         </mj-text>
     </mj-column>

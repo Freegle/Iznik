@@ -102,6 +102,10 @@ class AskForDonation extends MjmlMailable
                 'donateMarksUrl' => config('freegle.images.paymethods'),
                 'donateUrl' => $this->donateUrl,
                 'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'footer_settings', 'settings'),
+                // Without this the shared footer falls back to a bare, untracked
+                // /unsubscribe, so the one footer link we most want to measure was
+                // the only one we could not see. Matches what the digest passes.
+                'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'footer_unsubscribe', 'unsubscribe'),
                 'continueUrl' => $this->trackedUrl($this->userSite, 'continue_button', 'continue'),
             ], $this->getTrackingData()), 'emails.text.donation.ask')
             ->applyLogging('AskForDonation');

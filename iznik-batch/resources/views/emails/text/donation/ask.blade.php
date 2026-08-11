@@ -14,7 +14,7 @@ Thank you for using your local Freegle group.
 
 Freegle is free to use, but it's not free to run. This month we're trying to raise GBP {{ number_format($target) }} to keep us going.
 
-If you can, please consider donating. You can pay with Apple Pay, Google Pay, PayPal or a card - no card details to type:
+If you can, please consider donating. You can pay with Apple Pay, Google Pay, PayPal or a card:
 @foreach($donateLinks ?? app(\App\Services\DonateLinkService::class)->amountLinks() as $donateLink)
 {{ $donateLink['label'] }}: {!! $donateLink['url'] !!}
 @endforeach

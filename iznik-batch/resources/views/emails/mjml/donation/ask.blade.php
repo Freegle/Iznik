@@ -66,6 +66,6 @@
         </mj-section>
         @endif
 
-        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl])
+        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl, 'unsubscribeUrl' => $unsubscribeUrl ?? null])
     </mj-body>
 </mjml>
