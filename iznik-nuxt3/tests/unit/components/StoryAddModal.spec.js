@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { ref } from 'vue'
 import StoryAddModal from '~/components/StoryAddModal.vue'
@@ -11,7 +11,16 @@ const mockStoryStore = {
 
 const mockComposeStore = {
   uploading: false,
+  storyDraft: null,
+  saveStoryDraft: vi.fn(function (draft) {
+    mockComposeStore.storyDraft = draft
+  }),
+  clearStoryDraft: vi.fn(function () {
+    mockComposeStore.storyDraft = null
+  }),
 }
+
+const mockHide = vi.fn()
 
 const mockImageStore = {
   post: vi.fn().mockResolvedValue(undefined),
@@ -32,7 +41,7 @@ vi.mock('~/stores/image', () => ({
 vi.mock('~/composables/useOurModal', () => ({
   useOurModal: () => ({
     modal: mockModal,
-    hide: vi.fn(),
+    hide: mockHide,
   }),
 }))
 
@@ -40,7 +49,27 @@ describe('StoryAddModal', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockComposeStore.uploading = false
+    mockComposeStore.storyDraft = null
+    globalThis.__mockAuthStore = { user: { id: 42 }, forceLogin: false }
   })
+
+  afterEach(() => {
+    delete globalThis.__mockAuthStore
+  })
+
+  function fillIn(wrapper, headline, story) {
+    return Promise.all([
+      wrapper.find('.b-form-input').setValue(headline),
+      wrapper.find('.b-form-textarea').setValue(story),
+    ])
+  }
+
+  function clickButton(wrapper, text) {
+    return wrapper
+      .findAll('.b-button')
+      .find((b) => b.text().includes(text))
+      .trigger('click')
+  }
 
   function createWrapper() {
     return mount(StoryAddModal, {
@@ -51,6 +80,11 @@ describe('StoryAddModal', () => {
               '<div class="b-modal"><slot /><slot name="footer" /></div>',
             props: ['scrollable', 'title', 'size', 'noStacking'],
             emits: ['shown'],
+            // useOurModal shows the modal as soon as it mounts, so shown fires
+            // right away in real life too.
+            mounted() {
+              this.$emit('shown')
+            },
             methods: {
               show() {},
               hide() {},
@@ -262,6 +296,112 @@ describe('StoryAddModal', () => {
       await flushPromises()
 
       expect(wrapper.text()).toContain('grateful')
+    })
+  })
+
+  describe('login required', () => {
+    beforeEach(() => {
+      globalThis.__mockAuthStore = { user: null, forceLogin: false }
+    })
+
+    it('does not try to add the story when logged out', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      expect(mockStoryStore.add).not.toHaveBeenCalled()
+    })
+
+    it('asks for a login when logged out', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      expect(globalThis.__mockAuthStore.forceLogin).toBe(true)
+      expect(wrapper.emitted('login-required')).toHaveLength(1)
+    })
+
+    it('saves what they typed so the login modal closing it does not lose it', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      expect(mockComposeStore.saveStoryDraft).toHaveBeenCalledWith({
+        headline: 'Test Headline',
+        story: 'Test Story Content',
+        image: null,
+      })
+    })
+
+    it('still complains about an empty story rather than asking for a login', async () => {
+      const wrapper = createWrapper()
+
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      expect(globalThis.__mockAuthStore.forceLogin).toBe(false)
+      expect(mockComposeStore.saveStoryDraft).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('draft', () => {
+    it('picks up a saved draft when shown', async () => {
+      mockComposeStore.storyDraft = {
+        headline: 'Saved Headline',
+        story: 'Saved Story',
+        image: null,
+      }
+
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      expect(wrapper.find('.b-form-input').element.value).toBe('Saved Headline')
+      expect(wrapper.find('.b-form-textarea').element.value).toBe('Saved Story')
+    })
+
+    it('submits the restored draft once they are logged back in', async () => {
+      mockComposeStore.storyDraft = {
+        headline: 'Saved Headline',
+        story: 'Saved Story',
+        image: null,
+      }
+
+      const wrapper = createWrapper()
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      expect(mockStoryStore.add).toHaveBeenCalledWith(
+        'Saved Headline',
+        'Saved Story',
+        null,
+        true
+      )
+    })
+
+    it('clears the draft once the story is added', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+
+      await clickButton(wrapper, 'Add Your Story')
+      await flushPromises()
+
+      expect(mockComposeStore.clearStoryDraft).toHaveBeenCalled()
+    })
+
+    it('clears the draft if they cancel', async () => {
+      const wrapper = createWrapper()
+      await fillIn(wrapper, 'Test Headline', 'Test Story Content')
+
+      await clickButton(wrapper, 'Cancel')
+
+      expect(mockComposeStore.clearStoryDraft).toHaveBeenCalled()
+      expect(mockHide).toHaveBeenCalled()
     })
   })
 

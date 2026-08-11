@@ -128,7 +128,7 @@
           variant="white"
           :disabled="uploadingPhoto"
           class="me-2"
-          @click="hide"
+          @click="cancel"
         >
           Cancel
         </b-button>
@@ -146,15 +146,19 @@ import { useStoryStore } from '~/stores/stories'
 import { useComposeStore } from '~/stores/compose'
 import { useOurModal } from '~/composables/useOurModal'
 import { useImageStore } from '~/stores/image'
+import { useAuthStore } from '~/stores/auth'
 
 const OurUploader = defineAsyncComponent(() =>
   import('~/components/OurUploader')
 )
 
+const emit = defineEmits(['login-required'])
+
 // Store instances
 const storyStore = useStoryStore()
 const composeStore = useComposeStore()
 const imageStore = useImageStore()
+const authStore = useAuthStore()
 
 // Modal control
 const { modal, hide } = useOurModal()
@@ -176,6 +180,8 @@ const noStory = ref(false)
 const uploadingPhoto = computed(() => {
   return composeStore?.uploading
 })
+
+const loggedIn = computed(() => Boolean(authStore.user))
 
 // Watchers
 watch(
@@ -227,9 +233,20 @@ function rotateRight() {
 
 function onShow() {
   thankyou.value = false
-  story.value.headline = null
-  story.value.story = null
-  story.value.image = null
+
+  // If we had to interrupt them to log in, pick up where they left off rather
+  // than making them type their story out again.
+  const draft = composeStore.storyDraft
+
+  story.value.headline = draft?.headline ?? null
+  story.value.story = draft?.story ?? null
+  story.value.image = draft?.image ?? null
+}
+
+function cancel() {
+  // They've decided against it, so don't hang on to what they typed.
+  composeStore.clearStoryDraft()
+  hide()
 }
 
 async function submit() {
@@ -237,6 +254,21 @@ async function submit() {
   noStory.value = false
 
   if (story.value.headline && story.value.story) {
+    if (!loggedIn.value) {
+      // Adding a story needs a login. Ask for one, keeping what they've typed -
+      // logging in rebuilds the app and takes this modal with it, so the draft
+      // has to live outside it.
+      composeStore.saveStoryDraft({
+        headline: story.value.headline,
+        story: story.value.story,
+        image: story.value.image,
+      })
+
+      emit('login-required')
+      authStore.forceLogin = true
+      return
+    }
+
     await storyStore.add(
       story.value.headline,
       story.value.story,
@@ -244,6 +276,7 @@ async function submit() {
       true
     )
 
+    composeStore.clearStoryDraft()
     thankyou.value = true
   } else {
     if (!story.value.headline) {
