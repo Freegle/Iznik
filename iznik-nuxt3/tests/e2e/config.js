@@ -21,6 +21,13 @@ const timeouts = {
   // UI interaction timeouts
   ui: {
     appearance: 30000 * M, // Waiting for element to appear (increased for Docker)
+    // Waiting for Vue to hydrate an SSR'd page enough that its buttons become
+    // enabled. Longer than `appearance` because it is not one element arriving,
+    // it is the whole page's JS booting - and the login button in particular
+    // renders disabled until then. When this budget is too short the login
+    // helper gives up and the test carries on logged out, failing much later
+    // somewhere unrelated.
+    hydration: 90000 * M,
     interaction: 10000, // Interaction with elements like clicks
     animation: 1000, // Waiting for animations to complete
     autocomplete: 10000, // Waiting for autocomplete results
