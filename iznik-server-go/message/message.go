@@ -3961,11 +3961,15 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// worry words, phone numbers, vague-item, not-an-item, URLs, ...). A row
 	// that has already been checked is never re-scanned on its own, so editing
 	// in new content would otherwise leave the automated moderation filters
-	// silently skipped, catchable only by a mod noticing by hand. Mark the row
-	// for a fresh check, for both mods and owners: a mod stripping the issue
-	// that triggered a flag also needs the clean edit re-verified.
+	// silently skipped, catchable only by a mod noticing by hand. Stamp
+	// messages.editedat: the batch derives "checked, then edited" from
+	// editedat > contentcheck_checked_at and re-scans, for both mods and
+	// owners - a mod stripping the issue that triggered a flag also needs the
+	// clean edit re-verified. Deriving from the edit audit stamp rather than
+	// keeping a separate mark means the state cannot drift, and needs no
+	// schema beyond columns that already exist.
 	//
-	// Marking, NOT clearing contentcheck_checked_at. That stamp doubles as
+	// Stamping, NOT clearing contentcheck_checked_at. That stamp doubles as
 	// "safe to show a moderator": the Pending list (message_list.go) and the
 	// work counts (groupWork.go, session.go) hide rows that have never been
 	// checked, so a brand-new post is not shown before the checks have had
@@ -3979,10 +3983,14 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 	// is worse than no reason at all - another mod could reject a post over a
 	// problem that is no longer there. The recheck writes the true set back.
 	if subjectChanged || textChanged || itemsChanged {
+		db.Table("messages").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{
+				"editedat": gorm.Expr("NOW()"),
+				"editedby": myid,
+			})
 		db.Table("messages_groups").Where("msgid = ?", req.ID).
 			Updates(map[string]interface{}{
-				"contentcheck_reasons":    gorm.Expr("NULL"),
-				"contentcheck_recheck_at": gorm.Expr("NOW()"),
+				"contentcheck_reasons": gorm.Expr("NULL"),
 			})
 	}
 

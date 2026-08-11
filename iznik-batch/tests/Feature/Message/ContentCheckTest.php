@@ -25,10 +25,12 @@ class ContentCheckTest extends TestCase
         DB::table('messages_groups')
             ->whereNull('contentcheck_checked_at')
             ->update(['contentcheck_checked_at' => now()]);
-        // Same for rows an edit has marked for a recheck: they are candidates too.
-        DB::table('messages_groups')
-            ->whereNotNull('contentcheck_recheck_at')
-            ->update(['contentcheck_recheck_at' => null]);
+        // Same for rows edited since their check (editedat > checked stamp): re-stamp
+        // so they stop being candidates too.
+        DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->whereColumn('m.editedat', '>', 'mg.contentcheck_checked_at')
+            ->update(['mg.contentcheck_checked_at' => now()]);
     }
 
     // -------------------------------------------------------------------------
@@ -1046,11 +1048,11 @@ class ContentCheckTest extends TestCase
     }
 
     /**
-     * Editing a message that has already been checked marks it for a recheck rather than
-     * clearing its check stamp, because the stamp is what keeps a Pending post visible to
-     * moderators (Discourse 10001). The marked row must still be picked up here, and the
-     * marker cleared once it has been checked - otherwise every edit would be re-checked
-     * forever.
+     * Editing a message that has already been checked stamps messages.editedat rather
+     * than clearing the check stamp, because the stamp is what keeps a Pending post
+     * visible to moderators (Discourse 10001). A row whose editedat is newer than its
+     * check must be picked up here, and re-stamping on completion must resolve the
+     * comparison - otherwise every edit would be re-checked forever.
      */
     public function test_edited_message_marked_for_recheck_is_checked_again(): void
     {
@@ -1069,13 +1071,15 @@ class ContentCheckTest extends TestCase
             'source'   => 'Platform',
             'lat'      => 51.50,
             'lng'      => -0.13,
+            'editedat' => now(),
+            'editedby' => $user->id,
         ]);
         DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
         $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
 
-        // Checked once, flagged, then edited: stamp intact, marker set - exactly what
-        // PATCH /message leaves behind.
+        // Checked once, flagged, then edited: stamp intact, editedat newer - exactly
+        // what PATCH /message leaves behind.
         DB::table('messages_groups')->insert([
             'msgid'                   => $msgid,
             'groupid'                 => $group->id,
@@ -1084,16 +1088,19 @@ class ContentCheckTest extends TestCase
             'deleted'                 => 0,
             'contentcheck_checked_at' => now()->subMinutes(5),
             'contentcheck_reasons'    => json_encode(['stale reason from before the edit']),
-            'contentcheck_recheck_at' => now(),
         ]);
 
         $stats = $this->service->processUnprocessed();
 
-        $this->assertEquals(1, $stats['approved'], 'A row marked for recheck must be re-checked');
+        $this->assertEquals(1, $stats['approved'], 'A row edited since its check must be re-checked');
 
         $row = DB::table('messages_groups')->where('msgid', $msgid)->first();
         $this->assertEquals('Approved', $row->collection);
-        $this->assertNull($row->contentcheck_recheck_at, 'The recheck marker must be cleared once checked');
+        $editedat = DB::table('messages')->where('id', $msgid)->value('editedat');
+        $this->assertFalse(
+            $editedat > $row->contentcheck_checked_at,
+            'Re-stamping the check must resolve the editedat comparison, or every edit re-checks forever'
+        );
         $this->assertNull($row->contentcheck_reasons, 'The stale pre-edit reason must be replaced');
     }
 
