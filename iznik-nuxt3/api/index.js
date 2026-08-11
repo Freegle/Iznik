@@ -25,7 +25,6 @@ import DomainAPI from './DomainAPI.js'
 import DonationsAPI from './DonationsAPI.js'
 import EmailTrackingAPI from './EmailTrackingAPI.js'
 import ExportAPI from './ExportAPI.js'
-import FirstReplyAPI from './FirstReplyAPI.js'
 import GiftAidAPI from './GiftAidAPI.js'
 import GroupAPI from './GroupAPI.js'
 import HousekeeperAPI from './HousekeeperAPI.js'
@@ -79,7 +78,6 @@ export default (config) => {
     donations: new DonationsAPI(options),
     emailtracking: new EmailTrackingAPI(options),
     export: new ExportAPI(options),
-    firstreply: new FirstReplyAPI(options),
     giftaid: new GiftAidAPI(options),
     group: new GroupAPI(options),
     housekeeper: new HousekeeperAPI(options),

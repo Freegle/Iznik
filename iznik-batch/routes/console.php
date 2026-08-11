@@ -178,11 +178,18 @@ if (config('freegle.firstreply.enabled')) {
 
     // Freegle's own messages to the poster. Nothing here is due sooner than an hour after
     // posting, so five minutes is as often as it could possibly matter.
-    Schedule::command('firstreply:engage')
-        ->everyFiveMinutes()
-        ->withoutOverlapping(15)
-        ->sendOutputTo(cronLog('firstreply:engage'))
-        ->runInBackground();
+    //
+    // Gated on the chat switch as well as the master one: the chat is currently OFF
+    // (see config/freegle.php), EngagementService returns immediately when it is, and a
+    // cron whose only job is to rediscover that is a process spawn every five minutes for
+    // nothing. Switching the flag back on brings the schedule entry back with it.
+    if (config('freegle.firstreply.chat.enabled')) {
+        Schedule::command('firstreply:engage')
+            ->everyFiveMinutes()
+            ->withoutOverlapping(15)
+            ->sendOutputTo(cronLog('firstreply:engage'))
+            ->runInBackground();
+    }
 }
 
 // Best-effort "quicker to get to" moderator notes for rippled-in posts, computed out of the hot

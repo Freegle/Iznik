@@ -285,7 +285,7 @@ For each due post, `ripple:expand`:
   a scout who replies was outside the reach when we mailed them, so their reply is evidence
   the item is wanted that far out and the people around them should get the same chance
   rather than waiting on the clock. See
-  [first-reply.md](first-reply.md#a-scout-who-replies-pulls-the-reach-out-to-them).
+  [first-reply.md](first-reply.md#a-matched-member-who-replies-pulls-the-reach-out-to-them).
 - **`rippleIntoNewGroups`** resolves target groups with a non-locking snapshot `SELECT`, then
   inserts each `messages_groups` membership as its own `INSERT IGNORE` (Galera-safe; avoids
   the lock-wait storms a single `INSERT ... SELECT` caused). Rippled copies carry the post's

@@ -148,17 +148,6 @@
             :key="'rippling-analytics-' + ripplingBump"
           />
         </b-tab>
-
-        <!-- First Reply Tab: is each lever against zero-reply posts working? -->
-        <b-tab @click="onFirstReplyTab">
-          <template #title>
-            <h2 class="ms-2 me-2">First reply</h2>
-          </template>
-          <ModSysAdminFirstReply
-            v-if="showFirstReply"
-            :key="'firstreply-' + firstReplyBump"
-          />
-        </b-tab>
       </b-tabs>
     </div>
     <NoticeMessage v-else variant="warning">
@@ -193,8 +182,6 @@ const showIncomingEmail = ref(false)
 const incomingEmailBump = ref(0)
 const showRippling = ref(false)
 const ripplingBump = ref(0)
-const showFirstReply = ref(false)
-const firstReplyBump = ref(0)
 const showRecommendations = ref(false)
 const recommendationsBump = ref(0)
 const showReengage = ref(false)
@@ -267,11 +254,6 @@ function onBehaviourTab() {
   else onDigestClicksTab()
 }
 
-function onFirstReplyTab() {
-  showFirstReply.value = true
-  firstReplyBump.value = Date.now()
-}
-
 function onRipplingTab() {
   showRippling.value = true
   ripplingBump.value = Date.now()
@@ -300,7 +282,6 @@ onMounted(() => {
       behaviourSubTab.value = 2
       onReengageTab()
     } else if (tab === 'rippling') onRipplingTab()
-    else if (tab === 'firstreply') onFirstReplyTab()
   } else {
     // Default to showing housekeeping
     onHousekeepingTab()
