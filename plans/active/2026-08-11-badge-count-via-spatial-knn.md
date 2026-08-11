@@ -80,7 +80,36 @@ db1/2/3 at :8194, co-located with apiv2) and serve point-in-reach from RAM:
 - Sitewide count parity: keep a temporary shadow-compare (log when spatial
   path and SQL path disagree by >0) for a soak period on one node.
 
+## Measured cost split (2026-08-11, EXPLAIN ANALYZE on db3, 4 live viewers)
+
+| viewer | full query | containment only | residual with ids precomputed | outer cands | inner accepts | inner_bound NULL |
+|---|---|---|---|---|---|---|
+| Cardiff | 103 ms | 182 ms | 7.8 ms | 216 | 33 | 156 (72%) |
+| Kent (rural) | 496 ms | 444 ms | 5.4 ms | 415 | 22 | 349 (84%) |
+| Edinburgh | 349 ms | 284 ms | 12.5 ms | 894 | 166 | 581 (65%) |
+| Lancashire | 387 ms | 328 ms | 10.9 ms | 807 | 142 | 524 (65%) |
+
+- Geometry containment is **95–98% of the query**; the user-specific SQL
+  (joins, unseen, author cap) over a precomputed id list is **5–13 ms**.
+  So handing apiv2 the in-reach msgids (from spatial-knn RAM) is a
+  **~30–50× win per call**, and in-reach lists are O(10²–10³) — IN-list
+  friendly.
+- Root cause of the geometry cost is worse than the July estimate: the
+  inner-bound quick-accept barely functions. **65–84% of outer-bound
+  candidates have `inner_bound` NULL** (small reaches erode to no inner),
+  so they all fall through to the exact 11k-vertex `ST_Contains`. The July
+  "7–19% band" figure did not account for NULL inners at this scale.
+  (An alternative cheaper-than-spatial fix — synthesising better inner
+  bounds — would attack the same 65–84%, but caps out well short of the
+  cells approach and leaves the BLOB reads in mysqld.)
+- Measurement method: `/tmp/measure-count.sh` (scratchpad copy in the
+  session dir) — EXPLAIN ANALYZE of the deployed SQL, containment-only,
+  and residual-with-ids variants per viewer point. GOTCHA: GROUP_CONCAT
+  needs `group_concat_max_len` raised or the id list silently truncates;
+  `mysql --raw` needed for parseable EXPLAIN ANALYZE trees.
+
 ## Status
 
 - 2026-08-11: plan written after live spike captures identified the badge
-  count as the dominant residual db3 load. Not started.
+  count as the dominant residual db3 load. Cost split measured (above):
+  design validated, ~30–50× per-call win available. Not started.
