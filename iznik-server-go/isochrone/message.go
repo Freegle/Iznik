@@ -737,11 +737,27 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		return count
 	}
 
+	// Reach containment via the spatial server when enabled (SPATIAL_REACH_MODE=on):
+	// the geometry test that was 95-98% of this query's cost is answered from the
+	// spatial index's rasters, and SQL only runs keyed lookups over the returned ids
+	// (plus the exact polygon test for the few boundary-band ids). Any failure falls
+	// through to the SQL containment path below, unchanged.
+	spatialIn, spatialPartial, useSpatial := spatialReachIDs(latlng)
+
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
-		// Viewer sets no inbound limit: one COUNT over the shared reach-arm membership
-		// (reachCandidateQuery), which also carries the OUTBOUND author cap and the
-		// held-for-moderation filter - so this fast path can never disagree with the feed
-		// about which posts exist to be counted.
+		// Viewer sets no inbound limit: one COUNT over the shared reach-arm membership,
+		// which also carries the OUTBOUND author cap and the held-for-moderation filter
+		// - so this fast path can never disagree with the feed about which posts exist
+		// to be counted.
+		if useSpatial {
+			if len(spatialIn)+len(spatialPartial) == 0 {
+				return 0
+			}
+			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial).
+				Select("COUNT(DISTINCT ms.msgid)").
+				Scan(&count)
+			return count
+		}
 		reachCandidateQuery(db, myid, latlng, true).
 			Select("COUNT(DISTINCT ms.msgid)").
 			Scan(&count)
@@ -752,8 +768,20 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	// the per-post blurred-Haversine filter below needs nothing else, and the full
 	// fetchReachCandidates row (views/replies subqueries, polygon envelope) made this
 	// badge poll ~849ms a call for no benefit.
+	var cands []reachCandidateRow
+	if useSpatial {
+		if len(spatialIn)+len(spatialPartial) == 0 {
+			return 0
+		}
+		reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial).
+			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
+			Scan(&cands)
+	} else {
+		cands = reachCandidatePoints(db, myid, latlng)
+	}
+
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
-	for _, cand := range reachCandidatePoints(db, myid, latlng) {
+	for _, cand := range cands {
 		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
 		if distanceMiles <= maxDistanceMiles {
 			count++

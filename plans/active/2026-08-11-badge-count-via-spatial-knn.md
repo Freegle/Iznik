@@ -112,4 +112,21 @@ db1/2/3 at :8194, co-located with apiv2) and serve point-in-reach from RAM:
 
 - 2026-08-11: plan written after live spike captures identified the badge
   count as the dominant residual db3 load. Cost split measured (above):
-  design validated, ~30–50× per-call win available. Not started.
+  design validated, ~30–50× per-call win available.
+- 2026-08-11 (later): IMPLEMENTED, dark-launched.
+  - spatial-go: `raster.go` (tri-state polygon raster, never-wrong property
+    tested incl. 11k-vertex ring; ~14ms/polygon build, parallelised load),
+    `dataset_reach.go` (2-min delta on updated_at, held rows removed, drift
+    check), `GET /v1/:dataset/containing` (PointContainer interface).
+    Rasters instead of raw cells: ~2.3KB/reach fixed, ≈150MB for 52k.
+  - apiv2: `isochrone/reachspatial.go` + nearbyCount wiring. Gated on
+    `SPATIAL_REACH_MODE=on` per node .env; any spatial error/not-ready falls
+    back to the SQL containment path. Partial ids exact-tested in SQL WITH a
+    held re-check (covers holds newer than the spatial delta).
+    Test: TestNearbyCountSpatialReach (stubbed spatial server; in/partial/
+    fresh-hold/fallback/mode-off).
+  - ROLLOUT: deploy spatial-go db1/2/3 (unmonitor dance not needed — KNN
+    reopens warm, but reach builds fresh ~2min on first start; badge falls
+    back meanwhile) + local spatial-knn container; deploy apiv2; then set
+    SPATIAL_REACH_MODE=on on ONE node's apiv2 .env, compare counts + watch
+    db3 mysqld digest for the au-join COUNT dropping, then enable the rest.

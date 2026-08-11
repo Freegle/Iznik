@@ -63,6 +63,15 @@ type Dataset interface {
 	DeltaInterval() time.Duration
 }
 
+// PointContainer is an optional interface for datasets that answer "which
+// items' geometry contains this point?" (GET /v1/:dataset/containing).
+// `in` items definitely contain the point; `partial` items might — the point
+// falls in a raster boundary band — and the caller must resolve them against
+// the exact source geometry. See ReachDataset.
+type PointContainer interface {
+	Containing(idx *Index, lng, lat float64) (in []int64, partial []int64, err error)
+}
+
 // DriftChecker is an optional interface for delta datasets whose source table
 // can change in ways the incremental delta cannot self-heal.
 //
