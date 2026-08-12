@@ -202,9 +202,10 @@ switching to "All my communities", or widening what you are looking at - might y
 across a post that has not rippled out to your area yet. You can still reply: we simply
 **hold your message for a short while, then pass it on**. That gives people closer to the
 item a head start, which is the whole point of rippling out, but it is a short wait rather
-than an open-ended one - usually under an hour, and never more than three. If the post
-ripples out to you sooner than that, your reply goes straight through at that moment
-instead.
+than an open-ended one - usually under an hour, and never more than three. The wait depends
+on how far outside the post's current area you are, so if you are only just outside it, it
+is very short. If the post ripples out to you sooner than that, your reply goes straight
+through at that moment instead.
 
 You do not need to do anything or come back. It is delivered automatically, and your reply
 shows as "waiting to send" until then. Nothing is lost.

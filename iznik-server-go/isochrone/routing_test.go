@@ -52,7 +52,7 @@ func fakeResponse(status int, body string) *http.Response {
 type errReadCloser struct{}
 
 func (errReadCloser) Read([]byte) (int, error) { return 0, errors.New("simulated read failure") }
-func (errReadCloser) Close() error              { return nil }
+func (errReadCloser) Close() error             { return nil }
 
 func withEnv(t *testing.T, key, val string) {
 	t.Helper()
@@ -83,15 +83,17 @@ func clearEnv(t *testing.T, key string) {
 // ---------------------------------------------------------------------------
 
 func TestFetchIsochroneWKTFromRoutingServer_NoURLConfigured(t *testing.T) {
-	clearEnv(t, "SPATIAL_SERVER_URL")
+	clearEnv(t, "ROUTING_EVAL_URL")
 	clearEnv(t, "ROUTING_SERVER_URL")
+	// Unset means "skip the routing server, use Mapbox" - deliberately not defaulted
+	// to spatial:8194, which would remove the ability to turn the router off.
 	assert.Equal(t, "", FetchIsochroneWKTFromRoutingServer("Walk", 51.5, -0.1, 15))
 }
 
 func TestFetchIsochroneWKTFromRoutingServer_FallsBackToLegacyEnvVar(t *testing.T) {
-	// SPATIAL_SERVER_URL unset, ROUTING_SERVER_URL set - the base must come
+	// ROUTING_EVAL_URL unset, ROUTING_SERVER_URL set - the base must come
 	// from the legacy var rather than short-circuiting to "".
-	clearEnv(t, "SPATIAL_SERVER_URL")
+	clearEnv(t, "ROUTING_EVAL_URL")
 	withEnv(t, "ROUTING_SERVER_URL", "http://legacy.invalid")
 	rt := &fakeRoundTripper{resp: fakeResponse(200, routingResponseJSON())}
 	withFakeTransport(t, rt)
@@ -101,14 +103,28 @@ func TestFetchIsochroneWKTFromRoutingServer_FallsBackToLegacyEnvVar(t *testing.T
 	assert.True(t, strings.HasPrefix(rt.lastURL, "http://legacy.invalid/v1/isochrone"))
 }
 
+// SPATIAL_SERVER_URL is the routing container's EXTERNAL port: JWT, moderators only.
+// Reading it here meant every call answered 401, returned "", and sent the caller to
+// Mapbox instead - a silent failure that costs money and shows nothing to the user.
+// This pins the internal port as the one consulted, so it cannot creep back.
+func TestFetchIsochroneWKTFromRoutingServer_IgnoresTheAuthPortVar(t *testing.T) {
+	clearEnv(t, "ROUTING_EVAL_URL")
+	clearEnv(t, "ROUTING_SERVER_URL")
+	withEnv(t, "SPATIAL_SERVER_URL", "http://spatial.invalid:8196")
+	withFakeTransport(t, &fakeRoundTripper{resp: fakeResponse(200, routingResponseJSON())})
+
+	assert.Equal(t, "", FetchIsochroneWKTFromRoutingServer("Walk", 51.5, -0.1, 15),
+		"the external auth port must never be used as the routing base")
+}
+
 func TestFetchIsochroneWKTFromRoutingServer_NetworkError(t *testing.T) {
-	withEnv(t, "SPATIAL_SERVER_URL", "http://spatial.invalid")
+	withEnv(t, "ROUTING_EVAL_URL", "http://spatial.invalid")
 	withFakeTransport(t, &fakeRoundTripper{err: errors.New("connection refused")})
 	assert.Equal(t, "", FetchIsochroneWKTFromRoutingServer("Walk", 51.5, -0.1, 15))
 }
 
 func TestFetchIsochroneWKTFromRoutingServer_ReadBodyError(t *testing.T) {
-	withEnv(t, "SPATIAL_SERVER_URL", "http://spatial.invalid")
+	withEnv(t, "ROUTING_EVAL_URL", "http://spatial.invalid")
 	withFakeTransport(t, &fakeRoundTripper{resp: &http.Response{
 		StatusCode: 200,
 		Body:       errReadCloser{},
@@ -118,7 +134,7 @@ func TestFetchIsochroneWKTFromRoutingServer_ReadBodyError(t *testing.T) {
 }
 
 func TestFetchIsochroneWKTFromRoutingServer_NonOKStatus(t *testing.T) {
-	withEnv(t, "SPATIAL_SERVER_URL", "http://spatial.invalid")
+	withEnv(t, "ROUTING_EVAL_URL", "http://spatial.invalid")
 	withFakeTransport(t, &fakeRoundTripper{resp: fakeResponse(500, "internal error")})
 	assert.Equal(t, "", FetchIsochroneWKTFromRoutingServer("Walk", 51.5, -0.1, 15))
 }
@@ -126,14 +142,14 @@ func TestFetchIsochroneWKTFromRoutingServer_NonOKStatus(t *testing.T) {
 func TestFetchIsochroneWKTFromRoutingServer_NonOKStatusLongBody(t *testing.T) {
 	// The error-logging path truncates the body to 500 bytes - exercise it
 	// with a body long enough to require the truncation.
-	withEnv(t, "SPATIAL_SERVER_URL", "http://spatial.invalid")
+	withEnv(t, "ROUTING_EVAL_URL", "http://spatial.invalid")
 	longBody := strings.Repeat("x", 1000)
 	withFakeTransport(t, &fakeRoundTripper{resp: fakeResponse(503, longBody)})
 	assert.Equal(t, "", FetchIsochroneWKTFromRoutingServer("Walk", 51.5, -0.1, 15))
 }
 
 func TestFetchIsochroneWKTFromRoutingServer_BadJSON(t *testing.T) {
-	withEnv(t, "SPATIAL_SERVER_URL", "http://spatial.invalid")
+	withEnv(t, "ROUTING_EVAL_URL", "http://spatial.invalid")
 	withFakeTransport(t, &fakeRoundTripper{resp: fakeResponse(200, "not json")})
 	assert.Equal(t, "", FetchIsochroneWKTFromRoutingServer("Walk", 51.5, -0.1, 15))
 }
@@ -148,9 +164,9 @@ func routingResponseJSON() string {
 
 func TestFetchIsochroneWKTFromRoutingServer_TransportSelection(t *testing.T) {
 	tests := []struct {
-		name       string
-		transport  string
-		wantPoint  string
+		name      string
+		transport string
+		wantPoint string
 	}{
 		{"walk maps to walk polygon", "Walk", "-0.100000 51.500000"},
 		{"cycle maps to cycle polygon", "Cycle", "-0.300000 51.500000"},
@@ -160,7 +176,7 @@ func TestFetchIsochroneWKTFromRoutingServer_TransportSelection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			withEnv(t, "SPATIAL_SERVER_URL", "http://spatial.invalid")
+			withEnv(t, "ROUTING_EVAL_URL", "http://spatial.invalid")
 			withFakeTransport(t, &fakeRoundTripper{resp: fakeResponse(200, routingResponseJSON())})
 
 			wkt := FetchIsochroneWKTFromRoutingServer(tt.transport, 51.5, -0.1, 15)
@@ -171,7 +187,7 @@ func TestFetchIsochroneWKTFromRoutingServer_TransportSelection(t *testing.T) {
 }
 
 func TestFetchIsochroneWKTFromRoutingServer_URLIncludesParams(t *testing.T) {
-	withEnv(t, "SPATIAL_SERVER_URL", "http://spatial.invalid")
+	withEnv(t, "ROUTING_EVAL_URL", "http://spatial.invalid")
 	rt := &fakeRoundTripper{resp: fakeResponse(200, routingResponseJSON())}
 	withFakeTransport(t, rt)
 

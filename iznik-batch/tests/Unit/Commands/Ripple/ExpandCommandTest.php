@@ -59,6 +59,40 @@ class ExpandCommandTest extends TestCase
     }
 
     /**
+     * The site tells a member when a post is due to reach their area, and that date comes
+     * from the hazard schedule: tick k goes live at arrival + hazard_hours[k-1]. The API
+     * runs on a different server, so the schedule is published here rather than restated
+     * there, where the two could drift and we would quote an arrival that never happens.
+     */
+    public function test_publishes_hazard_hours_to_config(): void
+    {
+        Http::fake();
+        config(['freegle.ripple.hazard_hours' => [1, 3, 6, 12, 24, 48, 72, 120, 168]]);
+        DB::table('config')->where('key', 'ripple.hazard_hours')->delete();
+
+        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
+
+        $this->assertSame(
+            [1, 3, 6, 12, 24, 48, 72, 120, 168],
+            json_decode((string) DB::table('config')->where('key', 'ripple.hazard_hours')->value('value'), true),
+            'the hazard schedule is mirrored into config for the Go API to read'
+        );
+
+        // A changed schedule upserts rather than duplicating, and re-dates every estimate
+        // the API gives from that point on.
+        config(['freegle.ripple.hazard_hours' => [2, 4, 8]]);
+        $this->artisan('ripple:expand', ['--limit' => 1])->assertExitCode(0);
+
+        $this->assertSame(
+            [2, 4, 8],
+            json_decode((string) DB::table('config')->where('key', 'ripple.hazard_hours')->value('value'), true)
+        );
+        $this->assertSame(1, DB::table('config')->where('key', 'ripple.hazard_hours')->count());
+
+        DB::table('config')->where('key', 'ripple.hazard_hours')->delete();
+    }
+
+    /**
      * --within-group accepts a comma-separated list of group ids (the experiment scope) and resolves
      * it to the union of those groups' polyindex polygons. MySQL ST_Union is binary, so the command
      * chains it over per-id subqueries; this exercises that path with two real group polygons.

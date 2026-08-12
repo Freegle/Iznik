@@ -163,10 +163,16 @@ class MaxReachServiceTest extends TestCase
         // to be measurable per reply rather than guessed from a population.
         $msgid = $this->seedRipplingPost();
 
-        // The replier is outside tick 1 but inside tick 2's polygon, and the
-        // LOWEST covering tick is the one that decides: tick 2 is due at
-        // hazard_hours[0] = 1h after arrival, and the post arrived just now, so
-        // they were spared about an hour.
+        // The replier is outside tick 1 but inside tick 2's polygon, and the LOWEST
+        // covering tick is the one that decides. Tick k goes live at hazard_hours[k-1],
+        // so tick 2 is due 3h after arrival, and the post arrived just now.
+        //
+        // This asserted 1h (hazard_hours[0]) until 2026-08-12, pinning an off-by-one in
+        // the code rather than the behaviour. The mapping is settled by the rest of the
+        // engine - ReachService::tickForElapsedHours sets tick = $i + 1 once elapsed >=
+        // hazard_hours[$i], and nextExpansionAfter agrees - and by live rows, where
+        // reaches finishing at tick k do so exactly hazard_hours[k] hours after arrival
+        // (tick 1 at 3.0h, tick 4 at 24.0h, tick 8 at 168.0h).
         DB::table('firstreply_passthroughs')->insert([
             'msgid' => $msgid,
             'source' => 'email',
@@ -181,7 +187,7 @@ class MaxReachServiceTest extends TestCase
 
         $waited = DB::table('firstreply_passthroughs')->where('msgid', $msgid)->value('waited_hours');
         $this->assertNotNull($waited);
-        $this->assertEqualsWithDelta(1.0, (float) $waited, 0.2);
+        $this->assertEqualsWithDelta(3.0, (float) $waited, 0.2);
     }
 
     public function test_a_replier_already_inside_the_current_tick_is_sized_at_zero(): void

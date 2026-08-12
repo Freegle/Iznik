@@ -534,21 +534,65 @@ nobody waits more than three. Somebody just past the boundary is delivered a lit
 locals, which is the whole intent - they are not competing with people who have not been told
 yet, they are simply second.
 
-Distance is an exact haversine (`GreatCircle::distanceMiles`) between the post's blurred origin
-and the replier, both of which are already stored on the rows. Not `ST_Distance` on the reach
-geometry: that returns coordinate degrees, because the SRID 3857 tag is a site-wide mislabel,
-and degrees are anisotropic - the same "distance" means different things north-south and
-east-west. Degrees rank fine within one post, which is all the selection queries need, but they
-cannot be turned into minutes.
+Distance is measured from the **nearest point on the reach boundary**, not from the item. The
+band is meant to hug the isochrone: a reply from just outside the line is in practice one of
+the locals, because the line is a modelled drive-time contour rather than a fact about who can
+collect. "How far past the edge are you" is what separates a near-miss from someone genuinely
+distant.
+
+Measuring from the item, which this did until 2026-08-12, ranks held repliers consistently at
+one instant but is the wrong input for a timer, because the reach moves and the distance to the
+item does not. It also scaled the wait with something irrelevant: on live rows a replier 0.36
+miles outside the boundary was charged 55 minutes because the item was 13.2 miles off, and one
+1.47 miles outside was charged 42 for an item 8.9 miles away.
+
+Measured over 566 held replies across two days, the change takes the mean wait from 50.8 to
+29.2 minutes. Nearly half of them (269) sit within two miles of the boundary, and those go from
+37.5 minutes to 17.1 - about the base wait, which is the point. Five get marginally longer,
+because their reach polygon does not contain its own origin.
+
+The boundary distance is `ST_Distance` on the reach polygon, but only after re-tagging it:
+`rippling_reach.polygon` is declared SRID 3857 and stores raw lng/lat degrees, so as stored the
+result is in coordinate degrees, which are anisotropic and cannot be turned into minutes.
+`ST_SRID(polygon, 4326)` against `ST_SRID(POINT(lng, lat), 4326)` gives real metres.
+
+**No `ST_SwapXY`**, despite 4326 being nominally latitude-first. Measured on our server,
+`ST_Distance` under 4326 reads X as longitude and Y as latitude, which is the order the rows
+already store. The control is London to Birmingham: 101.2 miles untouched, 138.7 with the axes
+swapped, against a true 101.6. Swapping "to be correct" reinterprets UK coordinates as sitting
+near the equator, and the resulting error is the wrong size to look obviously wrong - it cost a
+round of this work before a unit test with hand-computed geometry caught it.
+
+About 12ms per row against polygons averaging a megabyte, which is affordable because it runs
+once at hold time and once per sweep for rows still waiting. Recomputing each sweep is the
+point: the distance past the edge shrinks as the isochrone advances on the replier.
 
 Coverage still wins. `ripple:release-replies` runs `releaseCovered()` first and `releaseDue()`
 second, so a replier the ripple reaches early is released then rather than waiting out their
 timer.
 
-**The policy lives in PHP only.** The Go and web hold paths leave `dueat` NULL, and the
-every-minute sweep stamps it. That means one implementation of the rule rather than two that
-can drift, and it also means the pre-existing backlog gets a due time on the first sweep
-instead of staying stuck.
+**PHP decides the wait; the API only quotes it.** The Go and web hold paths leave `dueat`
+NULL, and the every-minute sweep stamps it, so the rule is enforced in exactly one place and
+the pre-existing backlog gets a due time on the first sweep instead of staying stuck.
+
+The site does have to say the number **before** the member presses Send, though - that is the
+point of the delay, and an open-ended "we'll pass it on as soon as it reaches you" is the
+wording it replaces. So `ripple:expand` publishes the policy into `config` under
+`ripple.reply_delay`, and the Go read path computes the estimate from it
+(`rippling.LoadReplyDelayPolicy` / `ReplyDelayPolicy.DelayMinutes`), returning it as
+`replydelayminutes` alongside `replyeligible=false`. Published rather than restated as env
+vars on the API host precisely because the two ends must not drift: a member told "about 40
+minutes" whose reply then waits three hours is worse off than one who was told nothing.
+
+The estimate costs no extra query. `ReachBlockedOrigins` already reads the blocked rows for
+the containment test, so it carries `rippling_reach.lat/lng` off them and the delay is then
+arithmetic. Only the minutes cross the wire - the blurred origin the distance is measured from
+stays server-side, like every other reach geometry.
+
+Two things make it an estimate rather than an appointment, and the wording reflects both. The
+covered release can free a reply early, so the UI says "within about", not "in". And the Go
+side measures with a WGS84 geodesic where PHP uses a spherical haversine, which differs by
+under a tenth of a mile at UK distances; the display rounds to five minutes, well outside that.
 
 Releases are counted by reason - `released_covered`, `released_delayed`, `released_maxed`,
 `released_backfill` - in `rippling_event_metrics`. Without the split, the delay would be

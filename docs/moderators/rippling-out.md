@@ -97,21 +97,27 @@ TrashNothing - wherever a member replies from outside the post's current reach, 
 is accepted and held rather than turned away. Chat Review shows you it is held because of
 rippling (not because you chose to hold it).
 
-You do not need to do anything - the reply releases itself, either when the post ripples out
-far enough to cover that member, or when the post's reach stops growing (at which point every
-reply still waiting is let through rather than stranded).
+You do not need to do anything - the reply releases itself. It goes either when the post
+ripples out far enough to cover that member, or when its own **due time** comes round,
+whichever is sooner. If the reach stops growing before either, every reply still waiting is
+let through rather than stranded.
 
-**How long that takes varies a great deal, and can be days.** Some holds are given a **due
-time** worked out from how far the member is from the item, and those land quickly. Most are
-not, and wait for the reach instead. Measured over a fortnight in August 2026, of the holds
-that were eventually delivered: about a third landed within an hour, about half within three
-hours, and the other half took longer - with an average of just over a day and a long tail
-running into weeks. So if a member asks why their reply went unanswered for two days, "it was
-held by rippling" is a real and likely answer.
+The due time is worked out from how far the member is **past the edge of the post's current
+reach** - not from how far they are from the item: roughly a quarter of an hour plus a few
+minutes per mile beyond the boundary, capped at three hours. Someone barely outside the line
+is treated as the near-miss they are, whether the item itself is two miles away or twenty.
+In practice a held reply now lands in well under an hour on average, and none waits longer
+than three.
+
+That is a recent change, so **older holds you may still be looking at took far longer** -
+before every hold carried a due time, they waited for the reach itself, which averaged over a
+day with a tail running into weeks. If a member asks why their reply went unanswered for two
+days in early August 2026 or before, "it was held by rippling" is a real and likely answer.
 
 A hold can also end **without** the reply ever being delivered: if the item is taken while the
 reply is held, the reply is dropped and the replier is told the item has gone. The owner never
-sees it.
+sees it. This is now rare, because the wait is short enough that the item is usually still
+there, but it is what the third row below means.
 
 Chat Review tells you which of these happened, and how long it took:
 
@@ -124,6 +130,10 @@ Chat Review tells you which of these happened, and how long it took:
 That last one matters for tone: neither person did anything wrong, and the replier may be
 upset with the owner for "ignoring" them. It is worth saying plainly that our system held the
 message.
+
+The wait exists to give closer people a head start, not to hold anybody back indefinitely -
+which matters, because most held repliers live somewhere the post would never have reached on
+its own.
 
 The member who sent it sees their own message marked as "waiting to send"; the owner is not
 shown it until it is released.

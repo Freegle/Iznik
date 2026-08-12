@@ -21,15 +21,23 @@ describe('WhichPostsExplanation', () => {
     expect(wrapper.text()).toContain('most relevant posts first')
   })
 
-  it('tells members an out-of-reach reply is held (not blocked) and passed on when it reaches them', () => {
+  it('tells members an out-of-reach reply is held briefly (not blocked) and then passed on', () => {
     const wrapper = createWrapper()
-    const text = wrapper.text()
+    const text = wrapper.text().replace(/\s+/g, ' ')
     // Rippling-out hold: you can always reply; a reply to a post that hasn't reached you yet is
-    // held and delivered when it does. Assert the hold BEHAVIOUR, not brittle exact wording, so
-    // the test survives minor copy tweaks.
+    // held for a bounded spell so nearer people get first go, then passed on either way. Assert
+    // the hold BEHAVIOUR, not brittle exact wording, so the test survives minor copy tweaks.
     expect(text).toContain('go ahead and reply')
-    expect(text).toContain('pass it on to the owner')
-    expect(text).toMatch(/reaches you/i)
+    expect(text).toContain('pass yours on')
+    expect(text).toMatch(/first go/i)
+  })
+
+  it('does not promise delivery only once the post reaches you', () => {
+    const wrapper = createWrapper()
+    const text = wrapper.text().replace(/\s+/g, ' ')
+    // The hold ends on a timer as well as on coverage, and most held repliers are somewhere
+    // the ripple never reaches. "The moment the post reaches you" was a promise we don't keep.
+    expect(text).not.toMatch(/the moment the post reaches you/i)
   })
 
   it('does not use "this is new / we have changed" framing', () => {
