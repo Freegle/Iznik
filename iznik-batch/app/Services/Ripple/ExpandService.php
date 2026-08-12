@@ -34,16 +34,41 @@ class ExpandService
     /** Chooses each post's reach budget from how thinly freeglers are spread around it. */
     private DensityService $density;
 
+    /** Which communities have switched rippling off, per direction (groups.settings.rippling). */
+    private GroupRippleOptOut $optOut;
+
+    /** Releases held replies when a post's reach is dropped by an opt-out. */
+    private RippleReplyService $replies;
+
     /** Memoized rippling_reach density-column check, so a pre-migration deploy is a no-op. */
     private static ?bool $densityColumns = null;
 
     public function __construct(
         private ReachService $reach,
         ?ReachBoundsService $bounds = null,
-        ?DensityService $density = null
+        ?DensityService $density = null,
+        ?GroupRippleOptOut $optOut = null,
+        ?RippleReplyService $replies = null
     ) {
         $this->bounds = $bounds ?? new ReachBoundsService();
         $this->density = $density ?? new DensityService();
+        $this->optOut = $optOut ?? new GroupRippleOptOut();
+        $this->replies = $replies ?? new RippleReplyService(new ReachQueryService());
+    }
+
+    /**
+     * SQL fragment (leading " AND ...") excluding the communities that have opted out of
+     * the given rippling direction, or '' when none have. Every id is a DB int, so the
+     * inline list cannot inject — same shape as the reachable-gate clause below.
+     */
+    private function optOutClause(string $column, string $direction): string
+    {
+        $ids = $this->optOut->excludedGroupIds($direction);
+        if (empty($ids)) {
+            return '';
+        }
+
+        return ' AND ' . $column . ' NOT IN (' . implode(',', $ids) . ')';
     }
 
     /** Has the density-sizing migration run? Without it the cap still applies, unrecorded. */
@@ -160,6 +185,11 @@ class ExpandService
         // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
         //     leave removes the poster's post from that group (not just their membership).
         $this->pullRippledPostsFromLeftGroups($dryRun, $stats, $onlyMsgid);
+        // 1c. Stop-and-retract for posts on a community that has since switched ripple-OUT off
+        //     (groups.settings.rippling.out). initialiseNew's gate only stops NEW posts, so
+        //     without this a community that opts out keeps expanding everything it had already
+        //     started - including on the deploy that first gives it the setting.
+        $this->retractOptedOutCommunities($dryRun, $stats, $onlyMsgid);
 
         // 2. Initialise reach for posts new to messages_spatial.
         $this->initialiseNew($dryRun, $limit, $stats, $onlyMsgid, $withinPolyWkt);
@@ -321,6 +351,7 @@ class ExpandService
         if ($wkt === '') {
             return 0;
         }
+        // keep-raw: ST_Intersects/ST_GeometryType against a WKT literal - spatial predicates the builder cannot render
         $row = DB::selectOne(
             "SELECT COUNT(*) AS c
              FROM `groups` g
@@ -330,7 +361,8 @@ class ExpandService
                AND g.nameshort NOT LIKE '%playground%'
                AND g.polyindex IS NOT NULL
                AND ST_GeometryType(g.polyindex) <> 'POINT'
-               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))",
+               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))"
+            . $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN),
             [$wkt]
         );
         return (int) ($row->c ?? 0);
@@ -389,6 +421,80 @@ class ExpandService
         } catch (\Throwable $e) {
             $stats['errors']++;
             Log::warning("ripple: remove-stale-and-retract failed: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Stop-and-retract every post whose community has switched ripple-OUT off
+     * (groups.settings.rippling.out) since the post started rippling.
+     *
+     * initialiseNew's opt-out gate only keeps NEW posts from starting, so on its own it would
+     * leave a phantom or training community's in-flight ripples expanding for the rest of their
+     * life - and on the deploy that first writes the setting, EVERY live practice post there
+     * would keep going. This closes that: drop the reach row (which stops expansion and takes the
+     * post out of every reach-driven read path), pull the copies already delivered - exactly as
+     * removeStaleAndRetract does for a post that has left the browsable set - and release any
+     * replies still held against the reach we are dropping.
+     *
+     * Skips 'held' rows for the same reason the other retraction paths do: their copies are
+     * deliberately Pending for per-group moderation. A held post that is later re-approved
+     * flips back out of 'held' and is caught by the next run of this pass.
+     *
+     * Scope: only --msgid restricts it, matching removeStaleAndRetract - retracting a committed
+     * copy must complete regardless of the current area scope.
+     */
+    private function retractOptedOutCommunities(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
+    {
+        try {
+            $excluded = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_OUT);
+            if (empty($excluded)) {
+                return;
+            }
+
+            // ms.groupid is the post's own community (messages_spatial.msgid is UNIQUE). A post
+            // whose community opted out is matched here however far it had already spread.
+            $q = DB::table('rippling_reach as mr')
+                ->join('messages_spatial as ms', 'ms.msgid', '=', 'mr.msgid')
+                ->where('mr.status', '<>', 'held')
+                ->whereIn('ms.groupid', $excluded);
+            if ($onlyMsgid !== null) {
+                $q->where('mr.msgid', $onlyMsgid);
+            }
+            $msgids = $q->pluck('mr.msgid')->map(static fn ($id) => (int) $id)->all();
+            if (empty($msgids)) {
+                return;
+            }
+
+            if ($dryRun) {
+                $stats['removed'] += count($msgids);
+                $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
+                    ->whereIn('msgid', $msgids)
+                    ->where('rippled_in', 1)
+                    ->where('deleted', 0)
+                    ->count();
+
+                return;
+            }
+
+            foreach ($msgids as $msgid) {
+                $this->retractRippledCopiesForRemovedPost($msgid, $stats);
+                // Release any still-held replies BEFORE dropping the reach row. The post is live
+                // (it is still in messages_spatial), so these replies are real people waiting on
+                // a ripple that is never coming: with no reach row, ripple:release-replies takes
+                // the "transiently absent, wait for re-initialisation" branch and would hold them
+                // for ever, and initialiseNew will never re-create the row. Releasing hands them
+                // to the offerer, which is what would have happened when the reach reached them.
+                // (Replies made from here on are not held at all - the Go gate only holds when a
+                // reach row exists, so it fails open.)
+                $stats['released_on_opt_out'] = ($stats['released_on_opt_out'] ?? 0)
+                    + $this->replies->releaseAll($msgid, 'community-opted-out');
+                DB::table('rippling_reach')->where('msgid', $msgid)->delete();
+                $stats['removed']++;
+                Log::info("ripple: retracted $msgid - its community has rippling switched off");
+            }
+        } catch (\Throwable $e) {
+            $stats['errors']++;
+            Log::warning("ripple: retract-opted-out-communities failed: {$e->getMessage()}");
         }
     }
 
@@ -744,7 +850,24 @@ class ExpandService
         }
         $params[] = $limit;
 
+        // Ripple-OUT opt-out (groups.settings.rippling.out): a post on a community that has
+        // switched rippling off never gets a reach row, so it is never crossposted and never
+        // appears in another member's nearby feed (both read paths hang off rippling_reach).
+        // This is a community-level policy rather than a rollout guard, so unlike the arrival
+        // cutoff and the saturation stop it applies to --msgid and area runs too.
+        //
+        // messages_spatial.msgid is UNIQUE, so ms.groupid is the post's single recorded
+        // community. A candidate here has no reach row, hence has never rippled, so that
+        // recorded community is one it was posted to directly rather than rippled into. The
+        // NULL arm matters: groupid is nullable and `NULL NOT IN (...)` is NULL, which would
+        // silently drop every group-less row from the candidate set.
+        $outOptOut = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_OUT);
+        $optOutSql = empty($outOptOut)
+            ? ''
+            : ' AND (ms.groupid IS NULL OR ms.groupid NOT IN (' . implode(',', $outOptOut) . '))';
+
         // Candidate source: live posts with NO reach row yet (anti-join).
+        // keep-raw: ANY_VALUE + the ST_X/ST_Y spatial accessors on a GROUP BY the builder cannot render
         $rows = DB::select(
             'SELECT ms.msgid AS msgid,
                     ANY_VALUE(ST_Y(ms.point)) AS lat,
@@ -752,7 +875,7 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . '
+             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -1295,13 +1418,21 @@ class ExpandService
                 ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
                 : '';
 
+            // Ripple-IN opt-out (groups.settings.rippling.in): never crosspost into a community
+            // that has switched rippling off. The `%playground%` name test below predates this
+            // and stays as belt-and-braces for a playground community created before anyone gives
+            // it the setting; the setting is the deliberate, per-community mechanism (set by
+            // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
+            $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
+
+            // keep-raw: ST_Intersects/ST_GeometryType plus the correlated logs/ban NOT EXISTS arms the builder cannot render
             $targetGroups = DB::select(
                 "SELECT g.id
                  FROM `groups` g
                  WHERE g.publish = 1
                    AND g.type = 'Freegle'
                    AND g.onhere = 1
-                   AND g.nameshort NOT LIKE '%playground%'
+                   AND g.nameshort NOT LIKE '%playground%'" . $inOptOut . "
                    AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> 'POINT'
                    AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "
