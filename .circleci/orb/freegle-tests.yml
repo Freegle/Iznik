@@ -1468,7 +1468,20 @@ commands:
             fi
 
             echo "📦 Installing npm dependencies..."
-            npm ci --prefer-offline --no-audit
+            # package.json pulls cordova-plugin-calendar straight from a GitHub tarball
+            # URL rather than the npm registry, so npm's own --fetch-retries (registry
+            # fetches only) does not cover it — an ECONNRESET there aborts npm ci outright.
+            # Retry at the shell level, same pattern used for the Nuxt docker-build retry
+            # elsewhere in this file.
+            for attempt in 1 2 3; do
+              npm ci --prefer-offline --no-audit && break
+              if [ $attempt -eq 3 ]; then
+                echo "❌ npm ci failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️ npm ci attempt $attempt failed (possible transient network error, e.g. ECONNRESET fetching a GitHub tarball dependency), retrying in 15s..."
+              sleep 15
+            done
 
             echo "🔧 Running nuxi prepare..."
             npx nuxi prepare
@@ -2559,7 +2572,20 @@ jobs:
                 fi
                 cd "$NUXT_DIR"
                 echo "running" > /tmp/vitest-result
-                npm ci --prefer-offline --no-audit
+                # package.json pulls cordova-plugin-calendar straight from a GitHub tarball
+                # URL rather than the npm registry, so npm's own --fetch-retries (registry
+                # fetches only) does not cover it — an ECONNRESET there aborts npm ci outright.
+                # Retry at the shell level, same pattern as the Nuxt docker-build retry above.
+                for attempt in 1 2 3; do
+                  npm ci --prefer-offline --no-audit && break
+                  if [ $attempt -eq 3 ]; then
+                    echo "fail" > /tmp/vitest-result
+                    echo "❌ npm ci failed after 3 attempts"
+                    exit 1
+                  fi
+                  echo "⚠️ npm ci attempt $attempt failed (possible transient network error, e.g. ECONNRESET fetching a GitHub tarball dependency), retrying in 15s..."
+                  sleep 15
+                done
                 npx nuxi prepare
                 npm run test:unit:run -- --reporter=verbose --coverage 2>&1 | tee /tmp/vitest-output.log
                 EXIT_CODE=${PIPESTATUS[0]}

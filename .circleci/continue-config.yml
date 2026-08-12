@@ -49,7 +49,15 @@ orbs:
   # and downloads anyway; it now also falls back to the gradle-deps cache that
   # build-android-debug/-dev keep warm from master, which already contains the
   # unpacked distribution.
-  freegle: freegle/tests@1.1.375
+  #
+  # 1.1.377 retries `npm ci` in run-vitest-tests. package.json resolves
+  # cordova-plugin-calendar to a GitHub tarball URL, not a registry package, so
+  # npm's own --fetch-retries (registry fetches only) never covers it. Pipeline
+  # #10740 job 31779 lost `npm ci` outright to one ECONNRESET fetching that
+  # tarball, which failed Vitest and reded the whole build-and-test check. Wrapped
+  # in the same 3-attempt/15s shell retry already used for the Nuxt docker-build
+  # ECONNRESET case above.
+  freegle: freegle/tests@1.1.377
 
 jobs:
   mark-ci-passed:
