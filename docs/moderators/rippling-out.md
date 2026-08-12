@@ -97,13 +97,33 @@ TrashNothing - wherever a member replies from outside the post's current reach, 
 is accepted and held rather than turned away. Chat Review shows you it is held because of
 rippling (not because you chose to hold it).
 
-You do not need to do anything - the reply releases itself. Every hold has a **due time**,
-worked out from how far the member is from the item: roughly a quarter of an hour plus a
-few minutes per mile, so a typical held reply lands within the hour and none waits longer
-than three. If the post ripples out to that member before their time is up, it is released
-then instead. The wait exists to give closer people a head start, not to hold anybody back
-indefinitely - which matters, because most held repliers live somewhere the post would
-never have reached on its own.
+You do not need to do anything - the reply releases itself, either when the post ripples out
+far enough to cover that member, or when the post's reach stops growing (at which point every
+reply still waiting is let through rather than stranded).
+
+**How long that takes varies a great deal, and can be days.** Some holds are given a **due
+time** worked out from how far the member is from the item, and those land quickly. Most are
+not, and wait for the reach instead. Measured over a fortnight in August 2026, of the holds
+that were eventually delivered: about a third landed within an hour, about half within three
+hours, and the other half took longer - with an average of just over a day and a long tail
+running into weeks. So if a member asks why their reply went unanswered for two days, "it was
+held by rippling" is a real and likely answer.
+
+A hold can also end **without** the reply ever being delivered: if the item is taken while the
+reply is held, the reply is dropped and the replier is told the item has gone. The owner never
+sees it.
+
+Chat Review tells you which of these happened, and how long it took:
+
+| What you see | What it means |
+| --- | --- |
+| **Held: rippling out** (with how long it has been waiting) | Still waiting. It will go out on its own. |
+| **Delivered late** (with how long it was held) | It did arrive, but only after that delay. This is what to look for when someone reports a reply that seemed to be ignored - the delay is on our side, not theirs. |
+| **Never reached the recipient** | The item went, or the hold was abandoned, while the reply was held. The owner never saw it. |
+
+That last one matters for tone: neither person did anything wrong, and the replier may be
+upset with the owner for "ignoring" them. It is worth saying plainly that our system held the
+message.
 
 The member who sent it sees their own message marked as "waiting to send"; the owner is not
 shown it until it is released.

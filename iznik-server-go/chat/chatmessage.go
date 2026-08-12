@@ -59,12 +59,23 @@ type ChatMessage struct {
 	// this GORM adds it to every chat_messages INSERT, which fails outright on a database
 	// that has the code but not yet the migration.
 	Processingfailreason *string `json:"processingfailreason,omitempty" gorm:"->"`
-	// HeldByRippling is true when this message is held by the rippling reply-hold engine
-	// (a non-released row exists in rippling_held_replies). Populated for moderators (any
+	// HeldByRippling is true when this message is CURRENTLY held by the rippling reply-hold
+	// engine (a rippling_held_replies row with status='held'). Populated for moderators (any
 	// message) and for a normal caller on their OWN held reply, so the sender can show a
 	// "waiting to send" indicator. It is NOT set on the poster's view (the delivery gate
 	// removes held replies from their fetch entirely).
+	//
+	// Only 'held' counts. 'taken-gone' and 'dropped' are terminal - the reply was never
+	// delivered and never will be - so treating them as "held" told a moderator (and the
+	// sender) that delivery was still coming when it was not. Use RipplingHold to tell the
+	// terminal states apart.
 	HeldByRippling bool `json:"heldbyrippling,omitempty" gorm:"-"`
+	// RipplingHold is the rippling reply-hold row in whatever state it reached, including one
+	// already released or abandoned. Moderators only. HeldByRippling covers a live hold only,
+	// so once a hold released it went false and the delay left no trace anywhere in ModTools -
+	// which is how a 47-hour rippling hold came to be reported as a mail-system fault
+	// (Discourse 10025). Absent when the message was never held.
+	RipplingHold *RipplingHold `json:"ripplinghold,omitempty" gorm:"-"`
 	// Prompt is the answerable part of a type='Prompt' message - the tappable
 	// options, and the answer once one is chosen. Nil on every other message
 	// type, which is nearly all of them, so it costs an omitted field rather
@@ -79,6 +90,26 @@ type ChatMessage struct {
 	Replysource *string `json:"replysource" gorm:"-"`
 	Archived    int     `json:"-" gorm:"-"`
 	Deleted     bool    `json:"-"`
+}
+
+// RipplingHold describes what the rippling reply-hold engine did to a chat message, so a
+// moderator investigating "they say they never got my reply" can see whether it was delayed,
+// how long for, and whether it ever arrived at all.
+type RipplingHold struct {
+	// Status is rippling_held_replies.status verbatim: held | released | dropped | taken-gone.
+	Status string `json:"status"`
+	// Heldat is when the hold was placed, i.e. when the reply was written.
+	Heldat time.Time `json:"heldat"`
+	// Releasedat is when the hold ended, whatever the ending. Nil while still held.
+	Releasedat *time.Time `json:"releasedat,omitempty"`
+	// Heldminutes is how long the reply was undelivered: Heldat to Releasedat, or Heldat to now
+	// for a live hold. Computed server-side so a still-open hold does not depend on the
+	// client's clock, and so the client need not know that a NULL releasedat means "until now".
+	Heldminutes int64 `json:"heldminutes"`
+	// Delivered is true only for 'released'. 'taken-gone' (the item went while the reply was
+	// held) and 'dropped' never reached the recipient and never will, so the UI must not offer
+	// to wait for them.
+	Delivered bool `json:"delivered"`
 }
 
 // We need a separate struct for the query so that we can return image info in a single query.  If we put the
@@ -257,20 +288,49 @@ func FetchChatMessages(chatID, userID uint64, limit int, excludeID uint64, desce
 			idxByID[m.ID] = ix
 		}
 		type ripplingHeld struct {
-			Chatmsgid uint64 `gorm:"column:chatmsgid"`
+			Chatmsgid   uint64     `gorm:"column:chatmsgid"`
+			Status      string     `gorm:"column:status"`
+			CreatedAt   time.Time  `gorm:"column:created_at"`
+			Releasedat  *time.Time `gorm:"column:releasedat"`
+			Heldminutes int64      `gorm:"column:heldminutes"`
 		}
+		// Every status, not just the live ones: a released or abandoned hold is exactly what a
+		// moderator needs to see when a member reports a reply that arrived days late or never.
+		// Heldminutes is computed in SQL against the DB clock (COALESCE(releasedat, NOW()) so a
+		// live hold measures up to now), keeping it consistent with created_at/releasedat rather
+		// than mixing in the API host's clock.
+		//
 		// msgIDs is bound directly
 		// as a []uint64 slice rather than formatted as decimal text and
 		// joined into the SQL string.
 		var held []ripplingHeld
 		db.Table("rippling_held_replies").
-			Select("chatmsgid").
-			Where("chatmsgid IN ? AND status <> 'released'", msgIDs).
+			Select("chatmsgid, status, created_at, releasedat, "+
+				"TIMESTAMPDIFF(MINUTE, created_at, COALESCE(releasedat, NOW())) AS heldminutes").
+			Where("chatmsgid IN ?", msgIDs).
 			Scan(&held)
 		for _, h := range held {
-			if ix, ok := idxByID[h.Chatmsgid]; ok {
-				if modAccess || messages[ix].Userid == userID {
-					messages[ix].HeldByRippling = true
+			ix, ok := idxByID[h.Chatmsgid]
+			if !ok {
+				continue
+			}
+			// Only a live hold is "held" - see HeldByRippling.
+			if h.Status == "held" && (modAccess || messages[ix].Userid == userID) {
+				messages[ix].HeldByRippling = true
+			}
+			// The detail is a moderation tool. Members are deliberately not told their own
+			// reply is being held (see the notice in ChatMessage.vue), so it stays mod-only.
+			if modAccess {
+				mins := h.Heldminutes
+				if mins < 0 {
+					mins = 0
+				}
+				messages[ix].RipplingHold = &RipplingHold{
+					Status:      h.Status,
+					Heldat:      h.CreatedAt,
+					Releasedat:  h.Releasedat,
+					Heldminutes: mins,
+					Delivered:   h.Status == "released",
 				}
 			}
 		}

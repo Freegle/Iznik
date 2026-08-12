@@ -479,4 +479,92 @@ describe('ChatMessage', () => {
       expect(wrapper.find('.chat-message-warning').exists()).toBe(false)
     })
   })
+
+  // ripplinghold is only ever sent to moderators, so these badges are inherently mod-only.
+  // Without the ended states, a reply that was delayed for days - or binned undelivered -
+  // looks identical to an ordinary one when a mod reads the thread.
+  describe('rippling hold badges', () => {
+    async function withHold(hold, extra = {}) {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, ...extra, ripplinghold: hold }),
+      })
+      return await createWrapper()
+    }
+
+    it('shows how long a live hold has been waiting', async () => {
+      const wrapper = await withHold(
+        { status: 'held', heldminutes: 180, delivered: false },
+        { heldbyrippling: true }
+      )
+      const badge = wrapper.find('[data-testid="rippling-held-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('Held: rippling out')
+      expect(badge.text()).toContain('3 hours')
+    })
+
+    it('still hides the live-hold badge from the sender themselves', async () => {
+      // myid is 1 in this spec, so a message from userid 1 is the viewer's own.
+      const wrapper = await withHold(
+        { status: 'held', heldminutes: 180, delivered: false },
+        { heldbyrippling: true, userid: 1 }
+      )
+      expect(wrapper.find('[data-testid="rippling-held-badge"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('reports a delay that already happened', async () => {
+      const wrapper = await withHold({
+        status: 'released',
+        heldminutes: 2812,
+        delivered: true,
+      })
+      const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('Delivered late')
+      expect(badge.text()).toContain('46 hours')
+      // Not still waiting.
+      expect(wrapper.find('[data-testid="rippling-held-badge"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('says never delivered when the item went while held', async () => {
+      const wrapper = await withHold({
+        status: 'taken-gone',
+        heldminutes: 2812,
+        delivered: false,
+      })
+      const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('Never delivered')
+      expect(badge.text()).toContain('item went')
+      expect(badge.text()).toContain('46 hours')
+    })
+
+    it('says never delivered when the hold was dropped', async () => {
+      const wrapper = await withHold({
+        status: 'dropped',
+        heldminutes: 300,
+        delivered: false,
+      })
+      const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('Never delivered')
+      expect(badge.text()).toContain('5 hours')
+    })
+
+    it('shows no hold badge at all on an ordinary message', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('[data-testid="rippling-held-badge"]').exists()).toBe(
+        false
+      )
+      expect(
+        wrapper.find('[data-testid="rippling-ended-badge"]').exists()
+      ).toBe(false)
+    })
+  })
 })
