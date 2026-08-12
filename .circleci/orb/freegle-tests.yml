@@ -4217,6 +4217,20 @@ jobs:
       - run:
           name: Make gradlew executable
           command: chmod +x android/gradlew
+      # Without this the wrapper fetches the whole ~200MB Gradle distribution
+      # from services.gradle.org on every single Android build, so each release
+      # depends on that host holding the connection open for the length of the
+      # download.  Pipeline #10729 (production 4140acbb3) died on
+      # "java.net.SocketException: Connection reset" partway through
+      # gradle-8.11.1-all.zip: bundleRelease failed, and that production commit
+      # got no Play beta artifact at all while its iOS half built fine.
+      #
+      # A distribution is immutable for a given version, so key on the wrapper
+      # properties that name it and take no fallback - a version bump must
+      # fetch fresh rather than restore the previous zip.
+      - restore_cache:
+          keys:
+            - gradle-dist-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}
       - restore_cache:
           keys:
             - bundle-v1-{{ checksum "Gemfile.lock" }}
@@ -4229,6 +4243,13 @@ jobs:
       - run:
           name: Build and Deploy to Google Play Beta Track
           command: bundle exec fastlane android beta
+      # After the build, so we only ever cache a distribution Gradle actually
+      # unpacked and ran.  A half-downloaded zip saved from a failed build would
+      # poison every later one.
+      - save_cache:
+          key: gradle-dist-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}
+          paths:
+            - ~/.gradle/wrapper/dists
       - run:
           name: Update CircleCI Version Variable
           command: |
