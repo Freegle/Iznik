@@ -1007,9 +1007,11 @@ describe('compose store', () => {
       expect(mockJoinAndPost).not.toHaveBeenCalled()
       expect(mockImagePost).not.toHaveBeenCalled()
 
-      // Options threaded through: deadline normalised to ISO, delivery passed on.
+      // Options threaded through: deadline sent as a plain date (messages.deadline
+      // is a DATE column - an ISO datetime gets rejected under strict sql_mode,
+      // see Discourse #9481), delivery passed on.
       const payload = mockMessageSubmit.mock.calls[0][0]
-      expect(payload.deadline).toBe(new Date('2026-07-01').toISOString())
+      expect(payload.deadline).toBe('2026-07-01')
       expect(payload.deliverypossible).toBe(true)
       expect(payload.attachments).toEqual([{ externaluid: 'uid-a' }])
 
@@ -1315,8 +1317,7 @@ describe('compose store', () => {
       const store = useComposeStore()
       store.init({ public: {} })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      mockMessagePut.mockResolvedValue({ id: 77 })
-      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockMessageSubmit.mockResolvedValue({ id: 77, groupid: 10 })
 
       store.setEmail('test@a.com')
       store.setPostcode({
@@ -1335,12 +1336,14 @@ describe('compose store', () => {
 
       // messages.deadline is a DATE column: under strict sql_mode MySQL
       // rejects an ISO datetime ("2026-09-03T00:00:00.000Z") outright, and
-      // the give-flow deadline was silently lost (Discourse #9481).
-      expect(mockJoinAndPost).toHaveBeenCalledWith(
-        77,
-        'test@a.com',
-        expect.objectContaining({ deadline: '2026-09-03' })
+      // the give-flow deadline was silently lost (Discourse #9481). A new
+      // (non-repost) post now goes through the single-call submit, not
+      // joinAndPost, but the same plain-date truncation still applies.
+      expect(mockMessageSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ deadline: '2026-09-03' }),
+        expect.any(Function)
       )
+      expect(mockJoinAndPost).not.toHaveBeenCalled()
       logSpy.mockRestore()
     })
   })

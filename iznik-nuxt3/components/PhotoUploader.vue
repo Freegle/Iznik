@@ -703,7 +703,7 @@ function closeUppyModal() {
 }
 
 // Handle Uppy upload success
-async function handleUppySuccess(result) {
+function handleUppySuccess(result) {
   if (!result.successful) return
 
   for (const r of result.successful) {

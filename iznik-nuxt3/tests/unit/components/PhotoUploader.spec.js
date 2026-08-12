@@ -1565,9 +1565,7 @@ describe('PhotoUploader', () => {
       // The web/Uppy upload path (handleUppySuccess) must filter out AI-generated
       // photos after a real upload, just like the mobile uploadPhoto path.
       createWrapper({
-        modelValue: [
-          { ouruid: 'ai-uid-1', externalmods: { ai: true } },
-        ],
+        modelValue: [{ ouruid: 'ai-uid-1', externalmods: { ai: true } }],
       })
       await flushPromises()
 
@@ -1854,9 +1852,7 @@ describe('PhotoUploader', () => {
       await flushPromises()
 
       expect(wrapper.vm.photos[0].uploading).toBe(false)
-      expect(wrapper.vm.photos[0].ouruid).toBe(
-        'freegletusd-abc123'
-      )
+      expect(wrapper.vm.photos[0].ouruid).toBe('freegletusd-abc123')
       expect(mockImageStore.post).not.toHaveBeenCalled()
     })
   })
