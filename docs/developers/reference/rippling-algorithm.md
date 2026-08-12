@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-11
+last_reviewed: 2026-08-12
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -287,6 +287,44 @@ so the animation you watch is the targeting decision at each step, not a geometr
 approximation of it. On by default; `RIPPLE_REACHABLE_GATE=false` is the killswitch, reverting
 targeting and retraction to the polygon-overlap test.
 
+### 4a. Communities that never ripple: phantom and training
+
+Some communities exist to hold moderator practice posts rather than real items, and their
+posts must not travel. That is a per-community switch in `groups.settings`, resolved by
+[`GroupRippleOptOut`](../../../iznik-batch/app/Services/Ripple/GroupRippleOptOut.php) and
+enforced by `ExpandService`:
+
+```json
+{ "rippling": { "out": 0, "in": 0 } }
+```
+
+- **`out` off** - a post made on the community never gets a `rippling_reach` row, so it is
+  never crossposted and never surfaces in anyone's nearby feed (both read paths hang off that
+  table). Enforced in `initialiseNew`, and unlike the arrival cutoff and the saturation stop it
+  applies to `--msgid` and area-scoped runs too: this is community policy, not a rollout guard.
+- **`in` off** - the community is never a crosspost target. Enforced in `rippleIntoNewGroups`.
+
+**Absent means on**, so every community ripples both ways unless it has been switched off, and
+anything unexpected in the value is read as on. That fail-safe direction is deliberate: wrongly
+on ripples a phantom post, which is visible and a moderator can reject the copy, whereas
+wrongly off would silently stop a real community rippling and nobody would notice for weeks.
+
+**Deliberately not a moderator setting.** Which communities are phantom is a central decision,
+so the only way to change it is `php artisan ripple:opt-out` (`--direction=out|in|both`,
+`--on` to switch back on, `--list`, `--dry-run`). Switching a direction back on removes the key
+rather than storing a truthy value.
+
+Switching `out` off also stops what is already in flight: `retractOptedOutCommunities` drops the
+reach row and pulls the copies already delivered, on the same footing as a post that has left
+the browsable set (§6). Without it, the deploy that first opts a training community out would
+leave every live practice post there expanding for the rest of its life.
+
+The older `nameshort NOT LIKE '%playground%'` test in the target query predates this and stays
+as belt-and-braces for a playground community created before anyone gives it the setting. It
+only ever covered ripple-in, and only communities named that way - `FreeglePlayground` places
+its practice posts at a real Edinburgh postcode, so before this change a practice post there
+crossposted into the live Lothians communities.
+
 ### Rejected targeting approaches
 
 - **Polygon overlap** (`ST_Intersects(group polygon, reach polygon)`). Inherits every raster
@@ -339,6 +377,8 @@ soft-deletes rippled-in copies no longer in reach, and removes the ripple-join m
 when the poster has no other live post there. A **held** reach (from a report or
 Back-to-Pending) is frozen: its copies persist for per-group moderation and are never
 retracted, so re-approval restores the copy without re-rippling.
+
+A community switching ripple-out off retracts the same way - see §4a.
 
 ## 7. Consumers of the reach
 
@@ -563,6 +603,9 @@ Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-d
   `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
   coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+
+Per-community rather than config: `groups.settings.rippling.{out,in}` switches rippling off for
+one community in either direction (§4a), set only via `php artisan ripple:opt-out`.
 
 ## 9. Data model
 

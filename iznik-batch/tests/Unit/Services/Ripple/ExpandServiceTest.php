@@ -9,6 +9,7 @@ use App\Models\MessageGroup;
 use App\Models\User;
 use App\Services\Ripple\ExpandService;
 use App\Services\Ripple\ReachService;
+use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -32,6 +33,7 @@ class ExpandServiceTest extends TestCase
         config(['freegle.ripple.active_end_hour' => 24]);
         // Disable the go-live arrival cutoff so fixtures with back-dated arrivals still ripple.
         config(['freegle.ripple.enabled_at' => '']);
+        DB::statement('DELETE FROM rippling_held_replies');
         DB::statement('DELETE FROM rippling_reach');
         DB::statement('DELETE FROM messages_spatial');
     }
@@ -1344,6 +1346,219 @@ class ExpandServiceTest extends TestCase
         $this->assertNull(
             DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $playgroundGroup->id)->first(),
             'playground group is never rippled into even when the reach covers it'
+        );
+    }
+
+    /**
+     * A community with settings.rippling.in = 0 is never a crosspost target, even when the
+     * reach fully covers its area. This is the mechanism the phantom and training communities
+     * use - the older `%playground%` name test only ever covered communities named that way.
+     */
+    public function test_community_that_has_switched_ripple_in_off_is_not_rippled_into(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $area = 'POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))';
+
+        // Opted out of ripple-IN, area fully inside the reach.
+        $optedOut = $this->createTestGroup();
+        DB::statement(
+            'UPDATE `groups` SET publish = 1, settings = ?, polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            ['{"rippling": {"in": 0}}', $area, $optedOut->id]
+        );
+
+        // Control: same area, no setting — proves the reach really does cover it.
+        $normalGroup = $this->createTestGroup();
+        DB::statement(
+            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            [$area, $normalGroup->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $normalGroup->id)->first(),
+            'a community with no setting within reach is still rippled into'
+        );
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in']);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $optedOut->id)->first(),
+            'a community with rippling.in = 0 is never rippled into, however well the reach covers it'
+        );
+    }
+
+    /**
+     * A post on a community with settings.rippling.out = 0 never gets a reach row, so it is
+     * never crossposted AND never surfaces in another member's nearby feed (both read paths
+     * hang off rippling_reach). This is the half that had no gate at all before: a
+     * FreeglePlayground practice post is placed at a real Edinburgh postcode, so without it a
+     * practice post crossposts into the live Lothians communities.
+     */
+    public function test_post_on_a_community_that_has_switched_ripple_out_off_never_starts_rippling(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // Switch ripple-out off on the post's own community, after the post was seeded.
+        $originGid = (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid');
+        DB::table('groups')->where('id', $originGid)->update(['settings' => '{"rippling": {"out": 0}}']);
+
+        // A neighbouring community whose area the reach would otherwise cover.
+        $neighbour = $this->createTestGroup();
+        DB::statement(
+            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', $neighbour->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['initialized'], 'no reach is computed for a post that must not ripple out');
+        $this->assertNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->first(),
+            'no reach row, so no reach-driven read path can surface the post'
+        );
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $neighbour->id)->first(),
+            'the post is not crossposted anywhere'
+        );
+    }
+
+    /**
+     * An explicit single-post run (--msgid) bypasses the arrival cutoff and the saturation stop,
+     * because those are rollout guards. The opt-out is a community-level policy, not a rollout
+     * guard, so it still applies - otherwise a practice post could be rippled by hand.
+     */
+    public function test_ripple_out_opt_out_also_applies_to_a_single_post_run(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+        $originGid = (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid');
+        DB::table('groups')->where('id', $originGid)->update(['settings' => '{"rippling": {"out": 0}}']);
+
+        $stats = $this->service()->process(false, 500, $msgid);
+
+        $this->assertSame(0, $stats['initialized']);
+        $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
+    }
+
+    /**
+     * A post whose community has no setting still ripples: the regression guard for the whole
+     * feature, since an absent setting must mean "on" for every community on the network.
+     */
+    public function test_post_on_a_community_with_no_setting_still_ripples_out(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(1, $stats['initialized'], 'the default is unchanged: communities ripple');
+        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
+    }
+
+    /**
+     * Switching ripple-out off must also stop what is ALREADY rippling: the reach row is dropped
+     * and the copies already delivered are pulled. Without this the deploy that first opts a
+     * training community out would leave every live practice post there expanding for the rest
+     * of its life, and the copies already crossposted would stay on the real communities.
+     */
+    public function test_switching_ripple_out_off_retracts_a_post_already_rippling(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $neighbour = $this->createTestGroup();
+        DB::statement(
+            'UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', $neighbour->id]
+        );
+
+        // First run: the post ripples normally and lands on the neighbour.
+        $this->service()->process(false, 500);
+        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
+        $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $neighbour->id)->first();
+        $this->assertNotNull($copy, 'precondition: the post rippled into the neighbour');
+        $this->assertSame(0, (int) $copy->deleted);
+
+        // Now the community switches ripple-out off, as ripple:opt-out would.
+        $originGid = (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid');
+        DB::table('groups')->where('id', $originGid)->update(['settings' => '{"rippling": {"out": 0}}']);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->first(),
+            'the reach row is dropped, so the post stops expanding and leaves every reach-driven feed'
+        );
+        $this->assertSame(
+            1,
+            (int) DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $neighbour->id)->value('deleted'),
+            'the copy already delivered to the neighbour is pulled'
+        );
+        $this->assertGreaterThanOrEqual(1, $stats['removed']);
+    }
+
+    /**
+     * Dropping the reach row must not strand the people already waiting on it. A held reply is
+     * a real reply the offerer has not been shown yet; with no reach row, ripple:release-replies
+     * takes its "transiently absent, wait for re-initialisation" branch, and initialiseNew will
+     * never re-create the row for an opted-out community - so the reply would be held for ever.
+     */
+    public function test_switching_ripple_out_off_releases_replies_still_held_on_that_post(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        // The post ripples first, so there is a reach row for a reply to be held against.
+        $this->service()->process(false, 500);
+        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
+
+        // A reply from well outside the reach, held pending the ripple reaching them.
+        $replier = $this->createTestUser();
+        $other = $this->createTestUser();
+        $room = $this->createTestChatRoom($replier, $other);
+        $chatmsg = $this->createTestChatMessage($room, $replier);
+        $heldId = app(RippleReplyService::class)
+            ->hold($room->id, $chatmsg->id, $msgid, $replier->id, 53.4, -2.2);
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $heldId)->value('status'));
+
+        // The community switches ripple-out off.
+        $originGid = (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid');
+        DB::table('groups')->where('id', $originGid)->update(['settings' => '{"rippling": {"out": 0}}']);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(
+            'released',
+            DB::table('rippling_held_replies')->where('id', $heldId)->value('status'),
+            'a reply held against the dropped reach is released to the offerer, not stranded'
+        );
+        $this->assertSame(1, $stats['released_on_opt_out'] ?? 0);
+    }
+
+    /**
+     * The retraction is scoped to the opted-out community: a post on a community that still
+     * ripples keeps its reach and its copies when some OTHER community opts out.
+     */
+    public function test_retraction_leaves_posts_on_other_communities_alone(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $this->service()->process(false, 500);
+        $this->assertNotNull(DB::table('rippling_reach')->where('msgid', $msgid)->first());
+
+        // An unrelated community opts out.
+        $other = $this->createTestGroup();
+        DB::table('groups')->where('id', $other->id)->update(['settings' => '{"rippling": {"out": 0}}']);
+
+        $this->service()->process(false, 500);
+
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->first(),
+            'a post on a community that still ripples is untouched by another community opting out'
         );
     }
 
