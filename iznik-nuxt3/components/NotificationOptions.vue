@@ -37,7 +37,7 @@
         <b-button
           variant="white"
           size="sm"
-          class="notification-list__mark-read"
+          class="btn-mark-read"
           @click="markAllRead"
         >
           Mark all read
@@ -156,13 +156,6 @@ const showAboutMe = () => {
 @import 'bootstrap/scss/functions';
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
-@import 'assets/css/_color-vars.scss';
-
-/* Match the red "Mark read" treatment used in chat (see ChatPane). */
-.notification-list__mark-read {
-  border: 1px solid $color-red !important;
-  color: $color-red !important;
-}
 
 .notification-badge {
   position: absolute;
