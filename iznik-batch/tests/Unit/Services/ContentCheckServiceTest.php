@@ -850,6 +850,28 @@ class ContentCheckServiceTest extends TestCase
         $this->assertSame(ContentCheckService::CHECK_CONCERN_KEYWORD, $result['check']);
     }
 
+    // Regression test for Discourse #10024: a regex-mode concern keyword must
+    // report the text it actually matched in the post, not the raw pattern -
+    // a moderator reading "Matched concern keyword 'crack\s+cocaine'" has no
+    // idea what in the post triggered it.
+    public function test_check_concern_keywords_regex_match_reports_matched_text_not_pattern(): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'crack\s+cocaine',
+            'category'   => 'substance_regulated',
+            'match_mode' => 'regex',
+            'scope'      => 'global',
+            'group_id'   => 0,
+            'action'     => 'block',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('', 'selling crack cocaine cheap', 1);
+        $this->assertNotNull($result);
+        $this->assertSame('crack cocaine', $result['keyword'], 'keyword should be the matched text, not the regex pattern');
+        $this->assertSame("Matched concern keyword 'crack cocaine'", $result['detail']);
+        $this->assertStringNotContainsString('\s+', $result['detail'], 'detail must not leak the raw regex pattern');
+    }
+
     public function test_check_concern_keywords_exclude_pattern_skips(): void
     {
         DB::table('concern_keywords')->insert([
