@@ -372,7 +372,7 @@ class MatchMailServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertSame([], $this->scoutsFor((int) $message->id),
+        $this->assertSame([], $this->mailedFor((int) $message->id),
             'no scouts for an unreviewed post while the earned-reach gate is on');
     }
 
@@ -386,7 +386,7 @@ class MatchMailServiceTest extends TestCase
 
         $this->service()->run();
 
-        $this->assertArrayHasKey($wanter->id, $this->scoutsFor((int) $message->id),
+        $this->assertArrayHasKey($wanter->id, $this->mailedFor((int) $message->id),
             'a mod look clears the gate and scouting resumes');
     }
 
