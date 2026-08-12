@@ -109,10 +109,41 @@ test.describe('Profile page (/profile/[id])', () => {
       const auth = JSON.parse(localStorage.getItem('auth') || '{}')
       return auth?.auth?.jwt
     })
-    await page.request.post(`${API_V2}/message`, {
-      data: { id: result.id, action: 'Approve' },
+
+    // A freshly posted message may still be in an intermediate state where its
+    // messages_groups row isn't visible yet - poll until it is, and approve on
+    // that actual groupid. Omitting/mis-timing this leaves the Approve call
+    // matching zero groups, so it silently no-ops and the message stays Pending
+    // forever (see the identical workaround in test-modtools-edits-flow.spec.js).
+    let actualGroupId = null
+    await expect
+      .poll(
+        async () => {
+          const resp = await page.request.get(
+            `${API_V2}/message/${result.id}`,
+            { headers: { Authorization: modJwt } }
+          )
+          const msgData = await resp.json()
+          actualGroupId = msgData?.groups?.[0]?.groupid ?? null
+          return actualGroupId !== null
+        },
+        {
+          message: 'Waiting for message to have groups populated',
+          timeout: timeouts.api.slowApi,
+          intervals: [500, 500, 1000, 1000, 2000],
+        }
+      )
+      .toBe(true)
+
+    const approveResp = await page.request.post(`${API_V2}/message`, {
+      data: {
+        id: Number(result.id),
+        action: 'Approve',
+        groupid: Number(actualGroupId),
+      },
       headers: { Authorization: modJwt },
     })
+    expect(approveResp.ok()).toBeTruthy()
     await logoutIfLoggedIn(page)
 
     const viewerEmail = getTestEmail('profileviewer')
