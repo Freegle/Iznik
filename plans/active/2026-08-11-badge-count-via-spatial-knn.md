@@ -149,3 +149,24 @@ db1/2/3 at :8194, co-located with apiv2) and serve point-in-reach from RAM:
   their exact-test residue is larger; option = finer grid for small
   polygons, or skip rasterising polygons under ~N cells and mark all-partial
   (they're cheap to exact-test anyway). Parity harness is the check.
+- 2026-08-11 (later still): the `in` bucket had no rippling_reach reference at
+  all, so it counted posts the FEED excludes. Only the count uses the raster; the
+  feed is always reachCandidateQuery with its unconditional `rr.status != 'held'`,
+  so any status the two disagree about shows a member "N new posts" above
+  "you're up to date" with nothing in between. Fixed: both buckets now require a
+  live, non-held reach row via EXISTS (one PK lookup per id; the `in` bucket still
+  skips the geometry, which is the whole point of the raster). Deleted rows drop out
+  too, so the SQL side no longer relies on reconcile() alone for hard deletes.
+  Tests added to TestNearbyCountSpatialReach: fresh-hold on an `in` id, and an
+  `in` id whose reach row has gone. NOTE this is now a LIVE defect, not a
+  pre-rollout one: the mode went on everywhere the same evening. The 6/6 parity
+  harness would not have caught it - it compares counts at a moment, while this
+  window only opens for the ~2 minutes after a hold, so a spot-check almost always
+  lands outside it.
+- KNOWN RESIDUAL, now live: a polygon that SHRINKS (retraction, trimming) is only
+  picked up on the next delta, so for up to ~2 minutes an `in` id can claim
+  containment the feed's ST_Contains would refuse. Not closed, deliberately: testing
+  containment for `in` ids is exactly the geometry cost the raster exists to avoid,
+  and it is what the 12-20 -> 4-8 db3 load drop bought. Status and existence are
+  cheap and are checked; containment is not. To detect it, the parity harness needs
+  to sample DURING a reach change rather than at rest.

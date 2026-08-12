@@ -563,6 +563,28 @@ func TestNearbyCountSpatialReach(t *testing.T) {
 		"a freshly-held partial id is re-checked in SQL and excluded")
 	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", boundary)
 
+	// The same must hold for a definite `in` id. The raster is rebuilt on a 2-minute
+	// delta (iznik-spatial-go dataset_reach.go DeltaInterval), so for up to that long
+	// after a member report or a moderator's Back to Pending the index still says the
+	// post covers this viewer. The FEED excludes it immediately - reachCandidateQuery
+	// always joins rippling_reach and tests rr.status != 'held' - so without the same
+	// re-check here the badge counts a post the feed will not show, which is exactly
+	// the "N new posts" / "you're up to date" mismatch members report.
+	db.Exec("UPDATE rippling_reach SET status = 'held' WHERE msgid = ?", covered)
+	assert.Equal(t, float64(1), countOf(),
+		"a freshly-held in-list id is re-checked in SQL and excluded, like a partial one")
+	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", covered)
+
+	// And a reach row that has gone entirely (retraction) must not leave the id
+	// countable either - the in-list disjunct has to require a live reach row, not
+	// merely the absence of a held one.
+	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", covered)
+	assert.Equal(t, float64(1), countOf(),
+		"an in-list id whose reach row has gone is not counted")
+	// Put it back: the fallback assertions below expect both posts in reach again.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		coveringPoly+", ST_Envelope("+coveringPoly+"), 'expanding')", covered)
+
 	// Spatial down: transparent fallback to the SQL containment path, same answer.
 	stub.Close()
 	assert.Equal(t, float64(2), countOf(),
