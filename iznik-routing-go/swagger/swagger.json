@@ -8,7 +8,7 @@
   "swagger": "2.0",
   "info": {
     "description": "A routing and isochrone service for finding reachable areas from a given\nlocation using walk, cycle, and drive travel modes based on OpenStreetMap data.",
-    "title": "Freegle Routing & Isochrone API",
+    "title": "Freegle Routing \u0026 Isochrone API",
     "version": "1.0.0"
   },
   "basePath": "/",
@@ -168,6 +168,71 @@
             "format": "double",
             "description": "Budget decay rate (default 25)",
             "name": "budget_decay",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/routingGenericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/routingErrorResponse"
+          }
+        }
+      }
+    },
+    "/v1/drive-time": {
+      "get": {
+        "description": "The road time from (lat, lng) to (tolat, tolng), as a single number of\nminutes. Used to answer \"when will this post's reach expand to cover me\":\nthe site compares the member's drive time from the post's origin against\nthe drive-time budget stored on each tick of the post's reach schedule.\nReturns {reachable:false} when no path exists within max_minutes, which is\na real answer rather than an error.",
+        "tags": [
+          "routing"
+        ],
+        "summary": "Road drive-time between two points",
+        "operationId": "getDriveTime",
+        "parameters": [
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude of the origin point",
+            "name": "lat",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude of the origin point",
+            "name": "lng",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude of the destination point",
+            "name": "tolat",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude of the destination point",
+            "name": "tolng",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Maximum drive-time to consider in minutes (default 60, max 120)",
+            "name": "max_minutes",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Travel mode (walk, cycle, drive; default drive)",
+            "name": "mode",
             "in": "query"
           }
         ],
@@ -637,7 +702,7 @@
           },
           {
             "type": "integer",
-            "description": "Stage-A audience-budget cap; when >0 limits the schedule to the N nearest freeglers (default 0 = no cap)",
+            "description": "Stage-A audience-budget cap; when \u003e0 limits the schedule to the N nearest freeglers (default 0 = no cap)",
             "name": "target_users",
             "in": "query"
           }

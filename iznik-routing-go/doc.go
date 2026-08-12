@@ -227,6 +227,59 @@ package main
 //	400: routingErrorResponse
 //	404: routingErrorResponse
 
+// swagger:route GET /v1/drive-time routing getDriveTime
+//
+// Road drive-time between two points
+//
+// The road time from (lat, lng) to (tolat, tolng), as a single number of
+// minutes. Used to answer "when will this post's reach expand to cover me":
+// the site compares the member's drive time from the post's origin against
+// the drive-time budget stored on each tick of the post's reach schedule.
+// Returns {reachable:false} when no path exists within max_minutes, which is
+// a real answer rather than an error.
+//
+// Parameters:
+//   + name: lat
+//     in: query
+//     description: Latitude of the origin point
+//     required: true
+//     type: number
+//     format: double
+//   + name: lng
+//     in: query
+//     description: Longitude of the origin point
+//     required: true
+//     type: number
+//     format: double
+//   + name: tolat
+//     in: query
+//     description: Latitude of the destination point
+//     required: true
+//     type: number
+//     format: double
+//   + name: tolng
+//     in: query
+//     description: Longitude of the destination point
+//     required: true
+//     type: number
+//     format: double
+//   + name: max_minutes
+//     in: query
+//     description: Maximum drive-time to consider in minutes (default 60, max 120)
+//     required: false
+//     type: number
+//     format: double
+//   + name: mode
+//     in: query
+//     description: Travel mode (walk, cycle, drive; default drive)
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: routingGenericResponse
+//	400: routingErrorResponse
+
 // swagger:route GET /v1/group-extent routing getGroupExtent
 //
 // Group road diameter

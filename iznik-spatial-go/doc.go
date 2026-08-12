@@ -74,6 +74,45 @@ package main
 //	500: errorResponse
 //	503: errorResponse
 
+// swagger:route GET /v1/{dataset}/containing spatial containingQuery
+//
+// Point containment query
+//
+// Returns every item in the dataset whose geometry contains the given point.
+// Only datasets implementing PointContainer (currently reach) support it.
+// `in` are items the point is definitely inside; `partial` items sit in the
+// boundary band of a rasterised geometry and the caller must resolve them
+// against the exact source geometry to be sure.
+// Response: {"in": [int64...], "partial": [int64...]}
+//
+// Parameters:
+//   + name: dataset
+//     in: path
+//     description: Dataset name (must implement PointContainer, e.g. reach)
+//     required: true
+//     type: string
+//   + name: lng
+//     in: query
+//     description: Longitude of query point
+//     required: true
+//     type: number
+//     format: double
+//   + name: lat
+//     in: query
+//     description: Latitude of query point
+//     required: true
+//     type: number
+//     format: double
+//
+// Responses:
+//
+//	200: genericResponse
+//	400: errorResponse
+//	404: errorResponse
+//	500: errorResponse
+//	501: errorResponse
+//	503: errorResponse
+
 // swagger:route POST /v1/{dataset}/within_coords spatial withinCoordsPost
 //
 // Within polygon — return items with coordinates (POST)
