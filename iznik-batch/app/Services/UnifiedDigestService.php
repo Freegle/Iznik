@@ -1854,6 +1854,10 @@ class UnifiedDigestService
      * memoised per author id so repeated posts by the same freegler — across
      * recipients and groups within a run — cost a single lookup. Absent author or
      * absent/sentinel setting resolves to DISTANCE_UNLIMITED (no outbound cap).
+     *
+     * Uses authorMaxDistanceMiles, NOT maxDistanceMiles: the latter falls back to the
+     * member's density band default, which describes how far THEY would travel to collect
+     * and must never become a cap on how far their own posts may go.
      */
     private array $authorMaxMilesCache = [];
 
@@ -1862,7 +1866,7 @@ class UnifiedDigestService
         if (!array_key_exists($fromuser, $this->authorMaxMilesCache)) {
             $author = User::select('id', 'settings')->find($fromuser);
             $this->authorMaxMilesCache[$fromuser] = $author
-                ? app(DistancePreferenceFilter::class)->maxDistanceMiles($author)
+                ? app(DistancePreferenceFilter::class)->authorMaxDistanceMiles($author)
                 : (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
         }
 

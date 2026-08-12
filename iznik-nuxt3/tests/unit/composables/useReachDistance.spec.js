@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
-import { BROWSE_DISTANCE_UNLIMITED, BROWSE_MINUTES_MAX } from '~/constants'
+import {
+  BROWSE_DISTANCE_UNLIMITED,
+  BROWSE_MINUTES_MAX,
+  BROWSE_MINUTES_FALLBACK_MAX,
+} from '~/constants'
 
 // The slider persists BOTH settings.browseMaxMinutes (source of truth) and
 // settings.browseMaxDistance (the derived radius the fast feed/digest filters
@@ -79,14 +83,198 @@ describe('useReachDistance onSliderChange', () => {
     expect(mockFetchNear).not.toHaveBeenCalled()
   })
 
-  it('stores the unlimited sentinel at the far-right stop without a routing call', async () => {
+  // Before the server has answered, the member is on the flat cap - which is BELOW the
+  // ceiling the ripple grows to, so the top stop has to be a real radius. Storing the
+  // sentinel here would hand an unmeasured member the widest band's reach.
+  it('derives a radius at the far-right stop while still on the flat cap', async () => {
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 11.3 })
     const { onSliderChange } = useReachDistance()
 
-    await onSliderChange(BROWSE_MINUTES_MAX)
+    await onSliderChange(BROWSE_MINUTES_FALLBACK_MAX)
 
     const saved = mockSaveAndGet.mock.calls[0][0].settings
-    expect(saved.browseMaxMinutes).toBe(BROWSE_MINUTES_MAX)
+    expect(saved.browseMaxMinutes).toBe(BROWSE_MINUTES_FALLBACK_MAX)
+    expect(saved.browseMaxDistance).toBe(11.3)
+  })
+})
+
+// The reach engine sizes a post's travel-time budget from local freegler density
+// (20 dense / 30 medium / 45 sparse), so the top of the slider has to follow the
+// member's own band. A fixed top left rural members unable to ask for the 45
+// minutes they now actually receive, and told them "Max 10-12 miles by road"
+// while the reach engine was already carrying posts further.
+describe('useReachDistance density-aware maximum', () => {
+  let useReachDistance
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockMe.value = {
+      lat: 53.4,
+      lng: -1.3,
+      settings: { browseMaxMinutes: 15, browseMaxDistance: 6 },
+    }
+    const mod = await import('~/composables/useReachDistance')
+    useReachDistance = mod.useReachDistance
+  })
+
+  it('uses the flat cap until the server answers', () => {
+    const { maxMinutes } = useReachDistance()
+
+    expect(maxMinutes.value).toBe(BROWSE_MINUTES_FALLBACK_MAX)
+  })
+
+  it('opens up to the sparse cap for a rural member', async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { maxMinutes, loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(maxMinutes.value).toBe(45)
+  })
+
+  it('closes down to the dense cap for a city member', async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 20, density_band: 'dense' })
+    const { maxMinutes, loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(maxMinutes.value).toBe(20)
+  })
+
+  it('treats the cap - not a fixed 30 - as the no-limit stop', async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { onSliderChange, loadCap } = useReachDistance()
+    await loadCap()
+    mockFetchNear.mockClear()
+
+    await onSliderChange(45)
+
+    const saved = mockSaveAndGet.mock.calls[0][0].settings
+    expect(saved.browseMaxMinutes).toBe(45)
     expect(saved.browseMaxDistance).toBe(BROWSE_DISTANCE_UNLIMITED)
     expect(mockFetchNear).not.toHaveBeenCalled()
+  })
+
+  // The server grows every post's reach to the widest band's budget, so the
+  // unlimited sentinel means "the widest band's worth", not "mine". Only a member
+  // whose own band earns the ceiling can safely store it: below the ceiling the
+  // top stop still needs a real radius, or a city member would silently inherit
+  // the countryside's reach (on live, a 33-mile radius around Peterborough).
+  it('stores a real radius at the top stop when the band is below the ceiling', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 20,
+      density_band: 'dense',
+      reach_radius_miles: 7.4,
+    })
+    const { onSliderChange, loadCap } = useReachDistance()
+    await loadCap()
+
+    await onSliderChange(20)
+
+    const saved =
+      mockSaveAndGet.mock.calls[mockSaveAndGet.mock.calls.length - 1][0]
+        .settings
+    expect(saved.browseMaxMinutes).toBe(20)
+    expect(saved.browseMaxDistance).toBe(7.4)
+  })
+
+  it('clamps a drag past the top stop back onto the cap', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 20,
+      density_band: 'dense',
+      reach_radius_miles: 7.4,
+    })
+    const { sliderValue, onSliderChange, loadCap } = useReachDistance()
+    await loadCap()
+
+    await onSliderChange(30)
+
+    const saved =
+      mockSaveAndGet.mock.calls[mockSaveAndGet.mock.calls.length - 1][0]
+        .settings
+    expect(saved.browseMaxMinutes).toBe(20)
+    expect(sliderValue.value).toBe(20)
+  })
+
+  it('still derives a radius below the cap', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 45,
+      density_band: 'sparse',
+      reach_radius_miles: 16.2,
+    })
+    const { onSliderChange, loadCap } = useReachDistance()
+    await loadCap()
+
+    await onSliderChange(35)
+
+    const saved = mockSaveAndGet.mock.calls[0][0].settings
+    expect(saved.browseMaxMinutes).toBe(35)
+    expect(saved.browseMaxDistance).toBe(16.2)
+  })
+
+  it('never offers more than the ceiling, whatever the server says', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 120,
+      density_band: 'sparse',
+    })
+    const { maxMinutes, loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(maxMinutes.value).toBe(BROWSE_MINUTES_MAX)
+  })
+
+  it('keeps the flat cap when the server sends no cap at all', async () => {
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 8 })
+    const { maxMinutes, loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(maxMinutes.value).toBe(BROWSE_MINUTES_FALLBACK_MAX)
+  })
+
+  it('pulls a saved position above the new cap down onto the slider, and saves the correction', async () => {
+    // A city member who chose 25 back when the slider went to 30. Their band now
+    // caps at 20, so the reach engine already ignores the last stops - but their
+    // stored radius still filters at 25 minutes' worth. Showing the slider at the
+    // top while a narrower cap kept filtering is exactly the divergence that made
+    // members say "I only see old posts", so the correction is persisted.
+    mockMe.value.settings = { browseMaxMinutes: 25, browseMaxDistance: 9 }
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 20,
+      density_band: 'dense',
+      reach_radius_miles: 7.4,
+    })
+    const { sliderValue, loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(sliderValue.value).toBe(20)
+    const saved = mockSaveAndGet.mock.calls[0][0].settings
+    expect(saved.browseMaxMinutes).toBe(20)
+    // Below the ceiling the top stop is a real radius, not the sentinel.
+    expect(saved.browseMaxDistance).toBe(7.4)
+  })
+
+  it('leaves a saved position inside the new cap alone', async () => {
+    mockMe.value.settings = { browseMaxMinutes: 15, browseMaxDistance: 6 }
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { sliderValue, loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(sliderValue.value).toBe(15)
+    expect(mockSaveAndGet).not.toHaveBeenCalled()
+  })
+
+  it('does not ask for a cap when the member has no known location', async () => {
+    mockMe.value.lat = null
+    mockMe.value.lng = null
+    const { maxMinutes, loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(mockFetchNear).not.toHaveBeenCalled()
+    expect(maxMinutes.value).toBe(BROWSE_MINUTES_FALLBACK_MAX)
   })
 })

@@ -77,13 +77,23 @@ export const GROUP_REPOSTS = { offer: 3, wanted: 14, max: 10, chaseups: 2 }
 export const BROWSE_DISTANCE_UNLIMITED = Number.MAX_SAFE_INTEGER
 
 // The "How far away" slider is TIME-based: a travel-time budget in MINUTES, matching the reach
-// system (drive-time isochrones), not miles. The far-right (MAX) stop means "no limit" - it stores
-// BROWSE_DISTANCE_UNLIMITED, deferring to the server's own reach (default 30-min budget). The chosen
-// minutes are converted to a crow-flies mile radius by real routing (location-aware) and stored as
+// system (drive-time isochrones), not miles. The far-right stop means "no limit" - it stores
+// BROWSE_DISTANCE_UNLIMITED, deferring to the server's own reach. The chosen minutes are converted
+// to a crow-flies mile radius by real routing (location-aware) and stored as
 // settings.browseMaxDistance for the fast distance filter; the minutes themselves are stored as
 // settings.browseMaxMinutes so the slider restores.
+//
+// The TOP of the slider is not fixed: the reach engine sizes a post's budget from how thinly
+// freeglers are spread around it (20 minutes dense, 30 medium, 45 sparse), so the slider asks the
+// server for the member's own cap (town/near cap_minutes) and uses that. A fixed 5-30 was too short
+// in the country, where a member could not ask for the 45 minutes they now receive, and too long in
+// the city, where the last stops described travel the reach engine no longer honours.
+//   MIN          the closest anyone can ask for.
+//   FALLBACK_MAX the flat cap, used until the server answers or when density cannot be measured.
+//   MAX          the ceiling across all bands - the widest the slider can ever go.
 export const BROWSE_MINUTES_MIN = 5
-export const BROWSE_MINUTES_MAX = 30
+export const BROWSE_MINUTES_FALLBACK_MAX = 30
+export const BROWSE_MINUTES_MAX = 45
 export const BROWSE_MINUTES_STEP = 5
 
 // Colour for the reach/isochrone-style map polygons (the former per-user

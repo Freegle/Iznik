@@ -691,8 +691,16 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 // explicit ?maxDistance= query param wins (so the browse page can force a fresh value right
 // after a slider change), otherwise the viewer's saved settings.browseMaxDistance (so the
 // app-wide navbar badge honours the slider automatically without every call site having to
-// pass it), otherwise BrowseDistanceUnlimited (no limit — the server's own reach extent
-// governs, as before the distance slider existed).
+// pass it), otherwise their band default, otherwise BrowseDistanceUnlimited (no limit — the
+// server's own reach extent governs, as before the distance slider existed).
+//
+// browseReachMaxDistance is the INBOUND-ONLY band default (browse:backfill-max-distance). It is
+// deliberately a separate key from browseMaxDistance, which the member sets themselves and which
+// also caps how far away OTHER people see THEIR posts (utils.AuthorReachCapWhere). Writing a
+// default into that key would silently apply an outbound cap nobody asked for: a city member's
+// band radius is ~4.8 miles, so every post they made would stop reaching anyone beyond it - the
+// opposite of the point, which is to let posts travel while holding each RECIPIENT to the
+// distance their own surroundings justify.
 func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 	if q := c.Query("maxDistance", ""); q != "" {
 		if v, err := strconv.ParseFloat(q, 64); err == nil {
@@ -700,14 +708,27 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 		}
 	}
 
-	var raw string
+	var row struct {
+		Chosen  string `gorm:"column:chosen"`
+		Default string `gorm:"column:banddefault"`
+	}
 	// COALESCE to '' for the same reason as effectiveBrowseView: users who have never set
-	// browseMaxDistance scan cleanly into the non-nullable string instead of erroring.
+	// either key scan cleanly into the non-nullable strings instead of erroring.
 	db.Table("users").
-		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), '')").
+		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), '') AS chosen, "+
+			"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseReachMaxDistance')), '') AS banddefault").
 		Where("id = ?", myid).
-		Scan(&raw)
-	if raw != "" {
+		Scan(&row)
+
+	// An explicit choice always wins, including one that is wider than the band default:
+	// a member who dragged the slider has said what they want. An unparseable value is
+	// treated as no value and falls through, matching message.go's browse-scoped search
+	// and the Laravel DistancePreferenceFilter - all three must agree or the feed, its
+	// badge and search would disagree about the same member.
+	for _, raw := range []string{row.Chosen, row.Default} {
+		if raw == "" {
+			continue
+		}
 		if v, err := strconv.ParseFloat(raw, 64); err == nil {
 			return v
 		}
@@ -725,8 +746,14 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 // SAME blurred-coordinate Haversine distance the feed exposes as `distance`
 // (reachCandidateRow.blurredDistanceMiles) — so the badge matches the client's distance-
 // filtered list exactly at the boundary. Pass BrowseDistanceUnlimited (or anything at or above
-// it) to skip the per-post distance computation entirely and use the original, fast COUNT
-// query — the common case, since most members leave the slider at "no limit".
+// it) to skip the per-post distance computation entirely and use the original, fast COUNT query.
+//
+// The unlimited path used to be the common case, because most members never touched the slider.
+// It no longer is: browse:backfill-max-distance gives every member their density band's radius,
+// and only the sparse band (whose cap IS the reach ceiling) resolves to unlimited — so roughly
+// two thirds of members now take the distance-limited path below. That path deliberately stays
+// in Go rather than SQL: the filter must use the BLURRED coordinates the feed exposes, or the
+// badge and the list would disagree at the boundary, which is the bug class this replaced.
 func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	db := database.DBConn
 

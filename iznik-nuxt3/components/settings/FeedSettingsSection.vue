@@ -22,7 +22,7 @@
         <RangeSlider
           v-model="sliderValue"
           :min="BROWSE_MINUTES_MIN"
-          :max="BROWSE_MINUTES_MAX"
+          :max="maxMinutes"
           :step="BROWSE_MINUTES_STEP"
           left-label="Nearer"
           right-label="Further"
@@ -39,11 +39,7 @@
 import { defineEmits } from 'vue'
 import RangeSlider from '~/components/RangeSlider.vue'
 import NearbyTowns from '~/components/NearbyTowns.vue'
-import {
-  BROWSE_MINUTES_MIN,
-  BROWSE_MINUTES_MAX,
-  BROWSE_MINUTES_STEP,
-} from '~/constants'
+import { BROWSE_MINUTES_MIN, BROWSE_MINUTES_STEP } from '~/constants'
 import { useReachDistance } from '~/composables/useReachDistance'
 
 const emit = defineEmits(['update'])
@@ -52,8 +48,11 @@ const emit = defineEmits(['update'])
 // miles. The shared composable persists both the chosen minutes (so the slider restores) and the
 // routing-derived crow-flies mile radius (settings.browseMaxDistance, for the fast feed filter). The
 // far-right stop means "no limit". Deliberately no numeric readout - Nearer/Further is enough, and a
-// per-tick readout made the drag janky. Only persists on release (RangeSlider's `change`).
-const { sliderValue, onSliderChange } = useReachDistance(() => emit('update'))
+// per-tick readout made the drag janky. Only persists on release (RangeSlider's `change`). The top
+// of the slider is the member's own density-sized reach cap, not a fixed 30 minutes.
+const { sliderValue, maxMinutes, onSliderChange } = useReachDistance(() =>
+  emit('update')
+)
 </script>
 
 <style scoped lang="scss">

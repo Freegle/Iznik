@@ -781,13 +781,22 @@ class ExpandService
             $distinctOrigins[$lat . ',' . $lng] = ['lat' => $lat, 'lng' => $lng];
         }
 
-        // How far each origin's reach is allowed to grow. A function of the origin
-        // alone, like the schedule itself, so it is measured once per DISTINCT origin
-        // and memoized inside DensityService for the run.
+        // Every reach grows to the SAME budget: the widest any band earns. The cap
+        // belongs to the person who would travel, not to the item (DensityService
+        // docblock), and a post cannot know which bands the members around it fall
+        // in - so it must reach far enough for the sparse ones and let each member be
+        // admitted on their own band on the way out. Sizing this at the origin
+        // instead is what left a rural member permanently unable to see their nearest
+        // town's posts.
+        //
+        // The origin's own band is still measured and stored: it is what the row is
+        // read back by, and the density analytics compare bands against each other.
+        // It is a description of where the post is, not the limit on where it goes.
+        $ceiling = DensityService::ceiling();
         $capByKey = [];
         foreach ($distinctOrigins as $k => $o) {
             $capByKey[$k] = $this->density->capFor($o['lat'], $o['lng']);
-            $distinctOrigins[$k]['max_minutes'] = $capByKey[$k]['max_minutes'];
+            $distinctOrigins[$k]['max_minutes'] = $ceiling;
         }
 
         $scheduleByKey = []; // "lat,lng" => parsed schedule | null
@@ -824,14 +833,13 @@ class ExpandService
                     continue; // not one of this batch's origins, or already reused
                 }
                 // A stored schedule computed under a DIFFERENT reach budget is not this
-                // post's schedule, however co-located the two posts are. Without this the
-                // first post at an origin would fix the cap for everything that followed,
-                // and changing a band's minutes would take effect only where nobody had
-                // posted before - the density change would look far weaker than it is.
+                // post's schedule, however co-located the two posts are. Every reach now
+                // grows to the ceiling, so this mostly guards the rows written before
+                // that - and it is what makes a change to the ceiling take effect
+                // everywhere rather than only where nobody had posted before.
                 if ($capCol !== '') {
                     $storedCap = $e->max_minutes_cap === null ? null : (float) $e->max_minutes_cap;
-                    $wantCap = (float) ($capByKey[$k]['max_minutes'] ?? 0);
-                    if ($storedCap === null || abs($storedCap - $wantCap) > 0.001) {
+                    if ($storedCap === null || abs($storedCap - $ceiling) > 0.001) {
                         continue;
                     }
                 }
@@ -889,11 +897,8 @@ class ExpandService
                     // against a 30-min drive isochrone (the innermost tick is already km-scale), so
                     // this does not meaningfully reduce origin privacy - it only rescues the posts
                     // the blur would otherwise lose. Costs one extra routing call per stranded post.
-                    // Same reach budget as the blurred origin would have had: 400m cannot
-                    // move a post between density bands, so re-measuring would only add a
-                    // spatial call to the recovery path for the stranded posts.
                     $schedule = $this->reach->computeSchedule(
-                        (float) $row->lat, (float) $row->lng, $cap['max_minutes']
+                        (float) $row->lat, (float) $row->lng, $ceiling
                     );
                     if ($schedule !== null) {
                         $lat = (float) $row->lat;
@@ -975,7 +980,7 @@ class ExpandService
                         json_encode($schedule['ticks']),
                         json_encode($this->tickReachableIds($entry, $schedule)),
                         $next, $status,
-                    ], $withDensity ? [$cap['band'], $cap['radius_miles'], $cap['max_minutes']] : []);
+                    ], $withDensity ? [$cap['band'], $cap['radius_miles'], $ceiling] : []);
                     $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $poly): void {
                         $head = [$row->msgid, $lat, $lng, $wkt];
                         try {

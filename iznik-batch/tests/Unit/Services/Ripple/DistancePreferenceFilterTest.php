@@ -176,4 +176,56 @@ class DistancePreferenceFilterTest extends TestCase
         $miles = $this->filter()->distanceMiles(51.5074, -0.1278, 48.8566, 2.3522);
         $this->assertEqualsWithDelta(213.0, $miles, 5.0);
     }
+
+    /**
+     * The band default (browse:backfill-max-distance) is INBOUND only. It lives in its own
+     * key because browseMaxDistance also caps how far away other people see the member's
+     * posts - see DensityService for why the cap belongs to the recipient.
+     */
+    public function test_band_default_applies_when_the_member_has_not_chosen(): void
+    {
+        $user = $this->userWithSettings(['browseReachMaxDistance' => 7.4]);
+        $this->assertSame(7.4, $this->filter()->maxDistanceMiles($user));
+    }
+
+    public function test_an_explicit_choice_beats_the_band_default_even_when_wider(): void
+    {
+        // Someone who moved the slider has said what they want; the default is only a default.
+        $user = $this->userWithSettings([
+            'browseMaxDistance' => 22.0,
+            'browseReachMaxDistance' => 7.4,
+        ]);
+        $this->assertSame(22.0, $this->filter()->maxDistanceMiles($user));
+    }
+
+    public function test_an_explicit_unlimited_choice_beats_a_narrower_band_default(): void
+    {
+        $user = $this->userWithSettings([
+            'browseMaxDistance' => DistancePreferenceFilter::DISTANCE_UNLIMITED,
+            'browseReachMaxDistance' => 7.4,
+        ]);
+        $this->assertSame(
+            (float) DistancePreferenceFilter::DISTANCE_UNLIMITED,
+            $this->filter()->maxDistanceMiles($user)
+        );
+    }
+
+    public function test_a_junk_band_default_is_no_limit_not_a_guess(): void
+    {
+        $user = $this->userWithSettings(['browseReachMaxDistance' => 'nonsense']);
+        $this->assertSame(
+            (float) DistancePreferenceFilter::DISTANCE_UNLIMITED,
+            $this->filter()->maxDistanceMiles($user)
+        );
+    }
+
+    public function test_the_band_default_is_not_an_outbound_cap(): void
+    {
+        // authorMaxDistanceMiles must read ONLY the member's own choice.
+        $user = $this->userWithSettings(['browseReachMaxDistance' => 4.8]);
+        $this->assertSame(
+            (float) DistancePreferenceFilter::DISTANCE_UNLIMITED,
+            $this->filter()->authorMaxDistanceMiles($user)
+        );
+    }
 }
