@@ -53,7 +53,10 @@ class GroupPostIngestionServiceTest extends TestCase
     {
         return array_merge([
             'post_id'   => 'tn-unit-test-' . uniqid(),
-            'group_id'  => 'TestGroup',
+            // Source post: TN sets group_id only on the per-group COPIES it makes
+            // when a post is sent to a group, and those are discarded as
+            // crossposts (see ingest()). Tests that want a copy set it.
+            'group_id'  => null,
             'user_id'   => null,
             'title'     => 'Old wooden bookshelf',
             'content'   => 'Good condition, free to collect.',
@@ -393,22 +396,20 @@ class GroupPostIngestionServiceTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // Repost detection — TN gives no explicit link between a repost and its
-    // original (new post_id, new date), so a matching live message (same
-    // poster/group/subject/nearby coordinates) is bumped instead of a new
-    // message being created.
+    // Reposts vs crossposts. TN keeps a SOURCE post (no group_id) plus one COPY
+    // per group it was sent to (group_id set), so each group's mods can moderate
+    // their own copy. Copies are crossposts and are discarded — Freegle does its
+    // own cross-posting via rippling. A repost is a new source post, so it has no
+    // group_id and is kept as its own message, matching the email path.
     // -------------------------------------------------------------------------
 
-    public function test_repost_bumps_existing_message_instead_of_creating_new(): void
+    public function test_repost_creates_a_second_message_rather_than_bumping_the_original(): void
     {
         $locationId = $this->createTestLocation();
         $user  = $this->createTestUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
-        // arrival explicitly in the past — createTestMessage() defaults it to
-        // now(), and arrival is second-precision, so a same-second bump would
-        // make a strict "later than" comparison flaky.
         $original = $this->createTestMessage($user, $group, [
             'subject' => 'OFFER: Old wooden bookshelf',
             'lat'     => 55.9533,
@@ -417,96 +418,68 @@ class GroupPostIngestionServiceTest extends TestCase
         ]);
         $originalArrival = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first()->arrival;
 
+        // Same poster, same item, same spot, new TN post_id and no group_id —
+        // a repost (a new source post), which is kept, matching the email path.
         $postId = 'tn-repost-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
             'user_id'   => $user->id,
             'title'     => 'Old wooden bookshelf',
-            'latitude'  => 55.9534, // ~11m away — within the match radius, same item
+            'latitude'  => 55.9534,
             'longitude' => -3.1882,
             'date'      => now()->addMinute()->toIso8601String(),
         ]);
 
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
-        $this->assertSame('reposted', $result);
+        $this->assertSame('approved', $result);
 
-        // No new messages row for this tnpostid — it must be the existing
-        // message's row, re-pointed at the new tnpostid (see bumpAsRepost()),
-        // not a second row.
-        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'A repost must not create a new messages row');
-        $this->assertSame($original->id, Message::where('tnpostid', $postId)->first()->id, 'tnpostid must move to the existing bumped message, not a new one');
+        $reposted = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($reposted, 'A repost must create its own new message');
+        $this->assertNotSame($original->id, $reposted->id, 'The repost must be a separate row, not the original re-pointed');
 
+        // The original is left entirely alone — no bump, no Repost log.
         $mg = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first();
-        $this->assertSame(1, $mg->autoreposts, 'autoreposts should be incremented on the bumped message');
-        $this->assertTrue($mg->arrival->gt($originalArrival), 'arrival should be bumped forward');
-
-        $this->assertSame(1, DB::table('logs')->where('msgid', $original->id)->where('subtype', 'Repost')->count());
-        $this->assertSame(
-            1,
-            DB::table('messages_postings')->where('msgid', $original->id)->where('repost', 1)->where('autorepost', 0)->count(),
-        );
+        $this->assertSame(0, $mg->autoreposts);
+        $this->assertEquals($originalArrival, $mg->arrival);
+        $this->assertSame(0, DB::table('logs')->where('msgid', $original->id)->where('subtype', 'Repost')->count());
+        $this->assertSame(0, DB::table('messages_postings')->where('msgid', $original->id)->where('repost', 1)->count());
     }
 
-    public function test_repost_is_idempotent_when_already_bumped_past_the_new_posts_date(): void
+    public function test_post_with_a_tn_group_id_is_discarded_as_a_crosspost(): void
     {
         $locationId = $this->createTestLocation();
         $user  = $this->createTestUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
-        $newPostDate = now();
-
-        // Simulate an earlier/overlapping sync run having already bumped this
-        // message past the new post's own date — idempotency compares against
-        // messages.date (the latest TN content date applied), not
-        // messages_groups.arrival (ingestion wall-clock time, always "now").
-        $original = $this->createTestMessage($user, $group, [
-            'subject' => 'OFFER: Old wooden bookshelf',
-            'lat'     => 55.9533,
-            'lng'     => -3.1883,
-            'date'    => $newPostDate->copy()->addHour(),
-        ]);
-        MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->update([
-            'autoreposts' => 1,
-        ]);
-
-        $postId = 'tn-repost-idem-' . uniqid();
+        $postId = 'tn-crosspost-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
+            'group_id'  => '8444', // TN's per-group copy — a crosspost.
             'user_id'   => $user->id,
-            'title'     => 'Old wooden bookshelf',
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
-            'date'      => $newPostDate->toIso8601String(),
         ]);
 
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
-        $this->assertSame('duplicate', $result);
-
-        $mg = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first();
-        $this->assertSame(1, $mg->autoreposts, 'Already-bumped message must not be bumped again');
+        $this->assertSame('crosspost', $result);
+        $this->assertNull(Message::where('tnpostid', $postId)->first(), 'A per-group copy must not create a message');
     }
 
-    public function test_different_subject_at_same_location_does_not_trigger_repost(): void
+    public function test_source_post_without_a_group_id_is_ingested(): void
     {
         $locationId = $this->createTestLocation();
         $user  = $this->createTestUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
-        $this->createTestMessage($user, $group, [
-            'subject' => 'OFFER: A completely different item',
-            'lat'     => 55.9533,
-            'lng'     => -3.1883,
-        ]);
-
-        $postId = 'tn-notrepost-' . uniqid();
+        $postId = 'tn-source-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
+            'group_id'  => null,
             'user_id'   => $user->id,
-            'title'     => 'Old wooden bookshelf',
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
         ]);
@@ -514,99 +487,52 @@ class GroupPostIngestionServiceTest extends TestCase
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
         $this->assertSame('approved', $result);
-        $this->assertNotNull(Message::where('tnpostid', $postId)->first(), 'A genuinely different item must create its own new message');
+        $this->assertNotNull(Message::where('tnpostid', $postId)->first());
     }
 
-    public function test_repost_matches_across_different_resolved_users(): void
+    public function test_empty_string_group_id_counts_as_a_source_post(): void
     {
-        // TN's numeric user id is scoped per group-affiliation, not stable per
-        // real person — confirmed live: the same real poster's repost of the
-        // same item resolved to a different Freegle stub user than the
-        // original. The match must not require fromuser to be the same.
+        // TN has been seen returning '' rather than null for "no group"; that is
+        // still a source post, not a copy, and must not be silently discarded.
         $locationId = $this->createTestLocation();
-        $originalPoster = $this->createTestUser(['lastlocation' => $locationId]);
-        $repostPoster   = $this->createTestUser(['lastlocation' => $locationId]);
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $this->createMembership($repostPoster, $group, ['ourPostingStatus' => 'DEFAULT']);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
-        $original = $this->createTestMessage($originalPoster, $group, [
-            'subject' => 'OFFER: Old wooden bookshelf',
-            'lat'     => 55.9533,
-            'lng'     => -3.1883,
-            'arrival' => now()->subMinutes(10),
-        ]);
-
-        $postId = 'tn-repost-crossuser-' . uniqid();
+        $postId = 'tn-source-empty-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
-            'user_id'   => $repostPoster->id,
-            'title'     => 'Old wooden bookshelf',
+            'group_id'  => '',
+            'user_id'   => $user->id,
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
-            'date'      => now()->addMinute()->toIso8601String(),
         ]);
 
-        $result = $this->makeService(dryRun: false)->ingest($post, $group);
-
-        $this->assertSame('reposted', $result);
-        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'A cross-user repost match must still bump, not create new');
-        $this->assertSame($original->id, Message::where('tnpostid', $postId)->first()->id);
-
-        $mg = MessageGroup::where('msgid', $original->id)->where('groupid', $group->id)->first();
-        $this->assertSame(1, $mg->autoreposts);
-
-        // Logged against the original message's own poster, not the repost's
-        // resolved user.
-        $this->assertSame(
-            1,
-            DB::table('logs')->where('msgid', $original->id)->where('subtype', 'Repost')->where('user', $originalPoster->id)->count(),
-        );
+        $this->assertSame('approved', $this->makeService(dryRun: false)->ingest($post, $group));
+        $this->assertNotNull(Message::where('tnpostid', $postId)->first());
     }
 
-    public function test_crosspost_to_a_different_group_bumps_the_original_instead_of_creating_a_second_message(): void
+    public function test_the_same_tn_post_id_is_still_skipped_as_a_duplicate_on_the_same_group(): void
     {
-        // TN gives a crosspost to another group its own distinct post_id too,
-        // resolved independently via Location::groupsNear() — it can legitimately
-        // land on a different Freegle group than the original. Freegle already
-        // has its own cross-posting/rippling, so this must never create a second
-        // FD message: the match has to be found regardless of which group the
-        // candidate currently lives in.
+        // The one de-duplication that remains: (tnpostid, groupid) idempotency,
+        // so an overlapping sync window doesn't ingest the same TN post twice.
         $locationId = $this->createTestLocation();
-        $user   = $this->createTestUser(['lastlocation' => $locationId]);
-        $group1 = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $group2 = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
-        $this->createMembership($user, $group1, ['ourPostingStatus' => 'DEFAULT']);
-        $this->createMembership($user, $group2, ['ourPostingStatus' => 'DEFAULT']);
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
-        $original = $this->createTestMessage($user, $group1, [
-            'subject' => 'OFFER: Old wooden bookshelf',
-            'lat'     => 55.9533,
-            'lng'     => -3.1883,
-            'arrival' => now()->subMinutes(10),
-        ]);
-        $originalArrival = MessageGroup::where('msgid', $original->id)->where('groupid', $group1->id)->first()->arrival;
-
-        $postId = 'tn-crosspost-' . uniqid();
+        $postId = 'tn-same-postid-' . uniqid();
         $post   = $this->makePost([
             'post_id'   => $postId,
             'user_id'   => $user->id,
             'title'     => 'Old wooden bookshelf',
             'latitude'  => 55.9533,
             'longitude' => -3.1883,
-            'date'      => now()->addMinute()->toIso8601String(),
         ]);
 
-        // Resolved to group2, not group1 — a genuine TN crosspost.
-        $result = $this->makeService(dryRun: false)->ingest($post, $group2);
-
-        $this->assertSame('reposted', $result);
-        $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'A crosspost must not create a second message in the new group');
-        $this->assertSame($original->id, Message::where('tnpostid', $postId)->first()->id);
-
-        // group1's original message is bumped, not a new row in group2.
-        $this->assertNull(MessageGroup::where('msgid', $original->id)->where('groupid', $group2->id)->first());
-        $mg1 = MessageGroup::where('msgid', $original->id)->where('groupid', $group1->id)->first();
-        $this->assertSame(1, $mg1->autoreposts);
-        $this->assertTrue($mg1->arrival->gt($originalArrival));
+        $service = $this->makeService(dryRun: false);
+        $this->assertSame('approved', $service->ingest($post, $group));
+        $this->assertSame('duplicate', $service->ingest($post, $group));
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count());
     }
 }

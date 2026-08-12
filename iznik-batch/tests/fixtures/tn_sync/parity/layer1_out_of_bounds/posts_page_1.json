@@ -3,7 +3,7 @@
   "posts": [
     {
       "post_id": "tn-parity-l1oob-1",
-      "group_id": "9107",
+      "group_id": null,
       "user_id": 88020007,
       "title": "Placed Widget",
       "content": "A widget the email path placed in a real group, but whose API coordinates fall outside any group boundary.",

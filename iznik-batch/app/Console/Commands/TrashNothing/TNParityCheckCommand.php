@@ -216,7 +216,7 @@ class TNParityCheckCommand extends Command
         if (isset($layers['layer1Deleted']) || isset($layers['layer1BumpedOutOfWindow']) || isset($layers['layer1ResolvedOutcome'])) {
             $this->line('Layer 1 (filtered out):    deleted=' . count($layers['layer1Deleted'] ?? []) . ' bumped_out_of_window=' . count($layers['layer1BumpedOutOfWindow'] ?? []) . ' resolved_outcome=' . count($layers['layer1ResolvedOutcome'] ?? []));
         }
-        $this->line('API crossposts/reposts collapsed: ' . count($layers['apiDuplicatesDropped'] ?? []) . ' (Freegle handles cross-posting/reposting itself; only the earliest post_id per donation is kept)');
+        $this->line('API crossposts discarded:  ' . count($layers['apiCrosspostsDiscarded'] ?? []) . ' (TN per-group copies, identified by group_id; excluded from every count above — Freegle cross-posts via rippling)');
         $this->line($this->formatIngestionGainLine($layers));
         $this->line('');
 
@@ -226,13 +226,13 @@ class TNParityCheckCommand extends Command
         );
         $layer1DeletedLines    = array_map(static fn (string $postId) => self::POST_ID_PREFIX . $postId, $layers['layer1Deleted'] ?? []);
         $layer2ExtraLines      = array_map(static fn (string $postId) => self::POST_ID_PREFIX . $postId, $layers['layer2Extra']);
-        $apiDuplicatesLines    = array_map(static fn (string $postId) => self::POST_ID_PREFIX . $postId, $layers['apiDuplicatesDropped'] ?? []);
+        $apiCrosspostLines     = array_map(static fn (string $postId) => self::POST_ID_PREFIX . $postId, $layers['apiCrosspostsDiscarded'] ?? []);
 
         $this->printSection('Layer 1 FAILURES — posts the email path processed but the API path never covered:', $layer1MissingLines, isFailure: true);
         $this->printSection('Layer 1 (informational) — deleted from TN after the email was sent:', $layer1DeletedLines);
         $this->printSection('Layer 1 (informational) — exists on TN but its date was bumped outside the query window (repost/edit):', $layers['layer1BumpedOutOfWindow'] ?? []);
         $this->printSection('Layer 1 (informational) — reached a resolved outcome (satisfied/withdrawn), never going to be posted to FD:', $layers['layer1ResolvedOutcome'] ?? []);
-        $this->printSection('(informational) — API crosspost/repost duplicates collapsed onto an earlier post_id:', $apiDuplicatesLines);
+        $this->printSection('(informational) — API crossposts discarded (TN per-group copies, never ingested):', $apiCrosspostLines);
         $this->printSection('Layer 2 (informational) — posts the API path covered that the email path never saw:', $layer2ExtraLines);
         $this->printSection('Layer 3 FAILURES — same group on both paths, but content/outcome differs:', $layers['layer3Mismatches'], isFailure: true);
         $this->printSection('Layer 4 (informational) — overlapping posts with no meaningful same-group comparison:', $layers['layer4Divergences']);

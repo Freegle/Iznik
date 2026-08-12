@@ -3,7 +3,7 @@
   "posts": [
     {
       "post_id": "tn-parity-clean-1",
-      "group_id": "9101",
+      "group_id": null,
       "user_id": 88020001,
       "title": "Clean Widget",
       "content": "A perfectly ordinary free widget, works fine, no scratches.",

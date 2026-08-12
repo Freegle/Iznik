@@ -64,6 +64,11 @@ class ParityComparer
     // we actually getting" figure.
     private const INGESTED_RESULTS = ['approved', 'pending'];
 
+    // GroupPostIngestionService's result for a TN per-group copy, which it
+    // discards without writing anything. Excluded from every count and layer —
+    // see excludeApiCrossposts().
+    private const RESULT_CROSSPOST = 'crosspost';
+
     /**
      * Parses both trace-line sets and buckets post_ids into the four layers.
      *
@@ -71,7 +76,7 @@ class ParityComparer
      * @param  string[]  $apiLines
      * @return array{
      *     emailPostIdCount: int, apiCoveredCount: int,
-     *     emailIngestedCount: int, apiIngestedCount: int, apiDuplicatesDropped: string[],
+     *     emailIngestedCount: int, apiIngestedCount: int, apiCrosspostsDiscarded: string[],
      *     layer2ExtraIngested: string[],
      *     layer1Missing: string[], layer1Details: array<string, string>,
      *     layer2Extra: string[],
@@ -86,21 +91,16 @@ class ParityComparer
         $emailMessages     = $this->parseMessages($emailLines);
         $apiMessages       = $this->parseMessages($apiLines);
         $emailPostDetails  = $this->parsePostDetails($emailLines);
-        $apiPostDetails    = $this->parsePostDetails($apiLines);
         $emailStubUserIds  = $this->parseStubUserIds($emailLines);
         $apiStubUserIds    = $this->parseStubUserIds($apiLines);
 
-        // Collapse TN API crosspost/repost duplicates before anything else uses
-        // apiResults/apiMessages — see dedupeApiCrosspostsAndReposts() docblock.
-        // Layer 1 coverage is computed against apiResultPostIds too, but a
-        // dropped duplicate can never cause a false Layer 1 miss: if the email
-        // path saw that exact post_id, it wasn't a candidate for dedup removal
-        // in the first place (post_ids are TN-API-only identifiers the email
-        // path never has).
-        [$apiResults, $apiMessages, $apiDuplicatesDropped] = $this->dedupeApiCrosspostsAndReposts(
+        // Drop the API path's discarded per-group copies before anything else
+        // uses apiResults/apiMessages — see excludeApiCrossposts() docblock.
+        // They are not ingested, so counting them as coverage or as Layer 2
+        // "extra" posts would misreport what the API path actually delivered.
+        [$apiResults, $apiMessages, $apiCrosspostsDiscarded] = $this->excludeApiCrossposts(
             $apiResults,
             $apiMessages,
-            $apiPostDetails,
         );
 
         $emailPostIds     = array_keys($emailResults);
@@ -167,7 +167,7 @@ class ParityComparer
             'apiCoveredCount'       => count($apiResultPostIds),
             'emailIngestedCount'    => $emailIngestedCount,
             'apiIngestedCount'      => $apiIngestedCount,
-            'apiDuplicatesDropped'  => $apiDuplicatesDropped,
+            'apiCrosspostsDiscarded' => $apiCrosspostsDiscarded,
             'layer2ExtraIngested'   => $layer2ExtraIngested,
             'layer1Missing'         => $layer1Missing,
             'layer1Details'         => $layer1Details,
@@ -179,71 +179,50 @@ class ParityComparer
     }
 
     /**
-     * Collapses TN API crosspost/repost duplicates: TN returns a distinct
-     * post_id per group a poster cross-posted to, and — per confirmation
-     * from the TN team — a repost also creates an entirely new post_id with
-     * a new published date, rather than mutating the original. Freegle
-     * already has its own cross-posting (rippling) and reposting mechanisms,
-     * so counting each of these TN-side duplicates as a separate "new" post
-     * would inflate Layer 2 / the ingestion-gain stat with the same
-     * real-world donation counted multiple times. This has no email-path
-     * equivalent to worry about: TN's partner email feed reuses the *same*
-     * post_id across a crosspost's emails (confirmed early in this project),
-     * so email-side duplicates already collapse naturally when parseResults()
-     * builds its post_id-keyed map — only the API path needs this.
+     * Drops the TN API's per-group copies from every count and layer.
      *
-     * Groups ingested posts (a messages row must exist — nothing to compare
-     * without one) by (subject, rounded lat, rounded lng) and keeps
-     * only the earliest-dated post_id per group as canonical; every other
-     * post_id in that group is dropped entirely from apiResults/apiMessages,
-     * removing it from every layer, not just Layer 2.
+     * TN stores a post as a source post (no group_id) plus one copy per group
+     * it was sent to, so each group's moderators can moderate their own copy.
+     * GroupPostIngestionService discards every copy — Freegle does its own
+     * cross-posting via rippling — returning result='crosspost' for it. Those
+     * post_ids never become FD messages, so counting them anywhere would
+     * misreport what the API path ingested: they would show up as Layer 2
+     * "extra posts the API path found" when in fact they were thrown away.
+     *
+     * This replaces an earlier heuristic that grouped ingested posts by
+     * (subject, rounded lat, rounded lng) and kept the earliest-dated post_id
+     * per group. That approach is now both unnecessary and wrong:
+     * unnecessary because crossposts are identified exactly, by TN's own
+     * group_id, before they ever reach a messages row; and wrong because the
+     * heuristic could not tell a crosspost from a REPOST, which is a new
+     * source post that production deliberately keeps as its own message
+     * (matching the email path) — so it silently collapsed reposts and
+     * under-reported the API path's ingestion gain.
+     *
+     * No email-path equivalent is needed: post_ids are TN-API identifiers, and
+     * a post_id the email path also saw cannot be one of these copies, so this
+     * can never cause a false Layer 1 miss.
      *
      * @param  array<string, string>  $apiResults
      * @param  array<string, array<string, mixed>>  $apiMessages
-     * @param  array<string, array{type: string, group_id: string, date: string, title: string}>  $apiPostDetails
      * @return array{0: array<string, string>, 1: array<string, array<string, mixed>>, 2: string[]}
-     *   [dedupedResults, dedupedMessages, droppedPostIds]
+     *   [filteredResults, filteredMessages, discardedPostIds]
      */
-    private function dedupeApiCrosspostsAndReposts(array $apiResults, array $apiMessages, array $apiPostDetails): array
+    private function excludeApiCrossposts(array $apiResults, array $apiMessages): array
     {
-        $canonicalPostIdByKey = [];
-        $earliestDateByKey    = [];
+        $discarded = [];
 
-        foreach ($apiMessages as $postId => $msg) {
-            // Deliberately excludes fromuser: TN assigns a different numeric
-            // user id per group-affiliation for the same real person (see
-            // GroupPostIngestionService::findRepostCandidate() for the live
-            // case that discovered this), so a cross-group crosspost by the
-            // same poster legitimately shows two different fromuser values.
-            // Keying on it here would silently stop collapsing exactly the
-            // cross-group case this method exists to catch.
-            $key = implode('|', [
-                strtolower(trim((string) ($msg['subject'] ?? ''))),
-                is_numeric($msg['lat'] ?? null) ? round((float) $msg['lat'], self::COORDINATE_PRECISION) : ($msg['lat'] ?? ''),
-                is_numeric($msg['lng'] ?? null) ? round((float) $msg['lng'], self::COORDINATE_PRECISION) : ($msg['lng'] ?? ''),
-            ]);
-            $date = $apiPostDetails[$postId]['date'] ?? '';
-
-            if (!isset($earliestDateByKey[$key]) || $date < $earliestDateByKey[$key]) {
-                $earliestDateByKey[$key]    = $date;
-                $canonicalPostIdByKey[$key] = $postId;
+        foreach ($apiResults as $postId => $result) {
+            if ($result === self::RESULT_CROSSPOST) {
+                $discarded[] = (string) $postId;
             }
         }
 
-        $canonicalPostIds = array_fill_keys(array_values($canonicalPostIdByKey), true); // post_id => true, for O(1) lookup
-        $dropped          = [];
-
-        foreach (array_keys($apiMessages) as $postId) {
-            if (!isset($canonicalPostIds[$postId])) {
-                $dropped[] = $postId;
-            }
-        }
-
-        foreach ($dropped as $postId) {
+        foreach ($discarded as $postId) {
             unset($apiResults[$postId], $apiMessages[$postId]);
         }
 
-        return [$apiResults, $apiMessages, $dropped];
+        return [$apiResults, $apiMessages, $discarded];
     }
 
     /**
@@ -438,8 +417,10 @@ class ParityComparer
      * Parses the API-only pre-ingest [POST-SKIP] lines emitted by
      * PostSyncer::processPost() before GroupPostIngestionService::ingest()
      * is ever called (no-coordinates / not-in-any-group-bounds) — these
-     * posts never produce a [POST-RESULT] line, but the API path did "see"
-     * them, so they count toward Layer 1 coverage.
+     * posts never produce a [POST-RESULT] line, and deliberately do NOT count
+     * toward Layer 1 coverage (see computeLayers(): a post the email path
+     * placed in a real group that the API path could place nowhere is a
+     * genuine regression). Used only to enrich the Layer 1 failure detail.
      *
      * @param  string[]  $lines
      * @return array<string, string> post_id => reason

@@ -3,7 +3,7 @@
   "posts": [
     {
       "post_id": "tn-parity-l3-1",
-      "group_id": "9104",
+      "group_id": null,
       "user_id": 88020005,
       "title": "Widget API Version",
       "content": "A widget described differently on each path.",

@@ -3,7 +3,7 @@
   "posts": [
     {
       "post_id": "tn-parity-l2-shared",
-      "group_id": "9103",
+      "group_id": null,
       "user_id": 88020003,
       "title": "Shared Widget",
       "content": "A widget present on both paths.",
@@ -20,7 +20,7 @@
     },
     {
       "post_id": "tn-parity-l2-extra",
-      "group_id": "9103",
+      "group_id": null,
       "user_id": 88020004,
       "title": "Extra API-Only Widget",
       "content": "A widget the API path saw that no email ever arrived for.",

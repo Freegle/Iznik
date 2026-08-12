@@ -128,6 +128,60 @@ class EmailApiParityTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Crossposts — TN per-group copies, discarded at ingestion, excluded here
+    // -------------------------------------------------------------------------
+
+    public function test_discarded_crossposts_are_excluded_from_every_count(): void
+    {
+        // Fed straight to ParityComparer rather than through a fixture: this is
+        // about how a result=crosspost line is counted, not about ingestion.
+        $emailLines = [
+            'TN-SYNC-TRACE [EMAIL-RESULT] post_id=tn-source-1 result=Approved',
+        ];
+        $apiLines = [
+            'TN-SYNC-TRACE [POST-RESULT] post_id=tn-source-1 result=approved',
+            'TN-SYNC-TRACE [POST-RESULT] post_id=tn-copy-1 result=crosspost',
+            'TN-SYNC-TRACE [POST-RESULT] post_id=tn-copy-2 result=crosspost',
+        ];
+
+        $layers = (new ParityComparer())->computeLayers($emailLines, $apiLines);
+
+        $this->assertSame(['tn-copy-1', 'tn-copy-2'], $layers['apiCrosspostsDiscarded']);
+        $this->assertEmpty($layers['layer2Extra'], 'Discarded copies must not read as extra posts the API path found');
+        $this->assertSame(1, $layers['apiCoveredCount'], 'Only the ingested source post counts as covered');
+        $this->assertEmpty($layers['layer1Missing']);
+
+        // tn-source-1 itself does land in Layer 4 here: these synthetic lines
+        // carry no [WRITE] table=messages rows, and Layer 4 is exactly where a
+        // pair with no messages row on either side is reported. What matters
+        // for this test is that neither discarded copy appears there.
+        $layer4 = implode("\n", $layers['layer4Divergences']);
+        $this->assertStringNotContainsString('tn-copy-1', $layer4);
+        $this->assertStringNotContainsString('tn-copy-2', $layer4);
+    }
+
+    public function test_reposts_are_still_counted_as_genuine_extra_posts(): void
+    {
+        // A repost is a new SOURCE post, kept by production as its own message
+        // (matching the email path). The old heuristic dedup collapsed these by
+        // subject+coordinates; they must now be counted in full.
+        $emailLines = [
+            'TN-SYNC-TRACE [EMAIL-RESULT] post_id=tn-source-1 result=Approved',
+        ];
+        $apiLines = [
+            'TN-SYNC-TRACE [POST-RESULT] post_id=tn-source-1 result=approved',
+            'TN-SYNC-TRACE [POST-RESULT] post_id=tn-repost-1 result=approved',
+        ];
+
+        $layers = (new ParityComparer())->computeLayers($emailLines, $apiLines);
+
+        $this->assertEmpty($layers['apiCrosspostsDiscarded']);
+        $this->assertContains('tn-repost-1', $layers['layer2Extra']);
+        $this->assertContains('tn-repost-1', $layers['layer2ExtraIngested'], 'A repost really does land on FD, so it counts toward ingestion gain');
+        $this->assertSame(2, $layers['apiIngestedCount']);
+    }
+
+    // -------------------------------------------------------------------------
     // Layer 3 — same-group parity
     // -------------------------------------------------------------------------
 

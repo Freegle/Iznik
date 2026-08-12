@@ -220,7 +220,44 @@ Byte-identical trace diffing can't express either of these — it fails the mome
 - ✅ `tests/Feature/TrashNothing/EmailApiParityTest.php` rewritten from the old byte-identical diff to 10 tests against `ParityComparer` (one "flags the issue" + one "silent when clean" per layer, the four silent cases sharing one `all_clean` fixture), using 5 new dedicated fixture pairs under `tests/fixtures/tn_sync/parity/{all_clean,layer1_missing,layer2_extra,layer3_mismatch,layer4_divergent_group}/`. Tests construct `EmailReplaySyncer`/`PostSyncer` directly (not via artisan) to pass the fixture-path overrides.
   - Found and fixed a real issue while building the `all_clean` fixture (verified via `artisan tinker`, not guesswork): a `DEFAULT`-status membership walks into an existing, already-documented divergence — `IncomingMailService::handleGroupPost()` no longer auto-approves `DEFAULT` posters on arrival, while `GroupPostIngestionService::ingest()` still does — so even byte-identical content routes to different outcomes (`pending` vs `approved`). Switched the shared `seedParityUser()` helper to `MODERATED` (pends on both paths), matching the original test's approach, with the reasoning documented on the helper.
 
-### R. Repost/bump de-duplication in production ingestion ✅ complete
+### R. Repost vs crosspost de-duplication in production ingestion ⚠️ REVISED TWICE — now a one-line `group_id` check
+
+> **Status as of 2026-08-12.** This section's original coordinate/subject-matching "repost bump" design is gone, replaced first by a group-scoped crosspost matcher and then — once TN's actual data model was understood — by a trivial field check.
+>
+> **TN's data model (the key fact, confirmed 2026-08-12):** TN stores a post as a **source post**, which carries **no `group_id`**, plus **one copy per group** it was sent to, each carrying a **`group_id`**. The copies exist so each group's moderators can approve/deny/edit their own copy independently. So *every* post with a `group_id` is by construction a per-group copy — a crosspost — and the whole of crosspost detection collapses to:
+>
+> ```php
+> $tnGroupId = $this->getField($post, 'group_id', 'getGroupId');
+> if ($tnGroupId !== null && $tnGroupId !== '') {
+>     return 'crosspost';   // per-group copy; Freegle cross-posts via rippling
+> }
+> ```
+>
+> | TN action | What TN emits | API path does | Same as email path? |
+> |---|---|---|---|
+> | **Post to one group** | source post (no `group_id`) + 1 copy | ingests the source, discards the copy | ❌ no |
+> | **Crosspost to N groups** | source post + N copies | ingests the source, discards all N copies | ❌ no |
+> | **Repost / bump** | a new source post (no `group_id`) | creates its own new FD message | ✅ yes |
+>
+> **Reposts** are deliberately not de-duplicated — the email path doesn't, so neither does this one. A repost is a new *source* post, so it has no `group_id`, passes the check and creates its own message, exactly as it does when it arrives by email.
+>
+> **`group_id` is used only as a has-it/hasn't-it flag.** Its *value* is still never used for placement — resolved decision #7 stands (it is TN's own opaque internal id, which drifts out of step with Freegle group boundaries); `PostSyncer` still resolves the group from the post's own coordinates via `Location::groupsNear()`.
+>
+> **Removed by this simplification** (all of it now dead): `CROSSPOST_MATCH_RADIUS_METERS`, `findCrosspostCandidate()`, `normalizeSubjectForCrosspostMatch()`, `haversineMeters()`, and before them `bumpAsRepost()`, `normalizePostDate()`, the `messages.date` idempotency check, the `'reposted'` result and the `post-repost-bump` Loki event. ~340 lines of heuristic matching replaced by one field test. The crosspost branch writes nothing at all, so it needs no idempotency handling; `postAlreadyExists()` still covers the same `post_id` arriving twice across overlapping sync windows.
+>
+> **Everything the heuristic could get wrong is gone with it**: no more 50m-radius false matches, no more "two different people posting identical subject text nearby", and no more repost-that-moved-groups being misread as a crosspost. It is now exact.
+>
+> **Fixtures corrected**: every post in `tests/fixtures/tn_sync/posts_page_1.json` and `tests/fixtures/tn_sync/parity/*/posts_page_1.json` carried a `group_id`, written when we believed `group_id` was simply always present. Under the correct model those were all per-group copies and would now be discarded wholesale, so they have been changed to `"group_id": null` — they are meant to represent ingestable source posts. `makePost()` in `GroupPostIngestionServiceTest` likewise now defaults to `null` instead of `'TestGroup'`.
+>
+> ⚠️ **To verify against live data before go-live**: that `/posts/all` actually returns source posts and not only per-group copies. If the public feed carried copies alone, this check would discard the entire feed. Suggested check: count `group_id === null` over a live window with `tn:parity-check`, and confirm the count is in line with the number of distinct real items.
+>
+> **Knock-on items** (open, see Open items):
+> - ✅ **`ParityComparer` updated**: `dedupeApiCrosspostsAndReposts()` (the `(subject, lat, lng)` heuristic) is deleted, replaced by `excludeApiCrossposts()`, which drops any post_id whose result is `crosspost` from `apiResults`/`apiMessages` before any layer is computed. Discarded copies therefore count nowhere — not as Layer 1 coverage, not as Layer 2 extras, not in the ingestion-gain figure — and reposts, which the heuristic used to collapse, are now counted in full. Return key renamed `apiDuplicatesDropped` → `apiCrosspostsDiscarded`; `tn:parity-check`'s summary line and detail section updated to match.
+> - The old `bumpAsRepost()` re-pointed `messages.tnpostid` at the newest post_id so TN's inbound `PATCH /message/tn/:tnpostid` (iznik-server-go) would still resolve after a repost. Each repost now has its own row and resolves on its own, but the rows are independent — an edit sent against one post_id does not touch the other.
+> - **TN-side edits/moderation now only reach us via the source post.** Since we discard the per-group copies, any edit or moderation a group's mods make to *their copy* on TN is invisible to Freegle. That is the intended trade (Freegle moderates its own single message), but it is a behaviour change worth stating explicitly.
+> - `ExpandService`'s blanket "never ripple a TN post" guard is now the thing standing between "one FD message per TN item" and "that item reaching only one group". With crossposts discarded, lifting this guard is what makes rippling actually cover the groups TN used to cover. Sequence the two together.
+>
+> The original design and its rationale are preserved verbatim below for the record — **it no longer describes the code.**
 
 Section Q's crosspost/repost dedup (`ParityComparer::dedupeApiCrosspostsAndReposts()`) only affected the parity tool's *counting* — it never touched real ingestion. But the same TN behavior it was compensating for (a repost/bump creates a brand-new `post_id` with a new published date rather than mutating the original) applies to production API ingestion too: left alone, `GroupPostIngestionService` would create a second, separate FD message for what's really the same donation being bumped. Freegle already has its own bump/repost UI and `AutoRepostService`, so the right behavior is to detect this case in `GroupPostIngestionService::ingest()` itself and bump the existing message rather than insert a new one.
 
@@ -244,6 +281,10 @@ Section Q's crosspost/repost dedup (`ParityComparer::dedupeApiCrosspostsAndRepos
 
 ## Open items still to resolve
 
+- ~~**`subtype` for `result=reposted` (section I).**~~ **Closed 2026-08-12 by deletion** — there is no `reposted` result any more (section R). Its replacement, `result='crosspost'`, needs a `subtype` decision of its own when the section I work is unstashed: it has no email-path analogue either, but unlike `reposted` it writes nothing, so `Dropped` + a `crosspost` routing_reason is an honest mapping and is the recommendation. Note the volume involved is now much larger than the old heuristic produced — one discarded copy per group per post, not one per genuine crosspost — so whatever subtype it gets will dominate the API path's routed stream.
+- **Section I's implementation is stashed, not in the working tree** — `PostRoutingLogger`, `LokiService::logIngestedPost()` and the `PostSyncer` routing emissions are described as done but do not exist on disk. Reconcile before trusting section I.
+  - Everything else in section I is ✅ implemented — `source=tn_api` was chosen for decision 1 (see I.5 and the constant docblock on `LokiService::SOURCE_TN_API`).
+  - Two earlier candidate decisions are **closed as ruled out** by the email-path freeze, with their consequences recorded in I.5a and I.6: adding `tn_post_id` to the email-side entry (join instead via the FD msgid → `messages.tnpostid`, which only works for outcomes that created a message — everything else is aggregate-only), and having `EmailReplaySyncer` emit `logIncomingEmail()` (so Loki parity is checkable only against live production traffic, never from `tn:parity-check`).
 - See section P: the ModTools-side gate that reads `messages_groups.mod_messaging_allowed` before allowing a moderator to message a poster directly. Deliberately deferred — there's no existing contact-poster feature to gate, so this needs a concrete feature design before implementation, not just a wiring task.
 
 ## Resolved decisions

@@ -3,7 +3,7 @@
   "posts": [
     {
       "post_id": "tn-parity-l4-1",
-      "group_id": "9105",
+      "group_id": null,
       "user_id": 88020006,
       "title": "Divergent Widget",
       "content": "A widget placed on different groups by each path.",
