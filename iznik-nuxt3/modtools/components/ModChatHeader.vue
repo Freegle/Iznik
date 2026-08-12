@@ -104,7 +104,7 @@
       <b-button
         v-if="unseen"
         variant="white"
-        class="ms-1 d-block d-md-none"
+        class="ms-1 d-block d-md-none btn-mark-read"
         @click="markRead"
       >
         Mark read
@@ -120,7 +120,7 @@
           <b-button
             v-if="unseen"
             variant="white"
-            class="d-none d-md-block me-2"
+            class="d-none d-md-block me-2 btn-mark-read"
             @click="markRead"
           >
             Mark read
