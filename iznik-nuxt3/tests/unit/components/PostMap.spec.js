@@ -134,7 +134,7 @@ vi.mock('leaflet/dist/leaflet-src.esm', () => ({}))
 // flapping the Coveralls gate on PRs that touch no frontend code at all. Mocking them —
 // as every other external in this file already is — makes the geocoder path resolve
 // deterministically. Verified by diffing two lcov reports from the same tree.
-vi.mock('leaflet-control-geocoder/src/control', () => ({
+vi.mock('leaflet-control-geocoder', () => ({
   Geocoder: vi.fn().mockImplementation(() => {
     // ready() chains .on('markgeocode', ...).addTo(map), so both must be chainable.
     const control = {
@@ -143,10 +143,9 @@ vi.mock('leaflet-control-geocoder/src/control', () => ({
     }
     return control
   }),
-}))
-
-vi.mock('leaflet-control-geocoder/src/geocoders/photon', () => ({
-  Photon: vi.fn().mockImplementation(() => ({})),
+  geocoders: {
+    Photon: vi.fn().mockImplementation(() => ({})),
+  },
 }))
 
 // Mock vue-leaflet components
@@ -466,7 +465,7 @@ describe('PostMap', () => {
     // dynamic imports above were mocked, the real modules threw in jsdom and hit this
     // catch as a side effect. Asserted deliberately now.
     it('keeps working when the geocoder fails to construct', async () => {
-      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
+      const { Geocoder } = await import('leaflet-control-geocoder')
       Geocoder.mockImplementationOnce(() => {
         throw new Error('leaflet not ready')
       })
@@ -479,7 +478,9 @@ describe('PostMap', () => {
 
       // Swallowed, not propagated...
       expect(
-        logSpy.mock.calls.some((c) => String(c[0]).includes('Ignore leaflet exception'))
+        logSpy.mock.calls.some((c) =>
+          String(c[0]).includes('Ignore leaflet exception')
+        )
       ).toBe(true)
 
       // ...and the map is still live: it framed itself and the parent was told it is ready.
