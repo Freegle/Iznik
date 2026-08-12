@@ -16,17 +16,19 @@ import (
 // show no estimate than hold the whole response.
 var driveTimeHTTPClient = &http.Client{Timeout: 2 * time.Second}
 
-// routingInternalURL is the routing server's INTERNAL, no-auth port - the one trusted
-// backend services use (iznik-routing-go's startServer: 8194 internal, 8196 external
-// with JWT and moderators only). Deliberately not SPATIAL_SERVER_URL, which points at
-// the external port: an unauthenticated call there answers "authentication required"
-// with a 401, which this would then report as "no estimate" for every member forever.
-// Mirrors town.routingEvalURL() and iznik-batch's ReachService.
+// routingInternalURL is the ROUTING server's INTERNAL, no-auth port. Three env vars point
+// at three different things here and only this one is right:
+//
+//	ROUTING_EVAL_URL     http://spatial:8194       routing server, internal, no auth  <- this
+//	SPATIAL_SERVER_URL   http://spatial:8196       routing server, external, JWT + mod only
+//	SPATIAL_KNN_URL      http://spatial-knn:8194   a DIFFERENT container (KNN), no /v1/drive-time
+//
+// Using SPATIAL_SERVER_URL gets a 401 and using SPATIAL_KNN_URL gets a 404, and both would
+// surface identically as "no estimate" for every member, forever and silently. docker-compose
+// already carries a comment warning about this exact misrouting for the drive-time analytics.
+// So there is no KNN fallback: the only fallback is the routing container's own internal port.
 func routingInternalURL() string {
 	if u := os.Getenv("ROUTING_EVAL_URL"); u != "" {
-		return u
-	}
-	if u := os.Getenv("SPATIAL_KNN_URL"); u != "" {
 		return u
 	}
 
