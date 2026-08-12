@@ -118,8 +118,8 @@ Chat Review tells you which of these happened, and how long it took:
 | What you see | What it means |
 | --- | --- |
 | **Held: rippling out** (with how long it has been waiting) | Still waiting. It will go out on its own. |
-| **Delivered late** (with how long it was held) | It did arrive, but only after that delay. This is what to look for when someone reports a reply that seemed to be ignored - the delay is on our side, not theirs. |
-| **Never reached the recipient** | The item went, or the hold was abandoned, while the reply was held. The owner never saw it. |
+| **Held as too far for:** (with how long it was held) | It did arrive, but only after that delay, because the sender was outside the post's reach when they replied. This is what to look for when someone reports a reply that seemed to be ignored - the delay is on our side, not theirs. |
+| **Never reached the recipient** | The item was taken by someone else while the reply was held, so the owner never saw it. |
 
 That last one matters for tone: neither person did anything wrong, and the replier may be
 upset with the owner for "ignoring" them. It is worth saying plainly that our system held the

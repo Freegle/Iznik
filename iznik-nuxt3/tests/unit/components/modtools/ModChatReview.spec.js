@@ -806,8 +806,7 @@ describe('ModChatReview', () => {
       })
       const notice = wrapper.find('[data-testid="rippling-delayed-notice"]')
       expect(notice.exists()).toBe(true)
-      expect(notice.text()).toContain('46 hours')
-      expect(notice.text()).toMatch(/delayed|delivered late/i)
+      expect(notice.text()).toContain('Held as too far for: 46 hours')
       // Must NOT claim it is still waiting.
       expect(
         wrapper.find('[data-testid="rippling-held-notice"]').exists()
@@ -835,7 +834,10 @@ describe('ModChatReview', () => {
       ).toBe(false)
     })
 
-    it('dropped: says never delivered', () => {
+    // Safety net only. Nothing writes 'dropped' - production has never recorded one
+    // against ~9,800 released and ~3,200 taken-gone - so this covers the defensive
+    // branch rather than a state moderators will meet. It must not go silently blank.
+    it('an unexpected terminal status still says never delivered, without inventing a reason', () => {
       const wrapper = mountComponent({
         ripplinghold: {
           status: 'dropped',
@@ -847,6 +849,9 @@ describe('ModChatReview', () => {
       const notice = wrapper.find('[data-testid="rippling-undelivered-notice"]')
       expect(notice.exists()).toBe(true)
       expect(notice.text()).toMatch(/never (reached|delivered)/i)
+      expect(notice.text()).toContain('5 hours')
+      // No claim about an item being taken - we do not know that here.
+      expect(notice.text()).not.toContain('taken by someone else')
       expect(wrapper.text()).not.toContain('delivered automatically')
     })
 

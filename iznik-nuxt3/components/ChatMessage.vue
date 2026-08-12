@@ -129,12 +129,16 @@
       data-testid="rippling-ended-badge"
     >
       <span v-if="chatmessage?.ripplinghold?.delivered">
-        Delivered late: held {{ ripplingHeldFor }}
+        Held as too far for: {{ ripplingHeldFor }}
       </span>
       <span v-else-if="chatmessage?.ripplinghold?.status === 'taken-gone'">
-        Never delivered: item went after {{ ripplingHeldFor }}
+        Never delivered: held as too far for {{ ripplingHeldFor }}, item went
       </span>
-      <span v-else> Never delivered: dropped after {{ ripplingHeldFor }} </span>
+      <!-- 'dropped' is not produced anywhere - see the note in ModChatReview.vue.
+           Kept as a safety net so an unexpected status is not silently invisible. -->
+      <span v-else>
+        Never delivered: held as too far for {{ ripplingHeldFor }}
+      </span>
     </b-badge>
     <chat-message-warning v-if="phoneNumber" />
     <chat-message-date-read :id="id" :chatid="chatid" :last="last" :pov="pov" />

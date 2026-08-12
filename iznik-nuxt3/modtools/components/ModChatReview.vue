@@ -97,11 +97,17 @@
           data-testid="rippling-delayed-notice"
         >
           <v-icon icon="clock" class="me-1" />
-          Delivered late: rippling out held this reply for
-          {{ ripplingHeldFor }} because the sender was outside the post's reach
-          when they replied. The recipient saw nothing for that long, and the
-          sender had no answer - so each may believe the other ignored them.
+          Held as too far for: {{ ripplingHeldFor }}. The sender was outside the
+          post's reach when they replied, so rippling out held the reply for
+          that long before delivering it. The recipient saw nothing in the
+          meantime and the sender had no answer - so each may believe the other
+          ignored them.
         </NoticeMessage>
+        <!-- Terminal, never delivered. In practice this is always 'taken-gone':
+             nothing in the codebase writes 'dropped', and production has never
+             recorded one (0 rows since the table began, against ~9,800 released
+             and ~3,200 taken-gone). The generic wording is kept as a safety net
+             for a status we do not produce, rather than inventing a story for it. -->
         <NoticeMessage
           v-else-if="ripplingHoldState === 'undelivered'"
           class="mb-2"
@@ -110,14 +116,13 @@
         >
           <v-icon icon="ban" class="me-1" />
           <span v-if="message.ripplinghold?.status === 'taken-gone'">
-            Never reached the recipient: rippling out held this reply because
-            the sender was outside the post's reach, and after
-            {{ ripplingHeldFor }} the item was taken by someone else, so it was
-            dropped undelivered.
+            Never reached the recipient: held as too far for
+            {{ ripplingHeldFor }}, and in that time the item was taken by
+            someone else, so the reply was dropped undelivered.
           </span>
           <span v-else>
-            Never reached the recipient: rippling out held this reply for
-            {{ ripplingHeldFor }} and then abandoned it.
+            Never reached the recipient: held as too far for
+            {{ ripplingHeldFor }}, then ended without being delivered.
           </span>
         </NoticeMessage>
         <NoticeMessage

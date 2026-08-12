@@ -524,8 +524,7 @@ describe('ChatMessage', () => {
       })
       const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
       expect(badge.exists()).toBe(true)
-      expect(badge.text()).toContain('Delivered late')
-      expect(badge.text()).toContain('46 hours')
+      expect(badge.text()).toContain('Held as too far for: 46 hours')
       // Not still waiting.
       expect(wrapper.find('[data-testid="rippling-held-badge"]').exists()).toBe(
         false
@@ -541,11 +540,12 @@ describe('ChatMessage', () => {
       const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
       expect(badge.exists()).toBe(true)
       expect(badge.text()).toContain('Never delivered')
+      expect(badge.text()).toContain('held as too far for 46 hours')
       expect(badge.text()).toContain('item went')
-      expect(badge.text()).toContain('46 hours')
     })
 
-    it('says never delivered when the hold was dropped', async () => {
+    // Safety net only - nothing writes 'dropped'. See the note in ModChatReview.vue.
+    it('an unexpected terminal status still shows a badge, without inventing a reason', async () => {
       const wrapper = await withHold({
         status: 'dropped',
         heldminutes: 300,
@@ -554,7 +554,8 @@ describe('ChatMessage', () => {
       const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
       expect(badge.exists()).toBe(true)
       expect(badge.text()).toContain('Never delivered')
-      expect(badge.text()).toContain('5 hours')
+      expect(badge.text()).toContain('held as too far for 5 hours')
+      expect(badge.text()).not.toContain('item went')
     })
 
     it('shows no hold badge at all on an ordinary message', async () => {
