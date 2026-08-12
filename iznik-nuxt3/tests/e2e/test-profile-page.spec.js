@@ -10,12 +10,15 @@
  */
 
 const { test, expect } = require('./fixtures')
-const { timeouts } = require('./config')
+const { timeouts, environment } = require('./config')
 const {
   signUpViaHomepage,
   loginViaHomepage,
+  loginViaModTools,
   logoutIfLoggedIn,
 } = require('./utils/user')
+
+const API_V2 = environment.apiV2BaseUrl
 
 // Signs up via the homepage and captures the new user's id from the PUT
 // /user response (registration returns { ret, status, id, jwt, persistent }).
@@ -75,6 +78,7 @@ test.describe('Profile page (/profile/[id])', () => {
   test("another freegler's profile: their active OFFER is listed, WANTED stays empty, and the chat button opens a chat", async ({
     page,
     testEmail,
+    testEnv,
     getTestEmail,
     postMessage,
     withdrawPost,
@@ -94,6 +98,21 @@ test.describe('Profile page (/profile/[id])', () => {
     })
     expect(result.id).toBeTruthy()
 
+    await logoutIfLoggedIn(page)
+
+    // A brand-new member's first post is held for moderation (ContentCheckService
+    // treats a never-set membership posting status as MODERATED) - content-check
+    // alone never promotes it, only a mod acting or the 48h auto-approve fallback
+    // does. Approve it here as a mod would, so it is live for the viewer below.
+    await loginViaModTools(page, testEnv.mod.email)
+    const modJwt = await page.evaluate(() => {
+      const auth = JSON.parse(localStorage.getItem('auth') || '{}')
+      return auth?.auth?.jwt
+    })
+    await page.request.post(`${API_V2}/message`, {
+      data: { id: result.id, action: 'Approve' },
+      headers: { Authorization: modJwt },
+    })
     await logoutIfLoggedIn(page)
 
     const viewerEmail = getTestEmail('profileviewer')
