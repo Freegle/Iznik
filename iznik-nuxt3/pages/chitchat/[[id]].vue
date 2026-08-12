@@ -122,6 +122,16 @@
                   class="filter-select"
                   size="sm"
                 />
+                <!-- Community News posts are targeted at one area and capped in
+                     any one feed, so there is otherwise no way to review what is
+                     going out nationally. -->
+                <b-form-checkbox
+                  v-if="chitChatMod"
+                  v-model="allNewsletters"
+                  class="filter-newsletters"
+                >
+                  All newsletter posts
+                </b-form-checkbox>
               </div>
             </div>
           </div>
@@ -154,6 +164,8 @@
                 <NewsThread
                   :id="entry?.id"
                   :scroll-to="id"
+                  :context="id ? 'thread' : 'feed'"
+                  :jump-to-new="jumpToNew"
                   :duplicate-count="getDuplicateCount(entry?.id)"
                   @rendered="rendered"
                   @expand-duplicates="expandDuplicates"
@@ -192,6 +204,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import { useLocationStore } from '~/stores/location'
+import { useTeamStore } from '~/stores/team'
 import NewsCommunityEventVolunteerSummary from '~/components/NewsCommunityEventVolunteerSummary'
 import { useMe } from '~/composables/useMe'
 import VisibleWhen from '~/components/VisibleWhen'
@@ -234,6 +247,10 @@ const runtimeConfig = useRuntimeConfig()
 const route = useRoute()
 const id = route.params.id
 
+// The feed's "N new" link ends in #new, meaning "take me to what I have not
+// read". Anything else that opens a thread just opens it at the top.
+const jumpToNew = route.hash === '#new'
+
 useHead(
   buildHead(
     route,
@@ -252,6 +269,7 @@ const miscStore = useMiscStore()
 const newsfeedStore = useNewsfeedStore()
 const authStore = useAuthStore()
 const locationStore = useLocationStore()
+const teamStore = useTeamStore()
 
 // We want this to be our next home page.
 const existingHomepage = miscStore.get('lasthomepage')
@@ -264,7 +282,20 @@ if (existingHomepage !== 'news') {
 }
 
 // Use me computed property from useMe composable for consistency
-const { me } = useMe()
+const { me, chitChatMod } = useMe()
+
+// chitChatMod resolves team membership through the team store, so the team has
+// to be loaded before the review filter can appear. The session already tells us
+// which teams we are in, so ordinary members cost no extra request.
+if (
+  me.value &&
+  (me.value.systemrole === 'Moderator' ||
+    me.value.systemrole === 'Support' ||
+    me.value.systemrole === 'Admin' ||
+    me.value.teams?.includes('ChitChat Moderation'))
+) {
+  teamStore.fetch('ChitChat Moderation')
+}
 const mod = computed(
   () =>
     me.value &&
@@ -320,6 +351,21 @@ const selectedArea = computed({
 
     await authStore.saveAndGet({
       settings,
+    })
+  },
+})
+
+// A reviewing tool rather than a preference, so it lives in local state rather
+// than the profile settings - no server round-trip, and it doesn't follow the
+// moderator onto their phone.
+const allNewsletters = computed({
+  get() {
+    return Boolean(miscStore.get('chitchatallnewsletters'))
+  },
+  set(newval) {
+    miscStore.set({
+      key: 'chitchatallnewsletters',
+      value: newval,
     })
   },
 })
@@ -499,7 +545,8 @@ function loadMore($state) {
 async function areaChange() {
   const newDistance = me.value?.settings?.newsfeedarea || 0
   await newsfeedStore.reset()
-  await newsfeedStore.fetchFeed(newDistance)
+  // reset() clears the store's memory of the flag, so pass it explicitly.
+  await newsfeedStore.fetchFeed(newDistance, allNewsletters.value)
   infiniteId.value++
   show.value = 0
 }
@@ -614,6 +661,16 @@ watch(selectedArea, async () => {
   await areaChange()
 })
 
+// Turning the newsletter review filter on or off rebuilds the feed the same way
+// a distance change does.
+watch(allNewsletters, async () => {
+  if (!me.value) {
+    return
+  }
+
+  await areaChange()
+})
+
 // Initialize location data if needed
 const initializeLocation = async () => {
   if (!areaname.value && areaid.value) {
@@ -627,14 +684,10 @@ onMounted(() => {
   runCheck()
   initializeLocation()
 
-  // For feed view (not thread view), set up delayed seen marking.
-  if (!id) {
-    // Snapshot what was seen before visiting.
-    newsfeedStore.snapshotSeenBeforeVisit()
-
-    // Start 30s timer to mark as seen.
-    newsfeedStore.startDelayedSeen(30000)
-  }
+  // Start 30s timer to mark as seen. The baseline snapshot itself happens
+  // before the fetch dispatch below - on every view, not just the feed - so
+  // a notification deep link cannot instantly mark the whole thread seen.
+  newsfeedStore.startDelayedSeen(30000)
 })
 
 onBeforeUnmount(() => {
@@ -653,6 +706,18 @@ onBeforeUnmount(() => {
 // Initial data loading
 const settings = me.value?.settings
 distance.value = settings?.newsfeedarea || 0
+
+// Secure the seen baseline BEFORE any fetch is dispatched. This flips
+// delayedSeenMode on so the fetches below cannot fire an instant Seen POST.
+// The feed re-snapshots per visit (existing behaviour); a thread or deep-link
+// view keeps any session baseline so New pills survive feed-to-thread
+// navigation, and only snapshots on a cold load, where the first server
+// seenwatermark response then overwrites it (see stores/newsfeed.js).
+if (id) {
+  newsfeedStore.ensureSeenBaselineForThreadView()
+} else {
+  newsfeedStore.snapshotSeenBeforeVisit()
+}
 
 // Fetch data if user is logged in
 if (me.value) {
@@ -682,7 +747,7 @@ if (me.value) {
       }
     })
   } else {
-    newsfeedStore.fetchFeed(distance.value).then(() => {
+    newsfeedStore.fetchFeed(distance.value, allNewsletters.value).then(() => {
       // Fetch the first few threads in parallel so that they are in the store.
       const feed = newsfeedStore.feed
 
@@ -876,6 +941,15 @@ if (me.value) {
     border-color: $color-green-background;
     box-shadow: 0 0 0 2px rgba($color-green-background, 0.1);
   }
+}
+
+/* Moderator-only, so it must not squeeze the distance filter - it keeps its
+   natural width and wraps to its own line when the row runs out of room. */
+.filter-newsletters {
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  color: $color-gray--darker;
+  white-space: nowrap;
 }
 
 // Events section

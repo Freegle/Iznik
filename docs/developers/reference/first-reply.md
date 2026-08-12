@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-06
+last_reviewed: 2026-08-11
 covers:
   - iznik-batch/app/Services/FirstReply/**
   - iznik-batch/app/Console/Commands/FirstReply/**
@@ -8,7 +8,6 @@ covers:
   - iznik-server-go/chat/chatprompt.go
   - iznik-nuxt3/components/ChatMessagePrompt.vue
   - iznik-nuxt3/components/ChatPromptPost.vue
-  - iznik-nuxt3/modtools/components/ModSysAdminFirstReply.vue
 ---
 
 # Getting a First Reply In - Technical Reference
@@ -21,12 +20,26 @@ sooner, and when there isn't one, make the wait informative rather than blank.
 Everything here ships dark behind `freegle.firstreply.*`. With the switches off, none of it
 runs and nothing else behaves differently.
 
+**The Freegle chat (lever 3) is currently switched OFF** - `freegle.firstreply.chat.enabled` is
+hard `false` in `config/freegle.php` and no longer reads its env var, so it cannot come back on
+from a deployed environment file. Nothing has been dismantled: §3 below describes what runs when
+the flag goes back on. Sending is all that stops - `EngagementService` is the single writer and
+returns immediately - while answering stays live, so prompts already sent are not left with dead
+buttons.
+
 **It also rolls out by percentage.** `freegle.firstreply.rollout_percent` (default **0**)
-buckets on `msgid % 100`, so a post is in or out for its whole life and across **all three
-levers at once** - a post in the trial gets the passthrough, scouting and the Freegle chat, and
-one outside gets none of them. Split per lever instead and the arms overlap, so nothing could
-be attributed to anything. Raising the percentage only ever adds posts, so a trial widens
-without shuffling anyone out of the arm they were being measured in.
+buckets on `CRC32(msgid . '|firstreply') % 100`, so a post is in or out for its whole life and
+across **all three levers at once** - a post in the trial gets the passthrough, match mail and
+the Freegle chat, and one outside gets none of them. Split per lever instead and the arms
+overlap, so nothing could be attributed to anything. Raising the percentage only ever adds
+posts, so a trial widens without shuffling anyone out of the arm they were being measured in.
+A hash rather than a raw `msgid % 100` because ids are minted under Galera's
+`auto_increment_increment` stride - a raw modulus is only uniform while the stride stays
+coprime with the bucket count, and a cluster resize would silently skew the split. PHP
+`crc32`, MySQL `CRC32()` and Go `crc32.ChecksumIEEE` share the same polynomial; pinned tests
+on each side (`RolloutTest.php`, `TestRolloutBucketPinnedCrossLanguage`) hold the three
+expressions together. Check a post by eye with
+`SELECT CRC32(CONCAT(msgid, '|firstreply')) % 100`.
 
 **The trial arm decides which QUESTIONS a post gets, not whether Freegle speaks to it at all.**
 
@@ -45,7 +58,7 @@ cleanliness, so they are asked of everyone. `photo` and `views` are about how th
 which is exactly what is being measured, and neither changes anything a browser can see.
 
 The consequence for analysis is worth stating plainly: the comparison is **not** "chat versus
-nothing". It measures the passthrough, scouting and the two reassurance prompts. Any effect of
+nothing". It measures the passthrough, match mail and the two reassurance prompts. Any effect of
 the delivery and deadline questions themselves is present in both arms and therefore invisible
 to it.
 
@@ -57,7 +70,7 @@ universal ones covering all of them.
 The default of 0 means switching a lever on does nothing until a percentage is set as well.
 That is deliberate: forgetting the percentage costs a quiet run whose cron log says exactly
 why, where the opposite default would cost an unplanned full-network rollout of something that
-sends mail. Both `firstreply:scout` and `firstreply:engage` print the active percentage every
+sends mail. Both `firstreply:matchmail` and `firstreply:engage` print the active percentage every
 run. The Go API reads the same `FIRSTREPLY_ROLLOUT_PERCENT` and buckets identically, because
 otherwise a post would be in the trial for an emailed reply and out of it for an in-app one.
 
@@ -101,34 +114,48 @@ a reply the reach never covers.
 repliers a post may already have and still qualify. The poster talking on their own post does
 not count.
 
-## 2. Scouts
+## 2. Match mail
 
-As soon as a post with no reply is seen, pick a handful of members who look genuinely likely to
-want THIS item and mail them now, ahead of their digest and ahead of the ripple reaching them.
+As soon as a post with no reply is seen, find the members who have **asked for that item** and
+mail them about it now, ahead of their digest and ahead of the ripple reaching them.
 
-`quiet_minutes` defaults to **0**. An earlier version waited 45 minutes to avoid spending mail
-on posts about to get a reply anyway; that does not survive the timings, because whatever the
-wait saves is dwarfed by how long the scout then takes to read the mail and reply. The knob
-remains for rationing. The cron runs every minute to match, and the scout path fills in a
-brand-new post's eventual reach itself rather than waiting for the background pass. How far ahead of their digest depends on what picked them - see
-[below](#what-justifies-the-mail-decides-whether-it-may-be-an-extra-one).
+`quiet_minutes` defaults to **0**. Waiting to avoid spending mail on posts about to get a reply
+anyway does not survive the timings: whatever the wait saves is dwarfed by how long the
+recipient then takes to read the mail and reply. The knob remains for rationing. The cron runs
+every minute to match, and this path fills in a brand-new post's eventual reach itself rather
+than waiting for the background pass.
 
 Two problems, only one of which is about reach. Immediate mail on a rippling post goes only to
-members with `emailfrequency=IMMEDIATE`; everyone on the daily digest hears tomorrow,
-including the person two streets away who has replied to nine similar posts this year. And
-separately, somebody with an open WANTED for exactly this item may sit outside today's
-polygon and inside next Tuesday's.
+members with `emailfrequency=IMMEDIATE`; everyone on the daily digest hears tomorrow, buried
+among everything else posted that day. And separately, somebody with an open WANTED for exactly
+this item may sit outside today's polygon and inside next Tuesday's.
 
-Three signals, in `iznik-batch/app/Services/FirstReply/ScoutService.php`:
+Two signals, in `iznik-batch/app/Services/FirstReply/MatchMailService.php`:
 
 | Signal | Source | Weight |
 |---|---|---|
 | `wanted` | an open post of the **opposite** type that matches by vector | 5 |
 | `search` | a saved search (`users_searches`) that matches by vector | 3 |
-| `frequent` | distinct Interested replies in 90 days, on this post's own communities | 1 |
 
-`wanted` is type-aware on purpose: a WANTED matches an OFFER and vice versa. Somebody else
-wanting the same thing you want is competition, not a lead.
+**It matches both ways round.** A new OFFER finds the people holding open WANTEDs for it, and a
+new WANTED finds the people sitting on open OFFERs of it, so both sides of a would-be exchange
+get the chance to start it rather than only whichever of them posted second. The type rule
+lives in the matcher - a WANTED matches an OFFER and vice versa, because somebody else wanting
+what you want is competition rather than a lead - so it is not reimplemented here.
+
+### Propensity is not a signal, and the numbers are why
+
+A third signal used to pick members who reply to a lot of posts and live near this one. Over
+three days on live it sent **7,902 mails and produced 3 replies**, against 4 replies from the
+7,909 sent in total. It is gone, and nothing has replaced it: every mail this service sends now
+answers something the recipient asked for, item by item, which is also what justifies it being
+an EXTRA mail rather than their digest arriving early.
+
+`firstreply_scouts` keeps its name. Those rows are the evidence base for how this mail
+performs, including the propensity trial the paragraph above is drawn from, and renaming a live
+table with foreign keys to tidy up a word would put that continuity at risk for nothing. Rows
+with `reason = 'frequent'` are the surviving record of that trial; nothing writes new ones, and
+no code path reads that value any more.
 
 ### Matching is vector, at the bar for mail
 
@@ -162,30 +189,84 @@ re-embeds anything written by an older model rather than silently mixing scales.
 has run the `search` signal matches nothing** - it fails closed, which is the right direction,
 but it is inert rather than obviously off.
 
-### A scout is someone the ripple has NOT reached yet
+### Post views are NOT a signal, and the reason is not what you would guess
+
+Views look like the obvious fourth signal - a weaker `search`. There is plenty of data (1.5M
+genuine page-opens a week from ~18k members), `messages_likes.pageview` already separates a real
+page-open from a list-scroll impression, and viewed posts already carry embeddings, so no new
+table or embedding job would be needed. **It was measured on live and it does not work.** Do not
+rebuild it without new evidence.
+
+**A single view is far too weak to mail on.** Of genuine page-opens, **0.29%** are followed by
+that member replying to that post - about 1 in 345.
+
+**Repeat viewing looks much stronger, and is misleading.** Conversion by how many times a member
+opened the same post:
+
+| Views of that post | Sampled | Replied | Rate |
+|---|---|---|---|
+| 1 | 207,824 | 527 | 0.25% |
+| 2 | 4,046 | 57 | 1.41% |
+| 3 | 202 | 14 | 6.93% |
+| 4 | 97 | 11 | 11.34% |
+
+That is ~28x better at 3+ views, but it is largely reverse causation: people re-open a post
+*because* they are about to reply to it. It says nothing about what they want NEXT, which is what
+an interest profile would need.
+
+**The decisive test kills the idea.** For members who replied to a post, take the best cosine
+between that post and their prior *repeat-viewed* posts, and compare against the same posts
+shuffled between members - which controls for the fact that all Freegle items resemble each other
+somewhat:
+
+| Best prior repeat-viewed post vs the post actually replied to | median | p90 | >=0.85 |
+|---|---|---|---|
+| Real view history (n=1,142 reply events) | **0.596** | 0.685 | 0.3% |
+| Shuffled (same posts, wrong owners) | **0.597** | 0.675 | 0.2% |
+
+**Indistinguishable from random**, to three decimal places. View history is not a weak semantic
+signal, it is an empty one. The likely reason is that Freegle replying is driven by proximity and
+timing far more than by what an item resembles: somebody views a sofa and replies to a bookcase,
+because the bookcase is two streets away and free now.
+
+Limits of that measurement, so a future attempt knows what was and was not covered: a 21-day
+window, only posts carrying embeddings, and it tests *best-of* their repeat-viewed posts rather
+than a centroid of them. A centroid formulation is untested - though a median identical to
+shuffled leaves it little to rescue. The embeddings are the subject-only 256-dim ones, but those
+are exactly what the match matcher uses, so a signal invisible here is not available to the
+feature either.
+
+To re-run it: sample `(userid, refmsgid)` from `chat_messages` where `type='Interested'`, join
+`messages_likes` on the same member with `type='View' AND pageview=1 AND count >= 2` and
+`timestamp < chat_messages.date`, pull `messages_embeddings.subject_embedding` for both sides
+(little-endian float32, already unit-norm, so cosine is a dot product), and compare the real
+pairing against a shuffled one.
+
+### A recipient is someone the ripple has NOT reached yet
 
 The geographic test is a band, not a radius: **outside `rippling_reach.polygon` (the reach the
 post has right now) and inside `max_polygon` (the reach it ends up with)**.
 
 Both halves matter. The upper bound stops us mailing someone the post will never legitimately
-reach. The lower bound is what makes a scout a scout: somebody already inside the current
-polygon is going to be told anyway, on the ordinary schedule, so scouting them spends a scout
-slot, a mail and a per-member cooldown to change nothing at all. Reaching past the current edge
-is the entire point.
+reach. The lower bound is what makes this mail worth sending at all: somebody already inside the
+current polygon is going to be told anyway, on the ordinary schedule, so mailing them spends a
+slot, a mail and a per-member cooldown to change nothing. Reaching past the current edge is the
+entire point.
 
-The geographic bound differs by signal on purpose. `wanted` and `search` start from a small
-national candidate set, so testing each against the reach polygons is cheap and they get the
-full benefit of it. `frequent` starts from members of the post's own communities, because
-"every frequent replier in Britain" is not a set worth building to then discard 99.9% of.
+Both signals can afford the full test. `wanted` and `search` start from a small national
+candidate set - the people who asked for this particular item - so checking each one against the
+reach polygons is cheap. (The withdrawn propensity signal could not: "every frequent replier in
+Britain" is not a set worth building in order to discard 99.9% of it, so it started from members
+of the post's own communities instead.)
 
-### A scout who replies pulls the reach out to them
+### A matched member who replies pulls the reach out to them
 
-A scout was picked precisely because the ripple had not got to them. So a reply from one is
-evidence the item is wanted at a distance the schedule had not yet allowed for - and the people
-around them deserve the same chance rather than waiting on the clock.
+They were picked precisely because the ripple had not got to them. So a reply is evidence the
+item is wanted at a distance the schedule had not yet allowed for - and the people around them
+deserve the same chance rather than waiting on the clock.
 
-`ScoutService::attributeReplies` therefore does more than record the reply. For each newly
-attributed one it finds the lowest tick of the post's schedule whose polygon covers that scout,
+`MatchMailService::attributeReplies` therefore does more than record the reply. For each newly
+attributed one it finds the lowest tick of the post's schedule whose polygon covers that member,
 and writes it to **`rippling_reach.min_tick`** with `next_expansion_at = NOW()`.
 `ExpandService::advanceDue` then takes `max(elapsed-time target, min_tick)`, capped at the
 post's own schedule length, so the next pass jumps out to cover them.
@@ -193,72 +274,81 @@ post's own schedule length, so the next pass jumps out to cover them.
 A floor rather than a polygon write, deliberately. Advancing reach means resolving the tick's
 geometry, unioning the origin group's area, deriving bounds, re-applying rejected-group clips
 and upgrading routing-provided bounds - all of which `ExpandService` already does. Writing the
-polygon from `ScoutService` would be that same geometry implemented twice, which is a mistake
-this codebase has paid for before.
+polygon from `MatchMailService` would be that same geometry implemented twice, which is a
+mistake this codebase has paid for before.
 
 It only ever moves forward, only while the post is still `expanding`, and a reply from someone
 already inside the current reach moves nothing, because there is nothing to pull out to.
 
-Small is the point. Ten well-chosen people is a different product from "the digest, but
-sooner", and `user_cooldown_hours` / `user_max_per_week` exist so that being good at replying
-never turns into being punished for it. Scouts are written to `rippling_reach_notified` as
-well as `firstreply_scouts`, so the reach mailer never sends the same post again later.
+Small is the point. A few well-chosen people is a different product from "the digest, but
+sooner", and `user_cooldown_hours` / `user_max_per_week` exist so that asking for things never
+turns into being mailed constantly. Recipients are written to `rippling_reach_notified` as well
+as `firstreply_scouts`, so the reach mailer never sends the same post again later.
 
-### What justifies the mail decides whether it may be an extra one
+### What justifies the mail is that they asked for this item
 
-The two match signals and the propensity signal are held to different standards, because what
-they claim is different.
+Both surviving signals claim the same thing: **this member asked about this thing.** That is what
+makes the mail legitimate as an EXTRA one rather than as their digest arriving early, and the
+consent for it is `users.relevantallowed` - the existing "Suggested posts for you" setting.
 
-| | `wanted` / `search` | `frequent` |
-|---|---|---|
-| What it claims | this member asked about **this thing** | this member replies to a lot of things |
-| May be an extra mail? | yes | **no** |
-| Consent gate | `users.relevantallowed` ("Suggested posts for you") | at least one community not set to "never" |
-| Cadence gate | none | skipped if today's daily digest has already gone |
+So a member who saved a search for "bookcase" can hear about a bookcase even if their digest has
+already gone today, because they asked for that, item by item. The withdrawn propensity signal
+claimed only "this member replies to a lot of things", which is why it was never allowed to be an
+extra mail: it could bring that member's daily digest forward and nothing more.
 
-So a member who saved a search for "bookcase" can hear about a bookcase even if their digest
-has been today, because they asked for that, item by item. A member who is merely a good
-replier can only ever have their daily digest arriving **early**, never an additional mail.
+A candidate dropped by that gate does not leave a hole: filtering happens **before** the top-N
+cap, so the next-best candidate takes the slot and the post still gets its full complement.
 
-"Today" is the London calendar day, using the same boundary as the daily digest's own
-once-per-day guard. A rolling 24h window was rejected there because off-schedule sends make
-the digest time drift later every day, and the two must agree on what "today" means.
+**Slots are spent nearest-the-edge first** (signal score only breaks ties). Every candidate
+stands outside today's polygon by construction — inside it the ordinary ripple already tells
+them - but the reach will have grown by the time they read their mail, so if the ceiling ever
+does bind, the slots should go to the people just past the edge, whom the reach is about to
+cover, rather than to the strongest signal ten miles out. The ceiling is a backstop that should
+never bind, so in practice the ordering decides nothing. The distance
+comes from `ST_Distance` to the current polygon inside the eligibility query itself
+(coordinate degrees — the SRID 3857 tag is the site-wide mislabel — which ranks correctly
+within a post).
 
-A candidate dropped by either gate does not leave a hole: filtering happens **before** the
-top-N cap, so the next-best candidate takes the slot and the post still gets its full
-complement.
+**A match mail is an extra, and does not consume the recipient's digest.** They asked for this
+item, so taking their daily roll-up away as well would be a straight loss to them.
 
-**A `frequent` scout's digest is then recorded as sent**, so today's does not also go out -
-the mail genuinely replaces it rather than arriving alongside it. Only `lastsent` is stamped,
-never the `lastmsgid` cursor: the member has not actually seen today's roll-up, so tomorrow's
-must still start from where it would have. (The scouted post is not then duplicated in it,
-because the daily digest excludes posts that have a `rippling_reach` row, which every scouted
-post does.) Match-driven scouts are excluded from this - their mail was an extra they asked
-for, and taking the digest away as well would be a straight loss.
-
-The stamp is keyed on who was **actually mailed**, not who was picked, so a member whose spool
-failed keeps both their digest and their eligibility for the reach mail. That is why
+What it does consume is the reach mail: everyone actually mailed gets a
+`rippling_reach_notified` row, so the ripple does not later send them the same post a second
+time. That is keyed on who was **actually mailed**, not who was picked, so a member whose spool
+failed stays eligible for the reach mail rather than silently getting nothing. It is why
 `mailPostToUsers` returns the ids it sent to rather than a count.
 
 ### The mail is the ordinary digest mail
 
-A scout mail is byte-for-byte an immediate digest for that one post, via the shared
+A match mail is the immediate-digest layout for that one post, via the shared
 `spoolPostToRecipients` the reach mailer uses: same Mailable, same `MODE_IMMEDIATE`, same
 `emailType: 'digest_immediate'`, and the same recipient checks (preferred address,
-`browseMaxDistance` slider) so the two cannot drift. There is no scout-specific subject,
-preamble or footer, and nothing in it reveals how the recipient was chosen. A member should not be able to tell a
-scouted post from one the ripple reached normally, and nor should anyone they forward it to.
+`browseMaxDistance` slider) so the two cannot drift.
 
-**Membership is not required.** `UnifiedDigestService`'s reach mailer is members-only;
-scouting deliberately is not. Anyone inside the post's eventual reach may be told about it
-whether or not they have joined the community it was posted to, because replying joins them -
-the in-app path calls `AddMembership` as part of creating the reply, and an emailed reply is
-joined on its way in. The membership follows the interest rather than gating it. (Product
-decision, Edward, 2026-08-05.)
+**Two things distinguish it, and both exist because an anonymous copy of the digest is
+indistinguishable from the digest people are already ignoring.**
 
-`frequent` is still drawn from members of the post's own communities, but that is a **cost**
-bound, not a permission one: "every frequent replier in Britain" is not a set worth building in
-order to discard 99.9% of it. It widens on its own as the post ripples into more communities.
+| | Ordinary digest | Match mail |
+|---|---|---|
+| Subject | `[Group] OFFER: Pine bookcase (Ealing)` | `OFFER: Pine bookcase (Ealing)` |
+| Body opens with | the post count heading | one line naming the post or search of theirs it matched |
+
+The subject is the post's own, with no `[Group]` prefix, so the inbox line is the item rather
+than the shape every other Freegle mail shares. The intro line comes from
+`UnifiedDigest::matchIntro()`, driven by the per-recipient `$matchReason` map that
+`mailPostToUsers` threads through - `wanted` says "You have an open post about X, and this one
+looks like a match", `search` says "This matches a search you saved for X". A digest never gets
+either: `matchReason` is null and `matchIntro()` returns null.
+
+Nothing else reveals how the recipient was chosen, and nothing identifies which of their posts
+or searches matched beyond the item name.
+
+**Membership is not required.** `UnifiedDigestService`'s reach mailer is members-only; this
+deliberately is not. Anyone inside the post's eventual reach may be told about it whether or not
+they have joined the community it was posted to, because replying joins them - the in-app path
+calls `AddMembership` as part of creating the reply, and an emailed reply is joined on its way
+in. The membership follows the interest rather than gating it. (Product decision, Edward,
+2026-08-05.)
 
 ## 3. The Freegle chat
 
@@ -394,53 +484,54 @@ them in a quiet channel would mean nobody ever answers them.
 | Table | What |
 |---|---|
 | `rippling_reach.max_polygon` | the reach the post ends up with. NULL = not computed yet, and every reader falls back to current-reach behaviour |
-| `rippling_reach.min_tick` | a floor the expander must not sit below, set when a scout replies. NULL = expand on elapsed time alone, exactly as before |
+| `rippling_reach.min_tick` | a floor the expander must not sit below, set when a matched member replies. NULL = expand on elapsed time alone, exactly as before |
 | `users_searches_embeddings` | a saved search term as a vector, embedded as a DOCUMENT so it shares the post threshold |
 | `chat_prompts` | options and answer for a `Prompt` chat message |
-| `firstreply_scouts` | who was scouted about what, why, and whether they then replied (`replied_at`). Doubles as the fatigue ledger |
+| `firstreply_scouts` | who was mailed about what, why, and whether they then replied (`replied_at`). Doubles as the fatigue ledger. Keeps its name: these rows are the evidence base |
 | `firstreply_prompts_sent` | which prompts a MEMBER has had, with `postcount`. Keyed on the member rather than the post, because one message covers everything they have outstanding - so "have they been asked this lately" is a question about them |
 | `firstreply_passthroughs` | one row per reply let through, plus how long it would otherwise have waited (`waited_hours`, NULL until the sweep runs and when unanswerable) |
-| `firstreply_event_metrics` | daily counters, same shape as `rippling_event_metrics` |
+| `firstreply_event_metrics` | daily counters, same shape as `rippling_event_metrics`. Still written; read by SQL now that the ModTools panel has gone (see [Measuring it](#measuring-it)) |
 
 ## Crons
 
-All three are registered in `iznik-batch/routes/console.php` inside
+All are registered in `iznik-batch/routes/console.php` inside
 `if (config('freegle.firstreply.enabled'))`.
 
 | Command | Cadence | What |
 |---|---|---|
 | `firstreply:maxreach` | every minute | fills in `max_polygon`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
-| `firstreply:scout` | every minute | attributes replies to earlier scouts - pulling the post's reach out to cover any scout who replied - then picks and mails new ones |
+| `firstreply:matchmail` | every minute | attributes replies to earlier match mail - pulling the post's reach out to cover anyone who replied - then finds and mails new matches |
 | `embeddings:searches` | hourly | embeds saved search terms so the `search` signal can match by vector. Also re-embeds after a model change |
-| `firstreply:engage` | every 5 min | sends the next due prompt |
+| `firstreply:engage` | every 5 min, **not currently registered** | sends the next due prompt. Nested inside a second `if (config('freegle.firstreply.chat.enabled'))`, which is off, because `EngagementService` returns immediately when the chat is off and a cron whose only job is to rediscover that is a process spawn every five minutes for nothing |
 
 Each takes `--dry-run`.
 
 ## Turning it on
 
-`FIRSTREPLY_ENABLED` is the master switch; `FIRSTREPLY_PASSTHROUGH_ENABLED`,
-`FIRSTREPLY_SCOUTS_ENABLED` and `FIRSTREPLY_CHAT_ENABLED` gate the three levers independently.
+`FIRSTREPLY_ENABLED` is the master switch; `FIRSTREPLY_PASSTHROUGH_ENABLED` and
+`FIRSTREPLY_MATCHMAIL_ENABLED` gate those two levers independently. The chat's flag is **not**
+env-driven any more - it is hard `false` in `config/freegle.php` (see the top of this page).
 **`FIRSTREPLY_ROLLOUT_PERCENT` decides how much of the network sees any of it, and defaults to
 0 - set it or nothing happens.**
 The Go API needs `FIRSTREPLY_ENABLED` and `FIRSTREPLY_PASSTHROUGH_ENABLED` too, since the
 in-app reply path is enforced there.
 
 Sensible order: turn on `FIRSTREPLY_ENABLED` alone first so `firstreply:maxreach` can drain,
-then the passthrough (which needs `max_polygon` to do anything), then scouts, then chat.
+then the passthrough (which needs `max_polygon` to do anything), then match mail.
 
-### Two caps, because the two signals are not the same kind of thing
+### One cap, and it should never bind
 
-A `wanted` or `search` hit is somebody who **asked** - an open post for this item, or a saved
-search that matches it. There is no good reason to tell the first ten and not the eleventh, so
-the small per-post cap does not apply to them. `frequent` is only propensity, which is a guess,
-and the guess is what gets rationed.
+Everyone reaching this point **asked** - an open post for this item, or a saved search that
+matches it. There is no good reason to tell the first ten and not the eleventh, so
+`max_per_post` (default **50**) is a backstop against something pathological, not a rationing
+of the signal.
 
-| Setting | Applies to | Default |
-|---|---|---|
-| `max_per_post` | `frequent` only - propensity scouts | 10 |
-| `max_strong_per_post` | `wanted` + `search` - backstop, should never bind | 50 |
+It is still needed. A common term like `sofa` is held by hundreds of members nationally, and
+without a ceiling one post could mail all of them. When it does bind, that is logged and
+counted as `matchmail_capped`, so a pathological post shows up rather than quietly mailing
+everybody.
 
-**How big is the strong population really?** Sized from live:
+**How big is the population really?** Sized from live:
 
 | Quantity | Live value |
 |---|---|
@@ -458,7 +549,7 @@ strong is not rationed and the backstop should never fire.
 > would send - `filterEligible()` bounds every candidate to the reach band. It made a non-problem
 > look like a mailbomb. Keep per-post numbers per-post.
 
-The ceiling stays because it costs nothing when it never fires, and `scouts_strong_capped` counts
+The ceiling stays because it costs nothing when it never fires, and `matchmail_capped` counts
 the times it does, so a pathological post surfaces rather than quietly mailing everyone.
 
 ### Saved searches have to be recent
@@ -474,77 +565,105 @@ long enough for a slow-moving want to survive, short enough that the term still 
 somebody is after. It does not starve the signal - live has ~120k searches in the last 3 months
 and ~400k in the last year in the newest slice of the table alone.
 
-### Changing the caps without a deploy
+### Changing the cap without a deploy
 
-Both are the mail bill, and the moment you want to move one is usually the moment it is mailing
-too many people - the worst time to be waiting for a release. So both are runtime-settable:
+The cap is the whole mail bill of this lever, and the moment you want to move it is usually the
+moment it is mailing too many people - the worst time to be waiting for a release. So it is
+runtime-settable:
 
 ```sql
--- ration propensity scouts harder from the next cron tick
-INSERT INTO config (`key`, `value`) VALUES ('firstreply_scouts_max_per_post', '3')
-  ON DUPLICATE KEY UPDATE `value` = VALUES(`value`);
-
--- pull the safety ceiling in if scouts_strong_capped starts firing
-INSERT INTO config (`key`, `value`) VALUES ('firstreply_scouts_max_strong_per_post', '20')
+-- pull the safety ceiling in if matchmail_capped starts firing
+INSERT INTO config (`key`, `value`) VALUES ('firstreply_matchmail_max_per_post', '20')
   ON DUPLICATE KEY UPDATE `value` = VALUES(`value`);
 ```
 
-Zero means different things for each: `max_per_post = 0` stops propensity scouts while people who
-actually asked still hear; `max_strong_per_post = 0` stops those too, which together is the whole
-lever off without touching the enabled flags.
+**Zero is the stop button**: it halts the mail entirely without touching the enabled flags.
+An absent row means "no opinion", so the env default stands and an empty `config` table behaves
+exactly as a deploy-time default would.
 
-The env vars remain the defaults when the rows are absent, so an empty `config` table behaves
-exactly as before. Read by `ScoutService::scoutConfig()` on every run, so a change takes effect on
-the next tick with no restart. The other scout knobs stay env-only - they shape who is chosen
-rather than how much mail goes out, so they belong with a deploy and a think.
+Read by `MatchMailService::matchConfig()` on every run, so a change takes effect on the next
+tick with no restart. The other knobs stay env-only - they shape who is chosen rather than how
+much mail goes out, so they belong with a deploy and a think.
 
 ## Measuring it
 
-**ModTools → SysAdmin → First reply** (`/sysadmin?tab=firstreply`), served by
-`GET /api/firstreply/metrics` (Support/Admin only, `iznik-server-go/firstreply/metrics.go`).
+**There is no dashboard.** ModTools → SysAdmin → First reply and the
+`GET /api/firstreply/metrics` endpoint behind it were removed on 2026-08-11. Every ledger they
+read is still written, so this is now SQL against those tables. What mattered was never the panel
+but the way of reading them: a lever's own counter says a number went up without saying whether
+the number was worth having, so each one is read against something.
 
 ### The KPI
 
-**Does it get more items rehomed, and more posts replied to?** Everything else on the dashboard
-is a lever reporting on its own activity, and every one of those numbers can rise while this one
-does not. More mail sent is not more items rehomed.
+**Does it get more items rehomed, and more posts replied to?** Every lever counter can rise while
+this one does not. More mail sent is not more items rehomed.
 
-The `arms` section answers it directly: rippled posts in the window, split into the arm that got
-the treatment and the arm that did not, counted on **got a reply** and on **Taken**.
+Rippled posts in the window, split into the arm that got the treatment and the arm that did not,
+counted on **got a reply** and on **Taken**:
 
-| Field | Meaning |
-|---|---|
-| `posts` | rippled posts in the window on this side of the split |
-| `replied` | of those, how many got an `Interested` reply from somebody other than the poster |
-| `taken` | how many reached an outcome of `Taken` or `Received` |
+```sql
+SET @percent = 20;                     -- the live FIRSTREPLY_ROLLOUT_PERCENT
+SET @from = '2026-08-05 00:00:00';     -- NOT before the trial went live: see below
+SET @to = NOW();
 
-Split on `msgid % 100` against `FIRSTREPLY_ROLLOUT_PERCENT` - the same rule and the same
-percentage the levers bucket on, on both the Go and Laravel doors, so the arms really are the
-posts that did and did not get the treatment. The population is **rippled** posts, not all
-posts: that is what the levers act on, and where the 44%-no-reply figure comes from.
+SELECT CASE WHEN CRC32(CONCAT(rr.msgid, '|firstreply')) % 100 < @percent
+            THEN 'trial' ELSE 'holdout' END AS arm,
+       COUNT(*) AS posts,
+       SUM(EXISTS(SELECT 1 FROM chat_messages cm
+                   WHERE cm.refmsgid = rr.msgid AND cm.type = 'Interested'
+                     AND cm.userid <> m.fromuser)) AS replied,
+       SUM(EXISTS(SELECT 1 FROM messages_outcomes mo
+                   WHERE mo.msgid = rr.msgid AND mo.outcome IN ('Taken', 'Received'))) AS taken
+  FROM rippling_reach rr
+  JOIN messages m ON m.id = rr.msgid
+ WHERE rr.created_at BETWEEN @from AND @to
+   AND m.deleted IS NULL
+ GROUP BY arm;
+```
 
-Two limits, stated because the table looks equally authoritative either way:
+The two `EXISTS` are per candidate post rather than joins with `COUNT(DISTINCT)`, so neither
+`chat_messages` nor `messages_outcomes` is materialised; `rr.created_at` is indexed
+(`rippling_reach_created_freeglers`).
 
-- **At 0% or 100% one arm is empty** and the comparison means nothing. The dashboard says so
-  rather than letting the remaining row read as an effect.
+**Floor `@from` at the moment the trial went live.** A wider window fills both arms with
+pre-trial history - posts that got replies the ordinary way before the feature existed - and the
+trial row then reads as a claim the feature never made (live case: "1,834 trial posts replied"
+hours after switch-on). The dashboard did this from a `FIRSTREPLY_ENABLED_AT` env var, which
+nothing reads any more; the floor is now yours to set, and the honest thing is to state it
+alongside any number taken from this.
+
+Split on `CRC32(CONCAT(msgid, '|firstreply')) % 100` against `FIRSTREPLY_ROLLOUT_PERCENT` - the
+same rule and the same percentage the levers bucket on, on both the Go and Laravel doors, so the
+arms really are the posts that did and did not get the treatment. The population is **rippled**
+posts, not all posts: that is what the levers act on, and where the 44%-no-reply figure comes
+from.
+
+Three limits, stated because the output looks equally authoritative either way:
+
+- **At 0% or 100% one arm is empty** and the comparison means nothing. Don't read the surviving
+  row as an effect.
 - **The arms are not equal in size.** Read the percentages, not the counts.
 - `Taken` depends on the poster coming back to record an outcome, which is itself a behaviour
   the trial may change.
 
 Note that the delivery and deadline questions go to **both** arms (see the prompt table above),
-so the comparison is "passthrough + scouts + photo/views prompts" against "neither" - not
-"chat versus nothing".
+so the comparison is "passthrough + match mail + photo/views prompts" against "neither" - not
+"chat versus nothing". With the chat off, it is "passthrough + match mail" against neither.
 
 ### Per lever
 
-Each lever is also shown against something, because a counter on its own says a number went up
-without saying whether it was worth having:
+Read each lever against something, not on its own:
 
-| Lever | Read it as |
-|---|---|
-| Passthrough | first replies let through, and **how much earlier the poster heard because of it** - measured per reply, not guessed from a population |
-| Scouting | reply rate and rehome rate **per signal**, so `wanted` / `search` / `frequent` can be compared directly. A signal that does not convert should be switched off rather than left spending mail |
-| Freegle chat | answer rate per question, and how often the answer actually changed the post. "Collection only" and "no rush" are real answers that leave the post as it was, so they are counted separately from ones that did something |
+| Lever | Read it as | Where from |
+|---|---|---|
+| Passthrough | first replies let through, and **how much earlier the poster heard because of it** - measured per reply, not guessed from a population | `firstreply_passthroughs` (`source`, `waited_hours`), and `rippling_held_replies` for the holds that still happened |
+| Matches | reply rate and rehome rate **per signal**, so `wanted` and `search` can be compared directly. A signal that does not convert should be switched off rather than left spending mail - which is exactly what happened to `frequent` | `firstreply_scouts` grouped by `reason`, joined to `messages_outcomes` |
+| Freegle chat | answer rate per question, and how often the answer actually changed the post. "Collection only" and "no rush" are real answers that leave the post as it was, so count them separately from ones that did something | `chat_prompts` (`kind`, `answered_at`, `answer`) |
+
+The daily `firstreply_event_metrics` counters are still written by both stacks, and are the only
+record in the database of two things the row ledgers cannot reconstruct: `matchmail_capped` (the
+per-post ceiling actually bound) and `matchmail_reply_expanded_reach` (a matched member's reply
+pulled the reach out). Everything else in there duplicates a ledger, so prefer the ledger.
 
 ### Sizing a passthrough
 
@@ -567,21 +686,36 @@ Two deliberate choices in that sweep:
 
 - a replier already inside the tick the post had reached is sized at **0**, not discarded.
   Dropping the least impressive cases would quietly flatter the average.
-- a replier no tick covers is left **NULL**, not 0, and the dashboard averages only the rows
-  it could answer while showing how many it could not. An unknown saving is not a zero saving.
+- a replier no tick covers is left **NULL**, not 0, so average only the rows that could be
+  answered, and say how many could not. An unknown saving is not a zero saving.
 
-The dashboard also splits out how many of the sized replies would have arrived within a day
-anyway - a passthrough that saves twenty minutes is worth much less than one that saves three
-days, and a single average hides which kind these are.
+Split out how many of the sized replies would have arrived within a day anyway - a passthrough
+that saves twenty minutes is worth much less than one that saves three days, and a single average
+hides which kind these are:
 
-### Which signal picked a scout
+```sql
+SELECT source,
+       COUNT(waited_hours) AS sized,
+       AVG(waited_hours) AS avg_hours_earlier,
+       MAX(waited_hours) AS max_hours_earlier,
+       SUM(waited_hours < 24) AS same_day,
+       SUM(waited_hours IS NULL AND computed_at IS NOT NULL) AS unsized
+  FROM firstreply_passthroughs
+ WHERE created_at BETWEEN @from AND @to
+ GROUP BY source;
+```
 
-`firstreply_scouts.reason` records only the **strongest** signal that fired, so the `frequent`
-row means "frequent and nothing else". That is the right denominator for deciding whether
-propensity on its own earns its place: a member who also had a matching saved search is
-counted under `search`, where the credit belongs.
+`unsized` is counted from these rows rather than by subtracting `sized` from the daily counters -
+those are a different table and can legitimately diverge, which would put a wrong number in front
+of the reader.
 
-Scout replies are attributed by a sweep in `firstreply:scout` rather than a hook on the reply
+### Which signal picked a recipient
+
+`firstreply_scouts.reason` records the **strongest** signal that fired, so a member who had both
+an open WANTED and a matching saved search is counted under `wanted`, where the credit belongs.
+A `frequent` row is from the propensity trial and no new ones are written.
+
+Replies are attributed by a sweep in `firstreply:matchmail` rather than a hook on the reply
 path, because replies arrive through four doors (web, app, email, TrashNothing) and none of
-them knows or should know the replier was scouted. It is correlation, not proof - they replied
+them knows or should know the replier was mailed. It is correlation, not proof - they replied
 after we mailed them - which is why the rate is read next to the rehome rate rather than alone.

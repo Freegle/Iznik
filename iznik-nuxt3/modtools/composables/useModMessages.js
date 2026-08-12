@@ -41,11 +41,20 @@ const pendingWorkRefresh = ref(null)
 
 // Bootstrap sets <body> overflow:hidden while a modal is open, so use that as a
 // cross-component "is any modal open?" signal. The typeof guard keeps it
-// SSR-safe (no document on the server).
-function aModalIsOpen() {
+// SSR-safe (no document on the server). A moderator editing a Pending message
+// in place (ModMessage.vue's inline Edit/Save - not a modal) sets
+// miscStore.modtoolsediting instead ("do not check for work" - stores/misc.js).
+// Treat that the same as a modal being open: otherwise a workdetail change
+// landing while editing (or in the instant after Save flips modtoolsediting
+// back off and the work-poll catches up) forces an unprotected full-list
+// reload that can drop the message the moderator just saved, reappearing only
+// on a manual page reload (Discourse 10001/2).
+function refreshMustWait() {
+  const miscStore = useMiscStore()
   return (
-    typeof document !== 'undefined' &&
-    document.body?.style?.overflow === 'hidden'
+    (typeof document !== 'undefined' &&
+      document.body?.style?.overflow === 'hidden') ||
+    !!miscStore.modtoolsediting
   )
 }
 
@@ -292,12 +301,14 @@ export function setupModMessages(reset) {
     const newTotal = Number(newVal?.total ?? 0)
     const oldTotal = Number(oldVal?.total ?? 0)
     if (newTotal > oldTotal) {
-      // ...but NOT while a modal is open. Refreshing re-renders the message
-      // list, which unmounts an open modal (e.g. a moderator part-way through
-      // typing a rejection reason) and loses their draft. Park the refresh and
-      // apply it when the modal closes (see the observer below), so the new
-      // message still appears without a manual reload.
-      if (aModalIsOpen()) {
+      // ...but NOT while a modal is open, or a message is being edited in
+      // place. Refreshing re-renders the message list, which unmounts an
+      // open modal (e.g. a moderator part-way through typing a rejection
+      // reason) - or the ModMessage a moderator is editing - and loses their
+      // draft. Park the refresh and apply it when the modal closes / editing
+      // finishes (see the observers below), so the new message still appears
+      // without a manual reload.
+      if (refreshMustWait()) {
         pendingWorkRefresh.value = newVal
         return
       }
@@ -309,7 +320,7 @@ export function setupModMessages(reset) {
     // already handled): keep the existing suppression so the list does not
     // reload under the user's feet.
     if (miscStore.deferGetMessages) return
-    if (aModalIsOpen()) {
+    if (refreshMustWait()) {
       // Park it, exactly as the total-increased branch above does. Do NOT drop
       // it: another moderator holding a message moves it from `pending` to
       // `pendingother` (see groupWork.go), so the total never changes and this
@@ -334,7 +345,7 @@ export function setupModMessages(reset) {
     typeof MutationObserver !== 'undefined'
   ) {
     const bodyOverflowObserver = new MutationObserver(() => {
-      if (pendingWorkRefresh.value && !aModalIsOpen()) {
+      if (pendingWorkRefresh.value && !refreshMustWait()) {
         const deferred = pendingWorkRefresh.value
         pendingWorkRefresh.value = null
         getMessages(deferred)
@@ -348,6 +359,20 @@ export function setupModMessages(reset) {
       onScopeDispose(() => bodyOverflowObserver.disconnect())
     }
   }
+
+  // Apply a refresh that was deferred because a message was being edited in
+  // place, as soon as editing finishes (mirrors the modal-close observer
+  // above). ModMessage.vue's save()/cancelEdit() clear modtoolsediting.
+  watch(
+    () => useMiscStore().modtoolsediting,
+    (editing) => {
+      if (!editing && pendingWorkRefresh.value && !refreshMustWait()) {
+        const deferred = pendingWorkRefresh.value
+        pendingWorkRefresh.value = null
+        getMessages(deferred)
+      }
+    }
+  )
 
   return {
     busy,

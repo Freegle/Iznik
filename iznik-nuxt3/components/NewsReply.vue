@@ -1,5 +1,5 @@
 <template>
-  <div :class="{ 'bg-info': scrollToThis }">
+  <div :class="{ 'deep-link-target': scrollToThis }">
     <div v-if="mod || myid === reply.userid || !reply.hidden" class="reply">
       <!-- More actions dropdown - positioned at top right of reply -->
       <button
@@ -171,9 +171,13 @@
     <!-- Forward rendered events from nested replies: without this the
          notification deep-link scroll in NewsThread never hears about
          depth 2+ replies mounting. When the nested list reports that its
-         whole subtree has mounted, this reply's subtree is complete too. -->
+         whole subtree has mounted, this reply's subtree is complete too.
+         In the feed the children are suppressed and nothing stands in for
+         them here: recent ones are rows of their own in the card's
+         time-ordered tail, and the card's "View all N replies" link counts
+         and names the rest of the tree. -->
     <NewsReplies
-      v-if="reply?.replies?.length"
+      v-if="reply?.replies?.length && !suppressChildren"
       :id="id"
       :threadhead="threadhead"
       :scroll-to="scrollTo"
@@ -386,6 +390,15 @@ const props = defineProps({
     type: Number,
     required: true,
   },
+  // Feed cards render the recent part of a nested conversation as rows of the
+  // card's own tail rather than inline under the parent, so the inline list is
+  // suppressed to stop those replies appearing twice (set by NewsReplies in
+  // feed context).
+  suppressChildren: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
 const emit = defineEmits(['rendered', 'subtree-rendered', 'expand-combined'])
@@ -497,7 +510,12 @@ const threadUsers = computed(() => {
 })
 
 const scrollToThis = computed(() => {
-  return parseInt(props.scrollTo) === props.id
+  const target = parseInt(props.scrollTo)
+  if (!target) return false
+  if (target === props.id) return true
+  // A combined block renders as one component keyed by its first id; a deep
+  // link to any of the later messages must still light this row up.
+  return !!reply.value?.combinedIds?.includes(target)
 })
 
 const isNew = computed(() => {
@@ -546,10 +564,19 @@ onMounted(() => {
   // rendered.  The deep-link scroll in NewsThread is driven by these events.
   emit('rendered', props.id)
 
+  // A combined block mounts once, keyed by its first id. Announce the later
+  // ids too, or a deep link to one of them never triggers the pin.
+  for (const cid of reply.value?.combinedIds || []) {
+    if (cid !== props.id) {
+      emit('rendered', cid)
+    }
+  }
+
   // Completion signal for the deep-link pin: a reply with no children IS its
   // whole subtree. With children, the nested <NewsReplies> reports when all
   // of them (recursively) have mounted - forwarded below in the template.
-  if (!reply.value?.replies?.length) {
+  // Suppressed children (feed context) never mount, so nothing to wait for.
+  if (!reply.value?.replies?.length || props.suppressChildren) {
     emit('subtree-rendered', props.id)
   }
 })
@@ -1014,5 +1041,33 @@ function showReplyPhotoModal() {
   vertical-align: middle;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+
+/* The reply a notification deep link points at. A brief flash draws the eye
+   on arrival, settling to a soft resting tint so the row stays identifiable.
+   Under reduced motion the flash is skipped but the resting cue remains.
+
+   Paint the reply ROW, not the component root: the root also wraps the nested
+   <NewsReplies>, the reply box and the uploader, so tinting it turned the whole
+   subtree green instead of marking the one reply the notification meant. */
+.deep-link-target > .reply {
+  background-color: rgba($color-success-bg, 0.35);
+  border-radius: 4px;
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: deep-link-flash 2.4s ease-out;
+  }
+}
+
+/* One hue start to finish. This used to open on $color-success-border (a mint
+   green) and settle on $color-success-bg (an olive one), so the flash read as
+   a colour change rather than a fade. */
+@keyframes deep-link-flash {
+  0% {
+    background-color: rgba($color-success-bg, 0.9);
+  }
+  100% {
+    background-color: rgba($color-success-bg, 0.35);
+  }
 }
 </style>

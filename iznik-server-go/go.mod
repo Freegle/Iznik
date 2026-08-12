@@ -1,4 +1,4 @@
-module iznik-server-go
+module github.com/freegle/iznik-server-go
 
 go 1.23.0
 
@@ -74,8 +74,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-
-replace github.com/freegle/iznik-server-go => ./
 
 // Fix for dockertest v3.3.5 incompatibility with modern runc
 replace github.com/ory/dockertest => github.com/ory/dockertest/v3 v3.10.0

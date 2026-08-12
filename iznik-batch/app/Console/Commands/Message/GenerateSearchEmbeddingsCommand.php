@@ -49,14 +49,22 @@ class GenerateSearchEmbeddingsCommand extends Command
 
             // Missing entirely, or embedded by a model we no longer use - mixing
             // scales silently would be worse than not matching at all.
+            //
+            // Newest first, and only the window the consumers read: both the
+            // scout signal and /searchmatches filter on date >= 6 months, so an
+            // older search would be embedded for nobody, and while a backlog is
+            // draining the searches most likely to still be live intent should
+            // be matchable first, not last.
             $searches = DB::table('users_searches as s')
                 ->leftJoin('users_searches_embeddings as e', 'e.searchid', '=', 's.id')
                 ->where('s.deleted', 0)
                 ->whereNotNull('s.term')
                 ->where('s.term', '<>', '')
+                ->where('s.date', '>=', now()->subMonths((int) config('freegle.firstreply.search_max_age_months', 6)))
                 ->where(fn ($q) => $q->whereNull('e.searchid')
                     ->orWhere('e.model_version', '<>', EmbeddingService::MODEL_VERSION))
                 ->select('s.id', 's.term')
+                ->orderByDesc('s.id')
                 ->limit(min($chunkSize, $remaining))
                 ->get();
 

@@ -1,6 +1,7 @@
 package firstreply
 
 import (
+	"hash/crc32"
 	"os"
 	"strconv"
 	"sync"
@@ -64,8 +65,14 @@ func rolloutPercent() int {
 	return 0
 }
 
-// inRollout buckets on msgid % 100, exactly as App\Services\FirstReply\Rollout
-// does, so a post is in or out for its whole life and on both paths.
+// inRollout buckets on CRC32(msgid . "|firstreply") % 100, exactly as
+// App\Services\FirstReply\Rollout does, so a post is in or out for its whole
+// life and on both paths. A hash rather than msgid % 100 because message ids
+// are minted under Galera's auto_increment_increment stride - a raw modulus is
+// only uniform while the stride stays coprime with the bucket count, and a
+// cluster resize would silently skew the split. crc32.ChecksumIEEE, PHP crc32
+// and MySQL CRC32() share the same polynomial; a pinned test on each side
+// holds the three expressions together.
 func inRollout(msgid uint64) bool {
 	p := rolloutPercent()
 	if p >= 100 {
@@ -74,7 +81,12 @@ func inRollout(msgid uint64) bool {
 	if p <= 0 {
 		return false
 	}
-	return int(msgid%100) < p
+	return RolloutBucket(msgid) < p
+}
+
+// RolloutBucket is the shared trial bucket for a post, 0..99.
+func RolloutBucket(msgid uint64) int {
+	return int(crc32.ChecksumIEEE([]byte(strconv.FormatUint(msgid, 10)+"|firstreply")) % 100)
 }
 
 // maxExistingRepliers is how many distinct repliers a post may already have and

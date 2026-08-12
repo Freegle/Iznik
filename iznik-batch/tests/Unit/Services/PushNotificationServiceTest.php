@@ -1360,4 +1360,160 @@ class PushNotificationServiceTest extends TestCase
         $this->assertSame('/microvolunteering/message/123', $payload['route'],
             'Relative notification URLs must be passed through unchanged');
     }
+
+    // -----------------------------------------------------------------------
+    // consumerUnreadCounts() notification visibility (Discourse #9953)
+    //
+    // The app-icon badge is driven by consumerUnreadCounts()'s notifcount. The
+    // in-app bell/list (iznik-server-go notification.Count()/List()) only ever
+    // shows unseen notifications within a 90-day window and hides ones from a
+    // spam/pending-add sender. A notification invisible in the bell can never
+    // be marked seen there, so if the badge counts it anyway it becomes a
+    // permanent phantom blob - exactly Diz's report: "a permanent notification
+    // blob... and I don't [have any replies]".
+    // -----------------------------------------------------------------------
+
+    /**
+     * Sanity check: a recent, non-spam unseen notification does count, so the
+     * exclusion tests below aren't vacuously true.
+     */
+    public function test_consumerUnreadCounts_counts_recent_unseen_notification(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'seen' => 0,
+            'timestamp' => now()->subDays(1),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(1, $notifcount, 'A recent unseen notification must count towards the badge');
+    }
+
+    /**
+     * A notification older than the in-app bell's 90-day window can never be
+     * marked seen there (NotificationOne.vue's markSeen() only fires for a
+     * notification actually rendered in the list), so it must not permanently
+     * inflate the app-icon badge.
+     */
+    public function test_consumerUnreadCounts_excludes_notification_older_than_bell_window(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'seen' => 0,
+            'timestamp' => now()->subDays(200),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(0, $notifcount,
+            'A notification the member can never see in the bell must not inflate the badge (Discourse #9953)');
+    }
+
+    /**
+     * Notifications from a spam/pending-add sender are hidden from the in-app
+     * bell (notification.Count()/List() LEFT JOIN spam_users) and from the
+     * chaseup mailer (NotificationChaseUpService::SPAM_COLLECTIONS) - the
+     * push-computed badge must exclude them too.
+     */
+    public function test_consumerUnreadCounts_excludes_notification_from_spam_sender(): void
+    {
+        $user = $this->createTestUser();
+        $spammer = $this->createTestUser();
+
+        DB::table('spam_users')->insert([
+            'userid' => $spammer->id,
+            'byuserid' => $user->id,
+            'collection' => 'Spammer',
+        ]);
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $spammer->id,
+            'touser' => $user->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(0, $notifcount,
+            'A notification from a spam-flagged sender must not inflate the badge (Discourse #9953)');
+    }
+
+    /**
+     * A Whitelisted spam_users row must not exclude the sender's notifications -
+     * only Spammer/PendingAdd hide a notification from the bell.
+     */
+    public function test_consumerUnreadCounts_does_not_exclude_whitelisted_sender(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('spam_users')->insert([
+            'userid' => $sender->id,
+            'byuserid' => $user->id,
+            'collection' => 'Whitelisted',
+        ]);
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(1, $notifcount,
+            'Whitelisted is not a spam collection and must not exclude the notification');
+    }
+
+    /**
+     * Every spelling FCM uses for a permanently dead token must trigger the
+     * purge. Regression: a rejected send reports the legacy name
+     * 'NotRegistered', which the old case-sensitive match ('UNREGISTERED')
+     * missed - so dead tokens were never cleaned up and every subsequent push
+     * to them failed silently (2,162 such errors on 2026-08-09 alone).
+     */
+    public function test_dead_token_errors_are_recognised_in_all_spellings(): void
+    {
+        foreach ([
+            'NotRegistered',
+            'UNREGISTERED',
+            'Requested entity was not found.',
+            'NOT_FOUND',
+            'SENDER_ID_MISMATCH',
+            'MismatchSenderId',
+            'The registration token is not a valid FCM registration token',
+            'Invalid registration token',
+            'InvalidRegistration',
+        ] as $error) {
+            $this->assertTrue(PushNotificationService::isDeadTokenError($error), "'$error' must be treated as a dead token");
+        }
+    }
+
+    public function test_transient_errors_do_not_kill_the_token(): void
+    {
+        foreach ([
+            'Deadline exceeded',
+            'Internal server error',
+            'QUOTA_EXCEEDED',
+            'The service is currently unavailable',
+            'APNs device token is disabled.',
+        ] as $error) {
+            $this->assertFalse(PushNotificationService::isDeadTokenError($error), "'$error' must NOT delete the subscription");
+        }
+    }
 }

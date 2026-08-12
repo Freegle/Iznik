@@ -1,7 +1,14 @@
 import { spawn, execSync } from 'child_process'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { checkContainersReady, containersNotReadyMessage } from '../../utils/requiredContainers'
 
 const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
+
+// What the Unit+Feature suites actually talk to: the database, the container the
+// tests run in, and the spatial-knn finder that SeedsSpatialIndex posts to. With
+// spatial-knn down the suite still ran to the end and reported 31 errors that read
+// like broken code (Discourse 10001 investigation, 2026-08-10).
+const REQUIRED_CONTAINERS = ['percona', 'batch', 'spatial-knn']
 
 export default defineEventHandler(async (event) => {
   console.log('Starting Laravel tests...')
@@ -21,6 +28,22 @@ export default defineEventHandler(async (event) => {
       statusCode: 409,
       message: 'Laravel tests are already running'
     })
+  }
+
+  // Refuse to start rather than produce a red run that blames the code.
+  const readiness = checkContainersReady(prefix, REQUIRED_CONTAINERS)
+  if (!readiness.ok) {
+    const message = containersNotReadyMessage('Laravel', readiness)
+    setTestState('laravel', {
+      status: 'failed',
+      success: false,
+      message,
+      logs: message + '\n',
+      progress: { completed: 0, total: 0, passed: 0, failed: 0, current: '' },
+      startTime: Date.now(),
+      endTime: Date.now(),
+    })
+    throw createError({ statusCode: 503, message })
   }
 
   // Initialize test status
@@ -137,11 +160,18 @@ function parseLaravelTestOutput(text: string) {
       }
     }
 
-    // Failures
-    if (line.includes('FAILURES!')) {
+    // Failures and errors. PHPUnit reports them separately and prints only the
+    // headline it has: "FAILURES!" with a Failures: line, or "ERRORS!" with an
+    // Errors: line, or both. Counting failures alone let a run of 31 errors be
+    // summarised as "5389✓ 0✗" - passing arithmetic on a red run, which is worse
+    // than no summary at all. Both count as not-passed.
+    const summaryMatch = line.match(/^Tests:\s+\d+,/)
+    if (line.includes('FAILURES!') || line.includes('ERRORS!') || summaryMatch) {
       const failMatch = line.match(/Failures:\s*(\d+)/)
-      if (failMatch) {
-        state.progress.failed = parseInt(failMatch[1])
+      const errMatch = line.match(/Errors:\s*(\d+)/)
+      if (failMatch || errMatch) {
+        state.progress.failed =
+          (failMatch ? parseInt(failMatch[1]) : 0) + (errMatch ? parseInt(errMatch[1]) : 0)
       }
     }
   }

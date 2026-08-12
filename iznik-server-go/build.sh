@@ -89,9 +89,8 @@ echo "✅ Swagger specification validation passed"
 # directory at runtime, so the file-based detection in status.go's init() cannot
 # work there. ldflags is the only reliable way to make /api/version report the
 # live Go deploy (consumed by the monitor-fsm verified-live reply gate). The
-# import path here must match how packages are imported (via the
-# `replace github.com/freegle/iznik-server-go => ./` directive in go.mod), not
-# the bare module name.
+# import path here is the module path declared in go.mod, which is also how
+# every package imports its siblings.
 echo "Building application..."
 BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME=$(date -u '+%Y-%m-%d %H:%M:%S UTC')

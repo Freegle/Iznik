@@ -34,8 +34,16 @@
       link-class="notification-list__item"
     >
       <div class="d-flex justify-content-end">
-        <b-button variant="secondary" size="sm" @click="markAllRead">
+        <b-button
+          variant="white"
+          size="sm"
+          class="btn-mark-read"
+          @click="markAllRead"
+        >
           Mark all read
+          <b-badge v-if="unreadNotificationCount" variant="danger" class="ms-1">
+            {{ unreadNotificationCount }}
+          </b-badge>
         </b-button>
       </div>
     </b-dropdown-item>

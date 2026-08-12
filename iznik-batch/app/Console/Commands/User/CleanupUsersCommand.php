@@ -44,6 +44,7 @@ class CleanupUsersCommand extends Command
                     [$prefix . 'Forget inactive users', number_format($stats['inactive_users_forgotten'])],
                     [$prefix . 'Process GDPR forgets', number_format($stats['gdpr_forgets_processed'])],
                     [$prefix . 'Delete fully forgotten users', number_format($stats['forgotten_users_deleted'])],
+                    [$prefix . 'Prune old deletion records', number_format($stats['deletion_records_pruned'])],
                 ]
             );
 

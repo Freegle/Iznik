@@ -13,6 +13,7 @@ import {
   dateonlyNoYear,
   dateshortNoYear,
   weekdayshort,
+  durationMinutes,
 } from '~/composables/useTimeFormat'
 
 // Fixed reference instant — Friday 2026-04-17 12:00:00 UTC
@@ -239,6 +240,54 @@ describe('useTimeFormat', () => {
       expect(weekdayshort(d)).toMatch(
         /^Friday 17(st|nd|rd|th) \d{2}:\d{2} (am|pm)$/
       )
+    })
+  })
+
+  // durationMinutes renders an ELAPSED SPAN (a count of minutes), not a distance from now.
+  // timeagoMedium can't do this: it takes a date. Rippling reply-holds report heldminutes,
+  // computed server-side so it works for a still-open hold without trusting the client clock.
+  describe('durationMinutes', () => {
+    it('renders minutes below an hour, singular and plural', () => {
+      expect(durationMinutes(1)).toBe('1 min')
+      expect(durationMinutes(35)).toBe('35 mins')
+      expect(durationMinutes(59)).toBe('59 mins')
+    })
+
+    it('renders hours below a day', () => {
+      expect(durationMinutes(60)).toBe('1 hour')
+      expect(durationMinutes(150)).toBe('2 hours')
+      expect(durationMinutes(23 * 60)).toBe('23 hours')
+    })
+
+    // A delay is not a date. timeagoMedium switches to days at 24h, which is right for "when
+    // did this happen" but wrong for "how long was this stuck": "2 days" hides whether a hold
+    // straddled one night or three. So hours run to 48h before days take over.
+    it('keeps using hours past 24h, up to 48h', () => {
+      expect(durationMinutes(24 * 60)).toBe('24 hours')
+      expect(durationMinutes(2812)).toBe('46 hours')
+      expect(durationMinutes(47 * 60)).toBe('47 hours')
+    })
+
+    it('renders days from 48 hours', () => {
+      expect(durationMinutes(48 * 60)).toBe('2 days')
+      expect(durationMinutes(60 * 60)).toBe('2 days')
+      expect(durationMinutes(6 * 24 * 60)).toBe('6 days')
+    })
+
+    it('renders weeks beyond a week — 283h was the worst observed hold', () => {
+      expect(durationMinutes(7 * 24 * 60)).toBe('1 week')
+      expect(durationMinutes(283 * 60)).toBe('1 week')
+      expect(durationMinutes(21 * 24 * 60)).toBe('3 weeks')
+    })
+
+    it('handles zero, sub-minute and missing values without throwing', () => {
+      expect(durationMinutes(0)).toBe('less than a minute')
+      expect(durationMinutes(null)).toBe('')
+      expect(durationMinutes(undefined)).toBe('')
+    })
+
+    it('ignores a negative span rather than rendering nonsense', () => {
+      expect(durationMinutes(-5)).toBe('less than a minute')
     })
   })
 })

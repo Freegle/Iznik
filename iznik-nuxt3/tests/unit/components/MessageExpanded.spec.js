@@ -704,6 +704,47 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.reply-button').exists()).toBe(false)
     })
 
+    // Rippling-out: the post is visible but hasn't rippled to this viewer, so a
+    // reply is held for a bounded spell before it reaches the owner. Say how long,
+    // rather than leaving them with an open-ended promise.
+    describe('reach-blocked hold notice', () => {
+      it('says when the post is due to reach here when the API sends an estimate', async () => {
+        mockFromme.value = false
+        mockMessage.value.replyeligible = false
+        mockMessage.value.reachesyouat = new Date(
+          Date.now() + 3 * 60 * 60 * 1000
+        ).toISOString()
+        mockMessage.value.reachesyoufully = true
+        const wrapper = await createWrapper({ replyable: true })
+
+        expect(wrapper.find('[data-testid="reach-blocked-eta"]').exists()).toBe(
+          true
+        )
+        expect(wrapper.text().replace(/\s+/g, ' ')).toContain(
+          "It's due to reach you in about 3 hours"
+        )
+        expect(wrapper.text()).not.toContain('as soon as it does')
+      })
+
+      it('falls back to the open-ended wording when there is no estimate', async () => {
+        mockFromme.value = false
+        mockMessage.value.replyeligible = false
+        const wrapper = await createWrapper({ replyable: true })
+
+        expect(wrapper.find('[data-testid="reach-blocked-eta"]').exists()).toBe(
+          false
+        )
+        expect(wrapper.text()).toContain('as soon as it does')
+      })
+
+      it('says nothing about a hold when the post has reached the viewer', async () => {
+        mockFromme.value = false
+        const wrapper = await createWrapper({ replyable: true })
+
+        expect(wrapper.text()).not.toContain("hasn't reached your area yet")
+      })
+    })
+
     it('hides reply button when not replyable', async () => {
       const wrapper = await createWrapper({ replyable: false })
       expect(wrapper.find('.reply-button').exists()).toBe(false)

@@ -721,26 +721,27 @@ class UnifiedDigestService
      * Mail one post immediately to an explicit list of members, bypassing both the
      * reach ledger's "newly reached" logic and the recipient's digest frequency.
      *
-     * This exists for first-reply scouting (App\Services\FirstReply\ScoutService),
-     * which picks a handful of members who look genuinely likely to want a
-     * specific silent post - somebody with a matching open WANTED, or a saved
-     * search for it - and tells them now rather than when their daily digest runs
-     * or when the ripple eventually arrives. The caller has already decided WHO;
-     * this decides nothing except whether each of them can be mailed at all.
+     * This exists for match mail (App\Services\FirstReply\MatchMailService), which
+     * picks the members whose own open post of the opposite type, or saved search,
+     * matches a specific post, and tells them now rather than when their daily
+     * digest runs or when the ripple eventually arrives. The caller has already
+     * decided WHO; this decides nothing except whether each of them can be mailed
+     * at all.
      *
-     * Everything else about the mail is identical to a reach immediate digest,
-     * deliberately: recipients get the format they already recognise, not a new
-     * kind of mail from Freegle.
+     * The layout is the reach immediate digest, so recipients get the format they
+     * already recognise. $reasons (userid => 'wanted'|'search') adds the one thing
+     * that must differ: a line saying why this particular mail is for them, and
+     * the post's own subject on the envelope. Without that it reads as the daily
+     * digest arriving early, which is the mail they are already ignoring.
      *
-     * Returns the ids actually mailed rather than a count. The caller has to know
-     * WHO received it, because for some of them this mail stands in for their
-     * daily digest and that has to be recorded against those members and no
-     * others - including not against anyone whose spool failed.
+     * Returns the ids actually mailed rather than a count, because the caller has
+     * to know exactly who received it - not including anyone whose spool failed.
      *
      * @param int[] $userIds
+     * @param array<int,string> $reasons
      * @return int[]
      */
-    public function mailPostToUsers(int $msgid, array $userIds, bool $dryRun = false): array
+    public function mailPostToUsers(int $msgid, array $userIds, bool $dryRun = false, array $reasons = []): array
     {
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE) || empty($userIds)) {
             return [];
@@ -785,7 +786,9 @@ class UnifiedDigestService
                     : null;
             }
 
-            return $this->spoolPostToRecipients($msg, $userIds, $latLng, $dryRun, writeReachLedger: false);
+            return $this->spoolPostToRecipients(
+                $msg, $userIds, $latLng, $dryRun, writeReachLedger: false, matchReasons: $reasons
+            );
         } catch (\Throwable $e) {
             Log::warning('firstreply: mailPostToUsers failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
             return [];
@@ -813,7 +816,8 @@ class UnifiedDigestService
         array $recipientIds,
         array $recipientLatLng,
         bool $dryRun,
-        bool $writeReachLedger = true
+        bool $writeReachLedger = true,
+        array $matchReasons = []
     ): array {
         $msgid = (int) $msg->id;
 
@@ -855,7 +859,10 @@ class UnifiedDigestService
             $deduped = collect([['message' => $msg, 'postedToGroups' => $postedToGroups]]);
             try {
                 app(\App\Services\EmailSpoolerService::class)->spool(
-                    new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
+                    new UnifiedDigest(
+                        $user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache,
+                        matchReason: $matchReasons[(int) $user->id] ?? null
+                    ),
                     $user->email_preferred,
                     emailType: 'digest_immediate',
                 );
@@ -1847,6 +1854,10 @@ class UnifiedDigestService
      * memoised per author id so repeated posts by the same freegler — across
      * recipients and groups within a run — cost a single lookup. Absent author or
      * absent/sentinel setting resolves to DISTANCE_UNLIMITED (no outbound cap).
+     *
+     * Uses authorMaxDistanceMiles, NOT maxDistanceMiles: the latter falls back to the
+     * member's density band default, which describes how far THEY would travel to collect
+     * and must never become a cap on how far their own posts may go.
      */
     private array $authorMaxMilesCache = [];
 
@@ -1855,7 +1866,7 @@ class UnifiedDigestService
         if (!array_key_exists($fromuser, $this->authorMaxMilesCache)) {
             $author = User::select('id', 'settings')->find($fromuser);
             $this->authorMaxMilesCache[$fromuser] = $author
-                ? app(DistancePreferenceFilter::class)->maxDistanceMiles($author)
+                ? app(DistancePreferenceFilter::class)->authorMaxDistanceMiles($author)
                 : (float) DistancePreferenceFilter::DISTANCE_UNLIMITED;
         }
 

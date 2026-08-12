@@ -3,6 +3,12 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 import { Camera } from '@capacitor/camera'
 import PhotoUploader from '~/components/PhotoUploader.vue'
+// The full-screen viewer is a defineAsyncComponent inside PhotoUploader; the
+// viewer tests assert against the REAL component (slides, counter), so it is
+// not stubbed. Importing it here warms the module cache, making the dynamic
+// import resolve instantly - on a loaded CI runner the first cold import of
+// its chain could exceed the tests' waitFor window and flake (seen live).
+import '~/components/MessagePhotosModal'
 
 // Mock defineAsyncComponent to return a stub for vuedraggable
 vi.stubGlobal('defineAsyncComponent', (fn) => {
@@ -100,9 +106,14 @@ vi.mock('@uppy/compressor', () => ({
 // Spy on the Loki action() logger so we can assert the upload/compression
 // telemetry payloads. Keep the module's other exports real.
 const mockAction = vi.hoisted(() => vi.fn())
+const mockLogError = vi.fn()
 vi.mock('~/composables/useClientLog', async (importOriginal) => {
   const actual = await importOriginal()
-  return { ...actual, action: (...args) => mockAction(...args) }
+  return {
+    ...actual,
+    action: (...args) => mockAction(...args),
+    error: (...args) => mockLogError(...args),
+  }
 })
 
 // Mock image store
@@ -1168,6 +1179,74 @@ describe('PhotoUploader', () => {
       expect(wrapper.vm.photos.length).toBe(0)
       expect(wrapper.vm.showSourceModal).toBe(true)
     })
+
+    // A critical blur warning holds the upload back until the member chooses.
+    // Dismissing the modal without choosing (header X, backdrop, Esc) used to
+    // leave the photo uploading:true with nothing in flight, which disables
+    // Next for good - and compose persists it, so it blocked posting on the
+    // next visit too.
+    it('dismissing the quality modal uploads the held photo instead of stranding it', async () => {
+      mockMobileStore.isApp = true
+      mockAnalyzePhotoQuality.mockResolvedValue({
+        hasIssues: true,
+        overallSeverity: 'critical',
+        warnings: [{ type: 'blur', message: 'This photo is very blurry' }],
+      })
+      createWrapper()
+
+      await wrapper.vm.processPhoto('/blurry.jpg')
+      await flushPromises()
+
+      expect(wrapper.vm.showQualityModal).toBe(true)
+      expect(wrapper.vm.photos[0].uploading).toBe(true)
+      expect(mockTusUpload.start).not.toHaveBeenCalled()
+
+      wrapper.vm.onQualityModalHidden()
+      await flushPromises()
+
+      expect(mockTusUpload.start).toHaveBeenCalled()
+      expect(wrapper.vm.pendingPhoto).toBeNull()
+    })
+
+    it('hiding after a button choice does not upload a second time', async () => {
+      createWrapper()
+      wrapper.vm.showQualityModal = true
+      wrapper.vm.pendingPhoto = { preview: '/test.jpg', uploading: true }
+
+      wrapper.vm.continueWithPhoto()
+      await flushPromises()
+      expect(mockTusUpload.start).toHaveBeenCalledTimes(1)
+
+      wrapper.vm.onQualityModalHidden()
+      await flushPromises()
+
+      expect(mockTusUpload.start).toHaveBeenCalledTimes(1)
+      expect(wrapper.vm.pendingPhoto).toBeNull()
+    })
+
+    // Android's back gesture navigates instead of closing the modal, so the
+    // component unmounts with the photo still held.
+    it('navigating away with the modal open leaves the photo recoverable', async () => {
+      mockMobileStore.isApp = true
+      mockAnalyzePhotoQuality.mockResolvedValue({
+        hasIssues: true,
+        overallSeverity: 'critical',
+        warnings: [{ type: 'blur', message: 'This photo is very blurry' }],
+      })
+      createWrapper()
+
+      await wrapper.vm.processPhoto('/blurry.jpg')
+      await flushPromises()
+
+      const held = wrapper.vm.photos[0]
+      expect(held.uploading).toBe(true)
+
+      wrapper.unmount()
+      wrapper = null
+
+      expect(held.uploading).toBe(false)
+      expect(held.error).toBe(true)
+    })
   })
 
   describe('edge cases', () => {
@@ -1715,6 +1794,168 @@ describe('PhotoUploader', () => {
         expect.objectContaining({ attempt: 3 })
       )
       consoleError.mockRestore()
+    })
+  })
+
+  // You should be able to check a photo is any good before you post it, not
+  // after - so tapping it opens the same full-screen zoomable viewer as a photo
+  // on a live post.
+  describe('viewing a photo full screen', () => {
+    // The viewer teleports to the body, so it is not inside the wrapper.
+    function viewer() {
+      return document.body.querySelector('.fullscreen-viewer')
+    }
+
+    it('opens the viewer when the featured photo is tapped', async () => {
+      createWrapper({
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+
+      // The viewer is loaded on demand, so give the import a moment.
+      await vi.waitFor(() => expect(viewer()).not.toBeNull(), { timeout: 5000 })
+
+      // Every photo, so you can page through them, starting on the one shown.
+      expect(viewer().querySelectorAll('.image-slide')).toHaveLength(2)
+      expect(viewer().querySelector('.image-counter').textContent.trim()).toBe(
+        '1 / 2'
+      )
+    })
+
+    it('does not open for a photo that is still uploading', async () => {
+      createWrapper({
+        modelValue: [{ id: 1, tempId: 't1', uploading: true, progress: 40 }],
+      })
+      await flushPromises()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
+    })
+
+    it('closes again when the viewer is dismissed', async () => {
+      createWrapper({ modelValue: [{ id: 1, ouruid: 'uid1' }] })
+      await flushPromises()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+      await vi.waitFor(() => expect(viewer()).not.toBeNull(), { timeout: 5000 })
+
+      viewer().querySelector('.back-button').click()
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
+    })
+  })
+
+  // The bytes go up via tus, then we register them with the API.  That second
+  // call is what has to finish for the photo to stop being "uploading", and the
+  // give flow has no exits while it is: Next is gated on anyUploading and Skip
+  // only renders in the empty state.  So if the register call never settles the
+  // member is not just missing a photo, they cannot post at all - and compose
+  // persists that to their next visit.  This happened live: the API layer
+  // awaited a connection check that polled for ever, so a 200 that had already
+  // come back was never read (see composables/useFetchRetry.js).  That is fixed
+  // at source, but the flow should not depend on the API layer never hanging.
+  describe('registering the uploaded photo hangs', () => {
+    async function startUploadThatHangs() {
+      mockImageStore.post.mockReturnValueOnce(new Promise(() => {}))
+
+      createWrapper({ modelValue: [] })
+      await flushPromises()
+
+      wrapper.vm.processPhoto('/photo.jpg')
+      await flushPromises()
+
+      mockTusUpload._options.onProgress(100, 100)
+      mockTusUpload._options.onSuccess()
+      await flushPromises()
+    }
+
+    it('leaves the photo uploading while the register call is still outstanding', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+
+        expect(wrapper.vm.photos[0].uploading).toBe(true)
+        expect(wrapper.vm.photos[0].progress).toBe(100)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('gives the photo up as failed rather than blocking the flow for ever', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+
+        await vi.advanceTimersByTimeAsync(61000)
+
+        expect(wrapper.vm.photos[0].uploading).toBe(false)
+        expect(wrapper.vm.photos[0].error).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // The tray syncs to the persisted compose store through a watcher that Vue
+    // stops when this component unmounts.  So if we go away while an upload is
+    // outstanding, the last thing written to the store says uploading:true, and
+    // when the upload does settle it mutates an object nothing is listening to.
+    // The store keeps uploading:true for ever, the give flow gates Next on it,
+    // and it is restored in that state on the next visit.  Live, the member
+    // navigated off the photos page 22s after the reply came back, which is
+    // what made her lockout permanent rather than momentary.
+    it('does not leave the tray saying uploading when we navigate away mid-upload', async () => {
+      // Stand in for the compose store: whatever the component last pushed out
+      // is what gets persisted and restored on the next visit.
+      const pushedOut = []
+
+      mockImageStore.post.mockReturnValueOnce(new Promise(() => {}))
+      createWrapper({
+        modelValue: [],
+        'onUpdate:modelValue': (v) => pushedOut.push(v),
+      })
+      await flushPromises()
+
+      wrapper.vm.processPhoto('/photo.jpg')
+      await flushPromises()
+      mockTusUpload._options.onProgress(100, 100)
+      mockTusUpload._options.onSuccess()
+      await flushPromises()
+
+      expect(pushedOut.length).toBeGreaterThan(0)
+      expect(pushedOut.at(-1)[0].uploading).toBe(true)
+
+      wrapper.unmount()
+      await flushPromises()
+
+      const persisted = pushedOut.at(-1)[0]
+      expect(persisted.uploading).toBe(false)
+      expect(persisted.error).toBe(true)
+    })
+
+    it('offers retry and delete once it has failed, so there is a way forward', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+        await vi.advanceTimersByTimeAsync(61000)
+      } finally {
+        vi.useRealTimers()
+      }
+
+      await flushPromises()
+
+      const card = wrapper.find('.photo-card')
+      expect(card.attributes('data-error')).toBe('true')
+      expect(card.attributes('data-uploading')).toBe('false')
     })
   })
 })

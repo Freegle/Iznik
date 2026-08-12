@@ -56,13 +56,13 @@ import (
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
 
-	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/partnerships"
 	"github.com/freegle/iznik-server-go/recommendations"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
@@ -440,7 +440,7 @@ func SetupRoutes(app *fiber.App) {
 		// Changes
 		// @Router /changes [get]
 		// @Summary Get changes since timestamp
-		// @Description Returns message changes, user changes, and ratings since a given time. Requires partner key.
+		// @Description Returns message changes, user changes (Modified or Deleted), and ratings since a given time. Requires partner key.
 		// @Tags changes
 		// @Produce json
 		// @Param since query string false "ISO8601 timestamp (defaults to 1 hour ago)"
@@ -567,15 +567,11 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/config/:key", config.Get)
 
 		// Rippling-out live event counters, read-only, Support/Admin only (sysadmin §15/§16).
-		// First-reply effectiveness, per lever. Same Support/Admin gate as rippling.
-		firstReplyAdmin := rg.Group("/firstreply")
-		firstReplyAdmin.Use(config.RequireSupportOrAdminMiddleware())
-		firstReplyAdmin.Get("/metrics", firstreply.Metrics)
-
 		ripplingAdmin := rg.Group("/rippling")
 		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
 		ripplingAdmin.Get("/metrics", rippling.Metrics)
 		ripplingAdmin.Get("/analytics", rippling.Analytics)
+		ripplingAdmin.Get("/density", rippling.Density)
 		ripplingAdmin.Get("/analytics/drivetime", rippling.AnalyticsDriveTimes)
 		ripplingAdmin.Post("/analytics/drivetime/score", rippling.AnalyticsDriveScore)
 		ripplingAdmin.Post("/analytics/drivetime/aggregate", rippling.AnalyticsDriveAggregate)
@@ -1211,6 +1207,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Description Returns newsfeed items
 		// @Tags newsfeed
 		// @Produce json
+		// @Param distance query string false "Feed radius in metres, or 'nearby'/'anywhere'"
+		// @Param newsletters query string false "Set to 'all' to see Community News posts from every area. ChitChat moderators only; ignored for anyone else."
 		// @Success 200 {array} newsfeed.Item
 		rg.Get("/newsfeed", newsfeed.Feed)
 		rg.Post("/newsfeed", newsfeed.Post)
@@ -1355,7 +1353,7 @@ func SetupRoutes(app *fiber.App) {
 		// System Status
 		// @Router /status [get]
 		// @Summary Get system status
-		// @Description Returns the system status from /tmp/iznik.status
+		// @Description Returns the platform status published by the batch system's outcome monitoring
 		// @Tags status
 		// @Produce json
 		// @Success 200 {object} map[string]interface{}
@@ -1377,6 +1375,25 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/team", deprecation.Marker("POST /team", "2026-08-01"), team.PostTeam)
 		rg.Patch("/team", team.PatchTeam)
 		rg.Delete("/team", deprecation.Marker("DELETE /team", "2026-08-01"), team.DeleteTeam)
+
+		// Partnerships (ModTools). The literal paths must be registered before
+		// /partnership/:id, or "summary" and "statsjob" would be matched as ids.
+		rg.Get("/partnership/summary", partnerships.Summary)
+		rg.Get("/partnership/statsjob", partnerships.ListStatsJobs)
+		rg.Post("/partnership/statsjob", partnerships.CreateStatsJob)
+		rg.Delete("/partnership/statsjob/:id", partnerships.DeleteStatsJob)
+		rg.Get("/partnership/statsfile/:id", partnerships.DownloadStatsFile)
+		rg.Get("/partnership", partnerships.List)
+		rg.Post("/partnership", partnerships.Create)
+		rg.Get("/partnership/:id", partnerships.Single)
+		rg.Patch("/partnership/:id", partnerships.Update)
+		rg.Delete("/partnership/:id", partnerships.Delete)
+		rg.Get("/partnership/:id/group", partnerships.Groups)
+		rg.Patch("/partnership/:id/group", partnerships.PatchGroups)
+		rg.Put("/partnership/:id/year", partnerships.PutYears)
+		rg.Post("/partnership/:id/payment", partnerships.CreatePayment)
+		rg.Patch("/partnership/:id/payment/:paymentid", partnerships.UpdatePayment)
+		rg.Delete("/partnership/:id/payment/:paymentid", partnerships.DeletePayment)
 
 		// Mod Configs
 		rg.Get("/modtools/modconfig", modconfig.GetModConfig)

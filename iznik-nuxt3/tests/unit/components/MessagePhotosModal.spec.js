@@ -411,4 +411,111 @@ describe('MessagePhotosModal', () => {
       expect(wrapper.find('.image-counter').text()).toBe('1 / 3')
     })
   })
+
+  // The viewer serves two callers: a posted message, whose photos it reads from
+  // the store, and photos that are not a message yet - the ones you have just
+  // uploaded while composing a post, which it is handed directly.
+  describe('where the photos come from', () => {
+    function mountViewer(props) {
+      return mount(MessagePhotosModal, {
+        props,
+        attachTo: document.body,
+        global: {
+          stubs: {
+            teleport: true,
+            PinchMe: {
+              name: 'PinchMe',
+              props: ['attachment', 'width', 'height', 'zoom'],
+              template: '<div class="pinch-me" />',
+            },
+            'v-icon': { template: '<span />' },
+          },
+        },
+      })
+    }
+
+    it('uses the attachments it is given, without asking the store', () => {
+      const wrapper = mountViewer({
+        attachments: [
+          { id: 11, path: '/composed1.jpg' },
+          { id: 12, path: '/composed2.jpg' },
+        ],
+      })
+
+      expect(wrapper.findAll('.image-slide')).toHaveLength(2)
+      expect(mockMessageStore.byId).not.toHaveBeenCalled()
+      expect(wrapper.find('.image-counter').text()).toBe('1 / 2')
+    })
+
+    it('falls back to the message in the store when given an id', () => {
+      const wrapper = mountViewer({ id: 123 })
+
+      // The store fixture has three photos.
+      expect(wrapper.findAll('.image-slide')).toHaveLength(3)
+      expect(mockMessageStore.byId).toHaveBeenCalledWith(123)
+    })
+
+    it('starts on the photo that was clicked', () => {
+      const wrapper = mountViewer({
+        attachments: [{ id: 11 }, { id: 12 }, { id: 13 }],
+        initialIndex: 2,
+      })
+
+      expect(wrapper.find('.image-counter').text()).toBe('3 / 3')
+    })
+
+    it('shows no counter for a single photo', () => {
+      const wrapper = mountViewer({ attachments: [{ id: 11 }] })
+
+      expect(wrapper.find('.image-counter').exists()).toBe(false)
+    })
+
+    it('copes with an empty attachments array', () => {
+      const wrapper = mountViewer({ attachments: [] })
+
+      expect(wrapper.findAll('.image-slide')).toHaveLength(0)
+      expect(mockMessageStore.byId).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('escape key', () => {
+    function mountViewer(props) {
+      return mount(MessagePhotosModal, {
+        props,
+        attachTo: document.body,
+        global: {
+          stubs: {
+            teleport: true,
+            PinchMe: { template: '<div class="pinch-me" />' },
+            'v-icon': { template: '<span />' },
+          },
+        },
+      })
+    }
+
+    it('closes on escape', async () => {
+      const wrapper = mountViewer({ attachments: [{ id: 11 }] })
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      await nextTick()
+
+      expect(wrapper.emitted('hidden')).toBeTruthy()
+    })
+
+    it('keeps escape to itself, so it cannot also close the modal underneath', () => {
+      // The viewer opens on top of things that close on escape - the edit-post
+      // form, for one, where closing would throw away someone's edits.
+      const wrapper = mountViewer({ attachments: [{ id: 11 }] })
+
+      const underneath = vi.fn()
+      window.addEventListener('keydown', underneath)
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+
+      expect(wrapper.emitted('hidden')).toBeTruthy()
+      expect(underneath).not.toHaveBeenCalled()
+
+      window.removeEventListener('keydown', underneath)
+    })
+  })
 })

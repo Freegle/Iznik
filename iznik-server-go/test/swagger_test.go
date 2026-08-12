@@ -24,16 +24,19 @@ func TestSwaggerGeneration(t *testing.T) {
 		t.Fatalf("Failed to get root directory: %v", err)
 	}
 
-	// Define paths for swagger binary and output file
+	// Define paths for swagger binary and output file. Generate into a temp dir
+	// via SWAGGER_OUT rather than over swagger/swagger.json: this test used to
+	// delete the committed spec and regenerate it, so simply running it left the
+	// checkout holding whatever that run produced. On 2026-08-09 that was 4 model
+	// definitions in place of 115.
 	swaggerScript := filepath.Join(rootDir, "generate-swagger.sh")
-	swaggerJsonPath := filepath.Join(rootDir, "swagger", "swagger.json")
+	swaggerJsonPath := filepath.Join(t.TempDir(), "swagger.json")
 
-	// Remove existing swagger.json if it exists to ensure we're testing fresh generation
-	os.Remove(swaggerJsonPath)
-
-	// Run the generate-swagger.sh script
+	// Run the generate-swagger.sh script, writing to the temp path so the
+	// committed spec is left alone.
 	cmd := exec.Command("/bin/bash", swaggerScript)
 	cmd.Dir = rootDir
+	cmd.Env = append(os.Environ(), "SWAGGER_OUT="+swaggerJsonPath)
 	output, err := cmd.CombinedOutput()
 
 	// Output command result for debugging

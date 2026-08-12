@@ -29,6 +29,12 @@ class RippleReplyServiceTest extends TestCase
 
     private function seedReachedPost(): int
     {
+        return $this->seedReachedPostWith(self::POLY, 51.5, -0.1);
+    }
+
+    /** As seedReachedPost, with the reach geometry and origin chosen by the caller. */
+    private function seedReachedPostWith(string $poly, float $lat, float $lng): int
+    {
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $message = $this->createTestMessage($user, $group);
@@ -36,8 +42,8 @@ class RippleReplyServiceTest extends TestCase
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::POLY, self::POLY]
+             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, $poly, $poly]
         );
 
         return (int) $message->id;
@@ -153,6 +159,174 @@ class RippleReplyServiceTest extends TestCase
         $this->assertSame(0, (int) $sys->processingrequired);
         $this->assertSame(1, (int) $sys->processingsuccessful);
         $this->assertNotEquals($cmid, $sys->id, 'the notice is a new message, not the held reply');
+    }
+
+    /**
+     * The buffer band hugs the reach boundary, so what sets the wait is how far PAST THE
+     * EDGE somebody is, not how far the item happens to be. Two repliers the same short
+     * distance outside two different reaches are the same kind of near-miss and must wait
+     * the same, even when one item is four miles away and the other nearly fifty.
+     *
+     * This is the case the old measure got backwards. On live rows it charged a replier
+     * 0.79 miles outside the boundary 83 minutes because the item was 22.7 miles off,
+     * while another 0.68 miles outside waited 35 - the size of the isochrone deciding the
+     * wait rather than the person.
+     */
+    public function test_delay_is_set_by_distance_past_the_edge_not_distance_to_the_item(): void
+    {
+        config([
+            'freegle.ripple.reply_delay.enabled' => true,
+            'freegle.ripple.reply_delay.base_minutes' => 15,
+            'freegle.ripple.reply_delay.per_mile_minutes' => 3,
+            'freegle.ripple.reply_delay.max_minutes' => 180,
+        ]);
+
+        // Both reaches end at lng 0.0 on the eastern side, so a replier at lng 0.1 is the
+        // same distance past the edge of each. The origins are not: the small reach is
+        // centred 0.1 degrees from its edge, the wide one a full degree.
+        $small = $this->seedReachedPostWith(self::POLY, 51.5, -0.1);
+        $wide = $this->seedReachedPostWith(
+            'POLYGON((-2.0 51.4, 0.0 51.4, 0.0 51.6, -2.0 51.6, -2.0 51.4))',
+            51.5,
+            -1.0
+        );
+
+        $justOutside = [51.5, 0.1];
+        [$smallRow] = $this->seedHeldReply($small, $justOutside);
+        [$wideRow] = $this->seedHeldReply($wide, $justOutside);
+
+        $waitFor = function (int $rowId): float {
+            $row = DB::table('rippling_held_replies')->where('id', $rowId)->first();
+
+            return (strtotime($row->dueat) - strtotime($row->created_at)) / 60.0;
+        };
+
+        $smallWait = $waitFor($smallRow);
+        $wideWait = $waitFor($wideRow);
+
+        // Same near-miss, same wait. A minute of tolerance for the geographic distance
+        // being computed per row rather than compared symbolically.
+        $this->assertEqualsWithDelta(
+            $smallWait,
+            $wideWait,
+            1.0,
+            'the wait comes from the distance past the edge, which is equal here'
+        );
+
+        // And it is genuinely the edge distance being used, not a constant: 0.1 degrees of
+        // longitude at this latitude is about 4.3 miles, so about 28 minutes.
+        $this->assertEqualsWithDelta(15.0 + 3 * 4.3, $smallWait, 3.0);
+
+        // Under the old measure the wide reach's replier would have been charged for the
+        // ~47 miles back to the item, so this pins the regression rather than the value.
+        $this->assertLessThan(60.0, $wideWait, 'a near-miss is not charged for a distant item');
+    }
+
+    public function test_delay_grows_with_distance_past_the_edge_and_is_capped(): void
+    {
+        config([
+            'freegle.ripple.reply_delay.base_minutes' => 15,
+            'freegle.ripple.reply_delay.per_mile_minutes' => 3,
+            'freegle.ripple.reply_delay.max_minutes' => 180,
+        ]);
+        $svc = $this->service();
+
+        // On the boundary itself, and anyone inside it, still waits the base delay -
+        // locals go first.
+        $this->assertSame(15.0, $svc->delayMinutesForMiles(0.0));
+        // Sixteen miles beyond the edge: a little after locals, not days.
+        $this->assertSame(15.0 + 3 * 16.0, $svc->delayMinutesForMiles(16.0));
+        // Two counties away: capped, so no reply is ever invisible for longer than that.
+        $this->assertSame(180.0, $svc->delayMinutesForMiles(500.0));
+        // Nonsense distance cannot produce a negative delay.
+        $this->assertSame(15.0, $svc->delayMinutesForMiles(-5.0));
+    }
+
+    public function test_hold_stamps_the_due_time_it_computed(): void
+    {
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        $msgid = $this->seedReachedPost();
+        [$rowId] = $this->seedHeldReply($msgid, self::OUTSIDE);
+
+        $row = DB::table('rippling_held_replies')->where('id', $rowId)->first();
+        $this->assertNotNull($row->dueat, 'a hold is a delay, so it has a due time');
+        $this->assertGreaterThan($row->created_at, $row->dueat);
+    }
+
+    public function test_release_due_delivers_a_reply_the_reach_will_never_cover(): void
+    {
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        $msgid = $this->seedReachedPost();
+        // OUTSIDE is well beyond the reach box and the reach is not growing, so before
+        // this existed the only exit was the max-reach backstop, days later.
+        [$rowId, $cmid] = $this->seedHeldReply($msgid, self::OUTSIDE);
+
+        // Not due yet: still held.
+        $this->assertSame(0, $this->service()->releaseDue($msgid));
+        $this->assertTrue($this->service()->isDeliveryHeld($cmid));
+
+        // Wind the reply back past its due time.
+        DB::table('rippling_held_replies')->where('id', $rowId)->update([
+            'created_at' => now()->subDay(),
+            'dueat' => null,
+        ]);
+
+        $this->assertSame(1, $this->service()->releaseDue($msgid));
+        $this->assertSame('released', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+        $this->assertFalse($this->service()->isDeliveryHeld($cmid));
+    }
+
+    public function test_release_due_stamps_a_due_time_on_rows_held_by_the_web_path(): void
+    {
+        // The Go/web hold path does not compute the delay, so its rows arrive with a NULL
+        // due time. The sweep stamps them, which is what keeps the policy in one place.
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        $msgid = $this->seedReachedPost();
+        [$rowId] = $this->seedHeldReply($msgid, self::OUTSIDE);
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['dueat' => null]);
+
+        $this->service()->releaseDue($msgid);
+
+        $this->assertNotNull(
+            DB::table('rippling_held_replies')->where('id', $rowId)->value('dueat'),
+            'the sweep fills in what the web path could not compute'
+        );
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_release_due_does_nothing_when_the_delay_is_switched_off(): void
+    {
+        config(['freegle.ripple.reply_delay.enabled' => false]);
+        $msgid = $this->seedReachedPost();
+        [$rowId] = $this->seedHeldReply($msgid, self::OUTSIDE);
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['created_at' => now()->subDay()]);
+
+        $this->assertSame(0, $this->service()->releaseDue($msgid));
+        $this->assertSame('held', DB::table('rippling_held_replies')->where('id', $rowId)->value('status'));
+    }
+
+    public function test_release_due_is_counted_separately_from_release_on_coverage(): void
+    {
+        // The whole point of the change is to see how many replies the delay delivers
+        // that coverage never would have, so the two exits cannot share one counter.
+        config(['freegle.ripple.reply_delay.enabled' => true]);
+        DB::table('rippling_event_metrics')
+            ->whereIn('event', ['released', 'released_delayed', 'released_covered'])->delete();
+        $count = fn ($e) => (int) DB::table('rippling_event_metrics')
+            ->where('day', now()->toDateString())->where('event', $e)->value('count');
+
+        $msgid = $this->seedReachedPost();
+        [$rowId] = $this->seedHeldReply($msgid, self::OUTSIDE);
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['created_at' => now()->subDay()]);
+        $this->service()->releaseDue($msgid);
+
+        $msgid2 = $this->seedReachedPost();
+        $this->seedHeldReply($msgid2, self::INSIDE);
+        $this->service()->releaseCovered($msgid2);
+
+        $this->assertSame(1, $count('released_delayed'));
+        $this->assertSame(1, $count('released_covered'));
+        $this->assertSame(2, $count('released'), 'both still count as a release overall');
     }
 
     public function test_held_reply_state_transitions_are_counted(): void

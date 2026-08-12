@@ -126,6 +126,29 @@ vi.mock('nuxt/app', () => ({
 // Mock leaflet imports
 vi.mock('leaflet/dist/leaflet-src.esm', () => ({}))
 
+// ready() dynamically imports the geocoder control and the Photon geocoder. Left
+// unmocked they load the real modules, and whether that resolves before the test ends
+// is a race against real module-load time — so lines 700-753 of PostMap.vue were hit in
+// some runs and not others. That made this file's covered-line count vary between runs
+// of an IDENTICAL tree (559 vs 530 of 866), moving whole-repo coverage by ~0.024pp and
+// flapping the Coveralls gate on PRs that touch no frontend code at all. Mocking them —
+// as every other external in this file already is — makes the geocoder path resolve
+// deterministically. Verified by diffing two lcov reports from the same tree.
+vi.mock('leaflet-control-geocoder/src/control', () => ({
+  Geocoder: vi.fn().mockImplementation(() => {
+    // ready() chains .on('markgeocode', ...).addTo(map), so both must be chainable.
+    const control = {
+      on: vi.fn(() => control),
+      addTo: vi.fn(() => control),
+    }
+    return control
+  }),
+}))
+
+vi.mock('leaflet-control-geocoder/src/geocoders/photon', () => ({
+  Photon: vi.fn().mockImplementation(() => ({})),
+}))
+
 // Mock vue-leaflet components
 vi.mock('@vue-leaflet/vue-leaflet', () => ({
   LGeoJson: {
@@ -435,6 +458,36 @@ describe('PostMap', () => {
       const { loadLeaflet } = await import('~/composables/useMap')
       await createWrapper()
       expect(loadLeaflet).toHaveBeenCalled()
+    })
+
+    // ready() wraps its geocoder setup in try/catch precisely because leaflet throws
+    // here in practice. That containment is what keeps a geocoder failure from taking
+    // the whole map down, and it was only ever covered by accident — before the two
+    // dynamic imports above were mocked, the real modules threw in jsdom and hit this
+    // catch as a side effect. Asserted deliberately now.
+    it('keeps working when the geocoder fails to construct', async () => {
+      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
+      Geocoder.mockImplementationOnce(() => {
+        throw new Error('leaflet not ready')
+      })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      const wrapper = await createWrapper()
+      const map = wrapper.findComponent({ name: 'LMap' })
+      await map.vm.$emit('ready')
+      await flushPromises()
+
+      // Swallowed, not propagated...
+      expect(
+        logSpy.mock.calls.some((c) => String(c[0]).includes('Ignore leaflet exception'))
+      ).toBe(true)
+
+      // ...and the map is still live: it framed itself and the parent was told it is ready.
+      const component = wrapper.findComponent(PostMap)
+      expect(component.emitted('update:ready')).toBeTruthy()
+      expect(map.vm.leafletObject.fitBounds).toHaveBeenCalled()
+
+      logSpy.mockRestore()
     })
   })
 

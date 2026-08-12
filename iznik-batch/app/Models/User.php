@@ -943,6 +943,11 @@ class User extends Model implements Auditable
     public const LOGIN_LINK = 'Link';
 
     /**
+     * Memo for getUserKey(). Not an attribute — must never be persisted.
+     */
+    protected ?string $cachedUserKey = null;
+
+    /**
      * Get user's key for one-click unsubscribe/login links.
      * Creates one if it doesn't exist.
      *
@@ -950,25 +955,20 @@ class User extends Model implements Auditable
      */
     public function getUserKey(): string
     {
-        // Check for existing LOGIN_LINK credential.
-        $login = UserLogin::where('userid', $this->id)
-            ->where('type', self::LOGIN_LINK)
-            ->first(['credentials']);
-
-        if ($login && $login->credentials) {
-            return $login->credentials;
+        // Memoised on the instance: an email can want the key more than once
+        // (the unsubscribe footer and now the donate link), and the key never
+        // changes within the life of one model. Instance-scoped rather than
+        // static so a long-running digest worker doesn't accumulate keys for
+        // every user it has ever rendered.
+        if ($this->cachedUserKey !== null) {
+            return $this->cachedUserKey;
         }
 
-        // Create a new key.
-        $key = bin2hex(random_bytes(16));
-
-        UserLogin::create([
-            'userid' => $this->id,
-            'type' => self::LOGIN_LINK,
-            'credentials' => $key,
-        ]);
-
-        return $key;
+        // Delegates to LoginLinkService so there is exactly one implementation of
+        // get-or-create: this used to be a second copy, which both drifted (it never
+        // set uid) and raced the service's copy on the (userid, type) unique key.
+        return $this->cachedUserKey = app(\App\Services\LoginLinkService::class)
+            ->getOrCreateKey((int) $this->id);
     }
 
     /**
@@ -1763,6 +1763,12 @@ class User extends Model implements Auditable
         Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Deleted,user={$this->id},text=len=" . strlen($reason));
         if (!$dryRun) {
             $log->save();
+        }
+
+        // --- Tell partners, who mirror our users and can only find out by polling ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_deletions op=insert set=userid={$this->id},type=Forgotten");
+        if (!$dryRun) {
+            UserDeletion::record($this->id, UserDeletion::TYPE_FORGOTTEN, $reason);
         }
     }
 

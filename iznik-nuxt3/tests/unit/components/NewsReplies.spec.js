@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import NewsReplies from '~/components/NewsReplies.vue'
 
 const { mockReplies, mockNewsfeed } = vi.hoisted(() => {
@@ -96,12 +96,23 @@ describe('NewsReplies', () => {
           NewsReply: {
             template:
               '<div class="news-reply" :data-id="id"><slot />{{ replyData?.message }}</div>',
-            props: ['id', 'replyData', 'threadhead', 'scrollTo', 'depth'],
+            props: [
+              'id',
+              'replyData',
+              'threadhead',
+              'scrollTo',
+              'depth',
+              'suppressChildren',
+            ],
             emits: ['rendered', 'subtree-rendered', 'expand-combined'],
           },
           NewsRefer: {
             template: '<div class="news-refer" :data-id="id" />',
             props: ['id', 'type', 'threadhead'],
+          },
+          'nuxt-link': {
+            template: '<a class="nuxt-link-stub" :href="to"><slot /></a>',
+            props: ['to'],
           },
         },
       },
@@ -376,17 +387,633 @@ describe('NewsReplies', () => {
     })
   })
 
+  describe('scroll anchoring when expanding', () => {
+    // Expanding inserts rows ABOVE what you are reading, so without a
+    // correction the browser keeps scrollTop and your row slides down the
+    // page by the height of everything revealed.
+    function setupTenReplies() {
+      const replies = makeReplies(10)
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        return replies.find((r) => r.id === id)
+      })
+      return replies
+    }
+
+    it('scrolls by exactly the height the expansion added above the anchor', async () => {
+      setupTenReplies()
+      const wrapper = createWrapper()
+
+      const scrollBy = vi.fn()
+      window.scrollBy = scrollBy
+
+      // The row just below the expander is the anchor. Report it 100px down
+      // the viewport before expanding and 700px after, i.e. 600px was added.
+      let expanded = false
+      const anchorId = wrapper
+        .find('.show-more-replies')
+        .element.nextElementSibling.getAttribute('data-reply-id')
+
+      const origGetRect = Element.prototype.getBoundingClientRect
+      Element.prototype.getBoundingClientRect = function () {
+        if (this.getAttribute?.('data-reply-id') === anchorId) {
+          return { top: expanded ? 700 : 100 }
+        }
+        return origGetRect.call(this)
+      }
+
+      const btn = wrapper.find('.show-more-btn')
+      const promise = btn.trigger('click')
+      expanded = true
+      await promise
+      await flushPromises()
+
+      expect(scrollBy).toHaveBeenCalledWith(0, 600)
+
+      Element.prototype.getBoundingClientRect = origGetRect
+    })
+
+    it('does not scroll when the anchor did not move', async () => {
+      setupTenReplies()
+      const wrapper = createWrapper()
+
+      const scrollBy = vi.fn()
+      window.scrollBy = scrollBy
+
+      const origGetRect = Element.prototype.getBoundingClientRect
+      Element.prototype.getBoundingClientRect = function () {
+        if (this.getAttribute?.('data-reply-id')) return { top: 100 }
+        return origGetRect.call(this)
+      }
+
+      await wrapper.find('.show-more-btn').trigger('click')
+      await flushPromises()
+
+      expect(scrollBy).not.toHaveBeenCalled()
+
+      Element.prototype.getBoundingClientRect = origGetRect
+    })
+
+    it('anchors past the unread divider when that follows the expander', async () => {
+      // The row after the expander is not always a reply: when new activity
+      // starts right there, the divider sits between them. Anchoring on the
+      // divider (which carries no id) used to skip the correction entirely.
+      const replies = makeReplies(10, { startId: 10 })
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        return replies.find((r) => r.id === id)
+      })
+      mockNewsfeedStore.seenBeforeVisit = 14
+
+      const wrapper = createWrapper()
+      expect(
+        wrapper.find('.show-more-replies').element.nextElementSibling
+      ).toBe(wrapper.find('[data-unread-divider]').element)
+
+      const scrollBy = vi.fn()
+      window.scrollBy = scrollBy
+
+      let expanded = false
+      const origGetRect = Element.prototype.getBoundingClientRect
+      Element.prototype.getBoundingClientRect = function () {
+        if (this.getAttribute?.('data-reply-id') === '15') {
+          return { top: expanded ? 500 : 100 }
+        }
+        return origGetRect.call(this)
+      }
+
+      const promise = wrapper.find('.show-more-btn').trigger('click')
+      expanded = true
+      await promise
+      await flushPromises()
+
+      expect(scrollBy).toHaveBeenCalledWith(0, 400)
+
+      Element.prototype.getBoundingClientRect = origGetRect
+    })
+
+    it('still expands when there is no anchor to measure', async () => {
+      setupTenReplies()
+      const wrapper = createWrapper()
+      window.scrollBy = vi.fn()
+
+      await wrapper.find('.show-more-btn').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.findAll('.news-reply').length).toBe(10)
+    })
+  })
+
   describe('scrollTo behaviour', () => {
-    it('shows all replies when scrollTo is set (bypasses collapse)', () => {
+    it('still collapses on a deep link but exempts the target reply', () => {
+      // A notification deep link used to disable collapsing entirely, so a
+      // 60-reply thread rendered as a full wall. Now the collapse applies and
+      // only the target's row is exempted from hiding.
       const replies = makeReplies(10, { startId: 50 })
       mockNewsfeedStore.byId.mockImplementation((id) => {
         if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
         return replies.find((r) => r.id === id)
       })
 
-      const wrapper = createWrapper({ scrollTo: 'newsfeed-55' })
-      expect(wrapper.findAll('.news-reply').length).toBe(10)
-      expect(wrapper.find('.show-more-replies').exists()).toBe(false)
+      const wrapper = createWrapper({ scrollTo: '55' })
+      // head 2 (50, 51) + exempted target (55) + tail 3 (57, 58, 59)
+      expect(wrapper.findAll('.news-reply').length).toBe(6)
+      const renderedIds = wrapper
+        .findAll('.reply-thread')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toContain(55)
+      expect(renderedIds).not.toContain(52)
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 4 older replies'
+      )
+    })
+
+    it('exempts a combined block when the target is a later message inside it', () => {
+      // 54 and 55 are the same user two minutes apart, so they combine into
+      // one block keyed by 54. A deep link to 55 must keep that block visible.
+      const replies = makeReplies(10, { startId: 50 })
+      replies[5] = {
+        ...replies[5],
+        userid: replies[4].userid,
+        displayname: replies[4].displayname,
+        added: '2024-01-15T14:02:00Z',
+      }
+      replies[4].added = '2024-01-15T14:00:00Z'
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        return replies.find((r) => r.id === id)
+      })
+
+      const wrapper = createWrapper({ scrollTo: '55' })
+      const rows = wrapper.findAll('.reply-thread')
+      const renderedIds = rows.map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toContain(54)
+      // The block advertises every id it contains so the pin can find them.
+      const combinedRow = rows.find(
+        (n) => n.attributes('data-reply-id') === '54'
+      )
+      expect(combinedRow.attributes('data-combined-ids')).toContain('55')
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 3 older replies'
+      )
+    })
+
+    it('exempts a middle parent whose nested subtree contains the target', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      const child = {
+        id: 101,
+        userid: 300,
+        displayname: 'Nested User',
+        message: 'Nested target',
+        added: '2024-01-15T12:00:00Z',
+        deleted: false,
+        type: 'Reply',
+      }
+      replies[3].replies = [101] // id 13, a middle entry
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        if (id === 101) return child
+        return replies.find((r) => r.id === id)
+      })
+
+      const wrapper = createWrapper({ scrollTo: '101' })
+      const renderedIds = wrapper
+        .findAll('.reply-thread')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toContain(13)
+      expect(renderedIds).not.toContain(12)
+      expect(wrapper.find('.show-more-btn').text()).toContain(
+        'Show 4 older replies'
+      )
+    })
+  })
+
+  describe('unread divider', () => {
+    function withReplies(replies) {
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        return replies.find((r) => r.id === id)
+      })
+    }
+
+    it('renders the divider immediately before the first new reply', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 15
+
+      const wrapper = createWrapper()
+      const divider = wrapper.find('[data-unread-divider]')
+      expect(divider.exists()).toBe(true)
+      expect(
+        divider.element.nextElementSibling.getAttribute('data-reply-id')
+      ).toBe('16')
+    })
+
+    it('sits above an OLD parent that carries new nested replies', () => {
+      // Scattered case: someone replied to an old comment partway up the
+      // thread. The divider has to sit above that old parent, or it would
+      // claim "everything below is new" while new replies sat above it.
+      const replies = makeReplies(10, { startId: 10 })
+      const nestedNew = {
+        id: 99,
+        userid: 300,
+        displayname: 'Nested User',
+        message: 'New nested reply',
+        added: '2024-01-15T12:00:00Z',
+        deleted: false,
+        type: 'Reply',
+      }
+      replies[2].replies = [99] // id 12, old itself, new child
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        if (id === 99) return nestedNew
+        return replies.find((r) => r.id === id)
+      })
+      mockNewsfeedStore.seenBeforeVisit = 20
+
+      const wrapper = createWrapper()
+      const divider = wrapper.find('[data-unread-divider]')
+      expect(divider.exists()).toBe(true)
+      expect(
+        divider.element.nextElementSibling.getAttribute('data-reply-id')
+      ).toBe('12')
+    })
+
+    it('counts nested new replies so the total matches the feed link', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      const nestedNew = {
+        id: 99,
+        userid: 300,
+        displayname: 'Nested User',
+        message: 'New nested reply',
+        added: '2024-01-15T12:00:00Z',
+        deleted: false,
+        type: 'Reply',
+      }
+      replies[2].replies = [99]
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        if (id === 99) return nestedNew
+        return replies.find((r) => r.id === id)
+      })
+      // 18 and 19 are new at top level, plus the nested 99 = 3.
+      mockNewsfeedStore.seenBeforeVisit = 17
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('[data-unread-divider]').text()).toContain(
+        '3 new replies since your last visit'
+      )
+    })
+
+    it('describes how many replies are new', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 15
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('[data-unread-divider]').text()).toContain(
+        '4 new replies since your last visit'
+      )
+    })
+
+    it('uses the singular for one new reply', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 18
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('[data-unread-divider]').text()).toContain(
+        '1 new reply since your last visit'
+      )
+    })
+
+    it('does not render when every reply is new', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 9
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('[data-unread-divider]').exists()).toBe(false)
+    })
+
+    it('does not render when nothing is new', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 20
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('[data-unread-divider]').exists()).toBe(false)
+    })
+
+    it('does not render without a baseline', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = null
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('[data-unread-divider]').exists()).toBe(false)
+    })
+
+    it('does not render inside nested reply lists', () => {
+      const replies = makeReplies(4, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 11
+
+      const wrapper = createWrapper({ depth: 2, replyTo: 5 })
+      expect(wrapper.find('[data-unread-divider]').exists()).toBe(false)
+    })
+  })
+
+  describe('feed context', () => {
+    function withReplies(replies) {
+      mockNewsfeedStore.byId.mockImplementation((id) => {
+        if (id === 1) return { id: 1, replies: replies.map((r) => r.id) }
+        const nested = replies.flatMap((r) => r.nestedObjects || [])
+        return (
+          replies.find((r) => r.id === id) || nested.find((n) => n.id === id)
+        )
+      })
+    }
+
+    it('leaves small threads untouched', () => {
+      const replies = makeReplies(3, { startId: 10 })
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.findAll('.news-reply').length).toBe(3)
+      expect(wrapper.find('.view-all-replies').exists()).toBe(false)
+    })
+
+    it('shows a counted view-all link and only the two most recent replies', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const cta = wrapper.find('.view-all-replies')
+      expect(cta.exists()).toBe(true)
+      expect(cta.text()).toContain('View all 10 replies')
+      expect(cta.attributes('href')).toBe('/chitchat/1')
+
+      const renderedIds = wrapper
+        .findAll('.reply-thread')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toEqual([18, 19])
+      // The view-all link comes first, above the visible tail.
+      expect(
+        wrapper.find('.replies-container').element.firstElementChild.className
+      ).toContain('view-all')
+    })
+
+    it('shows the newest reply even when it is a reply to a reply', () => {
+      // ChitChat threads nest, so the newest thing said is often a nested
+      // reply. Picking the tail from top-level rows only left the card
+      // showing an older reply as the last word, with nothing at all to say
+      // the newer one existed.
+      const replies = makeReplies(5, { startId: 10 })
+      replies[4].replies = [200]
+      replies[4].nestedObjects = [
+        {
+          id: 200,
+          userid: 300,
+          displayname: 'Nested Newest',
+          message: 'Newest reply in the thread',
+          added: '2024-01-15T20:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const renderedIds = wrapper
+        .findAll('.reply-thread')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toEqual([14, 200])
+    })
+
+    it('renders a nested reply once when its parent is on the card too', () => {
+      // The parent still suppresses its own nested list - the child is a row
+      // in its own right here, so rendering both would show it twice.
+      const replies = makeReplies(5, { startId: 10 })
+      replies[4].replies = [200]
+      replies[4].nestedObjects = [
+        {
+          id: 200,
+          userid: 300,
+          displayname: 'Nested Newest',
+          message: 'Newest reply in the thread',
+          added: '2024-01-15T20:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const rows = wrapper.findAllComponents('.news-reply')
+      expect(rows.length).toBe(2)
+      expect(rows.map((r) => r.props('id'))).toEqual([14, 200])
+      expect(rows.every((r) => r.props('suppressChildren'))).toBe(true)
+    })
+
+    it('marks where the new replies start on the rows it shows', () => {
+      // The divider anchors on a row the card renders. Anchoring on the
+      // top-level parent instead would lose the line whenever that parent is
+      // not one of the rows the card had room for.
+      const replies = makeReplies(6, { startId: 10 })
+      replies[2].replies = [200]
+      replies[2].nestedObjects = [
+        {
+          id: 200,
+          userid: 300,
+          displayname: 'Nested Newest',
+          message: 'The newest thing anyone said',
+          added: '2024-01-15T20:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 199
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(
+        wrapper
+          .findAll('.reply-thread')
+          .map((n) => n.attributes('data-reply-id'))
+      ).toEqual(['15', '200'])
+      const divider = wrapper.find('[data-unread-divider]')
+      expect(divider.exists()).toBe(true)
+      expect(
+        divider.element.nextElementSibling.getAttribute('data-reply-id')
+      ).toBe('200')
+    })
+
+    it('keeps the tail in time order, not tree order', () => {
+      // An old nested reply under an early parent must not displace the
+      // genuinely recent top-level replies.
+      const replies = makeReplies(5, { startId: 10 })
+      replies[0].replies = [200]
+      replies[0].nestedObjects = [
+        {
+          id: 200,
+          userid: 300,
+          displayname: 'Nested Old',
+          message: 'Replied ages ago',
+          added: '2024-01-15T10:30:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const renderedIds = wrapper
+        .findAll('.reply-thread')
+        .map((n) => Number(n.attributes('data-reply-id')))
+      expect(renderedIds).toEqual([13, 14])
+    })
+
+    it('points the link at the new replies when there are some', () => {
+      // The link declares the intent in the URL, so the thread page knows
+      // where to land without inferring it, and the link survives a reload.
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 15
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.view-all-replies').attributes('href')).toBe(
+        '/chitchat/1#new'
+      )
+    })
+
+    it('links to the plain thread when nothing is new', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 100
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.view-all-replies').attributes('href')).toBe(
+        '/chitchat/1'
+      )
+    })
+
+    it('counts nested and new replies in the view-all link', () => {
+      const replies = makeReplies(5, { startId: 10 })
+      const nested = [
+        {
+          id: 101,
+          userid: 300,
+          displayname: 'Nested One',
+          message: 'Nested reply',
+          added: '2024-01-15T12:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+        {
+          id: 102,
+          userid: 301,
+          displayname: 'Nested Two',
+          message: 'Another nested reply',
+          added: '2024-01-15T12:05:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      replies[1].replies = [101, 102]
+      replies[1].nestedObjects = nested
+      withReplies(replies)
+      mockNewsfeedStore.seenBeforeVisit = 13
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.view-all-replies').text()).toContain(
+        'View all 7 replies'
+      )
+      expect(wrapper.find('.view-all-replies').text()).toContain('3 new')
+    })
+
+    it('names who replied, comma-separated and in the order they spoke', () => {
+      const replies = makeReplies(5, { startId: 10 })
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const cta = wrapper.find('.view-all-replies')
+      expect(cta.text()).toContain('View all 5 replies from')
+      expect(cta.find('.cta-names').text()).toBe(
+        'User 0, User 1, User 2, User 3, User 4'
+      )
+    })
+
+    it('names nested repliers too, since the count includes them', () => {
+      const replies = makeReplies(3, { startId: 10 })
+      replies[1].replies = [101]
+      replies[1].nestedObjects = [
+        {
+          id: 101,
+          userid: 300,
+          displayname: 'Nested One',
+          message: 'Nested reply',
+          added: '2024-01-15T12:00:00Z',
+          deleted: false,
+          type: 'Reply',
+        },
+      ]
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.cta-names').text()).toBe(
+        'User 0, User 1, Nested One, User 2'
+      )
+    })
+
+    it('names each person once however often they replied', () => {
+      const replies = makeReplies(10, { startId: 10, singleUser: true })
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      expect(wrapper.find('.cta-names').text()).toBe('Same User')
+    })
+
+    it('drops the "from" when nobody can be named', () => {
+      const replies = makeReplies(5, { startId: 10 }).map((r) => ({
+        ...r,
+        displayname: null,
+      }))
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const cta = wrapper.find('.view-all-replies')
+      expect(cta.text()).toContain('View all 5 replies')
+      expect(cta.text()).not.toContain('from')
+      expect(cta.find('.cta-names').exists()).toBe(false)
+    })
+
+    it('tells the visible rows to suppress their nested lists', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const rows = wrapper.findAllComponents('.news-reply')
+      expect(rows.length).toBe(2)
+      expect(rows[0].props('suppressChildren')).toBe(true)
+    })
+
+    it('does not suppress nested lists in small threads', () => {
+      const replies = makeReplies(2, { startId: 10 })
+      withReplies(replies)
+
+      const wrapper = createWrapper({ context: 'feed' })
+      const rows = wrapper.findAllComponents('.news-reply')
+      expect(rows[0].props('suppressChildren')).toBe(false)
+    })
+
+    it('never applies feed behaviour on the thread page', () => {
+      const replies = makeReplies(10, { startId: 10 })
+      withReplies(replies)
+
+      const wrapper = createWrapper()
+      expect(wrapper.find('.view-all-replies').exists()).toBe(false)
+      expect(wrapper.find('.show-more-btn').exists()).toBe(true)
     })
   })
 

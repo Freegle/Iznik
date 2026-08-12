@@ -165,23 +165,31 @@ if (config('freegle.firstreply.enabled')) {
         ->sendOutputTo(cronLog('firstreply:maxreach'))
         ->runInBackground();
 
-    // Tell a handful of likely-interested people about posts nobody has replied to. Every
-    // minute, because the whole point is speed and a post is now scouted as soon as it is
-    // seen (scouts.quiet_minutes = 0). Cheap in steady state: a post is only ever scouted
-    // once, so each run only does real work for whatever arrived in the last minute.
-    Schedule::command('firstreply:scout')
+    // Mail the people whose own open post or saved search matches a new post. Every
+    // minute, because the whole point is speed and a post is matched as soon as it is
+    // seen (matchmail.quiet_minutes = 0). Cheap in steady state: a post is only ever
+    // matched once, so each run only does real work for whatever arrived in the last
+    // minute.
+    Schedule::command('firstreply:matchmail')
         ->everyMinute()
         ->withoutOverlapping(15)
-        ->sendOutputTo(cronLog('firstreply:scout'))
+        ->sendOutputTo(cronLog('firstreply:matchmail'))
         ->runInBackground();
 
     // Freegle's own messages to the poster. Nothing here is due sooner than an hour after
     // posting, so five minutes is as often as it could possibly matter.
-    Schedule::command('firstreply:engage')
-        ->everyFiveMinutes()
-        ->withoutOverlapping(15)
-        ->sendOutputTo(cronLog('firstreply:engage'))
-        ->runInBackground();
+    //
+    // Gated on the chat switch as well as the master one: the chat is currently OFF
+    // (see config/freegle.php), EngagementService returns immediately when it is, and a
+    // cron whose only job is to rediscover that is a process spawn every five minutes for
+    // nothing. Switching the flag back on brings the schedule entry back with it.
+    if (config('freegle.firstreply.chat.enabled')) {
+        Schedule::command('firstreply:engage')
+            ->everyFiveMinutes()
+            ->withoutOverlapping(15)
+            ->sendOutputTo(cronLog('firstreply:engage'))
+            ->runInBackground();
+    }
 }
 
 // Best-effort "quicker to get to" moderator notes for rippled-in posts, computed out of the hot
@@ -898,6 +906,17 @@ Schedule::command('users:update-engagement')
     ->sendOutputTo(cronLog('users:update-engagement'))
     ->runInBackground();
 
+// Refresh users_approxlocs, the blurred point cloud of active members. It is the driving table
+// of the rippling reach query, so while it is not being written new members are invisible to
+// reach - which is what happened between V1's removal and this port (34% of active members were
+// missing by 2026-08-10).
+// V1: cron/nearby.php -> Nearby::updateLocations() (daily)
+Schedule::command('users:update-approx-locs')
+    ->dailyAt('04:45')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('users:update-approx-locs'))
+    ->runInBackground();
+
 // Remove search index entries for messages older than 30 days.
 // V1: cron/message_deindex.php (daily at 01:00)
 Schedule::command('messages:deindex')
@@ -1453,4 +1472,20 @@ Schedule::command('community-news:discover-sources')
     ->when(fn () => config('freegle.communitynews.enabled', false))
     ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('community-news:discover-sources'))
+    ->runInBackground();
+
+// Render the authority statistics spreadsheets the Partnerships page has queued. Each run
+// takes one job so a long report never blocks the next request for minutes on end.
+Schedule::command('partnerships:stats:run')
+    ->everyMinute()
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('partnerships:stats:run'))
+    ->runInBackground();
+
+// Chase council sponsorships three months out from expiry. Daily, but each partnership is
+// only ever chased once per window, so this is a no-op on most days.
+Schedule::command('partnerships:reminders')
+    ->dailyAt('08:00')
+    ->withoutOverlapping(30)
+    ->sendOutputTo(cronLog('partnerships:reminders'))
     ->runInBackground();

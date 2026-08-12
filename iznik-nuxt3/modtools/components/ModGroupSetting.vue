@@ -122,6 +122,14 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // What an UNSET setting means server-side, so the control shows the truth
+  // rather than always reading an absent flag as off. E.g. Community News is
+  // on unless a group explicitly opts out, so its toggle passes true here.
+  defaultValue: {
+    type: null,
+    required: false,
+    default: null,
+  },
 })
 
 const modGroupStore = useModGroupStore()
@@ -167,6 +175,13 @@ function setDeep(obj, path, val, setrecursively = false) {
 function getValueFromGroup() {
   let obj = modGroupStore.get(props.groupid)
 
+  // Pre-seed with the server-side default so a group whose settings object is
+  // entirely absent (the walk below exits early on that) still shows the
+  // truth; a completed walk overwrites this with any explicitly stored value.
+  if (props.defaultValue !== null) {
+    value.value = props.defaultValue
+  }
+
   if (obj) {
     let name = props.name
     let p
@@ -176,7 +191,11 @@ function getValueFromGroup() {
 
       if (p === -1) {
         // Got there.
-        if (props.type === 'toggle') {
+        if (obj[name] === undefined || obj[name] === null) {
+          // The group has never set this - show what the server actually
+          // does with an absent flag, not an unconditional "off".
+          value.value = props.defaultValue
+        } else if (props.type === 'toggle') {
           value.value =
             typeof obj[name] === 'boolean'
               ? obj[name]

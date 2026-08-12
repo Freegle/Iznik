@@ -65,8 +65,11 @@ RUN cp /tmp/mjml.so "$(php-config --extension-dir)/mjml.so" \
 # osmium-tool merges the Great Britain + Ireland/Northern Ireland OSM extracts
 # into the unified uk-latest.osm.pbf that the routing server loads
 # (used by the spatial:update-data scheduled command).
+# openssh-client is for monitor:scheduled-outcomes' host health checks
+# (App\Monitoring\SshHostCommandRunner probes each host over ssh, exactly as
+# V1's status cron did).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends osmium-tool \
+    && apt-get install -y --no-install-recommends osmium-tool openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Claude Code CLI — lets Community News research run on a Claude SUBSCRIPTION

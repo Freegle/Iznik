@@ -127,6 +127,9 @@
               {{ pct(s1.held_replies_pct) }}
             </div>
             <div class="sub">of replies held (waiting for reach)</div>
+            <div v-if="heldFirstVsAdditional" class="sub muted">
+              {{ heldFirstVsAdditional }}
+            </div>
             <div v-if="heldSourceBreakdown" class="sub muted">
               held now by source: {{ heldSourceBreakdown }}
             </div>
@@ -533,6 +536,25 @@ let metricsWindow = null
 const stratumLabel = computed(() =>
   stratum.value === 'all' ? 'all-density' : stratum.value
 )
+
+/*
+ * Held replies split by whether the post already had a reply from someone else at the moment
+ * this one was held. The two are not equally costly: holding the only reply a post has leaves
+ * the offerer staring at silence, while holding a later one just defers a choice they can
+ * already make. Since first replies started going through, "first" should be close to zero —
+ * a stubborn count there says the first-reply path is still holding somebody up.
+ */
+const heldFirstVsAdditional = computed(() => {
+  const s = s1.value
+  if (!s || !s.held_replies) return null
+  const additional = Number(s.held_replies_additional || 0)
+  const first = Number(s.held_replies_first || 0)
+  if (!additional && !first) return null
+  return (
+    `of which ${additional.toLocaleString()} additional ` +
+    `(post already had a reply) · ${first.toLocaleString()} first reply`
+  )
+})
 
 // Currently-held replies broken down by origin channel (email / tn / web), for the friction
 // panel - shows how many replies the new web reply-hold is capturing vs the email/TN path.

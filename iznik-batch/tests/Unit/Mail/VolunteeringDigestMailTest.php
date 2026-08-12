@@ -99,20 +99,24 @@ class VolunteeringDigestMailTest extends TestCase
                 }
             }
         }
-        // Fallback: raw freegle.in short link href (when tracking is null)
-        if (preg_match('/href=["\']([^"\']*freegle\.in[^"\']*)["\']/', $html, $match)) {
+        // Fallback: raw donate href (when tracking is null)
+        if (preg_match('/href=["\']([^"\']*(?:\/donate|freegle\.in)[^"\']*)["\']/', $html, $match)) {
             return html_entity_decode($match[1]);
         }
         return null;
     }
 
-    public function test_donate_url_in_job_ads_section_uses_freegle_in_short_link(): void
+    public function test_donate_url_in_job_ads_section_goes_to_our_stripe_page(): void
     {
-        // The "Donating helps too!" button must keep the freegle.in/paypal1510
-        // PayPal short link. freegle.in is whitelisted in the Go API's
-        // isValidRedirectURL allow-list, so the tracked redirect resolves the
-        // short link correctly. The short link must NOT be rewritten to a full
-        // /donate URL — short links are intentional and supported.
+        // This button used to go to the freegle.in/paypal1510 short link, which
+        // meant an email donor could only pay by PayPal — no Apple Pay, no
+        // Google Pay, no Link. It goes to our own /donate page now, which runs
+        // the Stripe Express Checkout Element and offers all of them.
+        //
+        // The destination host still has to be on the Go API's
+        // isValidRedirectURL allow-list or the tracked redirect will refuse it.
+        // USER_SITE is on that list, which is why a full user-site URL is safe
+        // here where an arbitrary third-party URL would not be.
         $userSite = config('freegle.sites.user');
 
         $mail = new VolunteeringDigestMail(
@@ -131,8 +135,32 @@ class VolunteeringDigestMailTest extends TestCase
 
         $this->assertNotNull($donateDest,
             '"Donating helps too!" button destination URL not found in rendered email');
-        $this->assertStringContainsString('freegle.in/paypal1510', $donateDest,
-            '"Donating helps too!" must use the freegle.in/paypal1510 PayPal short link (whitelisted in isValidRedirectURL); it must not be replaced with a full URL');
+        $this->assertStringContainsString('/donate', $donateDest,
+            '"Donating helps too!" must land on our Stripe donate page so wallets are on offer');
+        $this->assertStringNotContainsString('paypal', strtolower($donateDest),
+            'donate button must no longer send email donors straight to PayPal');
+        $this->assertStringContainsString(parse_url($userSite, PHP_URL_HOST), $donateDest,
+            'destination host must be USER_SITE, which is on the isValidRedirectURL allow-list');
+    }
+
+    public function test_donate_button_shows_the_payment_marks(): void
+    {
+        // The wallet options are the reason to click, so they have to be
+        // visible before the click. Images are blocked by default in a lot of
+        // clients, so the alt text has to carry the same message.
+        $userSite = config('freegle.sites.user');
+
+        $mail = new VolunteeringDigestMail(
+            recipientEmail: 'test@example.com',
+            volunteerings:  [$this->makeVolunteering(1)],
+            unsubscribeUrl: "{$userSite}/unsubscribe?email=" . urlencode('test@example.com'),
+            jobAds:         collect([$this->makeJobAd(99)]),
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringContainsString('paymethods.png', $html);
+        $this->assertStringContainsString('Apple Pay, Google Pay, PayPal or card', $html);
     }
 
     public function test_service_builds_volunteering_url_without_doubled_https(): void

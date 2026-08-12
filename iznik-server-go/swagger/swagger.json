@@ -10607,6 +10607,10 @@
         "lastupdated": {
           "type": "string",
           "x-go-name": "LastUpdated"
+        },
+        "type": {
+          "type": "string",
+          "x-go-name": "Type"
         }
       },
       "x-go-package": "github.com/freegle/iznik-server-go/changes"
@@ -11477,6 +11481,13 @@
         "items": {
           "$ref": "#/definitions/GroupEntry"
         }
+      }
+    },
+    "housekeeperTasksResponse": {
+      "description": "",
+      "schema": {
+        "type": "array",
+        "items": {}
       }
     },
     "illustrationResponse": {

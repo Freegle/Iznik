@@ -233,4 +233,67 @@ class CommunityNewsResearchServiceTest extends TestCase
         $this->assertSame('Fete - this Saturday', $items[0]['title']);
         $this->assertSame('Cakes, stalls - and more.', $items[0]['blurb']);
     }
+
+    /**
+     * The newsletter can only skip a past event if research recorded when the
+     * event is. researched_at says when WE looked, which is a different thing.
+     */
+    public function test_parse_captures_an_event_date(): void
+    {
+        $text = json_encode([
+            'intro' => 'x',
+            'items' => [
+                ['title' => 'Fete', 'blurb' => 'b', 'url' => 'https://ok.org', 'source' => 'S', 'date' => '2026-09-12'],
+            ],
+        ]);
+
+        [, $items] = $this->svc()->parse($text, 6);
+
+        $this->assertSame('2026-09-12', $items[0]['date']);
+    }
+
+    /** Most items are not dated events, and must come back with no date at all. */
+    public function test_parse_leaves_an_undated_item_undated(): void
+    {
+        $text = json_encode([
+            'intro' => 'x',
+            'items' => [
+                ['title' => 'New cycle path', 'blurb' => 'b', 'url' => 'https://ok.org', 'source' => 'S'],
+            ],
+        ]);
+
+        [, $items] = $this->svc()->parse($text, 6);
+
+        $this->assertNull($items[0]['date']);
+    }
+
+    /**
+     * A wrong date is worse than none: it either buries an event that is still
+     * to come or lets a past one through, which is the whole point of the field.
+     * Anything that is not an exact, real, plausible YYYY-MM-DD is dropped.
+     */
+    public function test_parse_rejects_dates_it_cannot_trust(): void
+    {
+        $cases = [
+            'Saturday',            // not a date at all
+            '12/09/2026',          // wrong format, and ambiguous day/month
+            '2026-13-01',          // no such month
+            '2026-02-31',          // overflows to 3 March if parsed loosely
+            '2035-01-01',          // implausibly far out for a local listing
+            '',
+        ];
+
+        foreach ($cases as $raw) {
+            $text = json_encode([
+                'intro' => 'x',
+                'items' => [
+                    ['title' => 'T', 'blurb' => 'b', 'url' => 'https://ok.org', 'source' => 'S', 'date' => $raw],
+                ],
+            ]);
+
+            [, $items] = $this->svc()->parse($text, 6);
+
+            $this->assertNull($items[0]['date'], "expected '{$raw}' to be rejected as an event date");
+        }
+    }
 }

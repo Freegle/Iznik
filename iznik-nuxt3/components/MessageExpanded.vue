@@ -447,8 +447,14 @@
                 variant="info"
                 class="mb-2"
               >
-                This hasn't reached your area yet — but go ahead and reply.
-                We'll pass it on to the owner as soon as it does.
+                <span v-if="reachNotice" data-testid="reach-blocked-eta">
+                  This hasn't reached your area yet, but go ahead and reply.
+                  {{ reachNotice }}
+                </span>
+                <span v-else>
+                  This hasn't reached your area yet — but go ahead and reply.
+                  We'll pass it on to the owner as soon as it does.
+                </span>
               </NoticeMessage>
               <div
                 v-if="replyable && !replied && !message.successful"
@@ -532,8 +538,14 @@
           variant="info"
           class="mb-2"
         >
-          This hasn't reached your area yet — but go ahead and reply. We'll pass
-          it on to the owner as soon as it does.
+          <span v-if="reachNotice" data-testid="reach-blocked-eta">
+            This hasn't reached your area yet, but go ahead and reply.
+            {{ reachNotice }}
+          </span>
+          <span v-else>
+            This hasn't reached your area yet — but go ahead and reply. We'll
+            pass it on to the owner as soon as it does.
+          </span>
         </NoticeMessage>
         <div
           v-if="replyable && !replied && !message.successful"
@@ -668,6 +680,7 @@ import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
+import { reachNoticeSentence } from '~/composables/reachArrival'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
@@ -784,6 +797,16 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 // until the reach engine populates rippling_reach.
 const reachBlocked = computed(
   () => message.value?.replyeligible === false && !fromme.value
+)
+
+// When the post is due to reach here, as a sentence. Null when the API sent no
+// estimate (routing unavailable, or the block is a ban rather than the reach), and
+// the notice then falls back to saying only that we'll pass it on.
+const reachNotice = computed(() =>
+  reachNoticeSentence(
+    message.value?.reachesyouat,
+    message.value?.reachesyoufully
+  )
 )
 
 // For a bulk offer the catalogue below (BulkItemsInterest) lists the items and

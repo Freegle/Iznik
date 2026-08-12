@@ -1,18 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
-import { ref, computed } from 'vue'
+import { mount, flushPromises } from '@vue/test-utils'
+import { ref } from 'vue'
+import ModStatus from '~/modtools/components/ModStatus.vue'
 
-// Mock composables with proper Vue ref to avoid template ref warnings
-const mockHide = vi.fn()
-const mockShow = vi.fn()
-const mockModal = ref({ show: mockShow, hide: mockHide })
-
-vi.mock('~/composables/useOurModal', () => ({
-  useOurModal: () => ({
-    modal: mockModal,
-    hide: mockHide,
-  }),
-}))
+// This spec used to mount a hand-written COPY of ModStatus's template and setup()
+// rather than the component itself. That is why the platform status dot could be
+// broken for a month with the suite green: the copy was fixed, the component was
+// not. Everything below mounts the real thing.
 
 const mockSupportOrAdmin = ref(false)
 
@@ -22,443 +16,271 @@ vi.mock('~/composables/useMe', () => ({
   }),
 }))
 
-// Mock API
 const mockStatusFetch = vi.fn()
-const mockApi = {
-  status: {
-    fetch: mockStatusFetch,
-  },
-}
 
 vi.mock('#app', () => ({
-  useNuxtApp: () => ({ $api: mockApi }),
+  useNuxtApp: () => ({ $api: { status: { fetch: mockStatusFetch } } }),
 }))
 
-// Create test component that mirrors ModStatus logic
-const ModStatusTest = {
-  template: `
-    <span title="Platform Status - click for more info" class="clickme" @click="clicked">
-      <span v-if="!tried" class="trying" />
-      <span v-else-if="error" class="error" />
-      <span v-else-if="warning && supportOrAdmin" class="warning" />
-      <span v-else class="fine" />
-      <div class="modal" v-if="showModal">
-        <div class="title">Platform Status: {{ headline }}</div>
-        <div class="content">
-          <div v-if="(warning || error) && supportOrAdmin" class="notice-support">
-            There is a problem.
-          </div>
-          <div v-else-if="error" class="notice-error">
-            There's a problem, and parts of the system may not be working.
-          </div>
-          <div v-else-if="warning" class="notice-warning">
-            There's a problem, but the system should still be working.
-          </div>
-          <div v-else class="notice-fine">
-            Everything seems fine.
-          </div>
-          <div v-if="status && status.info">
-            <div v-for="(stat, server) in status.info" :key="server" class="server-status">
-              <div v-if="stat.warning">{{ server }}: {{ stat.warningtext }}</div>
-              <div v-if="stat.error">{{ server }}: {{ stat.errortext }}</div>
-            </div>
-          </div>
-        </div>
-        <button @click="hideModal">Close</button>
-      </div>
-    </span>
-  `,
-  setup() {
-    const status = ref(null)
-    const updated = ref(null)
-    const tried = ref(false)
-    const showModal = ref(false)
-
-    const outOfDate = computed(() => {
-      return !updated.value || Date.now() - updated.value >= 1000 * 600
-    })
-
-    const error = computed(() => (status.value ? status.value.error : false))
-
-    const warning = computed(() => {
-      return outOfDate.value || (status.value && status.value.warning)
-    })
-
-    const headline = computed(() => {
-      if (outOfDate.value) {
-        return 'Not sure'
-      } else if (warning.value) {
-        return 'Warning'
-      } else if (error.value) {
-        return 'Error'
-      } else {
-        return 'Fine'
-      }
-    })
-
-    async function checkStatus() {
-      try {
-        status.value = await mockStatusFetch()
-        tried.value = true
-        if (status.value.ret === 0) {
-          updated.value = Date.now()
-        }
-      } catch (err) {
-        tried.value = true
-        status.value = {
-          ret: 1,
-          warning: true,
-          info: {
-            'Status API': {
-              warning: true,
-              warningtext: 'Cannot access status file - system status unknown',
-            },
-          },
-        }
-      }
-    }
-
-    function clicked(e) {
-      showModal.value = true
-      e.preventDefault()
-      e.stopPropagation()
-    }
-
-    function hideModal() {
-      showModal.value = false
-    }
-
-    return {
-      status,
-      updated,
-      tried,
-      showModal,
-      outOfDate,
-      error,
-      warning,
-      headline,
-      supportOrAdmin: mockSupportOrAdmin,
-      checkStatus,
-      clicked,
-      hideModal,
-    }
-  },
-}
+const OK_STATUS = { ret: 0, error: false, warning: false, info: {} }
 
 describe('ModStatus', () => {
-  function mountComponent() {
-    return mount(ModStatusTest)
+  let wrapper = null
+
+  // The component polls on a 30s timer and fetches on mount. Fake timers keep
+  // the poll from leaking between tests; mounting is always followed by
+  // flushPromises so the initial fetch has settled before we assert.
+  async function mountComponent() {
+    wrapper = mount(ModStatus, {
+      global: {
+        stubs: {
+          'b-modal': {
+            props: ['title'],
+            template:
+              '<div class="modal"><div class="title">{{ title }}</div><slot /></div>',
+          },
+          'b-button': { template: '<button><slot /></button>' },
+          NoticeMessage: {
+            props: ['variant'],
+            template: '<div class="notice" :class="variant"><slot /></div>',
+          },
+        },
+      },
+    })
+
+    await flushPromises()
+
+    return wrapper
   }
 
   beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.clearAllMocks()
-    vi.useFakeTimers()
     mockSupportOrAdmin.value = false
-    mockStatusFetch.mockResolvedValue({ ret: 0, error: false, warning: false })
+    mockStatusFetch.mockResolvedValue(OK_STATUS)
   })
 
   afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
     vi.useRealTimers()
   })
 
-  describe('rendering', () => {
-    it('renders a clickable span', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.find('.clickme').exists()).toBe(true)
-    })
+  describe('the dot', () => {
+    it('shows the trying indicator until the first answer arrives', () => {
+      // Deliberately never resolves, so we observe the pre-answer state.
+      mockStatusFetch.mockReturnValue(new Promise(() => {}))
+      wrapper = mount(ModStatus, {
+        global: { stubs: { 'b-modal': true, NoticeMessage: true } },
+      })
 
-    it('shows trying indicator before status is fetched', () => {
-      const wrapper = mountComponent()
       expect(wrapper.find('.trying').exists()).toBe(true)
     })
 
-    it('shows fine indicator when status is OK', async () => {
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      await wrapper.vm.$nextTick()
+    it('shows fine when the platform is healthy', async () => {
+      await mountComponent()
 
       expect(wrapper.find('.fine').exists()).toBe(true)
-      expect(wrapper.find('.error').exists()).toBe(false)
-      expect(wrapper.find('.warning').exists()).toBe(false)
     })
 
-    it('shows error indicator when status has error', async () => {
-      mockStatusFetch.mockResolvedValue({ ret: 0, error: true, warning: false })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      await wrapper.vm.$nextTick()
+    it('shows error when the published status has an error', async () => {
+      mockStatusFetch.mockResolvedValue({ ...OK_STATUS, error: true })
+      await mountComponent()
 
       expect(wrapper.find('.error').exists()).toBe(true)
     })
 
-    it('shows warning indicator for supportOrAdmin when status has warning', async () => {
+    it('shows warning to support and admin when there is a warning', async () => {
       mockSupportOrAdmin.value = true
-      mockStatusFetch.mockResolvedValue({ ret: 0, error: false, warning: true })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      await wrapper.vm.$nextTick()
+      mockStatusFetch.mockResolvedValue({ ...OK_STATUS, warning: true })
+      await mountComponent()
 
       expect(wrapper.find('.warning').exists()).toBe(true)
     })
 
-    it('does not show warning for non-admin when warning exists', async () => {
+    it('does not show warning to an ordinary mod', async () => {
+      // Deliberate: warnings are geek-facing detail. Errors are not gated.
       mockSupportOrAdmin.value = false
-      mockStatusFetch.mockResolvedValue({ ret: 0, error: false, warning: true })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      await wrapper.vm.$nextTick()
+      mockStatusFetch.mockResolvedValue({ ...OK_STATUS, warning: true })
+      await mountComponent()
 
-      // Non-admins see fine, not warning
       expect(wrapper.find('.warning').exists()).toBe(false)
       expect(wrapper.find('.fine').exists()).toBe(true)
     })
   })
 
-  describe('computed properties', () => {
-    describe('outOfDate', () => {
-      it('returns true when updated is null', () => {
-        const wrapper = mountComponent()
-        expect(wrapper.vm.outOfDate).toBe(true)
-      })
+  describe('freshness', () => {
+    it('stamps the timestamp when the API answers ret 0', async () => {
+      await mountComponent()
 
-      it('returns true when updated is more than 10 minutes ago', async () => {
-        const wrapper = mountComponent()
-        // Set updated to 11 minutes ago
-        wrapper.vm.updated = Date.now() - 1000 * 660
-        await wrapper.vm.$nextTick()
-        expect(wrapper.vm.outOfDate).toBe(true)
-      })
-
-      it('returns false when updated recently', async () => {
-        const wrapper = mountComponent()
-        await wrapper.vm.checkStatus()
-        expect(wrapper.vm.outOfDate).toBe(false)
-      })
+      expect(wrapper.vm.updated).not.toBeNull()
+      expect(wrapper.vm.outOfDate).toBe(false)
+      expect(wrapper.vm.headline).toBe('Fine')
     })
 
-    describe('error', () => {
-      it('returns false when status is null', () => {
-        const wrapper = mountComponent()
-        expect(wrapper.vm.error).toBe(false)
-      })
+    it('stamps the timestamp when the API answers ret 1, because it answered', async () => {
+      // The month-long bug. The API was replying promptly with ret 1 (its
+      // writer was dead), but only ret 0 stamped `updated`, so outOfDate stayed
+      // true forever: headline pinned to "Not sure", and a warning banner with
+      // no detail under it. outOfDate must mean "cannot reach the API".
+      mockStatusFetch.mockResolvedValue({ ret: 1, status: 'Nope' })
+      await mountComponent()
 
-      it('returns true when status has error flag', async () => {
-        mockStatusFetch.mockResolvedValue({ ret: 0, error: true })
-        const wrapper = mountComponent()
-        await wrapper.vm.checkStatus()
-        expect(wrapper.vm.error).toBe(true)
-      })
-
-      it('returns false when status has no error flag', async () => {
-        mockStatusFetch.mockResolvedValue({ ret: 0, error: false })
-        const wrapper = mountComponent()
-        await wrapper.vm.checkStatus()
-        expect(wrapper.vm.error).toBe(false)
-      })
+      expect(wrapper.vm.updated).not.toBeNull()
+      expect(wrapper.vm.outOfDate).toBe(false)
     })
 
-    describe('warning', () => {
-      it('returns true when outOfDate', () => {
-        const wrapper = mountComponent()
-        expect(wrapper.vm.warning).toBe(true)
-      })
+    it('leaves the timestamp alone when the API cannot be reached', async () => {
+      mockStatusFetch.mockRejectedValue(new Error('Network error'))
+      await mountComponent()
 
-      it('returns true when status has warning flag', async () => {
-        mockStatusFetch.mockResolvedValue({ ret: 0, warning: true })
-        const wrapper = mountComponent()
-        await wrapper.vm.checkStatus()
-        expect(wrapper.vm.warning).toBe(true)
-      })
-
-      it('returns false when status is fresh with no warning', async () => {
-        mockStatusFetch.mockResolvedValue({ ret: 0, warning: false })
-        const wrapper = mountComponent()
-        await wrapper.vm.checkStatus()
-        expect(wrapper.vm.warning).toBe(false)
-      })
+      expect(wrapper.vm.updated).toBeNull()
+      expect(wrapper.vm.outOfDate).toBe(true)
+      expect(wrapper.vm.headline).toBe('Not sure')
     })
 
-    describe('headline', () => {
-      it('returns "Not sure" when outOfDate', () => {
-        const wrapper = mountComponent()
-        expect(wrapper.vm.headline).toBe('Not sure')
-      })
+    it('goes out of date once an answer is more than ten minutes old', async () => {
+      await mountComponent()
+      expect(wrapper.vm.outOfDate).toBe(false)
 
-      it('returns "Fine" when status is OK and fresh', async () => {
-        mockStatusFetch.mockResolvedValue({
-          ret: 0,
-          error: false,
-          warning: false,
-        })
-        const wrapper = mountComponent()
-        await wrapper.vm.checkStatus()
-        expect(wrapper.vm.headline).toBe('Fine')
-      })
+      wrapper.vm.updated = Date.now() - 1000 * 601
 
-      it('returns "Warning" when warning exists', async () => {
-        mockStatusFetch.mockResolvedValue({
-          ret: 0,
-          error: false,
-          warning: true,
-        })
-        const wrapper = mountComponent()
-        await wrapper.vm.checkStatus()
-        expect(wrapper.vm.headline).toBe('Warning')
-      })
-
-      it('returns "Warning" not "Error" when both error and warning exist', async () => {
-        // Note: headline logic checks warning before error when not outOfDate
-        mockStatusFetch.mockResolvedValue({
-          ret: 0,
-          error: true,
-          warning: true,
-        })
-        const wrapper = mountComponent()
-        await wrapper.vm.checkStatus()
-        // warning is true, so headline is "Warning"
-        expect(wrapper.vm.headline).toBe('Warning')
-      })
+      expect(wrapper.vm.outOfDate).toBe(true)
+      expect(wrapper.vm.headline).toBe('Not sure')
     })
   })
 
-  describe('checkStatus method', () => {
-    it('calls API status fetch', async () => {
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      expect(mockStatusFetch).toHaveBeenCalled()
+  describe('headline', () => {
+    it('says Error, not Warning, when both are set', async () => {
+      // Error is the more severe of the two. The headline used to test warning
+      // first, so a platform with a real error announced itself as a warning
+      // while the dot next to it was red.
+      mockStatusFetch.mockResolvedValue({
+        ...OK_STATUS,
+        error: true,
+        warning: true,
+      })
+      await mountComponent()
+
+      expect(wrapper.vm.headline).toBe('Error')
     })
 
-    it('sets tried to true after fetch', async () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.tried).toBe(false)
-      await wrapper.vm.checkStatus()
-      expect(wrapper.vm.tried).toBe(true)
+    it('says Warning when only a warning is set', async () => {
+      mockStatusFetch.mockResolvedValue({ ...OK_STATUS, warning: true })
+      await mountComponent()
+
+      expect(wrapper.vm.headline).toBe('Warning')
     })
+  })
 
-    it('sets status from API response', async () => {
-      const statusData = { ret: 0, error: false, warning: false, info: {} }
-      mockStatusFetch.mockResolvedValue(statusData)
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      expect(wrapper.vm.status).toEqual(statusData)
-    })
+  describe('when the status cannot be obtained', () => {
+    it('explains a ret 1 using the reason the API gave', async () => {
+      mockStatusFetch.mockResolvedValue({
+        ret: 1,
+        status: 'Platform status has not been published yet',
+      })
+      await mountComponent()
 
-    it('updates timestamp when ret is 0', async () => {
-      mockStatusFetch.mockResolvedValue({ ret: 0 })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      expect(wrapper.vm.updated).not.toBeNull()
-    })
-
-    it('does not update timestamp when ret is not 0', async () => {
-      mockStatusFetch.mockResolvedValue({ ret: 1 })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      expect(wrapper.vm.updated).toBeNull()
-    })
-
-    it('handles API error gracefully', async () => {
-      mockStatusFetch.mockRejectedValue(new Error('Network error'))
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-
-      expect(wrapper.vm.tried).toBe(true)
-      expect(wrapper.vm.status.warning).toBe(true)
-      expect(wrapper.vm.status.info['Status API'].warningtext).toContain(
-        'Cannot access status file'
+      expect(wrapper.vm.headline).toBe('Warning')
+      expect(wrapper.vm.status.info['Status feed'].warningtext).toBe(
+        'Platform status has not been published yet'
       )
     })
-  })
 
-  describe('clicked method', () => {
-    it('opens modal on click', async () => {
-      const wrapper = mountComponent()
-      await wrapper.find('.clickme').trigger('click')
+    it('explains an unreachable API', async () => {
+      mockStatusFetch.mockRejectedValue(new Error('Network error'))
+      await mountComponent()
 
-      expect(wrapper.vm.showModal).toBe(true)
-      expect(wrapper.find('.modal').exists()).toBe(true)
+      expect(wrapper.vm.status.warning).toBe(true)
+      expect(wrapper.vm.status.info['Status feed'].warningtext).toContain(
+        'Cannot reach the status API'
+      )
     })
 
-    it('displays headline in modal title', async () => {
-      const wrapper = mountComponent()
-      await wrapper.find('.clickme').trigger('click')
-
-      expect(wrapper.find('.title').text()).toContain('Not sure')
-    })
-  })
-
-  describe('modal content', () => {
-    it('shows fine notice when status is OK', async () => {
-      mockStatusFetch.mockResolvedValue({
-        ret: 0,
-        error: false,
-        warning: false,
-      })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      await wrapper.find('.clickme').trigger('click')
-
-      expect(wrapper.find('.notice-fine').exists()).toBe(true)
-    })
-
-    it('shows error notice when error flag is set', async () => {
-      mockStatusFetch.mockResolvedValue({ ret: 0, error: true })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      await wrapper.find('.clickme').trigger('click')
-
-      expect(wrapper.find('.notice-error').exists()).toBe(true)
-    })
-
-    it('shows warning notice for non-admin when warning flag is set', async () => {
-      mockSupportOrAdmin.value = false
-      mockStatusFetch.mockResolvedValue({ ret: 0, error: false, warning: true })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
-      await wrapper.find('.clickme').trigger('click')
-
-      expect(wrapper.find('.notice-warning').exists()).toBe(true)
-    })
-
-    it('shows support notice for admin when warning exists', async () => {
+    it('never leaves the modal with a problem and no explanation', async () => {
+      // The original symptom: "There is a problem" over an empty info block.
       mockSupportOrAdmin.value = true
-      mockStatusFetch.mockResolvedValue({ ret: 0, error: false, warning: true })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
+      mockStatusFetch.mockResolvedValue({ ret: 1, status: 'Nope' })
+      await mountComponent()
+
       await wrapper.find('.clickme').trigger('click')
 
-      expect(wrapper.find('.notice-support').exists()).toBe(true)
+      expect(wrapper.text()).toContain('There is a problem')
+      expect(wrapper.text()).toContain('Nope')
+    })
+  })
+
+  describe('the modal', () => {
+    it('opens on click and shows the headline', async () => {
+      await mountComponent()
+
+      await wrapper.find('.clickme').trigger('click')
+
+      expect(wrapper.find('.modal').exists()).toBe(true)
+      expect(wrapper.find('.title').text()).toContain('Platform Status: Fine')
     })
 
-    it('displays server-specific status info', async () => {
+    it('lists each breached job with what is wrong', async () => {
+      mockSupportOrAdmin.value = true
       mockStatusFetch.mockResolvedValue({
         ret: 0,
-        error: false,
+        error: true,
         warning: true,
         info: {
-          'Web Server': {
+          'chats:process-incoming': {
+            error: true,
+            errortext: 'queue backing up',
+            warning: false,
+            warningtext: null,
+          },
+          'stats:generate-daily': {
+            error: false,
+            errortext: null,
             warning: true,
-            warningtext: 'High load',
+            warningtext: 'no rows for yesterday',
           },
         },
       })
-      const wrapper = mountComponent()
-      await wrapper.vm.checkStatus()
+      await mountComponent()
+
       await wrapper.find('.clickme').trigger('click')
 
-      expect(wrapper.text()).toContain('Web Server')
-      expect(wrapper.text()).toContain('High load')
+      const text = wrapper.text()
+      expect(text).toContain('chats:process-incoming')
+      expect(text).toContain('queue backing up')
+      expect(text).toContain('stats:generate-daily')
+      expect(text).toContain('no rows for yesterday')
     })
 
-    it('calls hideModal function', async () => {
-      const wrapper = mountComponent()
-      await wrapper.find('.clickme').trigger('click')
-      expect(wrapper.vm.showModal).toBe(true)
+    it('says everything is fine when nothing is wrong', async () => {
+      await mountComponent()
 
-      // Directly call the hideModal method
-      wrapper.vm.hideModal()
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.showModal).toBe(false)
+      await wrapper.find('.clickme').trigger('click')
+
+      expect(wrapper.text()).toContain('Everything seems fine')
+    })
+  })
+
+  describe('polling', () => {
+    it('re-checks on a timer', async () => {
+      await mountComponent()
+      expect(mockStatusFetch).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(30000)
+
+      expect(mockStatusFetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('stops polling once unmounted', async () => {
+      await mountComponent()
+      expect(mockStatusFetch).toHaveBeenCalledTimes(1)
+
+      wrapper.unmount()
+      wrapper = null
+
+      await vi.advanceTimersByTimeAsync(60000)
+
+      expect(mockStatusFetch).toHaveBeenCalledTimes(1)
     })
   })
 })

@@ -20,6 +20,10 @@ export const useNewsfeedStore = defineStore('newsfeed', {
     // Most recently used distance.
     lastDistance: 0,
 
+    // Whether the last feed fetch asked for every area's newsletter posts
+    // (ChitChat moderators only).
+    lastAllNewsletters: false,
+
     // Track what was seen before visiting ChitChat page (for "you're up to date" divider).
     seenBeforeVisit: null,
 
@@ -28,6 +32,9 @@ export const useNewsfeedStore = defineStore('newsfeed', {
 
     // Timer ID for delayed seen marking.
     delayedSeenTimer: null,
+    // Whether this visit's baseline has been set from a server seenwatermark.
+    // First-write-wins per visit; reset by snapshotSeenBeforeVisit().
+    watermarkCaptured: false,
   }),
   actions: {
     init(config) {
@@ -47,7 +54,22 @@ export const useNewsfeedStore = defineStore('newsfeed', {
       this.count = ret?.count || 0
       return this.count
     },
-    addItems(items) {
+    addItems(items, fromRecursion) {
+      // The server stamps its per-user seen watermark on the top-level item of
+      // GET /newsfeed/<id>. The FIRST one to arrive this visit becomes the
+      // "new since your last visit" baseline - before the auto-seen POST below
+      // can advance the server watermark past it. Recursed calls (nested
+      // replies) never capture: the field is only meaningful on the top level.
+      if (!fromRecursion && !this.watermarkCaptured) {
+        for (const item of items) {
+          if (typeof item.seenwatermark === 'number') {
+            this.seenBeforeVisit = item.seenwatermark
+            this.watermarkCaptured = true
+            break
+          }
+        }
+      }
+
       const prevMax = this.maxSeen
 
       items.forEach((item) => {
@@ -60,7 +82,7 @@ export const useNewsfeedStore = defineStore('newsfeed', {
         if (item.replies?.length) {
           item.replies.forEach((reply) => {
             if (typeof reply === 'object') {
-              this.addItems([reply])
+              this.addItems([reply], true)
             }
           })
         }
@@ -90,9 +112,26 @@ export const useNewsfeedStore = defineStore('newsfeed', {
     },
     snapshotSeenBeforeVisit() {
       // Capture what was seen before visiting the page.
-      // This is used to show the "you're up to date" divider.
+      // This is used to show the "you're up to date" divider and per-reply
+      // "New" pills. The session maxSeen is only a fallback baseline: the
+      // first server seenwatermark to arrive (see addItems) overwrites it,
+      // which is what makes "new since your last visit" survive a fresh page
+      // load, where maxSeen starts at 0.
       this.seenBeforeVisit = this.maxSeen
       this.delayedSeenMode = true
+      this.watermarkCaptured = false
+    },
+    ensureSeenBaselineForThreadView() {
+      // Thread and deep-link views need delayed-seen protection like the feed,
+      // but must NOT re-snapshot when the session already has a baseline: on a
+      // feed-to-thread navigation the store holds every fetched id, so a fresh
+      // snapshot from maxSeen would wipe the New pills the reader came to see.
+      this.delayedSeenMode = true
+
+      if (this.seenBeforeVisit === null) {
+        this.seenBeforeVisit = this.maxSeen
+        this.watermarkCaptured = false
+      }
     },
     startDelayedSeen(delayMs = 30000) {
       // Start a timer to mark items as seen after delay.
@@ -131,10 +170,20 @@ export const useNewsfeedStore = defineStore('newsfeed', {
       this.delayedSeenMode = false
       this.seenBeforeVisit = null
     },
-    async fetchFeed(distance) {
+    // allNewsletters defaults to whatever was last asked for so that a refetch
+    // triggered by something else - posting, for instance - doesn't silently
+    // drop a moderator out of the review view.
+    async fetchFeed(distance, allNewsletters = this.lastAllNewsletters) {
       this.lastDistance = distance
+      this.lastAllNewsletters = allNewsletters
       distance = distance || 'anywhere'
-      this.feed = await api(this.config).news.fetch(null, distance)
+      this.feed = await api(this.config).news.fetch(
+        null,
+        distance,
+        undefined,
+        undefined,
+        allNewsletters ? 'all' : undefined
+      )
       return this.feed
     },
     async fetch(id, force, lovelist) {

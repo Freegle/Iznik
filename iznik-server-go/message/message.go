@@ -264,6 +264,19 @@ type Message struct {
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
 	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
+	// ReachesYouAt: when this post's rippling reach is expected to arrive at the
+	// viewer, for a post they can see but which has not rippled to them yet. Set only
+	// alongside ReplyEligible=false and only for the reach reason - a viewer blocked
+	// by a ban is not waiting for the ripple, so it stays nil there.
+	//
+	// ReachesYouFully says which question was answered. True: a tick of the post's own
+	// schedule grows far enough to include them, and this is when. False: no tick ever
+	// does, so this is instead when the reach stops expanding - the point their held
+	// reply is passed on regardless. Both are real answers; the second is the common
+	// one, and it is an upper bound rather than a prediction, because a reach also
+	// finishes early when the post gathers enough repliers or is taken.
+	ReachesYouAt    *time.Time `json:"reachesyouat,omitempty" gorm:"-"`
+	ReachesYouFully *bool      `json:"reachesyoufully,omitempty" gorm:"-"`
 	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
 	// (and omitted) for ordinary single-item posts. Bulkcount is len(BulkItems),
 	// exposed so list/summary views can flag a bulk offer cheaply.
@@ -1052,7 +1065,58 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// be reach-eligible if ANY of them is within the post's reach. Extending this to
 		// iterate the member's full location set is future work.
 		latlng := user.GetLatLng(myid)
-		reachBlocked := ReachBlockedSet(ids, float64(latlng.Lat), float64(latlng.Lng))
+		reachBlocked := ReachBlockedOrigins(ids, float64(latlng.Lat), float64(latlng.Lng))
+
+		// When the reach is expected to arrive at this viewer. Worked out here rather
+		// than left to the client because it needs the post's BLURRED ripple origin
+		// and its stored schedule, neither of which the feed ships - only the
+		// resulting date crosses the wire.
+		//
+		// One budget-bounded routing search per blocked post (~40ms at a 30-minute
+		// budget on the UK graph), run concurrently so a feed with several blocked
+		// posts costs one search's latency rather than the sum. Only blocked posts
+		// pay it, which is a small minority of any feed.
+		coverage := make(map[uint64]rippling.Coverage, len(reachBlocked))
+		if len(reachBlocked) > 0 {
+			hazard := rippling.LoadHazardHours(db)
+
+			var covMu sync.Mutex
+			var covWg sync.WaitGroup
+			for msgid, origin := range reachBlocked {
+				if !origin.Ok || origin.Arrival == nil || len(origin.Schedule) == 0 {
+					continue
+				}
+				covWg.Add(1)
+				go func(msgid uint64, origin ReachOrigin) {
+					defer covWg.Done()
+
+					// Search no further than this post's own widest budget: beyond it
+					// the answer is "no tick ever covers you" however far they are, and
+					// the search cost scales with the budget.
+					budget := origin.Schedule[len(origin.Schedule)-1].DriveMin
+					dt, ok := rippling.FetchDriveTime(
+						origin.Lat, origin.Lng,
+						float64(latlng.Lat), float64(latlng.Lng),
+						budget,
+					)
+					if !ok {
+						// Routing unavailable: no estimate, rather than a guess.
+						return
+					}
+
+					cov, ok := rippling.CoverageAt(origin.Schedule, hazard, *origin.Arrival, dt.Minutes, dt.Reachable)
+					if !ok {
+						return
+					}
+
+					covMu.Lock()
+					coverage[msgid] = cov
+					covMu.Unlock()
+				}(msgid, origin)
+			}
+			covWg.Wait()
+		}
+
 		for msgid := range reachBlocked {
 			blockedSet[msgid] = true
 		}
@@ -1088,6 +1152,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				Scan(&bannedBlocked)
 			for _, b := range bannedBlocked {
 				blockedSet[b.Msgid] = true
+
+				// A banned viewer is not waiting for the ripple, they are not
+				// getting through at all. Telling them when it would arrive would
+				// be a promise we have no intention of keeping, so drop any
+				// estimate the reach check produced for the same post.
+				delete(coverage, b.Msgid)
 			}
 		}
 
@@ -1096,6 +1166,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			for ix := range messages {
 				if blockedSet[messages[ix].ID] {
 					messages[ix].ReplyEligible = &notEligible
+
+					// Only the reach reason carries an arrival. A ban also lands in
+					// blockedSet and has no coverage entry, so it stays nil.
+					if cov, found := coverage[messages[ix].ID]; found {
+						at := cov.At
+						fully := cov.Covered
+						messages[ix].ReachesYouAt = &at
+						messages[ix].ReachesYouFully = &fully
+					}
 				}
 			}
 		}
@@ -1658,15 +1737,30 @@ func Search(c *fiber.Ctx) error {
 		if ll := user.GetLatLng(myid); ll.Lat != 0 || ll.Lng != 0 {
 			memberLat, memberLng = float64(ll.Lat), float64(ll.Lng)
 		}
-		var rawDist, rawSort string
+		// Same two-key resolution as isochrone.resolveMaxDistance: the member's own
+		// choice, else their density band default (browseReachMaxDistance, written by
+		// browse:backfill-max-distance). Browse-scoped search shares the feed's universe
+		// (Discourse 9933), so missing the fallback here would surface posts in search
+		// that the feed itself hides.
+		var rawDist, rawDefaultDist, rawSort string
 		db.Table("users").
 			Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), ''), "+
+				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseReachMaxDistance')), ''), "+
 				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseSort')), '')").
 			Where("id = ?", myid).
-			Row().Scan(&rawDist, &rawSort)
-		if rawDist != "" {
-			if v, err := strconv.ParseFloat(rawDist, 64); err == nil && v > 0 {
+			Row().Scan(&rawDist, &rawDefaultDist, &rawSort)
+		for _, raw := range []string{rawDist, rawDefaultDist} {
+			if raw == "" {
+				continue
+			}
+			// An unparseable value is treated as no value and falls through to the
+			// next key, matching isochrone.resolveMaxDistance and the Laravel
+			// DistancePreferenceFilter - all three must agree or the feed, its badge
+			// and search would disagree about the same member.
+			if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
 				browseMaxMiles = v
+
+				break
 			}
 		}
 		browseSort = rawSort
@@ -2449,15 +2543,21 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 	ctx.Groupid = authorizedGroups[0]
 
-	// Only groups where this message is currently Pending can be rejected/deleted via
-	// this action. If it has since been (re-)approved to live, this click is a no-op
-	// (Discourse 9815): we must not move a non-pending row and - for a reject-with-
-	// explanation - must not log a phantom rejection or email the poster a "rejected"
-	// notice while the post stays live.
+	// Only groups where this message is still awaiting moderation - Pending, or
+	// auto-flagged into Spam (which ModTools presents in the same queue with the
+	// same Reject action) - can be rejected/deleted here. If it has since been
+	// (re-)approved to live, this click is a no-op (Discourse 9815): we must not
+	// move a non-pending row and - for a reject-with-explanation - must not log
+	// a phantom rejection or email the poster a "rejected" notice while the post
+	// stays live. Spam was originally omitted, which made Reject on a
+	// spam-flagged post a SILENT no-op: the API answered ret=1, ModTools
+	// swallowed it, and mods concluded the button was broken (Vale of White
+	// Horse, msgid 121384453 - ten identical attempts across three browsers).
+	moderatable := []string{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
 	var pendingGroups []uint64
 	db.Table("messages_groups").Select("groupid").
-		Where("msgid = ? AND groupid IN ? AND collection = ? AND deleted = 0",
-			req.ID, authorizedGroups, utils.COLLECTION_PENDING).Scan(&pendingGroups)
+		Where("msgid = ? AND groupid IN ? AND collection IN ? AND deleted = 0",
+			req.ID, authorizedGroups, moderatable).Scan(&pendingGroups)
 
 	if subject != "" && len(pendingGroups) == 0 {
 		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not rejected"})
@@ -2467,13 +2567,13 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Without a subject (plain delete), mark as deleted.
 	if subject != "" {
 		if result := db.Table("messages_groups").
-			Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, pendingGroups, utils.COLLECTION_PENDING).
+			Where("msgid = ? AND groupid IN ? AND collection IN ?", req.ID, pendingGroups, moderatable).
 			Updates(map[string]interface{}{"collection": utils.COLLECTION_REJECTED, "rejectedat": gorm.Expr("NOW()"), "heldby": gorm.Expr("NULL")}); result.Error != nil {
 			log.Printf("Failed to reject message %d: %v", req.ID, result.Error)
 		}
 	} else {
 		if result := db.Table("messages_groups").
-			Where("msgid = ? AND groupid IN ? AND collection = ?", req.ID, authorizedGroups, utils.COLLECTION_PENDING).
+			Where("msgid = ? AND groupid IN ? AND collection IN ?", req.ID, authorizedGroups, moderatable).
 			Updates(map[string]interface{}{"deleted": gorm.Expr("1"), "heldby": gorm.Expr("NULL")}); result.Error != nil {
 			log.Printf("Failed to delete pending message %d: %v", req.ID, result.Error)
 		}
@@ -3244,6 +3344,25 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		groupid = getPrimaryGroupForMessage(db, req.ID)
 	}
 	if groupid == 0 {
+		// The compose client normally resolves the member's location to a
+		// group and sends groupid; some clients fail to (observed live:
+		// WANTED posts whose draft stored a location but whose submit carried
+		// no group - the member was then stuck at "groupid is required" for
+		// good). The message knows where it is, so derive what the client
+		// should have sent: the closest group to the post's own coordinates
+		// (polygon containment is authoritative inside ClosestGroups).
+		var loc struct {
+			Lat float64 `gorm:"column:lat"`
+			Lng float64 `gorm:"column:lng"`
+		}
+		db.Table("messages").Select("lat, lng").Where("id = ?", req.ID).Scan(&loc)
+		if loc.Lat != 0 || loc.Lng != 0 {
+			if g := location.ClosestSingleGroup(loc.Lat, loc.Lng, location.NEARBY); g != nil {
+				groupid = g.ID
+			}
+		}
+	}
+	if groupid == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
 	}
 
@@ -3933,17 +4052,40 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 	// Subject, textbody, and item name are exactly the fields
 	// ContentCheckService::checkMessage() scans (concern keywords, per-group
-	// worry words, phone numbers, vague-item, not-an-item, URLs, ...).
-	// processUnprocessed() only re-scans messages_groups rows where
-	// contentcheck_checked_at IS NULL, so once a row has been checked, editing
-	// in new content otherwise leaves it unchecked forever - the automated
-	// moderation filters silently skip it and it can only be caught by a mod
-	// noticing manually. Clearing the stamp here re-queues the row for a fresh
-	// check, for both mods and owners: mods stripping an issue that triggered a
-	// flag also need the clean edit re-verified.
+	// worry words, phone numbers, vague-item, not-an-item, URLs, ...). A row
+	// that has already been checked is never re-scanned on its own, so editing
+	// in new content would otherwise leave the automated moderation filters
+	// silently skipped, catchable only by a mod noticing by hand. Stamp
+	// messages.editedat: the batch derives "checked, then edited" from
+	// editedat > contentcheck_checked_at and re-scans, for both mods and
+	// owners - a mod stripping the issue that triggered a flag also needs the
+	// clean edit re-verified. Deriving from the edit audit stamp rather than
+	// keeping a separate mark means the state cannot drift, and needs no
+	// schema beyond columns that already exist.
+	//
+	// Stamping, NOT clearing contentcheck_checked_at. That stamp doubles as
+	// "safe to show a moderator": the Pending list (message_list.go) and the
+	// work counts (groupWork.go, session.go) hide rows that have never been
+	// checked, so a brand-new post is not shown before the checks have had
+	// their say. Clearing it on edit made the post the moderator had just
+	// edited vanish out of their own queue - card and badge together - until
+	// the batch re-stamped it half a minute later, reappearing only on a
+	// manual reload (Discourse 10001).
+	//
+	// The stored reasons still go, as they always did: they are what ModTools
+	// shows as "why is this pending", and a reason the mod has just edited out
+	// is worse than no reason at all - another mod could reject a post over a
+	// problem that is no longer there. The recheck writes the true set back.
 	if subjectChanged || textChanged || itemsChanged {
+		db.Table("messages").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{
+				"editedat": gorm.Expr("NOW()"),
+				"editedby": myid,
+			})
 		db.Table("messages_groups").Where("msgid = ?", req.ID).
-			Updates(map[string]interface{}{"contentcheck_checked_at": gorm.Expr("NULL"), "contentcheck_reasons": gorm.Expr("NULL")})
+			Updates(map[string]interface{}{
+				"contentcheck_reasons": gorm.Expr("NULL"),
+			})
 	}
 
 	// The subject/body drive the search indexes (messages_index keyword search and

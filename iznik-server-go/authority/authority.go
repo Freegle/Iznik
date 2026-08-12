@@ -36,13 +36,13 @@ var AreaCodes = map[string]string{
 
 // Authority represents a local authority.
 type Authority struct {
-	ID       uint64                    `json:"id"`
-	Name     string                    `json:"name"`
-	AreaCode *string                   `json:"area_code"`
-	Polygon  string                    `json:"polygon"`
-	Centre   Centre                    `json:"centre"`
-	Groups   []Group                   `json:"groups"`
-	Stats    map[string]PostcodeStats  `json:"stats,omitempty"`
+	ID       uint64                   `json:"id"`
+	Name     string                   `json:"name"`
+	AreaCode *string                  `json:"area_code"`
+	Polygon  string                   `json:"polygon"`
+	Centre   Centre                   `json:"centre"`
+	Groups   []Group                  `json:"groups"`
+	Stats    map[string]PostcodeStats `json:"stats,omitempty"`
 }
 
 // Centre represents the centre point of an authority.
@@ -53,15 +53,15 @@ type Centre struct {
 
 // Group represents a Freegle group overlapping with an authority.
 type Group struct {
-	ID          uint64   `json:"id"`
-	Nameshort   string   `json:"nameshort"`
-	Namefull    *string  `json:"namefull"`
-	Namedisplay string   `json:"namedisplay"`
-	Lat         float64  `json:"lat"`
-	Lng         float64  `json:"lng"`
-	Poly        *string  `json:"poly"`
-	Overlap     float64  `json:"overlap"`
-	Overlap2    float64  `json:"overlap2"`
+	ID          uint64  `json:"id"`
+	Nameshort   string  `json:"nameshort"`
+	Namefull    *string `json:"namefull"`
+	Namedisplay string  `json:"namedisplay"`
+	Lat         float64 `json:"lat"`
+	Lng         float64 `json:"lng"`
+	Poly        *string `json:"poly"`
+	Overlap     float64 `json:"overlap"`
+	Overlap2    float64 `json:"overlap2"`
 }
 
 // SearchResult represents an authority search result.
@@ -124,28 +124,71 @@ func Single(c *fiber.Ctx) error {
 		}
 	}
 
-	// Query overlapping groups.
-	var groups []struct {
-		ID        uint64   `gorm:"column:id"`
-		Nameshort string   `gorm:"column:nameshort"`
-		Namefull  *string  `gorm:"column:namefull"`
-		Lat       float64  `gorm:"column:lat"`
-		Lng       float64  `gorm:"column:lng"`
-		Poly      *string  `gorm:"column:poly"`
-		Overlap   float64  `gorm:"column:overlap"`
-		Overlap2  float64  `gorm:"column:overlap2"`
+	responseGroups := GroupsForAuthority(id)
+
+	authority := Authority{
+		ID:       authRow.ID,
+		Name:     authRow.Name,
+		AreaCode: areaCodeFriendly,
+		Polygon:  authRow.Polygon,
+		Centre: Centre{
+			Lat: authRow.Lat,
+			Lng: authRow.Lng,
+		},
+		Groups: responseGroups,
 	}
+
+	// Include stats if requested.
+	if includeStats {
+		stats, err := GetStatsByAuthority(id, start, end)
+		if err == nil {
+			authority.Stats = stats
+		}
+	}
+
+	return c.JSON(authority)
+}
+
+// GroupsForAuthority returns the live Freegle groups whose catchment meaningfully
+// overlaps an authority's boundary. "Meaningfully" means at least 5% of the group sits
+// inside the authority, or the authority is at least 5% of the group - so a small
+// authority inside a big group still counts.
+//
+// Shared with the Partnerships page, which uses it to work out which groups a council
+// sponsorship covers.
+func GroupsForAuthority(id uint64) []Group {
+	db := database.DBConn
+
+	var groups []struct {
+		ID        uint64  `gorm:"column:id"`
+		Nameshort string  `gorm:"column:nameshort"`
+		Namefull  *string `gorm:"column:namefull"`
+		Lat       float64 `gorm:"column:lat"`
+		Lng       float64 `gorm:"column:lng"`
+		Poly      *string `gorm:"column:poly"`
+		Overlap   float64 `gorm:"column:overlap"`
+		Overlap2  float64 `gorm:"column:overlap2"`
+	}
+
+	// ST_Area errors on anything that isn't a polygon, and a single such group aborts the
+	// whole query rather than being skipped - so the geometry-type check has to guard the
+	// area calls themselves, not just filter rows. A group whose catchment is not an area
+	// cannot meaningfully overlap an authority anyway, so it scores zero.
+	const polygonal = "ST_GeometryType(polyindex) IN ('POLYGON', 'MULTIPOLYGON') " +
+		"AND ST_GeometryType(Coalesce(simplified, polygon)) IN ('POLYGON', 'MULTIPOLYGON')"
 
 	db.Table("groups").
 		Select("groups.id, nameshort, namefull, lat, lng, "+
 			"CASE WHEN poly IS NOT NULL THEN poly ELSE polyofficial END AS poly, "+
-			"CASE WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
+			"CASE WHEN NOT ("+polygonal+") THEN 0 "+
+			"WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
 			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
 			"ELSE St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) / St_area(polyindex) "+
 			"END "+
 			"ELSE 0 "+
 			"END AS overlap, "+
-			"CASE WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
+			"CASE WHEN NOT ("+polygonal+") THEN 0 "+
+			"WHEN ST_GeometryType(St_intersection(polyindex, Coalesce(simplified, polygon))) != 'GEOMCOLLECTION' THEN "+
 			"CASE WHEN polyindex = Coalesce(simplified, polygon) THEN 1 "+
 			"ELSE St_area(polyindex) / St_area(St_intersection(polyindex, Coalesce(simplified, polygon))) "+
 			"END "+
@@ -188,27 +231,7 @@ func Single(c *fiber.Ctx) error {
 		responseGroups = []Group{}
 	}
 
-	authority := Authority{
-		ID:       authRow.ID,
-		Name:     authRow.Name,
-		AreaCode: areaCodeFriendly,
-		Polygon:  authRow.Polygon,
-		Centre: Centre{
-			Lat: authRow.Lat,
-			Lng: authRow.Lng,
-		},
-		Groups: responseGroups,
-	}
-
-	// Include stats if requested.
-	if includeStats {
-		stats, err := GetStatsByAuthority(id, start, end)
-		if err == nil {
-			authority.Stats = stats
-		}
-	}
-
-	return c.JSON(authority)
+	return responseGroups
 }
 
 // Search searches authorities by name.

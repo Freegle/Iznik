@@ -6,6 +6,10 @@ export const useStoryStore = defineStore('story', {
   state: () => ({
     list: {},
     recent: [],
+    // Set when we've sent someone off to log in before they can tell us their
+    // story (see composables/useStoryAdd.js). Logging in re-runs the setup of
+    // the page they were on, so this can't live in the page.
+    addWanted: false,
   }),
   actions: {
     init(config) {

@@ -149,6 +149,44 @@ func Within(dataset, polygonWKT string) ([]int64, error) {
 	return out.IDs, nil
 }
 
+// ReachContaining calls GET /v1/reach/containing: all live reaches covering
+// the point. `in` are definite; `partial` fall in the raster boundary band
+// and the caller must exact-test them against rippling_reach.polygon.
+func ReachContaining(lng, lat float64) (in []int64, partial []int64, err error) {
+	params := url.Values{
+		"lng": {fmt.Sprintf("%f", lng)},
+		"lat": {fmt.Sprintf("%f", lat)},
+	}
+	reqURL := fmt.Sprintf("%s/v1/reach/containing?%s", baseURL(), params.Encode())
+
+	resp, err := httpClient.Get(reqURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("spatial reach containing: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, nil, fmt.Errorf("spatial dataset \"reach\" not ready")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("spatial reach containing: HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("spatial reach containing read body: %w", err)
+	}
+
+	var out struct {
+		In      []int64 `json:"in"`
+		Partial []int64 `json:"partial"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, nil, fmt.Errorf("spatial reach containing parse: %w", err)
+	}
+	return out.In, out.Partial, nil
+}
+
 // ExtraString returns a string value from a QueryResult.Extra map, or "" if absent.
 func ExtraString(r QueryResult, key string) string {
 	if v, ok := r.Extra[key].(string); ok {

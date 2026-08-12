@@ -155,12 +155,33 @@ how far you would like posts to come from. It starts set to "Further", which mea
 limit beyond the posts that have naturally reached you. If you would rather only see things
 from close by, drag it towards "Nearer" at any time; drag it back whenever you like.
 
+**"Further" means further in the countryside than it does in a city**, because it should. If
+you live somewhere with few people nearby, the nearest town is probably somewhere you already
+drive to, and its posts are the ones most worth showing you - so the slider reaches further out
+for you, and the "Max ... miles by road" note under it will say a bigger number than it would
+for someone in a city centre. In a busy area there is usually someone much closer, so reaching
+half an hour across town mostly means being emailed about things you would not travel for.
+Freegle works out which of these applies to you from how spread out other freeglers are around
+your postcode; you do not have to tell it anything.
+
 The same setting works **both ways**. As well as narrowing which posts you see and get
 emailed about, moving it towards "Nearer" also limits **how far away other people see your
 own posts** - handy if you would rather only hear from people who can easily get to you.
 Left at "Further", your posts reach as far as rippling naturally takes them. (It measures
 distance by road distance and travel time, not a straight line, so it follows real geography
 like estuaries and coastlines.)
+
+That both-ways rule applies to the slider **when you move it yourself**. It is your decision
+about how far you are willing to go, so it seems only fair that it says how far your own
+offers travel too.
+
+The starting position Freegle works out for you is different, and it only affects **what you
+see**. It never shortens how far your own posts go. That is deliberate, and the reason is that
+the two are not really the same question. Working out that you have plenty of freeglers close
+by is a statement about your neighbourhood, not a promise from you about how far you would
+drive. Using it to stop your spare sofa reaching somebody twenty minutes away would just mean
+one less thing gets reused, and it would not help anybody. So Freegle only holds your own
+posts back when you have actually asked it to.
 
 Freegle remembers your choice, along with your other filters (which posts, which communities,
 and sort order), so you do not need to set them again next time you visit.
@@ -179,8 +200,14 @@ On the default Nearby view, every post you see has already reached you, so your 
 goes straight to the owner. Only if you move away from that default - for example by
 switching to "All my communities", or widening what you are looking at - might you come
 across a post that has not rippled out to your area yet. You can still reply: we simply
-**hold your message and pass it on to the owner the moment the post reaches you**. You
-do not need to do anything or come back - it is delivered automatically, and your reply
+**hold your message for a short while, then pass it on**. That gives people closer to the
+item a head start, which is the whole point of rippling out, but it is a short wait rather
+than an open-ended one - usually under an hour, and never more than three. The wait depends
+on how far outside the post's current area you are, so if you are only just outside it, it
+is very short. If the post ripples out to you sooner than that, your reply goes straight
+through at that moment instead.
+
+You do not need to do anything or come back. It is delivered automatically, and your reply
 shows as "waiting to send" until then. Nothing is lost.
 
 ---

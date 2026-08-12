@@ -141,6 +141,99 @@ describe('newsfeed store', () => {
     })
   })
 
+  describe('server watermark capture', () => {
+    let store
+
+    beforeEach(() => {
+      store = useNewsfeedStore()
+      store.init({ public: {} })
+    })
+
+    it('captures the first seenwatermark into seenBeforeVisit', () => {
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100, seenwatermark: 42 }])
+
+      expect(store.seenBeforeVisit).toBe(42)
+      expect(store.watermarkCaptured).toBe(true)
+    })
+
+    it('freezes the baseline after the first capture', () => {
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100, seenwatermark: 42 }])
+      store.addItems([{ id: 200, seenwatermark: 99 }])
+
+      expect(store.seenBeforeVisit).toBe(42)
+    })
+
+    it('leaves the snapshot fallback in place when no watermark arrives', () => {
+      store.maxSeen = 55
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100 }])
+
+      expect(store.seenBeforeVisit).toBe(55)
+    })
+
+    it('does not treat a watermark on a nested reply as the baseline', () => {
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100, replies: [{ id: 101, seenwatermark: 42 }] }])
+
+      expect(store.seenBeforeVisit).toBe(0)
+      expect(store.watermarkCaptured).toBe(false)
+    })
+
+    it('captures before the auto-seen POST can fire', () => {
+      // Not in delayed mode: addItems would normally POST seen immediately.
+      // The capture must still win the race and set the baseline first.
+      mockSeen.mockResolvedValue({})
+      mockCount.mockResolvedValue({ count: 0 })
+      store.addItems([{ id: 100, seenwatermark: 42 }])
+
+      expect(store.seenBeforeVisit).toBe(42)
+      expect(mockSeen).toHaveBeenCalledWith(100)
+    })
+
+    it('snapshotSeenBeforeVisit resets the capture flag for a new visit', () => {
+      store.snapshotSeenBeforeVisit()
+      store.addItems([{ id: 100, seenwatermark: 42 }])
+      expect(store.watermarkCaptured).toBe(true)
+
+      store.snapshotSeenBeforeVisit()
+      expect(store.watermarkCaptured).toBe(false)
+    })
+  })
+
+  describe('ensureSeenBaselineForThreadView', () => {
+    let store
+
+    beforeEach(() => {
+      store = useNewsfeedStore()
+      store.init({ public: {} })
+    })
+
+    it('keeps an existing session baseline so New pills survive feed-to-thread navigation', () => {
+      // The user read the feed (baseline captured), items filled the store,
+      // then they clicked "View all replies". Re-snapshotting from maxSeen
+      // here would wipe every New pill they came to see.
+      store.seenBeforeVisit = 19
+      store.watermarkCaptured = true
+      store.maxSeen = 28
+
+      store.ensureSeenBaselineForThreadView()
+
+      expect(store.seenBeforeVisit).toBe(19)
+      expect(store.watermarkCaptured).toBe(true)
+      expect(store.delayedSeenMode).toBe(true)
+    })
+
+    it('snapshots on a cold load so the server watermark can be captured', () => {
+      store.ensureSeenBaselineForThreadView()
+
+      expect(store.seenBeforeVisit).toBe(0)
+      expect(store.watermarkCaptured).toBe(false)
+      expect(store.delayedSeenMode).toBe(true)
+    })
+  })
+
   describe('addItems', () => {
     let store
 
@@ -371,14 +464,56 @@ describe('newsfeed store', () => {
       expect(result).toEqual(feedData)
       expect(store.feed).toEqual(feedData)
       expect(store.lastDistance).toBe('nearby')
-      expect(mockFetchNews).toHaveBeenCalledWith(null, 'nearby')
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        'nearby',
+        undefined,
+        undefined,
+        undefined
+      )
     })
 
     it('defaults distance to anywhere when falsy', async () => {
       mockFetchNews.mockResolvedValue([])
 
       await store.fetchFeed(0)
-      expect(mockFetchNews).toHaveBeenCalledWith(null, 'anywhere')
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        'anywhere',
+        undefined,
+        undefined,
+        undefined
+      )
+    })
+
+    it('asks for every area when all newsletters are wanted', async () => {
+      mockFetchNews.mockResolvedValue([])
+
+      await store.fetchFeed('nearby', true)
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        'nearby',
+        undefined,
+        undefined,
+        'all'
+      )
+    })
+
+    it('keeps the newsletter flag across a refetch that does not pass it', async () => {
+      // Posting refetches the feed with no arguments; a moderator must not be
+      // silently dropped back to their own area.
+      mockFetchNews.mockResolvedValue([])
+
+      await store.fetchFeed('nearby', true)
+      await store.fetchFeed()
+
+      expect(mockFetchNews).toHaveBeenLastCalledWith(
+        null,
+        'anywhere',
+        undefined,
+        undefined,
+        'all'
+      )
     })
   })
 
@@ -510,7 +645,13 @@ describe('newsfeed store', () => {
         imageid: null,
       })
       // Should fetch feed for new thread
-      expect(mockFetchNews).toHaveBeenCalledWith(null, 'anywhere')
+      expect(mockFetchNews).toHaveBeenCalledWith(
+        null,
+        'anywhere',
+        undefined,
+        undefined,
+        undefined
+      )
     })
 
     it('sends reply and fetches threadhead', async () => {

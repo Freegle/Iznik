@@ -46,6 +46,15 @@ class AppServiceProvider extends ServiceProvider
             return new LokiService();
         });
 
+        // How HostHealthCheck reaches the estate's hosts (monitor:scheduled-
+        // outcomes). Bound here so tests can swap in a fake runner.
+        $this->app->bind(\App\Monitoring\HostCommandRunner::class, function () {
+            return new \App\Monitoring\SshHostCommandRunner(
+                (string) config('freegle.monitoring.host_ssh_key', '/etc/monitoring-ssh-key'),
+                (int) config('freegle.monitoring.host_ssh_timeout_seconds', 30),
+            );
+        });
+
         // Scheduler overlap mutex backend. Default (LOCK_STORE=flock) binds
         // FlockEventMutex — OS-level flock that auto-releases on process death.
         // Setting LOCK_STORE=redis (or another cache store) binds a TTL-based cache

@@ -100,6 +100,22 @@ button {
   -webkit-font-smoothing: antialiased !important;
 }
 
+/* "Mark read" / "Mark all read". Red outline so the affordance is recognisable
+ * wherever it appears - chat list, conversation header, notification dropdown,
+ * ModTools. Defined after .btn-white so it wins when combined with it. */
+.btn-mark-read {
+  background-color: $color-white !important;
+  border: 1px solid $color-red !important;
+  color: $color-red !important;
+
+  &:hover,
+  &:focus {
+    background-color: $color-red !important;
+    border-color: $color-red !important;
+    color: $color-white !important;
+  }
+}
+
 .btn-light {
   color: $color-gray--normal !important;
   background-color: inherit !important;

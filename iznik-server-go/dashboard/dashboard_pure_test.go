@@ -1,12 +1,14 @@
 package dashboard
 
-// Tests for the pure (no-DB) helpers behind getUsersReplying's chunked rewrite: chunkUint64s (the
-// chat_messages IN (...) batching), mergeReplyCounts (the crosspost-multiplicity weighting that
-// replaces the old single INNER JOIN), and topUserCounts (the Go-side ORDER BY ... LIMIT).
+// Tests for the pure (no-DB) helpers behind the chunked dashboard rewrites (getUsersReplying,
+// getUsersPosting, the newmessages counts): chunkUint64s (the IN (...) batching), mergeReplyCounts
+// (the crosspost-multiplicity weighting that replaces the old single INNER JOIN), topUserCounts
+// (the Go-side ORDER BY ... LIMIT), and arrivalWindows (the bounded date-range walk).
 
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -39,7 +41,7 @@ func TestChunkUint64s_UnevenRemainder(t *testing.T) {
 	assert.Equal(t, [][]uint64{{1, 2}, {3, 4}, {5}}, got)
 }
 
-// Order is preserved and every id appears in exactly one batch (the usersReplyingBatch-sized
+// Order is preserved and every id appears in exactly one batch (the dashboardBatch-sized
 // IN (...) batches must reconstruct the full input set with none dropped or duplicated).
 func TestChunkUint64s_CoversAllIDsInOrder(t *testing.T) {
 	ids := make([]uint64, 3200)
@@ -186,4 +188,78 @@ func TestTopUserCounts_FewerThanLimitReturnsAll(t *testing.T) {
 func TestTopUserCounts_EmptyTotals(t *testing.T) {
 	got := topUserCounts(map[uint64]int{}, 5)
 	assert.Empty(t, got)
+}
+
+// A range shorter than one window is a single inclusive window covering exactly [startQ, endQ] -
+// the common 30-day-dashboard case collapses to one statement, same as before the rewrite.
+func TestArrivalWindows_ShortRangeIsOneInclusiveWindow(t *testing.T) {
+	got := arrivalWindows("2026-08-01", "2026-08-05")
+
+	assert.Equal(t, []arrivalWindow{
+		{Start: "2026-08-01", End: "2026-08-05", LastInclusive: true},
+	}, got)
+}
+
+// A multi-window range: interior windows are half-open [Start, End) with each End equal to the
+// next window's Start (no gap, no overlap), and only the final window is inclusive, preserving
+// the replaced statements' "arrival <= endQ" semantics on the last day.
+func TestArrivalWindows_MultiWindowChainsWithoutGapsOrOverlap(t *testing.T) {
+	got := arrivalWindows("2026-01-01", "2026-01-20")
+
+	assert.Equal(t, []arrivalWindow{
+		{Start: "2026-01-01", End: "2026-01-08", LastInclusive: false},
+		{Start: "2026-01-08", End: "2026-01-15", LastInclusive: false},
+		{Start: "2026-01-15", End: "2026-01-20", LastInclusive: true},
+	}, got)
+}
+
+// A range that lands exactly on a window boundary must not emit a zero-length trailing window;
+// the final full window simply becomes the inclusive one.
+func TestArrivalWindows_ExactMultipleOfWindow(t *testing.T) {
+	got := arrivalWindows("2026-01-01", "2026-01-15")
+
+	assert.Equal(t, []arrivalWindow{
+		{Start: "2026-01-01", End: "2026-01-08", LastInclusive: false},
+		{Start: "2026-01-08", End: "2026-01-15", LastInclusive: true},
+	}, got)
+}
+
+// The year-plus admin range that motivated the rewrite: every window spans at most
+// dashboardWindowDays days, they chain start-to-end across the whole range, and exactly the last
+// one is inclusive. This is the shape that bounds each statement's messages_groups scan.
+func TestArrivalWindows_YearRangeIsFullyCoveredByBoundedWindows(t *testing.T) {
+	got := arrivalWindows("2025-08-11", "2026-08-12")
+
+	assert.Greater(t, len(got), 50)
+	assert.Equal(t, "2025-08-11", got[0].Start)
+	assert.Equal(t, "2026-08-12", got[len(got)-1].End)
+	for i, w := range got {
+		start, err1 := time.Parse("2006-01-02", w.Start)
+		end, err2 := time.Parse("2006-01-02", w.End)
+		assert.NoError(t, err1)
+		assert.NoError(t, err2)
+		days := end.Sub(start).Hours() / 24
+		assert.LessOrEqual(t, days, float64(dashboardWindowDays), "window %d spans more than the bound", i)
+		assert.Greater(t, days, float64(0), "window %d is empty", i)
+		if i < len(got)-1 {
+			assert.Equal(t, got[i+1].Start, w.End, "window %d does not chain to the next", i)
+			assert.False(t, w.LastInclusive)
+		} else {
+			assert.True(t, w.LastInclusive)
+		}
+	}
+}
+
+// Unparseable dates yield no windows - the walkers then return empty/zero, mirroring how the
+// replaced single statements failed on a malformed date rather than scanning anything.
+func TestArrivalWindows_BadDatesYieldNoWindows(t *testing.T) {
+	assert.Nil(t, arrivalWindows("not-a-date", "2026-01-01"))
+	assert.Nil(t, arrivalWindows("2026-01-01", "nope"))
+}
+
+// An empty range (start not before end) yields no windows: GetDashboard's endQ is always the end
+// date plus one day, so a well-formed request can only hit this if end precedes start.
+func TestArrivalWindows_EmptyRangeYieldsNoWindows(t *testing.T) {
+	assert.Nil(t, arrivalWindows("2026-01-02", "2026-01-02"))
+	assert.Nil(t, arrivalWindows("2026-01-05", "2026-01-02"))
 }

@@ -296,15 +296,29 @@
             />
           </slot>
         </b-input-group>
-        <b-button
-          v-if="!locked && (!config || !config.using || !config.using.length)"
-          variant="white"
-          class="mt-2"
-          @click="deleteIt"
-        >
-          <v-icon icon="trash-alt" /> Delete
-        </b-button>
+        <div class="d-flex gap-2">
+          <SpinButton
+            variant="white"
+            class="mt-2 text-nowrap"
+            icon-name="download"
+            label="Export PDF"
+            title="Download this whole config as a PDF you can read, print or send to someone"
+            @handle="exportPdf"
+          />
+          <b-button
+            v-if="!locked && (!config || !config.using || !config.using.length)"
+            variant="white"
+            class="mt-2"
+            @click="deleteIt"
+          >
+            <v-icon icon="trash-alt" /> Delete
+          </b-button>
+        </div>
       </div>
+      <NoticeMessage v-if="exportError" variant="danger" class="mt-2">
+        Sorry, we couldn't make the PDF. Please try again, and tell us if it
+        keeps happening.
+      </NoticeMessage>
       <ConfirmModal
         v-if="showDeleteModal"
         :title="'Delete: ' + config.name"
@@ -321,18 +335,20 @@ import { useModGroupStore } from '~/stores/modgroup'
 import { useMiscStore } from '@/stores/misc'
 import { useUserStore } from '~/stores/user'
 import { useMe } from '~/composables/useMe'
+import { exportModConfigPdf } from '~/composables/useModConfigPdf'
 
 const miscStore = useMiscStore()
 const modConfigStore = useModConfigStore()
 const modGroupStore = useModGroupStore()
 const userStore = useUserStore()
-const { myid } = useMe()
+const { me, myid } = useMe()
 
 const loading = ref(false)
 const showUsing = ref(false)
 const newconfigname = ref(null)
 const copyconfigname = ref(null)
 const showDeleteModal = ref(false)
+const exportError = ref(false)
 
 const configid = computed({
   get() {
@@ -470,6 +486,23 @@ async function copy(callback) {
   modConfigStore.fetch({
     all: true,
   })
+  callback()
+}
+
+async function exportPdf(callback) {
+  exportError.value = false
+
+  try {
+    await exportModConfigPdf(config.value, {
+      exportedBy: me.value?.displayname || me.value?.fullname,
+    })
+  } catch (e) {
+    // The button must stop spinning either way, so the failure is shown rather
+    // than left as a button that never comes back.
+    console.error('Failed to export config as PDF', e)
+    exportError.value = true
+  }
+
   callback()
 }
 

@@ -103,7 +103,7 @@
             @start="dragging = true"
             @end="dragging = false"
           >
-            <template #item="{ element }">
+            <template #item="{ element, index }">
               <PostPhoto
                 :id="element.id"
                 :key="element.id"
@@ -113,6 +113,7 @@
                 :externalmods="element.externalmods"
                 class="photo-item"
                 @remove="removePhoto"
+                @click="viewPhoto(index)"
               />
             </template>
             <template #footer>
@@ -126,6 +127,12 @@
               </div>
             </template>
           </draggable>
+          <MessagePhotosModal
+            v-if="viewingPhoto !== null"
+            :attachments="attachments"
+            :initial-index="viewingPhoto"
+            @hidden="viewingPhoto = null"
+          />
         </div>
       </div>
 
@@ -172,6 +179,9 @@ const OurUploader = defineAsyncComponent(
   () => import('~/components/OurUploader')
 )
 const PostItem = defineAsyncComponent(() => import('./PostItem'))
+const MessagePhotosModal = defineAsyncComponent(() =>
+  import('./MessagePhotosModal')
+)
 
 const props = defineProps({
   id: {
@@ -205,6 +215,20 @@ const attachments = ref(message.attachments || [])
 const dragging = ref(false)
 const triedToSave = ref(false)
 const item = ref(null)
+
+// Tapping a photo opens the same full-screen zoomable viewer as elsewhere, so
+// you can see what you are about to keep or delete.
+const viewingPhoto = ref(null)
+
+function viewPhoto(index) {
+  if (dragging.value) {
+    // A drag that finishes over the image also fires a click. Reordering is
+    // not a request to zoom.
+    return
+  }
+
+  viewingPhoto.value = index
+}
 
 const defaultDeadline = new Date(
   Date.now() + MESSAGE_EXPIRE_TIME * 24 * 60 * 60 * 1000

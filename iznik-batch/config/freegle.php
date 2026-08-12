@@ -76,6 +76,33 @@ return [
         'excluded_payers' => env('DONATIONS_EXCLUDE', 'ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com'),
     ],
 
+    // Where the "donate" buttons in emails send people.
+    //
+    // Historically every one of them went straight to the PayPal shortlink,
+    // which meant email donors could only pay by PayPal — no Apple Pay, no
+    // Google Pay, no Link, no card. Our own /donate page runs the Stripe
+    // Express Checkout Element, which offers all of those (and PayPal), so
+    // that is the default destination now. See DonateLinkService.
+    'donate' => [
+        // Path on the user site that renders the Stripe donate page.
+        'path' => env('FREEGLE_DONATE_PATH', '/donate'),
+
+        // Suggested amounts (£) offered as one-tap buttons in emails. The
+        // first is used where there is only room for a single button.
+        'amounts' => array_values(array_filter(array_map(
+            'intval',
+            explode(',', (string) env('FREEGLE_DONATE_AMOUNTS', '2,3,5'))
+        ))),
+
+        // Set to the PayPal shortlink to revert email donate buttons to the
+        // old PayPal-only behaviour without a code change.
+        'override_url' => env('FREEGLE_DONATE_OVERRIDE_URL'),
+
+        // Kept so the PayPal route is still reachable where we want it
+        // explicitly (e.g. "prefer PayPal?" links).
+        'paypal_url' => env('FREEGLE_DONATE_PAYPAL_URL', 'https://freegle.in/paypal1510'),
+    ],
+
     'branding' => [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
@@ -292,6 +319,11 @@ return [
         'email_assets' => env('FREEGLE_EMAIL_ASSETS_URL', 'https://www.ilovefreegle.org/emailimages'),
 
         // Rule images for welcome emails (from email_assets folder)
+        // Payment marks shown under donate buttons (Apple Pay / Google Pay /
+        // PayPal / card), so the low-friction options are visible before the
+        // click rather than only after it.
+        'paymethods' => env('FREEGLE_PAYMETHODS_IMAGE', 'https://www.ilovefreegle.org/emailimages/paymethods.png'),
+
         'rule_free' => env('FREEGLE_RULE_FREE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-free.png'),
         'rule_nice' => env('FREEGLE_RULE_NICE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-nice.png'),
         'rule_safe' => env('FREEGLE_RULE_SAFE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-safe.png'),
@@ -467,8 +499,34 @@ return [
         'curve' => env('RIPPLE_CURVE', 'step-70'),
         // Travel mode for the reach isochrone.
         'mode' => env('RIPPLE_MODE', 'drive'),
-        // Maximum drive-time (minutes) the reach may grow to.
+        // Maximum drive-time (minutes) the reach may grow to. This is the FLAT cap, used
+        // when the density-conditional cap below is off or cannot measure.
         'max_minutes' => (float) env('RIPPLE_MAX_MINUTES', 30),
+        // Density-conditional cap. Measured on 887 posts split by local freegler
+        // density, the chance a replier goes on to collect collapses past ~20-25
+        // minutes in dense areas and does not fall at all out to 45 in sparse ones, so
+        // no single flat cap fits both. See App\Services\Ripple\DensityService.
+        //
+        // Bands are terciles of "radius of the circle holding the nearest k freeglers".
+        // enabled=false puts every post back on the flat max_minutes above.
+        'density' => [
+            'enabled' => filter_var(env('RIPPLE_DENSITY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'k' => (int) env('RIPPLE_DENSITY_K', 400),
+            'dense_max_miles' => (float) env('RIPPLE_DENSITY_DENSE_MAX_MILES', 1.6),
+            'medium_max_miles' => (float) env('RIPPLE_DENSITY_MEDIUM_MAX_MILES', 3.1),
+            'timeout' => (int) env('RIPPLE_DENSITY_TIMEOUT', 5),
+            'max_minutes' => [
+                // Dense: 25-30 min converts at 7%, and 30-45 no better. The last third of
+                // a 30-minute budget buys almost nothing here but costs mail and crossposts.
+                'dense' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_DENSE', 20),
+                // Medium: unchanged, which is what makes it the comparison arm.
+                'medium' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_MEDIUM', 30),
+                // Sparse: 30-45 min converts at 20% against 18% for 0-10 min, and rural
+                // takers routinely drive 20-30. Cutting at 30 drops willing takers where
+                // the audience is thinnest to begin with.
+                'sparse' => (float) env('RIPPLE_DENSITY_MAX_MINUTES_SPARSE', 45),
+            ],
+        ],
         // How many reach schedules to compute CONCURRENTLY (Http::pool fan-out in
         // ExpandService::initialiseNew). Each /v1/ripple-schedule request is CPU-bound on the
         // routing host (one Dijkstra + polygon rasterisations), so cap this near the routing
@@ -523,6 +581,33 @@ return [
         // exclusive end. Outside this window, due expansions wait.
         'active_start_hour' => (int) env('RIPPLE_ACTIVE_START_HOUR', 6),
         'active_end_hour' => (int) env('RIPPLE_ACTIVE_END_HOUR', 23),
+
+        // Held replies are DELAYED: every hold has a due time of base + per_mile x
+        // miles from the item, capped at max_minutes.
+        //
+        // The hold gives people near the item first go, and a bounded delay is all
+        // that takes. Waiting for coverage instead is not a delay at all for most
+        // repliers: three in four of them live somewhere the reach NEVER covers, even
+        // fully grown, so their only exit is the max-reach backstop days later - and a
+        // quarter to a third of the time the item has gone by then. In 30 days 1,684
+        // posts had their FIRST reply held that way, so the poster saw silence while a
+        // willing taker sat in a queue.
+        //
+        // Distance is measured from the post's (blurred) origin to the replier - the
+        // only distance both rows already carry exactly, and the one the poster cares
+        // about (how far this person is coming). Everyone held is by definition outside
+        // the current reach, so among them "further from the item" is the right
+        // ordering: someone just past the boundary waits a little, someone two counties
+        // away waits longer, and nobody waits more than max_minutes.
+        //
+        // Coverage still wins: if the ripple reaches them before the due time they are
+        // released then. enabled=false makes coverage the only exit again.
+        'reply_delay' => [
+            'enabled' => filter_var(env('RIPPLE_REPLY_DELAY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+            'base_minutes' => (float) env('RIPPLE_REPLY_DELAY_BASE_MINUTES', 15),
+            'per_mile_minutes' => (float) env('RIPPLE_REPLY_DELAY_PER_MILE_MINUTES', 3),
+            'max_minutes' => (float) env('RIPPLE_REPLY_DELAY_MAX_MINUTES', 180),
+        ],
         // Audience-budget extent governor — Stage A (feed-forward). Caps reach at
         // the ~target_users NEAREST freeglers instead of letting a fixed drive-time
         // sweep density-blind: in dense areas (London) the cap binds at a small
@@ -582,8 +667,9 @@ return [
     | Four levers, each independently switchable:
     |   passthrough - never hold a post's FIRST reply if the replier is somewhere
     |                 the post's reach will eventually get to anyway.
-    |   scouts      - tell a handful of likely-interested people early, instead of
-    |                 waiting for their digest or for the ripple to arrive.
+    |   matchmail   - mail the people whose own open post or saved search matches
+    |                 a new post, instead of leaving them to wait for their digest
+    |                 or for the ripple to arrive.
     |   chat        - Freegle talks to the poster: asks the questions that make a
     |                 post more likely to succeed, and says what is happening.
     |
@@ -619,69 +705,68 @@ return [
             'max_existing_repliers' => (int) env('FIRSTREPLY_PASSTHROUGH_MAX_REPLIERS', 1),
         ],
 
-        // Tell a few likely-interested people early about a post nobody has
-        // replied to yet.
-        'scouts' => [
-            'enabled' => filter_var(env('FIRSTREPLY_SCOUTS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
-            // How long a post gets to attract a reply on its own before we help.
-            // ZERO: scout as soon as the post is seen.
+        // How old a saved search may be and still earn its holder mail or an
+        // embedding. Mirrors the Go side's FIRSTREPLY_SEARCH_MAX_AGE_MONTHS
+        // (searchmatches.go) - the two must agree or the embedder covers a
+        // different population than the matcher reads.
+        'search_max_age_months' => (int) env('FIRSTREPLY_SEARCH_MAX_AGE_MONTHS', 6),
+
+        // Mail the people whose own open post or saved search matches a new post,
+        // individually, about that one item. Matches both ways round: a new OFFER
+        // finds the people with open WANTEDs for it, and a new WANTED finds the
+        // people sitting on open OFFERs. See App\Services\FirstReply\MatchMailService.
+        'matchmail' => [
+            'enabled' => filter_var(env('FIRSTREPLY_MATCHMAIL_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            // How long a post gets to attract a reply on its own first. ZERO: mail
+            // the matches as soon as the post is seen. Whatever holding back saves
+            // in mail is dwarfed by how long the recipient then takes to read it,
+            // so the wait adds itself to every reply and removes nothing. Kept as a
+            // knob because it is the natural lever if the mail ever needs rationing.
+            'quiet_minutes' => (int) env('FIRSTREPLY_MATCHMAIL_QUIET_MINUTES', 0),
+            // Give up after this: a day-old post is a job for reposting, not for
+            // more mail.
+            'max_age_hours' => (int) env('FIRSTREPLY_MATCHMAIL_MAX_AGE_HOURS', 24),
+            // Backstop on how many matches one post may mail. Everyone eligible
+            // asked for this item, so there is no good reason to tell the first ten
+            // and not the eleventh - this is a guard against something pathological
+            // and should essentially never bind. It is counted when it does.
             //
-            // An earlier version waited 45 minutes on the theory that it would
-            // avoid spending mail on posts that were about to get a reply anyway.
-            // That theory does not survive contact with the timings: whatever we
-            // save by holding back is dwarfed by how long the scout then takes to
-            // read their mail and reply. The wait removed nothing from the mail
-            // bill and added itself to every reply.
-            //
-            // Kept as a knob rather than deleted, because it is the natural lever
-            // if scout mail ever needs rationing.
-            'quiet_minutes' => (int) env('FIRSTREPLY_SCOUTS_QUIET_MINUTES', 0),
-            // Give up after this: a day-old silent post is a job for reposting and
-            // better post quality, not for more notifications.
-            'max_age_hours' => (int) env('FIRSTREPLY_SCOUTS_MAX_AGE_HOURS', 24),
-            // Cap on PROPENSITY scouts per post - the "you reply to a lot of
-            // things" ones. Small on purpose: that signal is a guess, and a guess
-            // is what should be rationed. Does NOT apply to people who actually
-            // asked for the item; see max_strong_per_post.
-            //
-            // OVERRIDABLE AT RUNTIME: a `firstreply_scouts_max_per_post` row in
+            // OVERRIDABLE AT RUNTIME: a `firstreply_matchmail_max_per_post` row in
             // the `config` table wins over this, so the mail bill can be turned
-            // down (or off, with 0) without waiting for a deploy. This env value
-            // is the default when that row is absent. See ScoutService::scoutConfig().
-            'max_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_PER_POST', 10),
-            // Backstop on wanted/search scouts - people with an open post for
-            // this item or a matching saved search. They asked, so the small cap
-            // above deliberately does not apply to them, and this number should
-            // essentially never bind.
-            //
-            // Sized from live: a rippled post reaches ~3,600 freeglers (0.14% of
-            // the network), and a common term is held by single-digit thousands
-            // network-wide, so the in-reach population for a common OFFER is of
-            // the order of ten people - before the not-yet-reached band, cooldown,
-            // weekly cap, consent and the 0.85 threshold cut it further. 50 is
-            // therefore a guard against something pathological, not a limit on
-            // the signal. Overridable at runtime via
-            // `firstreply_scouts_max_strong_per_post`; `scouts_strong_capped`
-            // counts the times it fires.
-            'max_strong_per_post' => (int) env('FIRSTREPLY_SCOUTS_MAX_STRONG_PER_POST', 50),
+            // down (or off, with 0) without waiting for a deploy. This env value is
+            // the default when that row is absent. See MatchMailService::matchConfig().
+            'max_per_post' => (int) env('FIRSTREPLY_MATCHMAIL_MAX_PER_POST', 50),
             // Nobody should become Freegle's unpaid alerting service. A member is
-            // not scouted again within this many hours...
-            'user_cooldown_hours' => (int) env('FIRSTREPLY_SCOUTS_USER_COOLDOWN_HOURS', 24),
+            // not mailed again within this many hours...
+            'user_cooldown_hours' => (int) env('FIRSTREPLY_MATCHMAIL_USER_COOLDOWN_HOURS', 24),
             // ...nor more than this many times in a rolling week.
-            'user_max_per_week' => (int) env('FIRSTREPLY_SCOUTS_USER_MAX_PER_WEEK', 5),
+            'user_max_per_week' => (int) env('FIRSTREPLY_MATCHMAIL_USER_MAX_PER_WEEK', 5),
             // Minimum score to be worth mailing at all. A post with no good match
             // should mail nobody rather than pad the list out to max_per_post.
-            'min_score' => (float) env('FIRSTREPLY_SCOUTS_MIN_SCORE', 1.0),
-            // How many distinct Interested replies in the last 90 days make someone
-            // a "frequent replier" worth considering on propensity alone.
-            'frequent_replier_min' => (int) env('FIRSTREPLY_SCOUTS_FREQUENT_MIN', 3),
+            'min_score' => (float) env('FIRSTREPLY_MATCHMAIL_MIN_SCORE', 1.0),
             // Candidate pool size before scoring. Bounds the cost of the geo query.
-            'candidate_limit' => (int) env('FIRSTREPLY_SCOUTS_CANDIDATE_LIMIT', 500),
+            'candidate_limit' => (int) env('FIRSTREPLY_MATCHMAIL_CANDIDATE_LIMIT', 500),
+            // Posts examined per run. Small on purpose: each post costs seconds, and
+            // a run must comfortably finish inside the DB's wait_timeout or its idle
+            // write connection is closed under it. The every-minute cadence means
+            // throughput is 25/min, far above the arrival rate of in-trial posts.
+            'posts_per_run' => (int) env('FIRSTREPLY_MATCHMAIL_POSTS_PER_RUN', 25),
         ],
 
         // The Freegle chat: Freegle itself talks to the poster.
+        //
+        // SWITCHED OFF (2026-08-11), and deliberately no longer env-controlled, so it
+        // cannot come back on from a stale FIRSTREPLY_CHAT_ENABLED in a deployed
+        // environment file. Everything that implements it is left intact -
+        // EngagementService, PromptService, FreegleUserService, the firstreply:engage
+        // command, the Go answer handler and the chat-prompt UI - so turning it back on
+        // means restoring the env read here:
+        //     filter_var(env('FIRSTREPLY_CHAT_ENABLED', false), FILTER_VALIDATE_BOOLEAN)
+        // Sending is the only thing this stops: EngagementService is the single writer
+        // and returns immediately when it is off. Answering deliberately stays live, so
+        // prompts already sent are not left with dead buttons.
         'chat' => [
-            'enabled' => filter_var(env('FIRSTREPLY_CHAT_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => false,
             // The account the messages come from. Resolved by email, created on
             // first use if absent, so there is nothing to seed by hand.
             'system_user_email' => env('FIRSTREPLY_SYSTEM_USER_EMAIL', 'freegle@ilovefreegle.org'),
@@ -950,6 +1035,20 @@ return [
     'monitoring' => [
         // Master kill-switch. When false, monitor:scheduled-outcomes no-ops.
         'enabled' => env('FREEGLE_MONITORING_ENABLED', true),
+
+        // Host-level OS/service checks (HostHealthCheck — V1 status.php
+        // parity: security patches, reboot-required, monit). Comma-separated
+        // ssh targets, e.g. "root@10.0.0.1,root@10.0.0.2". The estate's
+        // topology must live ONLY in the environment (.env.background on the
+        // batch host), never in committed code. Empty = disabled (dev/CI).
+        'hosts' => env('FREEGLE_MONITORING_HOSTS', ''),
+        // Private key path INSIDE the container. docker-compose bind-mounts
+        // the real key from MONITORING_SSH_KEY_HOST_PATH (host-side var, same
+        // split-name pattern as FIREBASE_HOST_PATH so the host path never
+        // leaks into the container environment).
+        'host_ssh_key' => env('FREEGLE_MONITORING_SSH_KEY', '/etc/monitoring-ssh-key'),
+        // Per-host probe timeout. ConnectTimeout is 10s inside this budget.
+        'host_ssh_timeout_seconds' => (int) env('FREEGLE_MONITORING_SSH_TIMEOUT', 30),
 
         // stats:generate-daily — minimum per-group stats rows expected for
         // yesterday once the day's 02:30 run has had time to complete.

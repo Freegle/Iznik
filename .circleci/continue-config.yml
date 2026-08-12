@@ -32,13 +32,13 @@ orbs:
   # error. CircleCI resolves freegle/tests from the registry, not from the
   # copy in this repo, so the pin is what decides.
   #
-  # This is behind master's 1.1.373, which drops the ORM migration inventory
-  # ratchet (Gate 1) - that step self-guards on ci-ratchet.sh existing (it's
-  # been deleted), so it will exit 0 rather than fail, just wastefully
-  # provisioning a Go/PHP toolchain first. A follow-up orb publish from a
-  # merged source (ratchet removal + cap8 rename together) can drop that
-  # waste; not required for this rebase to be safe.
-  freegle: freegle/tests@1.1.371
+  # 1.1.376 publishes the orb from a source that merges both branches: this
+  # branch's cap8 push-notifications rename (was 1.1.371) plus master's
+  # removal of the ORM migration inventory ratchet gate (1.1.373) and its
+  # Gradle distribution cache for build-android (1.1.374/1.1.375 - see
+  # production pipeline #10729 on 4140acbb3, which lost a release to a
+  # "Connection reset" fetching gradle-8.11.1-all.zip from services.gradle.org).
+  freegle: freegle/tests@1.1.376
 
 jobs:
   mark-ci-passed:

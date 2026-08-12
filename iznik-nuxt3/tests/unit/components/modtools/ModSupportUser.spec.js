@@ -260,6 +260,42 @@ describe('ModSupportUser', () => {
     mockApiFns.fetchLogins.mockResolvedValue([])
   })
 
+  describe('lazy support extras', () => {
+    // A Support search renders one ModSupportUser per result; the extras
+    // (membership history, logins, etc.) are only shown in the expanded body,
+    // and the membership-history call walks the logs table server-side at
+    // over a second per heavy user. Eager fetching turned a wide search into
+    // dozens of those at once, so collapsed cards must not fetch extras.
+    it('does not fetch support extras when mounted collapsed', async () => {
+      await mountComponent()
+      expect(mockApiFns.fetchMembershipHistory).not.toHaveBeenCalled()
+      expect(mockApiFns.fetchLogins).not.toHaveBeenCalled()
+      expect(mockApiFns.fetchChatrooms).not.toHaveBeenCalled()
+    })
+
+    it('fetches support extras when mounted expanded', async () => {
+      await mountComponent({ expand: true })
+      expect(mockApiFns.fetchMembershipHistory).toHaveBeenCalledTimes(1)
+      expect(mockApiFns.fetchLogins).toHaveBeenCalledTimes(1)
+    })
+
+    it('fetches support extras once on first expansion only', async () => {
+      const wrapper = await mountComponent()
+      expect(mockApiFns.fetchMembershipHistory).not.toHaveBeenCalled()
+
+      await wrapper.find('.card-header').trigger('click')
+      await flushPromises()
+      expect(mockApiFns.fetchMembershipHistory).toHaveBeenCalledTimes(1)
+
+      // Collapse and re-expand: already fetched, no refetch.
+      await wrapper.find('.card-header').trigger('click')
+      await flushPromises()
+      await wrapper.find('.card-header').trigger('click')
+      await flushPromises()
+      expect(mockApiFns.fetchMembershipHistory).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('rendering', () => {
     it('renders card when user exists', async () => {
       const wrapper = await mountComponent()
@@ -431,7 +467,8 @@ describe('ModSupportUser', () => {
         { id: 2, chattype: 'User2User', lastdate: '2024-01-15' },
         { id: 3, chattype: 'User2Mod', lastdate: '2024-01-10' },
       ])
-      const wrapper = await mountComponent()
+      // Extras (including chatrooms) are only fetched on expansion.
+      const wrapper = await mountComponent({ expand: true })
       await flushPromises()
       const chats = wrapper.vm.chatsFiltered
       expect(chats).toHaveLength(2)

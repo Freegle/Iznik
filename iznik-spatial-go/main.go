@@ -42,6 +42,7 @@ func main() {
 		&GroupsDataset{},
 		&JobsDataset{},
 		&PostcodesDataset{},
+		&ReachDataset{},
 	}
 
 	srv := newServer(mysqlDB, idxDir, allDatasets)
@@ -104,6 +105,49 @@ func main() {
 			"count":     n,
 			"last_sync": state.lastSync,
 		})
+	})
+
+	// GET /v1/:dataset/containing — all items whose geometry contains the point.
+	// Only datasets implementing PointContainer (currently reach) support it.
+	// `in` are definite; `partial` items sit in the raster's boundary band and
+	// the caller must resolve them against the exact source geometry.
+	api.Get("/v1/:dataset/containing", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		state, ok := srv.getDataset(name)
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+		pc, ok := state.ds.(PointContainer)
+		if !ok {
+			return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "dataset does not support containing queries"})
+		}
+
+		lng := c.QueryFloat("lng", 0)
+		lat := c.QueryFloat("lat", 0)
+		if lng == 0 && lat == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "lng and lat required"})
+		}
+
+		var in, partial []int64
+		err := state.withIndex(func(idx *Index) error {
+			var e error
+			in, partial, e = pc.Containing(idx, lng, lat)
+			return e
+		})
+		if err == errIndexNotReady {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		// Empty slices, not nulls, so clients can range without nil checks.
+		if in == nil {
+			in = []int64{}
+		}
+		if partial == nil {
+			partial = []int64{}
+		}
+		return c.JSON(fiber.Map{"in": in, "partial": partial})
 	})
 
 	// GET /v1/:dataset/knn

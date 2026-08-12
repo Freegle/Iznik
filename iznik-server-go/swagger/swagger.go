@@ -49,6 +49,7 @@ import (
 	"github.com/freegle/iznik-server-go/config"
 	"github.com/freegle/iznik-server-go/donations"
 	"github.com/freegle/iznik-server-go/group"
+	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
 	"github.com/freegle/iznik-server-go/job"
@@ -877,7 +878,11 @@ type postChatMessageModerationParams struct {
 // Get changes since timestamp
 //
 // Returns message changes (deleted, edited, promised, reneged, outcomes, approved/reposted),
-// user changes, and ratings since a given time. Requires partner key authentication.
+// user changes and ratings since a given time. Requires partner key authentication.
+//
+// Each user change carries a type: Modified means the profile has changed and should be
+// re-read; Deleted means the user has been forgotten or purged and their copy should be
+// removed, for which the id is all that is supplied.
 //
 // Parameters:
 //   + name: since
@@ -3119,7 +3124,8 @@ type shortlinksResponse struct {
 // swagger:route GET /status status getStatus
 // Get system status
 //
-// Returns the system status from /tmp/iznik.status
+// Returns the platform status published by the batch system's outcome monitoring.
+// A status older than 30 minutes is downgraded to a warning about the feed itself.
 //
 // Responses:
 //
@@ -4089,7 +4095,16 @@ type aiImageRegenerateResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 
+// The one swagger:response of the 65 here that carried no type. The annotation
+// has to sit above a declaration; on its own it declares nothing, so the $ref
+// from /housekeeper/tasks never resolved and the whole spec failed validation.
+// housekeeper.ListTasks returns a bare array of tasks, so that is what this says.
 // swagger:response housekeeperTasksResponse
+type housekeeperTasksResponse struct {
+	// The housekeeper tasks, each with its last run status and overdue flag
+	// in:body
+	Body []housekeeper.HousekeeperTask
+}
 
 // swagger:route POST /housekeeper/tasks/{key}/complete housekeeper completeHousekeeperTask
 // Mark a housekeeper task complete

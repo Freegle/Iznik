@@ -2,6 +2,8 @@ package test
 
 import (
 	json2 "encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -433,4 +435,162 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 	assert.True(t, uncapped[float64(far)], "with no author cap, the far in-reach post appears again")
 	assert.Less(t, cappedCount, countOf(),
 		"the fast-path unread count excludes the far post while the author caps distance, and re-includes it once uncapped - staying in lock-step with the feed")
+}
+
+// TestNearbyCountExcludesHeld: the unread badge (GET /message/count, nearby view) must skip
+// posts whose reach is held for moderation, exactly as the feed does
+// (TestNearbyReachFeedExcludesHeld) - without the same rr.status filter the badge counted a
+// held post the feed never rendered, so the count could never drain to zero by reading.
+// Asserted on BOTH count paths: the fast unlimited COUNT and the distance-limited walk.
+func TestNearbyCountExcludesHeld(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("nearbycountheld")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	group := CreateTestGroup(t, prefix)
+	live := CreateTestMessage(t, posterID, group, "OFFER: live reach for count (nearbycountheld)", 51.5, -0.1)
+	held := CreateTestMessage(t, posterID, group, "OFFER: held reach for count (nearbycountheld)", 51.5, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", live, held)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", live, held)
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	// Both reach polygons cover the viewer - only the status differs.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", live)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'held') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", held)
+
+	countOf := func(url string) float64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var body map[string]interface{}
+		json2.Unmarshal(rsp(resp), &body)
+		c, _ := body["count"].(float64)
+		return c
+	}
+
+	// Fast unlimited path: with the held row hidden, hiding the held post must drop the count by
+	// exactly one relative to both rows counting - measured by flipping the held row live and back
+	// rather than asserting absolute numbers, since parallel tests may add their own posts.
+	heldCount := countOf("/api/message/count?jwt=" + token)
+	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", held)
+	bothLiveCount := countOf("/api/message/count?jwt=" + token)
+	assert.Equal(t, heldCount+1, bothLiveCount,
+		"releasing the held reach adds exactly that post to the fast-path badge count")
+	db.Exec("UPDATE rippling_reach SET status = 'held' WHERE msgid = ?", held)
+
+	// Distance-limited path (the per-post blurred-Haversine walk) must skip held rows too.
+	heldLimited := countOf("/api/message/count?jwt=" + token + "&maxDistance=10")
+	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", held)
+	bothLimited := countOf("/api/message/count?jwt=" + token + "&maxDistance=10")
+	assert.Equal(t, heldLimited+1, bothLimited,
+		"releasing the held reach adds exactly that post to the distance-limited badge count")
+}
+
+// TestNearbyCountSpatialReach: with SPATIAL_REACH_MODE=on the badge count takes its reach
+// containment from the spatial server (stubbed here): `in` ids count directly, `partial`
+// ids are exact-tested against rippling_reach.polygon (including a held re-check newer
+// than the spatial index), and a spatial failure falls back to the SQL containment path
+// with the same answer.
+func TestNearbyCountSpatialReach(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("nearbyspatial")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	group := CreateTestGroup(t, prefix)
+	// covered: reach covers the viewer; the stub reports it as definite `in`.
+	covered := CreateTestMessage(t, posterID, group, "OFFER: spatial in (nearbyspatial)", 51.5, -0.1)
+	// boundary: reach covers the viewer; the stub reports it as `partial`, so only the
+	// exact SQL test brings it in.
+	boundary := CreateTestMessage(t, posterID, group, "OFFER: spatial partial covered (nearbyspatial)", 51.5, -0.1)
+	// outside: reach does NOT cover the viewer; the stub still reports it `partial`
+	// (a fat raster band), and the exact test must exclude it.
+	outside := CreateTestMessage(t, posterID, group, "OFFER: spatial partial outside (nearbyspatial)", 51.5, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?, ?)", covered, boundary, outside)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?, ?)", covered, boundary, outside)
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	coveringPoly := "ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)"
+	elsewherePoly := "ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)"
+	for _, row := range []struct {
+		msgid uint64
+		poly  string
+	}{{covered, coveringPoly}, {boundary, coveringPoly}, {outside, elsewherePoly}} {
+		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+			row.poly+", ST_Envelope("+row.poly+"), 'expanding') "+
+			"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", row.msgid)
+	}
+
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/reach/containing" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"in":[%d],"partial":[%d,%d]}`, covered, boundary, outside)
+	}))
+	defer stub.Close()
+	t.Setenv("SPATIAL_REACH_MODE", "on")
+	t.Setenv("SPATIAL_KNN_URL", stub.URL)
+
+	countOf := func() float64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var body map[string]interface{}
+		json2.Unmarshal(rsp(resp), &body)
+		c, _ := body["count"].(float64)
+		return c
+	}
+
+	// Spatial path: `covered` counts from the in-list, `boundary` survives the exact
+	// test, `outside` is excluded by it. The stub only returns these three ids, so the
+	// count is exact (no >= hedging needed).
+	assert.Equal(t, float64(2), countOf(),
+		"in-list counts directly; partial ids resolve by the exact polygon test")
+
+	// A hold newer than the spatial index must still hide the post: flip `boundary`
+	// (a partial id, so the SQL exact test sees the fresh status) to held.
+	db.Exec("UPDATE rippling_reach SET status = 'held' WHERE msgid = ?", boundary)
+	assert.Equal(t, float64(1), countOf(),
+		"a freshly-held partial id is re-checked in SQL and excluded")
+	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", boundary)
+
+	// The same must hold for a definite `in` id. The raster is rebuilt on a 2-minute
+	// delta (iznik-spatial-go dataset_reach.go DeltaInterval), so for up to that long
+	// after a member report or a moderator's Back to Pending the index still says the
+	// post covers this viewer. The FEED excludes it immediately - reachCandidateQuery
+	// always joins rippling_reach and tests rr.status != 'held' - so without the same
+	// re-check here the badge counts a post the feed will not show, which is exactly
+	// the "N new posts" / "you're up to date" mismatch members report.
+	db.Exec("UPDATE rippling_reach SET status = 'held' WHERE msgid = ?", covered)
+	assert.Equal(t, float64(1), countOf(),
+		"a freshly-held in-list id is re-checked in SQL and excluded, like a partial one")
+	db.Exec("UPDATE rippling_reach SET status = 'expanding' WHERE msgid = ?", covered)
+
+	// And a reach row that has gone entirely (retraction) must not leave the id
+	// countable either - the in-list disjunct has to require a live reach row, not
+	// merely the absence of a held one.
+	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", covered)
+	assert.Equal(t, float64(1), countOf(),
+		"an in-list id whose reach row has gone is not counted")
+	// Put it back: the fallback assertions below expect both posts in reach again.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+		coveringPoly+", ST_Envelope("+coveringPoly+"), 'expanding')", covered)
+
+	// Spatial down: transparent fallback to the SQL containment path, same answer.
+	stub.Close()
+	assert.Equal(t, float64(2), countOf(),
+		"spatial failure falls back to the SQL containment path with the same result")
+
+	// Mode off: SQL path even with a (dead) URL configured.
+	t.Setenv("SPATIAL_REACH_MODE", "")
+	assert.Equal(t, float64(2), countOf(), "mode off uses the SQL path")
 }

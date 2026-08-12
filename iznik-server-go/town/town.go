@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/density"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -122,6 +123,13 @@ type rippleEvalResp struct {
 // roughly the chosen travel time, location-aware, with no hardcoded conversion). Names only, no
 // units. Best-effort: any routing/DB failure returns an empty list (the hint hides).
 //
+// cap_minutes is the top of the slider for THIS member: the reach budget their local freegler
+// density earns (20 dense / 30 medium / 45 sparse), because that is the budget the reach engine
+// gives posts around them. A fixed 5-30 slider is simultaneously too short in the country - where a
+// member cannot ask for the 45 minutes they now actually receive - and too long in the city, where
+// the top stops describe travel the reach engine no longer honours. Always present, so the client
+// never has to guess; it falls back to the flat cap whenever density cannot be measured.
+//
 // @Router /town/near [get]
 // @Summary Up to 5 towns the browse/feed distance slider reaches (by drive-time), names only
 // @Tags location
@@ -135,6 +143,13 @@ func Near(c *fiber.Ctx) error {
 	if (lat == 0 && lng == 0) || minutes <= 0 {
 		return c.JSON(empty)
 	}
+
+	// The cap describes the member's location, not the chosen travel time, so it
+	// rides on every response - including the ones where the town hint gives up.
+	// A client that only learned it on a lucky call would show the wrong slider.
+	reachCap := density.CapFor(lat, lng)
+	empty["cap_minutes"] = reachCap.MaxMinutes
+	empty["density_band"] = reachCap.Band
 	maxMin := minutes
 	if maxMin > 120 {
 		maxMin = 120 // cap so "no limit" never routes the whole country
@@ -189,7 +204,12 @@ func Near(c *fiber.Ctx) error {
 	// The road-distance reach range ("reaches median..max miles by road"), shown alongside the town
 	// list. Comes free from the isochrone, so it's present even when no named town falls inside the
 	// reach.
-	out := fiber.Map{"frontier_median_miles": r.FrontierMedianMiles, "frontier_max_miles": r.FrontierMaxMiles}
+	out := fiber.Map{
+		"frontier_median_miles": r.FrontierMedianMiles,
+		"frontier_max_miles":    r.FrontierMaxMiles,
+		"cap_minutes":           reachCap.MaxMinutes,
+		"density_band":          reachCap.Band,
+	}
 
 	// reach_radius_miles: the mile radius the chosen travel time reaches, for the client to store as
 	// settings.browseMaxDistance. This is a PURE travel-time value from the isochrone frontier -

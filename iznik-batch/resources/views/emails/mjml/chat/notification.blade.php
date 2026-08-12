@@ -419,6 +419,13 @@
         </mj-button>
       </mj-column>
     </mj-section>
+    {{-- Donate now lands on our Stripe page, not PayPal, so show what's there.
+         Alt text repeats it for clients that block images. --}}
+    <mj-section mj-class="bg-light" padding="0 20px 16px 20px">
+      <mj-column>
+        <mj-image src="{{ $donateMarksUrl ?? config('freegle.images.paymethods') }}" alt="Donate with Apple Pay, Google Pay, PayPal or card" title="Donate with Apple Pay, Google Pay, PayPal or card" width="190px" align="center" padding="0" href="{{ $donateUrl }}" />
+      </mj-column>
+    </mj-section>
     @endif
 
     {{-- Footer --}}

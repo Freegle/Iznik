@@ -536,12 +536,26 @@ func getOrCreateLoginKey(userID uint64) (string, error) {
 	// (the retired ormharness's normalise_test.go
 	// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c), so the
 	// map-Create reorder is harmless.
-	db.Table("users_logins").Create(map[string]interface{}{
+	res := db.Table("users_logins").Create(map[string]interface{}{
 		"userid":      userID,
 		"type":        utils.LOGIN_TYPE_LINK,
 		"uid":         fmt.Sprintf("%d", userID),
 		"credentials": newKey,
 	})
+
+	if res.Error != nil {
+		// Most likely we lost a check-then-insert race on the (userid, type)
+		// unique key against a concurrent request. Our key was never stored, so
+		// returning it would hand out a dead link - return the winner's instead.
+		db.Table("users_logins").Select("credentials").Where("userid = ? AND type = ?", userID, utils.LOGIN_TYPE_LINK).
+			Limit(1).Scan(&existingKey)
+
+		if existingKey != "" {
+			return existingKey, nil
+		}
+
+		return "", res.Error
+	}
 
 	return newKey, nil
 }
@@ -1755,6 +1769,24 @@ func GetSession(c *fiber.Ctx) error {
 		}
 		me["permissions"] = perms
 	}
+
+	// Team membership gates a few ModTools pages (currently Partnerships). This is not
+	// gated on systemrole: some team members are ordinary members by role - the account a
+	// team shares for its own inbox, for instance - and they still need their page. The
+	// table is tiny and indexed on userid, so the lookup is cheap enough to always do.
+	var teams []string
+	db.Table("teams_members tm").
+		Select("t.name").
+		Joins("INNER JOIN teams t ON t.id = tm.teamid").
+		Where("tm.userid = ?", myid).
+		Order("t.name ASC").
+		Scan(&teams)
+
+	if teams == nil {
+		teams = []string{}
+	}
+
+	me["teams"] = teams
 
 	if emails == nil {
 		emails = make([]EmailRow, 0)

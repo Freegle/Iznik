@@ -19,6 +19,7 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 use Symfony\Component\Mime\Email;
+use App\Services\DonateLinkService;
 use App\Services\UnsubscribeService;
 
 class ChatNotification extends MjmlMailable implements RetryableMailable
@@ -439,7 +440,19 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 ),
                 'jobAds' => $jobAds['jobs'],
                 'jobsUrl' => $this->trackedUrl($this->userSite . '/jobs', 'jobs_link', 'jobs'),
-                'donateUrl' => $this->trackedUrl('https://freegle.in/paypal1510', 'donate_link', 'donate'),
+                // Our own Stripe donate page rather than the PayPal-only
+                // shortlink, so Apple Pay / Google Pay / Link are on offer too.
+                // See DonateLinkService.
+                'donateUrl' => $this->trackedUrl(
+                    app(DonateLinkService::class)->url(
+                        $this->recipient,
+                        app(DonateLinkService::class)->defaultAmount(),
+                        'chatnotify'
+                    ),
+                    'donate_link',
+                    'donate'
+                ),
+                'donateMarksUrl' => config('freegle.images.paymethods'),
                 'ampIncluded' => $ampIncluded,
                 'isOwnMessage' => $this->isOwnMessage,
                 'otherUserName' => $otherUserName,

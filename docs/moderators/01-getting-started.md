@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-30
+last_reviewed: 2026-08-08
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/index.vue
@@ -65,7 +65,9 @@ Newsletter, Spam admin, Gift Aid, Clearance), granted independently of your role
 cannot see a feature this guide mentions, you may not have that permission on that
 community yet.
 
-You can see Freegle's volunteer **teams** and who is on them under `/teams`.
+You can see Freegle's volunteer **teams** and who is on them under `/teams`. A team can also
+unlock a page in its own right: being on the **Partnerships** team puts
+[Partnerships](partnerships.md) in your menu, for managing council sponsorship deals.
 
 ## Switching between communities
 

@@ -368,6 +368,11 @@ var cronJobs = []CronJob{
 	{Command: "users:remap-locations", Name: "Remap Locations", Description: "Updates cached location names in user settings when the canonical name has changed", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:process-exports", Name: "GDPR Exports", Description: "Processes pending GDPR data export requests; purges export data older than 7 days", Schedule: "Every minute", IntervalMinutes: 1, Category: "User Management", Active: true},
 	{Command: "users:update-engagement", Name: "Engagement Classification", Description: "Updates user engagement classifications (New / Occasional / Frequent / Obsessed / Inactive / Dormant) based on recent activity", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "User Management", Active: true},
+	// Worth watching: this is the only writer of users_approxlocs, and the rippling reach query
+	// drives off that table, so a silently-stopped run makes new members invisible to reach
+	// without anything else going red. That is exactly what happened between V1's removal and
+	// the Laravel port.
+	{Command: "users:update-approx-locs", Name: "Approx Locations", Description: "Refreshes users_approxlocs, the ~400m-blurred point cloud of recently-active members that drives the rippling reach query; prunes members inactive for 6 months", Schedule: "Daily at 4:45am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:cleanup", Name: "User Cleanup", Description: "Cleans up Yahoo Groups users, inactive users, GDPR forgets, and fully forgotten users", Schedule: "Daily (6am)", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:fix-tn-names", Name: "Fix TN Names", Description: "Extracts display names from TrashNothing email addresses (firstname-groupid@trashnothing.com) for users with no first/last name", Schedule: "Daily at 6:30am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 

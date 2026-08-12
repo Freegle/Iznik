@@ -17,8 +17,14 @@
         initialFetchDone && selectedSort === 'Unseen' && showCountsUnseen && me
       "
     >
+      <!-- Only announce new posts we can actually show. The count comes from the server
+           and is polled independently of the feed, so it can run ahead of the loaded list
+           (a post arriving after this page was fetched). Announcing it then puts "N new
+           post" directly above "YOU'RE UP TO DATE" with nothing in between - a promise the
+           page cannot keep. useFeedCountSync pulls the feed on a rise, so the usual case is
+           that the posts arrive a moment later and the banner appears with them. -->
       <MessageListCounts
-        v-if="browseCount && !search"
+        v-if="browseCount && unseenMessages.length && !search"
         :count="browseCount"
         @mark-seen="markSeen"
       />
@@ -155,6 +161,7 @@ import { useNearbyStore } from '~/stores/nearby'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
 import { useScrollDepth } from '~/composables/useScrollDepth'
+import { useFeedCountSync } from '~/composables/useFeedCountSync'
 import {
   deduplicateMessages,
   findDuplicates,
@@ -559,6 +566,17 @@ function visibilityChanged(visible) {
     emit('update:visible', visible)
   }
 }
+
+// The count is polled every 60s; the feed is not. When the count RISES, pull the feed so the
+// posts behind it actually load - otherwise the page announces "1 new post" while the list it
+// is showing predates that post, and the member sees a count with nothing to open.
+useFeedCountSync(browseCount, async () => {
+  if (me.value?.settings?.browseView === 'mygroups') {
+    await messageStore.fetchMyGroups()
+  } else {
+    await nearbyStore.fetchMessages(true)
+  }
+})
 
 function markSeen() {
   // Mark the whole list the count is computed over (the full nearby/mygroups response),

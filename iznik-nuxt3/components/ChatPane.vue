@@ -55,7 +55,7 @@
               <b-button
                 v-if="unseen"
                 variant="white"
-                class="action-btn action-btn--mark-read"
+                class="action-btn btn-mark-read"
                 @click="markRead"
               >
                 Mark read
@@ -126,7 +126,7 @@
               <b-button
                 v-if="unseen"
                 variant="white"
-                class="action-btn action-btn--mark-read"
+                class="action-btn btn-mark-read"
                 @click="markRead"
               >
                 Mark read
@@ -278,14 +278,14 @@ import { useRouter } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
-const ChatBlockModal = defineAsyncComponent(
-  () => import('~/components/ChatBlockModal')
+const ChatBlockModal = defineAsyncComponent(() =>
+  import('~/components/ChatBlockModal')
 )
-const ChatHideModal = defineAsyncComponent(
-  () => import('~/components/ChatHideModal')
+const ChatHideModal = defineAsyncComponent(() =>
+  import('~/components/ChatHideModal')
 )
-const ChatReportModal = defineAsyncComponent(
-  () => import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(() =>
+  import('~/components/ChatReportModal')
 )
 
 const chatStore = useChatStore()
@@ -306,8 +306,8 @@ function resize() {
 // Pre-reserve sticky-ad height for non-donors so chatHolder doesn't shrink when the ad renders.
 const allowAd = computed(() => !recentDonor.value)
 
-const ChatNotVisible = defineAsyncComponent(
-  () => import('~/components/ChatNotVisible.vue')
+const ChatNotVisible = defineAsyncComponent(() =>
+  import('~/components/ChatNotVisible.vue')
 )
 
 const { chat, otheruser, milesaway, unseen } = await setupChat(props.id)
@@ -493,7 +493,7 @@ function checkScroll() {
     // messagesToShow in the v-for loop we only trigger a render of the new items.
     messagesToShow.value = Math.min(
       chatmessages?.value?.length,
-      messagesToShow?.value + 10,
+      messagesToShow?.value + 10
     )
 
     scrollTimer.value = setTimeout(checkScroll, scrollInterval.value)
@@ -804,10 +804,5 @@ function typing() {
 .action-btn {
   font-size: 0.7rem;
   padding: 2px 8px;
-}
-
-.action-btn--mark-read {
-  border: 1px solid $color-red !important;
-  color: $color-red !important;
 }
 </style>

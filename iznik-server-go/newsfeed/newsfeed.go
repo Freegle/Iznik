@@ -102,6 +102,11 @@ type Newsfeed struct {
 	Replies        []Newsfeed        `json:"replies" gorm:"-"`
 	Lovelist       []NewsLove        `json:"lovelist" gorm:"-"`
 	Previews       []NewsfeedPreview `json:"previews" gorm:"-"`
+	// The user's newsfeed_users high-water mark, set only on the top-level item
+	// returned by Single() so the client can baseline "new since my last visit"
+	// on any entry path (feed card or notification deep link) without an extra
+	// request. Never populated on nested replies.
+	SeenWatermark uint64 `json:"seenwatermark,omitempty" gorm:"-"`
 }
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
@@ -264,7 +269,13 @@ func Feed(c *fiber.Ctx) error {
 		}
 	}
 
-	ret := getFeed(myid, gotDistance, distance)
+	// ChitChat moderators can ask to see the Community News drip posts from all
+	// over the country rather than just their own area, so that what goes out
+	// nationally can be reviewed. Silently ignored for anyone else - it must not
+	// become a way for a member to widen their feed.
+	allNewsletters := c.Query("newsletters") == "all" && auth.IsChitChatMod(myid)
+
+	ret := getFeed(myid, gotDistance, distance, allNewsletters)
 	if len(ret) == 0 {
 		// Force [] rather than null to be returned.
 		return c.JSON(make([]string, 0))
@@ -273,8 +284,19 @@ func Feed(c *fiber.Ctx) error {
 	}
 }
 
-func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
+// allNewsletters lifts the geographic filter and the flood cap on unpinned
+// Alerts (Community News). Callers must already have established that the user
+// is a ChitChat moderator - this function does not re-check.
+func getFeed(myid uint64, gotDistance bool, distance uint64, allNewsletters bool) []NewsfeedSummary {
 	db := database.DBConn
+
+	// The flood cap exists to stop a news run crowding out members' own ChitChat.
+	// A moderator reviewing the drip wants the opposite, so raise it to the same
+	// 100 the whole feed is capped at.
+	alertsPerFeed := utils.NEWSFEED_ALERTS_PER_FEED
+	if allNewsletters {
+		alertsPerFeed = 100
+	}
 
 	var gotLatLng bool
 
@@ -378,6 +400,26 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 	// Use a backstop timestamp so we can index better.
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE_CHITCHAT).Format("2006-01-02")
 
+	// The alert arm normally leans on the spatial index to find posts inside the
+	// member's alert box. Reviewing all newsletters drops that predicate, so the
+	// timestamp index is the one that serves it.
+	alertArmIndex := "position"
+	alertArmGeo := "MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND "
+	alertArmGeoArgs := []interface{}{
+		alertSwlng, alertSwlat,
+		alertSwlng, alertNelat,
+		alertNelng, alertNelat,
+		alertNelng, alertSwlat,
+		alertSwlng, alertSwlat,
+		utils.SRID,
+	}
+
+	if allNewsletters {
+		alertArmIndex = "timestamp"
+		alertArmGeo = ""
+		alertArmGeoArgs = nil
+	}
+
 	if gotLatLng {
 		// Four-way UNION:
 		// 1. Regular posts (non-event, non-alert types) in the user's geographic area, capped at 100.
@@ -385,7 +427,8 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 		//    flood of these cannot push regular posts out of the feed (Discourse #9624).
 		// 3. Alerts in the user's ALERT box (fixed NEWSFEED_ALERT_RADIUS_KM), capped at
 		//    NEWSFEED_ALERTS_PER_FEED. Community News drip-posts as type Alert, so this is
-		//    the same flood guard as #2.
+		//    the same flood guard as #2. Both the box and the cap come off for a ChitChat
+		//    mod who asked for all newsletters.
 		// 4. PINNED alerts (any location), capped at 5. Only pinned alerts - central Freegle
 		//    announcements - are allowed to escape the geographic filter.
 		db.Raw(
@@ -432,14 +475,14 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
 					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
 					"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
-					"FROM newsfeed FORCE INDEX (position) "+
+					"FROM newsfeed FORCE INDEX (%s) "+
 					"LEFT JOIN users ON users.id = newsfeed.userid "+
 					"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
 					"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
 					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
 					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
 					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
-					"WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND "+
+					"WHERE %s"+
 					"newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
 					"AND users.deleted IS NULL "+
 					"AND spam_users.id IS NULL "+
@@ -468,52 +511,50 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"ORDER BY pinned DESC, timestamp DESC "+
 					"LIMIT 5) "+
 					"ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
-				utils.NEWSFEED_EVENTS_PER_FEED, utils.NEWSFEED_ALERTS_PER_FEED),
-			// UNION 1: regular posts in geographic area
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			swlng, swlat,
-			swlng, nelat,
-			nelng, nelat,
-			nelng, swlat,
-			swlng, swlat,
-			utils.SRID,
-			start,
-			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY, utils.NEWSFEED_TYPE_ALERT,
-			// UNION 2: event/volunteering posts in geographic area (flood-capped, proximity-sorted)
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			swlng, swlat,
-			swlng, nelat,
-			nelng, nelat,
-			nelng, swlat,
-			swlng, swlat,
-			utils.SRID,
-			start,
-			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
-			userLng, userLat, utils.SRID,
-			// UNION 3: alerts in the ALERT box (flood-capped) - Community News posts here.
-			// The alert box, not the feed box: the feed's density-derived radius can be
-			// far smaller than the ~20-mile scale news areas are clustered at.
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			alertSwlng, alertSwlat,
-			alertSwlng, alertNelat,
-			alertNelng, alertNelat,
-			alertNelng, alertSwlat,
-			alertSwlng, alertSwlat,
-			utils.SRID,
-			start,
-			utils.NEWSFEED_TYPE_ALERT,
-			// UNION 4: pinned alerts only (any location)
-			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
-			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
-			myid,
-			start,
-			utils.NEWSFEED_TYPE_ALERT,
+				utils.NEWSFEED_EVENTS_PER_FEED, alertArmIndex, alertArmGeo, alertsPerFeed),
+			append(append([]interface{}{
+				// UNION 1: regular posts in geographic area
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				swlng, swlat,
+				swlng, nelat,
+				nelng, nelat,
+				nelng, swlat,
+				swlng, swlat,
+				utils.SRID,
+				start,
+				utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY, utils.NEWSFEED_TYPE_ALERT,
+				// UNION 2: event/volunteering posts in geographic area (flood-capped, proximity-sorted)
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				swlng, swlat,
+				swlng, nelat,
+				nelng, nelat,
+				nelng, swlat,
+				swlng, swlat,
+				utils.SRID,
+				start,
+				utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+				userLng, userLat, utils.SRID,
+				// UNION 3: alerts in the ALERT box (flood-capped) - Community News posts here.
+				// The alert box, not the feed box: the feed's density-derived radius can be
+				// far smaller than the ~20-mile scale news areas are clustered at. A ChitChat
+				// mod reviewing all newsletters gets no box at all - see alertArmGeo.
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+			}, alertArmGeoArgs...), []interface{}{
+				start,
+				utils.NEWSFEED_TYPE_ALERT,
+				// UNION 4: pinned alerts only (any location)
+				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+				utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+				myid,
+				start,
+				utils.NEWSFEED_TYPE_ALERT,
+			}...)...,
 		).Scan(&newsfeed)
 	} else {
 		// Three-way UNION for the "everywhere" path:
@@ -523,11 +564,16 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 		//    announcements) come from anywhere; unpinned ones - Community News - only from
 		//    inside the user's own alert box, so "everywhere" (the default feed setting)
 		//    doesn't serve somebody in Cornwall news about Yorkshire. With no known
-		//    location only pinned alerts are served.
+		//    location only pinned alerts are served. A ChitChat mod who asked for all
+		//    newsletters gets the lot, uncapped by geography.
 		alertGeo := "AND newsfeed.pinned = 1 "
 		var alertGeoArgs []interface{}
 
-		if gotAlertBox {
+		if allNewsletters {
+			// A ChitChat mod reviewing the drip wants every area's posts, so the
+			// arm carries no geographic condition at all.
+			alertGeo = ""
+		} else if gotAlertBox {
 			alertGeo = "AND (newsfeed.pinned = 1 OR MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position)) "
 			alertGeoArgs = []interface{}{
 				alertSwlng, alertSwlat,
@@ -596,7 +642,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"%s"+
 					"ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT %d "+
 					") ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
-				utils.NEWSFEED_EVENTS_PER_FEED, alertGeo, utils.NEWSFEED_ALERTS_PER_FEED),
+				utils.NEWSFEED_EVENTS_PER_FEED, alertGeo, alertsPerFeed),
 			append([]interface{}{
 				// UNION 1: regular posts
 				utils.NEWSFEED_MODSTATUS_SUPPRESSED,
@@ -641,6 +687,20 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 	return ret
 }
 
+// seenWatermarkFor returns the user's newsfeed_users high-water mark - the
+// highest newsfeed id they have marked seen - or 0 when logged out or never
+// recorded. One-row indexed SELECT, shared by Single() and Count().
+func seenWatermarkFor(myid uint64) uint64 {
+	var seen uint64
+
+	if myid > 0 {
+		db := database.DBConn
+		db.Table("newsfeed_users").Select("newsfeedid").Where("userid = ?", myid).Row().Scan(&seen)
+	}
+
+	return seen
+}
+
 func Single(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
@@ -652,10 +712,12 @@ func Single(c *fiber.Ctx) error {
 		var wg sync.WaitGroup
 		var newsfeed Newsfeed
 		var replies = []Newsfeed{}
+		var seenWatermark uint64
 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			seenWatermark = seenWatermarkFor(myid)
 		}()
 
 		wg.Add(1)
@@ -683,6 +745,7 @@ func Single(c *fiber.Ctx) error {
 
 		if newsfeed.ID > 0 {
 			newsfeed.Replies = replies
+			newsfeed.SeenWatermark = seenWatermark
 
 			if newsfeed.Replyto > 0 {
 				// We need to find the thread head.
@@ -901,8 +964,11 @@ func fetchSingle(id uint64, myid uint64, lovelist bool) (Newsfeed, bool) {
 			Scan(&areaname)
 		if areaname != "" {
 			newsfeed.Location = areaname
-		} else if len(newsfeed.Location) > 2 {
-			// Fallback to truncated postcode if no area name found.
+		} else if newsfeed.Type != utils.NEWSFEED_TYPE_ALERT && len(newsfeed.Location) > 2 {
+			// Fallback to truncated postcode if no area name found. Alerts are
+			// exempt: Community News stores the news AREA NAME there, and the
+			// system account that posts them has no lastlocation, so without this
+			// they would come back as "Edinbur" or "Weston-super-Ma".
 			newsfeed.Location = strings.TrimSpace(newsfeed.Location[:len(newsfeed.Location)-2])
 		}
 
@@ -1024,15 +1090,16 @@ func Count(c *fiber.Ctx) error {
 
 	go func() {
 		defer wg.Done()
-		ret = getFeed(myid, gotDistance, distance)
+		// Always the normal feed: the unread count is about what the member has
+		// to read, not what a moderator has asked to review.
+		ret = getFeed(myid, gotDistance, distance, false)
 	}()
 
-	db := database.DBConn
 	wg.Add(1)
 
 	go func() {
 		defer wg.Done()
-		db.Table("newsfeed_users").Select("newsfeedid").Where("userid = ?", myid).Row().Scan(&seen)
+		seen = seenWatermarkFor(myid)
 	}()
 
 	wg.Wait()

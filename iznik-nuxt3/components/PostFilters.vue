@@ -48,7 +48,7 @@
             id="distanceSlider"
             v-model="sliderValue"
             :min="BROWSE_MINUTES_MIN"
-            :max="BROWSE_MINUTES_MAX"
+            :max="maxMinutes"
             :step="BROWSE_MINUTES_STEP"
             left-label="Nearer"
             right-label="Further"
@@ -150,7 +150,6 @@ import { useMe } from '~/composables/useMe'
 import {
   BROWSE_DISTANCE_UNLIMITED,
   BROWSE_MINUTES_MIN,
-  BROWSE_MINUTES_MAX,
   BROWSE_MINUTES_STEP,
 } from '~/constants'
 import { useReachDistance } from '~/composables/useReachDistance'
@@ -399,10 +398,14 @@ const maxDistance = computed(
 
 // The time-based slider position + its persistence live in the shared composable. When a change is
 // saved it re-emits the derived mile cap (so parent feeds re-filter) and refreshes the unseen count.
-const { sliderValue, onSliderChange } = useReachDistance((miles) => {
-  emit('update:selectedMaxDistance', miles)
-  refetchCount()
-})
+// maxMinutes is the member's own density-sized reach cap, so the slider's top stop is the furthest
+// travel the reach engine will actually honour for them - not a fixed 30 minutes.
+const { sliderValue, maxMinutes, onSliderChange } = useReachDistance(
+  (miles) => {
+    emit('update:selectedMaxDistance', miles)
+    refetchCount()
+  }
+)
 
 // "Filters active" badge (#G): lights for ANY control that differs from its default -
 // not just narrowing ones - so members always have a quick visual cue that the feed

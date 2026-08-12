@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-05
+last_reviewed: 2026-08-11
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/UnsubscribeService.php

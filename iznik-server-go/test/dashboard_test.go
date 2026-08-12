@@ -213,6 +213,63 @@ func TestDashboardNewMessagesNoDoubleCount(t *testing.T) {
 	assert.Equal(t, float64(1), rc["newmessages"], "RecentCounts should not double-count multi-group messages")
 }
 
+// A wide date range (the admin "back to 2015" case that used to run as one 70-81s statement)
+// must walk multiple bounded windows and still produce the same answers: the legacy and
+// RecentCounts newmessages counts find the message, count its crosspost once, and UsersPosting
+// still surfaces the poster.
+func TestDashboardWideRangeBoundedWalk(t *testing.T) {
+	prefix := uniquePrefix("DashWide")
+	groupA := CreateTestGroup(t, prefix+"A")
+	groupB := CreateTestGroup(t, prefix+"B")
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupA, "Moderator")
+	CreateTestMembership(t, userID, groupB, "Moderator")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" Test", 55.9533, -3.1883)
+	// Crosspost to groupB: the windowed walk must still count this message once.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0)", msgID, groupB)
+
+	wideRange := "start=2024-01-01&end=today"
+
+	// Legacy dashboard.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?allgroups=true&%s&jwt=%s", wideRange, token), nil)
+	resp, _ := getApp().Test(req, 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	dash := result["dashboard"].(map[string]interface{})
+	assert.Equal(t, float64(1), dash["newmessages"], "wide-range legacy count should find the message exactly once")
+
+	// RecentCounts and UsersPosting components over the same wide range.
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=RecentCounts,UsersPosting&allgroups=true&%s&jwt=%s", wideRange, token), nil)
+	resp2, _ := getApp().Test(req2, 60000)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var result2 map[string]interface{}
+	json2.Unmarshal(rsp(resp2), &result2)
+	comps := result2["components"].(map[string]interface{})
+
+	rc := comps["RecentCounts"].(map[string]interface{})
+	assert.Equal(t, float64(1), rc["newmessages"], "wide-range RecentCounts should find the message exactly once")
+
+	up, ok := comps["UsersPosting"].([]interface{})
+	assert.True(t, ok, "UsersPosting should be an array for a moderator")
+	found := false
+	for _, u := range up {
+		row := u.(map[string]interface{})
+		if row["id"] == float64(userID) {
+			found = true
+			assert.Equal(t, float64(1), row["posts"], "crossposted message should count once for its poster")
+		}
+	}
+	assert.True(t, found, "wide-range UsersPosting should include the poster")
+}
+
 func TestGetDashboardV2Path(t *testing.T) {
 	req := httptest.NewRequest("GET", "/apiv2/dashboard", nil)
 	resp, _ := getApp().Test(req)

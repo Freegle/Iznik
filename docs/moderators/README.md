@@ -41,3 +41,6 @@ A few things worth holding onto, whichever guide you are in:
 There is a moderator-facing guide to rippling out at
 [./rippling-out.md](./rippling-out.md), and the
 technical detail is in [../developers/reference/rippling-algorithm.md](../developers/reference/rippling-algorithm.md).
+
+Council sponsorship deals - who sponsors us, what they are worth, and the quarterly
+statistics councils receive - are covered in [./partnerships.md](./partnerships.md).

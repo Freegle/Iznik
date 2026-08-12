@@ -30,6 +30,7 @@
       </b-row>
       <StoryAddModal
         v-if="showStoryAddModal"
+        @login-required="loginRequired"
         @hidden="showStoryAddModal = false"
       />
     </div>
@@ -47,6 +48,7 @@ import {
 } from '#imports'
 import NoticeMessage from '~/components/NoticeMessage'
 import StoryOne from '~/components/StoryOne'
+import { useStoryAdd } from '~/composables/useStoryAdd'
 
 const StoryAddModal = defineAsyncComponent(
   () => import('~/components/StoryAddModal')
@@ -83,9 +85,5 @@ if (invalid.value) {
   )
 }
 
-const showStoryAddModal = ref(false)
-
-function showAddModal() {
-  showStoryAddModal.value = true
-}
+const { showStoryAddModal, showAddModal, loginRequired } = useStoryAdd()
 </script>

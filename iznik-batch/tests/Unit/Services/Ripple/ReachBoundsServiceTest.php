@@ -190,28 +190,6 @@ class ReachBoundsServiceTest extends TestCase
         $this->assertSame(1, (int) $check->ie, 'verified provided inner is stored verbatim');
     }
 
-    public function test_sync_with_bad_provided_inner_nulls_it(): void
-    {
-        // A provided inner that pokes outside the stored polygon (possible after clips, or
-        // a routing bug) must fail write-time verification and be dropped — never shipped
-        // as a cheap-accept.
-        $msgid = $this->seedReach(self::WKT);
-        $outer = 'POLYGON((-0.21 51.39, 0.01 51.39, 0.01 51.61, -0.21 51.61, -0.21 51.39))';
-        $badInner = 'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))'; // ⊃ polygon
-
-        $this->service()->sync($msgid, $outer, $badInner);
-
-        $row = $this->boundsRow($msgid);
-        $this->assertNotNull($row);
-        $this->assertSame(1, (int) $row->inner_null, 'unverifiable provided inner is NULLed');
-        $ok = DB::selectOne(
-            'SELECT ST_Contains(outer_bound, polygon) AS o
-               FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
-        );
-        $this->assertSame(1, (int) $ok->o, 'the good provided outer is kept');
-    }
-
     public function test_sync_with_bad_provided_outer_falls_back_safely(): void
     {
         // A provided outer that does NOT contain the stored polygon (e.g. the polygon was
@@ -257,5 +235,120 @@ class ReachBoundsServiceTest extends TestCase
         $row = $this->boundsRow($msgid);
         $this->assertNotNull($row);
         $this->assertNotSame('POINT', $row->outer_type, 'reopened post gets real bounds back');
+    }
+
+    /** The area the stored inner bound covers, as a share of the polygon's area. */
+    private function innerRatio(int $msgid): float
+    {
+        return (float) DB::selectOne(
+            'SELECT COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(polygon), 0), 0) AS r
+               FROM rippling_reach WHERE msgid = ?',
+            [$msgid]
+        )->r;
+    }
+
+    public function test_sync_replaces_uselessly_small_provided_inner(): void
+    {
+        // A provided inner can be CORRECT (⊆ polygon) yet useless: the routing grid's
+        // 3-cell erosion disintegrates ribbon-shaped rural reaches, leaving a town-core
+        // fragment covering 1–2% of the polygon. Every viewer between that fragment and
+        // the outer bound then pays the full 178KB polygon test — the db3 CPU saturation
+        // of Aug 2026. Verified-but-tiny inners must be replaced by one derived from the
+        // stored polygon.
+        $msgid = $this->seedReach(self::WKT);
+        $outer = 'POLYGON((-0.21 51.39, 0.01 51.39, 0.01 51.61, -0.21 51.61, -0.21 51.39))';
+        $tinyInner = 'POLYGON((-0.101 51.499, -0.099 51.499, -0.099 51.501, -0.101 51.501, -0.101 51.499))';
+
+        $this->service()->sync($msgid, $outer, $tinyInner);
+
+        $this->assertGreaterThan(
+            0.5,
+            $this->innerRatio($msgid),
+            'a verified-but-tiny provided inner is replaced by a polygon-derived one'
+        );
+        $check = DB::selectOne(
+            'SELECT ST_Contains(polygon, inner_bound) AS i,
+                    ST_Contains(outer_bound, polygon) AS o
+               FROM rippling_reach WHERE msgid = ?',
+            [$msgid]
+        );
+        $this->assertSame(1, (int) $check->i, 'the replacement inner still satisfies inner ⊆ polygon');
+        $this->assertSame(1, (int) $check->o, 'the verified provided outer is kept');
+    }
+
+    public function test_sync_derives_inner_when_none_provided(): void
+    {
+        // Routing ships no inner when erosion leaves nothing usable. Previously that
+        // stored NULL (no cheap accept, full polygon test for every in-outer viewer);
+        // now the inner is derived from the stored polygon instead.
+        $msgid = $this->seedReach(self::WKT);
+        $outer = 'POLYGON((-0.21 51.39, 0.01 51.39, 0.01 51.61, -0.21 51.61, -0.21 51.39))';
+
+        $this->service()->sync($msgid, $outer, null);
+
+        $row = $this->boundsRow($msgid);
+        $this->assertNotNull($row);
+        $this->assertSame(0, (int) $row->inner_null, 'missing provided inner is derived from the polygon');
+        $this->assertGreaterThan(0.5, $this->innerRatio($msgid), 'the derived inner is useful, not a sliver');
+    }
+
+    public function test_sync_derives_inner_after_nulling_unverifiable_provided_inner(): void
+    {
+        // An inner that pokes outside the polygon (possible after clips, or a routing
+        // bug) must fail write-time verification and never ship as a cheap-accept; the
+        // replacement is derived from the polygon rather than left NULL (usefulness).
+        // Replaces the pre-guard test_sync_with_bad_provided_inner_nulls_it, whose
+        // "ends as NULL" assertion described the behaviour this guard exists to remove.
+        $msgid = $this->seedReach(self::WKT);
+        $outer = 'POLYGON((-0.21 51.39, 0.01 51.39, 0.01 51.61, -0.21 51.61, -0.21 51.39))';
+        $badInner = 'POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))'; // ⊃ polygon
+
+        $this->service()->sync($msgid, $outer, $badInner);
+
+        $check = DB::selectOne(
+            'SELECT inner_bound IS NULL AS inner_null,
+                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i,
+                    ST_Equals(inner_bound, ST_GeomFromText(?, 3857)) AS still_bad,
+                    ST_Contains(outer_bound, polygon) AS o
+               FROM rippling_reach WHERE msgid = ?',
+            [$badInner, $msgid]
+        );
+        $this->assertSame(0, (int) $check->inner_null, 'a safe inner is derived to replace the rejected one');
+        $this->assertSame(1, (int) $check->i, 'the derived inner satisfies inner ⊆ polygon');
+        $this->assertSame(0, (int) $check->still_bad, 'the rejected provided inner is not what is stored');
+        $this->assertSame(1, (int) $check->o, 'the good provided outer is kept');
+    }
+
+    public function test_ensure_useful_inner_keeps_a_good_inner_untouched(): void
+    {
+        $msgid = $this->seedReach(self::WKT);
+        $this->service()->syncFromPolygon($msgid);
+        $before = DB::selectOne(
+            'SELECT ST_AsBinary(inner_bound) AS b FROM rippling_reach WHERE msgid = ?',
+            [$msgid]
+        )->b;
+
+        $this->assertSame('kept', $this->service()->ensureUsefulInner($msgid));
+
+        $after = DB::selectOne(
+            'SELECT ST_AsBinary(inner_bound) AS b FROM rippling_reach WHERE msgid = ?',
+            [$msgid]
+        )->b;
+        $this->assertSame($before, $after, 'a useful inner is not rewritten');
+    }
+
+    public function test_ensure_useful_inner_skips_degraded_completed_rows(): void
+    {
+        // degradeForCompleted deliberately collapses the bounds to prune the post from
+        // the browse R-tree; the usefulness guard must never resurrect an inner there.
+        $msgid = $this->seedReach(self::WKT);
+        $this->service()->syncFromPolygon($msgid);
+        $this->service()->degradeForCompleted($msgid);
+
+        $this->assertSame('skipped', $this->service()->ensureUsefulInner($msgid));
+
+        $row = $this->boundsRow($msgid);
+        $this->assertSame('POINT', $row->outer_type, 'degraded outer stays a point');
+        $this->assertSame(1, (int) $row->inner_null, 'degraded inner stays NULL');
     }
 }

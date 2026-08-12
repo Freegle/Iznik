@@ -130,6 +130,45 @@ export function timeagoMedium(val) {
   }
 }
 
+/**
+ * Render an ELAPSED SPAN given as a count of minutes: "35 mins", "46 hours", "2 days".
+ *
+ * Not the same job as timeagoMedium, which takes a date and measures from now. A rippling
+ * reply-hold reports heldminutes (computed server-side so a still-open hold does not depend on
+ * the client clock), and a hold that has already ended has no "now" to measure from at all.
+ *
+ * Hours run to 48h rather than 24h: for a delay, "2 days" hides whether the reply sat for one
+ * night or three, which is exactly what a moderator is trying to establish.
+ */
+export function durationMinutes(mins) {
+  if (mins === null || mins === undefined || Number.isNaN(Number(mins))) {
+    return ''
+  }
+
+  const m = Math.floor(Number(mins))
+
+  if (m < 1) {
+    // Includes negatives, which would only arise from clock skew between rows.
+    return 'less than a minute'
+  }
+  if (m < 60) {
+    return m === 1 ? '1 min' : `${m} mins`
+  }
+
+  const hours = Math.floor(m / 60)
+  if (hours < 48) {
+    return hours === 1 ? '1 hour' : `${hours} hours`
+  }
+
+  const days = Math.floor(m / (60 * 24))
+  if (days < 7) {
+    return days === 1 ? '1 day' : `${days} days`
+  }
+
+  const weeks = Math.floor(days / 7)
+  return weeks === 1 ? '1 week' : `${weeks} weeks`
+}
+
 export function timeadapt(val) {
   const t = dayjs(val)
 

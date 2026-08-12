@@ -151,6 +151,9 @@
         </b-card-text>
       </b-card-body>
       <template #footer>
+        <NoticeMessage v-if="targetGone" variant="info" class="mb-2">
+          That reply has been removed. Here's the rest of the conversation.
+        </NoticeMessage>
         <NewsReplies
           v-if="newsfeed?.replies?.length"
           :id="id"
@@ -158,6 +161,7 @@
           :scroll-to="scrollTo"
           :reply-to="replyingTo"
           :depth="1"
+          :context="context"
           :class="newsfeed.deleted ? 'strike me-1' : 'me-1'"
           @rendered="rendered"
           @subtree-rendered="repliesRendered = true"
@@ -362,6 +366,20 @@ const props = defineProps({
     type: String,
     required: false,
     default: '',
+  },
+  // 'thread' = the full conversation page; 'feed' = a short card in the
+  // ChitChat feed. Forwarded to NewsReplies, which does the shortening.
+  context: {
+    type: String,
+    required: false,
+    default: 'thread',
+  },
+  // The reader asked to be taken to the new replies (the feed's "#new"
+  // link), rather than just opening the thread.
+  jumpToNew: {
+    type: Boolean,
+    required: false,
+    default: false,
   },
   duplicateCount: {
     type: Number,
@@ -576,6 +594,55 @@ const repliesRendered = ref(!newsfeed.value?.replies?.length)
 let ownPin = null
 let deepLinkPinned = false
 
+// A deep link whose target row never mounted: the reply was deleted (and is
+// filtered out for non-mods) or otherwise gone. Explains the silent landing.
+const targetGone = ref(false)
+
+// scrollTo naming the thread itself means "open this thread", not "find this
+// reply", so there is no target row to hunt for.
+const isGeneralLanding = computed(() => {
+  return !!props.scrollTo && parseInt(props.scrollTo) === parseInt(props.id)
+})
+
+onMounted(() => {
+  if (!props.scrollTo) return
+
+  threadContentSettled().then(() => {
+    if (deepLinkPinned) return
+
+    if (isGeneralLanding.value) {
+      // Only jump to the new replies if the reader actually asked for them
+      // (the feed's "N new" link, which says so via #new). Opening a thread
+      // any other way should start at the top, like any other page.
+      const divider = props.jumpToNew
+        ? document.querySelector('[data-unread-divider]')
+        : null
+
+      if (divider) {
+        deepLinkPinned = true
+        ownPin = scrollToAndPin(
+          () => document.querySelector('[data-unread-divider]'),
+          {
+            block: 'start',
+            offset: fixedHeaderOffset(),
+            done: threadContentSettled(),
+          }
+        )
+      }
+    } else {
+      // Specific reply requested and everything has settled. If the target's
+      // row is not in the DOM by now it never will be - deleted and filtered
+      // out for non-mods, typically from a stale notification.
+      const row = document.querySelector(
+        `[data-reply-id="${props.scrollTo}"], [data-combined-ids~="${props.scrollTo}"]`
+      )
+      if (!row) {
+        targetGone.value = true
+      }
+    }
+  })
+})
+
 onBeforeUnmount(() => {
   if (ownPin) ownPin()
 })
@@ -623,8 +690,13 @@ function rendered(id) {
   // not restart a released pin.
   if (parseInt(id) === parseInt(props.scrollTo) && !deepLinkPinned) {
     deepLinkPinned = true
+    // Compound selector: a combined block renders one row keyed by its FIRST
+    // id and advertises the rest via data-combined-ids.
     ownPin = scrollToAndPin(
-      () => document.querySelector(`[data-reply-id="${props.scrollTo}"]`),
+      () =>
+        document.querySelector(
+          `[data-reply-id="${props.scrollTo}"], [data-combined-ids~="${props.scrollTo}"]`
+        ),
       {
         block: 'center',
         offset: fixedHeaderOffset(),
@@ -675,8 +747,13 @@ async function sendComment(callback) {
       // releasing when the refetch and image loads are complete.
       if (newid) {
         nextTick(() => {
+          // Compound selector: the fresh reply may have combined into the
+          // poster's previous block, whose row is keyed by the OLDER id.
           ownPin = scrollToAndPin(
-            () => document.querySelector(`[data-reply-id="${newid}"]`),
+            () =>
+              document.querySelector(
+                `[data-reply-id="${newid}"], [data-combined-ids~="${newid}"]`
+              ),
             {
               block: 'center',
               done: whenAllSettled([

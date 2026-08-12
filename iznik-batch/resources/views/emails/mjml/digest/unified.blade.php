@@ -56,6 +56,21 @@
         {{-- IMMEDIATE MODE: single-post card matching browse page style    --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
+        @if(!empty($matchIntro))
+        {{-- Why this mail is for this member. Match mail only: they have an open
+             post of the opposite type, or a saved search, that matches this one.
+             Above the jobs strip and the card, because a reader who cannot tell
+             this apart from the digest they already ignore will not get as far as
+             the item. --}}
+        <mj-section background-color="#eef7ee" padding="12px 20px" border-radius="4px">
+            <mj-column>
+                <mj-text font-size="15px" line-height="21px" color="#22391f" padding="0">
+                    <strong>{{ $matchIntro }}</strong>
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        @endif
+
         {{-- Jobs near you, at the top (V1 parity). Shared partial. --}}
         @include('emails.mjml.digest._jobs')
 

@@ -49,6 +49,32 @@ _next_free_ports() {
     (( n == count ))
 }
 
+# _share_gitignored_data MAIN_REPO WORKTREE_DIR
+#   Give a new worktree the large gitignored downloads its containers need to boot. These are
+#   not in git, so `git worktree add` leaves them behind and the spatial containers exit(1) on
+#   a missing OSM extract — which looks like a broken worktree rather than a missing file.
+#
+#   Shared by hardlink, not copied: the UK extract is 2.5GB, it is an immutable download, and
+#   every container mounts its directory read-only, so one inode can back every worktree. The
+#   link survives removal of the main checkout (it is a reference to the inode, not to the path).
+#   Falls back to a copy if the two checkouts are on different filesystems.
+_share_gitignored_data() {
+    local main_repo="$1" worktree_dir="$2"
+    local rel
+    for rel in iznik-routing-go/data/uk-latest.osm.pbf; do
+        local src="$main_repo/$rel" dst="$worktree_dir/$rel"
+        [[ -f "$src" ]] || continue
+        [[ -e "$dst" ]] && continue
+        mkdir -p "$(dirname "$dst")"
+        ln "$src" "$dst" 2>/dev/null || cp "$src" "$dst" || {
+            echo "  Warning: could not share $rel; spatial containers will not start." >&2
+            continue
+        }
+        echo "  Shared $rel from the main checkout."
+    done
+    return 0
+}
+
 # Get the root of the main git repo (not a worktree)
 get_main_repo() {
     local gitdir
@@ -303,6 +329,10 @@ cmd_worktree_create() {
             sed -i -E "s|^(${live_key}=http://apiv2-live\.localhost)(:[0-9]+)?(/.*)?\$|\\1:${wt_traefik_port}\\3|" "$worktree_dir/.env"
         done
     fi
+
+    # Hand over the large gitignored downloads before starting containers, or the spatial
+    # services exit(1) on a missing OSM extract.
+    _share_gitignored_data "$main_repo" "$worktree_dir"
 
     # Start the containers immediately so the worktree is ready to use
     echo ""

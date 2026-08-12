@@ -5,12 +5,15 @@ export default class NewsAPI extends BaseAPI {
     return this.$getv2('/newsfeed', params)
   }
 
-  async fetch(id, distance, lovelist, logError) {
+  // newsletters: 'all' asks for the Community News posts from every area rather
+  // than just our own. The server honours it only for ChitChat moderators.
+  async fetch(id, distance, lovelist, logError, newsletters) {
     return await this.$getv2(
       id ? '/newsfeed/' + id : '/newsfeed',
       {
         distance,
         lovelist,
+        newsletters,
       },
       logError
     )

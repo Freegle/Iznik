@@ -94,7 +94,11 @@
       imgflag="story"
       @hidden="showNewsPhotoModal = false"
     />
-    <StoryAddModal v-if="showAdd" @hidden="showAdd = false" />
+    <StoryAddModal
+      v-if="showAdd"
+      @login-required="loginRequired"
+      @hidden="showAdd = false"
+    />
     <StoryShareModal
       v-if="showNewsShareModal"
       :id="newsfeed.storyid"
@@ -110,6 +114,7 @@ import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
 import NewsUserIntro from '~/components/NewsUserIntro'
 import NewsLoveComment from '~/components/NewsLoveComment'
+import { useStoryAdd } from '~/composables/useStoryAdd'
 
 const props = defineProps({
   id: {
@@ -154,7 +159,11 @@ try {
   console.log('Error fetching story:', e)
 }
 
-const showAdd = ref(false)
+const {
+  showStoryAddModal: showAdd,
+  showAddModal,
+  loginRequired,
+} = useStoryAdd()
 
 const story = computed(() => {
   return storyStore?.byId(newsfeed.value?.storyid)
@@ -177,10 +186,6 @@ function share() {
 
 function showPhotoModal() {
   showNewsPhotoModal.value = true
-}
-
-function showAddModal() {
-  showAdd.value = true
 }
 </script>
 <style scoped lang="scss">

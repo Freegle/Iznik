@@ -20,7 +20,11 @@
                 placeholder="Search chats (e.g. 'Joe' or 'mods')"
                 class="flex-shrink-1"
               />
-              <b-button class="mt-1" variant="white" @click="markAllRead">
+              <b-button
+                class="mt-1 btn-mark-read"
+                variant="white"
+                @click="markAllRead"
+              >
                 <v-icon icon="check" /> Mark all read
               </b-button>
             </div>

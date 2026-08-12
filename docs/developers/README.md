@@ -38,6 +38,7 @@ Read these directly; the pages above link into them rather than copy them:
 | Rippling out algorithm | [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md) |
 | Getting a first reply in | [./reference/first-reply.md](./reference/first-reply.md) |
 | Unsubscribing from email (List-Unsubscribe) | [./reference/unsubscribe.md](./reference/unsubscribe.md) |
+| Donation asks in email (Stripe, wallets) | [./reference/donation-asks-in-email.md](./reference/donation-asks-in-email.md) |
 | Browser testing with Chrome DevTools | [./reference/browser-testing.md](./reference/browser-testing.md) |
 | Worktrees / parallel instances | [./reference/worktrees.md](./reference/worktrees.md) |
 | TrashNothing / LoveJunk integration | [./reference/trashnothing.md](./reference/trashnothing.md) |

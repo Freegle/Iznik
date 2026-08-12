@@ -13,7 +13,10 @@
     <strong>System backed up on Yesterday up to:</strong>
     {{ latestMessage }}
     <span v-if="backupStatus === 'stale'"> ❌ Backup is over 2 days old!</span>
-    <span v-if="backupStatus === 'restore-failed'">
+    <!-- Driven by its own flag rather than backupStatus: a failed restore is
+         usually the CAUSE of a stale backup, so both must show together instead
+         of the age check winning and hiding why the backup went stale. -->
+    <span v-if="restoreFailed">
       ❌ Latest restore attempt failed - check logs</span
     >
     <span v-if="backupStatus === 'unreachable'"> ❌ Server unreachable</span>
@@ -31,6 +34,7 @@ dayjs.extend(customParseFormat)
 const latestMessage = ref(null)
 const backupStatus = ref(null)
 const isRestoring = ref(false)
+const restoreFailed = ref(false)
 
 onMounted(async () => {
   try {
@@ -57,6 +61,7 @@ onMounted(async () => {
       ) {
         // Check what backup is currently loaded (even if last restore attempt failed)
         const lastRestoreFailed = restoreData.status === 'failed'
+        restoreFailed.value = lastRestoreFailed
         try {
           const currentBackupResponse = await fetch(
             'https://yesterday.ilovefreegle.org:8444/api/current-backup'

@@ -1,3 +1,16 @@
+---
+last_reviewed: 2026-08-12
+covers:
+  - iznik-batch/app/Services/Ripple/**
+  - iznik-batch/app/Console/Commands/Ripple/**
+  - iznik-batch/app/Console/Commands/Browse/**
+  - iznik-server-go/rippling/**
+  - iznik-server-go/density/**
+  - iznik-nuxt3/composables/useReachDistance.js
+  - iznik-nuxt3/modtools/components/ModSysAdminRipplingDensity.vue
+  - iznik-nuxt3/modtools/components/ModSysAdminRipplingAnalytics.vue
+---
+
 # How Rippling Works - Technical Reference
 
 The technical companion to [../../moderators/rippling-out.md](../../moderators/rippling-out.md)
@@ -135,6 +148,97 @@ ceiling applies unchanged. Two further stops:
   Interested repliers stops expanding - it has plenty of interest already.
 - **Outcome.** A taken, withdrawn or received post stops immediately.
 
+### 3a. The time budget belongs to the traveller, not to the post
+
+The governor normalises the AUDIENCE. The drive-time ceiling on top of it is the other half,
+and a single national figure for it is wrong in both directions.
+
+Measured on live, conversion by drive-time behaves completely differently by place: in dense
+areas it collapses past about 20-25 minutes, and in sparse ones it does not fall at all out to
+45. A flat 30 is therefore too generous in cities - buying mail to people who will not come -
+and too tight in the country, where the people who would come are still outside it.
+
+`App\Services\Ripple\DensityService` measures the density directly rather than inferring it
+from the group or a population dataset: it asks the spatial KNN service for the **nearest K
+freeglers** (`RIPPLE_DENSITY_K`, default 400) to a point and takes the radius that contains
+them. That is the quantity the reach actually cares about - how far you have to go to find
+people - rather than a proxy for it.
+
+| Band | Nearest 400 within | Travel-time budget |
+|---|---|---|
+| `dense` | ≤ 1.6 mi | 20 |
+| `medium` | ≤ 3.1 mi | 30 |
+| `sparse` | > 3.1 mi | 45 |
+
+The thresholds are the terciles of the live distribution, so the bands are roughly equal in
+posts to begin with. Per-band caps live in `freegle.ripple.density.max_minutes`.
+
+**Whose density decides.** Read the measurement again and it is about the person who would
+make the journey, not the item: it is the REPLIER's drive-time and the REPLIER's surroundings
+that predict a collection. Applying the cap at the post's origin gets that right only when both
+ends sit in the same kind of place, and where they differ it fails exactly backwards - on the
+commonest case there is. A rural member's nearest town is the town they already drive to, and
+its posts are the ones they most want. Measured on live for a member outside Spalding (nearest
+400 freeglers 16.1 miles out, so definitively sparse):
+
+- Peterborough, their nearest big town, is `medium` and so would cap at 30 minutes. They are
+  **38 minutes** from it, so sizing at the origin means the town's posts could never reach them
+  however far they were willing to go.
+- Of 191 posts within 21.6 miles of them over 14 days, **2** were inside a 30-minute drive.
+  **110** are inside 45 minutes. Their local supply sits almost entirely in the band a flat or
+  origin-sized cap cuts off.
+
+So the cap is applied to the RECIPIENT:
+
+1. **Every ripple grows to `DensityService::ceiling()`** - the widest budget any band earns
+   (45 by default; taken as the max over the configured bands so re-tuning one cannot leave the
+   ripple too small to serve it). A post cannot know which bands the members around it fall in,
+   only that the sparse ones travel furthest.
+2. **Each member is admitted on their own band**, through the travel-time preference that
+   already gates browse and mail - `settings.browseMaxMinutes` and the radius derived from it,
+   `browseMaxDistance` (§8). Their band is the DEFAULT for that preference, so a city member is
+   still not shown or mailed a post 40 minutes away, while the rural member finally gets the
+   town.
+
+The dense saving is therefore preserved while the rural gap closes: what changed is which end
+of the journey the number describes.
+
+Two edge cases, both of which would otherwise size a member wrongly and silently:
+
+- **Fewer than K found** inside the KNN service's search ceiling is *definitively* sparse -
+  there genuinely are not 400 freeglers within reach - so the band is `sparse`, not unknown.
+- **Zero found**, or the service unreachable, is `unknown`, which keeps the flat cap and leaves
+  a member's stored preference untouched. An empty or broken index must not stretch a London
+  member to 45 minutes.
+
+The origin's own band is still measured and stored on the post - `rippling_reach.density_band`
+and `density_radius_miles` - because it is what the density analytics read rows back by. It is
+a description of where the post is, not a limit on where it goes; `max_minutes_cap` records the
+ceiling the schedule was built under, and schedule reuse is cap-aware, so changing the ceiling
+takes effect everywhere rather than only where nobody had posted before.
+
+Killswitch `RIPPLE_DENSITY_ENABLED=false` reverts every post and every member to the flat cap.
+
+**Instrumentation, because a lever nobody can read is a lever nobody can turn back.**
+`GET /rippling/density` (Support/Admin, `iznik-server-go/rippling/density.go`) reports per band:
+posts, cap asked for against drive time actually reached, the measured radius, audience,
+replies, rehomes, and held replies. It is surfaced as the top panel of ModTools → SysAdmin →
+Rippling.
+
+Read it as four separate questions, because a band can move on one and not the others:
+
+| Column | Question |
+|---|---|
+| Cap asked vs drive time reached | did the cap bind at all? A band well under its cap was never constrained by it |
+| Got a reply | what a SHORTER cap risks - fewer people told, so fewer replies |
+| Rehomed | the only one that matters on its own. More replies without more rehoming has bought mail, not reuse |
+| Replies held | the cost side. A cap that is too short shows here first |
+
+One caveat travels with those numbers: a withdrawn or deleted post loses its reach row and
+drops out of every column, so the rehome rate is an overestimate in all bands. The rows are
+safe to compare with each other, not to read individually - and only for as long as nothing
+makes withdrawal differ by band.
+
 ## 4. Targeting: which groups receive the post
 
 A group receives a rippled copy only if **at least one active freegler who lives in that
@@ -165,12 +269,61 @@ the nearest road is on the wrong bank - a postcode centre sits on its own street
 are assumed not to span rivers or similar barriers. This is all server-side; only group ids
 ever leave the server.
 
+**The candidate members come from `users_approxlocs`** - the query in
+`iznik-routing-go/reachable_groups.go` drives off that table's spatial index and joins
+outwards, so a member with no row there is invisible to targeting whatever their postcode
+says. That table is a cache, refreshed nightly by `users:update-approx-locs`
+(`UserApproxLocService`), holding one ~400m-blurred point per member active in the last six
+months. Nothing else notices when the refresh stops: reach still computes, still looks
+plausible, and just quietly stops seeing newer members. It went unwritten from V1's removal
+until 2026-08-10, by which point 38,325 of 112,548 active members (34%) had no row. If reach
+ever looks like it is under-targeting, check `MAX(timestamp)` on that table first - and the
+job's row on the SysAdmin cron dashboard, where a missed run shows as overdue.
+
 The same decision is computed **per tick**: every entry in the ripple schedule carries
 `reachable_group_ids` for its drive-time (a threshold over the already-computed member
 drive-times - no extra routing). The Rippling Explorer tints groups from exactly this field,
 so the animation you watch is the targeting decision at each step, not a geometric
 approximation of it. On by default; `RIPPLE_REACHABLE_GATE=false` is the killswitch, reverting
 targeting and retraction to the polygon-overlap test.
+
+### 4a. Communities that never ripple: phantom and training
+
+Some communities exist to hold moderator practice posts rather than real items, and their
+posts must not travel. That is a per-community switch in `groups.settings`, resolved by
+[`GroupRippleOptOut`](../../../iznik-batch/app/Services/Ripple/GroupRippleOptOut.php) and
+enforced by `ExpandService`:
+
+```json
+{ "rippling": { "out": 0, "in": 0 } }
+```
+
+- **`out` off** - a post made on the community never gets a `rippling_reach` row, so it is
+  never crossposted and never surfaces in anyone's nearby feed (both read paths hang off that
+  table). Enforced in `initialiseNew`, and unlike the arrival cutoff and the saturation stop it
+  applies to `--msgid` and area-scoped runs too: this is community policy, not a rollout guard.
+- **`in` off** - the community is never a crosspost target. Enforced in `rippleIntoNewGroups`.
+
+**Absent means on**, so every community ripples both ways unless it has been switched off, and
+anything unexpected in the value is read as on. That fail-safe direction is deliberate: wrongly
+on ripples a phantom post, which is visible and a moderator can reject the copy, whereas
+wrongly off would silently stop a real community rippling and nobody would notice for weeks.
+
+**Deliberately not a moderator setting.** Which communities are phantom is a central decision,
+so the only way to change it is `php artisan ripple:opt-out` (`--direction=out|in|both`,
+`--on` to switch back on, `--list`, `--dry-run`). Switching a direction back on removes the key
+rather than storing a truthy value.
+
+Switching `out` off also stops what is already in flight: `retractOptedOutCommunities` drops the
+reach row and pulls the copies already delivered, on the same footing as a post that has left
+the browsable set (§6). Without it, the deploy that first opts a training community out would
+leave every live practice post there expanding for the rest of its life.
+
+The older `nameshort NOT LIKE '%playground%'` test in the target query predates this and stays
+as belt-and-braces for a playground community created before anyone gives it the setting. It
+only ever covered ripple-in, and only communities named that way - `FreeglePlayground` places
+its practice posts at a real Edinburgh postcode, so before this change a practice post there
+crossposted into the live Lothians communities.
 
 ### Rejected targeting approaches
 
@@ -206,7 +359,7 @@ For each due post, `ripple:expand`:
   a scout who replies was outside the reach when we mailed them, so their reply is evidence
   the item is wanted that far out and the people around them should get the same chance
   rather than waiting on the clock. See
-  [first-reply.md](first-reply.md#a-scout-who-replies-pulls-the-reach-out-to-them).
+  [first-reply.md](first-reply.md#a-matched-member-who-replies-pulls-the-reach-out-to-them).
 - **`rippleIntoNewGroups`** resolves target groups with a non-locking snapshot `SELECT`, then
   inserts each `messages_groups` membership as its own `INSERT IGNORE` (Galera-safe; avoids
   the lock-wait storms a single `INSERT ... SELECT` caused). Rippled copies carry the post's
@@ -225,6 +378,8 @@ when the poster has no other live post there. A **held** reach (from a report or
 Back-to-Pending) is frozen: its copies persist for per-group moderation and are never
 retracted, so re-approval restores the copy without re-rippling.
 
+A community switching ripple-out off retracts the same way - see §4a.
+
 ## 7. Consumers of the reach
 
 - **Browse / Nearby feed:** members see rippled-in posts via
@@ -234,6 +389,46 @@ retracted, so re-approval restores the copy without re-rippling.
   own distance) and OUTBOUND (a post is only shown/mailed to people within the *poster's*
   distance of it - the author-side cap in `isochrone/message.go`'s `authorReachCapWhere` and
   the digest's `DistancePreferenceFilter::passesBothPreferences`).
+
+  Since the ripple grows to the ceiling rather than to the origin's band (§3a), **this
+  preference is what holds each member to their own band** - it is no longer only a narrowing
+  the member opted into. A member who has never touched the slider must therefore still have
+  one, which is what `browse:backfill-max-distance` materialises: their band's cap in
+  `browseMaxMinutes`, and the routing-derived radius for it in `browseReachMaxDistance`. On
+  live only 2,900 of 121,000 recently-active members had ever set one, so without that pass
+  the wider ripple would reach a city member with everything inside 45 minutes of a post.
+
+  **`browseReachMaxDistance` is a separate key from `browseMaxDistance`, and the split is
+  load-bearing.** `browseMaxDistance` is the member's own choice and applies in BOTH
+  directions, so writing a band default into it would silently cap how far away other people
+  see that member's posts: a city member's band radius is ~4.8 miles, so their giveaways would
+  stop travelling almost immediately - the exact opposite of growing the ripple to the ceiling.
+  How far someone will travel to collect is not the same question as how far their own post
+  should travel to find a taker. So:
+
+  | Key | Set by | Inbound | Outbound |
+  |---|---|---|---|
+  | `browseMaxDistance` | the member, via the slider | yes | yes |
+  | `browseReachMaxDistance` | the backfill, from their band | yes (only when the member has not chosen) | **never** |
+
+  Readers: `DistancePreferenceFilter::maxDistanceMiles` (inbound, falls back to the default)
+  and `authorMaxDistanceMiles` (outbound, own choice only); Go `isochrone.resolveMaxDistance`
+  (inbound, same fallback) and `utils.AuthorReachCapWhere` (outbound, own choice only).
+
+  The command also RESCALES an explicit choice rather than carrying it across. The old slider
+  was a fixed 5-30, so a stored value said what FRACTION of the range the member wanted, not an
+  absolute travel time: 15 was two fifths of the way up, and two fifths of a rural member's 5-45
+  is 20. It rescales proportionally and snaps to the slider's 5-minute step, and at or above the
+  old top stop the member lands on their new cap. No location, or a failed density or routing
+  lookup, means the member is skipped and left untouched.
+
+  **The unlimited sentinel is no longer safe below the ceiling.** It means "defer to the
+  server's own reach", and the server's own reach is now the ceiling - so it only says "as far
+  as my band goes" for a member whose band earns it. A medium-band member left on the sentinel
+  would silently gain the widest band's reach (measured on live: a 33-mile radius around
+  Peterborough against the 30-minute band they should have). Below the ceiling, both the
+  backfill and the slider store a real derived radius at the top stop; only at the ceiling is
+  the sentinel written.
 
   **The viewer's own posts always come first.** A member's own open posts are included in the
   feed regardless of reach (`isochrone/message.go` own-posts arm) and flagged with `mine`
@@ -276,10 +471,19 @@ retracted, so re-approval restores the copy without re-rippling.
   that margin, so superset/subset hold by construction), shipped as
   `catchment_outer`/`catchment_inner` on point-form `/v1/catchment`, and verified against
   the stored polygon on write (`Ripple\ReachBoundsService`); otherwise derived in SQL
-  (`ST_Buffer(ST_Simplify(polygon, tol), ±tol)`, tol 0.002°). A rejection clip that
-  shrinks the polygon NULLs `inner_bound` in the same statement
-  (`ClipReachForRejectedGroup`, `reapplyClips`), since a stale inner bound would keep
-  showing the post in the just-rejected area.
+  (`ST_Buffer(ST_Simplify(polygon, tol), ±tol)`, tol 0.002°). A provided inner is held to
+  a **usefulness** bar as well as a correctness one
+  (`ReachBoundsService::ensureUsefulInner`, `INNER_MIN_AREA_RATIO`): the routing grid's
+  erosion disintegrates ribbon-shaped rural reaches and ships a town-core fragment
+  covering 1–2% of the polygon, which verifies as a subset yet sends nearly every
+  in-outer viewer to the full polygon test (the Aug 2026 db3 saturation — the band ran
+  at ~58% against the designed 7–19%). An inner covering less than half the polygon's
+  area — or missing altogether — is replaced by the SQL derivation from the stored
+  polygon (~90% coverage); `ripple:backfill-inner-bounds` repairs rows written before
+  this guard existed. A rejection clip that shrinks the polygon NULLs `inner_bound` in
+  the same statement (`ClipReachForRejectedGroup`, `reapplyClips`), since a stale inner
+  bound would keep showing the post in the just-rejected area; the sync that follows the
+  clip then re-derives a safe inner from the clipped polygon.
 
   The single-point gates consult the same sandwich: `ReachQueryService::isWithinReach`
   (browse Nearby / reply-eligibility / held-reply release in batch), the message-list
@@ -297,17 +501,105 @@ retracted, so re-approval restores the copy without re-rippling.
   migration (small tables).
 - **Unified digest distance scoring:** the reach polygon feeds each post's closeness score.
 - **Reach mail:** the join notification when a post ripples to within reach.
-- **Held replies:** replies to rippled posts held for moderator Chat Review where applicable.
-  One exception: a post's FIRST reply is not held when the replier is inside the reach the
-  post will eventually have (`rippling_reach.max_polygon`). They were always going to be
-  allowed to reply once the ripple got there, so holding them delays a poster who currently
-  has nothing without protecting local-first ordering in any lasting way. See
+- **Held replies:** a reply from outside the post's current reach is parked in
+  `rippling_held_replies` rather than delivered, so local people keep first chance. Every hold
+  is a **delay with a due time** rather than an open-ended wait - see §7a. One exception: a
+  post's FIRST reply is not held at all when the replier is inside the reach the post will
+  eventually have (`rippling_reach.max_polygon`). They were always going to be allowed to
+  reply once the ripple got there, so holding them delays a poster who currently has nothing
+  without protecting local-first ordering in any lasting way. See
   [first-reply.md](first-reply.md); gated by `freegle.firstreply.passthrough.enabled`, off by
   default.
 - **Rippling Explorer (ModTools `/rippling`):** draws the exact polygon and tints groups from
   the per-tick `reachable_group_ids`.
 
-### 7a. Relevance ranking (browse feed AND digest - same engine)
+### 7a. A held reply is delayed, not withheld
+
+Holding out-of-reach replies protects local-first ordering. The failure was in the exit: a hold
+ended when the ripple covered the replier, when the post's reach reached `done`, or when the
+post went. Measured on live, **three in four held repliers live somewhere the ripple will never
+reach**, so for them the only exit was the backstop - days later, by which time a quarter to a
+third of items have already gone. In practice their reply was not delayed, it was discarded.
+
+So every hold now carries a due time, computed at hold time from how far the replier is from
+the item:
+
+```
+delay = clamp(base_minutes + per_mile_minutes × milesFromOrigin, base_minutes, max_minutes)
+```
+
+Defaults (`freegle.ripple.reply_delay.*`): base **15** minutes, **3** minutes per mile, ceiling
+**180** minutes. A typical held replier sits about 18 miles out and so waits about an hour;
+nobody waits more than three. Somebody just past the boundary is delivered a little after the
+locals, which is the whole intent - they are not competing with people who have not been told
+yet, they are simply second.
+
+Distance is measured from the **nearest point on the reach boundary**, not from the item. The
+band is meant to hug the isochrone: a reply from just outside the line is in practice one of
+the locals, because the line is a modelled drive-time contour rather than a fact about who can
+collect. "How far past the edge are you" is what separates a near-miss from someone genuinely
+distant.
+
+Measuring from the item, which this did until 2026-08-12, ranks held repliers consistently at
+one instant but is the wrong input for a timer, because the reach moves and the distance to the
+item does not. It also scaled the wait with something irrelevant: on live rows a replier 0.36
+miles outside the boundary was charged 55 minutes because the item was 13.2 miles off, and one
+1.47 miles outside was charged 42 for an item 8.9 miles away.
+
+Measured over 566 held replies across two days, the change takes the mean wait from 50.8 to
+29.2 minutes. Nearly half of them (269) sit within two miles of the boundary, and those go from
+37.5 minutes to 17.1 - about the base wait, which is the point. Five get marginally longer,
+because their reach polygon does not contain its own origin.
+
+The boundary distance is `ST_Distance` on the reach polygon, but only after re-tagging it:
+`rippling_reach.polygon` is declared SRID 3857 and stores raw lng/lat degrees, so as stored the
+result is in coordinate degrees, which are anisotropic and cannot be turned into minutes.
+`ST_SRID(polygon, 4326)` against `ST_SRID(POINT(lng, lat), 4326)` gives real metres.
+
+**No `ST_SwapXY`**, despite 4326 being nominally latitude-first. Measured on our server,
+`ST_Distance` under 4326 reads X as longitude and Y as latitude, which is the order the rows
+already store. The control is London to Birmingham: 101.2 miles untouched, 138.7 with the axes
+swapped, against a true 101.6. Swapping "to be correct" reinterprets UK coordinates as sitting
+near the equator, and the resulting error is the wrong size to look obviously wrong - it cost a
+round of this work before a unit test with hand-computed geometry caught it.
+
+About 12ms per row against polygons averaging a megabyte, which is affordable because it runs
+once at hold time and once per sweep for rows still waiting. Recomputing each sweep is the
+point: the distance past the edge shrinks as the isochrone advances on the replier.
+
+Coverage still wins. `ripple:release-replies` runs `releaseCovered()` first and `releaseDue()`
+second, so a replier the ripple reaches early is released then rather than waiting out their
+timer.
+
+**PHP decides the wait; the API only quotes it.** The Go and web hold paths leave `dueat`
+NULL, and the every-minute sweep stamps it, so the rule is enforced in exactly one place and
+the pre-existing backlog gets a due time on the first sweep instead of staying stuck.
+
+The site does have to say the number **before** the member presses Send, though - that is the
+point of the delay, and an open-ended "we'll pass it on as soon as it reaches you" is the
+wording it replaces. So `ripple:expand` publishes the policy into `config` under
+`ripple.reply_delay`, and the Go read path computes the estimate from it
+(`rippling.LoadReplyDelayPolicy` / `ReplyDelayPolicy.DelayMinutes`), returning it as
+`replydelayminutes` alongside `replyeligible=false`. Published rather than restated as env
+vars on the API host precisely because the two ends must not drift: a member told "about 40
+minutes" whose reply then waits three hours is worse off than one who was told nothing.
+
+The estimate costs no extra query. `ReachBlockedOrigins` already reads the blocked rows for
+the containment test, so it carries `rippling_reach.lat/lng` off them and the delay is then
+arithmetic. Only the minutes cross the wire - the blurred origin the distance is measured from
+stays server-side, like every other reach geometry.
+
+Two things make it an estimate rather than an appointment, and the wording reflects both. The
+covered release can free a reply early, so the UI says "within about", not "in". And the Go
+side measures with a WGS84 geodesic where PHP uses a spherical haversine, which differs by
+under a tenth of a mile at UK distances; the display rounds to five minutes, well outside that.
+
+Releases are counted by reason - `released_covered`, `released_delayed`, `released_maxed`,
+`released_backfill` - in `rippling_event_metrics`. Without the split, the delay would be
+invisible: every release looks the same in a single counter, so there would be no way to tell
+whether the new exit is doing anything.
+
+### 7b. Relevance ranking (browse feed AND digest - same engine)
 
 The browse/Nearby feed is **not** reverse-chronological. Both it and the unified digest order
 posts by a **rippling relevance score**, computed by one shared function
@@ -349,7 +641,15 @@ Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-d
 - `reachable_gate` - member-based reachability targeting (else polygon-only).
 - `proximity_notes` - the "quicker to get to" moderator note (independent).
 - `extent.*` (`target_users`, ...) - the audience governor.
+- `density.*` (`RIPPLE_DENSITY_ENABLED`, `k`, band thresholds, `max_minutes` per band) - the
+  per-post drive-time budget (§3a). Off reverts every post to the flat cap.
+- `reply_delay.*` (`RIPPLE_REPLY_DELAY_ENABLED`, `base_minutes`, `per_mile_minutes`,
+  `max_minutes`) - how long an out-of-reach reply waits (§7a). Off reverts to release on
+  coverage or backstop alone.
 - `reply_saturation_stop` (5), `hazard_hours`, `rippled_in_pending_hours` (0).
+
+Per-community rather than config: `groups.settings.rippling.{out,in}` switches rippling off for
+one community in either direction (§4a), set only via `php artisan ripple:opt-out`.
 
 ## 9. Data model
 
@@ -358,9 +658,13 @@ Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-d
   exact polygon (see §7; `outer_bound` is NOT NULL + spatially indexed and drives the
   browse R-tree), cached slim `schedule` (per-tick drive-time / audience / reached-group
   ids, no geometry), `tick`, `status` (expanding / stopped / done / held),
-  `reachable_group_ids` (the current tick's set, used by retraction). Bounds maintained
-  in the same statements as the polygon writes; prod schema migrated via
+  `reachable_group_ids` (the current tick's set, used by retraction), and the sizing decision
+  the post was built under - `density_band`, `density_radius_miles`, `max_minutes_cap` (§3a).
+  Bounds maintained in the same statements as the polygon writes; prod schema migrated via
   `ripple:migrate-reach-bounds-schema` (shadow copy + swap).
+- `rippling_held_replies` - one row per reply held for being outside the reach, with `dueat`
+  (§7a) and `releasedat`. Two similar names, one letter apart: `dueat` is when it becomes
+  due, `releasedat` is when it actually went.
 - `messages_groups.rippled_in = 1` - marks a rippled-in copy (vs the origin membership).
 - `rippling_proximity` - cached "quicker to get to" P/Q points per (msgid, groupid).
 - `logs` `text='Rippled'` - the ripple-join marker used for rejoin suppression.

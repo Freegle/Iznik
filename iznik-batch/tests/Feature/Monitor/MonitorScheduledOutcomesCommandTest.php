@@ -80,6 +80,29 @@ class MonitorScheduledOutcomesCommandTest extends TestCase
             );
     }
 
+    public function test_warning_severity_breaches_log_but_do_not_fail(): void
+    {
+        $this->fakeRegistry([
+            new CallbackCheck('job:a', fn ($now) => OutcomeResult::ok('job:a', 'fine')),
+            new CallbackCheck(
+                'host:x',
+                fn ($now) => OutcomeResult::breach('host:x', 'reboot required', 'warning')
+            ),
+        ]);
+
+        Log::spy();
+
+        // A warning is visible (status dot, log) but must not exit non-zero —
+        // a host awaiting a reboot for weeks would otherwise pin the cron-jobs
+        // tab red and page Sentry every 10 minutes.
+        $this->artisan('monitor:scheduled-outcomes')
+            ->expectsOutputToContain('warning')
+            ->assertExitCode(0);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message, $context = []) => str_contains((string) $message, 'host:x'));
+    }
+
     public function test_skipped_checks_do_not_cause_failure(): void
     {
         $this->fakeRegistry([
