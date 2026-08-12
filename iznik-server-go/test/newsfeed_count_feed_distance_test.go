@@ -65,8 +65,8 @@ func TestCountFeedDistanceAgreement(t *testing.T) {
 	var countNoDist struct {
 		Count uint64 `json:"count"`
 	}
-	json2.Unmarshal(rsp(respCountNoDist), &countNoDist)
-	assert.GreaterOrEqual(t, countNoDist.Count, uint64(0))
+	assert.NoError(t, json2.Unmarshal(rsp(respCountNoDist), &countNoDist),
+		"Count (no distance) response must be valid JSON")
 
 	respFeedNoDist, _ := getApp().Test(httptest.NewRequest("GET",
 		"/api/newsfeed?jwt="+token, nil))
@@ -88,6 +88,11 @@ func TestCountFeedDistanceAgreement(t *testing.T) {
 	var countNearby struct {
 		Count uint64 `json:"count"`
 	}
-	json2.Unmarshal(rsp(respCountNearby), &countNearby)
-	assert.GreaterOrEqual(t, countNearby.Count, uint64(0))
+	assert.NoError(t, json2.Unmarshal(rsp(respCountNearby), &countNearby),
+		"Count (distance=nearby) response must be valid JSON")
+	// The actual property under test: distance=nearby resolves exactly like no
+	// distance param (both gotDistance=false -> GetNearbyDistance), so the two
+	// back-to-back counts for the same user must agree.
+	assert.Equal(t, countNoDist.Count, countNearby.Count,
+		"distance=nearby must be treated identically to no distance param")
 }

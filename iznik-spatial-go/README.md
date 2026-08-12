@@ -45,12 +45,9 @@ trusted callers (`iznik-routing-go`, `apiv2`, batch).
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | `{"status":"ok"}` |
-| `GET` | `/v1/datasets` | All datasets with name, record count, readiness |
-| `GET` | `/v1/{dataset}/status` | Readiness, row count, last sync time for one dataset |
 | `GET` | `/v1/{dataset}/knn?lat=&lng=&limit=&type=&polygon=` | Nearest records to a point. `limit` 1–1000 (default 1); optional `type` filter; optional WKT `polygon` to restrict results |
-| `GET` | `/v1/{dataset}/within?polygon=` | IDs of all records inside a WKT polygon. Max **10 000** IDs (HTTP 413 if exceeded) |
-| `GET` | `/v1/{dataset}/within_coords?polygon=` | Like `/within` but returns full items **with coordinates** (no centre-distance bias). Use POST for large polygons |
-| `POST` | `/v1/{dataset}/within_coords` | Same as GET, polygon in the request body — avoids URL-length limits for big isochrone polygons. Body may be raw WKT (`text/plain`) or `polygon=WKT` (`application/x-www-form-urlencoded`) |
+| `GET` | `/v1/{dataset}/containing?lng=&lat=` | Reach raster containment: which live reaches cover the point (`reach` dataset only) |
+| `POST` | `/v1/{dataset}/within_coords` | Full items **with coordinates** inside a WKT polygon (no centre-distance bias). Polygon in the request body avoids URL-length limits for big isochrone polygons. Body may be raw WKT (`text/plain`) or `polygon=WKT` (`application/x-www-form-urlencoded`) |
 | `GET` | `/swagger` | Browsable OpenAPI reference (Redoc). Raw spec at `/swagger/swagger.json` |
 
 ### Admin API (`SPATIAL_ADMIN_PORT`, default `8195`)
@@ -60,12 +57,11 @@ A separate listener for maintenance operations — keep it off the public networ
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/v1/{dataset}/rebuild` | Trigger an async full rebuild of one dataset from MySQL (HTTP 409 if already rebuilding) |
-| `POST` | `/v1/rebuild` | Trigger an async full rebuild of **every** dataset |
 | `POST` | `/v1/{dataset}/remove` | Incremental hard-delete of specific record IDs. Body: `{"ids":[...]}` |
 
-**Response shape:** all query endpoints return `{"results":[...]}` (KNN /
-within_coords) or `{"ids":[...]}` (within). The legacy `{"locationid":N}` shape is
-**deprecated**; callers should use `?limit=1` and read `results[0].id`.
+**Response shape:** all query endpoints return `{"results":[...]}`. The legacy
+`{"locationid":N}` shape is **deprecated**; callers should use `?limit=1` and
+read `results[0].id`.
 
 **Polygon limits:** WKT polygons are capped at 100 KB and 10 000 vertices (HTTP
 400 if exceeded).
@@ -100,7 +96,7 @@ schedules:
   datasets with a "modified"/timestamp trigger; a periodic full rebuild (every
   **15 min**) for the rebuild-only datasets (`userapproxlocs`, `groups`).
 
-`last_sync` for each dataset is visible via `GET /v1/{dataset}/status`.
+Sync state is logged at startup and on each rebuild/delta cycle.
 
 ---
 

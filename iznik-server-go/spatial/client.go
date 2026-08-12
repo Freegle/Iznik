@@ -116,39 +116,6 @@ func KNN(dataset string, lng, lat float64, limit int, typeFilter string) ([]Quer
 	return out.Results, nil
 }
 
-// Within calls GET /v1/:dataset/within and returns all item IDs intersecting the WKT polygon.
-func Within(dataset, polygonWKT string) ([]int64, error) {
-	params := url.Values{"polygon": {polygonWKT}}
-	reqURL := fmt.Sprintf("%s/v1/%s/within?%s", baseURL(), url.PathEscape(dataset), params.Encode())
-
-	resp, err := httpClient.Get(reqURL)
-	if err != nil {
-		return nil, fmt.Errorf("spatial Within %s: %w", dataset, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		return nil, fmt.Errorf("spatial dataset %q not ready", dataset)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("spatial Within %s: HTTP %d: %s", dataset, resp.StatusCode, body)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("spatial Within %s read body: %w", dataset, err)
-	}
-
-	var out struct {
-		IDs []int64 `json:"ids"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("spatial Within %s parse: %w", dataset, err)
-	}
-	return out.IDs, nil
-}
-
 // ReachContaining calls GET /v1/reach/containing: all live reaches covering
 // the point. `in` are definite; `partial` fall in the raster boundary band
 // and the caller must exact-test them against rippling_reach.polygon.

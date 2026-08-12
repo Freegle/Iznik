@@ -19,8 +19,10 @@ import (
 )
 
 // swaggerAllowlist contains paths that are intentionally absent from one side.
-// Entries are path prefixes. Keep this list minimal: only true infrastructure
-// routes that are never going to be in swagger.json belong here.
+// Entries are exact normalised paths (not prefixes, so an allowlist entry can
+// never accidentally mask drift on a route that merely shares a prefix). Keep
+// this list minimal: only true infrastructure routes that are never going to be
+// in swagger.json belong here.
 var swaggerAllowlist = map[string]bool{
 	// Swagger UI and spec served by the framework itself.
 	"/swagger": true,
@@ -55,9 +57,10 @@ func normaliseParam(path string) string {
 	return re.ReplaceAllString(path, `{$1}`)
 }
 
-// extractRegisteredRoutes reads routes.go and returns a set of normalised paths.
-// It handles the main rg.Method() registrations and known sub-group variables
-// defined in routeGroupPrefixes.
+// extractRegisteredRoutes reads routes.go and returns a set of "METHOD /path"
+// keys (normalised), so drift in the HTTP method is caught as well as drift in
+// the path. It handles the main rg.Method() registrations and known sub-group
+// variables defined in routeGroupPrefixes.
 func extractRegisteredRoutes(routesFile string) (map[string]bool, error) {
 	data, err := os.ReadFile(routesFile)
 	if err != nil {
@@ -72,6 +75,7 @@ func extractRegisteredRoutes(routesFile string) (map[string]bool, error) {
 	paths := make(map[string]bool)
 	for _, m := range matches {
 		varName := string(m[1])
+		method := strings.ToUpper(string(m[2]))
 		rawPath := string(m[3])
 
 		// Determine prefix for this variable.
@@ -100,12 +104,13 @@ func extractRegisteredRoutes(routesFile string) (map[string]bool, error) {
 			continue
 		}
 		normalised := normaliseParam(fullPath)
-		paths[normalised] = true
+		paths[method+" "+normalised] = true
 	}
 	return paths, nil
 }
 
-// extractSwaggerPaths reads swagger.json and returns a set of path strings.
+// extractSwaggerPaths reads swagger.json and returns a set of "METHOD /path"
+// keys, one per operation documented under each path.
 func extractSwaggerPaths(swaggerFile string) (map[string]bool, error) {
 	data, err := os.ReadFile(swaggerFile)
 	if err != nil {
@@ -113,27 +118,37 @@ func extractSwaggerPaths(swaggerFile string) (map[string]bool, error) {
 	}
 
 	var spec struct {
-		Paths map[string]json.RawMessage `json:"paths"`
+		Paths map[string]map[string]json.RawMessage `json:"paths"`
 	}
 	if err := json.Unmarshal(data, &spec); err != nil {
 		return nil, fmt.Errorf("parsing swagger.json: %w", err)
 	}
 
+	httpMethods := map[string]bool{
+		"get": true, "put": true, "post": true, "delete": true,
+		"options": true, "head": true, "patch": true,
+	}
+
 	paths := make(map[string]bool, len(spec.Paths))
-	for p := range spec.Paths {
-		paths[p] = true
+	for p, ops := range spec.Paths {
+		for op := range ops {
+			// A path item can also carry "parameters"/"$ref"; only operations count.
+			if httpMethods[strings.ToLower(op)] {
+				paths[strings.ToUpper(op)+" "+p] = true
+			}
+		}
 	}
 	return paths, nil
 }
 
-// isAllowlisted returns true when path starts with any allowlisted prefix.
-func isAllowlisted(path string) bool {
-	for prefix := range swaggerAllowlist {
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
+// isAllowlisted returns true when the path part of a "METHOD /path" key is an
+// exact allowlist entry.
+func isAllowlisted(key string) bool {
+	path := key
+	if _, p, ok := strings.Cut(key, " "); ok {
+		path = p
 	}
-	return false
+	return swaggerAllowlist[path]
 }
 
 // TestSwaggerSync fails if routes.go and swagger.json have mismatched paths.

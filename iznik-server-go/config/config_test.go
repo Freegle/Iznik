@@ -8,6 +8,7 @@ package config
 // that reaches a DB call would panic.
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -131,6 +132,62 @@ func TestRequireSupportOrAdminMiddleware_VariousInvalidAuths(t *testing.T) {
 				"header=%q should yield 401", tc.header)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// PatchAdminConfig — pre-DB validation paths
+// ---------------------------------------------------------------------------
+
+func newPatchConfigApp() *fiber.App {
+	app := newApp()
+	app.Patch("/config/admin", PatchAdminConfig)
+	return app
+}
+
+func TestPatchAdminConfig_InvalidJSONBody_Returns400(t *testing.T) {
+	resp := doJSON(t, newPatchConfigApp(), "PATCH", "/config/admin", "{not valid json!!!}")
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestPatchAdminConfig_EmptyObject_Returns400(t *testing.T) {
+	// Empty JSON object {} → len(body) == 0 → "No config keys provided" → 400.
+	resp := doJSON(t, newPatchConfigApp(), "PATCH", "/config/admin", "{}")
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "No config keys provided")
+}
+
+func TestPatchAdminConfig_OnlyModtoolsKey_ReturnsSuccess(t *testing.T) {
+	// Body with only the "modtools" key → that key is skipped → loop is a no-op
+	// → returns 200 without touching the DB.
+	resp := doJSON(t, newPatchConfigApp(), "PATCH", "/config/admin", `{"modtools":{"x":1}}`)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	body, _ := io.ReadAll(resp.Body)
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &m))
+	assert.Equal(t, float64(0), m["ret"])
+	assert.Equal(t, "Success", m["status"])
+}
+
+func TestPatchAdminConfig_ModtoolsStringValue_ReturnsSuccess(t *testing.T) {
+	// String modtools value — same no-op behaviour.
+	resp := doJSON(t, newPatchConfigApp(), "PATCH", "/config/admin", `{"modtools":"ignored"}`)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestPatchAdminConfig_ModtoolsBoolValue_ReturnsSuccess(t *testing.T) {
+	resp := doJSON(t, newPatchConfigApp(), "PATCH", "/config/admin", `{"modtools":true}`)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+}
+
+func TestPatchAdminConfig_NoBody_Returns400(t *testing.T) {
+	req := httptest.NewRequest("PATCH", "/config/admin", nil)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := newPatchConfigApp().Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
 // ---------------------------------------------------------------------------
