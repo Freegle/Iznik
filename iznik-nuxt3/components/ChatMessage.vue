@@ -114,7 +114,31 @@
       class="mt-1"
       data-testid="rippling-held-badge"
     >
-      Held: rippling out
+      Held: rippling out<span v-if="ripplingHeldFor">
+        ({{ ripplingHeldFor }})</span
+      >
+    </b-badge>
+    <!-- A hold that has ENDED. ripplinghold is only ever sent to moderators, so this is
+         inherently mod-only and needs no myid guard - a member never has the field. Without
+         it a delayed or binned reply looks like an ordinary one, which is how a 47-hour
+         rippling hold got reported as a mail fault (Discourse 10025). -->
+    <b-badge
+      v-if="ripplingEnded"
+      :variant="chatmessage?.ripplinghold?.delivered ? 'warning' : 'danger'"
+      class="mt-1"
+      data-testid="rippling-ended-badge"
+    >
+      <span v-if="chatmessage?.ripplinghold?.delivered">
+        Held as too far for: {{ ripplingHeldFor }}
+      </span>
+      <span v-else-if="chatmessage?.ripplinghold?.status === 'taken-gone'">
+        Never delivered: held as too far for {{ ripplingHeldFor }}, item went
+      </span>
+      <!-- 'dropped' is not produced anywhere - see the note in ModChatReview.vue.
+           Kept as a safety net so an unexpected status is not silently invisible. -->
+      <span v-else>
+        Never delivered: held as too far for {{ ripplingHeldFor }}
+      </span>
     </b-badge>
     <chat-message-warning v-if="phoneNumber" />
     <chat-message-date-read :id="id" :chatid="chatid" :last="last" :pov="pov" />
@@ -176,6 +200,7 @@ import ChatMessageModMail from './ChatMessageModMail'
 import ChatMessageReminder from './ChatMessageReminder'
 import { setupChat } from '~/composables/useChat'
 import { useChatStore } from '~/stores/chat'
+import { durationMinutes } from '~/composables/useTimeFormat'
 import { ref, computed } from '#imports'
 import SupportLink from '~/components/SupportLink.vue'
 import ChatMessageWarning from '~/components/ChatMessageWarning'
@@ -233,6 +258,22 @@ const showConfirmModal = ref(false)
 const { chat, otheruser, chatmessage } = await setupChat(props.chatid, props.id)
 
 // Computed properties
+
+// Rippling reply-hold, mod-only (the API sends ripplinghold to moderators only). heldminutes
+// is server-computed, so a still-open hold does not depend on this device's clock.
+const ripplingHeldFor = computed(() =>
+  durationMinutes(chatmessage.value?.ripplinghold?.heldminutes)
+)
+
+// A hold that has finished, whichever way it finished. 'held' is covered by the existing
+// heldbyrippling badge, so this is only the terminal states.
+const ripplingEnded = computed(() => {
+  const status = chatmessage.value?.ripplinghold?.status
+  return (
+    status === 'released' || status === 'taken-gone' || status === 'dropped'
+  )
+})
+
 const phoneNumber = computed(() => {
   let ret = false
 
