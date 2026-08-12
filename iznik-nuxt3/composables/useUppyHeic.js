@@ -24,6 +24,7 @@
 // ~3MB, so it is dynamically imported and only ever fetched by someone who
 // actually picks a HEIC file.
 import { action } from '~/composables/useClientLog'
+import { withTimeout } from '~/composables/usePromiseTimeout'
 
 const HEIC_MIME_TYPES = [
   'image/heic',
@@ -53,17 +54,6 @@ export function isHeicFile(file) {
 function toJpegName(name) {
   if (!name) return 'photo.jpg'
   return name.replace(/\.(heic|heif)$/i, '') + '.jpg'
-}
-
-function withTimeout(promise, ms) {
-  let timer = null
-  const timeout = new Promise((resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('HEIC conversion timed out')), ms)
-  })
-
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timer) clearTimeout(timer)
-  })
 }
 
 // Returns an Uppy pre-processor which converts any HEIC files in the batch to
@@ -118,7 +108,8 @@ export function createHeicPreProcessor({ getUppy, uploader }) {
 
         const blob = await withTimeout(
           heicTo({ blob: file.data, type: 'image/jpeg', quality: 0.92 }),
-          CONVERT_TIMEOUT_MS
+          CONVERT_TIMEOUT_MS,
+          'HEIC conversion timed out'
         )
 
         if (!blob?.size) throw new Error('HEIC conversion produced no data')

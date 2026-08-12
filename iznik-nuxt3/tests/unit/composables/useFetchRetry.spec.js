@@ -452,7 +452,6 @@ describe('useFetchRetry', () => {
   describe('retry delay calculation', () => {
     it('should use exponential delay: attempt * 1000', async () => {
       const responseData = { success: true }
-      const delayCalls = []
 
       mockFetch
         .mockRejectedValueOnce(new Error('Network error'))
@@ -486,10 +485,115 @@ describe('useFetchRetry', () => {
       })
 
       const retryFetch = fetchRetry(mockFetch)
-      const init = { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+      const init = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }
       await retryFetch('http://test.com/api', init)
 
       expect(mockFetch).toHaveBeenCalledWith('http://test.com/api', init)
+    })
+  })
+
+  // retryOn() used to await waitForOnline() as its very first act, before it
+  // had even looked at what came back.  A member whose connection dropped in
+  // the moment between sending a request and its reply arriving therefore had
+  // a perfectly good response thrown away: the online check never resolved, so
+  // the success branch was never reached and the promise never settled.
+  //
+  // Live case (2026-08-10, user 3512849): POST /apiv2/image returned 200 with
+  // image id 45508630, the app flipped offline, and PhotoUploader's
+  // `await imageStore.post()` never returned.  The photo stayed uploading:true
+  // at 100%, compose persisted it, and because the give flow gates Next on
+  // anyUploading she could not post at all until the app's storage was
+  // cleared.  Waiting for the connection is only meaningful before we make
+  // another attempt, never before reading a reply we already hold.
+  describe('connection loss while a response is in flight', () => {
+    it('delivers a response that has already arrived even if the connection check never resolves', async () => {
+      miscStore.waitForOnline = vi.fn(() => new Promise(() => {}))
+
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: vi.fn().mockResolvedValueOnce({ id: 45508630 }),
+      })
+
+      const retryFetch = fetchRetry(mockFetch)
+
+      let settled = null
+      retryFetch('http://test.com/image').then(
+        (r) => {
+          settled = r
+        },
+        (e) => {
+          settled = e
+        }
+      )
+
+      await vi.waitFor(() => expect(settled).not.toBeNull(), { timeout: 2000 })
+
+      expect(settled).toEqual([200, { id: 45508630 }])
+    })
+
+    it('reports a client error that has already arrived even if the connection check never resolves', async () => {
+      miscStore.waitForOnline = vi.fn(() => new Promise(() => {}))
+
+      mockFetch.mockResolvedValueOnce({
+        status: 404,
+        json: vi.fn().mockResolvedValueOnce({ error: 'nope' }),
+      })
+
+      const retryFetch = fetchRetry(mockFetch)
+
+      let settled = null
+      retryFetch('http://test.com/image').then(
+        () => {
+          settled = 'resolved'
+        },
+        (e) => {
+          settled = e
+        }
+      )
+
+      await vi.waitFor(() => expect(settled).not.toBeNull(), { timeout: 2000 })
+
+      expect(settled).toBeInstanceOf(Error)
+      expect(settled).not.toBe('resolved')
+    })
+
+    it('still waits for the connection before making another attempt', async () => {
+      let releaseOnline
+      const onlineGate = new Promise((resolve) => {
+        releaseOnline = resolve
+      })
+      miscStore.waitForOnline = vi.fn(() => onlineGate)
+
+      mockFetch
+        .mockRejectedValueOnce(new Error('Failed to fetch'))
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce({ ok: true }),
+        })
+
+      const retryFetch = fetchRetry(mockFetch)
+
+      let settled = null
+      retryFetch('http://test.com/image').then((r) => {
+        settled = r
+      })
+
+      // First attempt failed, so we are about to retry - and must not until we
+      // believe we have a connection again.
+      await vi.waitFor(
+        () => expect(miscStore.waitForOnline).toHaveBeenCalled(),
+        { timeout: 2000 }
+      )
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(settled).toBeNull()
+
+      releaseOnline()
+
+      await vi.waitFor(() => expect(settled).not.toBeNull(), { timeout: 5000 })
+      expect(settled).toEqual([200, { ok: true }])
     })
   })
 })
