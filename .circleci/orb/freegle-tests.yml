@@ -4226,11 +4226,26 @@ jobs:
       # got no Play beta artifact at all while its iOS half built fine.
       #
       # A distribution is immutable for a given version, so key on the wrapper
-      # properties that name it and take no fallback - a version bump must
-      # fetch fresh rather than restore the previous zip.
+      # properties that name it. Both keys pin that same checksum, so a Gradle
+      # version bump can never restore the previous version's zip - it fetches
+      # fresh, which is what we want.
+      #
+      # The second key matters because the first one is COLD on the release that
+      # follows this change: gradle-dist-v1 is written only by this job's
+      # save_cache below, and this job runs only on the production branch. So on
+      # its own it would leave the next release doing the very 200MB download
+      # this is meant to remove, and would reset the same way on every Gradle
+      # bump. build-android-debug and build-android-dev, however, already save
+      # ~/.gradle/caches + ~/.gradle/wrapper (which holds wrapper/dists) after
+      # running gradlew, on the same android-executor and working directory, on
+      # every branch bar production/modtools - so that cache is kept warm from
+      # master continuously. CircleCI caches are project-scoped and restore
+      # across branches, so falling back to it gives this job an unpacked
+      # distribution on the first release after merge rather than the second.
       - restore_cache:
           keys:
             - gradle-dist-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-
       - restore_cache:
           keys:
             - bundle-v1-{{ checksum "Gemfile.lock" }}

@@ -42,7 +42,14 @@ orbs:
   # download. Pipeline #10729 on production 4140acbb3 lost it to
   # "java.net.SocketException: Connection reset", which failed bundleRelease and
   # left that commit with an iOS build but no Play beta artifact.
-  freegle: freegle/tests@1.1.374
+  #
+  # 1.1.375 makes that cache warm on the FIRST release rather than the second.
+  # build-android runs only on production and is the only writer of the
+  # gradle-dist key, so a restore keyed on it alone misses on the next release
+  # and downloads anyway; it now also falls back to the gradle-deps cache that
+  # build-android-debug/-dev keep warm from master, which already contains the
+  # unpacked distribution.
+  freegle: freegle/tests@1.1.375
 
 jobs:
   mark-ci-passed:
