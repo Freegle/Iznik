@@ -173,9 +173,9 @@
          depth 2+ replies mounting. When the nested list reports that its
          whole subtree has mounted, this reply's subtree is complete too.
          In the feed the children are suppressed and nothing stands in for
-         them: the card's own "View all N replies" link already counts and
-         names the whole tree, so a second counted link here would only
-         offer a subset of the same conversation under a smaller number. -->
+         them here: recent ones are rows of their own in the card's
+         time-ordered tail, and the card's "View all N replies" link counts
+         and names the rest of the tree. -->
     <NewsReplies
       v-if="reply?.replies?.length && !suppressChildren"
       :id="id"
@@ -390,8 +390,10 @@ const props = defineProps({
     type: Number,
     required: true,
   },
-  // Feed cards keep nested conversations behind a counted link instead of
-  // rendering them inline (set by NewsReplies in feed context).
+  // Feed cards render the recent part of a nested conversation as rows of the
+  // card's own tail rather than inline under the parent, so the inline list is
+  // suppressed to stop those replies appearing twice (set by NewsReplies in
+  // feed context).
   suppressChildren: {
     type: Boolean,
     required: false,
