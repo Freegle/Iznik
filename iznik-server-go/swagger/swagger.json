@@ -1005,6 +1005,48 @@
         ]
       }
     },
+    "/chat/{id}/message/{mid}/prompt": {
+      "post": {
+        "description": "Records the member's answer to a type='Prompt' chat message and applies it to\nthe posts the prompt covers. Only the member the prompt was sent to may\nanswer, and only once.",
+        "tags": [
+          "chat"
+        ],
+        "summary": "Answer a Freegle chat prompt",
+        "operationId": "postChatPromptAnswer",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Chat ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "integer",
+            "description": "Chat message ID",
+            "name": "mid",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
     "/chatmessages": {
       "get": {
         "description": "Returns review queue messages or messages from a specific chat room",
@@ -3930,6 +3972,36 @@
         }
       }
     },
+    "/message/{id}/searchmatches": {
+      "get": {
+        "description": "Candidate set for the matched-posts email: members whose saved search matches\nthis post, scored at the same MinMatchedPostScore threshold the matched-posts\nemail itself uses (both compare stored document embeddings, so the number\nmeans the same thing on both).",
+        "tags": [
+          "message"
+        ],
+        "summary": "Members whose saved search matches a given post",
+        "operationId": "getMessageSearchMatches",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Message ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "integer",
+            "description": "Max results (default 10, max 100)",
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          }
+        }
+      }
+    },
     "/message/{id}/similar": {
       "get": {
         "description": "Returns open posts of the same type that are semantically similar to the\ngiven post, for a \"more like this nearby\" recommendation strip.",
@@ -5467,6 +5539,565 @@
         }
       }
     },
+    "/partnership": {
+      "get": {
+        "description": "Returns every partnership (sponsorship deal with a local authority), the\ndeal running out soonest last. Partnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "List partnerships",
+        "operationId": "listPartnerships",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Creates a sponsorship deal with a local authority, and derives the groups it\ncovers from the authority's boundary. Partnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Create a partnership",
+        "operationId": "createPartnership",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/statsfile/{id}": {
+      "get": {
+        "description": "Streams one rendered spreadsheet (xlsx) belonging to a completed statistics\ngeneration job. Partnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Download a generated statistics spreadsheet",
+        "operationId": "getPartnershipStatsFile",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "File ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/statsjob": {
+      "get": {
+        "description": "Returns the recent quarterly-statistics generation runs with the files each\nproduced, which is what the page polls while a run is in progress.\nPartnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "List authority statistics generation jobs",
+        "operationId": "listPartnershipStatsJobs",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "description": "Queues a quarterly statistics spreadsheet generation run for one or more\nauthorities; the Laravel scheduler renders the spreadsheets asynchronously.\nPartnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Queue authority statistics generation",
+        "operationId": "createPartnershipStatsJob",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/statsjob/{id}": {
+      "delete": {
+        "description": "Discards a generation run and the spreadsheets it produced. Partnerships\nteam, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Delete a statistics generation job",
+        "operationId": "deletePartnershipStatsJob",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Job ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/summary": {
+      "get": {
+        "description": "Totals the partnership income and splits it by financial year, which is what\nthe page's headline figures and its income graph are drawn from. Partnerships\nteam, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Partnership income totals and financial-year split",
+        "operationId": "getPartnershipSummary",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/{id}": {
+      "get": {
+        "description": "Returns one partnership with the groups it covers, its financial-year split\nand its payments. Partnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Get a partnership",
+        "operationId": "getPartnership",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "description": "Removes a partnership. Its sponsorship rows go too, so the council stops\nappearing on the member site straight away; years, payments and group links\ncascade in the schema. Partnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Delete a partnership",
+        "operationId": "deletePartnership",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "description": "Changes a partnership and re-syncs its sponsorship rows, so editing the\ntagline, the link or the dates immediately changes what members see.\nPartnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Update a partnership",
+        "operationId": "patchPartnership",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/{id}/group": {
+      "get": {
+        "description": "Returns the groups a partnership covers, alongside the groups the authority's\nboundary suggests, so a mistake in the overlap can be corrected by hand.\nPartnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "List the groups a partnership covers",
+        "operationId": "getPartnershipGroups",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "description": "Adds or removes a group from a partnership, or re-derives the whole list from\nthe authority boundary. Partnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Change the groups a partnership covers",
+        "operationId": "patchPartnershipGroups",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/{id}/payment": {
+      "post": {
+        "description": "Records an invoice against a partnership. Partnerships team, Support or Admin\nonly.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Add a payment to a partnership",
+        "operationId": "createPartnershipPayment",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/{id}/payment/{paymentid}": {
+      "delete": {
+        "description": "Removes an invoice. Partnerships team, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Delete a payment",
+        "operationId": "deletePartnershipPayment",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "integer",
+            "description": "Payment ID",
+            "name": "paymentid",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "description": "Edits an invoice - most often to mark it paid. Partnerships team, Support or\nAdmin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Update a payment",
+        "operationId": "updatePartnershipPayment",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "integer",
+            "description": "Payment ID",
+            "name": "paymentid",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/partnership/{id}/year": {
+      "put": {
+        "description": "Replaces the explicit financial-year split for a multi-year deal. Sending an\nempty list drops back to pro-rating the deal across its term. Partnerships\nteam, Support or Admin only.",
+        "tags": [
+          "partnerships"
+        ],
+        "summary": "Set the financial-year split of a partnership",
+        "operationId": "putPartnershipYears",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Partnership ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
     "/rippling/analytics": {
       "get": {
         "description": "On-the-fly sysadmin rippling analytics KPIs: reply/take rates, trends and\nrippled-out-vs-home comparisons. Reads stratum, start and end query params\n(defaults to the last 30 days). Support/Admin only.",
@@ -5587,6 +6218,40 @@
         "responses": {
           "200": {
             "$ref": "#/responses/successResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/rippling/density": {
+      "get": {
+        "description": "Posts, reach budget asked for vs reached, audience, reply and taken counts,\nand held replies, per density band. Support/Admin only.",
+        "tags": [
+          "rippling"
+        ],
+        "summary": "Reach outcomes by local freegler density",
+        "operationId": "getRipplingDensity",
+        "parameters": [
+          {
+            "type": "integer",
+            "description": "Window length in days (default 30, max 365)",
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
           },
           "403": {
             "$ref": "#/responses/errorResponse"

@@ -5401,3 +5401,428 @@ type housekeeperTasksResponse struct {
 //	200: successResponse
 //	401: errorResponse
 //	403: errorResponse
+
+// swagger:route GET /message/{id}/searchmatches message getMessageSearchMatches
+// Members whose saved search matches a given post
+//
+// Candidate set for the matched-posts email: members whose saved search matches
+// this post, scored at the same MinMatchedPostScore threshold the matched-posts
+// email itself uses (both compare stored document embeddings, so the number
+// means the same thing on both).
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: Max results (default 10, max 100)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /chat/{id}/message/{mid}/prompt chat postChatPromptAnswer
+// Answer a Freegle chat prompt
+//
+// Records the member's answer to a type='Prompt' chat message and applies it to
+// the posts the prompt covers. Only the member the prompt was sent to may
+// answer, and only once.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Chat ID
+//     required: true
+//     type: integer
+//   + name: mid
+//     in: path
+//     description: Chat message ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+
+// swagger:route GET /rippling/density rippling getRipplingDensity
+// Reach outcomes by local freegler density
+//
+// Posts, reach budget asked for vs reached, audience, reply and taken counts,
+// and held replies, per density band. Support/Admin only.
+//
+// Parameters:
+//   + name: days
+//     in: query
+//     description: Window length in days (default 30, max 365)
+//     required: false
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// ============================================================================
+// Partnership (ModTools sponsorship deals with local authorities)
+// ============================================================================
+
+// swagger:route GET /partnership partnerships listPartnerships
+// List partnerships
+//
+// Returns every partnership (sponsorship deal with a local authority), the
+// deal running out soonest last. Partnerships team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /partnership partnerships createPartnership
+// Create a partnership
+//
+// Creates a sponsorship deal with a local authority, and derives the groups it
+// covers from the authority's boundary. Partnerships team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/{id} partnerships getPartnership
+// Get a partnership
+//
+// Returns one partnership with the groups it covers, its financial-year split
+// and its payments. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route PATCH /partnership/{id} partnerships patchPartnership
+// Update a partnership
+//
+// Changes a partnership and re-syncs its sponsorship rows, so editing the
+// tagline, the link or the dates immediately changes what members see.
+// Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route DELETE /partnership/{id} partnerships deletePartnership
+// Delete a partnership
+//
+// Removes a partnership. Its sponsorship rows go too, so the council stops
+// appearing on the member site straight away; years, payments and group links
+// cascade in the schema. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/{id}/group partnerships getPartnershipGroups
+// List the groups a partnership covers
+//
+// Returns the groups a partnership covers, alongside the groups the authority's
+// boundary suggests, so a mistake in the overlap can be corrected by hand.
+// Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route PATCH /partnership/{id}/group partnerships patchPartnershipGroups
+// Change the groups a partnership covers
+//
+// Adds or removes a group from a partnership, or re-derives the whole list from
+// the authority boundary. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route PUT /partnership/{id}/year partnerships putPartnershipYears
+// Set the financial-year split of a partnership
+//
+// Replaces the explicit financial-year split for a multi-year deal. Sending an
+// empty list drops back to pro-rating the deal across its term. Partnerships
+// team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route POST /partnership/{id}/payment partnerships createPartnershipPayment
+// Add a payment to a partnership
+//
+// Records an invoice against a partnership. Partnerships team, Support or Admin
+// only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route PATCH /partnership/{id}/payment/{paymentid} partnerships updatePartnershipPayment
+// Update a payment
+//
+// Edits an invoice - most often to mark it paid. Partnerships team, Support or
+// Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//   + name: paymentid
+//     in: path
+//     description: Payment ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route DELETE /partnership/{id}/payment/{paymentid} partnerships deletePartnershipPayment
+// Delete a payment
+//
+// Removes an invoice. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//   + name: paymentid
+//     in: path
+//     description: Payment ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/summary partnerships getPartnershipSummary
+// Partnership income totals and financial-year split
+//
+// Totals the partnership income and splits it by financial year, which is what
+// the page's headline figures and its income graph are drawn from. Partnerships
+// team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/statsjob partnerships listPartnershipStatsJobs
+// List authority statistics generation jobs
+//
+// Returns the recent quarterly-statistics generation runs with the files each
+// produced, which is what the page polls while a run is in progress.
+// Partnerships team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /partnership/statsjob partnerships createPartnershipStatsJob
+// Queue authority statistics generation
+//
+// Queues a quarterly statistics spreadsheet generation run for one or more
+// authorities; the Laravel scheduler renders the spreadsheets asynchronously.
+// Partnerships team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route DELETE /partnership/statsjob/{id} partnerships deletePartnershipStatsJob
+// Delete a statistics generation job
+//
+// Discards a generation run and the spreadsheets it produced. Partnerships
+// team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Job ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/statsfile/{id} partnerships getPartnershipStatsFile
+// Download a generated statistics spreadsheet
+//
+// Streams one rendered spreadsheet (xlsx) belonging to a completed statistics
+// generation job. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: File ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
