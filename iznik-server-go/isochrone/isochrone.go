@@ -208,10 +208,14 @@ func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uin
 		// original ExecInsertGetID's res.LastInsertId() exactly, including staying 0 when INSERT
 		// IGNORE skips a pre-existing row - the isoID == 0 fallback below still depends on that.
 		res := gorm.WithResult()
+		// ST_SRID(geometry, SRID) re-tags the copied location geometry: locations rows have
+		// carried SRID 0 in the past (Mar-Apr 2026 rows did), and a raw copy then poisons
+		// every later ST_Contains against this isochrone with error 3033. Re-tagging is a
+		// no-op for correctly-tagged rows and NULL-safe, so COALESCE still falls through.
 		tx := database.InsertSelect(db.Clauses(res, clause.Insert{Modifier: "IGNORE"}), "isochrones",
 			"(locationid, transport, minutes, polygon) "+
-				"SELECT ?, ?, ?, COALESCE(geometry, ST_GeomFromText(CONCAT('POINT(', lng, ' ', lat, ')'), ?)) FROM locations WHERE id = ?",
-			locationid, transport, minutes, utils.SRID, locationid)
+				"SELECT ?, ?, ?, COALESCE(ST_SRID(geometry, ?), ST_GeomFromText(CONCAT('POINT(', lng, ' ', lat, ')'), ?)) FROM locations WHERE id = ?",
+			locationid, transport, minutes, utils.SRID, utils.SRID, locationid)
 		if tx.Error != nil {
 			log.Printf("Failed to create fallback isochrone for location %d: %v", locationid, tx.Error)
 			return 0
