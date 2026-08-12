@@ -154,8 +154,14 @@
         variant="info"
         class="reply-card__reach-blocked"
       >
-        This hasn't reached your area yet — but go ahead and reply. We'll pass
-        it on to the owner as soon as it does.
+        <span v-if="reachNotice" data-testid="reach-blocked-eta">
+          This hasn't reached your area yet, but go ahead and reply.
+          {{ reachNotice }}
+        </span>
+        <span v-else>
+          This hasn't reached your area yet — but go ahead and reply. We'll pass
+          it on to the owner as soon as it does.
+        </span>
       </NoticeMessage>
 
       <!-- Composer: matches the real chat footer. The fields scroll inside
@@ -345,6 +351,7 @@ import UserRatings from '~/components/UserRatings'
 import SupporterInfo from '~/components/SupporterInfo'
 import { timeago } from '~/composables/useTimeFormat'
 import { rippledInAreaDates } from '~/composables/rippleStatus'
+import { reachNoticeSentence } from '~/composables/reachArrival'
 import {
   FAR_AWAY,
   LAST_SEEN_TOOLTIP,
@@ -418,6 +425,15 @@ const message = computed(() => {
 // visible to this viewer but its reach hasn't reached them yet. Gate the composer so no entry
 // path shows a reply box whose send the server-side reach check would reject.
 const reachBlocked = computed(() => message.value?.replyeligible === false)
+
+// When the post is due to reach here, as a sentence. Null when the API sent no
+// estimate, in which case the notice falls back to saying only that we'll pass it on.
+const reachNotice = computed(() =>
+  reachNoticeSentence(
+    message.value?.reachesyouat,
+    message.value?.reachesyoufully
+  )
+)
 
 const attachmentCount = computed(() => message.value?.attachments?.length || 0)
 

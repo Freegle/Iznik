@@ -37,8 +37,9 @@
       Yes. Most posts you see have already reached your area. If you come across
       one that hasn't quite reached you yet - because you've widened the
       distance, changed the sort, or chosen a different view - go ahead and
-      reply anyway. We'll hold your reply and pass it on to the owner the moment
-      the post reaches you.
+      reply anyway. We hold it briefly so that people closer to the item get
+      first go, then pass yours on. We'll tell you roughly how long that will be
+      before you send, and it's usually well under an hour.
     </p>
     <h5>Why don't I see posts that are too far away?</h5>
     <p>

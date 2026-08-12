@@ -29,6 +29,12 @@ class RippleReplyServiceTest extends TestCase
 
     private function seedReachedPost(): int
     {
+        return $this->seedReachedPostWith(self::POLY, 51.5, -0.1);
+    }
+
+    /** As seedReachedPost, with the reach geometry and origin chosen by the caller. */
+    private function seedReachedPostWith(string $poly, float $lat, float $lng): int
+    {
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $message = $this->createTestMessage($user, $group);
@@ -36,8 +42,8 @@ class RippleReplyServiceTest extends TestCase
             "INSERT INTO rippling_reach
                (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::POLY, self::POLY]
+             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, $poly, $poly]
         );
 
         return (int) $message->id;
@@ -155,7 +161,68 @@ class RippleReplyServiceTest extends TestCase
         $this->assertNotEquals($cmid, $sys->id, 'the notice is a new message, not the held reply');
     }
 
-    public function test_delay_grows_with_distance_from_the_item_and_is_capped(): void
+    /**
+     * The buffer band hugs the reach boundary, so what sets the wait is how far PAST THE
+     * EDGE somebody is, not how far the item happens to be. Two repliers the same short
+     * distance outside two different reaches are the same kind of near-miss and must wait
+     * the same, even when one item is four miles away and the other nearly fifty.
+     *
+     * This is the case the old measure got backwards. On live rows it charged a replier
+     * 0.79 miles outside the boundary 83 minutes because the item was 22.7 miles off,
+     * while another 0.68 miles outside waited 35 - the size of the isochrone deciding the
+     * wait rather than the person.
+     */
+    public function test_delay_is_set_by_distance_past_the_edge_not_distance_to_the_item(): void
+    {
+        config([
+            'freegle.ripple.reply_delay.enabled' => true,
+            'freegle.ripple.reply_delay.base_minutes' => 15,
+            'freegle.ripple.reply_delay.per_mile_minutes' => 3,
+            'freegle.ripple.reply_delay.max_minutes' => 180,
+        ]);
+
+        // Both reaches end at lng 0.0 on the eastern side, so a replier at lng 0.1 is the
+        // same distance past the edge of each. The origins are not: the small reach is
+        // centred 0.1 degrees from its edge, the wide one a full degree.
+        $small = $this->seedReachedPostWith(self::POLY, 51.5, -0.1);
+        $wide = $this->seedReachedPostWith(
+            'POLYGON((-2.0 51.4, 0.0 51.4, 0.0 51.6, -2.0 51.6, -2.0 51.4))',
+            51.5,
+            -1.0
+        );
+
+        $justOutside = [51.5, 0.1];
+        [$smallRow] = $this->seedHeldReply($small, $justOutside);
+        [$wideRow] = $this->seedHeldReply($wide, $justOutside);
+
+        $waitFor = function (int $rowId): float {
+            $row = DB::table('rippling_held_replies')->where('id', $rowId)->first();
+
+            return (strtotime($row->dueat) - strtotime($row->created_at)) / 60.0;
+        };
+
+        $smallWait = $waitFor($smallRow);
+        $wideWait = $waitFor($wideRow);
+
+        // Same near-miss, same wait. A minute of tolerance for the geographic distance
+        // being computed per row rather than compared symbolically.
+        $this->assertEqualsWithDelta(
+            $smallWait,
+            $wideWait,
+            1.0,
+            'the wait comes from the distance past the edge, which is equal here'
+        );
+
+        // And it is genuinely the edge distance being used, not a constant: 0.1 degrees of
+        // longitude at this latitude is about 4.3 miles, so about 28 minutes.
+        $this->assertEqualsWithDelta(15.0 + 3 * 4.3, $smallWait, 3.0);
+
+        // Under the old measure the wide reach's replier would have been charged for the
+        // ~47 miles back to the item, so this pins the regression rather than the value.
+        $this->assertLessThan(60.0, $wideWait, 'a near-miss is not charged for a distant item');
+    }
+
+    public function test_delay_grows_with_distance_past_the_edge_and_is_capped(): void
     {
         config([
             'freegle.ripple.reply_delay.base_minutes' => 15,
@@ -164,9 +231,10 @@ class RippleReplyServiceTest extends TestCase
         ]);
         $svc = $this->service();
 
-        // Someone on the doorstep still waits the base delay - locals go first.
+        // On the boundary itself, and anyone inside it, still waits the base delay -
+        // locals go first.
         $this->assertSame(15.0, $svc->delayMinutesForMiles(0.0));
-        // Just past the boundary of a 30-minute reach: a little after locals, not days.
+        // Sixteen miles beyond the edge: a little after locals, not days.
         $this->assertSame(15.0 + 3 * 16.0, $svc->delayMinutesForMiles(16.0));
         // Two counties away: capped, so no reply is ever invisible for longer than that.
         $this->assertSame(180.0, $svc->delayMinutesForMiles(500.0));

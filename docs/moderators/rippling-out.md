@@ -98,8 +98,11 @@ is accepted and held rather than turned away. Chat Review shows you it is held b
 rippling (not because you chose to hold it).
 
 You do not need to do anything - the reply releases itself. Every hold has a **due time**,
-worked out from how far the member is from the item: roughly a quarter of an hour plus a
-few minutes per mile, so a typical held reply lands within the hour and none waits longer
+worked out from how far the member is **past the edge of the post's current reach**, not
+from how far they are from the item: roughly a quarter of an hour plus a few minutes per
+mile beyond the boundary. Someone barely outside the line is treated as the near-miss they
+are, whether the post itself is two miles away or twenty, so a typical held reply lands
+within the hour and none waits longer
 than three. If the post ripples out to that member before their time is up, it is released
 then instead. The wait exists to give closer people a head start, not to hold anybody back
 indefinitely - which matters, because most held repliers live somewhere the post would

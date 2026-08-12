@@ -264,6 +264,19 @@ type Message struct {
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
 	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
+	// ReachesYouAt: when this post's rippling reach is expected to arrive at the
+	// viewer, for a post they can see but which has not rippled to them yet. Set only
+	// alongside ReplyEligible=false and only for the reach reason - a viewer blocked
+	// by a ban is not waiting for the ripple, so it stays nil there.
+	//
+	// ReachesYouFully says which question was answered. True: a tick of the post's own
+	// schedule grows far enough to include them, and this is when. False: no tick ever
+	// does, so this is instead when the reach stops expanding - the point their held
+	// reply is passed on regardless. Both are real answers; the second is the common
+	// one, and it is an upper bound rather than a prediction, because a reach also
+	// finishes early when the post gathers enough repliers or is taken.
+	ReachesYouAt    *time.Time `json:"reachesyouat,omitempty" gorm:"-"`
+	ReachesYouFully *bool      `json:"reachesyoufully,omitempty" gorm:"-"`
 	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
 	// (and omitted) for ordinary single-item posts. Bulkcount is len(BulkItems),
 	// exposed so list/summary views can flag a bulk offer cheaply.
@@ -1052,7 +1065,58 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// be reach-eligible if ANY of them is within the post's reach. Extending this to
 		// iterate the member's full location set is future work.
 		latlng := user.GetLatLng(myid)
-		reachBlocked := ReachBlockedSet(ids, float64(latlng.Lat), float64(latlng.Lng))
+		reachBlocked := ReachBlockedOrigins(ids, float64(latlng.Lat), float64(latlng.Lng))
+
+		// When the reach is expected to arrive at this viewer. Worked out here rather
+		// than left to the client because it needs the post's BLURRED ripple origin
+		// and its stored schedule, neither of which the feed ships - only the
+		// resulting date crosses the wire.
+		//
+		// One budget-bounded routing search per blocked post (~40ms at a 30-minute
+		// budget on the UK graph), run concurrently so a feed with several blocked
+		// posts costs one search's latency rather than the sum. Only blocked posts
+		// pay it, which is a small minority of any feed.
+		coverage := make(map[uint64]rippling.Coverage, len(reachBlocked))
+		if len(reachBlocked) > 0 {
+			hazard := rippling.LoadHazardHours(db)
+
+			var covMu sync.Mutex
+			var covWg sync.WaitGroup
+			for msgid, origin := range reachBlocked {
+				if !origin.Ok || origin.Arrival == nil || len(origin.Schedule) == 0 {
+					continue
+				}
+				covWg.Add(1)
+				go func(msgid uint64, origin ReachOrigin) {
+					defer covWg.Done()
+
+					// Search no further than this post's own widest budget: beyond it
+					// the answer is "no tick ever covers you" however far they are, and
+					// the search cost scales with the budget.
+					budget := origin.Schedule[len(origin.Schedule)-1].DriveMin
+					dt, ok := rippling.FetchDriveTime(
+						origin.Lat, origin.Lng,
+						float64(latlng.Lat), float64(latlng.Lng),
+						budget,
+					)
+					if !ok {
+						// Routing unavailable: no estimate, rather than a guess.
+						return
+					}
+
+					cov, ok := rippling.CoverageAt(origin.Schedule, hazard, *origin.Arrival, dt.Minutes, dt.Reachable)
+					if !ok {
+						return
+					}
+
+					covMu.Lock()
+					coverage[msgid] = cov
+					covMu.Unlock()
+				}(msgid, origin)
+			}
+			covWg.Wait()
+		}
+
 		for msgid := range reachBlocked {
 			blockedSet[msgid] = true
 		}
@@ -1088,6 +1152,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				Scan(&bannedBlocked)
 			for _, b := range bannedBlocked {
 				blockedSet[b.Msgid] = true
+
+				// A banned viewer is not waiting for the ripple, they are not
+				// getting through at all. Telling them when it would arrive would
+				// be a promise we have no intention of keeping, so drop any
+				// estimate the reach check produced for the same post.
+				delete(coverage, b.Msgid)
 			}
 		}
 
@@ -1096,6 +1166,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			for ix := range messages {
 				if blockedSet[messages[ix].ID] {
 					messages[ix].ReplyEligible = &notEligible
+
+					// Only the reach reason carries an arrival. A ban also lands in
+					// blockedSet and has no coverage entry, so it stays nil.
+					if cov, found := coverage[messages[ix].ID]; found {
+						at := cov.At
+						fully := cov.Covered
+						messages[ix].ReachesYouAt = &at
+						messages[ix].ReachesYouFully = &fully
+					}
 				}
 			}
 		}
