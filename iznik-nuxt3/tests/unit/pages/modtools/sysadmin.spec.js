@@ -41,7 +41,6 @@ function mountComponent() {
         ModSysAdminReengageEffectiveness: stub('c-reengage'),
         ModSysAdminRipplingDensity: stub('c-ripplingdensity'),
         ModSysAdminRipplingAnalytics: stub('c-rippling'),
-        ModSysAdminFirstReply: stub('c-firstreply'),
       },
     },
   })
@@ -53,7 +52,7 @@ describe('sysadmin page tab grouping', () => {
     mockRouteQuery.value = {}
   })
 
-  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling, First reply', async () => {
+  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling', async () => {
     const wrapper = mountComponent()
     await flushPromises()
     const text = wrapper.text()
@@ -63,10 +62,15 @@ describe('sysadmin page tab grouping', () => {
       'Mail',
       'Behaviour',
       'Rippling',
-      'First reply',
     ]) {
       expect(text).toContain(label)
     }
+  })
+
+  it('no longer offers a First reply tab', async () => {
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('First reply')
   })
 
   it('nests Outgoing and Incoming under Mail', () => {

@@ -754,8 +754,19 @@ return [
         ],
 
         // The Freegle chat: Freegle itself talks to the poster.
+        //
+        // SWITCHED OFF (2026-08-11), and deliberately no longer env-controlled, so it
+        // cannot come back on from a stale FIRSTREPLY_CHAT_ENABLED in a deployed
+        // environment file. Everything that implements it is left intact -
+        // EngagementService, PromptService, FreegleUserService, the firstreply:engage
+        // command, the Go answer handler and the chat-prompt UI - so turning it back on
+        // means restoring the env read here:
+        //     filter_var(env('FIRSTREPLY_CHAT_ENABLED', false), FILTER_VALIDATE_BOOLEAN)
+        // Sending is the only thing this stops: EngagementService is the single writer
+        // and returns immediately when it is off. Answering deliberately stays live, so
+        // prompts already sent are not left with dead buttons.
         'chat' => [
-            'enabled' => filter_var(env('FIRSTREPLY_CHAT_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => false,
             // The account the messages come from. Resolved by email, created on
             // first use if absent, so there is nothing to seed by hand.
             'system_user_email' => env('FIRSTREPLY_SYSTEM_USER_EMAIL', 'freegle@ilovefreegle.org'),
