@@ -198,23 +198,8 @@ class PushNotificationService
                     'error' => $errorMsg,
                 ]);
 
-                // Remove permanently invalid tokens (UNREGISTERED = app uninstalled,
-                // NOT_FOUND = instance deleted, SENDER_ID_MISMATCH = wrong Firebase project)
-                if (str_contains($errorMsg, 'UNREGISTERED') ||
-                    str_contains($errorMsg, 'NOT_FOUND') ||
-                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
-                    str_contains($errorMsg, 'Requested entity was not found') ||
-                    str_contains($errorMsg, 'Invalid registration token') ||
-                    str_contains($errorMsg, 'not a valid FCM registration token')) {
-                    DB::table('users_push_notifications')
-                        ->where('userid', $userId)
-                        ->where('subscription', $notif->subscription)
-                        ->delete();
-
-                    Log::info('Removed invalid push subscription', [
-                        'user_id' => $userId,
-                        'subscription' => substr($notif->subscription, 0, 20) . '...',
-                    ]);
+                if (self::isDeadTokenError($errorMsg)) {
+                    $this->removeDeadToken($userId, $notif->subscription);
                 }
             }
         }
@@ -273,16 +258,8 @@ class PushNotificationService
                     'error' => $errorMsg,
                 ]);
 
-                if (str_contains($errorMsg, 'UNREGISTERED') ||
-                    str_contains($errorMsg, 'NOT_FOUND') ||
-                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
-                    str_contains($errorMsg, 'Requested entity was not found') ||
-                    str_contains($errorMsg, 'Invalid registration token') ||
-                    str_contains($errorMsg, 'not a valid FCM registration token')) {
-                    DB::table('users_push_notifications')
-                        ->where('userid', $userId)
-                        ->where('subscription', $notif->subscription)
-                        ->delete();
+                if (self::isDeadTokenError($errorMsg)) {
+                    $this->removeDeadToken($userId, $notif->subscription);
                 }
             }
         }
@@ -752,18 +729,8 @@ class PushNotificationService
                     'error' => $errorMsg,
                 ]);
 
-                if (str_contains($errorMsg, 'UNREGISTERED') ||
-                    str_contains($errorMsg, 'Invalid registration token') ||
-                    str_contains($errorMsg, 'not a valid FCM registration token')) {
-                    DB::table('users_push_notifications')
-                        ->where('userid', $userId)
-                        ->where('subscription', $notif->subscription)
-                        ->delete();
-
-                    Log::info('Removed invalid push subscription', [
-                        'user_id' => $userId,
-                        'subscription' => substr($notif->subscription, 0, 20) . '...',
-                    ]);
+                if (self::isDeadTokenError($errorMsg)) {
+                    $this->removeDeadToken($userId, $notif->subscription);
                 }
             }
         }
@@ -840,6 +807,55 @@ class PushNotificationService
      * runs. Existing callers (chat, ModTools, exhort) are unaffected because
      * they don't carry category=NEW_POSTS in their payload.
      */
+    /**
+     * FCM error strings meaning the token is permanently dead and its row must
+     * go: the app was uninstalled, the Firebase instance deleted, or the token
+     * belongs to another project. Matched case-insensitively because FCM
+     * reports the same condition in several spellings depending on which call
+     * failed - the v1 errorCode is 'UNREGISTERED' but a rejected send surfaces
+     * the legacy name 'NotRegistered'. The previous case-sensitive match only
+     * covered the former, so tokens killed by real sends were never purged and
+     * every later push to them failed silently forever.
+     */
+    private const DEAD_TOKEN_ERRORS = [
+        'unregistered',
+        'notregistered',
+        'not_found',
+        'requested entity was not found',
+        'sender_id_mismatch',
+        'mismatchsenderid',
+        'invalid registration token',
+        'invalidregistration',
+        'not a valid fcm registration token',
+    ];
+
+    /** Does this FCM error mean the token can never work again? */
+    public static function isDeadTokenError(string $errorMsg): bool
+    {
+        $lower = strtolower($errorMsg);
+        foreach (self::DEAD_TOKEN_ERRORS as $needle) {
+            if (str_contains($lower, $needle)) {
+                return TRUE;
+            }
+        }
+
+        return FALSE;
+    }
+
+    /** Delete a dead token's row so we stop sending to it, and say so. */
+    private function removeDeadToken(int $userId, string $subscription): void
+    {
+        DB::table('users_push_notifications')
+            ->where('userid', $userId)
+            ->where('subscription', $subscription)
+            ->delete();
+
+        Log::info('Removed invalid push subscription', [
+            'user_id' => $userId,
+            'subscription' => substr($subscription, 0, 20) . '...',
+        ]);
+    }
+
     private function sendFcm(int $userId, string $type, string $token, array $payload, bool $forceVisible = false): void
     {
         if ($type === self::PUSH_FCM_ANDROID) {
@@ -982,16 +998,8 @@ class PushNotificationService
                     'error' => $errorMsg,
                 ]);
 
-                if (str_contains($errorMsg, 'UNREGISTERED') ||
-                    str_contains($errorMsg, 'NOT_FOUND') ||
-                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
-                    str_contains($errorMsg, 'Requested entity was not found') ||
-                    str_contains($errorMsg, 'Invalid registration token') ||
-                    str_contains($errorMsg, 'not a valid FCM registration token')) {
-                    DB::table('users_push_notifications')
-                        ->where('userid', $userId)
-                        ->where('subscription', $notif->subscription)
-                        ->delete();
+                if (self::isDeadTokenError($errorMsg)) {
+                    $this->removeDeadToken($userId, $notif->subscription);
                 }
             }
         }
@@ -1306,21 +1314,8 @@ class PushNotificationService
                     'error' => $errorMsg,
                 ]);
 
-                if (str_contains($errorMsg, 'UNREGISTERED') ||
-                    str_contains($errorMsg, 'NOT_FOUND') ||
-                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
-                    str_contains($errorMsg, 'Requested entity was not found') ||
-                    str_contains($errorMsg, 'Invalid registration token') ||
-                    str_contains($errorMsg, 'not a valid FCM registration token')) {
-                    DB::table('users_push_notifications')
-                        ->where('userid', $userId)
-                        ->where('subscription', $notif->subscription)
-                        ->delete();
-
-                    Log::info('Removed invalid push subscription', [
-                        'user_id' => $userId,
-                        'subscription' => substr($notif->subscription, 0, 20) . '...',
-                    ]);
+                if (self::isDeadTokenError($errorMsg)) {
+                    $this->removeDeadToken($userId, $notif->subscription);
                 }
             }
         }

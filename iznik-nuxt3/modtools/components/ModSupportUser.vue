@@ -649,7 +649,9 @@ const showAddCommentModal = ref(false)
 const emailAddError = ref(null)
 const showLogs = ref(false)
 
-// Support data fetched via separate API calls (not on the user object).
+// Support data fetched via separate API calls (not on the user object) -
+// lazily, on first expansion (see fetchSupportExtras).
+const extrasFetched = ref(false)
 const supportChatrooms = ref([])
 const supportEmailHistory = ref([])
 const supportBans = ref([])
@@ -839,34 +841,49 @@ async function fetchUser() {
       console.error('ModSupportUser: fetchMT failed', props.id, e?.message || e)
     }
 
-    // Fetch support-specific data via separate API calls in parallel.
-    const userApi = api(userStore.config).user
-    const fetches = [
-      userApi.fetchChatrooms(props.id).then((d) => {
-        supportChatrooms.value = d || []
-      }),
-      userApi.fetchEmailHistory(props.id).then((d) => {
-        supportEmailHistory.value = d || []
-      }),
-      userApi.fetchBans(props.id).then((d) => {
-        supportBans.value = d || []
-      }),
-      userApi.fetchNewsfeed(props.id).then((d) => {
-        supportNewsfeed.value = d || []
-      }),
-      userApi.fetchApplied(props.id).then((d) => {
-        supportApplied.value = d || []
-      }),
-      userApi.fetchMembershipHistory(props.id).then((d) => {
-        supportMembershipHistory.value = d || []
-      }),
-      userApi.fetchLogins(props.id).then((d) => {
-        supportLogins.value = d || []
-      }),
-    ]
-
-    await Promise.allSettled(fetches)
+    // The support extras are only rendered inside the expanded body, so a
+    // collapsed card doesn't need them. A Support user search renders one of
+    // these components per result, so fetching extras eagerly turned every
+    // multi-match search into dozens of parallel backend calls - the
+    // membership-history one alone walks the logs table at over a second per
+    // heavy user, and a wide search stacked enough of them to spike the write
+    // DB node. Collapsed cards skip them; expanding fetches on first look.
+    if (expanded.value) {
+      await fetchSupportExtras()
+    }
   }
+}
+
+async function fetchSupportExtras() {
+  extrasFetched.value = true
+
+  // Fetch support-specific data via separate API calls in parallel.
+  const userApi = api(userStore.config).user
+  const fetches = [
+    userApi.fetchChatrooms(props.id).then((d) => {
+      supportChatrooms.value = d || []
+    }),
+    userApi.fetchEmailHistory(props.id).then((d) => {
+      supportEmailHistory.value = d || []
+    }),
+    userApi.fetchBans(props.id).then((d) => {
+      supportBans.value = d || []
+    }),
+    userApi.fetchNewsfeed(props.id).then((d) => {
+      supportNewsfeed.value = d || []
+    }),
+    userApi.fetchApplied(props.id).then((d) => {
+      supportApplied.value = d || []
+    }),
+    userApi.fetchMembershipHistory(props.id).then((d) => {
+      supportMembershipHistory.value = d || []
+    }),
+    userApi.fetchLogins(props.id).then((d) => {
+      supportLogins.value = d || []
+    }),
+  ]
+
+  await Promise.allSettled(fetches)
 }
 
 function showLogsModal() {
@@ -945,6 +962,12 @@ function maybeExpand() {
   // Ignore text selection
   if (!window.getSelection().toString()) {
     expanded.value = !expanded.value
+
+    // The support extras are lazy: a card that mounted collapsed hasn't
+    // fetched them yet, so the first expansion does.
+    if (expanded.value && !extrasFetched.value) {
+      fetchSupportExtras()
+    }
   }
 }
 

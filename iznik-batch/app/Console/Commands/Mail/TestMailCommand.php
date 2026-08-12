@@ -24,6 +24,7 @@ use App\Services\StoriesNewsletterService;
 use App\Services\UnifiedDigestService;
 use App\Services\UnsubscribeService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class TestMailCommand extends Command
@@ -44,6 +45,7 @@ class TestMailCommand extends Command
                             {--as= : For User2Mod chats: "member" or "mod" perspective (default: member)}
                             {--dry-run : Preview email content without sending}
                             {--matched-count= : For "matched": number of matched posts to preview (1 = hero layout, default 4)}
+                            {--match-reason= : For "matchmail": wanted or search (default wanted)}
                             {--unsubscribed-type= : For "unsubscribed": which category they unsubscribed from (default digest)}
                             {--list : List available email types}';
 
@@ -51,6 +53,11 @@ class TestMailCommand extends Command
      * The console command description.
      */
     protected $description = 'Send test emails without affecting database state';
+
+    /** Recipient and posts buildDigest resolved, so buildMatchMail can reuse them. */
+    protected ?User $digestUser = null;
+
+    protected ?Collection $digestPosts = null;
 
     /**
      * Available email types.
@@ -60,6 +67,7 @@ class TestMailCommand extends Command
         'chat:user2user' => 'User-to-user chat notification',
         'chat:user2mod' => 'User-to-moderator chat notification',
         'digest' => 'Unified digest email (posts from all communities)',
+        'matchmail' => 'Match mail (one post, sent because the recipient asked for that item). --match-reason sets the opening line, default wanted',
         'donations:ask' => 'Donation request email',
         'donations:thank' => 'Donation thank you email',
         'welcome' => 'Welcome email for new users',
@@ -351,6 +359,7 @@ class TestMailCommand extends Command
             'chat:user2user' => $this->buildChatNotification(ChatRoom::TYPE_USER2USER),
             'chat:user2mod' => $this->buildChatNotification(ChatRoom::TYPE_USER2MOD),
             'digest' => $this->buildDigest(),
+            'matchmail' => $this->buildMatchMail(),
             'donations:ask' => $this->buildDonationAsk(),
             'donations:thank' => $this->buildDonationThank(),
             'welcome' => $this->buildWelcome(),
@@ -874,7 +883,43 @@ class TestMailCommand extends Command
 
         $this->info("After deduplication: {$deduplicatedPosts->count()} unique posts");
 
+        $this->digestUser = $user;
+        $this->digestPosts = $deduplicatedPosts;
+
         return new UnifiedDigest($user, $deduplicatedPosts, UnifiedDigestService::MODE_DAILY);
+    }
+
+    /**
+     * Build the match mail: one post, sent because the recipient asked for it.
+     *
+     * The same layout the digest uses, narrowed to a single post in immediate
+     * mode and carrying a match reason, which is what MatchMailService produces.
+     * --match-reason picks which line opens it, and the two are worth looking at
+     * side by side: they are the only thing separating this from the digest.
+     * mail:test matchmail --user=ID --send-to=you@... [--match-reason=search]
+     */
+    protected function buildMatchMail(): ?UnifiedDigest
+    {
+        $reason = $this->option('match-reason') ?: 'wanted';
+        if (! in_array($reason, ['wanted', 'search'], true)) {
+            $this->error('--match-reason must be "wanted" or "search"');
+
+            return null;
+        }
+
+        if (! $this->buildDigest()) {
+            return null;
+        }
+
+        $one = $this->digestPosts->take(1);
+        $this->info("Previewing match mail, reason \"{$reason}\": ".$one->first()['message']->subject);
+
+        return new UnifiedDigest(
+            $this->digestUser,
+            $one,
+            UnifiedDigestService::MODE_IMMEDIATE,
+            matchReason: $reason
+        );
     }
 
     /**

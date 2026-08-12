@@ -595,6 +595,10 @@
       margin-top: 6px;
       text-align: center;
     }
+    .donate-marks {
+      margin-top: 8px;
+      text-align: center;
+    }
     .jobs-button {
       display: inline-block;
       background-color: #338808;
@@ -806,6 +810,11 @@
       <div class="jobs-buttons">
         <a href="{{ $jobsUrl }}" class="jobs-button">View more jobs</a>
         <a href="{{ $donateUrl }}" class="jobs-button">Donating helps too!</a>
+      </div>
+      {{-- Donate lands on our Stripe page, not PayPal, so show what's on offer
+           there. 8:1 is the strip's native aspect ratio. --}}
+      <div class="donate-marks">
+        <a href="{{ $donateUrl }}"><amp-img src="{{ $donateMarksUrl ?? config('freegle.images.paymethods') }}" width="192" height="24" layout="fixed" alt="Donate with Apple Pay, Google Pay, PayPal or card"></amp-img></a>
       </div>
     </div>
     @endif

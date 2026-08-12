@@ -12,6 +12,13 @@ export default class RipplingAPI extends BaseAPI {
     return this.$getv2('/rippling/metrics', params)
   }
 
+  // How posts fared in each local-density band, so the per-band reach budgets
+  // can be read against each other. Support/Admin only. days bounds the window
+  // (default 30, max 365 server-side).
+  fetchDensity(days = 30) {
+    return this.$getv2('/rippling/density', { days })
+  }
+
   // On-the-fly rippling analytics KPIs (§ sysadmin analytics tab). stratum =
   // all|rural|suburban|dense. Fast: pure-SQL KPIs only. The slow drive-time metrics are fetched
   // separately via fetchAnalyticsDriveTimes so this returns (and the tab renders) immediately.

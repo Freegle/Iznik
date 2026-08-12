@@ -30,6 +30,7 @@
       </b-row>
       <StoryAddModal
         v-if="showStoryAddModal"
+        @login-required="loginRequired"
         @hidden="showStoryAddModal = false"
       />
     </div>
@@ -41,6 +42,7 @@ import { useRoute } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 import { useAuthorityStore } from '~/stores/authority'
 import StoryOne from '~/components/StoryOne'
+import { useStoryAdd } from '~/composables/useStoryAdd'
 const StoryAddModal = defineAsyncComponent(() =>
   import('~/components/StoryAddModal')
 )
@@ -79,9 +81,5 @@ const sortedStories = computed(() => {
   })
 })
 
-const showStoryAddModal = ref(false)
-
-const showAddModal = () => {
-  showStoryAddModal.value = true
-}
+const { showStoryAddModal, showAddModal, loginRequired } = useStoryAdd()
 </script>

@@ -21,8 +21,8 @@ namespace App\Services\FirstReply;
  * CRC32 spreads uniformly for any modulus (the same choice ExperimentBucket and
  * the digest worker sharding made), and the '|firstreply' salt keeps this
  * split independent of any other experiment bucketed on the same id. The Go
- * passthrough (firstreply/passthrough.go) and the metrics arm split
- * (firstreply/metrics.go) MUST use the identical expression - PHP crc32,
+ * passthrough (firstreply/passthrough.go), the query scopes below and any
+ * hand-written arm split MUST use the identical expression - PHP crc32,
  * MySQL CRC32() and Go crc32.ChecksumIEEE all implement the same polynomial,
  * and a pinned cross-language test holds them together. Still stable - a post
  * never changes arm - but no longer auditable by eye; check a post with

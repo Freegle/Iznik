@@ -9,7 +9,8 @@ import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 vi.mock('~/constants', () => ({
   BROWSE_DISTANCE_UNLIMITED: Number.MAX_SAFE_INTEGER,
   BROWSE_MINUTES_MIN: 5,
-  BROWSE_MINUTES_MAX: 30,
+  BROWSE_MINUTES_FALLBACK_MAX: 30,
+  BROWSE_MINUTES_MAX: 45,
   BROWSE_MINUTES_STEP: 5,
 }))
 
@@ -54,7 +55,12 @@ function mountWith(settings = {}) {
 const slider = (wrapper) => wrapper.findComponent({ name: 'RangeSlider' })
 
 describe('FeedSettingsSection', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // clearAllMocks wipes call history but NOT implementations, so a test that overrides
+  // fetchNear (to fake a density band) would otherwise leak its response into the next.
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 4 })
+  })
 
   it('renders the Feed section with a slider', () => {
     const wrapper = mountWith()
@@ -77,12 +83,30 @@ describe('FeedSettingsSection', () => {
     expect(wrapper.text()).not.toContain('any distance')
   })
 
-  it('is a fixed 5-30 minute travel-time range', () => {
+  // The top of the range is the member's own density-sized reach cap, not a fixed 30: the
+  // reach engine grows a post to the widest band's budget and holds each member to their
+  // own, so the slider must offer exactly what it will honour for them. Until the server
+  // answers, the flat cap applies.
+  it('starts on the flat cap in 5-minute steps', () => {
     const wrapper = mountWith()
     const s = slider(wrapper)
     expect(Number(s.props('min'))).toBe(5)
     expect(Number(s.props('max'))).toBe(30)
     expect(Number(s.props('step'))).toBe(5)
+  })
+
+  it("opens the range to a rural member's own cap", async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const wrapper = mountWith()
+    await flushPromises()
+    expect(Number(slider(wrapper).props('max'))).toBe(45)
+  })
+
+  it("closes the range to a city member's own cap", async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 20, density_band: 'dense' })
+    const wrapper = mountWith()
+    await flushPromises()
+    expect(Number(slider(wrapper).props('max'))).toBe(20)
   })
 
   // Left of max: persist the chosen MINUTES (so the slider restores) and the routing-derived
@@ -97,11 +121,14 @@ describe('FeedSettingsSection', () => {
     expect(me.value.settings.browseMaxDistance).toBe(4)
   })
 
-  it('stores the unlimited sentinel (and skips routing) when dragged to the far end', async () => {
+  it('stores the unlimited sentinel at the far end when the cap is the ceiling', async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
     const wrapper = mountWith({ browseMaxMinutes: 10 })
-    await slider(wrapper).vm.$emit('change', 30)
     await flushPromises()
-    expect(me.value.settings.browseMaxMinutes).toBe(30)
+    mockFetchNear.mockClear()
+    await slider(wrapper).vm.$emit('change', 45)
+    await flushPromises()
+    expect(me.value.settings.browseMaxMinutes).toBe(45)
     expect(me.value.settings.browseMaxDistance).toBe(BROWSE_DISTANCE_UNLIMITED)
     expect(mockFetchNear).not.toHaveBeenCalled()
   })

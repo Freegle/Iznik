@@ -73,16 +73,57 @@
             think it should be released.
           </span>
         </NoticeMessage>
+        <!-- Rippling reply-hold. Four outcomes a mod must be able to tell apart; before this
+             only "held now" was visible, so a hold that had already released left no trace and
+             its delay looked like a mail fault, while taken-gone/dropped wrongly read as
+             "still on its way". -->
         <NoticeMessage
-          v-if="message.heldbyrippling"
+          v-if="ripplingHoldState === 'held'"
           class="mb-2"
           variant="warning"
           data-testid="rippling-held-notice"
         >
           <v-icon icon="pause-circle" class="me-1" />
           Held: rippling out - this reply arrived before the post's reach grew
-          to cover the sender's location. It will be delivered automatically
-          once the reach expands far enough.
+          to cover the sender's location<span v-if="ripplingHeldFor"
+            >, and has been waiting {{ ripplingHeldFor }}</span
+          >. It will be delivered automatically once the reach expands far
+          enough.
+        </NoticeMessage>
+        <NoticeMessage
+          v-else-if="ripplingHoldState === 'released'"
+          class="mb-2"
+          variant="warning"
+          data-testid="rippling-delayed-notice"
+        >
+          <v-icon icon="clock" class="me-1" />
+          Held as too far for: {{ ripplingHeldFor }}. The sender was outside the
+          post's reach when they replied, so rippling out held the reply for
+          that long before delivering it. The recipient saw nothing in the
+          meantime and the sender had no answer - so each may believe the other
+          ignored them.
+        </NoticeMessage>
+        <!-- Terminal, never delivered. In practice this is always 'taken-gone':
+             nothing in the codebase writes 'dropped', and production has never
+             recorded one (0 rows since the table began, against ~9,800 released
+             and ~3,200 taken-gone). The generic wording is kept as a safety net
+             for a status we do not produce, rather than inventing a story for it. -->
+        <NoticeMessage
+          v-else-if="ripplingHoldState === 'undelivered'"
+          class="mb-2"
+          variant="danger"
+          data-testid="rippling-undelivered-notice"
+        >
+          <v-icon icon="ban" class="me-1" />
+          <span v-if="message.ripplinghold?.status === 'taken-gone'">
+            Never reached the recipient: held as too far for
+            {{ ripplingHeldFor }}, and in that time the item was taken by
+            someone else, so the reply was dropped undelivered.
+          </span>
+          <span v-else>
+            Never reached the recipient: held as too far for
+            {{ ripplingHeldFor }}, then ended without being delivered.
+          </span>
         </NoticeMessage>
         <NoticeMessage
           v-if="message.processingfailreason"
@@ -294,6 +335,10 @@ import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/modtools/composables/useModMe'
 import { useChatStore } from '~/stores/chat'
 import { useAuthStore } from '~/stores/auth'
+// Imported rather than relying on the Nuxt auto-import: the component unit tests mount without
+// the auto-import layer (they inject timeago as a mock), and a hold duration is worth asserting
+// against the real formatter rather than a stub.
+import { durationMinutes } from '~/composables/useTimeFormat'
 
 const props = defineProps({
   id: {
@@ -334,6 +379,24 @@ const chatPov = computed(() => {
   if (chat) return chat.user2 || null
   return null
 })
+
+// Which rippling reply-hold notice applies: 'held' | 'released' | 'undelivered' | null.
+// Collapses the four raw statuses into the three notices, because 'taken-gone' and 'dropped'
+// both mean "never arrived, never will" and read the same way to a mod.
+const ripplingHoldState = computed(() => {
+  const status = message.value?.ripplinghold?.status
+  if (status === 'held') return 'held'
+  if (status === 'released') return 'released'
+  if (status === 'taken-gone' || status === 'dropped') return 'undelivered'
+  // Older API build (or a cached response) sends heldbyrippling with no detail: still warn.
+  return message.value?.heldbyrippling ? 'held' : null
+})
+
+// How long the reply was undelivered. Empty string when the API sent no detail, which the
+// 'held' notice guards on so it degrades to the original wording.
+const ripplingHeldFor = computed(() =>
+  durationMinutes(message.value?.ripplinghold?.heldminutes)
+)
 
 const isActiveMod = computed(() => {
   const groupid = message.value?.group?.id

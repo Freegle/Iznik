@@ -95,11 +95,38 @@ Sometimes a reply is held because the post has not yet rippled out to where that
 is. This now applies to replies made on the **website and app** as well as by email or
 TrashNothing - wherever a member replies from outside the post's current reach, the reply
 is accepted and held rather than turned away. Chat Review shows you it is held because of
-rippling (not because you chose to hold it). You do not need to do anything - the reply is
-released automatically once the post reaches that member's area, or once the post has
-finished spreading as far as it will go, so no reply is ever held indefinitely. The member
-who sent it sees their own message marked as "waiting to send"; the owner is not shown it
-until it is released.
+rippling (not because you chose to hold it).
+
+You do not need to do anything - the reply releases itself, either when the post ripples out
+far enough to cover that member, or when the post's reach stops growing (at which point every
+reply still waiting is let through rather than stranded).
+
+**How long that takes varies a great deal, and can be days.** Some holds are given a **due
+time** worked out from how far the member is from the item, and those land quickly. Most are
+not, and wait for the reach instead. Measured over a fortnight in August 2026, of the holds
+that were eventually delivered: about a third landed within an hour, about half within three
+hours, and the other half took longer - with an average of just over a day and a long tail
+running into weeks. So if a member asks why their reply went unanswered for two days, "it was
+held by rippling" is a real and likely answer.
+
+A hold can also end **without** the reply ever being delivered: if the item is taken while the
+reply is held, the reply is dropped and the replier is told the item has gone. The owner never
+sees it.
+
+Chat Review tells you which of these happened, and how long it took:
+
+| What you see | What it means |
+| --- | --- |
+| **Held: rippling out** (with how long it has been waiting) | Still waiting. It will go out on its own. |
+| **Held as too far for:** (with how long it was held) | It did arrive, but only after that delay, because the sender was outside the post's reach when they replied. This is what to look for when someone reports a reply that seemed to be ignored - the delay is on our side, not theirs. |
+| **Never reached the recipient** | The item was taken by someone else while the reply was held, so the owner never saw it. |
+
+That last one matters for tone: neither person did anything wrong, and the replier may be
+upset with the owner for "ignoring" them. It is worth saying plainly that our system held the
+message.
+
+The member who sent it sees their own message marked as "waiting to send"; the owner is not
+shown it until it is released.
 
 ### 5. Members' Nearby feed is ordered by relevance, with their own distance preference
 
@@ -117,6 +144,15 @@ section above Email Settings. It is a **personal preference each member sets for
 themselves** - by default it is left at "Further" (no extra limit beyond their normal
 rippling reach), and moving it towards "Nearer" narrows how far away posts can be.
 
+**"Further" is not the same distance for everyone**, and this is deliberate. How far the slider
+reaches at its "Further" end depends on how spread out freeglers are around that member's
+postcode: in the countryside it goes further than in a city. The reason is that a rural
+member's nearest town is usually somewhere they already drive to, so its posts are exactly the
+ones worth showing them - whereas in a busy area there is nearly always someone closer, and
+reaching across town mostly generates email for journeys nobody makes. So if a rural member
+and a city member both say they are set to "Further", they are correctly seeing different
+distances, and the "Max ... miles by road" note under the slider will differ between them.
+
 Importantly, this preference now applies in **three** ways:
 
 - **What they see when browsing** - moving it "Nearer" hides posts from further away.
@@ -128,6 +164,26 @@ Importantly, this preference now applies in **three** ways:
 
 It still has **no effect on the rippling engine itself** (what it approves or joins, or how far
 it carries a post) **or on moderation**, and their choice is remembered between visits.
+
+**The third one only applies when the member moved the slider themselves.** This catches people
+out, so it is worth being clear about:
+
+| | What they see and are emailed | How far their own posts go |
+|---|---|---|
+| Member moved the slider | limited by their choice | limited by their choice |
+| Member never touched it | limited by the starting position Freegle works out for them | not limited |
+
+The starting position is Freegle's reading of the member's *area* - how spread out freeglers
+are around their postcode - not something the member has told us about themselves. So we use it
+to decide what is worth putting in front of them, but not to hold their own offers back. If we
+did, a member in a busy town would find their posts stopping a few miles out simply because
+they have a lot of neighbours, which would mean fewer things getting reused and would help
+nobody.
+
+So if a member asks "why do people further away see my post when I only see nearby ones?", the
+answer is that they have never set the slider: Freegle narrowed what it shows them, and left
+their giving alone. If they would rather their posts stayed local too, moving the slider to
+"Nearer" does exactly that, in both directions.
 
 A practical consequence worth knowing: a rippled-in post is shown to the members of your
 community who are **closest to the poster, whose own distance preference reaches that far, and
@@ -344,14 +400,13 @@ single origin community, those posts will ripple like any other.
 ## What to expect from members
 
 Members can now reply to any post they can see, even one that has not yet rippled out to
-their area. If they do, we **hold** the reply and deliver it automatically once the post
-reaches them - so instead of "why can't I reply?", a member might ask why their reply
-hasn't been answered yet, or notice their message marked **"waiting to send"**. The answer
-is reassuring:
+their area. If they do, we **hold** the reply for a short while and then deliver it - so
+instead of "why can't I reply?", a member might ask why their reply hasn't been answered
+yet, or notice their message marked **"waiting to send"**. The answer is reassuring:
 
-> *Your reply has been saved. The post just hasn't quite reached your area yet, so we're
-> holding your message and will pass it to the owner the moment it does - you do not need
-> to do anything.*
+> *Your reply has been saved. The post hasn't quite reached your area yet, so we're giving
+> people closer to it a short head start - usually less than an hour - and then passing
+> your message on. You do not need to do anything.*
 
 Worth knowing: on their default Nearby view, a member only ever sees posts that have
 already reached them, so a held reply usually only happens if they have switched to "All

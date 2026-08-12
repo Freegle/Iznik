@@ -1,5 +1,11 @@
 import { defineStore } from 'pinia'
+import { warn } from '~/composables/useClientLog'
 // import api from '~/api' // REMOVE FROM MT AS GENERATES SOME CIRCULAR REFERENCE
+
+// How long waitForOnline() will wait for the connection to come back before
+// giving up and letting the caller fail normally.  Long enough to ride out a
+// tunnel or a lift, short enough that nothing is parked indefinitely.
+const WAIT_FOR_ONLINE_TIMEOUT_MS = 30000
 
 export const useMiscStore = defineStore({
   id: 'misc',
@@ -168,19 +174,56 @@ export const useMiscStore = defineStore({
 
       this.onlineTimer = setTimeout(this.checkOnline, 1000)
     },
-    waitForOnline() {
+    // Wait until we believe we have a connection again, but never for ever.
+    //
+    // This used to recurse once a second with no timeout and no reject, so a
+    // caller that awaited it while the connection stayed down was awaiting a
+    // promise that could never settle.  Every API request awaits this before
+    // fetching, and useFetchRetry's retryOn() awaits it again around a retry
+    // decision, so one badly-timed connection drop could park a request for
+    // the lifetime of the page with no error, no Sentry event and nothing for
+    // the caller's catch block to see.  A give-flow photo stranded that way
+    // stayed at uploading:true / 100% for good, and because the flow gates
+    // Next on anyUploading the member could not post at all (Discourse, user
+    // 3512849, 2026-08-10).
+    //
+    // Give up after WAIT_FOR_ONLINE_TIMEOUT_MS and resolve rather than reject:
+    // callers then carry on and get an ordinary fetch failure, which they
+    // already handle.  Rejecting here would instead add a new unhandled path
+    // to every call site.
+    waitForOnline(timeoutMs = WAIT_FOR_ONLINE_TIMEOUT_MS) {
       if (this.online) {
         return
       }
 
+      const startedAt = Date.now()
+
       return new Promise((resolve) => {
-        setTimeout(() => {
-          if (this.online) {
-            resolve()
-          } else {
-            this.waitForOnline().then(resolve)
-          }
-        }, 1000)
+        const poll = () => {
+          setTimeout(() => {
+            if (this.online) {
+              resolve()
+              return
+            }
+
+            const waitedMs = Date.now() - startedAt
+
+            if (waitedMs >= timeoutMs) {
+              // Surfaced so we can see this in Loki next time rather than
+              // having to infer a silent hang from its absence.
+              warn('waitForOnline gave up', {
+                event_type: 'connection_wait_abandoned',
+                waited_ms: waitedMs,
+              })
+              resolve()
+              return
+            }
+
+            poll()
+          }, 1000)
+        }
+
+        poll()
       })
     },
     setMarketingConsent(value) {

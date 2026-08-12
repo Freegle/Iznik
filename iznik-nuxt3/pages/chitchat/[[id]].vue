@@ -122,6 +122,16 @@
                   class="filter-select"
                   size="sm"
                 />
+                <!-- Community News posts are targeted at one area and capped in
+                     any one feed, so there is otherwise no way to review what is
+                     going out nationally. -->
+                <b-form-checkbox
+                  v-if="chitChatMod"
+                  v-model="allNewsletters"
+                  class="filter-newsletters"
+                >
+                  All newsletter posts
+                </b-form-checkbox>
               </div>
             </div>
           </div>
@@ -194,6 +204,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import { useLocationStore } from '~/stores/location'
+import { useTeamStore } from '~/stores/team'
 import NewsCommunityEventVolunteerSummary from '~/components/NewsCommunityEventVolunteerSummary'
 import { useMe } from '~/composables/useMe'
 import VisibleWhen from '~/components/VisibleWhen'
@@ -258,6 +269,7 @@ const miscStore = useMiscStore()
 const newsfeedStore = useNewsfeedStore()
 const authStore = useAuthStore()
 const locationStore = useLocationStore()
+const teamStore = useTeamStore()
 
 // We want this to be our next home page.
 const existingHomepage = miscStore.get('lasthomepage')
@@ -270,7 +282,20 @@ if (existingHomepage !== 'news') {
 }
 
 // Use me computed property from useMe composable for consistency
-const { me } = useMe()
+const { me, chitChatMod } = useMe()
+
+// chitChatMod resolves team membership through the team store, so the team has
+// to be loaded before the review filter can appear. The session already tells us
+// which teams we are in, so ordinary members cost no extra request.
+if (
+  me.value &&
+  (me.value.systemrole === 'Moderator' ||
+    me.value.systemrole === 'Support' ||
+    me.value.systemrole === 'Admin' ||
+    me.value.teams?.includes('ChitChat Moderation'))
+) {
+  teamStore.fetch('ChitChat Moderation')
+}
 const mod = computed(
   () =>
     me.value &&
@@ -326,6 +351,21 @@ const selectedArea = computed({
 
     await authStore.saveAndGet({
       settings,
+    })
+  },
+})
+
+// A reviewing tool rather than a preference, so it lives in local state rather
+// than the profile settings - no server round-trip, and it doesn't follow the
+// moderator onto their phone.
+const allNewsletters = computed({
+  get() {
+    return Boolean(miscStore.get('chitchatallnewsletters'))
+  },
+  set(newval) {
+    miscStore.set({
+      key: 'chitchatallnewsletters',
+      value: newval,
     })
   },
 })
@@ -505,7 +545,8 @@ function loadMore($state) {
 async function areaChange() {
   const newDistance = me.value?.settings?.newsfeedarea || 0
   await newsfeedStore.reset()
-  await newsfeedStore.fetchFeed(newDistance)
+  // reset() clears the store's memory of the flag, so pass it explicitly.
+  await newsfeedStore.fetchFeed(newDistance, allNewsletters.value)
   infiniteId.value++
   show.value = 0
 }
@@ -620,6 +661,16 @@ watch(selectedArea, async () => {
   await areaChange()
 })
 
+// Turning the newsletter review filter on or off rebuilds the feed the same way
+// a distance change does.
+watch(allNewsletters, async () => {
+  if (!me.value) {
+    return
+  }
+
+  await areaChange()
+})
+
 // Initialize location data if needed
 const initializeLocation = async () => {
   if (!areaname.value && areaid.value) {
@@ -696,7 +747,7 @@ if (me.value) {
       }
     })
   } else {
-    newsfeedStore.fetchFeed(distance.value).then(() => {
+    newsfeedStore.fetchFeed(distance.value, allNewsletters.value).then(() => {
       // Fetch the first few threads in parallel so that they are in the store.
       const feed = newsfeedStore.feed
 
@@ -889,6 +940,15 @@ if (me.value) {
     border-color: $color-green-background;
     box-shadow: 0 0 0 2px rgba($color-green-background, 0.1);
   }
+}
+
+/* Moderator-only, so it must not squeeze the distance filter - it keeps its
+   natural width and wraps to its own line when the row runs out of room. */
+.filter-newsletters {
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  color: $color-gray--darker;
+  white-space: nowrap;
 }
 
 // Events section

@@ -123,4 +123,27 @@ func TestMyGroupsCountDistanceLimit(t *testing.T) {
 	json2.Unmarshal(rsp(settingResp), &settingBody)
 	assert.Equal(t, limitedCount, settingBody["count"].(float64),
 		"settings.browseMaxDistance is honoured for mygroups, matching the explicit query param")
+
+	// The band default (browseReachMaxDistance, written by browse:backfill-max-distance) is
+	// the INBOUND fallback for a member who never touched the slider. It has to bind, because
+	// it is what holds each member to their own density band now that a post's ripple grows to
+	// the ceiling rather than to its own origin's band.
+	db.Exec("UPDATE users SET settings = JSON_REMOVE(COALESCE(settings,'{}'), '$.browseMaxDistance') WHERE id = ?", viewerID)
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.browseReachMaxDistance', 10) WHERE id = ?", viewerID)
+	defaultResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
+	assert.Equal(t, 200, defaultResp.StatusCode)
+	var defaultBody map[string]interface{}
+	json2.Unmarshal(rsp(defaultResp), &defaultBody)
+	assert.Equal(t, limitedCount, defaultBody["count"].(float64),
+		"the band default narrows the feed for a member who never chose")
+
+	// An explicit choice beats the default, including a WIDER one: a member who moved the
+	// slider has said what they want, and the default is only a default.
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.browseMaxDistance', 9007199254740991) WHERE id = ?", viewerID)
+	chosenResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
+	assert.Equal(t, 200, chosenResp.StatusCode)
+	var chosenBody map[string]interface{}
+	json2.Unmarshal(rsp(chosenResp), &chosenBody)
+	assert.Equal(t, unlimitedCount, chosenBody["count"].(float64),
+		"an explicit unlimited choice overrides a narrower band default")
 }

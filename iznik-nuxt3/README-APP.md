@@ -134,6 +134,22 @@ Custom implementation using Freegle's fork:
   `settings.notifications.dailypostspush` (app-only toggle in Settings). Tapping opens `/browse`.
   Server side is `push:daily-posts` in iznik-batch, gated by `FREEGLE_POSTS_PUSH_ALLOWLIST`.
 
+#### Android backup and FCM tokens
+
+Android auto-backup must NOT restore Firebase's installation prefs: a restored
+Firebase Installation ID makes the FCM SDK return the PREVIOUS install's token,
+which FCM invalidated at uninstall — so a reinstalled app re-registers a dead
+token, every push to it is rejected (`NotRegistered`), and the app believes
+registration succeeded. `android/app/src/main/res/xml/backup_rules.xml`
+(Android ≤11) and `data_extraction_rules.xml` (12+, cloud restore AND
+device-to-device transfer) exclude `com.google.android.gms.appid.xml` and
+`com.google.firebase.messaging.xml` from backup for this reason; keep the
+exclusions if the backup config is ever reworked. The server purges tokens FCM
+reports as dead (`PushNotificationService::isDeadTokenError` in iznik-batch),
+but that cannot help a device that keeps re-registering a restored dead token —
+the affected user's remedy is clearing the app's storage/data so a fresh token
+is minted.
+
 ### Camera & Photo Management
 
 - **Native camera access** for taking photos

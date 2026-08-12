@@ -10,6 +10,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { useLoggingContextStore } from '~/stores/loggingContext'
 import { getTraceHeaders } from '~/composables/useTrace'
+import { warn } from '~/composables/useClientLog'
 
 export { APIError, MaintenanceError, LoginError, SignUpError }
 
@@ -224,6 +225,15 @@ export default class BaseAPI {
         // This can happen if a login token is invalid, and we don't want to show errors to the user.
         if (path.startsWith('/chat?includeClosed=true')) {
           console.log('Silently handling 401 for includeClosed chat request')
+          // Deliberately never settles, to keep this out of Sentry.  That is
+          // only safe because nothing downstream is gated on the result; if
+          // that ever stops being true it becomes the same class of bug as the
+          // stranded give-flow photo, so make it visible rather than silent.
+          warn('API request abandoned without settling', {
+            event_type: 'api_abandoned',
+            reason: 'chat_401',
+            api_path: path,
+          })
           return new Promise(function (resolve) {})
         }
       }
@@ -242,6 +252,20 @@ export default class BaseAPI {
         // when you're leaving a page.  No point in rippling those errors up to result in Sentry errors.
         // Swallow these by returning a problem that never resolves.  Possible memory leak but it's a rare case.
         console.log('Aborted - ignore')
+        // An abort during logout or unload is expected and the page is going
+        // away, so nothing is left waiting.  An abort at any other time leaves
+        // the caller's await hanging for the life of the page with no error to
+        // catch, which is how a give-flow photo got stranded at uploading:true.
+        // We cannot tell the two apart here, so record it: one of these in Loki
+        // beside a stuck UI is the answer straight away, rather than a day of
+        // working backwards from what is missing.
+        warn('API request abandoned without settling', {
+          event_type: 'api_abandoned',
+          reason: 'aborted',
+          api_path: path,
+          api_method: method,
+          detail: e?.message,
+        })
         return new Promise(function (resolve) {})
       }
 

@@ -39,8 +39,8 @@ function mountComponent() {
         ModSysAdminBrowseScroll: stub('c-browsescroll'),
         ModSysAdminRecommendations: stub('c-recommendations'),
         ModSysAdminReengageEffectiveness: stub('c-reengage'),
+        ModSysAdminRipplingDensity: stub('c-ripplingdensity'),
         ModSysAdminRipplingAnalytics: stub('c-rippling'),
-        ModSysAdminFirstReply: stub('c-firstreply'),
       },
     },
   })
@@ -52,7 +52,7 @@ describe('sysadmin page tab grouping', () => {
     mockRouteQuery.value = {}
   })
 
-  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling, First reply', async () => {
+  it('shows the grouped top-level tabs: Housekeeping, Cron Jobs, Mail, Behaviour, Rippling', async () => {
     const wrapper = mountComponent()
     await flushPromises()
     const text = wrapper.text()
@@ -62,10 +62,15 @@ describe('sysadmin page tab grouping', () => {
       'Mail',
       'Behaviour',
       'Rippling',
-      'First reply',
     ]) {
       expect(text).toContain(label)
     }
+  })
+
+  it('no longer offers a First reply tab', async () => {
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('First reply')
   })
 
   it('nests Outgoing and Incoming under Mail', () => {
@@ -115,6 +120,17 @@ describe('sysadmin page tab grouping', () => {
     const wrapper = mountComponent()
     await flushPromises()
     expect(wrapper.find('.c-recommendations').exists()).toBe(true)
+  })
+
+  it('shows both the density and the analytics panel under Rippling', async () => {
+    // The density comparison is what says whether the per-band reach budgets are
+    // working, so it has to be on the tab a sysadmin already opens rather than
+    // somewhere they have to be told about.
+    mockRouteQuery.value = { tab: 'rippling' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-ripplingdensity').exists()).toBe(true)
+    expect(wrapper.find('.c-rippling').exists()).toBe(true)
   })
 
   it('shows an access notice to non-admins', () => {

@@ -41,13 +41,21 @@ class DistancePreferenceFilter
     public const DISTANCE_UNLIMITED = 9007199254740991;
 
     /**
-     * Resolve a member's configured max distance in miles from
-     * settings.browseMaxDistance.
+     * Resolve a member's INBOUND max distance in miles: their own
+     * settings.browseMaxDistance if they have set one, else the band default in
+     * settings.browseReachMaxDistance.
      *
      * Absent, null, non-numeric, <= 0, or >= the sentinel all mean "no
      * limit" and collapse to DISTANCE_UNLIMITED so callers can short-circuit
-     * with a single comparison — this is the fast path that the overwhelming
-     * majority of members (who have never touched the slider) take.
+     * with a single comparison.
+     *
+     * The band default is a SEPARATE key on purpose. browseMaxDistance is the
+     * member's own choice and also caps how far away other people see THEIR
+     * posts (authorMaxDistanceMiles / the Go AuthorReachCapWhere clause), so
+     * writing a default into it would silently stop a city member's posts
+     * travelling beyond their ~4.8-mile band radius. The point of the band is
+     * to hold each RECIPIENT to the distance their own surroundings justify
+     * while posts still travel — see App\Services\Ripple\DensityService.
      */
     public function maxDistanceMiles(User $user): float
     {
@@ -55,19 +63,55 @@ class DistancePreferenceFilter
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
         }
+        if (!is_array($settings)) {
+            return (float) self::DISTANCE_UNLIMITED;
+        }
+
+        // An explicit choice always wins, including a wider one: a member who moved
+        // the slider has said what they want.
+        foreach (['browseMaxDistance', 'browseReachMaxDistance'] as $key) {
+            $value = $settings[$key] ?? null;
+            if (!is_numeric($value)) {
+                continue;
+            }
+
+            $value = (float) $value;
+
+            return $value <= 0 || $value >= self::DISTANCE_UNLIMITED
+                ? (float) self::DISTANCE_UNLIMITED
+                : $value;
+        }
+
+        return (float) self::DISTANCE_UNLIMITED;
+    }
+
+    /**
+     * A member's OUTBOUND cap in miles: how far away other people may see the posts they
+     * write. Reads ONLY settings.browseMaxDistance - the key the member set themselves.
+     *
+     * The band default (browseReachMaxDistance) is deliberately NOT consulted here. It says
+     * how far this member will travel to collect, which is a different question from how far
+     * their giveaway should travel to find a taker; applying it outbound would stop a city
+     * member's posts leaving their ~4.8-mile band radius and undo the reason the ripple grows
+     * to the ceiling at all.
+     */
+    public function authorMaxDistanceMiles(User $user): float
+    {
+        $settings = $user->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
 
         $value = is_array($settings) ? ($settings['browseMaxDistance'] ?? null) : null;
-
         if (!is_numeric($value)) {
             return (float) self::DISTANCE_UNLIMITED;
         }
 
         $value = (float) $value;
-        if ($value <= 0 || $value >= self::DISTANCE_UNLIMITED) {
-            return (float) self::DISTANCE_UNLIMITED;
-        }
 
-        return $value;
+        return $value <= 0 || $value >= self::DISTANCE_UNLIMITED
+            ? (float) self::DISTANCE_UNLIMITED
+            : $value;
     }
 
     /**

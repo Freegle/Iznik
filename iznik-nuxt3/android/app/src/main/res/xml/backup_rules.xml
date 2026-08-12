@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto-backup rules for Android 11 and below (see data_extraction_rules.xml
+     for 12+). Firebase's installation prefs must NOT be backed up: restoring
+     them on reinstall makes the FCM SDK hand back the PREVIOUS install's
+     token, which FCM invalidated at uninstall - so the app re-registers a
+     dead token and never receives another push, while believing registration
+     succeeded. Seen live 2026-08-09 (Samsung backup restore after an
+     uninstall/reinstall; every push since rejected as NotRegistered).
+     Everything else keeps backing up as before. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="com.google.android.gms.appid.xml"/>
+    <exclude domain="sharedpref" path="com.google.firebase.messaging.xml"/>
+</full-backup-content>

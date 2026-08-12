@@ -1692,6 +1692,13 @@ services:
       # tried to open it inside the container — memory
       # project_push_dropped_devnull_firebase.
       - ${FIREBASE_HOST_PATH:-/dev/null}:/etc/firebase.json:ro
+      # SSH key for monitor:scheduled-outcomes' host health checks (reboot
+      # required / security patches / monit — see HostHealthCheck). Same
+      # split-name pattern as FIREBASE_HOST_PATH: the HOST path lives in the
+      # compose .env on the batch host; the container always sees
+      # /etc/monitoring-ssh-key. Defaults to /dev/null (dev/CI: checks are
+      # disabled anyway when FREEGLE_MONITORING_HOSTS is empty).
+      - ${MONITORING_SSH_KEY_HOST_PATH:-/dev/null}:/etc/monitoring-ssh-key:ro
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
       # Read replica for the DB read/write split. Falls back to the write host

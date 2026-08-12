@@ -171,7 +171,11 @@
     <!-- Forward rendered events from nested replies: without this the
          notification deep-link scroll in NewsThread never hears about
          depth 2+ replies mounting. When the nested list reports that its
-         whole subtree has mounted, this reply's subtree is complete too. -->
+         whole subtree has mounted, this reply's subtree is complete too.
+         In the feed the children are suppressed and nothing stands in for
+         them here: recent ones are rows of their own in the card's
+         time-ordered tail, and the card's "View all N replies" link counts
+         and names the rest of the tree. -->
     <NewsReplies
       v-if="reply?.replies?.length && !suppressChildren"
       :id="id"
@@ -182,13 +186,6 @@
       @rendered="$emit('rendered', $event)"
       @subtree-rendered="$emit('subtree-rendered', id)"
     />
-    <nuxt-link
-      v-else-if="reply?.replies?.length && suppressChildren"
-      :to="'/chitchat/' + id"
-      class="view-child-replies"
-    >
-      View {{ childCount }} {{ childCount === 1 ? 'reply' : 'replies' }}
-    </nuxt-link>
     <div v-if="showReplyBox" class="mb-2 pb-1 ms-4">
       <div v-if="enterNewLine" class="w-100">
         <OurAtTa
@@ -393,8 +390,10 @@ const props = defineProps({
     type: Number,
     required: true,
   },
-  // Feed cards keep nested conversations behind a counted link instead of
-  // rendering them inline (set by NewsReplies in feed context).
+  // Feed cards render the recent part of a nested conversation as rows of the
+  // card's own tail rather than inline under the parent, so the inline list is
+  // suppressed to stop those replies appearing twice (set by NewsReplies in
+  // feed context).
   suppressChildren: {
     type: Boolean,
     required: false,
@@ -518,19 +517,6 @@ const scrollToThis = computed(() => {
   // link to any of the later messages must still light this row up.
   return !!reply.value?.combinedIds?.includes(target)
 })
-
-// Recursive size of this reply's nested conversation, for the counted link
-// shown when children are suppressed (feed context).
-function countNested(r) {
-  let total = 0
-  for (const kid of r?.replies || []) {
-    const child = typeof kid === 'object' ? kid : newsfeedStore.byId(kid)
-    total += 1 + countNested(child)
-  }
-  return total
-}
-
-const childCount = computed(() => countNested(reply.value))
 
 const isNew = computed(() => {
   const seenBefore = newsfeedStore.seenBeforeVisit
@@ -1051,35 +1037,15 @@ function showReplyPhotoModal() {
   text-transform: uppercase;
 }
 
-/* Counted stand-in for a suppressed nested conversation (feed context).
-   Full-width and comfortably tappable. */
-.view-child-replies {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  width: 100%;
-  padding: 0.25rem 0 0.25rem 1rem;
-  color: $color-success;
-  font-size: 0.85rem;
-  font-weight: 600;
-  text-decoration: none;
-
-  &:hover {
-    text-decoration: underline;
-  }
-
-  &:focus-visible {
-    outline: 2px solid $color-success;
-    outline-offset: 2px;
-    border-radius: 2px;
-  }
-}
-
 /* The reply a notification deep link points at. A brief flash draws the eye
    on arrival, settling to a soft resting tint so the row stays identifiable.
-   Under reduced motion the flash is skipped but the resting cue remains. */
-.deep-link-target {
-  background-color: rgba($color-success-bg, 0.6);
+   Under reduced motion the flash is skipped but the resting cue remains.
+
+   Paint the reply ROW, not the component root: the root also wraps the nested
+   <NewsReplies>, the reply box and the uploader, so tinting it turned the whole
+   subtree green instead of marking the one reply the notification meant. */
+.deep-link-target > .reply {
+  background-color: rgba($color-success-bg, 0.35);
   border-radius: 4px;
 
   @media (prefers-reduced-motion: no-preference) {
@@ -1087,12 +1053,15 @@ function showReplyPhotoModal() {
   }
 }
 
+/* One hue start to finish. This used to open on $color-success-border (a mint
+   green) and settle on $color-success-bg (an olive one), so the flash read as
+   a colour change rather than a fade. */
 @keyframes deep-link-flash {
   0% {
-    background-color: $color-success-border;
+    background-color: rgba($color-success-bg, 0.9);
   }
   100% {
-    background-color: rgba($color-success-bg, 0.6);
+    background-color: rgba($color-success-bg, 0.35);
   }
 }
 </style>

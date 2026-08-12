@@ -1658,15 +1658,30 @@ func Search(c *fiber.Ctx) error {
 		if ll := user.GetLatLng(myid); ll.Lat != 0 || ll.Lng != 0 {
 			memberLat, memberLng = float64(ll.Lat), float64(ll.Lng)
 		}
-		var rawDist, rawSort string
+		// Same two-key resolution as isochrone.resolveMaxDistance: the member's own
+		// choice, else their density band default (browseReachMaxDistance, written by
+		// browse:backfill-max-distance). Browse-scoped search shares the feed's universe
+		// (Discourse 9933), so missing the fallback here would surface posts in search
+		// that the feed itself hides.
+		var rawDist, rawDefaultDist, rawSort string
 		db.Table("users").
 			Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), ''), "+
+				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseReachMaxDistance')), ''), "+
 				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseSort')), '')").
 			Where("id = ?", myid).
-			Row().Scan(&rawDist, &rawSort)
-		if rawDist != "" {
-			if v, err := strconv.ParseFloat(rawDist, 64); err == nil && v > 0 {
+			Row().Scan(&rawDist, &rawDefaultDist, &rawSort)
+		for _, raw := range []string{rawDist, rawDefaultDist} {
+			if raw == "" {
+				continue
+			}
+			// An unparseable value is treated as no value and falls through to the
+			// next key, matching isochrone.resolveMaxDistance and the Laravel
+			// DistancePreferenceFilter - all three must agree or the feed, its badge
+			// and search would disagree about the same member.
+			if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
 				browseMaxMiles = v
+
+				break
 			}
 		}
 		browseSort = rawSort
@@ -3958,17 +3973,40 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, f
 
 	// Subject, textbody, and item name are exactly the fields
 	// ContentCheckService::checkMessage() scans (concern keywords, per-group
-	// worry words, phone numbers, vague-item, not-an-item, URLs, ...).
-	// processUnprocessed() only re-scans messages_groups rows where
-	// contentcheck_checked_at IS NULL, so once a row has been checked, editing
-	// in new content otherwise leaves it unchecked forever - the automated
-	// moderation filters silently skip it and it can only be caught by a mod
-	// noticing manually. Clearing the stamp here re-queues the row for a fresh
-	// check, for both mods and owners: mods stripping an issue that triggered a
-	// flag also need the clean edit re-verified.
+	// worry words, phone numbers, vague-item, not-an-item, URLs, ...). A row
+	// that has already been checked is never re-scanned on its own, so editing
+	// in new content would otherwise leave the automated moderation filters
+	// silently skipped, catchable only by a mod noticing by hand. Stamp
+	// messages.editedat: the batch derives "checked, then edited" from
+	// editedat > contentcheck_checked_at and re-scans, for both mods and
+	// owners - a mod stripping the issue that triggered a flag also needs the
+	// clean edit re-verified. Deriving from the edit audit stamp rather than
+	// keeping a separate mark means the state cannot drift, and needs no
+	// schema beyond columns that already exist.
+	//
+	// Stamping, NOT clearing contentcheck_checked_at. That stamp doubles as
+	// "safe to show a moderator": the Pending list (message_list.go) and the
+	// work counts (groupWork.go, session.go) hide rows that have never been
+	// checked, so a brand-new post is not shown before the checks have had
+	// their say. Clearing it on edit made the post the moderator had just
+	// edited vanish out of their own queue - card and badge together - until
+	// the batch re-stamped it half a minute later, reappearing only on a
+	// manual reload (Discourse 10001).
+	//
+	// The stored reasons still go, as they always did: they are what ModTools
+	// shows as "why is this pending", and a reason the mod has just edited out
+	// is worse than no reason at all - another mod could reject a post over a
+	// problem that is no longer there. The recheck writes the true set back.
 	if subjectChanged || textChanged || itemsChanged {
+		db.Table("messages").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{
+				"editedat": gorm.Expr("NOW()"),
+				"editedby": myid,
+			})
 		db.Table("messages_groups").Where("msgid = ?", req.ID).
-			Updates(map[string]interface{}{"contentcheck_checked_at": gorm.Expr("NULL"), "contentcheck_reasons": gorm.Expr("NULL")})
+			Updates(map[string]interface{}{
+				"contentcheck_reasons": gorm.Expr("NULL"),
+			})
 	}
 
 	// The subject/body drive the search indexes (messages_index keyword search and

@@ -16,14 +16,47 @@ export function fetchRetry(fetch) {
       return 10000
     }
 
+    if (response?.status === 429) {
+      // Rate limited.  The load balancer's rate window is short (per-second), so a couple of
+      // seconds is normally enough for a burst to clear.  Honour Retry-After if the server
+      // sent one.
+      const retryAfter = parseInt(response.headers?.get('Retry-After'))
+      if (!isNaN(retryAfter) && retryAfter > 0) {
+        return Math.min(retryAfter * 1000, 30000)
+      }
+
+      return 2000 * (attempt + 1)
+    }
+
     // Slowly back off for longer each time.
     return attempt * 1000
   }
 
   const retryOn = async function (attempt, error, response) {
-    // No point retrying until we know we are back online.
     const miscStore = useMiscStore()
-    await miscStore.waitForOnline()
+
+    // There is no point making another attempt until we believe we are back
+    // online - but that is the only thing the connection check is for.  It
+    // used to run here, as the very first act of every retry decision, before
+    // we had even looked at what came back.  So a member whose connection
+    // dropped in the moment between sending a request and its reply arriving
+    // had a perfectly good response thrown away: the online check did not
+    // resolve, the success branch below was never reached, and the caller was
+    // left awaiting a promise that could never settle.
+    //
+    // That is what stranded a give-flow photo for user 3512849 on 2026-08-10:
+    // POST /apiv2/image returned 200 with image id 45508630, the app flipped
+    // offline, and PhotoUploader's `await imageStore.post()` never returned.
+    // The photo stayed uploading:true at 100%, compose persisted it, and
+    // because the flow gates Next on anyUploading she could not post at all.
+    //
+    // So wait only on the paths that are about to try again, never before
+    // reading a reply we already hold.
+    const waitThenRetry = async function (why) {
+      console.log(why)
+      await miscStore.waitForOnline()
+      return [true, false]
+    }
 
     if (attempt >= 10) {
       return [false, false, null, new Error('Too many retries, give up')]
@@ -50,8 +83,7 @@ export function fetchRetry(fetch) {
       blandErrors.includes(response?.statusText?.toLowerCase()) ||
       blandErrors.includes(error?.message?.toLowerCase())
     ) {
-      console.log('Load failed - retry')
-      return [true, false]
+      return await waitThenRetry('Load failed - retry')
     }
 
     // A 504 means the gateway gave up on a request the server was probably still executing -
@@ -69,11 +101,23 @@ export function fetchRetry(fetch) {
       ]
     }
 
+    // Retry rate limiting (429) with backoff (see retryDelay).  Bursts trip the load
+    // balancer's per-second limits - e.g. ModTools firing parallel work checks at boot,
+    // before HAProxy has re-learned that the user is a privileged mod - and clear within
+    // seconds.  Until the LB error responses carried CORS headers these appeared to the
+    // browser as opaque network errors and were retried by the branch below; keep that
+    // resilience, but as deliberate policy.  Persistent 429s (real abuse) still fail via
+    // the overall attempt cap.
+    if (response?.status === 429) {
+      return await waitThenRetry('Rate limited - retry with backoff')
+    }
+
     // Retry on network errors or server errors (5xx).  Don't retry client errors (4xx) - these are legitimate
     // API responses (e.g. 400 Bad Request, 401 Unauthorized, 403 Forbidden, 404 Not Found, 409 Conflict).
     if (error !== null || response?.status >= 500) {
-      console.log('Error - retry', error, response?.status)
-      return [true, false]
+      return await waitThenRetry(
+        `Error - retry ${error?.message ?? ''} ${response?.status ?? ''}`
+      )
     }
 
     if (response?.status >= 200 && response?.status < 300) {
@@ -82,8 +126,7 @@ export function fetchRetry(fetch) {
 
         if (!data) {
           // We've seen 200 responses with no data, which is never valid for us, so retry.
-          console.log('Success but no data - retry')
-          return [true, false]
+          return await waitThenRetry('Success but no data - retry')
         } else {
           return [false, true, data]
         }
@@ -94,7 +137,7 @@ export function fetchRetry(fetch) {
         }
 
         // JSON parse failed on a response that should have had a body.  Retry.
-        return [true, false]
+        return await waitThenRetry('Bad JSON body - retry')
       }
     } else {
       // Client error (4xx) that we aren't supposed to retry.  Parse the response body if available

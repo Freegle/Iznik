@@ -6,6 +6,7 @@ use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * The rippling-out reach engine.
@@ -30,9 +31,64 @@ class ExpandService
     /** Maintains the sandwich-bounds columns alongside every polygon write. */
     private ReachBoundsService $bounds;
 
-    public function __construct(private ReachService $reach, ?ReachBoundsService $bounds = null)
-    {
+    /** Chooses each post's reach budget from how thinly freeglers are spread around it. */
+    private DensityService $density;
+
+    /** Which communities have switched rippling off, per direction (groups.settings.rippling). */
+    private GroupRippleOptOut $optOut;
+
+    /** Releases held replies when a post's reach is dropped by an opt-out. */
+    private RippleReplyService $replies;
+
+    /** Memoized rippling_reach density-column check, so a pre-migration deploy is a no-op. */
+    private static ?bool $densityColumns = null;
+
+    public function __construct(
+        private ReachService $reach,
+        ?ReachBoundsService $bounds = null,
+        ?DensityService $density = null,
+        ?GroupRippleOptOut $optOut = null,
+        ?RippleReplyService $replies = null
+    ) {
         $this->bounds = $bounds ?? new ReachBoundsService();
+        $this->density = $density ?? new DensityService();
+        $this->optOut = $optOut ?? new GroupRippleOptOut();
+        $this->replies = $replies ?? new RippleReplyService(new ReachQueryService());
+    }
+
+    /**
+     * SQL fragment (leading " AND ...") excluding the communities that have opted out of
+     * the given rippling direction, or '' when none have. Every id is a DB int, so the
+     * inline list cannot inject — same shape as the reachable-gate clause below.
+     */
+    private function optOutClause(string $column, string $direction): string
+    {
+        $ids = $this->optOut->excludedGroupIds($direction);
+        if (empty($ids)) {
+            return '';
+        }
+
+        return ' AND ' . $column . ' NOT IN (' . implode(',', $ids) . ')';
+    }
+
+    /** Has the density-sizing migration run? Without it the cap still applies, unrecorded. */
+    private function densityColumnsReady(): bool
+    {
+        if (self::$densityColumns === null) {
+            try {
+                self::$densityColumns = Schema::hasColumn('rippling_reach', 'density_band');
+            } catch (\Throwable) {
+                self::$densityColumns = false;
+            }
+        }
+
+        return self::$densityColumns;
+    }
+
+    /** Test-only: forget the memoized density-column check. */
+    public static function forgetDensityColumns(): void
+    {
+        self::$densityColumns = null;
     }
 
     /**
@@ -129,6 +185,11 @@ class ExpandService
         // 1b. Pull rippled-in posts from any group whose poster has actively left it, so a
         //     leave removes the poster's post from that group (not just their membership).
         $this->pullRippledPostsFromLeftGroups($dryRun, $stats, $onlyMsgid);
+        // 1c. Stop-and-retract for posts on a community that has since switched ripple-OUT off
+        //     (groups.settings.rippling.out). initialiseNew's gate only stops NEW posts, so
+        //     without this a community that opts out keeps expanding everything it had already
+        //     started - including on the deploy that first gives it the setting.
+        $this->retractOptedOutCommunities($dryRun, $stats, $onlyMsgid);
 
         // 2. Initialise reach for posts new to messages_spatial.
         $this->initialiseNew($dryRun, $limit, $stats, $onlyMsgid, $withinPolyWkt);
@@ -171,8 +232,13 @@ class ExpandService
             return $stats; // cap not active — there is nothing smaller to shrink to
         }
 
+        $cols = ['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status'];
+        if ($this->densityColumnsReady()) {
+            $cols[] = 'max_minutes_cap';
+        }
         $q = DB::table('rippling_reach')
-            ->select(['msgid', 'lat', 'lng', 'tick', 'total_freeglers', 'rejected_groups', 'status'])
+            ->select($cols)
+            // keep-raw: ST_AsText is a spatial function the builder cannot render
             ->selectRaw('ST_AsText(polygon) AS cur_wkt')   // current footprint, for the crosspost-breadth stat
             ->where('status', '!=', 'rejected')            // active reach rows only
             ->where('total_freeglers', '>', $target);      // only rows that can exceed the cap
@@ -186,8 +252,16 @@ class ExpandService
 
             // Re-fetch the schedule from the stored (already-blurred) origin. With
             // the cap now configured ReachService sends target_users, so this comes
-            // back capped to the nearest ~target_users freeglers.
-            $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+            // back capped to the nearest ~target_users freeglers. The post keeps the
+            // reach BUDGET it was sized with - this pass shrinks the audience, and
+            // silently re-sizing to the flat cap here would undo the density decision.
+            $schedule = $this->reach->computeSchedule(
+                (float) $row->lat,
+                (float) $row->lng,
+                isset($row->max_minutes_cap) && $row->max_minutes_cap !== null
+                    ? (float) $row->max_minutes_cap
+                    : null
+            );
             if ($schedule === null || empty($schedule['ticks'])) {
                 $stats['skipped']++;
                 continue; // routing unreachable this run — safe to retry later
@@ -277,6 +351,7 @@ class ExpandService
         if ($wkt === '') {
             return 0;
         }
+        // keep-raw: ST_Intersects/ST_GeometryType against a WKT literal - spatial predicates the builder cannot render
         $row = DB::selectOne(
             "SELECT COUNT(*) AS c
              FROM `groups` g
@@ -286,7 +361,8 @@ class ExpandService
                AND g.nameshort NOT LIKE '%playground%'
                AND g.polyindex IS NOT NULL
                AND ST_GeometryType(g.polyindex) <> 'POINT'
-               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))",
+               AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))"
+            . $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN),
             [$wkt]
         );
         return (int) ($row->c ?? 0);
@@ -345,6 +421,80 @@ class ExpandService
         } catch (\Throwable $e) {
             $stats['errors']++;
             Log::warning("ripple: remove-stale-and-retract failed: {$e->getMessage()}");
+        }
+    }
+
+    /**
+     * Stop-and-retract every post whose community has switched ripple-OUT off
+     * (groups.settings.rippling.out) since the post started rippling.
+     *
+     * initialiseNew's opt-out gate only keeps NEW posts from starting, so on its own it would
+     * leave a phantom or training community's in-flight ripples expanding for the rest of their
+     * life - and on the deploy that first writes the setting, EVERY live practice post there
+     * would keep going. This closes that: drop the reach row (which stops expansion and takes the
+     * post out of every reach-driven read path), pull the copies already delivered - exactly as
+     * removeStaleAndRetract does for a post that has left the browsable set - and release any
+     * replies still held against the reach we are dropping.
+     *
+     * Skips 'held' rows for the same reason the other retraction paths do: their copies are
+     * deliberately Pending for per-group moderation. A held post that is later re-approved
+     * flips back out of 'held' and is caught by the next run of this pass.
+     *
+     * Scope: only --msgid restricts it, matching removeStaleAndRetract - retracting a committed
+     * copy must complete regardless of the current area scope.
+     */
+    private function retractOptedOutCommunities(bool $dryRun, array &$stats, ?int $onlyMsgid = null): void
+    {
+        try {
+            $excluded = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_OUT);
+            if (empty($excluded)) {
+                return;
+            }
+
+            // ms.groupid is the post's own community (messages_spatial.msgid is UNIQUE). A post
+            // whose community opted out is matched here however far it had already spread.
+            $q = DB::table('rippling_reach as mr')
+                ->join('messages_spatial as ms', 'ms.msgid', '=', 'mr.msgid')
+                ->where('mr.status', '<>', 'held')
+                ->whereIn('ms.groupid', $excluded);
+            if ($onlyMsgid !== null) {
+                $q->where('mr.msgid', $onlyMsgid);
+            }
+            $msgids = $q->pluck('mr.msgid')->map(static fn ($id) => (int) $id)->all();
+            if (empty($msgids)) {
+                return;
+            }
+
+            if ($dryRun) {
+                $stats['removed'] += count($msgids);
+                $stats['pulled_on_removal'] += (int) DB::table('messages_groups')
+                    ->whereIn('msgid', $msgids)
+                    ->where('rippled_in', 1)
+                    ->where('deleted', 0)
+                    ->count();
+
+                return;
+            }
+
+            foreach ($msgids as $msgid) {
+                $this->retractRippledCopiesForRemovedPost($msgid, $stats);
+                // Release any still-held replies BEFORE dropping the reach row. The post is live
+                // (it is still in messages_spatial), so these replies are real people waiting on
+                // a ripple that is never coming: with no reach row, ripple:release-replies takes
+                // the "transiently absent, wait for re-initialisation" branch and would hold them
+                // for ever, and initialiseNew will never re-create the row. Releasing hands them
+                // to the offerer, which is what would have happened when the reach reached them.
+                // (Replies made from here on are not held at all - the Go gate only holds when a
+                // reach row exists, so it fails open.)
+                $stats['released_on_opt_out'] = ($stats['released_on_opt_out'] ?? 0)
+                    + $this->replies->releaseAll($msgid, 'community-opted-out');
+                DB::table('rippling_reach')->where('msgid', $msgid)->delete();
+                $stats['removed']++;
+                Log::info("ripple: retracted $msgid - its community has rippling switched off");
+            }
+        } catch (\Throwable $e) {
+            $stats['errors']++;
+            Log::warning("ripple: retract-opted-out-communities failed: {$e->getMessage()}");
         }
     }
 
@@ -700,7 +850,24 @@ class ExpandService
         }
         $params[] = $limit;
 
+        // Ripple-OUT opt-out (groups.settings.rippling.out): a post on a community that has
+        // switched rippling off never gets a reach row, so it is never crossposted and never
+        // appears in another member's nearby feed (both read paths hang off rippling_reach).
+        // This is a community-level policy rather than a rollout guard, so unlike the arrival
+        // cutoff and the saturation stop it applies to --msgid and area runs too.
+        //
+        // messages_spatial.msgid is UNIQUE, so ms.groupid is the post's single recorded
+        // community. A candidate here has no reach row, hence has never rippled, so that
+        // recorded community is one it was posted to directly rather than rippled into. The
+        // NULL arm matters: groupid is nullable and `NULL NOT IN (...)` is NULL, which would
+        // silently drop every group-less row from the candidate set.
+        $outOptOut = $this->optOut->excludedGroupIds(GroupRippleOptOut::DIRECTION_OUT);
+        $optOutSql = empty($outOptOut)
+            ? ''
+            : ' AND (ms.groupid IS NULL OR ms.groupid NOT IN (' . implode(',', $outOptOut) . '))';
+
         // Candidate source: live posts with NO reach row yet (anti-join).
+        // keep-raw: ANY_VALUE + the ST_X/ST_Y spatial accessors on a GROUP BY the builder cannot render
         $rows = DB::select(
             'SELECT ms.msgid AS msgid,
                     ANY_VALUE(ST_Y(ms.point)) AS lat,
@@ -708,7 +875,7 @@ class ExpandService
                     MIN(ms.arrival) AS arrival
              FROM messages_spatial ms
              LEFT JOIN rippling_reach mr ON mr.msgid = ms.msgid
-             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . '
+             WHERE mr.msgid IS NULL' . $scopeSql . $cutoffSql . $satSql . $optOutSql . '
              GROUP BY ms.msgid
              LIMIT ?',
             $params
@@ -737,6 +904,24 @@ class ExpandService
             $distinctOrigins[$lat . ',' . $lng] = ['lat' => $lat, 'lng' => $lng];
         }
 
+        // Every reach grows to the SAME budget: the widest any band earns. The cap
+        // belongs to the person who would travel, not to the item (DensityService
+        // docblock), and a post cannot know which bands the members around it fall
+        // in - so it must reach far enough for the sparse ones and let each member be
+        // admitted on their own band on the way out. Sizing this at the origin
+        // instead is what left a rural member permanently unable to see their nearest
+        // town's posts.
+        //
+        // The origin's own band is still measured and stored: it is what the row is
+        // read back by, and the density analytics compare bands against each other.
+        // It is a description of where the post is, not the limit on where it goes.
+        $ceiling = DensityService::ceiling();
+        $capByKey = [];
+        foreach ($distinctOrigins as $k => $o) {
+            $capByKey[$k] = $this->density->capFor($o['lat'], $o['lng']);
+            $distinctOrigins[$k]['max_minutes'] = $ceiling;
+        }
+
         $scheduleByKey = []; // "lat,lng" => parsed schedule | null
 
         // Reuse: a reach schedule is a deterministic function of the blurred origin (+ global ripple
@@ -755,8 +940,10 @@ class ExpandService
                 $reuseParams[] = $p['lat'];
                 $reuseParams[] = $p['lng'];
             }
+            $capCol = $this->densityColumnsReady() ? ', max_minutes_cap' : '';
+            // keep-raw: row-constructor `(lat, lng) IN ((?,?),(?,?)...)` - the builder cannot render a tuple IN
             $existing = DB::select(
-                'SELECT lat, lng, schedule, total_freeglers, max_drive_min
+                'SELECT lat, lng, schedule, total_freeglers, max_drive_min' . $capCol . '
                  FROM rippling_reach
                  WHERE schedule IS NOT NULL AND (lat, lng) IN (' . $placeholders . ')',
                 $reuseParams
@@ -767,6 +954,17 @@ class ExpandService
                 $k = round((float) $e->lat, 4) . ',' . round((float) $e->lng, 4);
                 if (!isset($distinctOrigins[$k]) || isset($scheduleByKey[$k])) {
                     continue; // not one of this batch's origins, or already reused
+                }
+                // A stored schedule computed under a DIFFERENT reach budget is not this
+                // post's schedule, however co-located the two posts are. Every reach now
+                // grows to the ceiling, so this mostly guards the rows written before
+                // that - and it is what makes a change to the ceiling take effect
+                // everywhere rather than only where nobody had posted before.
+                if ($capCol !== '') {
+                    $storedCap = $e->max_minutes_cap === null ? null : (float) $e->max_minutes_cap;
+                    if ($storedCap === null || abs($storedCap - $ceiling) > 0.001) {
+                        continue;
+                    }
                 }
                 $ticks = json_decode($e->schedule, true);
                 if (!is_array($ticks) || empty($ticks)) {
@@ -807,6 +1005,10 @@ class ExpandService
                 $lat = $blurredByRow[$i]['lat'];
                 $lng = $blurredByRow[$i]['lng'];
 
+                $cap = $capByKey[$blurredByRow[$i]['key']]
+                    ?? ['band' => DensityService::BAND_UNKNOWN, 'radius_miles' => null,
+                        'max_minutes' => (float) config('freegle.ripple.max_minutes', 30)];
+
                 $schedule = $scheduleByKey[$blurredByRow[$i]['key']] ?? null;
                 if ($schedule === null) {
                     // The blurred origin can snap to a DISCONNECTED routing node (a driveway stub
@@ -818,7 +1020,9 @@ class ExpandService
                     // against a 30-min drive isochrone (the innermost tick is already km-scale), so
                     // this does not meaningfully reduce origin privacy - it only rescues the posts
                     // the blur would otherwise lose. Costs one extra routing call per stranded post.
-                    $schedule = $this->reach->computeSchedule((float) $row->lat, (float) $row->lng);
+                    $schedule = $this->reach->computeSchedule(
+                        (float) $row->lat, (float) $row->lng, $ceiling
+                    );
                     if ($schedule !== null) {
                         $lat = (float) $row->lat;
                         $lng = (float) $row->lng;
@@ -865,33 +1069,41 @@ class ExpandService
                     // NOT NULL, and there must never be a window with stale/absent bounds);
                     // envelope retry if derivation throws on pathological geometry.
                     $ready = $this->bounds->ready();
+                    $withDensity = $this->densityColumnsReady();
                     $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
-                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $poly): string {
+                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $poly): string {
                         $cols = $ready ? ', outer_bound, inner_bound' : '';
                         $vals = $ready ? ", $outerExpr, $innerExpr" : '';
                         $dup = $ready ? ', outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)' : '';
+                        $dCols = $withDensity ? ', density_band, density_radius_miles, max_minutes_cap' : '';
+                        $dVals = $withDensity ? ', ?, ?, ?' : '';
+                        $dDup = $withDensity
+                            ? ', density_band = VALUES(density_band),
+                                density_radius_miles = VALUES(density_radius_miles),
+                                max_minutes_cap = VALUES(max_minutes_cap)'
+                            : '';
 
                         return 'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon' . $cols . ', arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
-                            next_expansion_at, status, created_at, updated_at)
-                         VALUES (?, ?, ?, ' . $poly . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                            next_expansion_at, status' . $dCols . ', created_at, updated_at)
+                         VALUES (?, ?, ?, ' . $poly . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
                             lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon)' . $dup . ',
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
                             reachable_group_ids = VALUES(reachable_group_ids),
-                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status),
+                            next_expansion_at = VALUES(next_expansion_at), status = VALUES(status)' . $dDup . ',
                             updated_at = NOW()';
                     };
-                    $initTail = [
+                    $initTail = array_merge([
                         $arrival, $this->reach->mode(), $tick, $total,
                         $schedule['total_freeglers'], $schedule['max_drive_min'],
                         json_encode($schedule['ticks']),
                         json_encode($this->tickReachableIds($entry, $schedule)),
                         $next, $status,
-                    ];
+                    ], $withDensity ? [$cap['band'], $cap['radius_miles'], $ceiling] : []);
                     $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $poly): void {
                         $head = [$row->msgid, $lat, $lng, $wkt];
                         try {
@@ -1206,13 +1418,21 @@ class ExpandService
                 ? ' AND g.id IN (' . implode(',', array_map('intval', $reachableGroupIds)) . ')'
                 : '';
 
+            // Ripple-IN opt-out (groups.settings.rippling.in): never crosspost into a community
+            // that has switched rippling off. The `%playground%` name test below predates this
+            // and stays as belt-and-braces for a playground community created before anyone gives
+            // it the setting; the setting is the deliberate, per-community mechanism (set by
+            // ripple:opt-out), and the only one that also covers ripple-OUT (see initialiseNew).
+            $inOptOut = $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN);
+
+            // keep-raw: ST_Intersects/ST_GeometryType plus the correlated logs/ban NOT EXISTS arms the builder cannot render
             $targetGroups = DB::select(
                 "SELECT g.id
                  FROM `groups` g
                  WHERE g.publish = 1
                    AND g.type = 'Freegle'
                    AND g.onhere = 1
-                   AND g.nameshort NOT LIKE '%playground%'
+                   AND g.nameshort NOT LIKE '%playground%'" . $inOptOut . "
                    AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> 'POINT'
                    AND ST_Intersects(g.polyindex, ST_GeomFromText(?, " . self::SRID . "))" . $reachableGate . "

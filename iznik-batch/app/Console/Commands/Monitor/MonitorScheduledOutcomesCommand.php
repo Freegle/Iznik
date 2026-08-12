@@ -13,10 +13,13 @@ use Illuminate\Support\Facades\Log;
  * their work (rows written, cursor advanced), not just that the scheduler is
  * alive. Runs every 10 minutes (itself heartbeated to Sentry Crons).
  *
- * For each registered check it prints a line and, on any BREACH, escalates to
- * Sentry (\Sentry\captureMessage, guarded by function_exists exactly like
- * EmailHealthCommand/TNSyncCommand) plus Log::warning, then exits non-zero so
- * the breach shows as a red badge in the cron-jobs sysadmin tab. SKIPPED
+ * For each registered check it prints a line and, on an ERROR-severity BREACH,
+ * escalates to Sentry (\Sentry\captureMessage, guarded by function_exists
+ * exactly like EmailHealthCommand/TNSyncCommand) plus Log::warning, then exits
+ * non-zero so the breach shows as a red badge in the cron-jobs sysadmin tab.
+ * WARNING-severity breaches are published to the status dot and logged, but
+ * neither page Sentry nor fail the command — a host that needs a reboot for a
+ * fortnight should show amber, not fire an alert every 10 minutes. SKIPPED
  * results (precondition unmet / outside active window) never fail the command.
  *
  * A full pass also publishes its verdict for ModTools' platform status dot (see
@@ -80,20 +83,33 @@ class MonitorScheduledOutcomesCommand extends Command
                 Log::warning("[ScheduledOutcomes] {$breach->slug}: {$breach->message}");
             }
 
-            // Escalate to Sentry so the team (who actively watch it) are alerted
-            // promptly. Guarded because Sentry's helpers aren't loaded in every
+            // Severity splits the response. An ERROR means part of the
+            // platform is not working: escalate to Sentry and exit non-zero.
+            // A WARNING (e.g. a host needing a reboot) still turns the status
+            // dot amber via the publish above, but a long-standing warning
+            // must not page Sentry every 10 minutes or pin the cron-jobs tab
+            // red for weeks — that alarm fatigue is how real errors get missed.
+            $errors = array_values(array_filter($breaches, fn ($b) => $b->severity === 'error'));
+
+            // Guarded because Sentry's helpers aren't loaded in every
             // environment (e.g. tests) — same pattern as EmailHealthCommand.
-            if (function_exists('\Sentry\captureMessage')) {
-                foreach ($breaches as $breach) {
+            if (! empty($errors) && function_exists('\Sentry\captureMessage')) {
+                foreach ($errors as $breach) {
                     \Sentry\captureMessage(
                         "[ScheduledOutcomes][{$breach->severity}] {$breach->slug}: {$breach->message}"
                     );
                 }
             }
 
-            $this->error(count($breaches) . ' scheduled-outcome check(s) breached.');
+            if (! empty($errors)) {
+                $this->error(count($errors) . ' scheduled-outcome check(s) breached.');
 
-            return Command::FAILURE;
+                return Command::FAILURE;
+            }
+
+            $this->warn(count($breaches) . ' scheduled-outcome warning(s) published to the status dot.');
+
+            return Command::SUCCESS;
         }
 
         $this->info('All scheduled-outcome checks OK.');

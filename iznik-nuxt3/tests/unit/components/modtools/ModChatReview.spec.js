@@ -771,6 +771,112 @@ describe('ModChatReview', () => {
     })
   })
 
+  // The four rippling-hold states a mod needs to tell apart. Before this, only "held now"
+  // was visible: a hold that had already released left NO trace, which is why the delay in
+  // Discourse 10025 looked like a mail-system fault, and 'taken-gone' rendered as "held ...
+  // will be delivered automatically" when in fact it never was and never will be.
+  describe('rippling hold states', () => {
+    it('held: shows how long it has been waiting so far', () => {
+      const wrapper = mountComponent({
+        heldbyrippling: true,
+        ripplinghold: {
+          status: 'held',
+          heldat: '2026-08-04T14:22:58Z',
+          heldminutes: 180,
+          delivered: false,
+        },
+      })
+      const notice = wrapper.find('[data-testid="rippling-held-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held: rippling out')
+      expect(notice.text()).toContain('3 hours')
+      // Still true for a live hold - it really will go out when the reach grows.
+      expect(notice.text()).toContain('delivered automatically')
+    })
+
+    it('released: reports the delay that already happened', () => {
+      const wrapper = mountComponent({
+        ripplinghold: {
+          status: 'released',
+          heldat: '2026-08-04T14:22:58Z',
+          releasedat: '2026-08-06T13:15:08Z',
+          heldminutes: 2812,
+          delivered: true,
+        },
+      })
+      const notice = wrapper.find('[data-testid="rippling-delayed-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held as too far for: 46 hours')
+      // Must NOT claim it is still waiting.
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
+    })
+
+    it('taken-gone: says never delivered, and does NOT promise delivery', () => {
+      const wrapper = mountComponent({
+        ripplinghold: {
+          status: 'taken-gone',
+          heldat: '2026-08-04T14:22:58Z',
+          releasedat: '2026-08-06T13:15:08Z',
+          heldminutes: 2812,
+          delivered: false,
+        },
+      })
+      const notice = wrapper.find('[data-testid="rippling-undelivered-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toMatch(/never (reached|delivered)/i)
+      expect(notice.text()).toContain('46 hours')
+      // The bug this fixes: the old notice promised automatic delivery.
+      expect(wrapper.text()).not.toContain('delivered automatically')
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
+    })
+
+    // Safety net only. Nothing writes 'dropped' - production has never recorded one
+    // against ~9,800 released and ~3,200 taken-gone - so this covers the defensive
+    // branch rather than a state moderators will meet. It must not go silently blank.
+    it('an unexpected terminal status still says never delivered, without inventing a reason', () => {
+      const wrapper = mountComponent({
+        ripplinghold: {
+          status: 'dropped',
+          heldat: '2026-08-04T14:22:58Z',
+          heldminutes: 300,
+          delivered: false,
+        },
+      })
+      const notice = wrapper.find('[data-testid="rippling-undelivered-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toMatch(/never (reached|delivered)/i)
+      expect(notice.text()).toContain('5 hours')
+      // No claim about an item being taken - we do not know that here.
+      expect(notice.text()).not.toContain('taken by someone else')
+      expect(wrapper.text()).not.toContain('delivered automatically')
+    })
+
+    it('falls back to the old notice when the API sends no ripplinghold detail', () => {
+      // Older API build, or a cached response: heldbyrippling alone must still warn.
+      const wrapper = mountComponent({ heldbyrippling: true })
+      const notice = wrapper.find('[data-testid="rippling-held-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held: rippling out')
+    })
+
+    it('shows nothing when there is no hold at all', () => {
+      const wrapper = mountComponent({})
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
+      expect(
+        wrapper.find('[data-testid="rippling-delayed-notice"]').exists()
+      ).toBe(false)
+      expect(
+        wrapper.find('[data-testid="rippling-undelivered-notice"]').exists()
+      ).toBe(false)
+    })
+  })
+
   describe('edge cases', () => {
     it('handles message without group', () => {
       const wrapper = mountComponent({ group: null })

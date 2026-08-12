@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-05
+last_reviewed: 2026-08-11
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -60,11 +60,16 @@ and per-group membership and roles are the ones you will meet first.
   and the rejected alternatives are in [./reference/rippling-algorithm.md](./reference/rippling-algorithm.md);
   the member and moderator behaviour is in
   [../members/rippling-out.md](../members/rippling-out.md) and
-  [../moderators/rippling-out.md](../moderators/rippling-out.md).
+  [../moderators/rippling-out.md](../moderators/rippling-out.md). The one structural thing
+  to know before reading any of it: the travel-time cap belongs to the RECIPIENT, not the
+  post. Every ripple grows to the same ceiling, and each member is then admitted on the
+  budget their own local freegler density justifies - so a rural member can reach the town
+  they already drive to, while a city member is not mailed things nobody would travel for.
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
-  that get no reply at all: a passthrough for a silent post's first reply, early notification
-  of members who look likely to want that specific item, and Freegle's own chat messages to
-  the poster. See [./reference/first-reply.md](./reference/first-reply.md).
+  that get no reply at all: a passthrough for a silent post's first reply, individual mail to
+  the members who have asked for that specific item (an open post of the opposite type, or a
+  saved search), and Freegle's own chat messages to the poster.
+  See [./reference/first-reply.md](./reference/first-reply.md).
 - **TrashNothing / LoveJunk** is a partner integration where external users post into
   Freegle communities. See [./reference/trashnothing.md](./reference/trashnothing.md).
 - **Logging and observability** run through Loki, with client-side tracing. See

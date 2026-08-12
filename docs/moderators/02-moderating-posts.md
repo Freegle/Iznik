@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-05
+last_reviewed: 2026-08-11
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -68,7 +68,11 @@ ModTools tells you *why* a post needs a look, right on the post:
 - **Rippling banners** explain when a post has rippled in from a neighbouring community
   ("do not reject just for being out of area"), or has rippled out to several communities
   (so approving here affects only your community). A **View rippling reach** map shows
-  where the post is or will be visible.
+  where the post is or will be visible. The map is the post's full reach; an individual
+  member inside it still only sees the post if it is within the travel time their own
+  area justifies, which is further in the countryside than in a city - so "it is on the
+  reach map" and "everyone in that area saw it" are not the same thing. See
+  [rippling out](rippling-out.md).
 - **Bulk clearance** posts show an item count and a "see how members see it" preview.
 
 ## Standard messages

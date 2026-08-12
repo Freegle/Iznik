@@ -132,11 +132,6 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 // badge's existing "unseen only" semantics) both call it, so feed and count cannot drift on
 // membership OR on the columns each candidate's score/distance is derived from.
 func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOnly bool) []reachCandidateRow {
-	unseenFilter := ""
-	if unseenOnly {
-		unseenFilter = "AND ml.msgid IS NULL "
-	}
-
 	// reach_wkt is the BOUNDING-BOX envelope of the reach polygon (ST_Envelope), not the
 	// polygon itself. The reach-gate's exact display polygons are huge - up to ~1.25MB of WKT
 	// each - so ST_AsText(rr.polygon) for every in-reach post shipped tens of MB per browse
@@ -144,8 +139,50 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// timed out and saw NO posts. The WKT is only consumed by ReachRadiusMetres (the score's
 	// 'close' term), which takes the farthest vertex from the origin; the envelope's 5 points
 	// give that extent (a small, uniform over-estimate) for ~100 bytes instead of megabytes.
-	// Visibility is unaffected: the WHERE below still tests containment on the FULL polygon
+	// Visibility is unaffected: the WHERE still tests containment on the FULL polygon
 	// (via the sandwich-bounds prefilter — see reachContainmentSQL).
+	var candidates []reachCandidateRow
+	reachCandidateQuery(db, myid, latlng, unseenOnly).
+		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
+			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
+			"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
+			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
+			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
+			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
+			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt",
+			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
+		Scan(&candidates)
+
+	return candidates
+}
+
+// reachCandidatePoints is the count-shaped slice of the reach arm: the SAME membership
+// (joins + WHERE, via reachCandidateQuery) as the feed, but selecting ONLY the post
+// coordinates the blurred-Haversine distance filter needs. The badge poll runs this every
+// 60s per active member with a saved browseMaxDistance, and it used to run the FULL
+// fetchReachCandidates - per-row views/replies correlated subqueries and the polygon
+// envelope, none of which a COUNT consumes - at ~849ms a call, a steady CPU tax on the
+// write node (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md finding 2).
+func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reachCandidateRow {
+	var candidates []reachCandidateRow
+	reachCandidateQuery(db, myid, latlng, true).
+		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
+		Scan(&candidates)
+	return candidates
+}
+
+// reachCandidateQuery composes the reach arm's FROM/JOINs/WHERE - the single definition of
+// "which open posts is this viewer inside the reach of". The feed (fetchReachCandidates),
+// the distance-limited badge walk (reachCandidatePoints) and the fast unlimited badge COUNT
+// (nearbyCount) all build on it, so none of them can drift on membership: a post the feed
+// shows is a post the badge counts, held-for-moderation reaches stay out of both, and the
+// author's outbound cap binds everywhere.
+func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOnly bool) *gorm.DB {
+	unseenFilter := ""
+	if unseenOnly {
+		unseenFilter = "AND ml.msgid IS NULL "
+	}
+
 	reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
 
 	// Two independent shape axes -
@@ -174,16 +211,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	whereArgs := append([]interface{}{}, pointArgs...)
 	whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
 
-	var candidates []reachCandidateRow
-	db.Table("messages_spatial ms").
-		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
-			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
-			"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
-			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
-			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
-			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt",
-			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
+	return db.Table("messages_spatial ms").
 		// JOIN messages for the ORIGINAL post arrival (m.arrival). ms.arrival is
 		// the ripple-bumped spatial arrival, so it can't stand in for "posted".
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").
@@ -191,10 +219,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 		Joins("INNER JOIN users au ON au.id = m.fromuser").
 		Joins("INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-		Where(whereSQL, whereArgs...).
-		Scan(&candidates)
-
-	return candidates
+		Where(whereSQL, whereArgs...)
 }
 
 // markPinned flags any summary in res whose msgid has a messages_pinned row (a paid
@@ -666,8 +691,16 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 // explicit ?maxDistance= query param wins (so the browse page can force a fresh value right
 // after a slider change), otherwise the viewer's saved settings.browseMaxDistance (so the
 // app-wide navbar badge honours the slider automatically without every call site having to
-// pass it), otherwise BrowseDistanceUnlimited (no limit — the server's own reach extent
-// governs, as before the distance slider existed).
+// pass it), otherwise their band default, otherwise BrowseDistanceUnlimited (no limit — the
+// server's own reach extent governs, as before the distance slider existed).
+//
+// browseReachMaxDistance is the INBOUND-ONLY band default (browse:backfill-max-distance). It is
+// deliberately a separate key from browseMaxDistance, which the member sets themselves and which
+// also caps how far away OTHER people see THEIR posts (utils.AuthorReachCapWhere). Writing a
+// default into that key would silently apply an outbound cap nobody asked for: a city member's
+// band radius is ~4.8 miles, so every post they made would stop reaching anyone beyond it - the
+// opposite of the point, which is to let posts travel while holding each RECIPIENT to the
+// distance their own surroundings justify.
 func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 	if q := c.Query("maxDistance", ""); q != "" {
 		if v, err := strconv.ParseFloat(q, 64); err == nil {
@@ -675,14 +708,27 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 		}
 	}
 
-	var raw string
+	var row struct {
+		Chosen  string `gorm:"column:chosen"`
+		Default string `gorm:"column:banddefault"`
+	}
 	// COALESCE to '' for the same reason as effectiveBrowseView: users who have never set
-	// browseMaxDistance scan cleanly into the non-nullable string instead of erroring.
+	// either key scan cleanly into the non-nullable strings instead of erroring.
 	db.Table("users").
-		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), '')").
+		Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), '') AS chosen, "+
+			"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseReachMaxDistance')), '') AS banddefault").
 		Where("id = ?", myid).
-		Scan(&raw)
-	if raw != "" {
+		Scan(&row)
+
+	// An explicit choice always wins, including one that is wider than the band default:
+	// a member who dragged the slider has said what they want. An unparseable value is
+	// treated as no value and falls through, matching message.go's browse-scoped search
+	// and the Laravel DistancePreferenceFilter - all three must agree or the feed, its
+	// badge and search would disagree about the same member.
+	for _, raw := range []string{row.Chosen, row.Default} {
+		if raw == "" {
+			continue
+		}
 		if v, err := strconv.ParseFloat(raw, 64); err == nil {
 			return v
 		}
@@ -700,8 +746,14 @@ func resolveMaxDistance(c *fiber.Ctx, db *gorm.DB, myid uint64) float64 {
 // SAME blurred-coordinate Haversine distance the feed exposes as `distance`
 // (reachCandidateRow.blurredDistanceMiles) — so the badge matches the client's distance-
 // filtered list exactly at the boundary. Pass BrowseDistanceUnlimited (or anything at or above
-// it) to skip the per-post distance computation entirely and use the original, fast COUNT
-// query — the common case, since most members leave the slider at "no limit".
+// it) to skip the per-post distance computation entirely and use the original, fast COUNT query.
+//
+// The unlimited path used to be the common case, because most members never touched the slider.
+// It no longer is: browse:backfill-max-distance gives every member their density band's radius,
+// and only the sparse band (whose cap IS the reach ceiling) resolves to unlimited — so roughly
+// two thirds of members now take the distance-limited path below. That path deliberately stays
+// in Go rather than SQL: the filter must use the BLURRED coordinates the feed exposes, or the
+// badge and the list would disagree at the boundary, which is the bug class this replaced.
 func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	db := database.DBConn
 
@@ -712,37 +764,51 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		return count
 	}
 
+	// Reach containment via the spatial server when enabled (SPATIAL_REACH_MODE=on):
+	// the geometry test that was 95-98% of this query's cost is answered from the
+	// spatial index's rasters, and SQL only runs keyed lookups over the returned ids
+	// (plus the exact polygon test for the few boundary-band ids). Any failure falls
+	// through to the SQL containment path below, unchanged.
+	spatialIn, spatialPartial, useSpatial := spatialReachIDs(latlng)
+
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
-		// Viewer sets no inbound limit, but the OUTBOUND author cap still applies (and must match
-		// the feed), so join the author and add authorReachCapWhere here too.
-		reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
-
-		// reachWhere is the same
-		// live-DB-gated shape as fetchReachCandidates' 5adca7e5928e above (it
-		// calls the same reachContainmentSQL) - one concatenated WHERE
-		// string, one Where() call, for the same reason: splitting reachWhere
-		// or authorReachCapWhere into their own Where() calls would trip
-		// GORM's extra-paren wrapping once multiple Where expressions are
-		// combined (clause/where.go buildExprs). Proven (both shapes) by the
-		// retired ormharness's reachcap_test.go and test/orm_batchc_test.go
-		// (both removed in d22ba1d6c).
-		whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " + reachWhere + authorReachCapWhere
-		whereArgs := append([]interface{}{}, pointArgs...)
-		whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
-
-		db.Table("messages_spatial ms").
+		// Viewer sets no inbound limit: one COUNT over the shared reach-arm membership,
+		// which also carries the OUTBOUND author cap and the held-for-moderation filter
+		// - so this fast path can never disagree with the feed about which posts exist
+		// to be counted.
+		if useSpatial {
+			if len(spatialIn)+len(spatialPartial) == 0 {
+				return 0
+			}
+			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial).
+				Select("COUNT(DISTINCT ms.msgid)").
+				Scan(&count)
+			return count
+		}
+		reachCandidateQuery(db, myid, latlng, true).
 			Select("COUNT(DISTINCT ms.msgid)").
-			Joins("INNER JOIN messages m ON m.id = ms.msgid").
-			Joins("INNER JOIN users au ON au.id = m.fromuser").
-			Joins("INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid").
-			Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-			Where(whereSQL, whereArgs...).
 			Scan(&count)
 		return count
 	}
 
+	// Distance-limited path: same membership again, but only the coordinates come back -
+	// the per-post blurred-Haversine filter below needs nothing else, and the full
+	// fetchReachCandidates row (views/replies subqueries, polygon envelope) made this
+	// badge poll ~849ms a call for no benefit.
+	var cands []reachCandidateRow
+	if useSpatial {
+		if len(spatialIn)+len(spatialPartial) == 0 {
+			return 0
+		}
+		reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial).
+			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
+			Scan(&cands)
+	} else {
+		cands = reachCandidatePoints(db, myid, latlng)
+	}
+
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
-	for _, cand := range fetchReachCandidates(db, myid, latlng, true) {
+	for _, cand := range cands {
 		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
 		if distanceMiles <= maxDistanceMiles {
 			count++

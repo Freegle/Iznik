@@ -130,6 +130,14 @@ If you see one, check which ports are in use:
 docker ps --format '{{.Ports}}' | grep -oP '0\.0\.0\.0:\d+' | sort | uniq -d
 ```
 
+### `spatial` / `spatial-live` exited immediately
+
+They need `iznik-routing-go/data/uk-latest.osm.pbf`, a 2.5GB gitignored download that
+`git worktree add` cannot bring across. `freegle worktree create` hardlinks it from the main
+checkout (one inode, so no extra disk per worktree) and prints `Shared iznik-routing-go/...`
+when it does. If the main checkout has never downloaded it, the two containers will exit(1) and
+everything that does not need the routing graph still works.
+
 ### CRLF line endings in worktree (WSL)
 If Docker builds fail with "not found" errors on shell scripts, fix line endings:
 ```bash

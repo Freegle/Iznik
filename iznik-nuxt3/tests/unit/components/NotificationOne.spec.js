@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import NotificationOne from '~/components/NotificationOne.vue'
@@ -47,6 +47,8 @@ vi.mock('#imports', async () => {
 
 globalThis.__testUseRouter = () => mockRouter
 
+const USER_SITE = 'https://www.ilovefreegle.org'
+
 describe('NotificationOne', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -57,6 +59,11 @@ describe('NotificationOne', () => {
       url: null,
     }
     mockNewsfeed.value = { id: 456 }
+    globalThis.__testRuntimeConfig = () => ({ public: { USER_SITE } })
+  })
+
+  afterEach(() => {
+    delete globalThis.__testRuntimeConfig
   })
 
   async function createWrapper(props = {}) {
@@ -243,6 +250,84 @@ describe('NotificationOne', () => {
       await wrapper.find('.notification__wrapper').trigger('click')
 
       expect(openSpy).toHaveBeenCalledWith('https://example.com/notification')
+      expect(mockRouter.push).not.toHaveBeenCalled()
+      openSpy.mockRestore()
+    })
+
+    // The stories exhort is scheduled with a full https://www.ilovefreegle.org
+    // URL. window.open() on that launches the system browser, which in the app
+    // means leaving the app for a session where you're not logged in.
+    it('routes internally for a url on our own site', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      mockNotification.value.url = USER_SITE + '/stories'
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.notification__wrapper').trigger('click')
+
+      expect(mockRouter.push).toHaveBeenCalledWith('/stories')
+      expect(openSpy).not.toHaveBeenCalled()
+      openSpy.mockRestore()
+    })
+
+    it('keeps the query and hash when routing internally', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      mockNotification.value.url = USER_SITE + '/stories?src=exhort#top'
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.notification__wrapper').trigger('click')
+
+      expect(mockRouter.push).toHaveBeenCalledWith('/stories?src=exhort#top')
+      expect(openSpy).not.toHaveBeenCalled()
+      openSpy.mockRestore()
+    })
+
+    it('routes internally for a url on the site we are being served from', async () => {
+      // Dev and the app are served from somewhere other than USER_SITE.
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      mockNotification.value.url = window.location.origin + '/stories'
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.notification__wrapper').trigger('click')
+
+      expect(mockRouter.push).toHaveBeenCalledWith('/stories')
+      expect(openSpy).not.toHaveBeenCalled()
+      openSpy.mockRestore()
+    })
+
+    it('routes internally for a url that is already a path', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      mockNotification.value.url = '/stories'
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.notification__wrapper').trigger('click')
+
+      expect(mockRouter.push).toHaveBeenCalledWith('/stories')
+      expect(openSpy).not.toHaveBeenCalled()
+      openSpy.mockRestore()
+    })
+
+    it('opens externally when we have no site configured to compare against', async () => {
+      globalThis.__testRuntimeConfig = () => ({ public: {} })
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      mockNotification.value.url = USER_SITE + '/stories'
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.notification__wrapper').trigger('click')
+
+      expect(openSpy).toHaveBeenCalledWith(USER_SITE + '/stories')
+      expect(mockRouter.push).not.toHaveBeenCalled()
+      openSpy.mockRestore()
+    })
+
+    it('opens externally for a url we cannot parse', async () => {
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => {})
+      mockNotification.value.url = 'not a url'
+      const wrapper = await createWrapper()
+
+      await wrapper.find('.notification__wrapper').trigger('click')
+
+      expect(openSpy).toHaveBeenCalledWith('not a url')
+      expect(mockRouter.push).not.toHaveBeenCalled()
       openSpy.mockRestore()
     })
 

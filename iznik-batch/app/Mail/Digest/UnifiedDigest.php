@@ -11,6 +11,7 @@ use App\Mail\Traits\TrackableEmail;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
+use App\Services\DonateLinkService;
 use App\Services\UnifiedDigestService;
 use App\Support\AmpEmailSupport;
 use App\Support\EmojiUtils;
@@ -48,12 +49,27 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
     protected int $digestNumber;
 
+    /**
+     * $matchReason marks this as MATCH MAIL: the recipient has an open post of the
+     * opposite type that matches, or a saved search that matches
+     * (App\Services\FirstReply\MatchMailService). 'wanted' or 'search', or null for
+     * an ordinary digest.
+     *
+     * It changes two things and nothing else. The subject becomes the post's own,
+     * without the usual "[Group]" prefix, and the body opens with a line saying why
+     * this mail is for them. The rest is the immediate-digest layout members
+     * already recognise. Both changes exist because the alternative - an identical
+     * copy of the digest, sent sooner - is indistinguishable from the mail these
+     * members are already not opening, and the entire value of this one is that it
+     * is about something they asked for.
+     */
     public function __construct(
         public User $user,
         protected Collection $posts,
         public string $mode,
         protected Collection $sponsors = new Collection(),
-        protected Collection $completedPosts = new Collection()
+        protected Collection $completedPosts = new Collection(),
+        public ?string $matchReason = null
     ) {
         parent::__construct();
 
@@ -464,7 +480,14 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         }
         $jobsUrl = $this->trackedUrl($this->userSite . '/jobs', 'jobs_view_more', 'jobs_view_more');
-        $donateUrl = $this->trackedUrl(config('freegle.donate.url', 'https://freegle.in/paypal1510'), 'donate', 'donate');
+        // Our own Stripe donate page (Apple Pay / Google Pay / PayPal / card)
+        // rather than the PayPal-only shortlink. See DonateLinkService.
+        $donateUrl = $this->trackedUrl(
+            app(DonateLinkService::class)->url($this->user, app(DonateLinkService::class)->defaultAmount(), 'digest'),
+            'donate',
+            'donate'
+        );
+        $donateMarksUrl = config('freegle.images.paymethods');
 
         // Per-group footer heading: "you're a member of {group}, set to
         // receive {frequency}". An immediate digest is about a single
@@ -530,9 +553,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             'jobAds' => $jobAds,
             'jobsUrl' => $jobsUrl,
             'donateUrl' => $donateUrl,
+            'donateMarksUrl' => $donateMarksUrl,
             'primaryGroupName' => $primaryGroupName,
             'frequencyText' => $frequencyText,
             'digestGroups' => $digestGroups,
+            'matchIntro' => $this->matchIntro(),
         ], $this->getTrackingData()), 'emails.text.digest.unified')
             ->to($this->user->email_preferred)
             ->applyLogging('UnifiedDigest');
@@ -642,6 +667,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'jobAds' => $jobAds,
                 'jobsUrl' => $jobsUrl,
                 'donateUrl' => $donateUrl,
+                'donateMarksUrl' => $donateMarksUrl,
                 'digestGroups' => $digestGroups,
             ]);
 
@@ -722,13 +748,34 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         return DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull']);
     }
 
+    /**
+     * The line at the top of a match mail saying why it arrived, or null for an
+     * ordinary digest. Phrased around what the member did, because that is the
+     * fact that makes this mail different from the digest, and reading it should
+     * answer "why am I getting this?" without them having to work it out.
+     */
+    public function matchIntro(): ?string
+    {
+        // preparedPosts, not posts: itemName is derived during preparation.
+        $item = $this->preparedPosts->isNotEmpty()
+            ? trim((string) ($this->preparedPosts->first()['itemName'] ?? ''))
+            : '';
+
+        return match ($this->matchReason) {
+            'wanted' => $item !== ''
+                ? "You have an open post about {$item}, and this one looks like a match."
+                : 'You have an open post that looks like a match for this one.',
+            'search' => $item !== ''
+                ? "This matches a search you saved for {$item}."
+                : 'This matches one of your saved searches.',
+            default => null,
+        };
+    }
+
     protected function getSubject(): string
     {
         if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
             $firstPost = $this->posts->first();
-            $groupId = $this->preferredGroupForPost($firstPost);
-            $groupRow = $this->groupRow($groupId);
-            $groupName = $groupRow ? ($groupRow->namefull ?: $groupRow->nameshort) : null;
             // Decode HTML entities: the DB stores subjects HTML-encoded (e.g.
             // "Coffee &amp; Cake"); the email subject line is plain text and
             // must contain a literal "&" rather than the encoded form.
@@ -737,6 +784,17 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 ENT_QUOTES | ENT_HTML5,
                 'UTF-8'
             );
+            // Match mail leads with the item and nothing else. The "[Group] " prefix
+            // is the shape of every other Freegle mail in the inbox, so it is the
+            // first thing that gets skimmed past; the item name is the whole reason
+            // this one is worth opening.
+            if ($this->matchReason !== null) {
+                return $postSubject;
+            }
+            $groupId = $this->preferredGroupForPost($firstPost);
+            $groupRow = $this->groupRow($groupId);
+            $groupName = $groupRow ? ($groupRow->namefull ?: $groupRow->nameshort) : null;
+
             return $groupName ? "[{$groupName}] {$postSubject}" : $postSubject;
         }
 

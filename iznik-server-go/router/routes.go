@@ -56,7 +56,6 @@ import (
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
 
-	"github.com/freegle/iznik-server-go/firstreply"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/modconfig"
@@ -568,15 +567,11 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/config/:key", config.Get)
 
 		// Rippling-out live event counters, read-only, Support/Admin only (sysadmin §15/§16).
-		// First-reply effectiveness, per lever. Same Support/Admin gate as rippling.
-		firstReplyAdmin := rg.Group("/firstreply")
-		firstReplyAdmin.Use(config.RequireSupportOrAdminMiddleware())
-		firstReplyAdmin.Get("/metrics", firstreply.Metrics)
-
 		ripplingAdmin := rg.Group("/rippling")
 		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
 		ripplingAdmin.Get("/metrics", rippling.Metrics)
 		ripplingAdmin.Get("/analytics", rippling.Analytics)
+		ripplingAdmin.Get("/density", rippling.Density)
 		ripplingAdmin.Get("/analytics/drivetime", rippling.AnalyticsDriveTimes)
 		ripplingAdmin.Post("/analytics/drivetime/score", rippling.AnalyticsDriveScore)
 		ripplingAdmin.Post("/analytics/drivetime/aggregate", rippling.AnalyticsDriveAggregate)
@@ -1212,6 +1207,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Description Returns newsfeed items
 		// @Tags newsfeed
 		// @Produce json
+		// @Param distance query string false "Feed radius in metres, or 'nearby'/'anywhere'"
+		// @Param newsletters query string false "Set to 'all' to see Community News posts from every area. ChitChat moderators only; ignored for anyone else."
 		// @Success 200 {array} newsfeed.Item
 		rg.Get("/newsfeed", newsfeed.Feed)
 		rg.Post("/newsfeed", newsfeed.Post)

@@ -493,6 +493,20 @@ describe('ModChatHeader', () => {
       wrapper = await mountComponent()
       expect(wrapper.text()).not.toContain('Mark read')
     })
+
+    it('gives Mark read the shared red treatment', async () => {
+      /* .btn-mark-read lives in assets/css/buttons.scss so the affordance
+       * looks the same here as in the member site and the chat list. */
+      mockUnseen.value = 5
+      const wrapper = await mountComponent()
+      const markReadBtns = wrapper
+        .findAll('button')
+        .filter((b) => b.text().includes('Mark read'))
+      expect(markReadBtns.length).toBeGreaterThan(0)
+      for (const btn of markReadBtns) {
+        expect(btn.classes()).toContain('btn-mark-read')
+      }
+    })
   })
 
   describe('chat status buttons', () => {

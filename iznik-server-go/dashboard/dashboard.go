@@ -128,12 +128,20 @@ func GetDashboard(c *fiber.Ctx) error {
 	dashboard["newmessages"] = 0
 
 	if len(groupIDs) > 0 {
+		// Bounded rewrite of a single COUNT(DISTINCT messages.id) JOIN messages_groups
+		// statement (70-81s over a year-plus range, caught live on db3): windowed
+		// messages_groups walk, then batched primary-key existence counts. This legacy count
+		// has no messages.arrival condition - the INNER JOIN only required the messages row
+		// to exist - so the batched count is unfiltered.
+		ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+		defer cancel()
+		bdb := db.WithContext(ctx)
 		var msgCount int64
-		db.Table("messages").
-			Select("COUNT(DISTINCT messages.id)").
-			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
-			Where("messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?)", startQ, endQ, groupIDs).
-			Scan(&msgCount)
+		if ids, ok := scopedMessageIDs(bdb, groupIDs, startQ, endQ); ok {
+			if n, ok := countMessagesByID(bdb, ids, "", "", false); ok {
+				msgCount = n
+			}
+		}
 		dashboard["newmessages"] = msgCount
 
 		var memCount int64
@@ -211,13 +219,19 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 		return result
 	}
 
+	// Bounded rewrite of a single COUNT(DISTINCT messages.id) JOIN messages_groups statement,
+	// which over a systemwide/year-plus range scanned for 70-81s (caught live on db3): walk the
+	// range in bounded windows, then count the matching messages in batched primary-key lookups.
+	// The DISTINCT is preserved by scopedMessageIDs' dedup.
 	var newmessages, newmembers int64
-	db.Table("messages").
-		Select("COUNT(DISTINCT messages.id)").
-		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
-		Where("messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?) AND messages.arrival >= ? AND messages.arrival <= ?",
-			startQ, endQ, groupIDs, startQ, endQ).
-		Scan(&newmessages)
+	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	defer cancel()
+	bdb := db.WithContext(ctx)
+	if ids, ok := scopedMessageIDs(bdb, groupIDs, startQ, endQ); ok {
+		if n, ok := countMessagesByID(bdb, ids, startQ, endQ, true); ok {
+			newmessages = n
+		}
+	}
 
 	// Identical sibling of
 	// 770ce1ca6e09 above in GetDashboard; converted together (ratchet gate h).
@@ -231,10 +245,12 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 }
 
 func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []map[string]interface{} {
-	db := database.DBConn
 	if len(groupIDs) == 0 {
 		return []map[string]interface{}{}
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	defer cancel()
+	db := database.DBConn.WithContext(ctx)
 
 	type PostRow struct {
 		Views   int
@@ -242,13 +258,18 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 		Subject string
 	}
 
+	// Last of the dashboard components converted to the bounded windowed walk
+	// (see dashboardWindowDays): the single statement version computed the
+	// correlated views COUNT for EVERY post the whole date range matched
+	// before its ORDER BY views LIMIT 5 could apply — ~30s on a systemwide
+	// year range, the longest dashboard statement left after cc54e65c0.
+	// A post has exactly one arrival, so each window's top 5 is a superset
+	// candidate of the global top 5: run the same query per window and merge.
 	var posts []PostRow
 
 	if systemwide {
-		// For systemwide queries, skip the messages_groups join entirely since
-		// all groups are included. Use a correlated subquery on messages_likes
-		// instead of a JOIN to avoid scanning the 73M+ row messages_likes table.
-		// Cap at 90 days max to keep query time under ~5s.
+		// Systemwide skips the messages_groups join entirely (all groups are
+		// included) and keeps its historical 90-day cap on the range.
 		start, err1 := time.Parse("2006-01-02", startQ)
 		end, err2 := time.Parse("2006-01-02", endQ)
 		capStart := startQ
@@ -259,15 +280,26 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 			}
 		}
 
-		db.Table("messages m").
-			Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject", utils.MESSAGE_LIKES_VIEW).
-			Where("m.arrival >= ? AND m.arrival <= ? AND m.deleted IS NULL", capStart, endQ).
-			Order("views DESC").
-			Limit(5).
-			Scan(&posts)
+		for _, win := range arrivalWindows(capStart, endQ) {
+			arrivalCmp := "<"
+			if win.LastInclusive {
+				arrivalCmp = "<="
+			}
+			var winPosts []PostRow
+			// Correlated subquery on messages_likes rather than a JOIN, to
+			// avoid scanning the 73M+ row table (unchanged from the replaced
+			// statement).
+			db.Table("messages m").
+				Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = m.id AND type = ?) AS views, m.id, m.subject", utils.MESSAGE_LIKES_VIEW).
+				Where("m.arrival >= ? AND m.arrival "+arrivalCmp+" ? AND m.deleted IS NULL", win.Start, win.End).
+				Order("views DESC").
+				Limit(5).
+				Scan(&winPosts)
+			posts = append(posts, winPosts...)
+		}
 	} else {
-		// For specific groups, use correlated subquery with messages_groups filter.
-		// Uses existing groupid index on messages_groups.
+		// For specific groups, correlated subquery with messages_groups filter
+		// (existing groupid index).
 		//
 		// rippled_in = 0 restricts to each post's ORIGIN group row. Rippling-out adds
 		// an Approved messages_groups row (rippled_in = 1) per group a post reaches, so
@@ -276,17 +308,49 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 		// INTO a group would pollute that group's own popular list. GROUP BY mg.msgid
 		// additionally collapses genuine multi-group (crossposted) origin rows so each
 		// post is listed once. Same native-only pattern as the stats/IP-abuse/edit-queue
-		// fixes (fa60c39b0, 4b6d7b3c3).
-		db.Table("messages_groups mg").
-			Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, mg.msgid AS id, MIN(m.subject) AS subject", utils.MESSAGE_LIKES_VIEW).
-			Joins("INNER JOIN messages m ON m.id = mg.msgid").
-			Where("mg.arrival >= ? AND mg.arrival <= ? AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0",
-				startQ, endQ, groupIDs, utils.COLLECTION_APPROVED).
-			Group("mg.msgid").
-			Order("views DESC").
-			Limit(5).
-			Scan(&posts)
+		// fixes (fa60c39b0, 4b6d7b3c3). A crossposted origin can straddle two windows
+		// and surface in both; the merge below dedups by id.
+		for _, win := range arrivalWindows(startQ, endQ) {
+			arrivalCmp := "<"
+			if win.LastInclusive {
+				arrivalCmp = "<="
+			}
+			var winPosts []PostRow
+			db.Table("messages_groups mg").
+				Select("(SELECT COUNT(*) FROM messages_likes WHERE msgid = mg.msgid AND type = ?) AS views, mg.msgid AS id, MIN(m.subject) AS subject", utils.MESSAGE_LIKES_VIEW).
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Where("mg.arrival >= ? AND mg.arrival "+arrivalCmp+" ? AND mg.groupid IN (?) AND mg.collection = ? AND mg.rippled_in = 0",
+					win.Start, win.End, groupIDs, utils.COLLECTION_APPROVED).
+				Group("mg.msgid").
+				Order("views DESC").
+				Limit(5).
+				Scan(&winPosts)
+			posts = append(posts, winPosts...)
+		}
 	}
+
+	// Merge the per-window top-5s: dedup by id (a crossposted origin row can
+	// straddle windows), sort by views desc with id as a deterministic
+	// tie-break, keep 5 — replicating the replaced ORDER BY views DESC LIMIT 5.
+	seen := make(map[uint64]struct{}, len(posts))
+	merged := posts[:0]
+	for _, p := range posts {
+		if _, dup := seen[p.ID]; dup {
+			continue
+		}
+		seen[p.ID] = struct{}{}
+		merged = append(merged, p)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].Views != merged[j].Views {
+			return merged[i].Views > merged[j].Views
+		}
+		return merged[i].ID < merged[j].ID
+	})
+	if len(merged) > 5 {
+		merged = merged[:5]
+	}
+	posts = merged
 
 	userSite := os.Getenv("USER_SITE")
 	if userSite == "" {
@@ -310,9 +374,24 @@ func getPopularPosts(groupIDs []uint64, startQ, endQ string, systemwide bool) []
 	return result
 }
 
+// getUsersPosting is the bounded rewrite of what was a single
+// "COUNT(*) ... WHERE id IN (SELECT msgid FROM messages_groups ...) GROUP BY fromuser" statement:
+// over a systemwide/year-plus range that one statement scanned a large fraction of the 9.4M-row
+// messages_groups table for 70-81s (caught live on db3, several stacked concurrently). It now
+// walks the range in bounded windows (scopedMessageIDs) and folds per-batch GROUP BY fromuser
+// counts in application code, exactly as getUsersReplying already did. The IN-subquery
+// deduplicated msgids, so scopedMessageIDs' DISTINCT set (no multiplicity) preserves the old
+// counts for crossposted messages.
 func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
-	db := database.DBConn
 	if len(groupIDs) == 0 {
+		return []map[string]interface{}{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
+	defer cancel()
+	db := database.DBConn.WithContext(ctx)
+
+	ids, ok := scopedMessageIDs(db, groupIDs, startQ, endQ)
+	if !ok || len(ids) == 0 {
 		return []map[string]interface{}{}
 	}
 
@@ -321,22 +400,30 @@ func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interf
 		Fromuser uint64
 	}
 
-	var users []UserCount
-	db.Table("messages").
-		Select("COUNT(*) AS count, messages.fromuser").
-		Where("id IN (SELECT msgid FROM messages_groups WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?)) AND messages.arrival >= ? AND messages.arrival <= ?",
-			startQ, endQ, groupIDs, startQ, endQ).
-		Group("messages.fromuser").
-		Order("count DESC").
-		Limit(5).
-		Scan(&users)
+	totals := make(map[uint64]int)
+	for _, batch := range chunkUint64s(ids, dashboardBatch) {
+		var rows []UserCount
+		if err := db.Table("messages").
+			Select("COUNT(*) AS count, messages.fromuser").
+			Where("id IN ? AND messages.arrival >= ? AND messages.arrival <= ?", batch, startQ, endQ).
+			Group("messages.fromuser").
+			Scan(&rows).Error; err != nil {
+			// All-or-nothing, matching the replaced single statement's fail-empty behaviour.
+			return []map[string]interface{}{}
+		}
+		for _, r := range rows {
+			totals[r.Fromuser] += r.Count
+		}
+	}
+
+	users := topUserCounts(totals, 5)
 
 	result := make([]map[string]interface{}, len(users))
 	for i, u := range users {
 		var displayname string
-		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", u.Fromuser).Scan(&displayname)
+		db.Table("users").Select("COALESCE(fullname, firstname, lastname, 'Unknown')").Where("id = ?", u.Userid).Scan(&displayname)
 		result[i] = map[string]interface{}{
-			"id":          u.Fromuser,
+			"id":          u.Userid,
 			"displayname": displayname,
 			"posts":       u.Count,
 		}
@@ -344,28 +431,124 @@ func getUsersPosting(groupIDs []uint64, startQ, endQ string) []map[string]interf
 	return result
 }
 
-// usersReplyingWindowDays bounds each messages_groups arrival-range scan in getUsersReplying to at
-// most a week of rows, regardless of how wide the dashboard's overall date range is (Admins can
-// pick "systemwide" across ~442 groups, or a custom range back to 2015) - keeps every individual
-// statement a cheap seek on the existing `arrival` index instead of one scan across a large
-// fraction of the 9.4M-row table.
-const usersReplyingWindowDays = 7
+// dashboardWindowDays bounds each messages_groups arrival-range scan in the chunked dashboard
+// walkers (getUsersReplying, getUsersPosting, the newmessages counts) to at most a week of rows,
+// regardless of how wide the dashboard's overall date range is (Admins can pick "systemwide"
+// across ~442 groups, or a custom range back to 2015) - keeps every individual statement a cheap
+// seek on the existing `arrival` index instead of one scan across a large fraction of the
+// 9.4M-row table. Caught live 2026-08-11: the then-unbounded getUsersPosting/newmessages
+// statements ran 70-81s each over a one-year range and stacked concurrently (the API gateway
+// times out at 50s, so clients retried on top), pinning db3.
+const dashboardWindowDays = 7
 
-// usersReplyingBatch bounds each chat_messages IN (...) lookup in getUsersReplying so the
-// statement stays a bounded set of keyed lookups on the existing refmsgid index, rather than
-// growing with the number of messages the date range/group scope matched.
-const usersReplyingBatch = 1500
+// dashboardBatch bounds each IN (...) lookup that follows a window walk (chat_messages by
+// refmsgid, messages by id) so the statement stays a bounded set of keyed index lookups rather
+// than growing with the number of messages the date range/group scope matched.
+const dashboardBatch = 1500
 
-// usersReplyingDeadline bounds the whole chunked walk. The fiber request context can't be used
+// dashboardDeadline bounds each whole chunked walk. The fiber request context can't be used
 // for this (fasthttp only cancels it on server shutdown), so without an explicit deadline an
 // abandoned systemwide/wide-range request would keep stepping through every remaining window.
-const usersReplyingDeadline = 60 * time.Second
+const dashboardDeadline = 60 * time.Second
+
+// arrivalWindow is one bounded sub-range of a dashboard date range, as produced by
+// arrivalWindows: scan it as [Start, End) normally, or [Start, End] when LastInclusive - the
+// final window keeps the replaced single statements' "arrival <= endQ" semantics (endQ is the
+// requested end date plus one day, per GetDashboard's parsing).
+type arrivalWindow struct {
+	Start         string
+	End           string
+	LastInclusive bool
+}
+
+// arrivalWindows splits [startQ, endQ] into dashboardWindowDays-day windows. Interior windows
+// use a strict "<" upper bound equal to the next window's lower bound so no arrival can be
+// double-counted across windows. Returns nil for unparseable dates - callers then return
+// empty/zero, like the single statements they replaced did on error.
+func arrivalWindows(startQ, endQ string) []arrivalWindow {
+	start, err := time.Parse("2006-01-02", startQ)
+	if err != nil {
+		return nil
+	}
+	end, err := time.Parse("2006-01-02", endQ)
+	if err != nil {
+		return nil
+	}
+
+	var windows []arrivalWindow
+	for winStart := start; winStart.Before(end); winStart = winStart.AddDate(0, 0, dashboardWindowDays) {
+		winEnd := winStart.AddDate(0, 0, dashboardWindowDays)
+		last := !winEnd.Before(end)
+		if last {
+			winEnd = end
+		}
+		windows = append(windows, arrivalWindow{
+			Start:         winStart.Format("2006-01-02"),
+			End:           winEnd.Format("2006-01-02"),
+			LastInclusive: last,
+		})
+	}
+	return windows
+}
+
+// scopedMessageIDs walks [startQ, endQ] in bounded windows and returns the DISTINCT msgids whose
+// messages_groups arrival falls in range for the selected groups - the bounded replacement for
+// "IN (SELECT msgid FROM messages_groups WHERE arrival ... AND groupid IN ...)" and for the
+// mg-join side of the replaced COUNT(DISTINCT messages.id) statements. ok=false if any window's
+// query failed (callers then fail empty/zero, matching the replaced statements' error
+// behaviour).
+func scopedMessageIDs(db *gorm.DB, groupIDs []uint64, startQ, endQ string) ([]uint64, bool) {
+	seen := make(map[uint64]struct{})
+	ids := []uint64{}
+
+	for _, w := range arrivalWindows(startQ, endQ) {
+		var msgids []uint64
+		q := db.Table("messages_groups").Select("msgid")
+		if w.LastInclusive {
+			q = q.Where("arrival >= ? AND arrival <= ? AND groupid IN ?", w.Start, w.End, groupIDs)
+		} else {
+			q = q.Where("arrival >= ? AND arrival < ? AND groupid IN ?", w.Start, w.End, groupIDs)
+		}
+		if err := q.Scan(&msgids).Error; err != nil {
+			return nil, false
+		}
+		for _, id := range msgids {
+			if _, dup := seen[id]; !dup {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids, true
+}
+
+// countMessagesByID batches ids into dashboardBatch-sized primary-key lookups on messages and
+// returns how many exist, optionally also requiring messages.arrival within [startQ, endQ] -
+// the two shapes the replaced COUNT(DISTINCT messages.id) statements needed (the legacy
+// dashboard count has no messages.arrival condition; getRecentCounts does). ok=false on error.
+func countMessagesByID(db *gorm.DB, ids []uint64, startQ, endQ string, arrivalFiltered bool) (int64, bool) {
+	var total int64
+	for _, batch := range chunkUint64s(ids, dashboardBatch) {
+		var n int64
+		q := db.Table("messages").Select("COUNT(*)")
+		if arrivalFiltered {
+			q = q.Where("id IN ? AND arrival >= ? AND arrival <= ?", batch, startQ, endQ)
+		} else {
+			q = q.Where("id IN ?", batch)
+		}
+		if err := q.Scan(&n).Error; err != nil {
+			return 0, false
+		}
+		total += n
+	}
+	return total, true
+}
 
 func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
 	if len(groupIDs) == 0 {
 		return []map[string]interface{}{}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), usersReplyingDeadline)
+	ctx, cancel := context.WithTimeout(context.Background(), dashboardDeadline)
 	defer cancel()
 	db := database.DBConn.WithContext(ctx)
 
@@ -396,42 +579,24 @@ func getUsersReplying(groupIDs []uint64, startQ, endQ string) []map[string]inter
 	return result
 }
 
-// repliedMessageMultiplicity walks [startQ, endQ] in usersReplyingWindowDays-day sub-windows, each
-// running a bounded arrival-indexed scan of messages_groups, and returns how many times each msgid
-// matched the group scope. startQ/endQ follow GetDashboard's convention: endQ is already the
-// desired end date plus one day, so "arrival <= endQ" on the final window reproduces the original
-// query's inclusive-through-the-last-day semantics exactly; interior windows use a strict "<"
-// upper bound (equal to the next window's lower bound) so no arrival can be double-counted across
-// windows.
+// repliedMessageMultiplicity walks [startQ, endQ] in dashboardWindowDays-day sub-windows (see
+// arrivalWindows), each running a bounded arrival-indexed scan of messages_groups, and returns
+// how many times each msgid matched the group scope. Unlike scopedMessageIDs this keeps the
+// per-window MULTIPLICITY: a message crossposted to k of the selected groups counts k times,
+// matching the old single JOIN's behaviour of producing one row per (chat_message,
+// messages_groups) match.
 func repliedMessageMultiplicity(db *gorm.DB, groupIDs []uint64, startQ, endQ string) map[uint64]int {
 	multiplicity := make(map[uint64]int)
 
-	start, err := time.Parse("2006-01-02", startQ)
-	if err != nil {
-		return multiplicity
-	}
-	end, err := time.Parse("2006-01-02", endQ)
-	if err != nil {
-		return multiplicity
-	}
-
-	for winStart := start; winStart.Before(end); winStart = winStart.AddDate(0, 0, usersReplyingWindowDays) {
-		winEnd := winStart.AddDate(0, 0, usersReplyingWindowDays)
-		last := !winEnd.Before(end)
-		if last {
-			winEnd = end
-		}
-
+	for _, w := range arrivalWindows(startQ, endQ) {
 		var msgids []uint64
-		var err error
-		if last {
-			err = db.Raw("SELECT msgid FROM messages_groups WHERE arrival >= ? AND arrival <= ? AND groupid IN (?)",
-				winStart.Format("2006-01-02"), winEnd.Format("2006-01-02"), groupIDs).Scan(&msgids).Error
+		q := db.Table("messages_groups").Select("msgid")
+		if w.LastInclusive {
+			q = q.Where("arrival >= ? AND arrival <= ? AND groupid IN ?", w.Start, w.End, groupIDs)
 		} else {
-			err = db.Raw("SELECT msgid FROM messages_groups WHERE arrival >= ? AND arrival < ? AND groupid IN (?)",
-				winStart.Format("2006-01-02"), winEnd.Format("2006-01-02"), groupIDs).Scan(&msgids).Error
+			q = q.Where("arrival >= ? AND arrival < ? AND groupid IN ?", w.Start, w.End, groupIDs)
 		}
-		if err != nil {
+		if err := q.Scan(&msgids).Error; err != nil {
 			// Fail the whole component (empty top-5, like the replaced single
 			// statement did on error) rather than silently missing a window's
 			// worth of messages from the counts.
@@ -454,7 +619,7 @@ type refUserCount struct {
 	Count    int
 }
 
-// repliesForMessages batches the msgids in multiplicity into usersReplyingBatch-sized IN (...)
+// repliesForMessages batches the msgids in multiplicity into dashboardBatch-sized IN (...)
 // lookups against chat_messages (existing refmsgid index), so no single statement grows with the
 // number of messages the date range/group scope matched.
 func repliesForMessages(db *gorm.DB, multiplicity map[uint64]int) []refUserCount {
@@ -464,7 +629,7 @@ func repliesForMessages(db *gorm.DB, multiplicity map[uint64]int) []refUserCount
 	}
 
 	var rows []refUserCount
-	for _, batch := range chunkUint64s(msgids, usersReplyingBatch) {
+	for _, batch := range chunkUint64s(msgids, dashboardBatch) {
 		var batchRows []refUserCount
 		if err := db.Raw("SELECT refmsgid, userid, COUNT(*) AS count FROM chat_messages "+
 			"WHERE refmsgid IN (?) AND type = ? GROUP BY refmsgid, userid",
