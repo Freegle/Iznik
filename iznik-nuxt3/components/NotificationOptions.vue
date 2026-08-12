@@ -34,8 +34,16 @@
       link-class="notification-list__item"
     >
       <div class="d-flex justify-content-end">
-        <b-button variant="secondary" size="sm" @click="markAllRead">
+        <b-button
+          variant="white"
+          size="sm"
+          class="notification-list__mark-read"
+          @click="markAllRead"
+        >
           Mark all read
+          <b-badge v-if="unreadNotificationCount" variant="danger" class="ms-1">
+            {{ unreadNotificationCount }}
+          </b-badge>
         </b-button>
       </div>
     </b-dropdown-item>
@@ -148,6 +156,13 @@ const showAboutMe = () => {
 @import 'bootstrap/scss/functions';
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
+@import 'assets/css/_color-vars.scss';
+
+/* Match the red "Mark read" treatment used in chat (see ChatPane). */
+.notification-list__mark-read {
+  border: 1px solid $color-red !important;
+  color: $color-red !important;
+}
 
 .notification-badge {
   position: absolute;

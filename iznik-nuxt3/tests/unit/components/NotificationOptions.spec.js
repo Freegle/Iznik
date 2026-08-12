@@ -149,6 +149,30 @@ describe('NotificationOptions', () => {
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('Mark all read')
     })
+
+    it('styles Mark all read like the chat Mark read button', () => {
+      const wrapper = createWrapper()
+      const markAllBtn = wrapper.find('.notification-list__mark-read')
+      expect(markAllBtn.exists()).toBe(true)
+      expect(markAllBtn.classes()).toContain('white')
+    })
+
+    it('shows the unread count as a danger badge on Mark all read', () => {
+      const wrapper = createWrapper()
+      const badge = wrapper.find('.notification-list__mark-read .b-badge')
+      expect(badge.exists()).toBe(true)
+      expect(badge.classes()).toContain('danger')
+      expect(badge.text()).toBe('2')
+    })
+
+    it('omits the Mark all read badge when nothing is unread', () => {
+      mockNotificationStore.count.value = 0
+      const wrapper = createWrapper()
+      expect(wrapper.find('.notification-list__mark-read').exists()).toBe(true)
+      expect(
+        wrapper.find('.notification-list__mark-read .b-badge').exists()
+      ).toBe(false)
+    })
   })
 
   describe('mark all read', () => {
