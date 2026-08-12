@@ -223,7 +223,8 @@ import {
   createHeicPreProcessor,
   createHeicSafeCompressor,
 } from '~/composables/useUppyHeic'
-import { action } from '~/composables/useClientLog'
+import { action, error as logError } from '~/composables/useClientLog'
+import { withTimeout } from '~/composables/usePromiseTimeout'
 import { describeUploadError } from '~/composables/useUploadErrorDetail'
 import { reportCameraError } from '~/composables/useCameraErrorMessage'
 import { useRuntimeConfig } from '#app'
@@ -233,6 +234,11 @@ import {
   analyzePhotoQuality,
   getQualityMessage,
 } from '~/composables/usePhotoQuality'
+
+// The bytes are already uploaded by the time we register the photo, so this
+// call is small.  Generous ceiling: we only want to catch a hang, never a slow
+// connection.
+const FINALISE_TIMEOUT_MS = 60000
 
 const draggable = defineAsyncComponent(() => import('vuedraggable'))
 const MessagePhotosModal = defineAsyncComponent(() =>
@@ -505,8 +511,27 @@ async function uploadPhoto(photo, webPath) {
             recognise: props.recognise && photos.value.indexOf(photo) === 0,
           }
 
+          action('photo bytes uploaded', {
+            event_type: 'photo_upload',
+            photo_stage: 'tus_complete',
+            imgtype: props.type,
+          })
+
           try {
-            const ret = await imageStore.post(att)
+            // The bytes are already up at this point; this call only registers
+            // them, so it is quick under any normal conditions.  Bound it
+            // anyway.  This is the step that has to complete for the photo to
+            // stop being "uploading", and the give flow has no way out while
+            // it is: Next is gated on anyUploading and Skip only renders in
+            // the empty state.  So an await here that never settles does not
+            // lose a photo, it locks the member out of posting entirely, and
+            // compose persists that state to the next visit.  Better a photo
+            // that failed and offers Retry than a flow with no exits.
+            const ret = await withTimeout(
+              imageStore.post(att),
+              FINALISE_TIMEOUT_MS,
+              'Timed out registering the uploaded photo'
+            )
 
             // Update photo with server data
             photo.id = ret.id
@@ -520,12 +545,23 @@ async function uploadPhoto(photo, webPath) {
             // Remove any AI-generated images now that a real photo has been added
             photos.value = photos.value.filter((p) => !p.externalmods?.ai)
 
+            action('photo registered', {
+              event_type: 'photo_upload',
+              photo_stage: 'registered',
+              attachment_id: ret.id,
+            })
+
             emit('photoProcessed', ret.id)
             resolve()
           } catch (e) {
             console.error('Image post failed:', e)
             photo.error = true
             photo.uploading = false
+            logError('Photo upload could not be completed', {
+              event_type: 'photo_upload',
+              photo_stage: 'finalise_failed',
+              reason: e?.message,
+            })
             reject(e)
           }
         },
@@ -901,6 +937,37 @@ onBeforeUnmount(() => {
     pendingPhoto.value.error = true
   }
   pendingPhoto.value = null
+
+  // Same trap as the held photo above, one step later: a photo whose upload is
+  // still outstanding when we go away.  The tray reaches the persisted compose
+  // store through a watcher that Vue stops with this component, so the last
+  // thing written out says uploading:true, and when the upload finally settles
+  // it mutates an object nothing is listening to any more.  Next is gated on
+  // anyUploading and the state is restored on the next visit, so that is a
+  // permanent posting lockout rather than a lost photo.
+  //
+  // Mark them failed and push that out by hand - the watcher will not fire for
+  // us again, and the parent's setter writes to a store that outlives us both.
+  const stranded = photos.value.filter((p) => p?.uploading)
+
+  if (stranded.length) {
+    stranded.forEach((photo) => {
+      photo.uploading = false
+      photo.error = true
+    })
+
+    emit(
+      'update:modelValue',
+      photos.value.map((p) => ({ ...p }))
+    )
+
+    logError('Left the photo tray with an upload still in flight', {
+      event_type: 'photo_upload',
+      photo_stage: 'stranded_on_unmount',
+      stranded: stranded.length,
+      max_progress: Math.max(...stranded.map((p) => p.progress ?? 0)),
+    })
+  }
 
   compressTimers.clear()
   uploadRetries.clear()

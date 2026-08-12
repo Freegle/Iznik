@@ -102,9 +102,14 @@ vi.mock('@uppy/compressor', () => ({
 // Spy on the Loki action() logger so we can assert the upload/compression
 // telemetry payloads. Keep the module's other exports real.
 const mockAction = vi.hoisted(() => vi.fn())
+const mockLogError = vi.fn()
 vi.mock('~/composables/useClientLog', async (importOriginal) => {
   const actual = await importOriginal()
-  return { ...actual, action: (...args) => mockAction(...args) }
+  return {
+    ...actual,
+    action: (...args) => mockAction(...args),
+    error: (...args) => mockLogError(...args),
+  }
 })
 
 // Mock image store
@@ -1843,6 +1848,110 @@ describe('PhotoUploader', () => {
       await flushPromises()
 
       expect(viewer()).toBeNull()
+    })
+  })
+
+  // The bytes go up via tus, then we register them with the API.  That second
+  // call is what has to finish for the photo to stop being "uploading", and the
+  // give flow has no exits while it is: Next is gated on anyUploading and Skip
+  // only renders in the empty state.  So if the register call never settles the
+  // member is not just missing a photo, they cannot post at all - and compose
+  // persists that to their next visit.  This happened live: the API layer
+  // awaited a connection check that polled for ever, so a 200 that had already
+  // come back was never read (see composables/useFetchRetry.js).  That is fixed
+  // at source, but the flow should not depend on the API layer never hanging.
+  describe('registering the uploaded photo hangs', () => {
+    async function startUploadThatHangs() {
+      mockImageStore.post.mockReturnValueOnce(new Promise(() => {}))
+
+      createWrapper({ modelValue: [] })
+      await flushPromises()
+
+      wrapper.vm.processPhoto('/photo.jpg')
+      await flushPromises()
+
+      mockTusUpload._options.onProgress(100, 100)
+      mockTusUpload._options.onSuccess()
+      await flushPromises()
+    }
+
+    it('leaves the photo uploading while the register call is still outstanding', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+
+        expect(wrapper.vm.photos[0].uploading).toBe(true)
+        expect(wrapper.vm.photos[0].progress).toBe(100)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('gives the photo up as failed rather than blocking the flow for ever', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+
+        await vi.advanceTimersByTimeAsync(61000)
+
+        expect(wrapper.vm.photos[0].uploading).toBe(false)
+        expect(wrapper.vm.photos[0].error).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // The tray syncs to the persisted compose store through a watcher that Vue
+    // stops when this component unmounts.  So if we go away while an upload is
+    // outstanding, the last thing written to the store says uploading:true, and
+    // when the upload does settle it mutates an object nothing is listening to.
+    // The store keeps uploading:true for ever, the give flow gates Next on it,
+    // and it is restored in that state on the next visit.  Live, the member
+    // navigated off the photos page 22s after the reply came back, which is
+    // what made her lockout permanent rather than momentary.
+    it('does not leave the tray saying uploading when we navigate away mid-upload', async () => {
+      // Stand in for the compose store: whatever the component last pushed out
+      // is what gets persisted and restored on the next visit.
+      const pushedOut = []
+
+      mockImageStore.post.mockReturnValueOnce(new Promise(() => {}))
+      createWrapper({
+        modelValue: [],
+        'onUpdate:modelValue': (v) => pushedOut.push(v),
+      })
+      await flushPromises()
+
+      wrapper.vm.processPhoto('/photo.jpg')
+      await flushPromises()
+      mockTusUpload._options.onProgress(100, 100)
+      mockTusUpload._options.onSuccess()
+      await flushPromises()
+
+      expect(pushedOut.length).toBeGreaterThan(0)
+      expect(pushedOut.at(-1)[0].uploading).toBe(true)
+
+      wrapper.unmount()
+      await flushPromises()
+
+      const persisted = pushedOut.at(-1)[0]
+      expect(persisted.uploading).toBe(false)
+      expect(persisted.error).toBe(true)
+    })
+
+    it('offers retry and delete once it has failed, so there is a way forward', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+        await vi.advanceTimersByTimeAsync(61000)
+      } finally {
+        vi.useRealTimers()
+      }
+
+      await flushPromises()
+
+      const card = wrapper.find('.photo-card')
+      expect(card.attributes('data-error')).toBe('true')
+      expect(card.attributes('data-uploading')).toBe('false')
     })
   })
 })

@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { action } from '~/composables/useClientLog'
 import { useMessageStore } from '~/stores/message'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
@@ -411,15 +412,25 @@ export const useComposeStore = defineStore({
     // server is simply no longer uploading.
     sanitiseRestoredAttachments() {
       let changed = false
+      let dropped = 0
+      let cleared = 0
+      let maxProgress = 0
 
       for (const message of this.messages) {
         if (!message?.attachments?.length) {
           continue
         }
 
+        for (const attachment of message.attachments) {
+          if (attachment?.uploading) {
+            maxProgress = Math.max(maxProgress, attachment.progress ?? 0)
+          }
+        }
+
         const kept = message.attachments.filter((a) => !a?.uploading || a?.id)
 
         if (kept.length !== message.attachments.length) {
+          dropped += message.attachments.length - kept.length
           message.attachments = kept
           changed = true
         }
@@ -427,6 +438,7 @@ export const useComposeStore = defineStore({
         for (const attachment of kept) {
           if (attachment?.uploading) {
             attachment.uploading = false
+            cleared++
             changed = true
           }
         }
@@ -434,6 +446,20 @@ export const useComposeStore = defineStore({
 
       if (changed) {
         this.attachmentBump++
+
+        // Reaching here means a photo was left mid-upload on this device, which
+        // is the state that used to lock people out of posting.  Cleaning it up
+        // silently means we cannot tell whether that is now rare or routine, so
+        // say so: `progress` tells us where it died, which distinguishes an
+        // interrupted upload from one that finished and then hung waiting on a
+        // reply (see composables/useFetchRetry.js).
+        action('stranded photo cleaned up on restore', {
+          event_type: 'photo_upload',
+          photo_stage: 'stranded_restore_cleaned',
+          dropped,
+          cleared,
+          max_progress: maxProgress,
+        })
       }
     },
     removeAttachment(params) {

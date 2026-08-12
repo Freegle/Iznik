@@ -41,6 +41,11 @@ vi.mock('@sentry/vue', () => ({
   captureMessage: mockCaptureMessage,
 }))
 
+const mockWarn = vi.fn()
+vi.mock('~/composables/useClientLog', () => ({
+  warn: (...args) => mockWarn(...args),
+}))
+
 // Mock fetchRetry to return a function that uses our mock fetch
 const mockFetch = vi.fn()
 vi.mock('~/composables/useFetchRetry', () => ({
@@ -206,6 +211,71 @@ describe('BaseAPI', () => {
       }
 
       expect(mockCaptureMessage).not.toHaveBeenCalled()
+    })
+  })
+
+  // Two paths here deliberately return a promise that never settles, to keep
+  // expected noise (logout aborts, a stale chat 401) out of Sentry.  That is
+  // fine only while nothing is waiting on the result.  When something is, the
+  // caller's await hangs for the life of the page with no success and no catch,
+  // and any state it was going to clear stays set - which is how a give-flow
+  // photo stayed at uploading:true and locked a member out of posting.  We
+  // cannot tell from here whether anyone is waiting, so log it: the point is
+  // that a silent hang leaves no trace at all to investigate.
+  describe('requests abandoned without settling', () => {
+    it('records an aborted request, and still does not settle', async () => {
+      mockFetch.mockRejectedValue(new Error('The user aborted a request.'))
+
+      const api = createApi()
+
+      let settled = false
+      api.$requestv2('POST', '/image', {}).then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+
+      await vi.waitFor(() => expect(mockWarn).toHaveBeenCalled(), {
+        timeout: 2000,
+      })
+
+      expect(mockWarn.mock.calls[0][0]).toContain('abandoned')
+      expect(mockWarn.mock.calls[0][1]).toMatchObject({
+        event_type: 'api_abandoned',
+        reason: 'aborted',
+        api_method: 'POST',
+      })
+      expect(settled).toBe(false)
+      expect(mockCaptureMessage).not.toHaveBeenCalled()
+    })
+
+    it('records a swallowed chat 401, and still does not settle', async () => {
+      mockFetch.mockResolvedValue([401, {}])
+
+      const api = createApi()
+
+      let settled = false
+      api.$requestv2('GET', '/chat?includeClosed=true', { params: {} }).then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+
+      await vi.waitFor(() => expect(mockWarn).toHaveBeenCalled(), {
+        timeout: 2000,
+      })
+
+      expect(mockWarn.mock.calls[0][1]).toMatchObject({
+        event_type: 'api_abandoned',
+        reason: 'chat_401',
+      })
+      expect(settled).toBe(false)
     })
   })
 })

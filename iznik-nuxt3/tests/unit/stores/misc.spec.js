@@ -338,7 +338,7 @@ describe('misc store', () => {
   })
 
   describe('startOnlineCheck', () => {
-    it('starts online check when no timer exists', async () => {
+    it('starts online check when no timer exists', () => {
       vi.useFakeTimers()
       const store = useMiscStore()
       store.init({ public: { APIv2: 'http://test' } })
@@ -390,6 +390,36 @@ describe('misc store', () => {
       vi.advanceTimersByTime(1000)
 
       await promise
+    })
+
+    // Every API request awaits this before fetching, and useFetchRetry's
+    // retryOn() awaits it again before deciding whether to make another
+    // attempt.  It used to poll every second for ever with no timeout and no
+    // reject, so a member who went offline at the wrong moment left a caller
+    // awaiting a promise that could never settle.  That is how a give-flow
+    // photo got stranded at uploading:true / 100% for good: the server had
+    // accepted the image (200) but PhotoUploader's `await imageStore.post()`
+    // never returned, so nothing ever cleared the flag, and compose persisted
+    // it.  Give up instead - the caller then gets a normal failure it already
+    // knows how to handle.
+    it('gives up rather than polling for ever when we stay offline', async () => {
+      vi.useFakeTimers()
+      const store = useMiscStore()
+      store.online = false
+
+      let settled = false
+      Promise.resolve(store.waitForOnline()).then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+      expect(settled).toBe(true)
     })
   })
 
