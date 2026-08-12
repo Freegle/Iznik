@@ -30,6 +30,11 @@ import { updateActualReachLayer } from './actualreach.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
 import { driveMinForAudience, clampAudienceMinutes } from './audience.js'
+import {
+  REACH_CEILING_MINUTES,
+  reachModelSentence,
+  reachSliderHelp,
+} from './reachmodel.js'
 
 export async function setupRipplingExplorer({
   props,
@@ -106,7 +111,7 @@ export async function setupRipplingExplorer({
   let catchmentRenderer = null // dedicated L.svg renderer for the heat, so we can clip it
   let catchmentClipSeq = 0 // unique clipPath ids across redraws
   let catchmentDrawToken = 0 // guards async extent/catchment results against group switches
-  let catchmentReachBasis = 'current' // 'current' (30-min) | 'audience' (proposed N* reach)
+  let catchmentReachBasis = 'current' // 'current' (grows to the ceiling) | 'audience' (proposed N* reach)
   // Per-group cache of catchment responses + group ring, keyed by group id, so flipping the
   // reach toggle re-renders from memory instead of re-hitting the routing server (the slow bit).
   let catchmentCache = { key: null, ring: undefined, byMinutes: {} }
@@ -140,6 +145,49 @@ export async function setupRipplingExplorer({
 
   const timeSlider = document.getElementById('rippling-time-slider')
   const fairnessSlider = document.getElementById('rippling-fairness-slider')
+
+  // Open at the reach a post actually gets, and caption the slider from the same
+  // constants, so the page cannot claim a number the engine stopped using. The markup
+  // carries a matching literal for the pre-hydration render; this is the source of truth.
+  timeSlider.value = String(REACH_CEILING_MINUTES)
+  const timeHelpEl = document.getElementById('rippling-time-help')
+  if (timeHelpEl) timeHelpEl.textContent = reachSliderHelp()
+
+  /**
+   * Show which density band the dropped marker sits in, and therefore how far a member
+   * THERE is shown posts — the limit that is not the same as how far the post travels.
+   *
+   * Asks apiv2 rather than measuring it here: /town/near already returns cap_minutes and
+   * density_band from the Go density package, and a fourth copy of the band thresholds
+   * would be one more thing to forget when they are re-tuned. Best-effort in every
+   * direction — no apiv2 URL, a failed call or an unmeasurable band all leave the line
+   * hidden rather than showing a guess.
+   */
+  async function updateRecipientCap(lat, lng, gen) {
+    const el = document.getElementById('rippling-recipient-cap')
+    if (!el) return
+    el.style.display = 'none'
+    if (!props.apiv2Url) return
+
+    try {
+      const url =
+        `${props.apiv2Url}/town/near?lat=${lat.toFixed(6)}&lng=${lng.toFixed(
+          6
+        )}` + `&minutes=${REACH_CEILING_MINUTES}`
+      const r = await fetch(url)
+      if (!r.ok) return
+      const data = await r.json()
+      // A late answer for a previous marker must not caption the current one.
+      if (gen !== locationGeneration) return
+
+      const sentence = reachModelSentence(data.density_band, data.cap_minutes)
+      if (!sentence) return
+      el.textContent = sentence
+      el.style.display = ''
+    } catch {
+      // Leave it hidden: no band is a supported state, a wrong band is not.
+    }
+  }
 
   document.querySelectorAll('.rpl-mode-btn[data-mode]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -501,7 +549,7 @@ export async function setupRipplingExplorer({
   // Resolve the drive-time the catchment should use under the "Possible alternative" (audience-
   // based) reach: the drive-time at which the group's own outward reach first hits ~N* nearby
   // freeglers (clamped [10,30]). Also sets the caption. Cached per group so flipping is instant.
-  // Returns the minutes, or null on failure (caller falls back to the 30-min slider value).
+  // Returns the minutes, or null on failure (caller falls back to the slider value).
   function catchmentAudienceMinutes(g, token) {
     const el = document.getElementById('rippling-catchment-audience')
     const apply = (a) => {
@@ -526,7 +574,8 @@ export async function setupRipplingExplorer({
         apiUrl(
           `/v1/ripple-schedule?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(
             6
-          )}` + `&mode=drive&ticks=9&max_minutes=30&curve=step-70`
+          )}` +
+            `&mode=drive&ticks=9&max_minutes=${REACH_CEILING_MINUTES}&curve=step-70`
         )
       ).then((r) => (r.ok ? r.json() : null)),
     ])
@@ -550,8 +599,8 @@ export async function setupRipplingExplorer({
               : HAZARD_HOURS[HAZARD_HOURS.length - 1],
         }))
         const total = sched.total_freeglers || 0
-        // Sparse groups never reach N* within the 30-min ceiling, so the alternative reach stays at
-        // 30 min = the current reach (identical by design) — say so, or it looks like a no-op.
+        // Sparse groups never reach N* inside the ceiling, so the alternative reach stays at the
+        // ceiling = the current reach (identical by design) — say so, or it looks like a no-op.
         const caption =
           total >= actives.nstar
             ? `Possible alternative reach (audience-based): ~${Math.round(
@@ -559,8 +608,8 @@ export async function setupRipplingExplorer({
               )} min` +
               ` — stops once ~${actives.nstar.toLocaleString()} nearby freeglers are reached` +
               ` (group has ${actives.actives.toLocaleString()} active members).`
-            : `Possible alternative: unchanged (~30 min). This group only reaches about ` +
-              `${total.toLocaleString()} freeglers within 30 min — below its ` +
+            : `Possible alternative: unchanged (~${REACH_CEILING_MINUTES} min). This group only reaches about ` +
+              `${total.toLocaleString()} freeglers within ${REACH_CEILING_MINUTES} min — below its ` +
               `${actives.nstar.toLocaleString()} target — so it stays at the ceiling, same as now. ` +
               `Sparse groups aren't tightened; try a dense city group to see the difference.`
         const a = { mins, caption, hazard }
@@ -1071,7 +1120,7 @@ export async function setupRipplingExplorer({
   if (catchmentGroupInput)
     catchmentGroupInput.addEventListener('change', drawCatchment)
 
-  // Catchment reach-model toggle: flip between the current 30-min reach and the proposed
+  // Catchment reach-model toggle: flip between the current ceiling-grown reach and the proposed
   // audience-based reach, redrawing the catchment at each so the two areas can be compared.
   document
     .querySelectorAll('input[name="rippling-catchment-reach"]')
@@ -1329,6 +1378,7 @@ export async function setupRipplingExplorer({
     currentLat = lat
     currentLng = lng
     syncUrl()
+    updateRecipientCap(lat, lng, locationGeneration)
     if (marker) map.removeLayer(marker)
     const inbound = viewMode === 'inbound'
     if (inbound) {
@@ -2688,7 +2738,7 @@ export async function setupRipplingExplorer({
   // ---------------------------------------------------------------------------
   // The notification cron will step drive-time radius by 1 minute per N wall-
   // clock minutes (config in freegle.php).  We therefore fetch one keyframe per
-  // drive-minute (30 frames covering 0..30 min) and morph smoothly between them
+  // drive-minute (one frame per minute out to the ceiling) and morph smoothly between them
   // on the client using RADIAL INTERPOLATION:
   //
   //   1.  Each polygon ring is reparameterised as `radius(θ)` — for each of
@@ -2702,7 +2752,11 @@ export async function setupRipplingExplorer({
   // This is physically correct (each ray sweeps outward as drive time grows)
   // and works regardless of source-frame vertex counts.
   // ---------------------------------------------------------------------------
-  const RIPPLE_FRAMES = 30 // 30 keyframes = 1 per drive-minute
+  // One keyframe per drive-minute, out to the reach a post actually grows to. This was
+  // 30 while the engine still used a flat 30-minute cap; the ripple now grows to the
+  // ceiling over all density bands, so stopping at 30 drew a wave that finished well
+  // inside the real one. The extra frames cost proportionally more isochrone fetches.
+  const RIPPLE_FRAMES = REACH_CEILING_MINUTES
   const RIPPLE_STEP_MINS = 1
   // Audience-budget cap mirrored from batch config freegle.ripple.extent.target_users
   // (env RIPPLE_EXTENT_TARGET_USERS). Passed to /v1/ripple-schedule so the explorer's
@@ -3069,7 +3123,7 @@ export async function setupRipplingExplorer({
 
   /**
    * Map the user's speed slider (1..10) to milliseconds per keyframe.
-   * Default speed 3 → ~800 ms per drive-minute → 24 s for the full 30-min ripple.
+   * Default speed 3 → ~800 ms per drive-minute, so the full ripple takes ~800 ms x the ceiling.
    */
   function getMsPerFrame() {
     const spd =
@@ -3138,7 +3192,10 @@ export async function setupRipplingExplorer({
       'rippling-info'
     ).textContent = `${tickLabel} · ${minuteLabel} drive-min${usersLabel}`
     updateTimeline(frameA, rippleFrames.length)
-    timeSlider.value = Math.min(30, Math.round(mDrive))
+    // Follow the animation with the slider, clamped to the reach a post really grows
+    // to. Clamping at 30 pinned the slider a third of the way short once the ceiling
+    // moved, so the handle stopped tracking the wave it is supposed to describe.
+    timeSlider.value = Math.min(REACH_CEILING_MINUTES, Math.round(mDrive))
   }
 
   // Once-per-animation cross-posting trigger.  Fires the first time a

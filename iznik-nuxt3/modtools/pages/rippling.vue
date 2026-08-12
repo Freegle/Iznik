@@ -43,14 +43,27 @@
       "
     >
       <div style="font-size: 1.2rem">Spatial server warming up…</div>
-      <div style="font-size: 0.85rem; color: #999">This takes about 2–3 minutes on first start</div>
+      <div style="font-size: 0.85rem; color: #999">
+        This takes about 2–3 minutes on first start
+      </div>
     </div>
-    <RipplingExplorer v-else :spatial-url="spatialUrl" :jwt="jwtToken" />
+    <RipplingExplorer
+      v-else
+      :spatial-url="spatialUrl"
+      :jwt="jwtToken"
+      :apiv2-url="apiv2Url"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted, useRuntimeConfig } from '#imports'
+import {
+  computed,
+  ref,
+  onMounted,
+  onUnmounted,
+  useRuntimeConfig,
+} from '#imports'
 import { useMe } from '~/composables/useMe'
 import RipplingExplorer from '~/modtools/components/RipplingExplorer.vue'
 
@@ -60,6 +73,10 @@ const { mod, jwt: jwtToken, loginStateKnown } = useMe()
 const spatialUrl = computed(
   () => runtimeConfig.public.SPATIAL_SERVER_URL || 'http://localhost:8196'
 )
+
+// For /town/near, which tells the explorer the density band of a dropped marker. Empty
+// when unconfigured, and the explorer then hides that line rather than guessing.
+const apiv2Url = computed(() => runtimeConfig.public.APIv2 || '')
 
 const serverReady = ref(false)
 let healthPollTimer = null
