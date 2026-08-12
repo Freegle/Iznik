@@ -48,6 +48,16 @@ host after any change).
 - Full steps: **[deployment-spend-optimisation.md](deployment-spend-optimisation.md)**.
 - Run roughly monthly, or when a host crosses ~75% disk use.
 
+## Annual AGM category on Discourse
+
+Once a year the AGM gets its own Discourse category, which every user is put on
+"Watching" so the announcements reach them. Set up, announced and closed with the
+`discourse:agm` artisan command, run by hand in three separate steps.
+
+- Full steps: **[agm-category.md](agm-category.md)**.
+- The steps are separate on purpose: switching Watching on before the information
+  posts exist means every draft notifies the whole forum.
+
 ## Adding a runbook
 
 Keep summaries here **non-confidential**: describe impact, what pauses, what stays up, and
