@@ -484,29 +484,39 @@ func TestGetDashboardHappiness(t *testing.T) {
 	assert.Greater(t, len(happy), 0, "Should have at least one happiness entry")
 }
 
-// Happiness reads the nightly stats rollup (the rows stats:generate-daily writes at 02:30)
-// and tops up only the days the rollup has not reached yet. This proves both halves: a
-// rollup row for yesterday plus a raw outcome recorded today must add up.
-func TestGetDashboardHappinessFromStatsRollupPlusToday(t *testing.T) {
-	prefix := uniquePrefix("DashHappyRollup")
+// A rating is one member's view of how their post went, so it counts ONCE however many
+// groups the post is on. The query this replaced counted join rows against
+// messages_groups, so a post that had rippled outwards had its rating counted again for
+// every group it reached - measured at more than four times the real total on
+// production.
+func TestGetDashboardHappinessCountsOneVotePerRating(t *testing.T) {
+	prefix := uniquePrefix("DashHappyOneVote")
 	db := database.DBConn
-	groupID, _, token := createModDashboardFixtures(t, prefix)
+	groupID, userID, token := createModDashboardFixtures(t, prefix)
 
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-	db.Exec("INSERT INTO stats (date, end, groupid, type, count) VALUES (?, ?, ?, 'Happy', 4)", yesterday, yesterday, groupID)
-	db.Exec("INSERT INTO stats (date, end, groupid, type, count) VALUES (?, ?, ?, 'Fine', 2)", yesterday, yesterday, groupID)
-
-	// One more Happy recorded today, which the rollup cannot know about yet.
 	var msgID uint64
 	db.Raw("SELECT msgid FROM messages_groups WHERE groupid = ? LIMIT 1", groupID).Scan(&msgID)
+
+	// The same post also sits on a second group the moderator runs, and has rippled
+	// into a third. Neither may make the one rating count again.
+	groupB := CreateTestGroup(t, prefix+"B")
+	CreateTestMembership(t, userID, groupB, "Moderator")
+	groupC := CreateTestGroup(t, prefix+"C")
+	CreateTestMembership(t, userID, groupC, "Moderator")
+
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 0)", msgID, groupB)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupC)
+
 	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, timestamp) VALUES (?, 'Taken', 'Happy', NOW())", msgID)
 
 	t.Cleanup(func() {
-		db.Exec("DELETE FROM stats WHERE groupid = ?", groupID)
 		db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN (?, ?)", msgID, groupB, groupC)
 	})
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=Happiness&group=%d&jwt=%s", groupID, token), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=Happiness&allgroups=true&jwt=%s", token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -522,12 +532,8 @@ func TestGetDashboardHappinessFromStatsRollupPlusToday(t *testing.T) {
 		counts[row["happiness"].(string)] = row["count"].(float64)
 	}
 
-	assert.Equal(t, float64(5), counts["Happy"], "4 from the rollup plus 1 recorded today")
-	assert.Equal(t, float64(2), counts["Fine"], "rollup only")
-
-	// Highest count first.
-	first := rows[0].(map[string]interface{})
-	assert.Equal(t, "Happy", first["happiness"])
+	assert.Equal(t, float64(1), counts["Happy"],
+		"one rating on a post spanning three groups is still one vote")
 }
 
 func TestGetDashboardPopularPostsWithGroup(t *testing.T) {
