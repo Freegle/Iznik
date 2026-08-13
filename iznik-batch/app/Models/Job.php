@@ -2,6 +2,13 @@
 
 namespace App\Models;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\DateDiff;
+use App\Database\Expressions\Greatest;
+use App\Database\Expressions\Now;
+use App\Database\Expressions\Value;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -67,11 +74,30 @@ class Job extends Model
             // convert), so decay the score with the posting age: factor 1.0 when
             // fresh, floored at 0.5 by ~7 days. posted_at NULL -> treated as fresh.
             // Selected as `score` so the variety step below can weight by it.
-            ->selectRaw('cpc * clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), posted_at), 0) * 0.07) AS score')
+            ->addSelect(new Alias(
+                new Arithmetic(
+                    new Arithmetic('cpc', '*', 'clickability'),
+                    '*',
+                    new Greatest(
+                        Value::of(0.5),
+                        new Arithmetic(
+                            Value::of(1),
+                            '-',
+                            new Arithmetic(
+                                new Coalesce(new DateDiff(new Now(), 'posted_at'), Value::of(0)),
+                                '*',
+                                Value::of(0.07)
+                            )
+                        )
+                    )
+                ),
+                'score'
+            ))
             ->whereIn('id', $ids)
-            ->whereRaw('cpc >= ?', [self::MINIMUM_CPC])
+            ->where('cpc', '>=', self::MINIMUM_CPC)
             ->where('visible', 1)
-            ->orderByRaw('score DESC, id ASC')
+            ->orderBy('score', 'desc')
+            ->orderBy('id')
             ->get();
 
         // Dedup of duplicate WhatJobs postings (one recruitment ad spammed to many

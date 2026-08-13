@@ -232,6 +232,11 @@ class ChatProcessService
             // fetch use (not held for review, not spam), so list visibility tracks delivery.
             // GREATEST guards against moving latestmessage backwards when a burst is processed
             // out of natural order; the hourly recompute remains as a backfill.
+            // keep-raw: GREATEST(COALESCE(latestmessage, ?), ?) - both GREATEST() and
+            // COALESCE() are SQL functions composed over the latestmessage column as the
+            // UPDATE SET value; the query builder has no method for either, and wrapping
+            // them in DB::raw() as the update() value would only relocate the raw SQL
+            // into the array, not convert it.
             DB::update(
                 'UPDATE chat_rooms SET latestmessage = GREATEST(COALESCE(latestmessage, ?), ?) WHERE id = ?',
                 [$message->date, $message->date, $chatid]

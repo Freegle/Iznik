@@ -79,7 +79,7 @@ class MessageExpiryService
             ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
-            ->whereRaw('messages.deadline < CURDATE()')
+            ->where('messages.deadline', '<', today()->toDateString())
             ->whereNull('messages_outcomes.id')
             ->distinct()
             ->lazyById(500, 'messages.id', 'id');
@@ -200,6 +200,8 @@ class MessageExpiryService
      */
     protected function getExpiredCandidates(): \Illuminate\Support\Collection
     {
+        // keep-raw: GREATEST/COALESCE/CASE/TIMESTAMPDIFF/JSON_EXTRACT arithmetic
+        // computing a per-row threshold has no builder method.
         $sql = <<<'SQL'
 SELECT DISTINCT ms.msgid
 FROM messages_spatial ms
@@ -246,6 +248,11 @@ WHERE ms.successful = 0
   )
 SQL;
 
+        // keep-raw: the per-row threshold above combines TIMESTAMPDIFF/GREATEST/COALESCE/
+        // CASE/JSON_EXTRACT arithmetic with EXISTS/NOT EXISTS predicates in one OR'd boolean
+        // expression - no builder method projects that arithmetic, and pulling just the
+        // EXISTS clauses out to whereExists() would still leave the arithmetic in a
+        // whereRaw(), which is itself a raw call site, so the query stays as one statement.
         return collect(DB::select($sql, [MessageOutcome::OUTCOME_EXPIRED]))
             ->pluck('msgid');
     }

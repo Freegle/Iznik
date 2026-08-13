@@ -2,6 +2,18 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\CaseWhen;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\GetMaxDimension;
+use App\Database\Expressions\IsNull;
+use App\Database\Expressions\StAsText;
+use App\Database\Expressions\StCentroid;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\StX;
+use App\Database\Expressions\StY;
+use App\Database\Expressions\Value;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -194,37 +206,51 @@ class DoogalService
     private function createPostcode(string $name, float $lng, float $lat): ?int
     {
         $point = "POINT($lng $lat)";
+        // Reused (not rebuilt) for the maxdimension column below - Value::of()
+        // renders via Grammar::escape() at SQL-compile time (see Value's
+        // docblock), so the WKT literal and SRID appear inline both times,
+        // exactly like the original query's two `ST_GeomFromText(?, ?)` calls
+        // sharing the same bound $point/$this->srid pair.
+        $geomExpr = new StGeomFromText(Value::of($point), $this->srid);
 
-        DB::insert(
-            'INSERT INTO locations (osm_id, name, type, geometry, canon, osm_place, maxdimension) '
-            .'VALUES (NULL, ?, ?, ST_GeomFromText(?, ?), ?, 0, GetMaxDimension(ST_GeomFromText(?, ?)))',
-            [$name, 'Postcode', $point, $this->srid, $this->canon($name), $point, $this->srid]
-        );
-        $id = (int) DB::getPdo()->lastInsertId();
+        // insertGetId() readback of LAST_INSERT_ID() is the same single extra
+        // round trip DB::getPdo()->lastInsertId() was (both go via the PDO
+        // driver, not a second SELECT), so nothing is duplicated here.
+        $id = DB::table('locations')->insertGetId([
+            'osm_id' => null,
+            'name' => $name,
+            'type' => 'Postcode',
+            'geometry' => $geomExpr,
+            'canon' => $this->canon($name),
+            'osm_place' => 0,
+            'maxdimension' => new GetMaxDimension($geomExpr),
+        ]);
         if (!$id) {
             return null;
         }
 
-        DB::insert(
-            'INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ?))',
-            [$id, $point, $this->srid]
-        );
+        DB::table('locations_spatial')->insert([
+            'locationid' => $id,
+            'geometry' => new StGeomFromText(Value::of($point), $this->srid),
+        ]);
 
         // Cache lat/lng from the geometry centroid (speeds up later queries).
-        DB::update(
-            'UPDATE locations SET lng = ST_X(ST_Centroid(geometry)), lat = ST_Y(ST_Centroid(geometry)) WHERE id = ?',
-            [$id]
-        );
+        DB::table('locations')->where('id', $id)->update([
+            'lng' => new StX(new StCentroid('geometry')),
+            'lat' => new StY(new StCentroid('geometry')),
+        ]);
 
         // Link a full postcode (e.g. "AB1 2CD") to its parent district ("AB1").
         $sp = strpos($name, ' ');
         if ($sp !== false) {
-            $parent = DB::selectOne(
-                "SELECT id FROM locations WHERE name = ? AND type = 'Postcode' LIMIT 1",
-                [substr($name, 0, $sp)]
-            );
+            $parent = DB::table('locations')
+                ->select('id')
+                ->where('name', substr($name, 0, $sp))
+                ->where('type', 'Postcode')
+                ->limit(1)
+                ->first();
             if ($parent) {
-                DB::update('UPDATE locations SET postcodeid = ? WHERE id = ?', [$parent->id, $id]);
+                DB::table('locations')->where('id', $id)->update(['postcodeid' => $parent->id]);
             }
         }
 
@@ -239,14 +265,25 @@ class DoogalService
     {
         $point = "POINT($lng $lat)";
 
-        DB::update(
-            'UPDATE locations SET lat = ?, lng = ?, type = ?, geometry = ST_GeomFromText(?, ?), ourgeometry = NULL WHERE id = ?',
-            [$lat, $lng, 'Postcode', $point, $this->srid, $id]
-        );
+        DB::table('locations')->where('id', $id)->update([
+            'lat' => $lat,
+            'lng' => $lng,
+            'type' => 'Postcode',
+            'geometry' => new StGeomFromText(Value::of($point), $this->srid),
+            'ourgeometry' => null,
+        ]);
 
-        DB::statement(
-            'REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, ?))',
-            [$id, $point, $this->srid]
+        // locations_spatial has exactly one non-key column (geometry), so
+        // REPLACE INTO's delete+reinsert and an ON DUPLICATE KEY UPDATE both
+        // leave the row in the same end state here - verified empirically
+        // (insert-then-upsert round trip reproduces REPLACE INTO's result
+        // exactly). upsert() compiles to one atomic
+        // `INSERT ... ON DUPLICATE KEY UPDATE` statement, so this isn't a
+        // read-then-write split either.
+        DB::table('locations_spatial')->upsert(
+            ['locationid' => $id, 'geometry' => new StGeomFromText(Value::of($point), $this->srid)],
+            ['locationid'],
+            ['geometry']
         );
     }
 
@@ -272,46 +309,70 @@ class DoogalService
     {
         // Pass 1: relabel wrong-SRID source geometry (coordinates unchanged).
         DB::table('locations')
-            ->whereRaw('ST_SRID(geometry) <> ?', [$this->srid])
+            ->where(new Comparison(new StSrid('geometry'), '<>', $this->srid))
             ->select('id')
             ->orderBy('id')
             ->chunkById(1000, function ($rows) {
                 foreach ($rows as $r) {
-                    DB::update('UPDATE locations SET geometry = ST_SRID(geometry, ?) WHERE id = ?', [$this->srid, $r->id]);
+                    DB::table('locations')->where('id', $r->id)->update([
+                        'geometry' => new StSrid('geometry', $this->srid),
+                    ]);
                 }
             });
 
         DB::table('locations')
             ->whereNotNull('ourgeometry')
-            ->whereRaw('ST_SRID(ourgeometry) <> ?', [$this->srid])
+            ->where(new Comparison(new StSrid('ourgeometry'), '<>', $this->srid))
             ->select('id')
             ->orderBy('id')
             ->chunkById(1000, function ($rows) {
                 foreach ($rows as $r) {
-                    DB::update('UPDATE locations SET ourgeometry = ST_SRID(ourgeometry, ?) WHERE id = ?', [$this->srid, $r->id]);
+                    DB::table('locations')->where('id', $r->id)->update([
+                        'ourgeometry' => new StSrid('ourgeometry', $this->srid),
+                    ]);
                 }
             });
 
         // Pass 2: re-sync locations_spatial wherever the canonical geometry
         // genuinely differs. With SRIDs now consistent, `!=` only fires on real
         // positional drift.
+        //
+        // The original CASE-expression predicate is equivalent to "ourgeometry
+        // differs from spatial.geometry when set, else geometry differs from
+        // it" - expressed below as two whereColumn() branches OR'd together, so
+        // there is no CASE and no whereRaw(). The whole OR is wrapped in one
+        // ->where(closure) group: chunkById() appends its own `AND id > ?` after
+        // each page, and SQL's AND binds tighter than OR, so an unwrapped OR at
+        // the top level would let that pagination bound apply only to the
+        // second branch instead of the query as a whole.
         DB::table('locations')
             ->join('locations_spatial', 'locations_spatial.locationid', '=', 'locations.id')
-            ->whereRaw(
-                '(CASE WHEN locations.ourgeometry IS NOT NULL THEN locations.ourgeometry ELSE locations.geometry END) '
-                .'<> locations_spatial.geometry'
-            )
+            ->where(function ($query) {
+                $query->where(function ($query) {
+                    $query->whereNotNull('locations.ourgeometry')
+                        ->whereColumn('locations.ourgeometry', '<>', 'locations_spatial.geometry');
+                })->orWhere(function ($query) {
+                    $query->whereNull('locations.ourgeometry')
+                        ->whereColumn('locations.geometry', '<>', 'locations_spatial.geometry');
+                });
+            })
             ->select(
                 'locations.id',
-                DB::raw('ST_AsText(CASE WHEN locations.ourgeometry IS NOT NULL THEN locations.ourgeometry ELSE locations.geometry END) AS g')
+                new Alias(
+                    new StAsText(
+                        (new CaseWhen())
+                            ->when(new IsNull('locations.ourgeometry', not: true))->then('locations.ourgeometry')
+                            ->otherwise('locations.geometry')
+                    ),
+                    'g'
+                )
             )
             ->orderBy('locations.id')
             ->chunkById(1000, function ($badlocs) {
                 foreach ($badlocs as $bad) {
-                    DB::update(
-                        'UPDATE locations_spatial SET geometry = ST_GeomFromText(?, ?) WHERE locationid = ?',
-                        [$bad->g, $this->srid, $bad->id]
-                    );
+                    DB::table('locations_spatial')->where('locationid', $bad->id)->update([
+                        'geometry' => new StGeomFromText(Value::of($bad->g), $this->srid),
+                    ]);
                 }
             }, 'locations.id', 'id');
     }

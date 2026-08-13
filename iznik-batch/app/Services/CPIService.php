@@ -203,10 +203,11 @@ class CPIService
             'source' => 'ONS D7BT series',
         ]);
 
-        DB::statement(
-            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
-            [self::CONFIG_KEY, $json, $json]
-        );
+        DB::table('config')->upsert(
+                [['key' => self::CONFIG_KEY, 'value' => $json]],
+                ['key'],
+                ['value']
+            );
     }
 
     /**

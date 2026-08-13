@@ -2,6 +2,12 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Count;
+use App\Database\Expressions\Sum;
+use App\Database\Expressions\Value;
 use App\Mail\AI\AIImageReviewDigestMail;
 use App\Mail\Traits\FeatureFlags;
 use Illuminate\Console\Command;
@@ -84,13 +90,16 @@ class SendAIImageReviewDigestCommand extends Command
     {
         return DB::table('microactions')
             ->select('userid')
-            ->selectRaw('COUNT(*) as total_votes')
-            ->selectRaw("SUM(result = 'Approve') as approve_count")
-            ->selectRaw("SUM(result = 'Reject') as reject_count")
+            ->addSelect(new Alias(new Count(), 'total_votes'))
+            ->addSelect(new Alias(new Sum(new Comparison('result', '=', Value::of('Approve'))), 'approve_count'))
+            ->addSelect(new Alias(new Sum(new Comparison('result', '=', Value::of('Reject'))), 'reject_count'))
             ->where('actiontype', 'AIImageReview')
             ->groupBy('userid')
-            ->havingRaw('total_votes >= 10')
-            ->havingRaw("(approve_count / total_votes > 0.9 OR reject_count / total_votes > 0.9)")
+            ->having('total_votes', '>=', 10)
+            ->having(function ($query) {
+                $query->having(new Comparison(new Arithmetic('approve_count', '/', 'total_votes'), '>', 0.9))
+                    ->orHaving(new Comparison(new Arithmetic('reject_count', '/', 'total_votes'), '>', 0.9));
+            })
             ->pluck('userid')
             ->toArray();
     }
@@ -109,7 +118,7 @@ class SendAIImageReviewDigestCommand extends Command
         }
 
         return $query->groupBy('aiimageid')
-            ->havingRaw('COUNT(*) >= 5')
+            ->having(new Comparison(new Count(), '>=', 5))
             ->get()
             ->count();
     }
@@ -127,9 +136,9 @@ class SendAIImageReviewDigestCommand extends Command
                 'ai_images.name',
                 'ai_images.usage_count',
             )
-            ->selectRaw("SUM(microactions.result = 'Approve') as approve_count")
-            ->selectRaw("SUM(microactions.result = 'Reject') as reject_count")
-            ->selectRaw('SUM(microactions.containspeople = 1) as people_count')
+            ->addSelect(new Alias(new Sum(new Comparison('microactions.result', '=', Value::of('Approve'))), 'approve_count'))
+            ->addSelect(new Alias(new Sum(new Comparison('microactions.result', '=', Value::of('Reject'))), 'reject_count'))
+            ->addSelect(new Alias(new Sum(new Comparison('microactions.containspeople', '=', 1)), 'people_count'))
             ->where('microactions.actiontype', 'AIImageReview');
 
         if (! empty($outlierUserIds)) {
@@ -137,8 +146,12 @@ class SendAIImageReviewDigestCommand extends Command
         }
 
         return $query->groupBy('ai_images.id', 'ai_images.name', 'ai_images.usage_count')
-            ->havingRaw('COUNT(*) >= 5')
-            ->havingRaw("SUM(microactions.result = 'Reject') > SUM(microactions.result = 'Approve')")
+            ->having(new Comparison(new Count(), '>=', 5))
+            ->having(new Comparison(
+                new Sum(new Comparison('microactions.result', '=', Value::of('Reject'))),
+                '>',
+                new Sum(new Comparison('microactions.result', '=', Value::of('Approve')))
+            ))
             ->orderByDesc('ai_images.usage_count')
             ->get()
             ->map(fn ($row) => [

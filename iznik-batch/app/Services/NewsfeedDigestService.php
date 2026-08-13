@@ -151,24 +151,23 @@ class NewsfeedDigestService
         }
 
         $oldest = now()->subDays(self::WINDOW_DAYS)->toDateTimeString();
-        $typePlaceholders = implode(',', array_fill(0, count(self::FEED_TYPES), '?'));
-        $idPlaceholders = implode(',', array_fill(0, count($ids), '?'));
 
-        $posts = DB::select(
-            "SELECT newsfeed.id, newsfeed.type, newsfeed.userid, newsfeed.message, newsfeed.timestamp
-             FROM newsfeed
-             WHERE newsfeed.id IN ({$idPlaceholders})
-               AND newsfeed.replyto IS NULL
-               AND newsfeed.deleted IS NULL
-               AND newsfeed.hidden IS NULL
-               AND newsfeed.userid <> ?
-               AND newsfeed.type IN ({$typePlaceholders})
-               AND newsfeed.timestamp >= ?
-               AND TIMESTAMPDIFF(HOUR, newsfeed.timestamp, NOW()) >= ?
-             ORDER BY newsfeed.pinned DESC, newsfeed.timestamp DESC
-             LIMIT " . self::MAX_ITEMS,
-            array_merge($ids, [$userId], self::FEED_TYPES, [$oldest, self::MIN_HOUR_AGE])
-        );
+        $posts = DB::table('newsfeed')
+            ->whereIn('id', $ids)
+            ->whereNull('replyto')
+            ->whereNull('deleted')
+            ->whereNull('hidden')
+            ->where('userid', '!=', $userId)
+            ->whereIn('type', self::FEED_TYPES)
+            ->where('timestamp', '>=', $oldest)
+            // TIMESTAMPDIFF(HOUR, timestamp, NOW()) >= N
+            ->where('timestamp', '<=', now()->subHours(self::MIN_HOUR_AGE))
+            ->orderByDesc('pinned')
+            ->orderByDesc('timestamp')
+            ->limit(self::MAX_ITEMS)
+            ->select(['id', 'type', 'userid', 'message', 'timestamp'])
+            ->get()
+            ->all();
 
         if (empty($posts)) {
             return 0;

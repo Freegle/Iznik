@@ -712,6 +712,7 @@ class SpamCheckService
             // Get whitelisted domains (count >= 3, length > 5, excluding shorteners)
             $whitelistedDomains = DB::table('spam_whitelist_links')
                 ->where('count', '>=', 3)
+                // keep-raw: LENGTH() has no builder method.
                 ->whereRaw('LENGTH(domain) > 5')
                 ->where('domain', 'NOT LIKE', '%linkedin%')
                 ->where('domain', 'NOT LIKE', '%goo.gl%')
@@ -860,7 +861,7 @@ class SpamCheckService
         $count = DB::table('chat_images')
             ->join('chat_messages', 'chat_images.id', '=', 'chat_messages.imageid')
             ->where('chat_images.hash', $hash)
-            ->whereRaw('TIMESTAMPDIFF(HOUR, chat_messages.date, NOW()) <= ?', [self::IMAGE_THRESHOLD_TIME])
+            ->where('chat_messages.date', '>', now()->subHours(self::IMAGE_THRESHOLD_TIME + 1))
             ->count();
 
         return $count > self::IMAGE_THRESHOLD;

@@ -2,9 +2,24 @@
 
 namespace App\Services;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Arithmetic;
+use App\Database\Expressions\Avg;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Count;
+use App\Database\Expressions\Max;
+use App\Database\Expressions\Min;
+use App\Database\Expressions\Over;
+use App\Database\Expressions\Round;
+use App\Database\Expressions\RowNumber;
+use App\Database\Expressions\StAsText;
+use App\Database\Expressions\StEnvelope;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\Value;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class WhatJobsService
 {
@@ -555,7 +570,7 @@ class WhatJobsService
                 'existing' => $existing,
                 'min_ratio' => self::MIN_SWAP_RATIO,
             ]);
-            DB::statement('DROP TABLE IF EXISTS jobs_new');
+            Schema::dropIfExists('jobs_new');
             return ['total' => $inserted, 'inserted' => 0, 'skipped_swap' => true, 'existing' => $existing];
         }
 
@@ -1095,11 +1110,13 @@ class WhatJobsService
         // instead of inheriting their own wrong point. The per-run in-memory cache
         // above still dedupes, so each tuple is geocoded at most once per run.
         if (!$this->forceRegeocode) {
-            $geo = DB::select(
-                "SELECT ST_AsText(ST_Envelope(geometry)) AS geom FROM jobs
-                 WHERE city = ? AND state = ? AND country = ? LIMIT 1",
-                [$city, $state, $country]
-            );
+            $geo = DB::table('jobs')
+                ->select(new Alias(new StAsText(new StEnvelope('geometry')), 'geom'))
+                ->where('city', $city)
+                ->where('state', $state)
+                ->where('country', $country)
+                ->limit(1)
+                ->get();
 
             if (count($geo) && $geo[0]->geom) {
                 $bbox = $this->bboxFromWkt($geo[0]->geom);
@@ -1274,14 +1291,27 @@ class WhatJobsService
      */
     protected function geocodePostcode(string $outward): ?array
     {
-        $row = DB::selectOne(
-            "SELECT AVG(lat) AS lat, AVG(lng) AS lng,
-                    MIN(lat) AS swlat, MIN(lng) AS swlng,
-                    MAX(lat) AS nelat, MAX(lng) AS nelng
-             FROM locations
-             WHERE type = 'Postcode' AND name LIKE ? AND lat IS NOT NULL",
-            [$outward . ' %']
-        );
+        // Six differently-aliased aggregates (AVG/MIN/MAX x2) in one SELECT
+        // list. Query\Builder's own aggregate helpers (avg()/min()/max()) each
+        // execute immediately and return a single scalar (see
+        // Builder::aggregate()), so they cannot project several aliased
+        // aggregates together in one round trip - the Avg/Min/Max expression
+        // classes render the same aggregate functions as plain SELECT-list
+        // columns instead, and Alias supplies the per-column output name that
+        // an Expression cannot otherwise carry (see Alias's docblock).
+        $row = DB::table('locations')
+            ->select([
+                new Alias(new Avg('lat'), 'lat'),
+                new Alias(new Avg('lng'), 'lng'),
+                new Alias(new Min('lat'), 'swlat'),
+                new Alias(new Min('lng'), 'swlng'),
+                new Alias(new Max('lat'), 'nelat'),
+                new Alias(new Max('lng'), 'nelng'),
+            ])
+            ->where('type', 'Postcode')
+            ->where('name', 'like', $outward . ' %')
+            ->whereNotNull('lat')
+            ->first();
 
         if (!$row || $row->lat === null) {
             return null;
@@ -1515,7 +1545,18 @@ class WhatJobsService
 
     public function prepareTempTable(): void
     {
-        DB::statement('DROP TABLE IF EXISTS jobs_new');
+        Schema::dropIfExists('jobs_new');
+        // keep-raw: CREATE TABLE ... LIKE clones the full structure (columns,
+        // indexes, spatial SRID attribute) of the live `jobs` table verbatim.
+        // Verified there is no Schema Blueprint equivalent: Blueprint has no
+        // like()/clone() method (confirmed live - calling
+        // Schema::create('x', fn($t) => $t->like('jobs')) throws
+        // BadMethodCallException: "Method ...Blueprint::like does not exist"),
+        // and Schema\Grammars\Grammar::compileCreate() only ever renders
+        // column definitions a Blueprint was explicitly given - there is no
+        // grammar path that copies another table's structure. Hand-redefining
+        // the columns would fork from the jobs migration and silently drift
+        // out of sync with it.
         DB::statement('CREATE TABLE jobs_new LIKE jobs');
     }
 
@@ -1547,7 +1588,7 @@ class WhatJobsService
         // freshly-swapped table is never touched again.
         $maxish   = $this->getMaxish();
         $keywords = [];
-        foreach (DB::select('SELECT keyword, count FROM jobs_keywords') as $row) {
+        foreach (DB::table('jobs_keywords')->select('keyword', 'count')->get() as $row) {
             $keywords[$row->keyword] = (int) $row->count;
         }
 
@@ -1559,8 +1600,7 @@ class WhatJobsService
                 return;
             }
 
-            $placeholders = [];
-            $bindings     = [];
+            $rows = [];
 
             foreach ($buffer as $j) {
                 $id = $existingIds[$j['job_reference']] ?? null;
@@ -1571,27 +1611,44 @@ class WhatJobsService
                 }
                 $clickability = $maxish > 0 ? $score / $maxish : 0;
 
-                $placeholders[] = '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,ST_GeomFromText(?,?),?,?,?,?,?)';
-                array_push(
-                    $bindings,
-                    $id,
-                    $j['location'], $j['title'], $j['city'], $j['state'],
-                    $j['zip'], $j['country'], $j['job_type'], $j['posted_at'],
-                    $j['job_reference'], $j['company'], $j['category'], $j['url'],
-                    $j['body'], $j['cpc'],
-                    $j['geometry'], $srid,
-                    $clickability, $j['bodyhash'], $j['seenat'],
-                    $j['visible'], $j['canonical_title']
-                );
+                // geometry is per-row externally-sourced WKT (from the feed via
+                // geocodeCityState/boxPoly), so it cannot be a compile-time SQL
+                // literal - it goes through Value::of(), which App\Database\
+                // Expressions\Value renders via Grammar::escape() (PDO quote()),
+                // exactly as safe against injection as a bound parameter, just
+                // resolved at compile time instead of execute time (see Value's
+                // docblock). insertOrIgnore()'s $values array natively supports
+                // an Expression as a column value - Grammar::parameter() emits
+                // it verbatim instead of a bound "?" placeholder (see
+                // Grammar::parameterize()/parameter()), and
+                // Builder::cleanBindings() drops it back out of the bindings
+                // array that PDO receives, so nothing is left mismatched.
+                $rows[] = [
+                    'id' => $id,
+                    'location' => $j['location'],
+                    'title' => $j['title'],
+                    'city' => $j['city'],
+                    'state' => $j['state'],
+                    'zip' => $j['zip'],
+                    'country' => $j['country'],
+                    'job_type' => $j['job_type'],
+                    'posted_at' => $j['posted_at'],
+                    'job_reference' => $j['job_reference'],
+                    'company' => $j['company'],
+                    'category' => $j['category'],
+                    'url' => $j['url'],
+                    'body' => $j['body'],
+                    'cpc' => $j['cpc'],
+                    'geometry' => new StGeomFromText(Value::of($j['geometry']), $srid),
+                    'clickability' => $clickability,
+                    'bodyhash' => $j['bodyhash'],
+                    'seenat' => $j['seenat'],
+                    'visible' => $j['visible'],
+                    'canonical_title' => $j['canonical_title'],
+                ];
             }
 
-            $sql = 'INSERT IGNORE INTO jobs_new
-                (id,location,title,city,state,zip,country,job_type,posted_at,
-                 job_reference,company,category,url,body,cpc,geometry,
-                 clickability,bodyhash,seenat,visible,canonical_title)
-                VALUES ' . implode(',', $placeholders);
-
-            DB::statement($sql, $bindings);
+            DB::table('jobs_new')->insertOrIgnore($rows);
             $inserted += count($buffer);
             $buffer = [];
         };
@@ -1609,41 +1666,84 @@ class WhatJobsService
 
     public function swapTables(): void
     {
-        DB::statement('DROP TABLE IF EXISTS jobs_old');
+        Schema::dropIfExists('jobs_old');
+        // keep-raw: a single multi-table RENAME TABLE is atomic - both renames
+        // take effect together, so `jobs` is never missing. Verified
+        // Schema\Builder::rename() only ever builds a Blueprint for one
+        // table ($from) and calls $blueprint->rename($to) on it - there is no
+        // overload or array form for a multi-table rename. Doing this as two
+        // separate Schema::rename() calls (jobs->jobs_old, then jobs_new->jobs)
+        // would open a window where the `jobs` table doesn't exist at all,
+        // which concurrently-running reads/serving code would hit - the exact
+        // "never split an atomic statement into read-then-write" case.
         DB::statement('RENAME TABLE jobs TO jobs_old, jobs_new TO jobs');
-        DB::statement('DROP TABLE IF EXISTS jobs_old');
+        Schema::dropIfExists('jobs_old');
     }
 
     public function analyseClickability(): void
     {
         $cutoff = now()->subDays(31)->startOfDay()->format('Y-m-d H:i:s');
-        DB::statement('DELETE FROM logs_jobs WHERE timestamp < ?', [$cutoff]);
+        DB::table('logs_jobs')->where('timestamp', '<', $cutoff)->delete();
 
         // Back-fill missing jobid from URL
-        $logs = DB::select(
-            'SELECT jobs.id AS jobid, logs_jobs.id AS lid
-             FROM logs_jobs
-             INNER JOIN jobs ON jobs.url = logs_jobs.link
-             WHERE logs_jobs.jobid IS NULL AND logs_jobs.link IS NOT NULL
-             ORDER BY logs_jobs.id DESC'
-        );
+        $logs = DB::table('logs_jobs')
+            ->select('jobs.id as jobid', 'logs_jobs.id as lid')
+            // Joined on URL, not id - that is the point: these are log rows
+            // whose jobid was never resolved, matched back to the job by link.
+            ->join('jobs', 'jobs.url', '=', 'logs_jobs.link')
+            ->whereNull('logs_jobs.jobid')
+            ->whereNotNull('logs_jobs.link')
+            ->orderByDesc('logs_jobs.id')
+            ->get()
+            ->all();
         foreach ($logs as $log) {
-            DB::statement('UPDATE logs_jobs SET jobid = ? WHERE id = ?', [$log->jobid, $log->lid]);
+            DB::table('logs_jobs')->where('id', $log->lid)->update(['jobid' => $log->jobid]);
         }
 
         // Rebuild keyword frequency from clicked jobs
-        DB::statement('TRUNCATE TABLE jobs_keywords');
-        $clicked = DB::select(
-            'SELECT DISTINCT jobs.title FROM logs_jobs
-             INNER JOIN jobs ON logs_jobs.jobid = jobs.id'
-        );
+        DB::table('jobs_keywords')->truncate();
+        $clicked = DB::table('logs_jobs')
+            ->distinct()
+            ->select('jobs.title')
+            ->join('jobs', 'logs_jobs.jobid', '=', 'jobs.id')
+            ->get()
+            ->all();
         foreach ($clicked as $row) {
             foreach ($this->getKeywords($row->title) as $keyword) {
-                DB::statement(
-                    'INSERT INTO jobs_keywords (keyword, count) VALUES (?,1)
-                     ON DUPLICATE KEY UPDATE count = count + 1',
-                    [$keyword]
-                );
+                $this->bumpKeywordCount($keyword);
+            }
+        }
+    }
+
+    /**
+     * Atomically increment jobs_keywords.count for $keyword, inserting a new
+     * row at count=1 the first time it's seen. upsert() only emits
+     * `col = values(col)` or `col = ?` (both a REPLACE of the stored value),
+     * which would discard the running count instead of incrementing it, so
+     * this uses the increment-first pattern instead: try the UPDATE: if it
+     * affects 0 rows the keyword doesn't exist yet, so insert it at count=1.
+     * A concurrent process can insert that same keyword between our failed
+     * increment and our insert - the insert's UNIQUE KEY on `keyword` then
+     * raises a duplicate-key error (verified against MySQL 8: this codebase's
+     * existing convention for detecting it, matching
+     * IncomingMailService::createGroupPostMessage(), is
+     * `str_contains($e->getMessage(), 'Duplicate entry')`), which is caught
+     * and turned into a retried increment - now guaranteed to hit the row the
+     * other process just created.
+     */
+    private function bumpKeywordCount(string $keyword): void
+    {
+        $updated = DB::table('jobs_keywords')->where('keyword', $keyword)->increment('count');
+
+        if ($updated === 0) {
+            try {
+                DB::table('jobs_keywords')->insert(['keyword' => $keyword, 'count' => 1]);
+            } catch (\Illuminate\Database\QueryException $e) {
+                if (! str_contains($e->getMessage(), 'Duplicate entry')) {
+                    throw $e;
+                }
+
+                DB::table('jobs_keywords')->where('keyword', $keyword)->increment('count');
             }
         }
     }
@@ -1652,31 +1752,47 @@ class WhatJobsService
     {
         $maxish = $this->getMaxish();
         $keywords = [];
-        foreach (DB::select('SELECT keyword, count FROM jobs_keywords') as $row) {
+        foreach (DB::table('jobs_keywords')->select('keyword', 'count')->get() as $row) {
             $keywords[$row->keyword] = (int) $row->count;
         }
 
-        $jobs = DB::select('SELECT id, title FROM jobs');
+        $jobs = DB::table('jobs')->select('id', 'title')->get()->all();
         foreach ($jobs as $job) {
             $score = 0;
             foreach ($this->getKeywords($job->title) as $kw) {
                 $score += $keywords[$kw] ?? 0;
             }
             $normalised = $maxish > 0 ? $score / $maxish : 0;
-            DB::statement('UPDATE jobs SET clickability = ? WHERE id = ?', [$normalised, $job->id]);
+            DB::table('jobs')->where('id', $job->id)->update(['clickability' => $normalised]);
         }
     }
 
     private function getMaxish(): float
     {
-        $rows = DB::select(
-            'SELECT count FROM
-             (SELECT t.*, @row_num := @row_num + 1 AS row_num
-              FROM jobs_keywords t, (SELECT @row_num:=0) counter
-              ORDER BY count) temp
-             WHERE temp.row_num = ROUND(0.95 * @row_num)'
-        );
-        return $rows ? (float) $rows[0]->count : 1.0;
+        // The 95th-percentile keyword count. Originally emulated a window
+        // function via MySQL user-defined session variables (@row_num) - a
+        // pattern from before this codebase's MySQL 8 target had real window
+        // functions. MySQL 8 has ROW_NUMBER() OVER (...) and COUNT(*) OVER ()
+        // natively, which this now uses instead: rank every row by count
+        // ascending (rn) alongside the whole-table row count (total, the same
+        // aggregate on every row via an empty OVER ()), then pick the row
+        // whose rank equals ROUND(0.95 * total) - verified against MySQL 8 to
+        // return the identical value to the session-variable version on the
+        // same data, including the empty-table (0 rows) and single-row (that
+        // row) edge cases.
+        $percentileRow = DB::table('jobs_keywords')
+            ->select([
+                'count',
+                new Alias(new Over(new RowNumber(), 'count'), 'rn'),
+                new Alias(new Over(new Count()), 'total'),
+            ]);
+
+        $rows = DB::query()->fromSub($percentileRow, 'temp')
+            ->select('count')
+            ->where(new Comparison('rn', '=', new Round(new Arithmetic(Value::of(0.95), '*', 'total'))))
+            ->get();
+
+        return $rows->isNotEmpty() ? (float) $rows[0]->count : 1.0;
     }
 
     private function getKeywords(string $str): array

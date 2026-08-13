@@ -55,6 +55,9 @@ class ChatChaseupExpectedService
             // V1 parity: `chat_roster.status != 'Blocked'`. In SQL this also
             // excludes rows with no roster status (NULL), matching the legacy V1 PHP implementation.
             ->where('chat_roster.status', '!=', ChatRoom::STATUS_BLOCKED)
+            // keep-raw: TIMESTAMPDIFF over two COLUMNS (not NOW()) has no builder
+            // equivalent - the now()->subX() rewrite only works when one side is
+            // the current timestamp.
             ->whereRaw('TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?', [self::EXPECTED_GRACE_MINUTES])
             ->where('chat_rooms.chattype', ChatRoom::TYPE_USER2USER)
             ->orderBy('chat_messages.id', 'desc')

@@ -22,20 +22,24 @@ class LoveJunkService
         $result = ['sent' => 0, 'edited' => 0, 'completed_or_deleted' => 0, 'failed' => 0];
         $since = now()->subDay()->toDateString();
 
-        $edited = DB::select("
-            SELECT DISTINCT messages.id, lovejunk.status
-            FROM messages
-            INNER JOIN lovejunk ON lovejunk.msgid = messages.id
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
-            INNER JOIN messages_edits ON messages_edits.msgid = messages.id
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
-            WHERE messages.arrival >= ?
-              AND messages_edits.timestamp > lovejunk.timestamp
-              AND messages.type = 'Offer'
-              AND messages_groups.collection = 'Approved'
-              AND groups.onlovejunk = 1
-            ORDER BY messages.arrival ASC
-        ", [$since]);
+        $edited = DB::table('messages')
+            ->distinct()
+            ->select('messages.id', 'lovejunk.status')
+            ->join('lovejunk', 'lovejunk.msgid', '=', 'messages.id')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('messages_edits', 'messages_edits.msgid', '=', 'messages.id')
+            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
+            ->where('messages.arrival', '>=', $since)
+            // Column-to-column: an edit made AFTER we last told LoveJunk about
+            // the message. whereColumn, not where - a plain where would bind
+            // the string 'lovejunk.timestamp'.
+            ->whereColumn('messages_edits.timestamp', '>', 'lovejunk.timestamp')
+            ->where('messages.type', 'Offer')
+            ->where('messages_groups.collection', 'Approved')
+            ->where('groups.onlovejunk', 1)
+            ->orderBy('messages.arrival')
+            ->get()
+            ->all();
 
         foreach ($edited as $msg) {
             $lj = json_decode($msg->status, true);
@@ -47,23 +51,24 @@ class LoveJunkService
             }
         }
 
-        $newMsgs = DB::select("
-            SELECT messages.id
-            FROM messages
-            LEFT JOIN lovejunk ON lovejunk.msgid = messages.id
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
-            WHERE messages.arrival >= ?
-              AND messages.type = 'Offer'
-              AND lovejunk.msgid IS NULL
-              AND messages_groups.collection = 'Approved'
-              AND groups.onlovejunk = 1
-              AND NOT EXISTS (
-                SELECT 1 FROM messages_bulk_items
-                WHERE messages_bulk_items.msgid = messages.id
-              )
-            ORDER BY messages.arrival ASC
-        ", [$since]);
+        $newMsgs = DB::table('messages')
+            ->select('messages.id')
+            // leftJoin + "lovejunk.msgid IS NULL" is the anti-join that finds
+            // messages we have NOT sent yet; an inner join would return the
+            // exact opposite set.
+            ->leftJoin('lovejunk', 'lovejunk.msgid', '=', 'messages.id')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
+            ->where('messages.arrival', '>=', $since)
+            ->where('messages.type', 'Offer')
+            ->whereNull('lovejunk.msgid')
+            ->where('messages_groups.collection', 'Approved')
+            ->where('groups.onlovejunk', 1)
+            ->whereNotExists(fn ($q) => $q->from('messages_bulk_items')
+                ->whereColumn('messages_bulk_items.msgid', 'messages.id'))
+            ->orderBy('messages.arrival')
+            ->get()
+            ->all();
 
         foreach ($newMsgs as $msg) {
             if ($dryRun) {
@@ -79,21 +84,22 @@ class LoveJunkService
             }
         }
 
-        $withOutcomes = DB::select("
-            SELECT DISTINCT messages.id
-            FROM messages_outcomes
-            INNER JOIN messages ON messages.id = messages_outcomes.msgid
-            INNER JOIN messages_groups ON messages_groups.msgid = messages.id
-            INNER JOIN lovejunk ON lovejunk.msgid = messages_outcomes.msgid
-            INNER JOIN `groups` ON groups.id = messages_groups.groupid
-            WHERE messages_outcomes.timestamp >= ?
-              AND messages.type = 'Offer'
-              AND lovejunk.success = 1
-              AND lovejunk.deleted IS NULL
-              AND lovejunk.status LIKE '{%'
-              AND groups.onlovejunk = 1
-            ORDER BY messages.arrival ASC
-        ", [$since]);
+        $withOutcomes = DB::table('messages_outcomes')
+            ->distinct()
+            ->select('messages.id')
+            ->join('messages', 'messages.id', '=', 'messages_outcomes.msgid')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('lovejunk', 'lovejunk.msgid', '=', 'messages_outcomes.msgid')
+            ->join('groups', 'groups.id', '=', 'messages_groups.groupid')
+            ->where('messages_outcomes.timestamp', '>=', $since)
+            ->where('messages.type', 'Offer')
+            ->where('lovejunk.success', 1)
+            ->whereNull('lovejunk.deleted')
+            ->where('lovejunk.status', 'LIKE', '{%')
+            ->where('groups.onlovejunk', 1)
+            ->orderBy('messages.arrival')
+            ->get()
+            ->all();
 
         foreach ($withOutcomes as $msg) {
             if (!$dryRun) {
@@ -158,12 +164,13 @@ class LoveJunkService
     {
         $fromUser = DB::table('messages')->where('id', $msgId)->value('fromuser');
 
-        $promises = DB::select("
-            SELECT mp.userid, u.ljuserid
-            FROM messages_promises mp
-            INNER JOIN users u ON u.id = mp.userid
-            WHERE mp.msgid = ? AND u.ljuserid IS NOT NULL
-        ", [$msgId]);
+        $promises = DB::table('messages_promises as mp')
+            ->select('mp.userid', 'u.ljuserid')
+            ->join('users as u', 'u.id', '=', 'mp.userid')
+            ->where('mp.msgid', $msgId)
+            ->whereNotNull('u.ljuserid')
+            ->get()
+            ->all();
 
         $completed = false;
 
@@ -232,22 +239,28 @@ class LoveJunkService
 
     private function buildPayload(int $msgId): ?array
     {
-        $msg = DB::selectOne("
-            SELECT m.id, m.textbody, m.fromuser, m.locationid, m.lat, m.lng,
-                   m.sourceheader, m.subject, m.type,
-                   i.name as item,
-                   u.fullname, u.firstname, u.lastname,
-                   l.name as postcode,
-                   la.name as area
-            FROM messages m
-            LEFT JOIN messages_items mi ON mi.msgid = m.id
-            LEFT JOIN items i ON i.id = mi.itemid
-            LEFT JOIN users u ON u.id = m.fromuser
-            LEFT JOIN locations l ON l.id = m.locationid
-            LEFT JOIN locations la ON la.id = l.areaid
-            WHERE m.id = ?
-            LIMIT 1
-        ", [$msgId]);
+        $msg = DB::table('messages as m')
+            ->select(
+                'm.id', 'm.textbody', 'm.fromuser', 'm.locationid', 'm.lat', 'm.lng',
+                'm.sourceheader', 'm.subject', 'm.type',
+                'i.name as item',
+                'u.fullname', 'u.firstname', 'u.lastname',
+                'l.name as postcode',
+                'la.name as area'
+            )
+            // Every join here is a LEFT join on purpose: a message with no
+            // item, no location or no area must still come back, just with
+            // nulls. Any of these as an inner join silently drops messages
+            // from the LoveJunk feed rather than erroring.
+            ->leftJoin('messages_items as mi', 'mi.msgid', '=', 'm.id')
+            ->leftJoin('items as i', 'i.id', '=', 'mi.itemid')
+            ->leftJoin('users as u', 'u.id', '=', 'm.fromuser')
+            ->leftJoin('locations as l', 'l.id', '=', 'm.locationid')
+            // la joins l, not m - the area of the message's location.
+            ->leftJoin('locations as la', 'la.id', '=', 'l.areaid')
+            ->where('m.id', $msgId)
+            ->limit(1)
+            ->first();
 
         if (!$msg) {
             return null;

@@ -457,11 +457,34 @@ class RippleReplyService
     private function recordEvent(string $event): void
     {
         try {
-            DB::statement(
-                'INSERT INTO rippling_event_metrics (day, event, count) VALUES (CURDATE(), ?, 1) '
-                . 'ON DUPLICATE KEY UPDATE count = count + 1',
-                [$event]
-            );
+            // Atomic-counter upsert without raw SQL, matching the pattern already used
+            // in UnifiedDigestService: increment() is itself atomic (UPDATE ... SET
+            // count = count + n), so an existing row is safe; a missing row falls through
+            // to an INSERT, and if a concurrent writer wins that race the duplicate-key
+            // error is caught and the increment retried. No count is lost. NOT upsert()
+            // (which emits count = values(count) and would REPLACE the counter) and NOT
+            // incrementOrCreate() (firstOrCreate + a separate increment, i.e. read-then-
+            // write, which can drop counts between the two statements).
+            $today = now()->toDateString();
+            $updated = DB::table('rippling_event_metrics')
+                ->where('day', $today)
+                ->where('event', $event)
+                ->increment('count', 1);
+
+            if ($updated === 0) {
+                try {
+                    DB::table('rippling_event_metrics')->insert([
+                        'day' => $today,
+                        'event' => $event,
+                        'count' => 1,
+                    ]);
+                } catch (\Throwable) {
+                    DB::table('rippling_event_metrics')
+                        ->where('day', $today)
+                        ->where('event', $event)
+                        ->increment('count', 1);
+                }
+            }
         } catch (\Throwable $e) {
             Log::warning("ripple: recordEvent({$event}) failed: {$e->getMessage()}");
         }
@@ -608,6 +631,7 @@ class RippleReplyService
         // but the chat never appears in the list until the hourly recompute. Bump on
         // release, keyed off the message's own date via GREATEST so we never move
         // latestmessage backwards.
+        // keep-raw: GREATEST()/COALESCE() and a multi-table UPDATE...JOIN have no builder form.
         DB::update(
             'UPDATE chat_rooms cr ' .
             'JOIN rippling_held_replies rhr ON rhr.id = ? ' .

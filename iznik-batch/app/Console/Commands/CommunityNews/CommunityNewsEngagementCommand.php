@@ -2,6 +2,14 @@
 
 namespace App\Console\Commands\CommunityNews;
 
+use App\Database\Expressions\Alias;
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Count;
+use App\Database\Expressions\IsNull;
+use App\Database\Expressions\JsonExtract;
+use App\Database\Expressions\JsonUnquote;
+use App\Database\Expressions\Sum;
+use App\Database\Expressions\Value;
 use App\Services\CommunityNews\CommunityNewsChitChatService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -60,10 +68,10 @@ class CommunityNewsEngagementCommand extends Command
     {
         $byArea = DB::table('email_tracking')
             ->where('email_type', 'CommunityNews')
-            ->selectRaw("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.area')), '?') AS area")
-            ->selectRaw('COUNT(*) AS sent')
-            ->selectRaw('SUM(opened_at IS NOT NULL) AS opened')
-            ->selectRaw('SUM(clicked_at IS NOT NULL) AS clicked')
+            ->addSelect(new Alias(new Coalesce(new JsonUnquote(new JsonExtract('metadata', Value::of('$.area'))), Value::of('?')), 'area'))
+            ->addSelect(new Alias(new Count(), 'sent'))
+            ->addSelect(new Alias(new Sum(new IsNull('opened_at', not: true)), 'opened'))
+            ->addSelect(new Alias(new Sum(new IsNull('clicked_at', not: true)), 'clicked'))
             ->groupBy('area')
             ->get();
 
@@ -82,7 +90,8 @@ class CommunityNewsEngagementCommand extends Command
         $topLinks = DB::table('email_tracking_clicks')
             ->join('email_tracking', 'email_tracking.id', '=', 'email_tracking_clicks.email_tracking_id')
             ->where('email_tracking.email_type', 'CommunityNews')
-            ->select('email_tracking_clicks.link_position', DB::raw('COUNT(*) AS clicks'))
+            ->select('email_tracking_clicks.link_position')
+            ->addSelect(new Alias(new Count(), 'clicks'))
             ->groupBy('email_tracking_clicks.link_position')
             ->orderByDesc('clicks')
             ->limit(10)

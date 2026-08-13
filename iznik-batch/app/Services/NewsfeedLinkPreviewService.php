@@ -4,6 +4,7 @@ namespace App\Services;
 
 use DOMDocument;
 use DOMXPath;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -15,9 +16,10 @@ class NewsfeedLinkPreviewService
 
     public function generatePreviews(bool $dryRun = false): int
     {
-        $recent = DB::select(
-            "SELECT id, message FROM newsfeed WHERE DATEDIFF(NOW(), `timestamp`) < 2"
-        );
+        $recent = DB::table('newsfeed')
+            ->whereDate('timestamp', '>', Carbon::today()->subDays(2)->toDateString())
+            ->get(['id', 'message'])
+            ->all();
 
         $urlsSeen = [];
         $count = 0;
@@ -35,10 +37,11 @@ class NewsfeedLinkPreviewService
                     $urlsSeen[$url] = true;
 
                     if ($dryRun) {
-                        $cached = DB::select(
-                            "SELECT id FROM link_previews WHERE url = ? AND DATEDIFF(NOW(), retrieved) < 7",
-                            [$url]
-                        );
+                        $cached = DB::table('link_previews')
+                            ->where('url', $url)
+                            ->whereDate('retrieved', '>', Carbon::today()->subDays(7)->toDateString())
+                            ->get(['id'])
+                            ->all();
                         $status = $cached ? 'cached' : 'would fetch';
                         Log::debug("Dry run: $url — $status");
                         if (!$cached) {
@@ -62,10 +65,11 @@ class NewsfeedLinkPreviewService
 
     public function getOrCreate(string $url): ?int
     {
-        $existing = DB::select(
-            "SELECT id FROM link_previews WHERE url = ? AND DATEDIFF(NOW(), retrieved) < 7",
-            [$url]
-        );
+        $existing = DB::table('link_previews')
+            ->where('url', $url)
+            ->whereDate('retrieved', '>', Carbon::today()->subDays(7)->toDateString())
+            ->get(['id'])
+            ->all();
 
         if ($existing) {
             return $existing[0]->id;
@@ -146,6 +150,7 @@ class NewsfeedLinkPreviewService
 
             $data = $this->parseHtml($response->body());
 
+            // keep-raw: LAST_INSERT_ID(id) readback on an upsert - no builder form returns the existing row's id this way.
             DB::statement(
                 "INSERT INTO link_previews(url, title, description, image) VALUES (?,?,?,?)
                  ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), title=?, description=?, image=?, retrieved=NOW()",
@@ -168,6 +173,7 @@ class NewsfeedLinkPreviewService
 
     protected function upsertInvalid(string $url): int
     {
+        // keep-raw: LAST_INSERT_ID(id) readback on an upsert - no builder form returns the existing row's id this way.
         DB::statement(
             "INSERT INTO link_previews(url, invalid) VALUES (?,1)
              ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), retrieved=NOW()",

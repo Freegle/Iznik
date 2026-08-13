@@ -2,6 +2,10 @@
 
 namespace App\Console\Commands\Ripple;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\StAsText;
+use App\Database\Expressions\StUnion;
+use App\Database\Expressions\Subquery;
 use App\Services\Ripple\ExpandService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
@@ -224,11 +228,23 @@ class ExpandCommand extends Command
                 return false;
             }
             $count = count($validIds);
-            $expr = '(SELECT polyindex FROM `groups` WHERE id = ' . array_pop($validIds) . ')';
+            // ST_Union is chained right-nested (one per --within-group id) since MySQL's
+            // ST_Union is strictly binary, not an aggregate - see StUnion's docblock. Each
+            // leaf is a Subquery wrapping `SELECT polyindex FROM groups WHERE id = <id>` so
+            // MySQL performs every union step itself; only the final combined polygon's
+            // WKT crosses to PHP, avoiding an N-way round-trip of (possibly large)
+            // intermediate polygons through PHP. Subquery requires a bindings-free builder
+            // (see its docblock), so the predicate is built with Comparison rather than the
+            // normal bound where('id', $id) - safe here since $id is always our own
+            // already-cast int, never external input.
+            $groupPoly = fn (int $id) => new Subquery(
+                DB::table('groups')->select('polyindex')->where(new Comparison('id', '=', $id))
+            );
+            $expr = $groupPoly(array_pop($validIds));
             foreach (array_reverse($validIds) as $id) {
-                $expr = 'ST_Union((SELECT polyindex FROM `groups` WHERE id = ' . $id . '), ' . $expr . ')';
+                $expr = new StUnion($groupPoly($id), $expr);
             }
-            $wkt = DB::selectOne('SELECT ST_AsText(' . $expr . ') AS u')?->u;
+            $wkt = DB::query()->value(new StAsText($expr));
             if (!$wkt) {
                 $this->error("ST_Union of --within-group polygons [{$idList}] returned NULL.");
 

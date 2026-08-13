@@ -31,7 +31,7 @@ class SendApprovedOutreachCommand extends Command
             ->leftJoin('helper_outreach_sends as s', 's.proposalid', '=', 'p.id')
             ->where('p.type', 'message')
             ->where('p.status', 'sent')
-            ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(p.payload, '$.channel')) = 'email'")
+            ->where('p.payload->channel', 'email')
             ->whereNull('s.id')  // not yet emailed
             ->select('p.id', 'p.resolved_text', 'p.proposed_text', 'p.payload')
             ->get();

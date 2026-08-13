@@ -106,6 +106,8 @@ class ListModsService
             ->join('groups', 'groups.id', '=', 'memberships.groupid')
             ->where('memberships.userid', $userid)
             ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
+            // keep-raw: COALESCE() over two columns has no builder method
+            // (LOWER() is a no-op here - every text column is utf8mb4_unicode_ci).
             ->orderByRaw('LOWER(COALESCE(groups.namefull, groups.nameshort)) ASC')
             ->select('memberships.*', 'groups.nameshort AS group_nameshort')
             ->get();

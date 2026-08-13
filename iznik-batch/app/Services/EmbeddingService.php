@@ -90,14 +90,20 @@ class EmbeddingService
                 ? $this->packVector($vectors["b:$id"])
                 : null;
 
-            DB::statement(
-                'INSERT INTO messages_embeddings (msgid, subject_embedding, body_embedding, model_version)
-                 VALUES (?, ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                   subject_embedding = VALUES(subject_embedding),
-                   body_embedding    = VALUES(body_embedding),
-                   model_version     = VALUES(model_version)',
-                [$id, $subjectBlob, $bodyBlob, self::MODEL_VERSION]
+            // upsert() with the update columns given as a plain LIST renders
+            // exactly "col = values(col)" for each - which is what this
+            // statement wrote by hand. Passing them as a key => value map
+            // instead would emit "col = ?" and bind, quietly changing an
+            // update-from-the-incoming-row into an update-to-a-fixed-value.
+            DB::table('messages_embeddings')->upsert(
+                [[
+                    'msgid' => $id,
+                    'subject_embedding' => $subjectBlob,
+                    'body_embedding' => $bodyBlob,
+                    'model_version' => self::MODEL_VERSION,
+                ]],
+                ['msgid'],
+                ['subject_embedding', 'body_embedding', 'model_version']
             );
             $count++;
         }
@@ -149,13 +155,17 @@ class EmbeddingService
                 continue;
             }
 
-            DB::statement(
-                'INSERT INTO users_searches_embeddings (searchid, term_embedding, model_version)
-                 VALUES (?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                   term_embedding = VALUES(term_embedding),
-                   model_version  = VALUES(model_version)',
-                [(int) $id, $this->packVector($vectors[$id]), self::MODEL_VERSION]
+            // Same upsert() shape as processMessages() above: the update columns are
+            // given as a plain LIST so each renders "col = values(col)" rather than
+            // "col = ?" bound to a fixed value.
+            DB::table('users_searches_embeddings')->upsert(
+                [[
+                    'searchid' => (int) $id,
+                    'term_embedding' => $this->packVector($vectors[$id]),
+                    'model_version' => self::MODEL_VERSION,
+                ]],
+                ['searchid'],
+                ['term_embedding', 'model_version']
             );
             $count++;
         }

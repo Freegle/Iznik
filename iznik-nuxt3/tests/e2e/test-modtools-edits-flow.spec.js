@@ -202,23 +202,25 @@ test.describe('ModTools Edits Flow', () => {
     // Select the group where the edit was created (by actualGroupId value).
     // This is more robust than matching by name — the mod may moderate multiple
     // groups and we need to look at the one where the edit actually lives.
-    let selectedGroup = false
-    const options = await groupSelect.locator('option').all()
-    for (const option of options) {
-      const value = await option.getAttribute('value')
-      if (value && value === String(actualGroupId)) {
-        const text = await option.textContent()
-        console.log(`Selecting group: ${text} (value=${value})`)
-        await groupSelect.selectOption(value)
-        selectedGroup = true
-        break
-      }
-    }
-    if (!selectedGroup) {
-      console.log(
-        `Group ${actualGroupId} not found in dropdown, using All Communities`
-      )
-    }
+    //
+    // Wait for the option rather than reading whatever is there the moment the
+    // select becomes visible. ModGroupSelect renders the select as soon as the
+    // page mounts, carrying only "-- All my communities --"; the mod's groups
+    // arrive later, when modGroupStore loads. Enumerating straight after
+    // toBeVisible() raced that fetch, and losing the race was silent: the spec
+    // fell through to All Communities and then spent three minutes polling a
+    // view that cannot show this edit, failing on an assertion that named the
+    // edits queue rather than the empty dropdown that caused it.
+    const targetOption = groupSelect.locator(
+      `option[value="${actualGroupId}"]`
+    )
+    await expect(targetOption).toHaveCount(1, {
+      timeout: timeouts.ui.appearance,
+    })
+    console.log(
+      `Selecting group: ${await targetOption.textContent()} (value=${actualGroupId})`
+    )
+    await groupSelect.selectOption(String(actualGroupId))
 
     // Poll for edits to appear — the edit review may take a moment to propagate
     let pollAttempts = 0

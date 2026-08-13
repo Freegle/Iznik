@@ -1,0 +1,302 @@
+{
+  "_comment": [
+    "Reviewer-approved divergences between a site's recorded golden SQL and what the",
+    "query builder actually emits. The Laravel counterpart of",
+    "tools/orm-migration/approved-diffs.json on the Go side, and declarative for the",
+    "same reason: the decision survives manifest regeneration and is reviewed as a diff",
+    "rather than hand-edited into a 1,151-entry JSON file where nobody would find it.",
+    "",
+    "`sql` is the statement the builder emits, compared canonically (keyword case,",
+    "whitespace and identifier quoting do not need to match). Every entry needs a",
+    "reason: an approved diff asserts two statements are equivalent, and that assertion",
+    "has to be justified.",
+    "",
+    "THE COMMON CASE, by a wide margin: the raw statement INLINED a constant and the",
+    "builder BINDS it. `SET replyexpected = 0` becomes `set replyexpected = ?` with 0",
+    "bound; `role IN ('Owner','Moderator')` becomes `role in (?, ?)`. The statement, the",
+    "values and the rows affected are identical - only the split between SQL text and",
+    "bind arguments moves, which is why the harness's placeholder-count guard flags it",
+    "rather than the text comparison. Binding a literal is strictly the better form",
+    "(it is what makes the statement reusable by the prepared-statement cache), so",
+    "these are approved rather than worked around: the alternative is DB::raw or",
+    "->whereRaw to force the literal back inline, and both are raw sites in this",
+    "inventory - converting nothing."
+  ],
+  "diffs": [
+    {
+      "id": "2ed1e85ee303",
+      "sql": "update `chat_messages` set `replyexpected` = ? where `id` = ?",
+      "reason": "Inlined constant now bound: `SET replyexpected = 0` renders as `set replyexpected = ?` with 0 as the first bind. Same statement, same value written."
+    },
+    {
+      "id": "db62be21a27d",
+      "sql": "update `chat_messages` set `replyexpected` = ? where `id` = ?",
+      "reason": "Second call site of the identical statement to 2ed1e85ee303, same reasoning."
+    },
+    {
+      "id": "96489b97d4c7",
+      "sql": "update `chat_messages` set `replyreceived` = ? where `id` = ?",
+      "reason": "Inlined constant now bound: `SET replyreceived = 1` renders as `set replyreceived = ?` with 1 as the first bind."
+    },
+    {
+      "id": "21c764087977",
+      "sql": "select distinct `userid` from `memberships` where `groupid` = ? and `role` in (?, ?)",
+      "reason": "The role list was inlined as IN ('Owner', 'Moderator') and whereIn() binds it as in (?, ?). Same two values, same order, same rows."
+    },
+    {
+      "id": "6bac4dbbcabe",
+      "sql": "select `groupid`, `settings` from `memberships` where `userid` = ? and `role` in (?, ?) and `collection` = ?",
+      "reason": "Two inlined constants now bound: the IN ('Owner', 'Moderator') role list and collection = 'Approved'. Same predicates, same values."
+    },
+    {
+      "id": "2b0a0c6d24d3",
+      "sql": "select max(`date`) as aggregate from `chat_messages` where `chatid` = ? and `id` < ? and `userid` = ?",
+      "reason": "NOT the inlined-constant case - an alias difference. ->max('date') is a first-class aggregate and emits its result as `aggregate`, where the raw statement said `AS max`. The alias never leaves the statement: ->max() reads the value off it and returns a scalar, and the caller was rewritten from $lastOther[0]->max to that scalar. Matching the golden byte-for-byte would need ->selectRaw('MAX(date) AS max'), which is itself a raw site here and would convert nothing."
+    },
+    {
+      "id": "7afcdec295c4",
+      "sql": "select `name` from `locations` where `type` = ? and `name` = ? limit 1",
+      "reason": "Inlined constant now bound: type = 'Postcode' renders as type = ? with 'Postcode' as the first bind."
+    },
+    {
+      "id": "2f142c0c73a9",
+      "sql": "select `name` from `locations` where `type` = ? and `name` LIKE ? order by `name` asc limit 1",
+      "reason": "Two differences, both cosmetic. The inlined type = 'Postcode' is now bound, as above; and orderBy() writes the direction explicitly, so ORDER BY name becomes order by `name` asc. ASC is the SQL default, so the ordering is identical - MySQL parses the two the same way."
+    },
+    {
+      "id": "6b8dcb20450d",
+      "sql": "update `giftaid` set `reviewed` = ? where `userid` = ?",
+      "reason": "Inlined constant now bound, the NULL case of it: SET reviewed = NULL renders as set reviewed = ? with null bound. MySQL assigns SQL NULL either way."
+    },
+    {
+      "id": "83aec2aa9cd7",
+      "sql": "select max(`msgid`) as aggregate from `rippling_reach_shadow`",
+      "reason": "The COALESCE moves from SQL to PHP, and the alias changes with it. COALESCE(MAX(msgid), 0) guards exactly one case - an empty table, where MAX returns NULL - and ->max('msgid') returns null there, so the caller's `?? 0` covers the same case and hands back the same int. The alias difference (`aggregate` vs `m`) never leaves the statement: ->max() reads the value off it and returns a scalar. Keeping COALESCE in SQL would need DB::raw, itself a raw site here, so it would convert nothing."
+    },
+    {
+      "id": "167eea65c5ac",
+      "sql": "update `chat_rooms` set `flaggedspam` = ? where `id` = ?",
+      "reason": "Inlined constant now bound: SET flaggedspam = 1 renders as set flaggedspam = ? with 1 bound."
+    },
+    {
+      "id": "72404d41f2b6",
+      "sql": "update `chat_messages` set `reviewrequired` = ?, `processingrequired` = ?, `processingsuccessful` = ?, `reviewrejected` = ?, `reviewedby` = ? where `userid` = ? and `reviewrequired` = ? and `reviewedby` is null",
+      "reason": "The same inlined-constant case at scale: five assigned constants and one WHERE constant all become binds, so one placeholder becomes seven. Column order, values and the IS NULL predicate are unchanged, so the rows matched and the values written are identical."
+    },
+    {
+      "id": "273df11c1838",
+      "sql": "insert into `memberships_history` (`userid`, `groupid`, `collection`, `processingrequired`, `rippled`) values (?, ?, ?, ?, ?)",
+      "reason": "Inlined constants now bound, on an INSERT: the raw VALUES tuple wrote 'Approved', 1, 1 literally and the builder binds all five columns. The column list and its ORDER are unchanged, which is the part that matters on an insert - columns and values disagreeing would write the wrong data while still being valid SQL."
+    },
+    {
+      "id": "d73229723d30",
+      "sql": "select count(distinct `userid`) as aggregate from `chat_messages` where `refmsgid` = ? and `type` = ?",
+      "reason": "Two changes, both already documented classes. The inlined type = 'Interested' is now bound; and ->count('userid') emits its result as `aggregate` where the raw statement said `AS n` - an alias that never leaves the statement, since ->count() reads the value off it and returns an int. COUNT(DISTINCT userid) itself is preserved exactly by ->distinct()->count('userid')."
+    },
+    {
+      "id": "001920a6d03b",
+      "sql": "select `id` from `locations` where `name` = ? and `type` = ? limit 1",
+      "reason": "Inlined constant now bound: type = 'Postcode' renders as type = ? with 'Postcode' as the second bind."
+    },
+    {
+      "id": "9e1132f382e3",
+      "sql": "select `id`, `userid` from `users_stories` where `reviewed` = ? and `public` = ? and `userid` is not null order by `date` desc",
+      "reason": "Inlined constants now bound, from a statement that had NO placeholders at all: reviewed = 1 and public = 1 become two binds. The IS NOT NULL predicate and the ORDER BY are unchanged, so the same rows come back in the same order."
+    },
+    {
+      "id": "30a2059ffce8",
+      "sql": "select * from `background_tasks` where `processed_at` is null and `failed_at` is null and `attempts` < ? order by `created_at` asc limit 10",
+      "reason": "Two grammar differences, no semantic one. The MAX_ATTEMPTS constant is bound as before; and Laravel's compileLimit INLINES the limit rather than binding it, so the golden's second placeholder becomes a literal. The literal here is the test's representative value (10) because the approvedDiff is compared after bindings are substituted - the production call still passes $limit through. ORDER BY also gains an explicit asc, the SQL default."
+    },
+    {
+      "id": "44c4c74bbb4e",
+      "sql": "select `id`, `nameshort`, `poly` from `groups` where `type` = ? and `publish` = ? and `onmap` = ?",
+      "reason": "Inlined constants now bound: type = 'Freegle', publish = 1 and onmap = 1 were all literal, so a golden with no placeholders renders with three."
+    },
+    {
+      "id": "0089fe542c58",
+      "sql": "update `chat_messages` set `reviewrejected` = ?, `reviewrequired` = ? where `id` = ?",
+      "reason": "Inlined constants now bound: the two assigned literals become binds. Column order and the WHERE are unchanged."
+    },
+    {
+      "id": "3d1dc34753bd",
+      "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ?",
+      "reason": "Inlined constants now bound: SET giftaidconsent = 1 and the giftaidconsent = 0 guard. The userid and timestamp binds are unchanged, so the same rows are matched and the same value written."
+    },
+    {
+      "id": "54bddc06f05c",
+      "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ?",
+      "reason": "Second consent variant, identical statement to 3d1dc34753bd - same reasoning. The two differ only in the date the caller passes."
+    },
+    {
+      "id": "d5c7a6502341",
+      "sql": "select distinct `locations`.`id`, `lat`, `lng`, `name` from `locations` where `lat` < `lng` and `locations`.`name` NOT LIKE ?",
+      "reason": "Inlined constant now bound: the 'BF%' pattern becomes a bind. Note what did NOT change - whereColumn('lat','<','lng') still emits a column-to-column comparison, which is the part that would have been a silent bug if written as a plain where() binding the string 'lng'."
+    },
+    {
+      "id": "a61080618cba",
+      "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ? and date(`timestamp`) = ?",
+      "reason": "Inlined constants now bound, as with the other consent variants. whereDate emits date(`timestamp`) = ? exactly as the raw statement did, so the calendar-day comparison is preserved rather than approximated by a range on the raw column."
+    },
+    {
+      "id": "3dc022a277c1",
+      "sql": "update `users_donations` set `giftaidconsent` = ? where `userid` = ? and `giftaidconsent` = ? and `timestamp` >= ? and date(`timestamp`) >= ?",
+      "reason": "The >= variant of a61080618cba - same reasoning."
+    },
+    {
+      "id": "4d2a758e2882",
+      "sql": "select `TABLE_NAME`, `COLUMN_NAME` from `INFORMATION_SCHEMA`.`KEY_COLUMN_USAGE` where `REFERENCED_TABLE_NAME` = ? and `TABLE_NAME` != ? and `TABLE_SCHEMA` = ?",
+      "reason": "Inlined constants now bound ('groups' twice), plus the qualified table name gaining backticks around each part. Quoting a catalog view as `INFORMATION_SCHEMA`.`KEY_COLUMN_USAGE` is valid MySQL and resolves to the same view; the TABLE_SCHEMA bind that was already there is unchanged."
+    },
+    {
+      "id": "1a2fdf6e9cab",
+      "sql": "select `cm`.`id`, `cm`.`userid`, `cm`.`chatid`, `cm`.`date`, `cr`.`user1`, `cr`.`user2` from `chat_messages` as `cm` inner join `chat_rooms` as `cr` on `cr`.`id` = `cm`.`chatid` where `cm`.`date` >= ? and `cm`.`replyexpected` = ? and `cm`.`replyreceived` = ? and `cr`.`chattype` = ?",
+      "reason": "Inlined constants now bound: replyexpected = 1 and replyreceived = 0. What is deliberately NOT different is everything that decides which rows come back on a join - the INNER JOIN type, the ON clause, the column list and the remaining predicates all render identically, which is why Layer 1 is still adequate evidence for a plain join with no grouping."
+    },
+    {
+      "id": "7fa41827ba83",
+      "sql": "select `users_emails`.`userid` as `emailid`, `users_donations`.`id` as `donationid` from `users_donations` inner join `users_emails` on `users_emails`.`email` = `users_donations`.`Payer` where `users_donations`.`userid` is null and `users_donations`.`Payer` != ? and `users_emails`.`email` != ?",
+      "reason": "Inlined empty-string constants now bound: the two != '' guards become binds. The join type, ON clause, column aliases and the IS NULL predicate are unchanged, which is what decides the rows."
+    },
+    {
+      "id": "28717f6b9519",
+      "sql": "(select `chat_rooms`.`id`, `spam_users`.`userid` as `spammer_id`, `user1`, `user2` from `chat_rooms` inner join `spam_users` on `user1` = `spam_users`.`userid` where `latestmessage` >= ? and `flaggedspam` = ? and `spam_users`.`collection` = ?) union (select `chat_rooms`.`id`, `spam_users`.`userid` as `spammer_id`, `user1`, `user2` from `chat_rooms` inner join `spam_users` on `user2` = `spam_users`.`userid` where `latestmessage` >= ? and `flaggedspam` = ? and `spam_users`.`collection` = ?)",
+      "reason": "Two differences, neither semantic. The inlined constants (flaggedspam = 0, collection = 'Spammer') are now bound in each arm; and Laravel parenthesises each arm of a union, which MySQL parses identically to the bare form. What is deliberately unchanged is the pair that decides behaviour: UNION rather than UNION ALL, so a room whose BOTH participants are spammers is still de-duplicated rather than warned twice, and two arms joined on user1 and user2 separately rather than one join with an OR, which is what lets each arm use the index on its own column."
+    },
+    {
+      "id": "0f2ac58b064f",
+      "sql": "select `rr`.`msgid` from `rippling_reach` as `rr` left join `rippling_reach_shadow` as `s` on `s`.`msgid` = `rr`.`msgid` where (`s`.`msgid` is null or `rr`.`updated_at` >= ?) limit 1000",
+      "reason": "Laravel inlines LIMIT rather than binding it, so the golden's second placeholder becomes a literal - the test's representative value, since the diff is compared after bindings are substituted; the production call still passes $chunk. The parentheses around the OR are Laravel making explicit what the raw statement got from precedence, and are what the closure exists to preserve. LEFT JOIN and the IS NULL arm are unchanged, which is what makes this find rows with no shadow row."
+    },
+    {
+      "id": "0c92b9505326",
+      "sql": "select distinct `messages`.`id`, `lovejunk`.`status` from `messages` inner join `lovejunk` on `lovejunk`.`msgid` = `messages`.`id` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `messages_edits` on `messages_edits`.`msgid` = `messages`.`id` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages`.`arrival` >= ? and `messages_edits`.`timestamp` > `lovejunk`.`timestamp` and `messages`.`type` = ? and `messages_groups`.`collection` = ? and `groups`.`onlovejunk` = ? order by `messages`.`arrival` asc",
+      "reason": "Three inlined constants now bound (type = 'Offer', collection = 'Approved', onlovejunk = 1) and orderBy writing asc explicitly. Unchanged, and the parts that decide the rows: all four joins in their original ORDER, DISTINCT, and the column-to-column predicate messages_edits.timestamp > lovejunk.timestamp - which whereColumn renders as a column comparison rather than binding the second name as a string."
+    },
+    {
+      "id": "8784a573032d",
+      "sql": "select `messages`.`id` from `messages` left join `lovejunk` on `lovejunk`.`msgid` = `messages`.`id` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages`.`arrival` >= ? and `messages`.`type` = ? and `lovejunk`.`msgid` is null and `messages_groups`.`collection` = ? and `groups`.`onlovejunk` = ? and not exists (select * from `messages_bulk_items` where `messages_bulk_items`.`msgid` = `messages`.`id`) order by `messages`.`arrival` asc",
+      "reason": "Inlined constants now bound, plus one genuine rendering difference: whereNotExists writes 'select *' inside the subquery where the raw statement wrote 'select 1'. The select list of an EXISTS is never evaluated - MySQL only asks whether a row exists - so the two are equivalent. Unchanged, and load-bearing: the LEFT JOIN plus 'lovejunk.msgid IS NULL' anti-join, which is what selects messages NOT yet sent; an inner join would return precisely the opposite set and re-send everything."
+    },
+    {
+      "id": "a792f4c8557c",
+      "sql": "select distinct `messages`.`id` from `messages_outcomes` inner join `messages` on `messages`.`id` = `messages_outcomes`.`msgid` inner join `messages_groups` on `messages_groups`.`msgid` = `messages`.`id` inner join `lovejunk` on `lovejunk`.`msgid` = `messages_outcomes`.`msgid` inner join `groups` on `groups`.`id` = `messages_groups`.`groupid` where `messages_outcomes`.`timestamp` >= ? and `messages`.`type` = ? and `lovejunk`.`success` = ? and `lovejunk`.`deleted` is null and `lovejunk`.`status` LIKE ? and `groups`.`onlovejunk` = ? order by `messages`.`arrival` asc",
+      "reason": "Four inlined constants now bound, including the LIKE pattern '{%' - which is worth naming because it is not a wildcard search but a JSON-shape test: lovejunk.status holds a JSON document and this selects rows whose status actually starts with an object brace. Binding it changes nothing about that. DISTINCT, all four joins in order, the IS NULL and the ORDER BY are unchanged."
+    },
+    {
+      "id": "d4d815c33ac9",
+      "sql": "update `messages_attachments` set `primary` = ? where `msgid` = ? order by `id` asc limit 1",
+      "reason": "Inlined constant now bound (SET `primary` = 1) and orderBy writing asc explicitly. Preserved, and both load-bearing: ORDER BY id and LIMIT 1 on an UPDATE are a MySQL extension doing real work here - of a message's attachments, mark the LOWEST-id one primary. Without the ORDER BY an arbitrary attachment is marked; without the LIMIT, all of them are."
+    },
+    {
+      "id": "ed6f86e4e59c",
+      "sql": "select distinct `mg`.`msgid`, `m`.`subject`, `mg`.`arrival` from `messages_groups` as `mg` inner join `messages` as `m` on `m`.`id` = `mg`.`msgid` inner join `messages_spatial` as `ms` on `ms`.`msgid` = `mg`.`msgid` left join `messages_attachments` as `ma` on `ma`.`msgid` = `m`.`id` left join `messages_ai_declined` as `maid` on `maid`.`msgid` = `m`.`id` where `mg`.`arrival` >= ? and `mg`.`collection` in (?, ?) and `ma`.`id` is null and `maid`.`msgid` is null and `m`.`subject` is not null and `m`.`subject` != ? order by `mg`.`arrival` asc, `mg`.`msgid` asc limit 100",
+      "reason": "Inlined constants now bound (the IN list and the != '' guard), the LIMIT inlined by the grammar with the test's representative value, and explicit asc on both ORDER BY terms. Unchanged, and all load-bearing: DISTINCT, the two INNER joins, and both ANTI-joins - leftJoin paired with IS NULL on messages_attachments and messages_ai_declined. An inner join in either position would return exactly the messages this is meant to skip, and since this feeds an AI image generator that would mean paying to illustrate messages that already have pictures."
+    },
+    {
+      "id": "f464bbe429f8",
+      "sql": "select distinct `messages`.`id`, `messages_groups`.`groupid` from `messages` inner join `spam_users` on `messages`.`fromuser` = `spam_users`.`userid` and `spam_users`.`collection` = ? inner join `messages_groups` on `messages`.`id` = `messages_groups`.`msgid` inner join `users` on `messages`.`fromuser` = `users`.`id` and `users`.`systemrole` = ? where `messages`.`deleted` is null",
+      "reason": "One inlined constant now bound: users.systemrole = 'User' becomes a bind. Everything that decides which rows are DELETED is unchanged - DISTINCT, all three inner joins, and both extra predicates still in their ON clauses. The systemrole one is a guard rather than a filter: it is what stops this deleting posts by moderators or support staff who happen to be flagged as spammers, so it is the single most important thing in this statement to render identically."
+    },
+    {
+      "id": "bfe55685accb",
+      "sql": "select `mg`.`groupid` from `messages_groups` as `mg` where `mg`.`msgid` = ? and `mg`.`rippled_in` = ? and not exists (select * from `memberships` as `m` where `m`.`userid` = ? and `m`.`groupid` = `mg`.`groupid`) and not exists (select * from `logs` as `lj` where `lj`.`user` = ? and `lj`.`groupid` = `mg`.`groupid` and `lj`.`type` = ? and `lj`.`subtype` = ? and `lj`.`text` = ? and not exists (select * from `logs` as `lj2` where `lj2`.`user` = `lj`.`user` and `lj2`.`groupid` = `lj`.`groupid` and `lj2`.`type` = ? and `lj2`.`subtype` = ? and `lj2`.`id` > `lj`.`id`) and exists (select * from `logs` as `ll` where `ll`.`user` = `lj`.`user` and `ll`.`groupid` = `lj`.`groupid` and `ll`.`type` = ? and `ll`.`subtype` = ? and `ll`.`id` > `lj`.`id`)) and not exists (select * from `users_banned` as `ub` where `ub`.`userid` = ? and `ub`.`groupid` = `mg`.`groupid`)",
+      "reason": "Inlined constants now bound (rippled_in, and the log type/subtype/text literals), and whereExists/whereNotExists writing 'select *' where the raw statement wrote 'select 1' - the select list of an EXISTS is never evaluated. Everything structural is unchanged, and on this statement that is the whole point: three guards, the middle one nesting a NOT EXISTS and an EXISTS that TOGETHER mean 'the last time they joined this group it was a ripple, and they have since left'. Every correlation between a subquery and its outer query is a whereColumn, so none of them degraded into a bound string - which is the failure that would have made this compile, run, and quietly re-join people who left and deliberately rejoined."
+    },
+    {
+      "id": "07087e8cc794",
+      "sql": "select exists(select * from `messages_outcomes` where `msgid` = ? and `outcome` in (?, ?, ?)) as `exists`",
+      "reason": "A real rewrite, not a rendering nicety, and approved on those terms. The raw form - SELECT 1 AS x ... LIMIT 1, then testing the result for null - is the hand-rolled version of the question ->exists() asks, and the caller only ever coerced it to a bool. compileExists wraps the same predicate in EXISTS(), which MySQL can short-circuit at the first matching row exactly as LIMIT 1 did. Keeping the literal select list would have required DB::raw, itself a raw site here, so the alternative was not a purer conversion but no conversion at all."
+    },
+    {
+      "id": "a2a0b695276b",
+      "sql": "select distinct `chat_rooms`.`id` from `chat_rooms` inner join ((select distinct `chatid` from `chat_roster` where `userid` = ?) union (select distinct `chatid` from `chat_messages` where (`userid` = ? or `reviewedby` = ?))) as `t` on `t`.`chatid` = `chat_rooms`.`id` order by `chat_rooms`.`id` asc",
+      "reason": "Parenthesisation and an explicit asc, nothing semantic. Laravel wraps each union arm and the derived table itself in parentheses, and MySQL parses that identically to the bare form. Everything that decides the result is unchanged: DISTINCT on the outer and both arms, UNION rather than UNION ALL - so a chat matching both arms appears once rather than duplicating in the export - and the grouped OR in the second arm, which flat would have bound against that arm's whole WHERE and pulled in every chat the user ever moderated."
+    },
+    {
+      "id": "b7fe22c9f927",
+      "sql": "delete from `logs` where `type` = ? and (`subtype` = ? or `subtype` = ?) and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "ee112faa8fb6",
+      "sql": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "e8216202fee1",
+      "sql": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "bfd91e927d85",
+      "sql": "delete from `logs` where (`type` = ? or `type` = ?) and `subtype` = ? and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "06a0736afd38",
+      "sql": "delete from `logs` where `type` = ? and `subtype` = ? and `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "af5bd3f5ecb1",
+      "sql": "delete from `bounces_emails` where `date` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "0f525ed7d096",
+      "sql": "delete from `logs_emails` where `timestamp` < ? or `timestamp` > ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "f88d2c32b9f2",
+      "sql": "delete from `logs` where `timestamp` < ? and `groupid` = ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "d3c47e835355",
+      "sql": "delete from `logs_src` where `date` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "978d17107d12",
+      "sql": "delete from `logs_errors` where `date` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "a0abe6e079a4",
+      "sql": "delete from `logs` where `timestamp` < ? and `type` = ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "91a2a946f8f3",
+      "sql": "delete from `logs_sql` where `date` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "6f40faa9e18c",
+      "sql": "delete from `users_active` where `timestamp` < ? limit 500",
+      "reason": "PurgeService chunked DELETE. Two divergences, both cosmetic. (1) The raw statement INLINED its constants ('User', 'Login', the subtype literals) and bound only the timestamp, so the golden has one placeholder where the builder binds every value - the documented common case for an approved diff. (2) The golden records LIMIT {{expr}} because the chunk size was interpolated into the SQL string; ->limit() inlines the same integer. The predicates, their AND/OR grouping and the row set are unchanged - and the grouping is the part that matters, since a flattened OR on a DELETE widens it across the whole table."
+    },
+    {
+      "id": "ea03606b98f1",
+      "sql": "select `id`, `message` from `newsfeed` where date(`timestamp`) > ?",
+      "reason": "DATEDIFF(NOW(), col) < N recency filter, rewritten as a date comparison against a cutoff computed in PHP. Measured, not assumed: DATEDIFF(NOW(), ts) >= N is exactly DATE(ts) <= today - N days, verified against MySQL over a fixture including same-calendar-day rows at 00:01 and 23:59 - the boundary where a 24-hour-based rewrite diverges. DATEDIFF counts calendar-day BOUNDARIES, so whereDate() against today() is right and where() against now() would shift the cutoff. Moving the clock from MySQL to PHP is safe because both share one UTC clock here (app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM, measured one second apart) - the premise the original keep-raw reason got wrong. The bind count rises because the raw statement inlined the interval and the builder binds the cutoff."
+    },
+    {
+      "id": "d3579da9736a",
+      "sql": "select `id` from `link_previews` where `url` = ? and date(`retrieved`) > ?",
+      "reason": "DATEDIFF(NOW(), col) < N recency filter, rewritten as a date comparison against a cutoff computed in PHP. Measured, not assumed: DATEDIFF(NOW(), ts) >= N is exactly DATE(ts) <= today - N days, verified against MySQL over a fixture including same-calendar-day rows at 00:01 and 23:59 - the boundary where a 24-hour-based rewrite diverges. DATEDIFF counts calendar-day BOUNDARIES, so whereDate() against today() is right and where() against now() would shift the cutoff. Moving the clock from MySQL to PHP is safe because both share one UTC clock here (app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM, measured one second apart) - the premise the original keep-raw reason got wrong. The bind count rises because the raw statement inlined the interval and the builder binds the cutoff."
+    },
+    {
+      "id": "33219aae3e9a",
+      "sql": "select `id` from `link_previews` where `url` = ? and date(`retrieved`) > ?",
+      "reason": "DATEDIFF(NOW(), col) < N recency filter, rewritten as a date comparison against a cutoff computed in PHP. Measured, not assumed: DATEDIFF(NOW(), ts) >= N is exactly DATE(ts) <= today - N days, verified against MySQL over a fixture including same-calendar-day rows at 00:01 and 23:59 - the boundary where a 24-hour-based rewrite diverges. DATEDIFF counts calendar-day BOUNDARIES, so whereDate() against today() is right and where() against now() would shift the cutoff. Moving the clock from MySQL to PHP is safe because both share one UTC clock here (app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM, measured one second apart) - the premise the original keep-raw reason got wrong. The bind count rises because the raw statement inlined the interval and the builder binds the cutoff."
+    },
+    {
+      "id": "029b3600e99d",
+      "sql": "update `users_donations` set `giftaidclaimed` = ? where `id` = ?",
+      "reason": "UPDATE users_donations SET giftaidclaimed = NOW(): the database clock becomes a bound application timestamp, so the bind count rises from one to two. Equivalent here because MySQL and PHP share one UTC clock in this deployment - app.timezone=UTC, php date.timezone=UTC, MySQL SYSTEM resolving to the same wall clock, measured one second apart. This site previously carried the opposite decision, kept raw on the argument that binding a PHP timestamp 'moves the clock from the database to the application'; that argument assumed a second clock that does not exist here."
+    }
+  ]
+}

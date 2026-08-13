@@ -248,6 +248,47 @@ describe('user store', () => {
     })
   })
 
+  describe('fetch (batched)', () => {
+    let store
+
+    beforeEach(() => {
+      store = useUserStore()
+      store.init({ public: {} })
+    })
+
+    it('resolves with the user once the batch completes', async () => {
+      mockFetchMultiple.mockResolvedValue([{ id: 1, displayname: 'A' }])
+
+      const user = await store.fetch(1)
+      expect(user.displayname).toBe('A')
+    })
+
+    it('rejects rather than hanging when the batched request fails', async () => {
+      // A single unknown id makes the API return 404. If the batch failure
+      // isn't passed on, the promise fetch() handed out never settles and
+      // anything awaiting it - e.g. the top-level await in pages/profile/[id]
+      // - is stuck for ever, leaving a permanently blank page.
+      const err = new Error('API Error GET /user/999999999 -> status: 404')
+      err.response = { status: 404 }
+      mockFetchMultiple.mockRejectedValue(err)
+
+      await expect(store.fetch(999999999)).rejects.toThrow('status: 404')
+    })
+
+    it('still resolves waiters that already have cached data when a batch fails', async () => {
+      store.list[1] = { id: 1, displayname: 'Cached' }
+      mockFetchMultiple.mockRejectedValue(new Error('boom'))
+
+      const [cached, missing] = await Promise.allSettled([
+        store.fetch(1),
+        store.fetch(2),
+      ])
+      expect(cached.status).toBe('fulfilled')
+      expect(cached.value.displayname).toBe('Cached')
+      expect(missing.status).toBe('rejected')
+    })
+  })
+
   describe('fetchPublicLocation', () => {
     let store
 

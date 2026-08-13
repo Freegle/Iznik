@@ -15,9 +15,24 @@ This describes how code reaches production. The CI reference is
 ## The web pipeline
 
 1. **Push to `master`.** CircleCI runs the full test suite (Go, PHPUnit, Laravel, Vitest,
-   Playwright) via a shared reusable orb. New raw SQL is kept out at authoring time by the
-   `.claude/check-raw-sql.sh` hook rather than by a CI gate - the ORM migration inventory
-   ratchet that used to run here was retired once the Go migration reached zero raw sites.
+   Playwright) via a shared reusable orb. New raw SQL is kept out by
+   `.claude/check-raw-sql.sh`, which runs in two places: as an authoring-time Claude Code
+   hook, and as the `check-raw-sql` CI job (`--diff` mode) that scans the branch and fails
+   the build. The CI job is the one that actually holds the line - the authoring hook only
+   sees edits made through that one tool. The ORM migration inventory ratchet that used to
+   run here was retired once the Go conversion work finished; note that this did *not* mean
+   zero raw SQL, as about 44 deliberate sites remain (the manifest's "raw: 0" counted
+   untriaged sites, not raw statements).
+
+   **Coverage deliberately given up when the ratchet went.** Retiring the harness also
+   removed seven "Tier 9" Go tests (`*_tier9_test.go` in `logs/`, `message/`, `session/`)
+   that proved production query builders - `buildGetLogsQuery`, `buildInsertViewBatchQuery`
+   and friends - correct across many field and parameter combinations, by independently
+   reconstructing the expected SQL. Those builders still exist and are still exercised by
+   the ordinary integration tests, but no longer combinatorially. Reviving them would mean
+   keeping ~2,200 lines of `ormharness` (golden, fieldwise, wherefieldwise,
+   parametrizedshape, canonical) alive purely for them, which is the machinery this change
+   set out to remove. Recorded here so the trade is visible rather than silent.
 2. **On green, `master` auto-merges to `production`.** This is automatic only when all
    tests pass.
 3. **`production` deploys the frontends.** Two Netlify sites build from the same

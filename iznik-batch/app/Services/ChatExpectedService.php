@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
-use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -83,10 +82,9 @@ class ChatExpectedService
         // each statement holds a single-row lock for milliseconds.
         $updated = 0;
         foreach ($idsQuery->pluck('id') as $id) {
-            $updated += DB::update(
-                'UPDATE chat_messages SET replyexpected = 0 WHERE id = ?',
-                [$id],
-            );
+            $updated += DB::table('chat_messages')
+                ->where('id', $id)
+                ->update(['replyexpected' => 0]);
         }
 
         return $updated;
@@ -116,10 +114,9 @@ class ChatExpectedService
         // chat_messages writers.
         $updated = 0;
         foreach ($idsQuery->pluck('id') as $id) {
-            $updated += DB::update(
-                'UPDATE chat_messages SET replyexpected = 0 WHERE id = ?',
-                [$id],
-            );
+            $updated += DB::table('chat_messages')
+                ->where('id', $id)
+                ->update(['replyexpected' => 0]);
         }
 
         return $updated;
@@ -208,14 +205,21 @@ class ChatExpectedService
                 ->where('userid', $other)
                 // A rippling-held reply hasn't reached the expecter yet, so it must not count as
                 // "reply received" (that would prematurely stop chase-up). Once released it counts.
-                ->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'))
+                // Inlined equivalent of RippleReplyService::deliveryGateSql('chat_messages.id').
+                ->whereNotExists(function ($q) {
+                    $q->from('rippling_held_replies as cmr')
+                        ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                        ->where('cmr.status', '<>', 'released');
+                })
                 ->count();
 
             $value = $replyCount > 0 ? 1 : -1;
 
             if (!$dryRun) {
                 if ($value === 1) {
-                    DB::update('UPDATE chat_messages SET replyreceived = 1 WHERE id = ?', [$msg->id]);
+                    DB::table('chat_messages')
+                        ->where('id', $msg->id)
+                        ->update(['replyreceived' => 1]);
                 }
 
                 if (($existing[$msg->id] ?? null) !== $value) {
@@ -347,22 +351,15 @@ class ChatExpectedService
         $maxDelay = 30 * 24 * 3600;
 
         foreach ($userIds as $userId) {
-            $msgs = DB::select(
-                "SELECT cm.id, cm.chatid, cm.date, cr.user1, cr.user2
-                 FROM chat_messages cm
-                 INNER JOIN chat_rooms cr ON cr.id = cm.chatid
-                 WHERE cm.userid = ?
-                   AND cm.date > ?
-                   AND cr.chattype = ?
-                   AND cm.type IN (?, ?)",
-                [
-                    $userId,
-                    $since,
-                    ChatRoom::TYPE_USER2USER,
-                    ChatMessage::TYPE_INTERESTED,
-                    ChatMessage::TYPE_DEFAULT,
-                ]
-            );
+            $msgs = DB::table('chat_messages as cm')
+                ->select('cm.id', 'cm.chatid', 'cm.date', 'cr.user1', 'cr.user2')
+                ->join('chat_rooms as cr', 'cr.id', '=', 'cm.chatid')
+                ->where('cm.userid', $userId)
+                ->where('cm.date', '>', $since)
+                ->where('cr.chattype', ChatRoom::TYPE_USER2USER)
+                ->whereIn('cm.type', [ChatMessage::TYPE_INTERESTED, ChatMessage::TYPE_DEFAULT])
+                ->get()
+                ->all();
 
             $delays = [];
 
@@ -370,15 +367,15 @@ class ChatExpectedService
                 $other = $msg->user1 == $userId ? $msg->user2 : $msg->user1;
 
                 // Check if the other user has an outstanding un-replied message
-                $outstanding = DB::select(
-                    "SELECT cm.date FROM chat_messages cm
-                     WHERE cm.chatid = ?
-                       AND cm.userid = ?
-                       AND cm.id > ?
-                     ORDER BY cm.id DESC
-                     LIMIT 1",
-                    [$msg->chatid, $other, $msg->id]
-                );
+                $outstanding = DB::table('chat_messages as cm')
+                    ->select('cm.date')
+                    ->where('cm.chatid', $msg->chatid)
+                    ->where('cm.userid', $other)
+                    ->where('cm.id', '>', $msg->id)
+                    ->orderByDesc('cm.id')
+                    ->limit(1)
+                    ->get()
+                    ->all();
 
                 if (!empty($outstanding)) {
                     // Other user replied — compute how long it took
@@ -388,14 +385,19 @@ class ChatExpectedService
                     }
                 } else {
                     // No reply from the other user: find if we're waiting on them
-                    $lastOther = DB::select(
-                        "SELECT MAX(date) AS max FROM chat_messages
-                         WHERE chatid = ? AND id < ? AND userid = ?",
-                        [$msg->chatid, $msg->id, $other]
-                    );
+                    // ->max() rather than ->select(DB::raw('MAX(date) AS max')):
+                    // DB::raw() is itself a raw site in the inventory (surface
+                    // "expression"), so wrapping the aggregate in it would move
+                    // this site between surfaces rather than remove it - the raw
+                    // count would not drop and nothing would have been converted.
+                    $lastOtherMax = DB::table('chat_messages')
+                        ->where('chatid', $msg->chatid)
+                        ->where('id', '<', $msg->id)
+                        ->where('userid', $other)
+                        ->max('date');
 
-                    if (!empty($lastOther) && $lastOther[0]->max) {
-                        $delay = strtotime($msg->date) - strtotime($lastOther[0]->max);
+                    if ($lastOtherMax) {
+                        $delay = strtotime($msg->date) - strtotime($lastOtherMax);
                         if ($delay > 0 && $delay < $maxDelay) {
                             $delays[] = $delay;
                         }

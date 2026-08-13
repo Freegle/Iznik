@@ -251,7 +251,8 @@ class User extends Model implements Auditable
     public function getEmailPreferredAttribute(): ?string
     {
         $emails = $this->emails()
-            ->orderByRaw('preferred DESC, validated DESC')
+            ->orderBy('preferred', 'desc')
+            ->orderBy('validated', 'desc')
             ->pluck('email');
 
         foreach ($emails as $email) {
@@ -717,11 +718,14 @@ class User extends Model implements Auditable
             ->where('users.lastaccess', '>=', now()->subDays(self::USER_INACTIVE_DAYS))
             ->where(function (Builder $q) {
                 // simplemail in settings JSON is either absent (default = TRUE)
-                // or any value other than 'None'.
-                $q->whereRaw("JSON_EXTRACT(users.settings, '$.simplemail') IS NULL")
-                    ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [
-                        self::SIMPLE_MAIL_NONE,
-                    ]);
+                // or any value other than 'None'. Unlike the = true/false and = 0/1
+                // JSON comparisons documented elsewhere, a plain != string comparison
+                // against a JSON path renders identically via the builder's JSON dot
+                // syntax (json_unquote(json_extract(...)) != ?) - verified against
+                // absent-key, JSON null, NULL column, and boolean-value rows, all of
+                // which agree with the previous whereRaw byte-for-byte.
+                $q->whereJsonDoesntContainKey('users.settings->simplemail')
+                    ->orWhere('users.settings->simplemail', '!=', self::SIMPLE_MAIL_NONE);
             });
 
         if ($checkHoliday) {
@@ -2035,9 +2039,16 @@ class User extends Model implements Auditable
             'memberships.role',
             'memberships.configid',
             'memberships.ourPostingStatus',
+            // keep-raw: App\Database\Expressions\CaseWhen exists, but when() requires a
+            // ConditionExpression, and the only implementation (Comparison) whitelists only
+            // =, !=, <>, <, <=, >, >=, <=>, LIKE, NOT LIKE - no IS NULL/IS NOT NULL - so
+            // "namefull IS NOT NULL" can't be built. Coalesce(namefull, nameshort) is
+            // runtime-equivalent but renders as COALESCE(...), not this CASE WHEN ... END
+            // text, so it isn't substituted in either. Also projected under an alias that
+            // orderBy('namedisplay') below depends on.
             DB::raw("CASE WHEN groups.namefull IS NOT NULL THEN groups.namefull ELSE groups.nameshort END AS namedisplay"),
         ])
-            ->orderByRaw('LOWER(namedisplay) ASC')
+            ->orderBy('namedisplay') // LOWER() is redundant: both CASE arms are utf8mb4_unicode_ci
             ->get();
 
         $ret = [];

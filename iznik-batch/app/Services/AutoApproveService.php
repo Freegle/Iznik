@@ -74,8 +74,7 @@ class AutoApproveService
                 'messages_groups.rippled_in',
                 'messages.fromuser',
                 'messages.spamtype',
-                'messages.subject',
-                DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hours_pending')
+                'messages.subject'
             )
             ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
             ->whereNull('messages_groups.heldby')
@@ -86,8 +85,7 @@ class AutoApproveService
             // queue (Discourse #9654) but must be actioned by a human, never
             // auto-sent after the 48h fallback.
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_groups as spam_mg')
+                $q->from('messages_groups as spam_mg')
                     ->whereColumn('spam_mg.msgid', 'messages_groups.msgid')
                     ->where('spam_mg.collection', MessageGroup::COLLECTION_SPAM)
                     ->where('spam_mg.deleted', 0);
@@ -98,8 +96,7 @@ class AutoApproveService
             // it would re-list a gone item in a new group and fire a "newly reached" mail, so skip
             // anything with a Taken/Received outcome.
             ->whereNotExists(function ($q) {
-                $q->select(DB::raw(1))
-                    ->from('messages_outcomes')
+                $q->from('messages_outcomes')
                     ->whereColumn('messages_outcomes.msgid', 'messages_groups.msgid')
                     ->whereIn('messages_outcomes.outcome', ['Taken', 'Received']);
             })
@@ -107,7 +104,7 @@ class AutoApproveService
                 // Normal posts: the 48h fallback (unchanged).
                 $q->where(function ($q2) {
                     $q2->where('messages_groups.rippled_in', 0)
-                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::PENDING_HOURS]);
+                        ->where('messages_groups.arrival', '<=', now()->subHours(self::PENDING_HOURS + 1));
                 })
                 // Rippling-out rows already Approved on their origin group: a short mod-veto
                 // window, then auto-approve (membership gate bypassed in shouldApproveOnGroup).
@@ -117,10 +114,9 @@ class AutoApproveService
                     // groups). >= so that 0 means "eligible as soon as it arrives".
                     $rippledInHours = (int) config('freegle.ripple.rippled_in_pending_hours', self::RIPPLED_IN_PENDING_HOURS);
                     $q2->where('messages_groups.rippled_in', 1)
-                        ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) >= ?', [$rippledInHours])
+                        ->where('messages_groups.arrival', '<=', now()->subHours($rippledInHours))
                         ->whereExists(function ($q3) {
-                            $q3->select(DB::raw(1))
-                                ->from('messages_groups as origin_mg')
+                            $q3->from('messages_groups as origin_mg')
                                 ->whereColumn('origin_mg.msgid', 'messages_groups.msgid')
                                 ->whereColumn('origin_mg.groupid', '!=', 'messages_groups.groupid')
                                 ->where('origin_mg.collection', MessageGroup::COLLECTION_APPROVED)

@@ -81,17 +81,16 @@ class MaxReachService
 
         try {
             $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
-            $row = DB::selectOne(
-                "SELECT EXISTS(
-                    SELECT 1 FROM rippling_reach
-                    WHERE msgid = ?
-                      AND (ST_Contains(polygon, $point) = 1
-                           OR (max_polygon IS NOT NULL AND ST_Contains(max_polygon, $point) = 1))
-                 ) AS within",
-                [$msgid, $lng, $lat, $lng, $lat]
-            );
 
-            return (bool) ($row->within ?? 0);
+            // keep-raw: ST_Contains/ST_SRID/POINT are spatial functions with no query
+            // builder equivalent. Everything else here (the EXISTS(SELECT ... WHERE
+            // ...) wrapper) is the builder's own ->exists(), not hand-written.
+            return DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->where(fn ($q) => $q->whereRaw("ST_Contains(polygon, $point) = 1", [$lng, $lat])
+                    ->orWhere(fn ($q2) => $q2->whereNotNull('max_polygon')
+                        ->whereRaw("ST_Contains(max_polygon, $point) = 1", [$lng, $lat])))
+                ->exists();
         } catch (\Throwable $e) {
             // Invalid stored geometry can make ST_Contains throw. A spatial failure
             // must never decide a reply's fate by exception, so fall back to "no".
@@ -195,6 +194,8 @@ class MaxReachService
 
                 $cumulative = isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null;
 
+                // keep-raw: ST_GeomFromText() is a spatial function the query builder
+                // has no method for.
                 DB::statement(
                     'UPDATE rippling_reach
                      SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
@@ -260,6 +261,8 @@ class MaxReachService
                 return false;
             }
 
+            // keep-raw: ST_GeomFromText() is a spatial function the query builder has
+            // no method for.
             DB::statement(
                 'UPDATE rippling_reach
                  SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
@@ -304,16 +307,15 @@ class MaxReachService
         $stats = ['scanned' => 0, 'computed' => 0, 'unknown' => 0];
 
         try {
-            $rows = DB::select(
-                'SELECT p.id, p.msgid, p.lat, p.lng, p.created_at,
-                        rr.schedule, rr.arrival, rr.total_ticks
-                 FROM firstreply_passthroughs p
-                 JOIN rippling_reach rr ON rr.msgid = p.msgid
-                 WHERE p.computed_at IS NULL AND p.lat IS NOT NULL AND p.lng IS NOT NULL
-                 ORDER BY p.created_at
-                 LIMIT ?',
-                [$limit]
-            );
+            $rows = DB::table('firstreply_passthroughs as p')
+                ->join('rippling_reach as rr', 'rr.msgid', '=', 'p.msgid')
+                ->whereNull('p.computed_at')
+                ->whereNotNull('p.lat')
+                ->whereNotNull('p.lng')
+                ->orderBy('p.created_at')
+                ->limit($limit)
+                ->select('p.id', 'p.msgid', 'p.lat', 'p.lng', 'p.created_at', 'rr.schedule', 'rr.arrival', 'rr.total_ticks')
+                ->get();
         } catch (\Throwable $e) {
             Log::warning('firstreply: passthrough saving sweep failed', ['error' => $e->getMessage()]);
 
@@ -416,6 +418,10 @@ class MaxReachService
 
         foreach ($withGeometry as $entry) {
             try {
+                // keep-raw: ST_Contains/ST_GeomFromText/ST_SRID/POINT are spatial
+                // functions with no query builder equivalent, and this SELECT has no
+                // FROM table to build a query builder chain against in the first
+                // place - it evaluates the pair of geometries directly.
                 $row = DB::selectOne(
                     'SELECT ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), '
                     . 'ST_SRID(POINT(?, ?), ' . self::SRID . ')) AS inside',

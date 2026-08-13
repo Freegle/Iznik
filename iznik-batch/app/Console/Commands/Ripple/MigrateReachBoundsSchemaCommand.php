@@ -2,8 +2,15 @@
 
 namespace App\Console\Commands\Ripple;
 
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Now;
+use App\Database\Expressions\StContains;
+use App\Database\Expressions\StGeometryType;
+use App\Database\Expressions\Value;
 use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Console\Command;
+use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -55,7 +62,7 @@ class MigrateReachBoundsSchemaCommand extends Command
             return Command::SUCCESS;
         }
 
-        $total = (int) DB::selectOne('SELECT COUNT(*) AS n FROM rippling_reach')->n;
+        $total = (int) DB::table('rippling_reach')->count();
         if (!$this->option('execute')) {
             $chunks = (int) ceil($total / $chunk);
             $this->info("DRY RUN: would shadow-copy {$total} rows in ~{$chunks} chunks of {$chunk} "
@@ -65,32 +72,43 @@ class MigrateReachBoundsSchemaCommand extends Command
             return Command::SUCCESS;
         }
 
-        $copyStart = DB::selectOne('SELECT NOW() AS t', [], false)->t;
+        // Reads the WRITE connection's clock deliberately (useWritePdo()) to watermark
+        // rows written since the copy began. The clock itself is bindable - MySQL and
+        // PHP agree here - but the watermark is compared against updated_at values
+        // MySQL sets, and a watermark that runs even fractionally ahead of the server
+        // silently drops delta rows, so it must come from the server via NOW() rather
+        // than from PHP's now().
+        $copyStart = DB::query()->useWritePdo()->value(new Now());
 
         // 1) Shadow with the full target schema. LIKE copies columns/indexes but not the
         //    FK, so the columns, index and FK are added explicitly. All cheap: empty table.
         if (!Schema::hasTable('rippling_reach_shadow')) {
+            // keep-raw: CREATE TABLE ... LIKE has no Schema Blueprint equivalent - it
+            // clones another table's live column/index definitions, which Blueprint
+            // cannot express without first introspecting and re-declaring every column.
+            // Verified: Blueprint has no like()/clone-style method - calling one throws
+            // "BadMethodCallException: Method Illuminate\Database\Schema\Blueprint::like
+            // does not exist."
             DB::statement('CREATE TABLE rippling_reach_shadow LIKE rippling_reach');
-            DB::statement(
-                'ALTER TABLE rippling_reach_shadow
-                    ADD COLUMN outer_bound GEOMETRY NOT NULL SRID ' . self::SRID . ',
-                    ADD COLUMN inner_bound GEOMETRY SRID ' . self::SRID . ' NULL,
-                    ADD SPATIAL INDEX rippling_reach_outer (outer_bound)'
-            );
-            DB::statement(
-                'ALTER TABLE rippling_reach_shadow
-                    ADD CONSTRAINT rippling_reach_shadow_msgid_foreign
-                    FOREIGN KEY (msgid) REFERENCES messages (id) ON DELETE CASCADE'
-            );
+            Schema::table('rippling_reach_shadow', function (Blueprint $table) {
+                $table->geometry('outer_bound', null, self::SRID);
+                $table->geometry('inner_bound', null, self::SRID)->nullable();
+                $table->spatialIndex('outer_bound', 'rippling_reach_outer');
+            });
+            Schema::table('rippling_reach_shadow', function (Blueprint $table) {
+                $table->foreign('msgid', 'rippling_reach_shadow_msgid_foreign')
+                    ->references('id')->on('messages')->onDelete('cascade');
+            });
         }
         $this->info('Shadow table ready.');
 
         // 2) Chunked, resumable, msgid-ordered copy with per-row bounds derivation.
         $copied = 0;
         while (true) {
-            $cursor = (int) DB::selectOne(
-                'SELECT COALESCE(MAX(msgid), 0) AS m FROM rippling_reach_shadow', [], false
-            )->m;
+            // COALESCE(MAX(msgid), 0) becomes ->max() plus a PHP ?? 0: ->max()
+            // returns null on an empty table, which is the only case COALESCE was
+            // guarding. Keeping COALESCE would need DB::raw, itself a raw site.
+            $cursor = (int) (DB::table('rippling_reach_shadow')->useWritePdo()->max('msgid') ?? 0);
             $done = $this->copyChunk($cursor, $chunk);
             if ($done === 0) {
                 break;
@@ -110,40 +128,58 @@ class MigrateReachBoundsSchemaCommand extends Command
         do {
             $deltaIds = array_map(
                 fn ($r) => (int) $r->msgid,
-                DB::select(
-                    'SELECT rr.msgid FROM rippling_reach rr
-                      LEFT JOIN rippling_reach_shadow s ON s.msgid = rr.msgid
-                      WHERE s.msgid IS NULL OR rr.updated_at >= ? LIMIT ?',
-                    [$copyStart, $chunk],
-                    false
-                )
+                DB::table('rippling_reach as rr')
+                    ->select('rr.msgid')
+                    // leftJoin, not join: the whole point is finding rows with
+                    // NO shadow row, which an inner join would exclude.
+                    ->leftJoin('rippling_reach_shadow as s', 's.msgid', '=', 'rr.msgid')
+                    ->useWritePdo()
+                    ->where(function ($q) use ($copyStart) {
+                        $q->whereNull('s.msgid')
+                          ->orWhere('rr.updated_at', '>=', $copyStart);
+                    })
+                    ->limit($chunk)
+                    ->get()
+                    ->all()
             );
             foreach ($deltaIds as $msgid) {
                 $this->replaceRow($msgid);
                 $delta++;
             }
             // Advance the watermark so a busy table converges instead of re-copying
-            // the same rows forever.
-            $copyStart = DB::selectOne('SELECT NOW() AS t', [], false)->t;
+            // the same rows forever. Same write-connection-clock reasoning as the
+            // initial watermark read above.
+            $copyStart = DB::query()->useWritePdo()->value(new Now());
         } while (count($deltaIds) === $chunk);
         $this->info("Delta pass complete ({$delta} rows).");
 
         // 4) Atomic swap. No inbound FKs reference rippling_reach, so this is clean.
+        // keep-raw: a multi-table RENAME TABLE is a single atomic operation in MySQL;
+        // Schema::rename() only renames one table per call, so two calls would leave a
+        // window where neither name (or the wrong one) is live for concurrent readers.
+        // Verified: Schema\Builder::rename($from, $to) takes exactly one pair - passing
+        // an array of pairs throws "ArgumentCountError: Too few arguments to function
+        // Illuminate\Database\Schema\Builder::rename(), 1 passed ... and exactly 2
+        // expected"; there is no atomic multi-table form to fall back to.
         DB::statement('RENAME TABLE rippling_reach TO rippling_reach_old, rippling_reach_shadow TO rippling_reach');
         $this->info('Swapped. Old table kept as rippling_reach_old — DROP it manually once satisfied.');
 
         // 5) Verify: counts + a sample sandwich check.
-        $oldN = (int) DB::selectOne('SELECT COUNT(*) AS n FROM rippling_reach_old', [], false)->n;
-        $newN = (int) DB::selectOne('SELECT COUNT(*) AS n FROM rippling_reach', [], false)->n;
-        $badSample = (int) DB::selectOne(
-            'SELECT COUNT(*) AS n FROM (
-                SELECT msgid FROM rippling_reach
-                 WHERE ST_GeometryType(outer_bound) <> \'POINT\'
-                   AND NOT ST_Contains(outer_bound, polygon) LIMIT 100
-             ) x',
-            [],
-            false
-        )->n;
+        $oldN = (int) DB::table('rippling_reach_old')->useWritePdo()->count();
+        $newN = (int) DB::table('rippling_reach')->useWritePdo()->count();
+        // ->limit(100)->get()->count() applies the cap BEFORE counting, same as the
+        // original subquery. (->limit(100)->count() would NOT do this - Laravel's
+        // aggregate() leaves the LIMIT on a query that already collapses to one row,
+        // so it would count every violation in the table instead of capping the
+        // sample at 100.)
+        $badSample = DB::table('rippling_reach')
+            ->useWritePdo()
+            ->select('msgid')
+            ->where(new Comparison(new StGeometryType('outer_bound'), '<>', Value::of('POINT')))
+            ->whereNot(new StContains('outer_bound', 'polygon'))
+            ->limit(100)
+            ->get()
+            ->count();
         $this->info("Verify: old={$oldN} new={$newN} sandwich-violations(sample)={$badSample}.");
         if ($newN < $oldN || $badSample > 0) {
             $this->error('VERIFY FAILED — investigate before dropping rippling_reach_old '
@@ -163,26 +199,48 @@ class MigrateReachBoundsSchemaCommand extends Command
     {
         return $this->insertRows(
             'rr.msgid > ' . $cursor . ' ORDER BY rr.msgid LIMIT ' . $chunk,
-            false
+            false,
+            fn (): QueryBuilder => DB::table('rippling_reach as rr')
+                ->where('rr.msgid', '>', $cursor)
+                ->orderBy('rr.msgid')
+                ->limit($chunk)
         );
     }
 
     /** Re-copy one row (delta pass), replacing any stale shadow copy. */
     private function replaceRow(int $msgid): void
     {
-        DB::delete('DELETE FROM rippling_reach_shadow WHERE msgid = ?', [$msgid]);
+        DB::table('rippling_reach_shadow')->where('msgid', $msgid)->delete();
         // The source row may have been deleted since the delta SELECT — then this
         // inserts nothing, which is exactly right.
-        $this->insertRows('rr.msgid = ' . $msgid, true);
+        $this->insertRows(
+            'rr.msgid = ' . $msgid,
+            true,
+            fn (): QueryBuilder => DB::table('rippling_reach as rr')->where('rr.msgid', $msgid)
+        );
     }
 
     /**
      * INSERT..SELECT into the shadow for rows matching $where, deriving bounds with the
      * sentinel ladder. Falls back to envelope-only for chunks whose geometry makes the
      * derivation throw (then per-row so one bad polygon cannot poison a whole chunk).
+     *
+     * $matchingRows builds the SAME row set as $where, via the query builder, for the
+     * row-by-row retry fallback below. It is a second parameter rather than one derived
+     * from the other because $where must stay a raw SQL fragment for the necessarily-raw
+     * INSERT..SELECT (see the keep-raw note in $insert below), while the retry-path
+     * SELECT has no such constraint and can go through the builder directly. Both are
+     * built from the same $cursor/$chunk or $msgid the caller was given, so they cannot
+     * drift independently.
      */
-    private function insertRows(string $where, bool $single): int
+    private function insertRows(string $where, bool $single, \Closure $matchingRows): int
     {
+        // keep-raw: this INSERT..SELECT selects rr.* (every column of rippling_reach,
+        // unknown to the ORM since the shadow table's shape comes from a runtime
+        // CREATE TABLE ... LIKE) alongside CASE WHEN EXISTS(...) expressions built from
+        // ST_SRID/POINT and ReachBoundsService's own ST_* fragments - CASE WHEN and ST_*
+        // both have no query builder equivalent, so the select list must stay raw
+        // regardless of how the INSERT/SELECT shell is expressed.
         $insert = function (string $outerExpr, string $innerExpr) use ($where): int {
             return DB::affectingStatement(
                 'INSERT INTO rippling_reach_shadow
@@ -213,11 +271,11 @@ class MigrateReachBoundsSchemaCommand extends Command
                     return $insert('ST_SRID(POINT(rr.lng, rr.lat), ' . self::SRID . ')', 'NULL');
                 }
             }
-            // Retry the chunk row-by-row so one bad polygon cannot poison it.
-            $ids = array_map(
-                fn ($r) => (int) $r->msgid,
-                DB::select('SELECT rr.msgid FROM rippling_reach rr WHERE ' . $where, [], false)
-            );
+            // Retry the chunk row-by-row so one bad polygon cannot poison it. useWritePdo()
+            // matches the previous raw connection-pinned read this replaced - the row set
+            // must come from the same connection the INSERT..SELECT above just ran against.
+            $ids = $matchingRows()->useWritePdo()->pluck('rr.msgid')
+                ->map(fn ($v) => (int) $v)->all();
             $n = 0;
             foreach ($ids as $msgid) {
                 $this->replaceRow($msgid);

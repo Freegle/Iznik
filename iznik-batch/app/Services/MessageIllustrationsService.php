@@ -30,17 +30,16 @@ class MessageIllustrationsService
      */
     private function cleanupDuplicates(bool $dryRun = false): int
     {
-        $duplicates = DB::select("
-            SELECT DISTINCT ma_ai.id, ma_ai.msgid
-            FROM messages_attachments ma_ai
-            INNER JOIN messages_attachments ma_real ON ma_real.msgid = ma_ai.msgid
-            WHERE JSON_EXTRACT(ma_ai.externalmods, '$.ai') = TRUE
-            AND (
-                ma_real.externalmods IS NULL
-                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') IS NULL
-                OR JSON_EXTRACT(ma_real.externalmods, '$.ai') = FALSE
-            )
-        ");
+        $duplicates = DB::table('messages_attachments as ma_ai')
+            ->join('messages_attachments as ma_real', 'ma_real.msgid', '=', 'ma_ai.msgid')
+            ->where('ma_ai.externalmods->ai', true)
+            ->where(function ($q) {
+                $q->whereJsonDoesntContainKey('ma_real.externalmods->ai')
+                    ->orWhere('ma_real.externalmods->ai', false);
+            })
+            ->distinct()
+            ->select('ma_ai.id', 'ma_ai.msgid')
+            ->get();
 
         $count = 0;
         foreach ($duplicates as $dup) {
@@ -53,10 +52,11 @@ class MessageIllustrationsService
                     ->exists();
 
                 if (! $hasPrimary) {
-                    DB::statement(
-                        'UPDATE messages_attachments SET `primary` = 1 WHERE msgid = ? ORDER BY id ASC LIMIT 1',
-                        [$dup->msgid]
-                    );
+                    DB::table('messages_attachments')
+                        ->where('msgid', $dup->msgid)
+                        ->orderBy('id')
+                        ->limit(1)
+                        ->update(['primary' => 1]);
                 }
             }
             $count++;
@@ -73,22 +73,27 @@ class MessageIllustrationsService
         $cachedHits = 0;
 
         while (true) {
-            $msgs = DB::select("
-                SELECT DISTINCT mg.msgid, m.subject, mg.arrival
-                FROM messages_groups mg
-                INNER JOIN messages m ON m.id = mg.msgid
-                INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid
-                LEFT JOIN messages_attachments ma ON ma.msgid = m.id
-                LEFT JOIN messages_ai_declined maid ON maid.msgid = m.id
-                WHERE mg.arrival >= ?
-                AND mg.collection IN ('Approved', 'Pending')
-                AND ma.id IS NULL
-                AND maid.msgid IS NULL
-                AND m.subject IS NOT NULL
-                AND m.subject != ''
-                ORDER BY mg.arrival ASC, mg.msgid ASC
-                LIMIT ?
-            ", [$lastArrival, self::BATCH_SIZE * 2]);
+            $msgs = DB::table('messages_groups as mg')
+                ->distinct()
+                ->select('mg.msgid', 'm.subject', 'mg.arrival')
+                ->join('messages as m', 'm.id', '=', 'mg.msgid')
+                ->join('messages_spatial as ms', 'ms.msgid', '=', 'mg.msgid')
+                // Two anti-joins: messages with no attachment and no prior AI
+                // decline. leftJoin + IS NULL, not join - an inner join would
+                // return exactly the messages we want to skip.
+                ->leftJoin('messages_attachments as ma', 'ma.msgid', '=', 'm.id')
+                ->leftJoin('messages_ai_declined as maid', 'maid.msgid', '=', 'm.id')
+                ->where('mg.arrival', '>=', $lastArrival)
+                ->whereIn('mg.collection', ['Approved', 'Pending'])
+                ->whereNull('ma.id')
+                ->whereNull('maid.msgid')
+                ->whereNotNull('m.subject')
+                ->where('m.subject', '!=', '')
+                ->orderBy('mg.arrival')
+                ->orderBy('mg.msgid')
+                ->limit(self::BATCH_SIZE * 2)
+                ->get()
+                ->all();
 
             if (empty($msgs)) {
                 break;

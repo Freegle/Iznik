@@ -484,6 +484,8 @@ class BounceService
             ->where('users.bouncing', 0)
             ->select('users_emails.userid')
             ->groupBy('users_emails.userid')
+            // keep-raw: COUNT(*) is not selected/aliased (only userid is), so there is no
+            // column/alias for having() to compare - the aggregate only exists in HAVING.
             ->havingRaw('COUNT(*) >= ?', [self::PERMANENT_THRESHOLD])
             ->pluck('userid');
 
@@ -503,6 +505,8 @@ class BounceService
             ->where('users.bouncing', 0)
             ->select('users_emails.userid')
             ->groupBy('users_emails.userid')
+            // keep-raw: COUNT(*) is not selected/aliased (only userid is), so there is no
+            // column/alias for having() to compare - the aggregate only exists in HAVING.
             ->havingRaw('COUNT(*) >= ?', [self::SOFT_BOUNCE_THRESHOLD])
             ->pluck('userid');
 
@@ -520,6 +524,8 @@ class BounceService
             ->where('users.bouncing', 0)
             ->select('users_emails.userid')
             ->groupBy('users_emails.userid')
+            // keep-raw: COUNT(*) is not selected/aliased (only userid is), so there is no
+            // column/alias for having() to compare - the aggregate only exists in HAVING.
             ->havingRaw('COUNT(*) >= ?', [self::TOTAL_THRESHOLD])
             ->pluck('userid');
 

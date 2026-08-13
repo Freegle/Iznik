@@ -76,6 +76,26 @@ export default defineEventHandler(async (event) => {
  * `settleMs` gives MySQL a moment to flush after a heavy parallel run before we
  * issue DDL; without it the DROP can sit on the DDL lock for minutes.
  */
+/**
+ * execSync that says which step died. A bare execSync timeout surfaces as
+ * "spawnSync /bin/sh ETIMEDOUT" with no clue which of the reset's half-dozen
+ * commands hit its limit, and the underlying `docker exec` keeps running after
+ * we give up - so the database carries on filling in while the run reports a
+ * reset failure, which reads as a puzzle rather than a timeout.
+ */
+function runStep(step: string, cmd: string, timeout: number, input?: string) {
+  const started = Date.now()
+  try {
+    return execSync(cmd, { encoding: 'utf8', timeout, input })
+  } catch (e: any) {
+    const secs = Math.round((Date.now() - started) / 1000)
+    const why = e?.code === 'ETIMEDOUT'
+      ? `timed out after ${secs}s (limit ${Math.round(timeout / 1000)}s). The command it ran keeps going in the background, so the database may still be changing.`
+      : (e?.stderr || e?.message || String(e))
+    throw new Error(`Test database reset failed at "${step}": ${why}`)
+  }
+}
+
 async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
   appendTestLogs('playwright', `${label}Resetting test database to clean state...\n`)
 
@@ -93,57 +113,83 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
     )
   } catch {}
 
-  execSync(
+  runStep(
+    'drop and recreate database',
     `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
-    { encoding: 'utf8', timeout: 300000 }
+    300000
   )
-  execSync(
+  // Every migration runs from an empty schema here, and on a cold stack - containers
+  // just started, buffer pool empty, a dozen other services competing for the disk -
+  // that overran the old five-minute limit. The reset then aborted while migrate
+  // carried on in the background, so the tables kept appearing after the run had
+  // already given up. Fifteen minutes is far more than a warm run needs (about one)
+  // and still bounded.
+  runStep(
+    'php artisan migrate',
     `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
-    { encoding: 'utf8', timeout: 300000 }
+    900000
   )
   // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
-  execSync(
+  runStep(
+    'load test fixtures',
     `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
-    { encoding: 'utf8', timeout: 120000 }
+    300000
   )
-  // Roll the fixture post dates forward, exactly as scripts/setup-test-database.sh
-  // does after ITS fixture load.
+  // Roll the fixture post dates forward, exactly as scripts/setup-test-database.sh does
+  // when CI builds its database. The fixtures carry fixed 2026-07-09 dates, and the feed
+  // only shows posts from the last MessageSpatialService::RECENT_DAYS (31) days. Once
+  // they age past that, upsertRecentMessages stops re-adding them AND removeOldMessages
+  // deletes the rows the fixtures ship, so messages_spatial empties and browse/explore
+  // return nothing. Locally the batch scheduler runs the reconciler, so it happens within
+  // minutes of a reset; CI never runs it, which is why this reset path could stay broken
+  // while CI stayed green. Every spec that browses for a seeded post then fails on an
+  // empty feed with nothing in the output to say why.
   //
-  // The fixtures carry absolute dates (2026-07-08..2026-07-16). The browse and
-  // explore feeds only return posts from the last 31 days
-  // (group/groupMessages.go), so as wall-clock time moves past that window the
-  // seeded posts age out and every feed-dependent spec fails on an empty feed —
-  // on a date, not on a change. Reloading the fixtures here without re-applying
-  // the roll-forward silently undid the setup script's work, so a run that had
-  // been reseeded by hand beforehand still got stale dates.
-  //
-  // Shifting by a whole number of days preserves the relative ages and ordering
-  // the fixtures encode and lands the newest post a day old; it is self-limiting,
-  // since the delta is 0 once the newest post is already a day old. `deadline` is
-  // deliberately not shifted - some fixtures carry a deliberately expired one.
-  execSync(
-    `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -e \\"` +
-      `SET @delta := (SELECT GREATEST(DATEDIFF(NOW(), MAX(arrival)) - 1, 0) FROM messages_groups WHERE arrival <= NOW()); ` +
-      `UPDATE messages_groups SET arrival = arrival + INTERVAL @delta DAY, approvedat = approvedat + INTERVAL @delta DAY, rejectedat = rejectedat + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW(); ` +
-      `UPDATE messages SET arrival = arrival + INTERVAL @delta DAY, date = date + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW();\\""`,
-    { encoding: 'utf8', timeout: 120000 }
+  // Whole days preserve the relative ages the fixtures encode and land the newest post a
+  // day old. Self-limiting: once it is a day old the delta is 0 and re-running is a no-op.
+  appendTestLogs('playwright', `${label}Rolling fixture post dates into the feed window...\n`)
+  const rollForward = `
+SET @delta := (
+  SELECT GREATEST(DATEDIFF(NOW(), MAX(arrival)) - 1, 0)
+  FROM messages_groups
+  WHERE arrival <= NOW()
+);
+UPDATE messages_groups
+   SET arrival    = arrival    + INTERVAL @delta DAY,
+       approvedat = approvedat + INTERVAL @delta DAY,
+       rejectedat = rejectedat + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+UPDATE messages
+   SET arrival = arrival + INTERVAL @delta DAY,
+       date    = date    + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+UPDATE messages_spatial
+   SET arrival = arrival + INTERVAL @delta DAY
+ WHERE @delta > 0 AND arrival <= NOW();
+`
+  runStep(
+    'roll fixture dates forward',
+    `docker exec -i ${pfx}-percona sh -c "mysql -u root -piznik iznik"`,
+    120000,
+    rollForward
   )
 
-  // Assert it worked, here rather than 20 minutes later in a spec: an empty feed
-  // is invisible in the test output and reads as a bug in whatever branch is
-  // running.
+  // Assert it worked. Without this the failure is invisible from the test output and
+  // reads as a puzzle on whichever branch happens to run.
   const FEED_WINDOW_DAYS = 31
   const newestAge = parseInt(
-    execSync(
-      `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -N -B -e 'SELECT DATEDIFF(NOW(), MAX(arrival)) FROM messages_groups WHERE arrival <= NOW()'"`,
-      { encoding: 'utf8', timeout: 30000 }
+    runStep(
+      'check newest seeded post is inside the feed window',
+      `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -N -B -e \\"SELECT DATEDIFF(NOW(), MAX(arrival)) FROM messages_groups WHERE arrival <= NOW()\\""`,
+      60000
     ).trim(),
     10
   )
   if (Number.isFinite(newestAge) && newestAge >= FEED_WINDOW_DAYS) {
     throw new Error(
-      `Newest seeded post is ${newestAge} days old, outside the ${FEED_WINDOW_DAYS}-day feed window ` +
-        `(group/groupMessages.go). Browse and explore would return nothing.`
+      `Newest seeded post is ${newestAge} days old, outside the ${FEED_WINDOW_DAYS}-day feed ` +
+        `window (group/groupMessages.go, message/groups.go). Browse and explore would return ` +
+        `nothing and every test that browses for a seeded post would fail.`
     )
   }
   appendTestLogs(
@@ -155,7 +201,7 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
   // database invalidates those connections. Restart the container so it starts
   // fresh — otherwise the location typeahead (used by postcode validation in the
   // /give flow) returns empty results and Playwright tests time out.
-  execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 60000 })
+  runStep('restart apiv2', `docker restart ${pfx}-apiv2`, 120000)
 
   const apiv2Start = Date.now()
   let apiv2Ready = false

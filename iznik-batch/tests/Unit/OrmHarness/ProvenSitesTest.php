@@ -11,11 +11,25 @@ use Tests\TestCase;
  * Proves the harness works end to end against REAL sites from
  * tools/orm-migration/services/laravel/manifest.json - not synthetic
  * fixtures (that is what CanonicalTest/GoldenSqlTest/ResultParityTest are
- * for). This does NOT convert anything: every site named here stays status
- * "raw" in the manifest, and the production call sites are untouched. What
- * this proves is narrower and earlier than a conversion - that an
- * equivalent query-builder chain WOULD satisfy both layers, before any
- * production code changes to use one.
+ * for).
+ *
+ * WHAT THIS FILE WAS FOR, AND WHAT CHANGED. It was written in Phase B, when
+ * the harness existed but no Laravel site had been converted, to show that an
+ * equivalent builder chain WOULD satisfy both layers before any production
+ * code changed to use one - so it said, correctly at the time, that it
+ * converted nothing and every site it names stayed "raw".
+ *
+ * That is no longer true. All three sites have since been converted for real
+ * (SendTestPushCommand, ArchiveProfileImagesCommand and
+ * ChatRoom::getOrCreateUser2Mod), and the Wave* files carry their own
+ * assertions. This one is kept rather than deleted because it still earns its
+ * place: it is the only file exercising BOTH layers against the same sites,
+ * and Layer 2 result parity is not otherwise covered by the wave tests.
+ *
+ * The note is here rather than left to be discovered because a test whose
+ * stated premise has quietly become false is exactly the failure this
+ * migration keeps finding elsewhere - a proof that reads as current while
+ * describing a state of the world that has moved on.
  *
  * Picked to span kinds: a simple two-condition SELECT, an aggregate SELECT
  * with GROUP BY/HAVING, and an UPDATE - deliberately not a WHERE-fragment

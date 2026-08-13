@@ -36,6 +36,7 @@ class StoriesService
                 ->where('memberships.userid', $story->userid)
                 ->where('groups.type', 'Freegle')
                 ->where('groups.onmap', 1)
+                // keep-raw: COALESCE() over two columns has no builder method.
                 ->selectRaw('COALESCE(groups.namefull, groups.nameshort) AS namedisplay')
                 ->value('namedisplay');
 

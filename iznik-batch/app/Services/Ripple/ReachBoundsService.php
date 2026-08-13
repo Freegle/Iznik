@@ -2,6 +2,19 @@
 
 namespace App\Services\Ripple;
 
+use App\Database\Expressions\Coalesce;
+use App\Database\Expressions\Comparison;
+use App\Database\Expressions\Point;
+use App\Database\Expressions\StBuffer;
+use App\Database\Expressions\StContains;
+use App\Database\Expressions\StEnvelope;
+use App\Database\Expressions\StGeometryType;
+use App\Database\Expressions\StGeomFromText;
+use App\Database\Expressions\StSimplify;
+use App\Database\Expressions\StSrid;
+use App\Database\Expressions\StUnion;
+use App\Database\Expressions\Subquery;
+use App\Database\Expressions\Value;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -47,6 +60,8 @@ class ReachBoundsService
      * legitimately-eroded urban inners (solid grids lose only their rim) never churn.
      */
     public const INNER_MIN_AREA_RATIO = 0.5;
+
+    private const SRID = 3857;
 
     /** Cached column-existence check so a pre-migration deploy degrades to a no-op. */
     private static ?bool $columnsExist = null;
@@ -105,14 +120,18 @@ class ReachBoundsService
 
         $stored = false;
         try {
-            DB::update(
-                'UPDATE rippling_reach
-                    SET outer_bound = ST_GeomFromText(?, 3857), '
-                    . ($innerWkt !== null ? 'inner_bound = ST_GeomFromText(?, 3857), ' : 'inner_bound = NULL, ') .
-                    'updated_at = updated_at
-                  WHERE msgid = ?',
-                $innerWkt !== null ? [$outerWkt, $innerWkt, $msgid] : [$outerWkt, $msgid]
-            );
+            // updated_at = updated_at was a self-assignment to suppress an ON UPDATE
+            // auto-bump - rippling_reach.updated_at has no such trigger (empty `extra`
+            // in information_schema, verified), so simply omitting it here is
+            // equivalent, exactly as nullInner() below established.
+            DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->update([
+                    'outer_bound' => new StGeomFromText(Value::of($outerWkt), self::SRID),
+                    'inner_bound' => $innerWkt !== null
+                        ? new StGeomFromText(Value::of($innerWkt), self::SRID)
+                        : null,
+                ]);
             $stored = true;
         } catch (\Throwable) {
             // Unusable provided geometry — derive from the polygon instead.
@@ -223,14 +242,16 @@ class ReachBoundsService
 
         $derived = false;
         try {
-            DB::update(
-                'UPDATE rippling_reach
-                    SET outer_bound = ' . self::outerExpr('polygon') . ',
-                        inner_bound = ' . self::innerExpr('polygon') . ',
-                        updated_at = updated_at
-                  WHERE msgid = ?',
-                [$msgid]
-            );
+            // Same ST_Buffer(ST_Simplify(polygon, TOLERANCE), ±TOLERANCE) shape as
+            // outerExpr()/innerExpr() (kept string-returning for MigrateReachBoundsSchemaCommand
+            // and ExpandService's raw-SQL callers), expressed structurally here. updated_at
+            // omitted - see sync() above for why the self-assignment was always a no-op.
+            DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->update([
+                    'outer_bound' => new StBuffer(new StSimplify('polygon', self::TOLERANCE), self::TOLERANCE),
+                    'inner_bound' => new StBuffer(new StSimplify('polygon', self::TOLERANCE), -self::TOLERANCE),
+                ]);
             $derived = true;
         } catch (\Throwable) {
             // Invalid stored geometry — fall through to the envelope fallback.
@@ -267,14 +288,13 @@ class ReachBoundsService
         }
 
         try {
-            DB::update(
-                'UPDATE rippling_reach
-                    SET outer_bound = ST_SRID(POINT(lng, lat), 3857),
-                        inner_bound = NULL,
-                        updated_at = updated_at
-                  WHERE msgid = ?',
-                [$msgid]
-            );
+            // updated_at omitted - see sync() above.
+            DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->update([
+                    'outer_bound' => new StSrid(new Point('lng', 'lat'), self::SRID),
+                    'inner_bound' => null,
+                ]);
         } catch (\Throwable $e) {
             Log::warning("ripple: bounds degrade failed for msg {$msgid}: {$e->getMessage()}");
         }
@@ -289,16 +309,28 @@ class ReachBoundsService
     private function verifySandwich(int $msgid): array
     {
         try {
-            $check = DB::select(
-                'SELECT ST_Contains(outer_bound, polygon) AS o,
-                        (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
-                   FROM rippling_reach
-                  WHERE msgid = ?',
-                [$msgid],
-                false
-            )[0] ?? null;
+            // Two ->exists() reads replace the one-row SELECT: each is the truthiness
+            // test the raw form's boolean column was ("... AS o"/"... AS i"), and
+            // ->useWritePdo() preserves useReadPdo=false from the raw form - this must
+            // read our own just-written row, not a replica that may not have caught up.
+            // Both share this one try/catch so a throw from either yields [0, 0], exactly
+            // as a throw from the single original query did.
+            $outerOk = DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->where(new StContains('outer_bound', 'polygon'))
+                ->useWritePdo()
+                ->exists();
 
-            return [(int) ($check->o ?? 0), (int) ($check->i ?? 0)];
+            $innerOk = DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->where(function ($q) {
+                    $q->whereNull('inner_bound')
+                        ->orWhere(new StContains('polygon', 'inner_bound'));
+                })
+                ->useWritePdo()
+                ->exists();
+
+            return [(int) $outerOk, (int) $innerOk];
         } catch (\Throwable) {
             return [0, 0];
         }
@@ -312,22 +344,31 @@ class ReachBoundsService
     private function unionOuterWithOriginGroup(int $msgid): void
     {
         try {
-            DB::update(
-                'UPDATE rippling_reach rr
-                    SET rr.outer_bound = COALESCE(
-                        (SELECT ST_Union(rr.outer_bound, g.polyindex)
-                           FROM messages_groups mg
-                           JOIN `groups` g ON g.id = mg.groupid
-                          WHERE mg.msgid = rr.msgid AND mg.deleted = 0
-                            AND g.polyindex IS NOT NULL
-                            AND ST_GeometryType(g.polyindex) <> \'POINT\'
-                          ORDER BY mg.arrival ASC
-                          LIMIT 1),
-                        rr.outer_bound),
-                        rr.updated_at = rr.updated_at
-                  WHERE rr.msgid = ?',
-                [$msgid]
-            );
+            // A correlated scalar subquery as an UPDATE ... SET value renders directly
+            // via Builder::update()'s own Builder-detection - but only at the top level
+            // of a value position, not nested inside another Expression's operand
+            // (COALESCE here). Subquery (App\Database\Expressions\Subquery) bridges
+            // that gap: it embeds a fully-built, binding-free Builder as SQL text so it
+            // can sit inside Coalesce's operand list. The subquery's own predicates are
+            // therefore built with this namespace's Comparison/Value::of() instead of
+            // the builder's normal bound where() - see Subquery's docblock for why
+            // (bindings have nowhere to attach once nested this way). updated_at
+            // omitted - see sync() above.
+            $originGroupArea = DB::table('messages_groups as mg')
+                ->join('groups as g', 'g.id', '=', 'mg.groupid')
+                ->whereColumn('mg.msgid', 'rr.msgid')
+                ->where(new Comparison('mg.deleted', '=', 0))
+                ->whereNotNull('g.polyindex')
+                ->where(new Comparison(new StGeometryType('g.polyindex'), '<>', Value::of('POINT')))
+                ->orderBy('mg.arrival')
+                ->limit(1)
+                ->select(new StUnion('rr.outer_bound', 'g.polyindex'));
+
+            DB::table('rippling_reach as rr')
+                ->where('rr.msgid', $msgid)
+                ->update([
+                    'rr.outer_bound' => new Coalesce(new Subquery($originGroupArea), 'rr.outer_bound'),
+                ]);
         } catch (\Throwable) {
             // Leave the stored outer as-is; verification decides.
         }
@@ -340,13 +381,13 @@ class ReachBoundsService
     private function fallbackToEnvelope(int $msgid): void
     {
         try {
-            DB::update(
-                'UPDATE rippling_reach
-                    SET outer_bound = ST_Envelope(polygon), inner_bound = NULL,
-                        updated_at = updated_at
-                  WHERE msgid = ?',
-                [$msgid]
-            );
+            // updated_at omitted - see sync() above.
+            DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->update([
+                    'outer_bound' => new StEnvelope('polygon'),
+                    'inner_bound' => null,
+                ]);
         } catch (\Throwable $e) {
             // Even the envelope failed. The column keeps its previous value: a stale
             // outer is safe-loose, but a stale INNER could cheap-accept a clipped-out
@@ -359,10 +400,11 @@ class ReachBoundsService
     private function nullInner(int $msgid): void
     {
         try {
-            DB::update(
-                'UPDATE rippling_reach SET inner_bound = NULL, updated_at = updated_at WHERE msgid = ?',
-                [$msgid]
-            );
+            // The raw form carried "updated_at = updated_at" to suppress an
+            // auto-update column. There is no such column: rippling_reach.updated_at
+            // has an empty `extra` in information_schema and no trigger, so the
+            // self-assignment was inert and the builder form is equivalent.
+            DB::table('rippling_reach')->where('msgid', $msgid)->update(['inner_bound' => null]);
         } catch (\Throwable $e) {
             Log::warning("ripple: bounds inner-null failed for msg {$msgid}: {$e->getMessage()}");
         }

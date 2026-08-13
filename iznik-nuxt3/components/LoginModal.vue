@@ -422,7 +422,7 @@ function loginNative(e) {
     } else {
       authStore
         .signUp({
-          fullname: fullname.value,
+          displayname: fullname.value,
           email: email.value,
           password: password.value,
         })

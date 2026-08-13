@@ -218,6 +218,9 @@ class RippleTuneService
             ->whereIn('m.type', ['Offer', 'Wanted'])
             ->whereBetween('mg.arrival', [$start, $end])
             ->groupBy('mg.groupid')
+            // keep-raw: an aliased aggregate in a multi-row SELECT list under GROUP BY
+            // (groupid is also selected) has no query builder method - ->count() only
+            // covers a query selecting nothing but the aggregate.
             ->select('mg.groupid', DB::raw('COUNT(*) as n'))
             ->pluck('n', 'mg.groupid')
             ->toArray();
@@ -235,6 +238,7 @@ class RippleTuneService
             ->join('messages_groups as mg', 'mg.msgid', '=', 'rr.msgid')
             ->whereBetween('rr.created_at', [$start, $end])
             ->groupBy('mg.groupid')
+            // keep-raw: aliased aggregate in a multi-row SELECT list under GROUP BY.
             ->select('mg.groupid', DB::raw('AVG(rr.max_drive_min) as d'))
             ->pluck('d', 'mg.groupid')
             ->toArray();
@@ -252,6 +256,8 @@ class RippleTuneService
             ->where('mg.rippled_in', 1)
             ->whereBetween('mg.arrival', [$start, $end])
             ->groupBy('mg.groupid')
+            // keep-raw: CASE WHEN has no builder method, and the CASE/COUNT ratio is an
+            // aliased aggregate expression in a multi-row SELECT list under GROUP BY.
             ->select(
                 'mg.groupid',
                 DB::raw("SUM(CASE WHEN mg.collection = 'Rejected' THEN 1 ELSE 0 END) / COUNT(*) as rate")

@@ -46,6 +46,9 @@ class GenerateEmbeddingsCommand extends Command
 
             $batchLimit = min($remaining, $chunkSize);
 
+            // keep-raw: LEFT() has no builder method; the rest of this query
+            // (join, anti-join, order, limit) would gain nothing from being
+            // rebuilt around a lone selectRaw() for that one column.
             $messages = DB::select('
                 SELECT ms.msgid, m.subject, LEFT(m.textbody, 500) as body
                 FROM messages_spatial ms

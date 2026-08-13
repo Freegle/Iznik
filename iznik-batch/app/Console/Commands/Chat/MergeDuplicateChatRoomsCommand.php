@@ -33,35 +33,45 @@ class MergeDuplicateChatRoomsCommand extends Command
             $this->info('DRY RUN - no changes will be made');
         }
 
-        $query = "
-            SELECT cr1.id as old_id, cr2.id as new_id,
-                   cr1.user1 as old_user1, cr1.user2 as old_user2,
-                   cr2.user1 as new_user1, cr2.user2 as new_user2,
-                   cr1.created as old_created, cr2.created as new_created,
-                   (SELECT COUNT(*) FROM chat_messages WHERE chatid = cr1.id) as old_msgs,
-                   (SELECT COUNT(*) FROM chat_messages WHERE chatid = cr2.id) as new_msgs
-            FROM chat_rooms cr1
-            JOIN chat_rooms cr2 ON cr1.user1 = cr2.user2
-                AND cr1.user2 = cr2.user1
-                AND cr1.chattype = cr2.chattype
-            WHERE cr1.chattype = 'User2User'
-              AND cr1.id < cr2.id
-        ";
-
-        $params = [];
+        $query = DB::table('chat_rooms as cr1')
+            ->join('chat_rooms as cr2', function ($join) {
+                $join->on('cr1.user1', '=', 'cr2.user2')
+                    ->on('cr1.user2', '=', 'cr2.user1')
+                    ->on('cr1.chattype', '=', 'cr2.chattype');
+            })
+            ->where('cr1.chattype', 'User2User')
+            ->whereColumn('cr1.id', '<', 'cr2.id');
 
         if ($userId) {
-            $query .= " AND (cr1.user1 = ? OR cr1.user2 = ? OR cr2.user1 = ? OR cr2.user2 = ?)";
-            $params = [(int) $userId, (int) $userId, (int) $userId, (int) $userId];
+            $userId = (int) $userId;
+            $query->where(function ($q) use ($userId) {
+                $q->where('cr1.user1', $userId)
+                    ->orWhere('cr1.user2', $userId)
+                    ->orWhere('cr2.user1', $userId)
+                    ->orWhere('cr2.user2', $userId);
+            });
         }
 
-        $query .= " ORDER BY cr2.created DESC";
+        $oldMsgs = DB::table('chat_messages')->whereColumn('chatid', 'cr1.id');
+        $oldMsgs->aggregate = ['function' => 'count', 'columns' => ['*']];
+        $newMsgs = DB::table('chat_messages')->whereColumn('chatid', 'cr2.id');
+        $newMsgs->aggregate = ['function' => 'count', 'columns' => ['*']];
+
+        $query->select([
+            'cr1.id as old_id', 'cr2.id as new_id',
+            'cr1.user1 as old_user1', 'cr1.user2 as old_user2',
+            'cr2.user1 as new_user1', 'cr2.user2 as new_user2',
+            'cr1.created as old_created', 'cr2.created as new_created',
+        ])
+            ->selectSub($oldMsgs, 'old_msgs')
+            ->selectSub($newMsgs, 'new_msgs')
+            ->orderBy('cr2.created', 'desc');
 
         if ($limit > 0) {
-            $query .= " LIMIT $limit";
+            $query->limit($limit);
         }
 
-        $pairs = DB::select($query, $params);
+        $pairs = $query->get();
 
         $this->info("Found " . count($pairs) . " duplicate pair(s)");
 
@@ -89,17 +99,16 @@ class MergeDuplicateChatRoomsCommand extends Command
                 DB::beginTransaction();
 
                 // 1. Move all messages from duplicate to canonical
-                $movedMsgs = DB::update(
-                    'UPDATE chat_messages SET chatid = ? WHERE chatid = ?',
-                    [$canonicalId, $duplicateId]
-                );
+                $movedMsgs = DB::table('chat_messages')
+                    ->where('chatid', $duplicateId)
+                    ->update(['chatid' => $canonicalId]);
                 $this->line("  Moved $movedMsgs messages");
 
                 // 2. Move roster entries (ignore duplicates - user may be in both rosters)
-                $rosterEntries = DB::select(
-                    'SELECT userid, status, lastmsgseen, lastemailed, lastmsgemailed, lastip FROM chat_roster WHERE chatid = ?',
-                    [$duplicateId]
-                );
+                $rosterEntries = DB::table('chat_roster')
+                    ->select('userid', 'status', 'lastmsgseen', 'lastemailed', 'lastmsgemailed', 'lastip')
+                    ->where('chatid', $duplicateId)
+                    ->get();
 
                 foreach ($rosterEntries as $entry) {
                     DB::table('chat_roster')->updateOrInsert(
@@ -116,13 +125,27 @@ class MergeDuplicateChatRoomsCommand extends Command
                 $this->line("  Merged " . count($rosterEntries) . " roster entries");
 
                 // 3. Delete old roster entries for duplicate room
-                DB::delete('DELETE FROM chat_roster WHERE chatid = ?', [$duplicateId]);
+                DB::table('chat_roster')->where('chatid', $duplicateId)->delete();
 
                 // 4. Update latestmessage on canonical room to be the most recent
-                DB::update(
-                    'UPDATE chat_rooms SET latestmessage = (SELECT MAX(date) FROM chat_messages WHERE chatid = ?) WHERE id = ?',
-                    [$canonicalId, $canonicalId]
-                );
+                // A sub-builder IS expanded into a correlated subquery here. An earlier
+                // revision of this comment claimed the opposite, having tested
+                // Grammar::compileUpdate() directly - but the Builder->subquery conversion
+                // happens in Builder::update(), one layer ABOVE the grammar, so testing the
+                // grammar alone shows "set x = ?" and hides the feature. Through the real
+                // path this renders:
+                //   set latestmessage = (select date from chat_messages
+                //                        where chatid = ? order by date desc limit 1)
+                // with both ids bound, matching the raw statement. MAX(date) becomes
+                // ORDER BY date DESC LIMIT 1 because a sub-builder renders as a plain
+                // SELECT; both yield NULL for an empty room.
+                DB::table('chat_rooms')->where('id', $canonicalId)->update([
+                    'latestmessage' => DB::table('chat_messages')
+                        ->where('chatid', $canonicalId)
+                        ->orderByDesc('date')
+                        ->limit(1)
+                        ->select('date'),
+                ]);
 
                 // 5. Insert redirect so email replies to old chatid still work
                 DB::table('chat_room_redirects')->insertOrIgnore([
@@ -131,7 +154,7 @@ class MergeDuplicateChatRoomsCommand extends Command
                 ]);
 
                 // 6. Delete the duplicate room
-                DB::delete('DELETE FROM chat_rooms WHERE id = ?', [$duplicateId]);
+                DB::table('chat_rooms')->where('id', $duplicateId)->delete();
 
                 DB::commit();
 

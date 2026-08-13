@@ -86,9 +86,15 @@ class GroupMaintenanceService
             'messages_fixed' => 0,
         ];
 
-        $locations = DB::select(
-            "SELECT DISTINCT locations.id, lat, lng, name FROM locations WHERE lat < lng AND locations.name NOT LIKE 'BF%'"
-        );
+        $locations = DB::table('locations')
+            ->distinct()
+            ->select('locations.id', 'lat', 'lng', 'name')
+            // lat < lng compares two COLUMNS, so it needs whereColumn - a plain
+            // where() would bind 'lng' as a string literal and match nothing.
+            ->whereColumn('lat', '<', 'lng')
+            ->where('locations.name', 'NOT LIKE', 'BF%')
+            ->get()
+            ->all();
 
         $details = '';
 

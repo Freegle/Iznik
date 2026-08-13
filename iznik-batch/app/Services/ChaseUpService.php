@@ -11,7 +11,6 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\Notification;
 use App\Models\User;
-use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -122,8 +121,8 @@ class ChaseUpService
         $count = 0;
 
         $intendeds = DB::table('messages_outcomes_intended')
-            ->whereRaw('TIMESTAMPDIFF(MINUTE, timestamp, NOW()) > 30')
-            ->whereRaw('TIMESTAMPDIFF(DAY, timestamp, NOW()) <= 7')
+            ->where('timestamp', '<=', now()->subMinutes(31))
+            ->where('timestamp', '>', now()->subDays(8))
             ->get();
 
         foreach ($intendeds as $intended) {
@@ -208,8 +207,15 @@ class ChaseUpService
 
         $groups = DB::table('messages_groups')
             ->where('msgid', $msgid)
-            ->select('groupid', DB::raw('TIMESTAMPDIFF(HOUR, arrival, NOW()) AS hoursago'))
+            ->select('groupid', 'arrival')
             ->get();
+
+        // TIMESTAMPDIFF(HOUR, arrival, NOW()) truncates toward zero; (int)-casting
+        // Carbon's diffInHours() gives the identical whole-hour count for the
+        // always-past `arrival` timestamps here (verified against MySQL directly).
+        // NOW() is captured once, matching the single SELECT's one-NOW()-per-query
+        // semantics.
+        $now = now();
 
         foreach ($groups as $group) {
             $groupModel = Group::find($group->groupid);
@@ -222,7 +228,9 @@ class ChaseUpService
                 ? ($reposts['offer'] ?? 3)
                 : ($reposts['wanted'] ?? 7);
 
-            if ($group->hoursago > $interval * 24) {
+            $hoursago = (int) \Illuminate\Support\Carbon::parse($group->arrival)->diffInHours($now);
+
+            if ($hoursago > $interval * 24) {
                 return true;
             }
         }
@@ -239,10 +247,7 @@ class ChaseUpService
     {
         DB::table('messages_groups')
             ->where('msgid', $msgid)
-            ->update([
-                'arrival' => now(),
-                'autoreposts' => DB::raw('autoreposts + 1'),
-            ]);
+            ->increment('autoreposts', 1, ['arrival' => now()]);
     }
 
     /**
@@ -306,7 +311,13 @@ class ChaseUpService
                 ->where('date', '>=', $end)
                 // A rippling-held reply hasn't reached the poster yet, so it isn't "activity" that
                 // should suppress the still-available chase-up. Once released it counts as normal.
-                ->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'))
+                // Inlined equivalent of RippleReplyService::deliveryGateSql('chat_messages.id')
+                // as a real NOT EXISTS subquery rather than a raw SQL fragment.
+                ->whereNotExists(function ($q) {
+                    $q->from('rippling_held_replies as cmr')
+                        ->whereColumn('cmr.chatmsgid', 'chat_messages.id')
+                        ->where('cmr.status', '<>', 'released');
+                })
                 ->max('date');
 
             if ($recentChat) {
@@ -571,11 +582,11 @@ class ChaseUpService
                 'messages_groups.lastchaseup',
                 'messages_groups.autoreposts',
                 'messages_groups.rippled_in',
+                'messages_groups.arrival',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',
-                'messages.fromuser',
-                DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hoursago')
+                'messages.fromuser'
             )
             ->where('messages_groups.arrival', '>', $mindate)
             ->where('messages_groups.groupid', $groupid)
@@ -650,7 +661,12 @@ class ChaseUpService
             ? ($reposts['offer'] ?? 3)
             : ($reposts['wanted'] ?? 7);
 
-        return $msg->hoursago > $interval * 24;
+        // TIMESTAMPDIFF(HOUR, arrival, NOW()) truncates toward zero; (int)-casting
+        // Carbon's diffInHours() gives the identical whole-hour count for the
+        // always-past `arrival` timestamp here (verified against MySQL directly).
+        $hoursago = (int) \Illuminate\Support\Carbon::parse($msg->arrival)->diffInHours(now());
+
+        return $hoursago > $interval * 24;
     }
 
     /**

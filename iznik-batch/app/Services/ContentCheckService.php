@@ -417,7 +417,7 @@ class ContentCheckService
         $base = fn () => DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', 'm.type as msgtype', 'm.fromuser as fromuser', 'm.lat as lat')
             // Either never checked, or checked and then edited. The edit stamps
             // messages.editedat rather than clearing the check stamp, because the
             // stamp is also what lets a moderator see the post at all - clearing it
@@ -1339,8 +1339,7 @@ class ContentCheckService
     {
         $raw = DB::table('groups')
             ->where('id', $groupid)
-            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.spammers.worrywords')) AS worrywords")
-            ->value('worrywords');
+            ->value('settings->spammers->worrywords');
 
         if (!$raw || $raw === 'null') {
             return null;
@@ -1394,6 +1393,7 @@ class ContentCheckService
             ->where('domain', 'not like', '%goo.gl%')
             ->where('domain', 'not like', '%bit.ly%')
             ->where('domain', 'not like', '%tinyurl%')
+            // keep-raw: LENGTH() applied to a column has no query-builder method.
             ->where(DB::raw('LENGTH(domain)'), '>', 5)
             ->pluck('domain')
             ->map(fn ($d) => strtolower($d))

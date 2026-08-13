@@ -13,9 +13,13 @@ class GroupBoundaryService
     {
         $srid = config('freegle.srid', 3857);
 
-        $groups = DB::select(
-            "SELECT id, nameshort, poly FROM `groups` WHERE type = 'Freegle' AND publish = 1 AND onmap = 1"
-        );
+        $groups = DB::table('groups')
+            ->select('id', 'nameshort', 'poly')
+            ->where('type', 'Freegle')
+            ->where('publish', 1)
+            ->where('onmap', 1)
+            ->get()
+            ->all();
 
         $total = count($groups);
         $errors = 0;
@@ -27,6 +31,10 @@ class GroupBoundaryService
 
         foreach ($groups as $group) {
             try {
+                // keep-raw: ST_Intersection/ST_GeomFromText/COALESCE() are spatial
+                // and conditional functions with no builder method; this is a
+                // validity probe (result unused, an exception means the boundary
+                // is invalid).
                 DB::select(
                     "SELECT ST_Intersection(ST_GeomFromText(polyofficial, ?), COALESCE(simplified, polygon))
                      FROM `groups`
@@ -36,6 +44,10 @@ class GroupBoundaryService
                 );
 
                 if ($group->poly) {
+                    // keep-raw: ST_Intersection/ST_GeomFromText/COALESCE() are spatial
+                    // and conditional functions with no builder method; this is a
+                    // validity probe (result unused, an exception means the boundary
+                    // is invalid).
                     DB::select(
                         "SELECT ST_Intersection(ST_GeomFromText(poly, ?), COALESCE(simplified, polygon))
                          FROM `groups`
