@@ -38,8 +38,18 @@ SET @ddl := IF(@idx_exists = 0,
     'SELECT 1');
 PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- AFTERWARDS. The poll should stop scanning. Expect EXPLAIN to change from type=ALL to
--- type=range with key=rippling_reach_updated_at:
+-- AFTERWARDS. Give the optimizer figures for the new index before judging it. Until it has
+-- them, it is guessing at how many rows the poll's window matches, and on a table whose rows
+-- average around 600KB it can reasonably guess that reading the whole thing is cheaper:
+--
+--   ANALYZE TABLE rippling_reach;
+--
+-- Then confirm the poll has actually stopped scanning. This is a check to run, not a result
+-- to assume - if it still says type=ALL then the index is not being used and the change has
+-- bought nothing, so say so rather than closing the ticket:
 --
 --   EXPLAIN SELECT msgid, status, ST_AsWKB(polygon) FROM rippling_reach
 --   WHERE updated_at > NOW() - INTERVAL 2 MINUTE;
+--
+-- Wanted: type=range, key=rippling_reach_updated_at, and a rows estimate in the hundreds
+-- rather than the tens of thousands.
