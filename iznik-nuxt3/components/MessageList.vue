@@ -12,6 +12,57 @@
     <h2 class="visually-hidden">List of wanteds and offers</h2>
     <div id="visobserver" v-observe-visibility="visibilityChanged" />
 
+    <!-- The viewer's own posts, collapsed. They are still first in the feed order; this just
+         stops several of your own cards standing between you and everything new. -->
+    <div v-if="ownPostsRowLabel" class="ownposts">
+      <button
+        type="button"
+        class="ownposts__toggle"
+        :aria-expanded="ownPostsExpanded"
+        aria-controls="ownposts-list"
+        @click="ownPostsExpanded = !ownPostsExpanded"
+      >
+        <v-icon :icon="ownPostsExpanded ? 'chevron-down' : 'chevron-right'" />
+        {{ ownPostsRowLabel }}
+      </button>
+      <!-- Through ScrollGrid, not a plain v-for: the grid is what gives the cards the feed's
+           two-column tile layout (and one column in landscape/on desktop). Rendered directly
+           they came out full-width and stacked, twice the height of the cards below them.
+           initial-count is the whole set, since expanding is an explicit request to see them
+           all and there are only ever a handful. -->
+      <ScrollGrid
+        v-if="ownPostsExpanded"
+        id="ownposts-list"
+        :items="ownPosts"
+        key-field="id"
+        :loading="loading"
+        :distance="distance"
+        :initial-count="ownPosts.length"
+      >
+        <template #item="{ item: m, index: ix }">
+          <div
+            :id="'messagewrapper-' + m.id"
+            :ref="'messagewrapper-' + m.id"
+            class="messagewrapper"
+          >
+            <Suspense>
+              <OurMessage
+                :id="m.id"
+                :matchedon="m.matchedon"
+                :preload="ix < 2"
+                record-view
+                @view="onCardView(m.id)"
+                @not-found="messageNotFound(m.id)"
+              />
+              <template #fallback>
+                <MessageSkeleton />
+              </template>
+            </Suspense>
+          </div>
+        </template>
+      </ScrollGrid>
+    </div>
+
     <div
       v-if="
         initialFetchDone && selectedSort === 'Unseen' && showCountsUnseen && me
@@ -162,6 +213,10 @@ import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
 import { useScrollDepth } from '~/composables/useScrollDepth'
 import { useFeedCountSync } from '~/composables/useFeedCountSync'
+import {
+  partitionOwnPosts,
+  ownPostsLabel,
+} from '~/composables/useOwnPostsGroup'
 import {
   deduplicateMessages,
   findDuplicates,
@@ -469,7 +524,7 @@ function isOnMyGroup(message) {
 // on a group the viewer belongs to (Discourse 9733 / 9729); firstSeenMessage always wins.
 // Delegates to the pure deduplicateMessages, whose member-group swap is O(1) (id->index
 // Map) rather than the previous ret.findIndex() scan.
-const deDuplicatedMessages = computed(() =>
+const allDeDuplicatedMessages = computed(() =>
   deduplicateMessages(filteredMessagesToShow.value, {
     getMessage: (id) => filteredMessagesInStore.value[id],
     exclude: props.exclude,
@@ -477,6 +532,26 @@ const deDuplicatedMessages = computed(() =>
     isOnMyGroup,
     failedIds: failedIds.value,
   })
+)
+
+// The viewer's own posts come out of the feed and into one collapsed row above it. They are
+// still pinned first by sortBrowseMessages (Discourse 9933) - that is what makes them the
+// leading run here - but shown in full they meant anyone with a few live posts scrolled past
+// their own before reaching anything new.
+//
+// Taking them out of the split below is deliberate, not incidental: your own post is not "new
+// to you", so counting it as unseen put it above the YOU'RE UP TO DATE divider and into the
+// new-post tally.
+const ownPosts = computed(
+  () => partitionOwnPosts(allDeDuplicatedMessages.value).own
+)
+const deDuplicatedMessages = computed(
+  () => partitionOwnPosts(allDeDuplicatedMessages.value).others
+)
+
+const ownPostsExpanded = ref(false)
+const ownPostsRowLabel = computed(() =>
+  ownPostsLabel(ownPosts.value.length, ownPostsExpanded.value)
 )
 
 // For each rendered card, the ids of the crosspost/repost copies that deduplicateMessages
@@ -703,9 +778,39 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped lang="scss">
+@import 'bootstrap/scss/functions';
+@import 'bootstrap/scss/variables';
+@import 'assets/css/_color-vars.scss';
+
 .messagewrapper {
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+.ownposts {
+  margin-bottom: 0.5rem;
+}
+
+/* A full-width row rather than a link: the whole thing is the target, which matters most on
+   a phone, and a button carries the expanded state for a screen reader without extra ARIA. */
+.ownposts__toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid $gray-300;
+  background: $gray-200;
+  color: $gray-700;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: left;
+
+  &:hover,
+  &:focus-visible {
+    background: $gray-300;
+    color: $gray-800;
+  }
 }
 </style>
