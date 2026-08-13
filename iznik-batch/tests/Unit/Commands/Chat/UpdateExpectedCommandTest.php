@@ -13,8 +13,8 @@ class UpdateExpectedCommandTest extends TestCase
         $service = $this->createMock(ChatExpectedService::class);
         $service->expects($this->once())
             ->method('updateChatExpected')
-            ->with(true)
-            ->willReturn(['deleted_cleared' => 0, 'spam_cleared' => 0, 'waiting' => 0, 'received' => 0]);
+            ->with(true, false)
+            ->willReturn(['deleted_cleared' => 0, 'spam_cleared' => 0, 'waiting' => 0, 'received' => 0, 'checked' => 0, 'full' => false]);
 
         $this->app->instance(ChatExpectedService::class, $service);
 
