@@ -17,26 +17,12 @@
         class="d-flex w-100 justify-content-md-around"
         :style="maxWidth ? `max-width: ${maxWidth}` : ''"
       >
-        <!-- Use job ads as fallback when main ads fail to load. jobsEmpty guards against
-             falling back into a slot that has already told us it has nothing: without it
-             the fallback re-mounts the same empty jobs list and the reserved space stays
-             blank, which is the bug this whole path exists to avoid. -->
-        <JobsDaSlot
-          v-if="jobs && !jobsEmpty"
-          :min-width="minWidth"
-          :max-width="maxWidth"
-          :min-height="minHeight"
-          :max-height="maxHeight"
-          :hide-header="hideJobsHeader"
-          :list-only="listOnly"
-          :placement="placement"
-          :class="{
-            'text-center': maxWidth === '100vw',
-          }"
-          @rendered="jobsRendered"
-        />
-        <!-- Final fallback: donate ad if job ads not enabled -->
-        <nuxt-link v-else to="/adsoff" style="display: block; max-width: 100%">
+        <!-- The donate banner, and ONLY the donate banner. This block is reached from a
+             single place: the app without cookies, which cannot run a real ad at all, so a
+             banner here is genuine content rather than something filling a hole. Routing
+             failed ad loads through it instead (8b8b18176) is what reserved 123px for
+             nothing when the jobs list was also empty. -->
+        <nuxt-link to="/adsoff" style="display: block; max-width: 100%">
           <img
             src="/donate/SupportFreegle_970x250px_20May20215.png"
             alt="Please donate to help keep Freegle running"
@@ -65,7 +51,7 @@
               :class="{
                 'text-center': maxWidth === '100vw',
               }"
-              @rendered="jobsRendered"
+              @rendered="rippleRendered"
               @borednow="setBored"
             />
             <OurPlaywireDa
@@ -269,11 +255,10 @@ function visibilityChanged(visible) {
               prebidRetry++
 
               if (prebidRetry > 20) {
-                // Give up.  Probably blocked - show fallback donation ad.
-                console.log('Give up on prebid load - showing fallback')
-                fallbackAdVisible.value = true
-                adShown.value = true
-                emit('rendered', true)
+                // Give up. Probably blocked, so report no ad and let the band collapse.
+                console.log('Give up on prebid load')
+                adShown.value = false
+                emit('rendered', false)
               } else {
                 // Try again for prebid later.
                 visibleAndScriptsLoadedTimer = setTimeout(() => {
@@ -299,11 +284,10 @@ function visibilityChanged(visible) {
             tcDataRetry++
 
             if (tcDataRetry > 50) {
-              // Give up.  Probably blocked - show fallback donation ad.
-              console.log('Give up on TC data load - showing fallback')
-              fallbackAdVisible.value = true
-              adShown.value = true
-              emit('rendered', true)
+              // Give up. Probably blocked, so report no ad and let the band collapse.
+              console.log('Give up on TC data load')
+              adShown.value = false
+              emit('rendered', false)
             } else {
               visibleAndScriptsLoadedTimer = window.setTimeout(() => {
                 visibilityChanged(visible)
@@ -362,42 +346,22 @@ async function checkStillVisible() {
         showingAds
       )
       useMiscStore().adsDisabled = true
-      // Show fallback donation ad instead of empty space
-      fallbackAdVisible.value = true
-      adShown.value = true
-      emit('rendered', true)
+      adShown.value = false
+      emit('rendered', false)
+      emit('disabled')
     }
   } else {
     emit('rendered', false)
   }
 }
 
-// The jobs slot has nothing to show. Distinct from an ad network failing to fill: the
-// jobs list is ours, so retrying it is pointless, and re-mounting it as the "fallback"
-// just leaves the reserved space blank. Latch it and let rippleRendered fall through to
-// the donate banner, which fills the band we have already reserved.
-const jobsEmpty = ref(false)
-
-function jobsRendered(rendered) {
-  if (!rendered) {
-    jobsEmpty.value = true
-  }
-
-  rippleRendered(rendered)
-}
-
 function rippleRendered(rendered) {
-  if (rendered) {
-    adShown.value = true
-    emit('rendered', true)
-  } else {
-    // Ad failed to render - show fallback donation ad
-    console.log('Ad failed to render - showing fallback')
-    useMiscStore().adsDisabled = true
-    fallbackAdVisible.value = true
-    adShown.value = true
-    emit('rendered', true)
-  }
+  // Report the truth. 8b8b18176 replaced this with "show a donate banner and claim
+  // rendered:true", which is why an unfilled slot left a 123px band behind: the caller
+  // reserves space on a true, and LayoutCommon's collapse (.adNotShown, padding-bottom 0)
+  // only fires on stickyAdRendered === 0. Nothing to show means collapse, as it did before.
+  adShown.value = rendered
+  emit('rendered', rendered)
 }
 
 // When the ad (or its fallback — Jobs list, donate banner) is rendered we
