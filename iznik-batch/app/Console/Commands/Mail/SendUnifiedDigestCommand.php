@@ -26,6 +26,28 @@ class SendUnifiedDigestCommand extends Command
     private const IDLE_ITERATION_SECONDS = 2.0;
 
     /**
+     * The shortest pause between idle passes, whatever the pass cost.
+     *
+     * Pacing purely on elapsed time has a nasty edge: a pass that overruns the period
+     * leaves no remainder to wait out, so the loop would go straight round again with no
+     * gap at all. The pass most likely to overrun is a slow one, and the usual reason for
+     * a slow one is a database under strain - exactly when easing off matters most. This
+     * floor keeps a gap there regardless.
+     */
+    private const IDLE_MINIMUM_PAUSE_SECONDS = 0.5;
+
+    /**
+     * How long to wait after an idle pass that took $elapsed seconds.
+     *
+     * Separated out so the awkward cases can be tested without having to make a real
+     * pass run slowly.
+     */
+    public static function idlePauseSeconds(float $elapsed): float
+    {
+        return max(self::IDLE_MINIMUM_PAUSE_SECONDS, self::IDLE_ITERATION_SECONDS - $elapsed);
+    }
+
+    /**
      * The name and signature of the console command.
      *
      * --limit semantics:
@@ -166,7 +188,10 @@ class SendUnifiedDigestCommand extends Command
         $shouldStop = fn () => $this->shouldStop();
 
         for ($i = 0; $i < $maxIterations; $i++) {
-            $iterationStart = microtime(true);
+            // hrtime, not microtime: this measures how long the pass took, and the
+            // system clock can step (NTP, a VM resuming) in a way that would make that
+            // measurement nonsense. hrtime only ever moves forward.
+            $iterationStart = hrtime(true);
 
             $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards, $shouldStop);
 
@@ -195,10 +220,8 @@ class SendUnifiedDigestCommand extends Command
             // spent on running it more often. Sleeping the remainder of the period
             // instead holds the rate steady whatever the queries cost.
             if (($r['emails_sent'] ?? 0) === 0 && $i + 1 < $maxIterations) {
-                $remaining = self::IDLE_ITERATION_SECONDS - (microtime(true) - $iterationStart);
-                if ($remaining > 0) {
-                    usleep((int) ($remaining * 1_000_000));
-                }
+                $elapsed = (hrtime(true) - $iterationStart) / 1_000_000_000;
+                usleep((int) (self::idlePauseSeconds($elapsed) * 1_000_000));
             }
         }
 

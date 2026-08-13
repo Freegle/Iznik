@@ -75,6 +75,28 @@ class SendUnifiedDigestCommandTest extends TestCase
         $this->assertStringContainsString('--max-iterations=1 ', $signature->getValue($cmd));
     }
 
+    public function test_idle_pause_never_disappears_however_slow_the_pass(): void
+    {
+        // The loop paces itself by sleeping whatever is left of a fixed period after
+        // each idle pass. Taken literally that means a pass which overruns the period
+        // leaves nothing to sleep, so the loop goes straight round again with no gap.
+        // The passes that overrun are the slow ones, and the usual reason for a slow
+        // one is a database already struggling, so the moment the pause is needed most
+        // is the moment it would vanish. There is a floor to stop that happening.
+        $cls = \App\Console\Commands\Mail\SendUnifiedDigestCommand::class;
+
+        // A quick pass waits out the rest of the period, holding the poll rate steady
+        // however cheap the queries get.
+        $this->assertEqualsWithDelta(1.9, $cls::idlePauseSeconds(0.1), 0.001);
+
+        // A pass that fills the period still pauses, rather than dropping to nothing.
+        $this->assertGreaterThan(0, $cls::idlePauseSeconds(2.0));
+
+        // And a pass that badly overruns pauses too. This is the case that matters:
+        // before the floor existed this returned nothing at all.
+        $this->assertGreaterThanOrEqual(0.5, $cls::idlePauseSeconds(30.0));
+    }
+
     public function test_spool_failure_for_recipient_still_advances_cursor(): void
     {
         // Regression guard for the duplicate-send hazard: if spool() throws
