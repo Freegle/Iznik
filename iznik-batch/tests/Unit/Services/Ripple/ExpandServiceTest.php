@@ -633,6 +633,60 @@ class ExpandServiceTest extends TestCase
         $this->assertLessThan(0.02, abs((float) $row->lng + 0.1));
     }
 
+    /**
+     * Put a post past the stale-reach grace period.
+     *
+     * removeStaleAndRetract waits for a post to stay missing from messages_spatial
+     * before dropping its reach row, because that table is rebuilt every five minutes
+     * and a live post drops out of it and back all day. Tests that are about what
+     * happens to a genuinely gone post say so by pre-dating its absence, rather than
+     * rehearsing the wait.
+     */
+    private function ageOutOfSpatialGrace(int $msgid, int $minutesAgo = 60): void
+    {
+        $path = storage_path('app/ripple/absent-since.json');
+        @mkdir(dirname($path), 0775, true);
+
+        $seen = is_file($path) ? (json_decode((string) file_get_contents($path), true) ?: []) : [];
+        $seen[(string) $msgid] = now()->subMinutes($minutesAgo)->getTimestamp();
+
+        file_put_contents($path, json_encode($seen));
+    }
+
+    /**
+     * The churn this grace period exists for: a post that blinks out of the spatial
+     * index and comes back must keep its reach row. Deleting it also retracted the
+     * post's copies from every group it had rippled into and forced a full rebuild -
+     * routing searches and a large polygon write per post - and on production that was
+     * about 85% of all initialisation work.
+     */
+    public function test_reach_survives_a_post_briefly_missing_from_spatial(): void
+    {
+        Http::fake();
+        $user = $this->createTestUser();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: blinks', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['removed'], 'a post missing for the first time is given time to come back');
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $message->id)->count(),
+            'the reach row must survive a blink out of the spatial index'
+        );
+    }
+
     public function test_removes_reach_for_post_no_longer_in_spatial(): void
     {
         Http::fake();
@@ -650,6 +704,9 @@ class ExpandServiceTest extends TestCase
              VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, self::WKT, self::WKT, now()->subDays(1)]
         );
+
+        // Gone for a while, not just this instant - see ageOutOfSpatialGrace.
+        $this->ageOutOfSpatialGrace($message->id);
 
         $stats = $this->service()->process(false, 500);
 
@@ -2186,8 +2243,10 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull($b, 'precondition: post rippled into B');
         $this->assertSame(0, (int) $b->deleted, 'precondition: rippled-in row live');
 
-        // The post leaves the browsable set (withdrawn/taken/deleted -> gone from messages_spatial).
+        // The post leaves the browsable set (withdrawn/taken/deleted -> gone from
+        // messages_spatial), and stays gone rather than blinking out between rebuilds.
         DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+        $this->ageOutOfSpatialGrace($msgid);
 
         // Origin group removed from the trial: scope no longer covers the origin.
         $nonCoveringScope = 'POLYGON((-3.30 55.90,-3.10 55.90,-3.10 56.00,-3.30 56.00,-3.30 55.90))';
@@ -2501,12 +2560,29 @@ class ExpandServiceTest extends TestCase
     }
 
     /** The post is removed from the browsable set (rejected on origin / withdrawn): it leaves messages_spatial. */
+    /**
+     * The post has left the spatial index, and stayed gone.
+     *
+     * removeStaleAndRetract waits out a grace period before acting on an absence,
+     * because messages_spatial is rebuilt every five minutes and a live post drops out
+     * of it and back all day. These tests are about a post that has genuinely gone, so
+     * they say so rather than rehearsing the wait - see ageOutOfSpatialGrace, and
+     * test_reach_survives_a_post_briefly_missing_from_spatial for the other case.
+     */
     private function leaveSpatial(int $msgid): void
     {
         DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+        $this->ageOutOfSpatialGrace($msgid);
     }
 
-    /** A post with a reach row but NOT in messages_spatial, with one rippled-in copy + ripple-membership on a fresh group. Returns [msgid, groupB, posterId]. */
+    /**
+     * A post with a reach row but NOT in messages_spatial, with one rippled-in copy +
+     * ripple-membership on a fresh group. Returns [msgid, groupB, posterId].
+     *
+     * The absence is pre-dated past the stale-reach grace period, because these tests
+     * are about a post that has genuinely gone rather than one that has blinked out of
+     * the index between rebuilds.
+     */
     private function seedStaleReachWithRippledCopy(float $lat = 51.5, float $lng = -0.1): array
     {
         $user = $this->createTestUser();
@@ -2537,6 +2613,8 @@ class ExpandServiceTest extends TestCase
              VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $lat, $lng, self::WKT, self::WKT, now()->subHours(2)]
         );
+
+        $this->ageOutOfSpatialGrace((int) $message->id);
 
         return [(int) $message->id, (int) $groupB->id, (int) $user->id];
     }
