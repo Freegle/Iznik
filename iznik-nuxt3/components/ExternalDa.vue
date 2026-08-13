@@ -325,14 +325,25 @@ async function checkStillVisible() {
     const myEmail = me.value?.email
 
     const runtimeConfig = useRuntimeConfig()
-    const userSite = runtimeConfig.public.USER_SITE
-    const userSite2 = userSite.replace('www.', '')
-    console.log('Consider system', myEmail, userSite, userSite2)
+    // USER_SITE is a URL - 'https://www.ilovefreegle.org' by default and in the deployed
+    // env - so the old test, `myEmail.includes(userSite)` with a `replace('www.', '')`
+    // variant, could never match: no email address contains 'https://'. Ad suppression for
+    // our own accounts was therefore dead in production. It only looked right in tests,
+    // where the fixture set USER_SITE to a bare 'ilovefreegle.org'.
+    //
+    // Compare the email's DOMAIN against the site's HOST instead, allowing subdomains so
+    // someone@mail.ilovefreegle.org still counts.
+    const host = String(runtimeConfig.public.USER_SITE ?? '')
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/.*$/, '')
+      .toLowerCase()
+    const emailDomain = myEmail ? myEmail.split('@').pop().toLowerCase() : ''
+    const isSystemAccount = Boolean(
+      host && emailDomain && (emailDomain === host || emailDomain.endsWith('.' + host))
+    )
 
-    if (
-      myEmail &&
-      (myEmail.includes(userSite) || myEmail.includes(userSite2))
-    ) {
+    if (isSystemAccount) {
       console.log('Ads disabled as system account')
       emit('rendered', false)
     } else if (recentDonor.value) {
