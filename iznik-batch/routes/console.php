@@ -1211,10 +1211,25 @@ Schedule::command('donations:update-ads-target')
 // =============================================================================
 
 // Update usage counts for AI images (how many posts use each image).
+//
+// Hourly, this only counts attachments added since the last run - a primary-key range
+// over the last hour's rows. The full JSON_EXTRACT scan of all 31.6M messages_attachments
+// rows (and the ~50k single-row UPDATEs that followed it) runs once overnight instead of
+// 24 times a day, on a counter whose measured net change is ~8 rows an hour.
 Schedule::command('ai:usage-counts:update')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('ai:usage-counts:update'))
+    ->runInBackground();
+
+// The nightly ground truth: rebuilds every count, which is also what corrects the
+// decrements the hourly delta cannot see (purged messages, rotated images).
+// 02:45 rather than 02:30 keeps it clear of the purge/stats cluster that occupies
+// 02:00-02:34.
+Schedule::command('ai:usage-counts:update --full')
+    ->dailyAt('02:45')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('ai:usage-counts:update-full'))
     ->runInBackground();
 
 
