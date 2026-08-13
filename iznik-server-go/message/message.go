@@ -1080,12 +1080,25 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		if len(reachBlocked) > 0 {
 			hazard := rippling.LoadHazardHours(db)
 
+			// Per-request backstop on top of FetchDriveTime's process-wide cap, cache
+			// and breaker: "blocked posts are a small minority of any feed" is false for
+			// a viewer outside the reach of many rippling posts (2026-08-13: one viewer's
+			// polls drove ~600 routing searches/min and a load-31 spike on the routing
+			// host). Past the cap the remaining blocked posts simply carry no ETA — the
+			// hold itself is still reported.
+			const maxCoverageLookups = 24
+			lookups := 0
+
 			var covMu sync.Mutex
 			var covWg sync.WaitGroup
 			for msgid, origin := range reachBlocked {
 				if !origin.Ok || origin.Arrival == nil || len(origin.Schedule) == 0 {
 					continue
 				}
+				if lookups >= maxCoverageLookups {
+					break
+				}
+				lookups++
 				covWg.Add(1)
 				go func(msgid uint64, origin ReachOrigin) {
 					defer covWg.Done()
