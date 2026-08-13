@@ -565,6 +565,59 @@ class UserManagementServiceTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $stats['updated']);
     }
 
+    /**
+     * The point of the window: activity older than it is left to the nightly pass, so
+     * the hourly one stops joining users against the whole history of chat_messages
+     * and memberships.
+     */
+    public function test_hourly_pass_ignores_activity_older_than_the_window(): void
+    {
+        $user = $this->createTestUser();
+        $user2 = $this->createTestUser();
+
+        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subDays(60)]);
+
+        $room = $this->createTestChatRoom($user, $user2);
+        $this->createTestChatMessage($room, $user, ['date' => now()->subDays(30)]);
+
+        // Pretend the last run was an hour ago, so the window starts three hours back.
+        DB::table('config')->upsert(
+            [['key' => 'users.lastaccess_cursor', 'value' => now()->subHour()->toDateTimeString()]],
+            ['key'],
+            ['value'],
+        );
+
+        $windowed = $this->service->updateLastAccess();
+        $this->assertSame(0, $windowed['updated'], 'a 30-day-old message is outside the window');
+
+        $user->refresh();
+        $this->assertLessThan(now()->subDays(50)->timestamp, strtotime($user->lastaccess));
+
+        // The nightly unbounded pass is what catches it.
+        $full = $this->service->updateLastAccess(false, true);
+        $this->assertTrue($full['full']);
+        $this->assertGreaterThanOrEqual(1, $full['updated']);
+
+        $user->refresh();
+        $this->assertGreaterThan(now()->subDays(31)->timestamp, strtotime($user->lastaccess));
+    }
+
+    public function test_a_run_records_where_it_got_to(): void
+    {
+        $this->assertNull(DB::table('config')->where('key', 'users.lastaccess_cursor')->value('value'));
+
+        $this->service->updateLastAccess();
+
+        $this->assertNotNull(DB::table('config')->where('key', 'users.lastaccess_cursor')->value('value'));
+    }
+
+    public function test_a_dry_run_does_not_record_where_it_got_to(): void
+    {
+        $this->service->updateLastAccess(true);
+
+        $this->assertNull(DB::table('config')->where('key', 'users.lastaccess_cursor')->value('value'));
+    }
+
     public function test_update_lastaccess_ignores_small_differences(): void
     {
         $user = $this->createTestUser();

@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\UserDeletion;
 use App\Models\UserEmail;
 use App\Traits\ChunkedProcessing;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -28,6 +29,16 @@ class UserManagementService
      * after an outage, and keeps the table small enough to stay uninteresting.
      */
     public const DELETION_RETENTION_DAYS = 90;
+
+    /** Where the hourly lastaccess pass remembers how far it has looked. */
+    private const LASTACCESS_CURSOR_KEY = 'users.lastaccess_cursor';
+
+    /**
+     * How far before the last run the hourly pass still looks. Covers a run that
+     * overlapped the previous one, a clock adjustment, and rows written slightly out
+     * of order, at the cost of re-examining an hour already known to be up to date.
+     */
+    private const LASTACCESS_OVERLAP_HOURS = 2;
 
     private LokiService $lokiService;
 
@@ -515,27 +526,54 @@ class UserManagementService
      * chat message or membership join, and updates accordingly.
      *
      */
-    public function updateLastAccess(bool $dryRun = false): array
+    public function updateLastAccess(bool $dryRun = false, bool $full = false): array
     {
+        // Taken before any work, so activity arriving while this runs is left for the
+        // next run rather than being skipped by a cursor that moved past it.
+        $startedAt = now();
+
         $stats = [
             'candidates' => 0,
             'updated' => 0,
         ];
 
-        // Find users whose lastaccess is > 600 seconds behind their latest chat message or membership join.
+        // Find users whose lastaccess is > 600 seconds behind their latest chat message
+        // or membership join.
+        //
+        // Hourly, this only looks at activity since the last run. Unbounded, both arms
+        // join users against the whole history of chat_messages and of the 4.96M-row
+        // memberships table with a non-sargable TIMESTAMPDIFF, which cost about 4,145
+        // seconds of database time a day to find roughly 37 users. Nothing older than
+        // the window can newly qualify: a user only falls behind when fresh activity
+        // arrives, and this job is a top-up over the lastaccess the API writes anyway.
+        //
+        // The nightly unbounded pass is what covers the one case the window cannot: a
+        // writer inserting rows with timestamps older than the window. It is not
+        // optional - it is the whole correctness argument for narrowing the hourly one.
+        $since = $full ? null : $this->lastAccessWindowStart();
+
+        // keep-raw: both arms compare one table's column against another's with an
+        // interval, and union two DISTINCT sets. The query builder cannot express the
+        // correlated column-to-column comparison without raw fragments anyway, and the
+        // shape is unchanged from the version this replaces bar the window.
         $users = DB::select("
             SELECT DISTINCT(userid) FROM (
                 SELECT DISTINCT(userid) FROM users
                 INNER JOIN chat_messages ON chat_messages.userid = users.id
                 WHERE users.lastaccess < chat_messages.date
                     AND TIMESTAMPDIFF(SECOND, users.lastaccess, chat_messages.date) > 600
+                    AND (? IS NULL OR chat_messages.date >= ?)
                 UNION
                 SELECT DISTINCT(userid) FROM memberships
                 INNER JOIN users ON users.id = memberships.userid
                 WHERE TIMESTAMPDIFF(SECOND, users.lastaccess, memberships.added) > 600
+                    AND (? IS NULL OR memberships.added >= ?)
             ) t
             LIMIT 50000
-        ");
+        ", [$since, $since, $since, $since]);
+
+        $stats['full'] = $full;
+        $stats['since'] = $since;
 
         $stats['candidates'] = count($users);
         $processed = 0;
@@ -574,7 +612,42 @@ class UserManagementService
             }
         }
 
+        if (!$dryRun) {
+            $this->writeLastAccessCursor($startedAt);
+        }
+
         return $stats;
+    }
+
+    /**
+     * How far back the hourly pass looks: the last run, less a safety margin.
+     *
+     * The margin covers a run that overlapped the previous one, a clock adjustment,
+     * and rows written slightly out of order. Two hours against an hourly job is
+     * generous, and the cost of it is re-examining an hour of activity that was
+     * already up to date - which the per-user check below discards immediately.
+     *
+     * With nothing stored, returns a window wide enough to behave like a first full
+     * pass rather than silently examining nothing.
+     */
+    private function lastAccessWindowStart(): string
+    {
+        $raw = DB::table('config')->where('key', self::LASTACCESS_CURSOR_KEY)->value('value');
+
+        if (!$raw) {
+            return now()->subDays(7)->toDateTimeString();
+        }
+
+        return Carbon::parse($raw)->subHours(self::LASTACCESS_OVERLAP_HOURS)->toDateTimeString();
+    }
+
+    private function writeLastAccessCursor(Carbon $startedAt): void
+    {
+        DB::table('config')->upsert(
+            [['key' => self::LASTACCESS_CURSOR_KEY, 'value' => $startedAt->toDateTimeString()]],
+            ['key'],
+            ['value'],
+        );
     }
 
     /**

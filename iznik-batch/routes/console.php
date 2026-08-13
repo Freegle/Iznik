@@ -447,10 +447,24 @@ Schedule::command('users:update-modmails')
 
 // Hourly fallback users.lastaccess update from chat / membership activity.
 // V1: cron/lastaccess.php
+//
+// Hourly, this only looks at activity since the last run. Unbounded it joined users
+// against the whole history of chat_messages and the 4.96M-row memberships table with
+// a predicate no index can help, costing ~4,145 seconds of database time a day to find
+// about 37 users.
 Schedule::command('users:update-lastaccess')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('users:update-lastaccess'))
+    ->runInBackground();
+
+// The nightly unbounded pass. Not optional: narrowing the hourly one is only safe
+// because this still covers activity written with a timestamp older than the window.
+// 03:45 is clear of the purge and stats cluster and of db1's 04:00-04:17 backup.
+Schedule::command('users:update-lastaccess --full')
+    ->dailyAt('03:45')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('users:update-lastaccess-full'))
     ->runInBackground();
 
 // Update chat reply-expectation tracking and per-user reply-time metrics.
