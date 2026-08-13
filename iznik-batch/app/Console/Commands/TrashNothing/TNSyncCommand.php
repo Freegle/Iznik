@@ -29,7 +29,8 @@ class TNSyncCommand extends Command
                             {--to= : Override sync end timestamp (ISO-8601)}
                             {--run-id= : Queue run identifier used to update background_tasks JSON completion state}
                             {--dry-run : Trace DB writes without executing them}
-                            {--local-testing : Load API responses from local fixture files instead of hitting the live TN API}';
+                            {--local-testing : Load API responses from local fixture files instead of hitting the live TN API}
+                            {--full-duplicate-scan : Re-scan every Trash Nothing address rather than only those added since the last run}';
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
@@ -102,7 +103,7 @@ class TNSyncCommand extends Command
                 }
 
                 // Merge duplicate TN users.
-                $duplicatesMerged = $this->mergeDuplicateTNUsers();
+                $duplicatesMerged = $this->mergeDuplicateTNUsers((bool) $this->option('full-duplicate-scan'));
 
                 // Store the max change date for next sync.
                 if ($maxChangeDate) {
@@ -609,7 +610,44 @@ class TNSyncCommand extends Command
         return [$count, $maxDate];
     }
 
-    private function mergeDuplicateTNUsers(): int
+    /** Where the per-tick duplicate check remembers how far it has read. */
+    private const DUP_CURSOR_KEY = 'tn.dupscan_cursor';
+
+    /** When the last whole-table duplicate re-scan finished. */
+    private const DUP_FULL_AT_KEY = 'tn.dupscan_full_at';
+
+    /**
+     * How long the per-tick check may run before one tick does the whole table again.
+     *
+     * The full re-scan is what covers a duplicate created by re-pointing an existing row
+     * rather than adding one, since that adds no new id for the per-tick check to see.
+     * It happens on one ordinary tick rather than on a schedule of its own: a separate
+     * scheduled entry would be a different command string, so it would not share the
+     * per-minute run's overlap mutex and the two could run at once.
+     */
+    private const DUP_FULL_SCAN_HOURS = 24;
+
+    /**
+     * Merge Trash Nothing accounts that are really the same person.
+     *
+     * This ran on every tick, and a tick is every minute. Each run streamed all ~400,000
+     * Trash Nothing addresses out of users_emails and grouped them in PHP, about five
+     * seconds of database time and twenty gigabytes a day off the wire, to find a number
+     * of duplicates measured at roughly zero a day.
+     *
+     * A duplicate can only come into existence when a users_emails row is INSERTED, so
+     * the per-tick check now looks only at rows added since the last one, and probes for
+     * siblings of each by an indexed prefix on the address. Typically that is no rows at
+     * all and no probes.
+     *
+     * The one thing that escapes it is an UPDATE re-pointing an existing row, which adds
+     * no new id. $full is the answer to that: the nightly run does today's whole scan,
+     * and it is a permanent fixture rather than a transitional one - it is the only
+     * reason narrowing the per-tick check is safe. Worst case a duplicate is merged a day
+     * late, against an event rate of about zero a day, and User::merge re-checks live
+     * state anyway so a late merge cannot corrupt anything.
+     */
+    private function mergeDuplicateTNUsers(bool $full = false): int
     {
         // Use the `backwards` index (REVERSE(email)) to avoid a full table scan.
         // LIKE '%@user.trashnothing.com' can't use the email index (leading wildcard),
@@ -620,25 +658,66 @@ class TNSyncCommand extends Command
         // full ~400k-row result set as Eloquent models exhausts the 512M memory_limit;
         // raw rows are an order of magnitude lighter and we only need userid + email.
         // Group by TN username in PHP — avoids slow REGEXP_REPLACE GROUP BY in MySQL.
+        // Read the watermark BEFORE any work, so a row arriving mid-run is left for the
+        // next run rather than stepped over.
+        $highWater = (int) DB::table('users_emails')->max('id');
+        $cursor = ($full || $this->fullDuplicateScanDue()) ? null : $this->readDupCursor();
+        $didFullScan = $cursor === null;
+
         $groups = [];
-        foreach (
-            DB::table('users_emails')
-                ->select('userid', 'email')
-                ->where('backwards', 'LIKE', $reversedSuffix . '%')
-                ->orderBy('id')
-                ->cursor() as $row
-        ) {
-            $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email);
-            $groups[$username][] = (int) $row->userid;
+
+        if ($cursor === null) {
+            // Full pass: the nightly reconciliation, and whatever runs first after a
+            // deploy so there is a watermark to work from.
+            foreach (
+                DB::table('users_emails')
+                    ->select('userid', 'email')
+                    ->where('backwards', 'LIKE', $reversedSuffix . '%')
+                    ->orderBy('id')
+                    ->cursor() as $row
+            ) {
+                $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email);
+                $groups[$username][] = (int) $row->userid;
+            }
+        } else {
+            // Only addresses added since last time. For each, collect everyone sharing
+            // its Trash Nothing username - an indexed prefix match on the address, since
+            // email is uniquely indexed and 'username-g' anchors the left of it.
+            $newUsernames = [];
+            foreach (
+                DB::table('users_emails')
+                    ->select('email')
+                    ->where('backwards', 'LIKE', $reversedSuffix . '%')
+                    ->where('id', '>', $cursor)
+                    ->where('id', '<=', $highWater)
+                    ->cursor() as $row
+            ) {
+                $newUsernames[preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email)] = true;
+            }
+
+            foreach (array_keys($newUsernames) as $username) {
+                foreach (
+                    DB::table('users_emails')
+                        ->select('userid', 'email')
+                        ->where('email', 'LIKE', str_replace(['%', '_'], ['\\%', '\\_'], $username) . '-g%@user.trashnothing.com')
+                        ->cursor() as $row
+                ) {
+                    $groups[$username][] = (int) $row->userid;
+                }
+            }
         }
 
         if (empty($groups)) {
+            $this->writeDupCursor($highWater, $didFullScan);
+
             return 0;
         }
 
         $duplicateGroups = array_filter($groups, fn($ids) => count(array_unique($ids)) > 1);
 
         if (empty($duplicateGroups)) {
+            $this->writeDupCursor($highWater, $didFullScan);
+
             return 0;
         }
 
@@ -664,6 +743,46 @@ class TNSyncCommand extends Command
             }
         }
 
+        // Only once the merges are done. A crash before this point leaves the watermark
+        // where it was, so the next run re-reads the same rows rather than stepping over
+        // a duplicate it never got to.
+        $this->writeDupCursor($highWater, $didFullScan);
+
         return $merged;
+    }
+
+    /** Is it time for one tick to re-scan the whole table? */
+    private function fullDuplicateScanDue(): bool
+    {
+        $last = DB::table('config')->where('key', self::DUP_FULL_AT_KEY)->value('value');
+
+        if (!$last) {
+            return true;
+        }
+
+        return strtotime($last) < strtotime('-' . self::DUP_FULL_SCAN_HOURS . ' hours');
+    }
+
+    /** How far the per-tick duplicate check has read, or null if it has never run. */
+    private function readDupCursor(): ?int
+    {
+        $value = DB::table('config')->where('key', self::DUP_CURSOR_KEY)->value('value');
+
+        return $value === null || $value === '' ? null : (int) $value;
+    }
+
+    private function writeDupCursor(int $highWater, bool $wasFull = false): void
+    {
+        if ($this->dryRun) {
+            return;
+        }
+
+        $rows = [['key' => self::DUP_CURSOR_KEY, 'value' => (string) $highWater]];
+
+        if ($wasFull) {
+            $rows[] = ['key' => self::DUP_FULL_AT_KEY, 'value' => now()->toDateTimeString()];
+        }
+
+        DB::table('config')->upsert($rows, ['key'], ['value']);
     }
 }
