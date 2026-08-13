@@ -699,7 +699,15 @@ class TNSyncCommand extends Command
                 foreach (
                     DB::table('users_emails')
                         ->select('userid', 'email')
-                        ->where('email', 'LIKE', str_replace(['%', '_'], ['\\%', '\\_'], $username) . '-g%@user.trashnothing.com')
+                        // Escape the escape character first, then the wildcards - doing it
+                        // the other way round would re-escape the backslashes just added.
+                        ->where('email', 'LIKE', str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $username) . '-g%@user.trashnothing.com')
+                        // Same ordering as the full pass above. Whichever account comes
+                        // first is the one kept when duplicates are merged, and it takes
+                        // its own name over the other's, so the order decides what the
+                        // member ends up called. Without this the answer would be
+                        // whatever order the address index happened to return.
+                        ->orderBy('id')
                         ->cursor() as $row
                 ) {
                     $groups[$username][] = (int) $row->userid;
