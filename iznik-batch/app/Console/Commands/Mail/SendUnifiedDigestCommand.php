@@ -15,6 +15,17 @@ class SendUnifiedDigestCommand extends Command
     use PreventsOverlapping;
 
     /**
+     * How long an idle pass through the loop takes, at minimum.
+     *
+     * Chosen to match what an idle pass effectively cost before: the eligible-groups
+     * query plus a one-second sleep. Paced on elapsed time rather than slept flat, so
+     * that making those queries cheaper banks the saving instead of spending it on
+     * polling more often. Only idle passes wait - a pass that sent something starts the
+     * next one immediately.
+     */
+    private const IDLE_ITERATION_SECONDS = 2.0;
+
+    /**
      * The name and signature of the console command.
      *
      * --limit semantics:
@@ -142,7 +153,8 @@ class SendUnifiedDigestCommand extends Command
         // any time during our run, and another shard may be processing
         // one of our groups (no — partitions are disjoint, but messages
         // are still arriving from outside the digest system). Match the
-        // mail:chat:user2user pattern: sleep(1) when nothing to do, keep
+        // mail:chat:user2user pattern: hold idle passes to a fixed period
+        // (IDLE_ITERATION_SECONDS) rather than racing round the loop, and keep
         // looping until max-iterations is hit. The next cron tick takes
         // over from there.
         // Immediate mode reports per-group counters (groups_processed,
@@ -154,6 +166,8 @@ class SendUnifiedDigestCommand extends Command
         $shouldStop = fn () => $this->shouldStop();
 
         for ($i = 0; $i < $maxIterations; $i++) {
+            $iterationStart = microtime(true);
+
             $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards, $shouldStop);
 
             // Daily mode returns a different stat shape — match keys best-effort.
@@ -171,11 +185,20 @@ class SendUnifiedDigestCommand extends Command
                 break;
             }
 
-            // Sleep briefly between idle iterations so we don't hammer
-            // the DB with empty queries. Active iterations roll straight
-            // into the next without a sleep.
+            // Hold idle iterations to a fixed period so we don't hammer the DB with
+            // empty queries. Active iterations roll straight into the next without a
+            // wait, because immediate mail is meant to be immediate.
+            //
+            // This paces on ELAPSED TIME rather than sleeping a flat second, which
+            // matters as soon as the queries get cheaper: a flat sleep leaves the poll
+            // rate free to rise as the work shrinks, so a saving in the query is partly
+            // spent on running it more often. Sleeping the remainder of the period
+            // instead holds the rate steady whatever the queries cost.
             if (($r['emails_sent'] ?? 0) === 0 && $i + 1 < $maxIterations) {
-                sleep(1);
+                $remaining = self::IDLE_ITERATION_SECONDS - (microtime(true) - $iterationStart);
+                if ($remaining > 0) {
+                    usleep((int) ($remaining * 1_000_000));
+                }
             }
         }
 

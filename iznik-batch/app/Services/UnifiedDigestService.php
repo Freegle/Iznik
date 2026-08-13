@@ -187,22 +187,24 @@ class UnifiedDigestService
             return $stats;
         }
 
-        // The EXISTS is left as a per-group correlated subquery (NO_SEMIJOIN) so it resolves via
-        // the memberships(groupid,...) index and short-circuits on the first immediate member of
-        // each group. Without the hint the optimiser materialises the semijoin using only the
-        // `collection` index, scanning ~2.37M Approved rows (10-24s) because there is no index on
-        // memberships.emailfrequency. Immediate members are ~0.7% of Approved, so the per-group
-        // lookup is far cheaper. (A memberships(emailfrequency,groupid) index would make either
-        // plan fast, but this needs no DDL.) groups_digests is tiny (~3k rows).
+        // This used to carry an EXISTS against memberships, to skip groups with no
+        // immediate members at all. It was the single most expensive thing this service
+        // did: 0.61-0.88s per execution, run about 232,000 times a day across the shards,
+        // roughly one and a half to two cores of the database sustained - to skip 12
+        // groups out of 505.
+        //
+        // Dropping it is safe because it decided nothing. processGroupImmediate selects
+        // recipients with exactly the same condition (emailfrequency = Immediate,
+        // collection = Approved), so a group with none produces an empty recipient list
+        // and sends nothing. And a group that reaches that point with messages but no
+        // recipients still advances its cursor, so it cannot re-scan the same messages
+        // every tick.
+        //
+        // The 12 groups now cost one cursor-bounded message lookup each per pass, against
+        // a correlated subquery that ran for all 505.
         $query = DB::table('groups_digests as gd')
             ->where('gd.frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-            ->whereExists(function ($q) {
-                $q->select(DB::raw('/*+ QB_NAME(imm_member) */ 1'))->from('memberships')
-                    ->whereColumn('memberships.groupid', 'gd.groupid')
-                    ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-                    ->where('memberships.collection', Membership::COLLECTION_APPROVED);
-            })
-            ->select(DB::raw('/*+ NO_SEMIJOIN(@imm_member) */ gd.groupid'), 'gd.msgid as cursor_msgid', 'gd.msgdate as cursor_msgdate');
+            ->select('gd.groupid', 'gd.msgid as cursor_msgid', 'gd.msgdate as cursor_msgdate');
 
         // Partition groups across parallel shards. MOD(groupid, shards) =
         // shard means each group is owned by exactly one shard. Disjoint
