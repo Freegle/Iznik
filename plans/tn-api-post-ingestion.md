@@ -104,8 +104,172 @@ Covered by all-or-nothing checkpoint decision above. Each syncer surfaces its ow
 ### H. Throughput / rate limits
 Existing syncers page 100 at a time. Posts/chats volume unknown — confirm pagination + rate-limit headers, plan for backoff. If posts add minutes of work, may exceed scheduler interval (lock prevents overlap but starves other resources).
 
-### I. Loki / observability parity
-Email path emits structured logs at every routing decision (`routing_reason`, `user_id`, `message_id`, `chat_id`). New path needs equivalent `loki->logEvent` calls. Define event names up front on the `tn-sync` channel: `post-create`, `post-skip-duplicate`, `chat-create`, etc.
+### I. Loki / observability parity ✅ **implemented**
+
+> **Reconciled with section R, 2026-08-12.** Repost/crosspost *detection* has been removed from the API path entirely (section R): there is no `reposted` result, no `repost-already-bumped` skip and no `post-repost-bump` event. Historical mentions of them below have been corrected in place; the open "what `subtype` for `reposted`?" question is closed by deletion rather than by a decision. The implementation is on disk (it was briefly stashed while section R landed).
+
+**Implementation summary** (all additive on the API side; the email path and its Loki output are untouched).
+
+**The architecture deliberately mirrors the email path's, class for class and seam for seam** — that is a requirement, not a coincidence, because a stream that is 1:1 in content but reached by a different route drifts apart the moment either side changes:
+
+| | email path | TN API path |
+|---|---|---|
+| router — decides the outcome, **never touches Loki** | `IncomingMailService::route()` | `GroupPostIngestionService::ingest()` |
+| accumulates context, replaced wholesale by a `dropped()` helper | `$lastRoutingContext` / `dropped()` | same names, same semantics |
+| exposes it to the caller | `getLastRoutingContext()` | `getLastRoutingContext()` |
+| caller — emits **exactly one** entry after routing returns | `IncomingMailController::receive()` / `IncomingMailCommand` | `PostSyncer::processPost()` |
+| Loki entry point | `LokiService::logIncomingEmail()` | `LokiService::logIngestedPost()` |
+
+- `LokiService` — `logIngestedPost()` added; `logIncomingEmail()` keeps its exact signature and output. Both delegate to shared private `buildRoutedMessage()`/`buildRoutedEntry()` helpers, so the schema cannot drift on one side without drifting on both.
+- `GroupPostIngestionService` — has **no Loki dependency for routing**. It resets its context at entry (as `route()` does), sets `group_id`/`group_name`/`user_id` at the same relative point `handleGroupPost()` does, appends `message_id` once a message exists, and uses a `dropped()` helper with the email path's replace-don't-merge semantics. Reason strings live on the class that decides them, as they do on the email path. `outcomeFor()` maps its result vocabulary to `RoutingResult`.
+- `PostSyncer` — the caller. Emits one entry per post via `logRoutedPost()` (a thin wrapper over `LokiService`, factored only because this class has four call sites where the controller has one), plus `logBatchJob('tn:sync-posts', 'failed'|'completed')` for run-level events.
+- **No extra classes.** An earlier draft introduced a `PostRoutingLogger` that emitted from inside the ingestion service; it has been deleted, because the email path has no equivalent and scattering emission through the router is precisely the structure this section exists to avoid.
+- Tests: `TnApiLokiParityTest` (end-to-end label/payload shape, asserted against a **real** `logIncomingEmail()` entry rather than a hardcoded copy of its schema), `GroupPostIngestionServiceTest` (8 context tests — the router's half), `PostSyncerTest` (the two pre-ingest skips), sharing the `CapturesRoutedLokiEntries` trait.
+
+The original text of this section ("email path emits structured logs at every routing decision... new path needs equivalent `loki->logEvent` calls") was **wrong on both halves**, and the `logEvent('tn-sync', ...)` calls already scattered through the API path were written against that wrong model. What follows replaces it.
+
+#### I.1 What actually reaches Loki
+
+Only `LokiService` writes reach Loki. `conf/alloy/config.alloy` tails **`/var/log/freegle/*.log`** only — the JSON-line files `LokiService::writeLog()` produces. Laravel's own `Log::info()`/`Log::channel('incoming_mail')` output goes to `storage/logs/laravel.log` and is **never shipped**.
+
+Consequence: **every `TN-SYNC-TRACE` line on both paths is invisible in Loki.** The trace lines are a `tn:parity-check`-only mechanism (captured in-process, see `TNParityCheckCommand::captureTraceLogs()`); they are not, and must not be confused with, the Loki comparison this section is about. The two comparison mechanisms are independent and both are needed.
+
+#### I.2 The email path's Loki output, in full
+
+The email path emits **exactly one Loki entry per inbound email**, written *after* routing completes, by the caller — never by `IncomingMailService` itself (which contains zero `LokiService` references):
+
+- `IncomingMailController::receive()` (`app/Http/Controllers/IncomingMailController.php:71`) — the production Postfix path.
+- `IncomingMailCommand` (`app/Console/Commands/IncomingMailCommand.php:93`) — the CLI path.
+
+Both call `LokiService::logIncomingEmail($envelopeFrom, $envelopeTo, $fromAddress, $subject, $messageId, $result->value, $service->getLastRoutingContext())`, producing a line in `incoming_mail.log`:
+
+| | |
+|---|---|
+| **file** | `incoming_mail.log` |
+| **labels** | `app=freegle`, `source=incoming_mail`, `type=routed`, `subtype=<RoutingResult->value>` |
+| **message (fixed)** | `envelope_from`, `envelope_to`, `from_address`, `subject`, `message_id`, `routing_outcome` |
+| **message (merged from `getLastRoutingContext()`)** | `routing_reason`, `group_id`, `group_name`, `user_id`, `message_id` (the FD msgid — note the **key collision** with the header `message_id`; the context value wins), `spam_type`, `spam_reason` |
+
+`subtype`/`routing_outcome` use the **PascalCase** `RoutingResult` values (`Approved`, `Pending`, `IncomingSpam`, `Dropped`, `ToSystem`, …), not the API path's lowercase result strings.
+
+This stream is a live consumer-facing feed, not just diagnostics: ModTools' incoming-email dashboard queries `sources=incoming_mail` and reads exactly these keys — see `iznik-nuxt3/modtools/stores/emailtracking.js:407-450`, `ModSupportIncomingEmail.vue`, `ModIncomingEmailDetail.vue`, `ModIncomingEmailCharts.vue`. Any parity work must not break or pollute it.
+
+#### I.3 Every email-path case that produces a Loki entry for a TN group post
+
+`route()` clears `lastRoutingContext` at entry (`IncomingMailService.php:99`), so the context is whatever the winning branch set. Cases, in `handleGroupPost()` order — **each of these is one Loki line the API path currently has no counterpart for**:
+
+| # | Email-path branch | `subtype` | Context fields present |
+|---|---|---|---|
+| 1 | Unknown group (`findGroup()` null) | `Dropped` | `routing_reason="Post to unknown group"` only |
+| 2 | Unknown user (`findUserByEmail()` null) | `Dropped` | `routing_reason="Post from unknown user"` only |
+| 3 | Non-member (no Approved membership) | `Dropped` | `routing_reason="Post from non-member"` only |
+| 4 | TAKEN/RECEIVED subject swallowed | `ToSystem` | **none** — context is empty (returns before it is set) |
+| 5 | Spam classified | `IncomingSpam` | `group_id`, `group_name`, `user_id`, `message_id`, `spam_type`, `spam_reason` |
+| 6 | `ourPostingStatus=PROHIBITED` | `Dropped` | `group_id`, `group_name`, `user_id` — **no `routing_reason`** (returns `RoutingResult::DROPPED` directly, not via `dropped()`) |
+| 7 | Approved | `Approved` | `group_id`, `group_name`, `user_id`, `message_id` |
+| 8 | Pending — awaiting content check (DEFAULT/UNMODERATED) | `Pending` | `group_id`, `group_name`, `user_id`, `message_id` |
+| 9 | Pending — moderator reason (moderated group/user, Big Switch, worry words, unmapped user, mod poster) | `Pending` | `group_id`, `group_name`, `user_id`, `message_id` — note `pendingReason` is **not** propagated into the context, only into `laravel.log` |
+| 10 | `createGroupPostMessage()` returned null (duplicate messageid, or exception → `recordFailure`) | `Approved`/`Pending` (the pre-computed result) | `group_id`, `group_name`, `user_id` — **no `message_id`**, and the failure itself is invisible in Loki |
+
+Cases 4, 6, 9 and 10 each drop context the other cases carry — 4 emits no context at all, 6 omits `routing_reason`, 9 omits `pendingReason`, 10 omits `message_id` and renders the creation failure invisible. These are **deliberate non-changes, not defects to fix**: the email path is frozen (see "Guiding constraint" and section M), and that freeze explicitly extends to its Loki output. The API path must **reproduce these same omissions** so the two streams line up field-for-field — adding the missing context on the API side only would itself create false divergence. Revisit as a joint improvement once the email path is retired, not before.
+
+**Pre-`handleGroupPost` branches** (auto-reply, self-sent, known spammer, dropped sender, bounce, digest reply, `isChatNotificationReply`) also emit `Dropped`-with-`routing_reason` lines for what may be TN traffic. These have **no API-path equivalent by construction** — there is no envelope, no bounce, no auto-reply on an API post. Document as intentionally absent; they must not be counted as coverage misses.
+
+#### I.4 What the API path emits today, and every case that is missing
+
+Current API-path Loki calls all go through `logEvent('tn-sync', <subtype>, …)` → `batch_event.log`, labels `source=batch_event`, `type=tn-sync`. **Wrong file, wrong labels, wrong subtype vocabulary, wrong field names** (`tn_post_id`/`msg_id`/`collection` vs `message_id`/`routing_outcome`) — a Loki-side comparison against the email path is impossible today, and none of these entries appear on the ModTools incoming dashboard.
+
+Existing (to be reshaped, see I.5):
+
+| API branch | current event |
+|---|---|
+| `GroupPostIngestionService::ingest()` duplicate `tnpostid` | `post-skip-duplicate` |
+| unknown/absent `fd_user_id` | `post-skip-unknown-user` |
+| per-group copy discarded | `post-skip-crosspost` |
+| approved | `post-create` (`collection=Approved`) |
+| pending | `post-create` (`collection=Pending`, `reason`) |
+| stub user created (`findOrCreateUser()`) | `user-stub-create` |
+
+**Previously missing entirely — no Loki entry was emitted at all. All ✅ implemented:**
+
+*In `PostSyncer::processPost()`:*
+1. ✅ **`[POST-SKIP] reason=no-coordinates`** — post has no lat/lng, never reaches ingestion. Nearest email-path analogue: case 1/2 (`Dropped` + reason). → `Dropped` + `REASON_NO_COORDINATES`, no group context (no group was resolved).
+2. ✅ **`[POST-SKIP] reason=not-in-any-group-bounds`** — `Location::groupsNear()` placed it nowhere. Analogue: case 1 (`Dropped`, "Post to unknown group"). **Highest-value gap**: precisely the Layer 1 coverage-regression case section Q calls out, previously invisible in Loki. → `Dropped` + `REASON_NOT_IN_ANY_GROUP_BOUNDS`.
+3. ✅ **Ingestion threw** (`catch (\Throwable)` around `ingest()`) — was `Log::error` only. → `Failure` + `REASON_INGESTION_EXCEPTION`, with group context (the group *was* resolved before the throw).
+
+*In `PostSyncer::fetchPage()` / `sync()`:*
+4. ✅ **TN API call failed** (`ApiException`) — aborts the whole sync; was `Log::error` only, so a failed run looked identical in Loki to a window with no posts. → `logBatchJob('tn:sync-posts', 'failed')` with page/status/error/window.
+5. ✅ **Sync-level summary** — → `logBatchJob('tn:sync-posts', 'completed')` with total/max_date/window/dry_run. Deliberately on the batch stream, not the routed one, which carries one entry per post and nothing else.
+
+*In `GroupPostIngestionService::ingest()`:*
+6. ✅ **`reason=crosspost`** (returns `'crosspost'`) → `Dropped` + `REASON_CROSSPOST`. Supersedes the repost-bump entries this section originally specified — commit `d5f0b4983` replaced coordinate-based repost/crosspost detection with TN's own source-vs-copy distinction (a post carrying a `group_id` is a per-group copy and is discarded; reposts are no longer de-duplicated at all). **This is an intended divergence, not a parity gap**: the email path receives one email per TN group and ingests each as its own message, so an item crossposted to N TN groups yields N email-path messages but ONE API-path message. The entry exists so that volume difference is explained in the stream rather than reading as posts going missing.
+7. ✅ **`reason=prohibited`** (returns `'dropped'`) → `Dropped` with group + user context and **no** `routing_reason`, mirroring email case 6.
+8. ✅ **`createMessage()` returned null → `'skipped'`** → `Dropped` + `REASON_MESSAGE_CREATE_FAILED`. Note the deliberate divergence: email case 10 reports its pre-computed `Approved`/`Pending` and merely omits `message_id`, whereas this path genuinely returns `'skipped'`, so reporting Approved/Pending here would misstate what happened. Logged with an explicit reason so a comparison can account for it.
+9. ✅ **Non-member `[POST-META]`** — no routing entry (correct: the API path continues rather than dropping). Asymmetry recorded here: the email path drops these (case 3, `Dropped`/"Post from non-member"), so an email-side `Dropped` with an API-side `Approved`/`Pending` for the same post is expected, not a regression.
+
+*⬜ **Not implemented — deliberately deferred.** Sub-failures still `Log::warning`-only and invisible in Loki. The email path is equally silent on all of these, so they cost nothing in parity terms; they are operational diagnostics only, and belong on `source=batch_event`, never in the routing stream (one routed entry per post is what makes the comparison countable). Pick these up if/when they actually bite:*
+10. `[LOCATION-STALE]` — spatial index returned a `locationid` not present in `locations`; post ingested with no location.
+11. `addToSpatialIndex()` failure — approved message never becomes searchable.
+12. `notifyGroupMods()` failure — pending work never surfaced to mods.
+13. Photo download / tusd upload / attachment failures in `createImageAttachments()`.
+
+*Never occurs on the API path, by design — record as intentionally absent so it is not read as a gap:*
+14. Spam (case 5). Per resolved decision #4 the spam check is always skipped for API posts, exactly as `shouldSkipSpamCheck()` does for TN emails. No API path can ever produce `subtype=IncomingSpam`.
+
+#### I.5 Shape the API path's entries must take
+
+To make the two streams comparable with a single Loki query, the API path must write **the same schema, into the same file, with the same label set and the same subtype vocabulary**:
+
+- **File**: `incoming_mail.log`, via a new `LokiService::logIngestedPost()` (or a `$source` parameter on `logIncomingEmail()` — do not duplicate `writeLog()` call sites).
+- **Labels**: `app=freegle`, `type=routed`, `subtype=<RoutingResult value>` — identical. **`source` must differ** (proposal: `source=tn_api`): identical `source` would silently merge API posts into the ModTools incoming-email dashboard (§I.2), which is a member-facing view of *email* traffic. Differing on exactly one label is what makes a side-by-side diff possible at all — identical on every label means the two streams are indistinguishable. ⚠️ **Decision needed** — see Open items.
+- **Subtype mapping** — the API path's lowercase result strings must be mapped to the email path's `RoutingResult` values, not logged raw:
+
+  | API result | `subtype` / `routing_outcome` |
+  |---|---|
+  | `approved` | `Approved` |
+  | `pending` | `Pending` |
+  | `dropped` | `Dropped` |
+  | `skipped` | `Dropped` |
+  | `duplicate` | `Dropped` (+ `routing_reason=duplicate`) |
+  | `crosspost` | `Dropped` (+ `routing_reason=crosspost`) — no email-path analogue; an intended divergence, see I.4 #6 |
+
+- **Message fields** — same keys, synthesized from the same values the RFC822 blob already uses (section C), so a diff compares like with like:
+  - `envelope_from` → `null`/`''` (API path has none; email path has the TN sender)
+  - `envelope_to` → `$groupEmail` (matches `messages.envelopeto`)
+  - `from_address` → `null` (matches `messages.fromaddr`)
+  - `subject`, `message_id` (synthesized `{postid}@tn.trashnothing.com-{groupid}`), `routing_outcome`, `routing_reason`, `group_id`, `group_name`, `user_id`, `message_id` (FD msgid)
+  - **plus `tn_post_id`** on the API side only — see I.5a for why the email side cannot carry it and how the join works instead.
+- **`routing_reason` strings must be byte-identical** to the email path's where an analogue exists (`"Post to unknown group"`, `"Post from unknown user"`, `"Post from non-member"`), so a diff can group on them. New API-only reasons (`no-coordinates`, `not-in-any-group-bounds`, `crosspost`, `duplicate`, `message-create-failed`, `ingestion-exception`) get their own distinct, documented strings.
+- **Dry-run gating**: unlike DB writes, Loki entries should be emitted in `--dry-run` too (that is the whole point of a parallel-run comparison), tagged `dry_run=true` as `findOrCreateUser()` already does. Confirm this does not pollute production dashboards before enabling.
+
+#### I.5a Correlating the two streams — the email side cannot carry `tn_post_id`
+
+**The email path is frozen for this work, and the freeze explicitly includes its Loki output.** No new field may be added to `logIncomingEmail()`'s payload, to `getLastRoutingContext()`, or to the `IncomingMailController`/`IncomingMailCommand` call sites. An earlier draft of this section proposed adding `tn_post_id` caller-side; **that is ruled out.**
+
+That constraint is binding, because the TN post id is genuinely not recoverable from the email-side Loki line as it stands:
+
+- It lives in the `X-Trash-Nothing-Post-Id` header (`ParsedEmail::getTrashNothingPostId()`, `ParsedEmail.php:361`), which is never written to Loki.
+- It is **not** derivable from the logged `message_id`. A real TN email's `Message-ID` is TN's own and does not contain the post id. (`EmailReplaySyncer::buildRawEmail()` *does* synthesize `{postid}@tn.trashnothing.com` at line 225 — but that is the replay harness fabricating a header, not what production email carries. Do not build the join on it.)
+
+So the correlation must be done **outside Loki, in two tiers**:
+
+**Tier 1 — exact, for entries that created a message** (`Approved`, `Pending`, `IncomingSpam`). Here `getLastRoutingContext()` sets `message_id` to the FD msgid, and because `array_merge()` puts the context last, that value **overwrites** the RFC822 `message_id` in the payload. So the email-side Loki line carries the FD msgid, and `messages.tnpostid` resolves it to the TN post id with a single DB lookup. Join that against the API side's own `tn_post_id`. Exact, and needs zero email-path change — it works precisely *because* of the existing key collision noted in I.2.
+
+**Tier 2 — aggregate only, for entries that created no message** (`Dropped`, `ToSystem` — cases 1, 2, 3, 4, 6). There is no message row, therefore no `tnpostid` anywhere, therefore **no per-post join is possible from Loki for these outcomes at all**. Compare them by **distribution**: counts per `subtype` × `routing_reason` over the same time window, email vs API. A per-post answer for these cases has to come from `tn:parity-check`'s trace lines, which do carry `post_id` on both sides.
+
+This split is a real limitation of the Loki comparison, not a temporary gap — accept it and scope the Loki work accordingly. Loki answers *"is the outcome mix the same, and is volume holding up?"*; `tn:parity-check` answers *"did post X land identically?"*. Do not try to make Loki do the second job.
+
+#### I.6 Comparison-harness limitation
+
+`EmailReplaySyncer::sync()` — the email side of `tn:parity-check` — calls `IncomingMailService::route()` **directly** and never calls `logIncomingEmail()` (only `logEvent('tn-sync', 'email-replay', …)`). So a `tn:parity-check` run produces **no** `source=incoming_mail` entries, and the Loki comparison cannot be exercised through the parity tool.
+
+Adding `logIncomingEmail()` to `EmailReplaySyncer` would fix that, and the syncer is test-harness-only code rather than the production email path — but it exists to drive the email path and emit its side of the comparison, so under the "don't modify the email path or its Loki logs" constraint it is **treated as in-scope for the freeze and left alone**.
+
+**Consequence, stated plainly: Loki parity is verifiable only against real production email traffic, not from `tn:parity-check`.** The API side can still be developed and unit-tested in isolation; the side-by-side check has to wait for both paths running live on the same window. Factor that into rollout sequencing — Loki parity cannot be a pre-merge gate.
+
+#### I.7 Ordering note
+
+`logEvent`'s existing `tn-sync` events (ratings, user-changes, user-merge, user-stub-create) are a *different* concern from post-routing parity and should stay on `batch_event.log` as they are. Only the per-post routing outcome moves to the `incoming_mail`-shaped stream. `user-stub-create` is the ambiguous one: it has no email-path analogue (the email path *drops* an unknown user, case 2, where the API path creates a stub and continues), so it stays a `batch_event` diagnostic, but the divergence must be noted in the comparison so an email-side `Dropped/"Post from unknown user"` with an API-side `Approved` is not read as a regression.
 
 ### J. Dry-run / fixture-test parity
 - Every DB-write call in new services must respect `dryRun`.
@@ -281,10 +445,12 @@ Section Q's crosspost/repost dedup (`ParityComparer::dedupeApiCrosspostsAndRepos
 
 ## Open items still to resolve
 
-- ~~**`subtype` for `result=reposted` (section I).**~~ **Closed 2026-08-12 by deletion** — there is no `reposted` result any more (section R). Its replacement, `result='crosspost'`, needs a `subtype` decision of its own when the section I work is unstashed: it has no email-path analogue either, but unlike `reposted` it writes nothing, so `Dropped` + a `crosspost` routing_reason is an honest mapping and is the recommendation. Note the volume involved is now much larger than the old heuristic produced — one discarded copy per group per post, not one per genuine crosspost — so whatever subtype it gets will dominate the API path's routed stream.
-- **Section I's implementation is stashed, not in the working tree** — `PostRoutingLogger`, `LokiService::logIngestedPost()` and the `PostSyncer` routing emissions are described as done but do not exist on disk. Reconcile before trusting section I.
-  - Everything else in section I is ✅ implemented — `source=tn_api` was chosen for decision 1 (see I.5 and the constant docblock on `LokiService::SOURCE_TN_API`).
-  - Two earlier candidate decisions are **closed as ruled out** by the email-path freeze, with their consequences recorded in I.5a and I.6: adding `tn_post_id` to the email-side entry (join instead via the FD msgid → `messages.tnpostid`, which only works for outcomes that created a message — everything else is aggregate-only), and having `EmailReplaySyncer` emit `logIncomingEmail()` (so Loki parity is checkable only against live production traffic, never from `tn:parity-check`).
+- ~~**`subtype` for `result=reposted` (section I).**~~ **Closed 2026-08-12 by deletion** — there is no `reposted` result any more (section R). A repost is a new source post that creates its own message, so it gets an ordinary `Approved`/`Pending` entry like any other post (`test_repost_emits_a_normal_routing_entry_like_any_other_source_post`).
+- ~~**Section I's implementation is stashed, not in the working tree.**~~ **Reconciled 2026-08-12** — the stash was popped, its two conflicts in `GroupPostIngestionService` resolved in favour of the new source-vs-copy model (the orphaned `handleRepostCandidate()` wrapper, whose callees `d5f0b4983` had deleted, was removed), and the repost-bump Loki entries replaced by the crosspost entry below. `LokiService::logIngestedPost()` and the `PostSyncer` routing emissions are now on disk and covered by tests. The `PostRoutingLogger` class that draft introduced has since been deleted in favour of mirroring the email path's architecture directly — see the table at the top of section I.
+- ~~**Whether `Dropped`/`crosspost` should stay in the routed stream given its volume.**~~ **Closed 2026-08-12: it stays.** Decided on the governing principle that **being 1:1 with the email path's Loki output is what matters**, ahead of any other consideration. The email path emits exactly one `type=routed` entry per item it handles, with no exceptions and no volume-based suppression, so the API path does the same — one entry per post, always. The alternative (crossposts on `batch_event` only) was rejected precisely because it would break that invariant: posts the syncer handled would be absent from the routed stream, so its totals would no longer reconcile against the feed and a genuinely missing post would be indistinguishable from a deliberately suppressed one.
+  - Accepted consequence: `Dropped` will dominate a naive `count by (subtype)` panel, since TN emits one discarded copy per group per post. Filter on `routing_reason != "crosspost"` for outcome-mix comparisons. That is a dashboard-query concern, not a reason to log less.
+  - **This invariant is now enforced structurally, not merely asserted**: emission is a single statement in `PostSyncer::processPost()` after `ingest()` returns, so a post cannot produce two entries — if `ingest()` throws, nothing was emitted and the catch emits once instead. `CapturesRoutedLokiEntries::onlyRoutedEntry()` additionally asserts exactly one entry in every test that reads the stream.
+- Two earlier candidate decisions are **closed as ruled out** by the email-path freeze, with their consequences recorded in I.5a and I.6: adding `tn_post_id` to the email-side entry (join instead via the FD msgid → `messages.tnpostid`, which only works for outcomes that created a message — everything else is aggregate-only), and having `EmailReplaySyncer` emit `logIncomingEmail()` (so Loki parity is checkable only against live production traffic, never from `tn:parity-check`).
 - See section P: the ModTools-side gate that reads `messages_groups.mod_messaging_allowed` before allowing a moderator to message a poster directly. Deliberately deferred — there's no existing contact-poster feature to gate, so this needs a concrete feature design before implementation, not just a wiring task.
 
 ## Resolved decisions

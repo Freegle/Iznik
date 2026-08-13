@@ -5,6 +5,7 @@ namespace Tests\Unit\Services\TrashNothing;
 use App\Models\Group;
 use App\Services\ItemService;
 use App\Services\LokiService;
+use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use Tests\TestCase;
@@ -19,6 +20,20 @@ use Tests\TestCase;
  */
 class PostSyncerTest extends TestCase
 {
+    use CapturesRoutedLokiEntries;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->enableLokiCapture();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->tearDownLokiCapture();
+        parent::tearDown();
+    }
+
     private function makeSyncer(): PostSyncer
     {
         return new PostSyncer(
@@ -53,6 +68,8 @@ class PostSyncerTest extends TestCase
         $method = new \ReflectionMethod(PostSyncer::class, 'processPost');
         $method->invoke($syncer, $post, null);
     }
+
+
 
     private function makePost(array $overrides = []): array
     {
@@ -109,11 +126,24 @@ class PostSyncerTest extends TestCase
 
         $spy->expects($this->never())->method('ingest');
 
+        $postId = 'tn-nocoords-' . uniqid('', true);
         $this->callProcessPost($syncer, $this->makePost([
+            'post_id'   => $postId,
             'group_id'  => (string) $group->id,
             'latitude'  => null,
             'longitude' => null,
         ]));
+
+        // Skipping before ingestion used to leave no trace outside the trace
+        // logs, which are not shipped to Loki — so a post dropped here was
+        // invisible in the comparison against the email path.
+        $entry = $this->onlyRoutedEntry();
+        $this->assertSame(RoutingResult::DROPPED->value, $entry['labels']['subtype']);
+        $this->assertSame('no-coordinates', $entry['message']['routing_reason']);
+        $this->assertSame($postId, $entry['message']['tn_post_id']);
+        // No group was resolved, so no group context — matching the shape of the
+        // email path's own unknown-group drop.
+        $this->assertArrayNotHasKey('group_id', $entry['message']);
     }
 
     public function test_skips_post_whose_coordinates_are_outside_any_group_bounds(): void
@@ -128,11 +158,22 @@ class PostSyncerTest extends TestCase
 
         $spy->expects($this->never())->method('ingest');
 
+        $postId = 'tn-oob-' . uniqid('', true);
         $this->callProcessPost($syncer, $this->makePost([
+            'post_id'   => $postId,
             'group_id'  => (string) $group->id,
             'latitude'  => 35.0,
             'longitude' => -40.0,
         ]));
+
+        // The single most important entry in this stream: a post the API path
+        // could not place in any group is exactly the coverage regression
+        // tn:parity-check's Layer 1 exists to catch, and it was previously
+        // invisible in Loki.
+        $entry = $this->onlyRoutedEntry();
+        $this->assertSame(RoutingResult::DROPPED->value, $entry['labels']['subtype']);
+        $this->assertSame('not-in-any-group-bounds', $entry['message']['routing_reason']);
+        $this->assertSame($postId, $entry['message']['tn_post_id']);
     }
 
     public function test_mod_messaging_disallowed_when_freegle_group_ids_absent(): void

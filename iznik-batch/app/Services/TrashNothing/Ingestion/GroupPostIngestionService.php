@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\ItemService;
 use App\Services\LokiService;
+use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\SpatialQueryService;
 use App\Services\TusService;
 use Illuminate\Support\Facades\DB;
@@ -29,11 +30,98 @@ use Illuminate\Support\Facades\Log;
  */
 class GroupPostIngestionService
 {
+    /**
+     * routing_reason values that MUST stay byte-identical to the email path's,
+     * so a comparison can group on them. Sourced from
+     * IncomingMailService::handleGroupPost()'s dropped() calls.
+     */
+    public const REASON_UNKNOWN_USER = 'Post from unknown user';
+
+    /**
+     * API-only routing_reason values — no email-path branch produces these.
+     * Stable strings: dashboards and the parity comparison group on them.
+     */
+    public const REASON_NO_USER_ID = 'no-user-id';
+
+    public const REASON_DUPLICATE = 'duplicate';
+
+    /**
+     * A TN per-group COPY of a source post, discarded so Freegle's own rippling
+     * does the cross-posting instead.
+     *
+     * An intended divergence rather than a parity gap: the email path receives
+     * one email per TN group and ingests each as its own message, so an item
+     * crossposted to N TN groups yields N email-path messages but ONE API-path
+     * message. Expect email-side Approved/Pending against an API-side
+     * Dropped/crosspost for the same item — that is the feature working.
+     */
+    public const REASON_CROSSPOST = 'crosspost';
+
+    public const REASON_MESSAGE_CREATE_FAILED = 'message-create-failed';
+
+    /**
+     * Context from the last ingest() call, for the caller to attach to its Loki
+     * entry — mirroring IncomingMailService::$lastRoutingContext exactly, right
+     * down to which branches populate which keys.
+     *
+     * This service deliberately does NOT log to Loki itself, because the email
+     * path's router doesn't either: IncomingMailService accumulates context and
+     * its callers (IncomingMailController / IncomingMailCommand) emit exactly
+     * one entry after routing returns. PostSyncer is this path's equivalent
+     * caller. Keeping emission at the caller is what guarantees one entry per
+     * item on both paths.
+     */
+    private array $lastRoutingContext = [];
+
     public function __construct(
         private readonly bool $dryRun,
         private readonly LokiService $loki,
         private readonly ItemService $itemService,
     ) {}
+
+    /**
+     * Context from the last routing decision.
+     *
+     * Mirrors IncomingMailService::getLastRoutingContext().
+     */
+    public function getLastRoutingContext(): array
+    {
+        return $this->lastRoutingContext;
+    }
+
+    /**
+     * Set the routing reason and return the ingest result.
+     *
+     * Mirrors IncomingMailService::dropped(), including the fact that it
+     * REPLACES the accumulated context rather than merging into it — which is
+     * why the email path's early drops carry a routing_reason and nothing else.
+     * The extra $result parameter is the one difference: the email path always
+     * returns RoutingResult::DROPPED here, whereas this path distinguishes
+     * 'crosspost'/'duplicate'/'skipped'/'dropped' for its caller (all of which
+     * still map to a Dropped subtype — see outcomeFor()).
+     */
+    private function dropped(string $reason, array $extraContext = [], string $result = 'dropped'): string
+    {
+        $this->lastRoutingContext = array_merge(['routing_reason' => $reason], $extraContext);
+
+        return $result;
+    }
+
+    /**
+     * Map an ingest() result to the email path's RoutingResult vocabulary, so
+     * both paths' Loki entries use the same subtype values.
+     *
+     * 'crosspost'/'duplicate'/'skipped' all collapse to Dropped: none of them
+     * creates a message, and the routing_reason distinguishes them.
+     */
+    public static function outcomeFor(string $result): RoutingResult
+    {
+        return match ($result) {
+            'approved' => RoutingResult::APPROVED,
+            'pending' => RoutingResult::PENDING,
+            default => RoutingResult::DROPPED,
+        };
+    }
 
     /**
      * Ingest a single TN API post for the given Freegle group.
@@ -56,6 +144,10 @@ class GroupPostIngestionService
         $photos   = $this->getField($post, 'photos', 'getPhotos') ?? [];
 
         $subject = strtoupper($tnType) . ': ' . $title;
+
+        // Mirrors IncomingMailService::route(), which clears the context at
+        // entry so each item's context is only what its own winning branch set.
+        $this->lastRoutingContext = [];
 
         // Crosspost de-duplication — API-path-only behaviour, deliberately NOT
         // mirroring the email path (which de-duplicates nothing).
@@ -84,7 +176,11 @@ class GroupPostIngestionService
                 'tn_group_id' => $tnGroupId,
                 'group_id'    => $group->id,
             ]);
-            return 'crosspost';
+            // Deliberate divergence from the email path, which ingests one
+            // message per TN group copy — see REASON_CROSSPOST. Recorded so the
+            // resulting volume difference is explained in the comparison rather
+            // than looking like posts going missing.
+            return $this->dropped(self::REASON_CROSSPOST, result: 'crosspost');
         }
 
         // Idempotency: skip if this post was already ingested for this group.
@@ -92,7 +188,10 @@ class GroupPostIngestionService
         if ($isDuplicate) {
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=duplicate tnpostid=' . $postId . ' groupid=' . $group->id . ($this->dryRun ? ' would_be_duplicate=true' : ''));
             $this->loki->logEvent('tn-sync', 'post-skip-duplicate', ['tn_post_id' => $postId, 'group_id' => $group->id]);
-            return 'duplicate';
+            // No email-path analogue: the email path only discovers a duplicate
+            // when the messages.messageid unique index rejects the insert, which
+            // it reports as case 10 (a null return, no Loki entry of its own).
+            return $this->dropped(self::REASON_DUPLICATE, result: 'duplicate');
         }
 
         // Resolve Freegle user from TN fd_user_id, creating a stub account if needed.
@@ -101,7 +200,14 @@ class GroupPostIngestionService
             $reason = $fdUserId ? 'unknown-user' : 'no-user-id';
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=' . $reason . ' tnpostid=' . $postId . ' fd_user_id=' . $fdUserId);
             $this->loki->logEvent('tn-sync', 'post-skip-unknown-user', ['tn_post_id' => $postId, 'fd_user_id' => $fdUserId]);
-            return 'skipped';
+            // Mirrors email-path case 2, which sets routing_reason and NOTHING
+            // else — no group_id/group_name, even though the email path has
+            // resolved the group by this point. dropped() REPLACES the context
+            // rather than merging, which is what reproduces that omission here.
+            return $this->dropped(
+                $fdUserId ? self::REASON_UNKNOWN_USER : self::REASON_NO_USER_ID,
+                result: 'skipped',
+            );
         }
 
         // Update user's last access.
@@ -126,6 +232,16 @@ class GroupPostIngestionService
         if ($membership === null) {
             Log::info('TN-SYNC-TRACE [POST-META] reason=non-member tnpostid=' . $postId . ' user_id=' . $user->id . ' group_id=' . $group->id);
         }
+
+        // Set context early - we know the group and user at this point.
+        // Positioned exactly where IncomingMailService::handleGroupPost() sets
+        // its equivalent, which is what makes the earlier drops above carry a
+        // routing_reason and nothing else on BOTH paths.
+        $this->lastRoutingContext = [
+            'group_id'   => $group->id,
+            'group_name' => $group->nameshort ?? $group->namefull ?? '',
+            'user_id'    => $user->id,
+        ];
 
         // Determine posting status, applying the same override hierarchy as the email path.
         $postingStatus = $membership->ourPostingStatus ?? 'DEFAULT';
@@ -162,6 +278,10 @@ class GroupPostIngestionService
 
         if ($routingResult === 'dropped') {
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=prohibited tnpostid=' . $postId . ' user_id=' . $user->id);
+            // Mirrors email-path case 6, which returns RoutingResult::DROPPED
+            // directly rather than via dropped(), so it keeps the group/user
+            // context set above and carries NO routing_reason. Returning without
+            // calling dropped() reproduces that exactly.
             return 'dropped';
         }
 
@@ -169,8 +289,26 @@ class GroupPostIngestionService
         $messageId = $this->createMessage($user, $group, $subject, $content, $lat, $lng, $date, $postId, $photos, $modMessagingAllowed);
 
         if ($messageId === null) {
+            // The email path's equivalent (case 10: a duplicate messageid, or an
+            // exception after the row was created) still reports its
+            // pre-computed Approved/Pending outcome and merely omits message_id.
+            // This path genuinely returns 'skipped' instead, so reporting
+            // Approved/Pending here would misstate what happened. The divergence
+            // is real and expected — logged as Dropped with an explicit reason
+            // so a comparison can account for it rather than trip over it.
+            // dropped() would REPLACE the group/user context set above, which
+            // the email path keeps in this branch, so set the reason directly.
+            $this->lastRoutingContext['routing_reason'] = self::REASON_MESSAGE_CREATE_FAILED;
+
             return 'skipped';
         }
+
+        // Mirrors IncomingMailService::handleGroupPost(), which appends the
+        // created message id to the context it set earlier. On both paths this
+        // key COLLIDES with the synthesized RFC822 message_id the caller passes
+        // to Loki, and wins — see LokiService::buildRoutedMessage(). That is
+        // what lets the email side be joined back to messages.tnpostid.
+        $this->lastRoutingContext['message_id'] = $messageId;
 
         // Record in messages_postings (matches email path #12).
         Log::info('TN-SYNC-TRACE [WRITE] table=messages_postings op=insert set=msgid=' . $messageId . ',groupid=' . $group->id . ',repost=0,autorepost=0');
@@ -201,6 +339,11 @@ class GroupPostIngestionService
                 $this->notifyGroupMods($group->id);
             }
             $this->loki->logEvent('tn-sync', 'post-create', ['tn_post_id' => $postId, 'msg_id' => $messageId, 'collection' => 'Pending', 'reason' => $pendingReason]);
+            // $pendingReason is deliberately NOT recorded as routing_reason. The
+            // email path computes the same value and keeps it out of its Loki
+            // context too (case 9 — it reaches laravel.log only), so exposing it
+            // here would show up as a difference between the paths where none
+            // exists. It remains available above on the batch_event stream.
         }
 
         return $routingResult;

@@ -13,6 +13,24 @@ use Illuminate\Support\Facades\Log;
  */
 class LokiService
 {
+    /**
+     * Source label for routing entries produced by the incoming email path.
+     */
+    public const SOURCE_INCOMING_MAIL = 'incoming_mail';
+
+    /**
+     * Source label for routing entries produced by the TN API ingestion path.
+     *
+     * Deliberately distinct from SOURCE_INCOMING_MAIL while every other label
+     * and every message field stays identical: a shared label would inject TN
+     * API posts into ModTools' member-facing incoming-EMAIL dashboard (which
+     * selects on source="incoming_mail"), and would make the two paths
+     * indistinguishable in a query. Differing on exactly one label is what
+     * makes a side-by-side comparison possible. See plans/
+     * tn-api-post-ingestion.md section I.
+     */
+    public const SOURCE_TN_API = 'tn_api';
+
     private bool $enabled = false;
 
     private string $logPath;
@@ -140,6 +158,66 @@ class LokiService
             return;
         }
 
+        $this->writeLog('incoming_mail.log', $this->buildRoutedEntry(
+            self::SOURCE_INCOMING_MAIL,
+            $routingOutcome,
+            $this->buildRoutedMessage($envelopeFrom, $envelopeTo, $fromAddress, $subject, $messageId, $routingOutcome, $context),
+        ));
+    }
+
+    /**
+     * Log a routing event for a post ingested via the TN API.
+     *
+     * Emits the same schema, into the same file, with the same label set and
+     * the same subtype vocabulary as logIncomingEmail() — differing only on
+     * the source label — so a single Loki query can compare the email and API
+     * ingestion paths side by side.
+     *
+     * The email path is frozen (see plans/tn-api-post-ingestion.md), so the
+     * shared construction in buildRoutedMessage()/buildRoutedEntry() is what
+     * structurally guarantees the two stay identical: the schema cannot drift
+     * on one side without drifting on both.
+     */
+    public function logIngestedPost(
+        string $envelopeFrom,
+        string $envelopeTo,
+        ?string $fromAddress,
+        string $subject,
+        string $messageId,
+        string $routingOutcome,
+        array $context = [],
+    ): void {
+        if (! $this->enabled) {
+            return;
+        }
+
+        $this->writeLog('incoming_mail.log', $this->buildRoutedEntry(
+            self::SOURCE_TN_API,
+            $routingOutcome,
+            $this->buildRoutedMessage($envelopeFrom, $envelopeTo, $fromAddress, $subject, $messageId, $routingOutcome, $context),
+        ));
+    }
+
+    /**
+     * Build the message body of a type=routed entry. Shared by every ingestion
+     * path so their Loki output cannot diverge in shape — see logIngestedPost().
+     *
+     * NB: $context is merged LAST and therefore overwrites the fixed fields on
+     * a key collision. This matters for 'message_id': callers that created a
+     * message pass the numeric message id in the context, which replaces the
+     * RFC822/synthesized message id passed as $messageId. That behaviour is
+     * relied upon to correlate the two paths (the numeric id resolves to
+     * messages.tnpostid), so it must be preserved, not "fixed".
+     */
+    private function buildRoutedMessage(
+        string $envelopeFrom,
+        string $envelopeTo,
+        ?string $fromAddress,
+        string $subject,
+        string $messageId,
+        string $routingOutcome,
+        array $context = [],
+    ): array {
         $message = [
             'envelope_from' => $envelopeFrom,
             'envelope_to' => $envelopeTo,
@@ -158,18 +236,24 @@ class LokiService
             $message = array_merge($message, $context);
         }
 
-        $entry = [
+        return $message;
+    }
+
+    /**
+     * Wrap a routed message body in its labels/timestamp envelope.
+     */
+    private function buildRoutedEntry(string $source, string $routingOutcome, array $message): array
+    {
+        return [
             'timestamp' => now()->toIso8601String(),
             'labels' => [
                 'app' => 'freegle',
-                'source' => 'incoming_mail',
+                'source' => $source,
                 'type' => 'routed',
                 'subtype' => $routingOutcome,
             ],
             'message' => $message,
         ];
-
-        $this->writeLog('incoming_mail.log', $entry);
     }
 
     /**

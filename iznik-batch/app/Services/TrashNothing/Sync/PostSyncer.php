@@ -6,6 +6,7 @@ use App\Models\Group;
 use App\Models\Location;
 use App\Services\ItemService;
 use App\Services\LokiService;
+use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Facades\Log;
 use OpenAPI\Client\Api\PostsApi;
@@ -14,10 +15,20 @@ use OpenAPI\Client\Configuration;
 
 class PostSyncer
 {
+    // ISO-8601 UTC, the format TN's API returns dates in and the one every
+    // date this class logs or compares is normalized to.
+    private const ISO_UTC = 'Y-m-d\TH:i:s\Z';
+
     // /posts/all enforces per_page <= 50.
     private const PAGE_SIZE = 50;
     // TN API rate limit is 2 requests/second; enforce a minimum 750ms gap.
     private const MIN_REQUEST_INTERVAL_US = 750_000;
+
+    // routing_reason values for the skips this class decides itself, before
+    // ingestion is reached. API-only — no email-path branch produces them.
+    private const REASON_NO_COORDINATES = 'no-coordinates';
+    private const REASON_NOT_IN_ANY_GROUP_BOUNDS = 'not-in-any-group-bounds';
+    private const REASON_INGESTION_EXCEPTION = 'ingestion-exception';
 
     private GroupPostIngestionService $ingestionService;
     private float $lastRequestTime = 0.0;
@@ -79,6 +90,17 @@ class PostSyncer
 
         Log::info('TN-SYNC-TRACE [POSTS-DONE] total=' . $count . ' max_date=' . ($maxDate ?? 'null'));
 
+        // Run-level volume, for comparison against the email path's own volume
+        // over the same window. Not a routing outcome, so it stays on the batch
+        // stream — the routed stream carries one entry per post and nothing else.
+        $this->loki->logBatchJob('tn:sync-posts', 'completed', [
+            'total'    => $count,
+            'max_date' => $maxDate,
+            'from'     => $from,
+            'to'       => $to,
+            'dry_run'  => $this->dryRun,
+        ]);
+
         return [$count, $maxDate];
     }
 
@@ -105,6 +127,18 @@ class PostSyncer
             Log::error('TN sync: posts API failed on page ' . $page, [
                 'status' => $e->getCode(),
                 'error'  => $e->getMessage(),
+            ]);
+            // Aborts the whole sync (see sync()'s `break 2`). Without this a
+            // failed run is indistinguishable in Loki from a window that simply
+            // had no posts — the difference between "nothing happened" and
+            // "ingestion is down". Not a per-post routing outcome, so it goes on
+            // the batch stream rather than the routed one.
+            $this->loki->logBatchJob('tn:sync-posts', 'failed', [
+                'page'   => $page,
+                'status' => $e->getCode(),
+                'error'  => $e->getMessage(),
+                'from'   => $from->format(self::ISO_UTC),
+                'to'     => $to->format(self::ISO_UTC),
             ]);
             return [null, false];
         }
@@ -135,7 +169,7 @@ class PostSyncer
 
     private function processPost(mixed $post, ?string $maxDate): ?string
     {
-        $date      = is_array($post) ? ($post['date'] ?? null) : $post->getDate()?->format('Y-m-d\TH:i:s\Z');
+        $date      = is_array($post) ? ($post['date'] ?? null) : $post->getDate()?->format(self::ISO_UTC);
         $postId    = is_array($post) ? ($post['post_id'] ?? '') : $post->getPostId();
         $type      = is_array($post) ? ($post['type'] ?? '') : $post->getType();
         $groupId   = is_array($post) ? ($post['group_id'] ?? '') : $post->getGroupId();
@@ -149,6 +183,10 @@ class PostSyncer
 
         Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $type . ' group_id=' . $groupId . ' date=' . $date . ' title=' . substr((string) $title, 0, 60));
 
+        // The subject the ingestion service would have synthesized, so a skip
+        // entry carries the same subject text as a successful one.
+        $subject = strtoupper((string) $type) . ': ' . $title;
+
         // Resolve the Freegle group purely from the post's own lat/lng — the group TN thinks
         // a post belongs to (group_id) is just where the member happened to post it, which
         // drifts out of step with Freegle's group boundaries, so it is never used to place a
@@ -157,12 +195,28 @@ class PostSyncer
         // in iznik-server-go/location/location.go).
         if ($lat === null || $lng === null) {
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=no-coordinates group_id=' . $groupId . ' post_id=' . $postId);
+            // No group resolved, so no group context — which matches the shape
+            // of the email path's own unknown-group drop (case 1: routing_reason
+            // and nothing else).
+            $this->logRoutedPost($postId, $subject, null, RoutingResult::DROPPED, [
+                'routing_reason' => self::REASON_NO_COORDINATES,
+            ]);
+
             return $maxDate;
         }
 
         $group = $this->findGroupByLocation((float) $lat, (float) $lng);
         if ($group === null) {
             Log::info('TN-SYNC-TRACE [POST-SKIP] reason=not-in-any-group-bounds lat=' . $lat . ' lng=' . $lng . ' post_id=' . $postId);
+            // The closest analogue to the email path's "Post to unknown group"
+            // (case 1), and the single most important entry in this whole
+            // stream: this is the coverage-regression case Layer 1 of
+            // tn:parity-check exists to catch, and it was previously invisible
+            // outside the trace logs.
+            $this->logRoutedPost($postId, $subject, null, RoutingResult::DROPPED, [
+                'routing_reason' => self::REASON_NOT_IN_ANY_GROUP_BOUNDS,
+            ]);
+
             return $maxDate;
         }
 
@@ -187,14 +241,89 @@ class PostSyncer
         try {
             $result = $this->ingestionService->ingest($post, $group, $moderatorMessagingAllowed);
             Log::info('TN-SYNC-TRACE [POST-RESULT] post_id=' . $postId . ' result=' . $result);
+
+            // THE emission point for an ingested post, mirroring
+            // IncomingMailController::receive(): the router returns an outcome
+            // plus its accumulated context, and the caller turns that into
+            // exactly one Loki entry. Because this is a single statement after
+            // ingest() returns, a post can never produce two entries — if
+            // ingest() throws, nothing was emitted and the catch below emits
+            // once instead.
+            $this->logRoutedPost(
+                $postId,
+                $subject,
+                $group,
+                GroupPostIngestionService::outcomeFor($result),
+                $this->ingestionService->getLastRoutingContext(),
+            );
         } catch (\Throwable $e) {
             Log::error('TN sync: post ingestion failed', [
                 'post_id' => $postId,
                 'error'   => $e->getMessage(),
             ]);
+            // The one place this path deliberately does NOT mirror the email
+            // path: IncomingMailController's own catch emits no Loki entry, so a
+            // post lost to an exception leaves no trace in the routed stream at
+            // all. Reproducing that would mean silently losing posts here too,
+            // which is the opposite of what this stream is for. RoutingResult::
+            // FAILURE is the email path's own value for "routing failed", so the
+            // vocabulary still lines up even though the email path never emits it.
+            $this->logRoutedPost($postId, $subject, $group, RoutingResult::FAILURE, [
+                'routing_reason' => self::REASON_INGESTION_EXCEPTION,
+            ]);
         }
 
         return $maxDate;
+    }
+
+    /**
+     * Emit one type=routed Loki entry for one TN post.
+     *
+     * The API-path counterpart of the single
+     * `app(LokiService::class)->logIncomingEmail(...)` call in
+     * IncomingMailController::receive() / IncomingMailCommand — same schema,
+     * same labels, same subtype vocabulary, differing only on the source label.
+     * Factored into a helper purely because this class has four call sites where
+     * the controller has one; the emission still lives in the caller, never in
+     * the ingestion service, exactly as on the email path.
+     *
+     * @param  Group|null  $group  Null when no group was resolved (pre-ingest skips)
+     * @param  array  $context  The ingestion service's accumulated routing context
+     */
+    private function logRoutedPost(
+        string $postId,
+        string $subject,
+        ?Group $group,
+        RoutingResult $outcome,
+        array $context,
+    ): void {
+        // API-only, and the one field with no email-path counterpart: the TN
+        // post id lives in the X-Trash-Nothing-Post-Id header, which the email
+        // path never logs, and adding it there would mean modifying a frozen
+        // path. Correlation therefore runs the other way — email-side message_id
+        // -> messages.tnpostid. See plans/tn-api-post-ingestion.md section I.5a.
+        $context['tn_post_id'] = $postId;
+
+        if ($this->dryRun) {
+            $context['dry_run'] = true;
+        }
+
+        $this->loki->logIngestedPost(
+            // No SMTP envelope on this path; mirrors the null/synthesized values
+            // createMessage() writes to messages.envelopefrom/fromaddr.
+            envelopeFrom: '',
+            envelopeTo: $group !== null
+                ? $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org')
+                : '',
+            fromAddress: null,
+            subject: $subject,
+            // Matches messages.messageid. Overwritten by the context's own
+            // message_id (the FD msgid) when ingestion created a message, which
+            // is exactly what the email path's context does.
+            messageId: $group !== null ? $postId . '@tn.trashnothing.com-' . $group->id : '',
+            routingOutcome: $outcome->value,
+            context: $context,
+        );
     }
 
     /**
@@ -219,7 +348,7 @@ class PostSyncer
             $post = $this->buildApiClient()->getPost($postId);
             return [
                 'status'  => 'found',
-                'date'    => $post->getDate()?->format('Y-m-d\TH:i:s\Z'),
+                'date'    => $post->getDate()?->format(self::ISO_UTC),
                 'outcome' => $post->getOutcome(),
             ];
         } catch (ApiException $e) {

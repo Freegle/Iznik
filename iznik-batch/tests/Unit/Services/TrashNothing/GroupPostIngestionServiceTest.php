@@ -6,6 +6,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\ItemService;
 use App\Services\LokiService;
+use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -534,5 +535,229 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame('approved', $service->ingest($post, $group));
         $this->assertSame('duplicate', $service->ingest($post, $group));
         $this->assertSame(1, Message::where('tnpostid', $postId)->count());
+    }
+
+    // -------------------------------------------------------------------------
+    // Routing context — the input to the caller's single Loki entry.
+    //
+    // This service does not log to Loki itself, exactly as IncomingMailService
+    // doesn't: it accumulates context that PostSyncer turns into one entry. So
+    // these tests assert getLastRoutingContext(), the same seam the email path
+    // exposes. End-to-end payload/label shape is covered by TnApiLokiParityTest.
+    // See plans/tn-api-post-ingestion.md section I.
+    // -------------------------------------------------------------------------
+
+    public function test_approved_ingest_sets_full_routing_context(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $postId = 'tn-ctx-approved-'.uniqid();
+        $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('approved', $service->ingest($post, $group));
+        $this->assertSame(RoutingResult::APPROVED, GroupPostIngestionService::outcomeFor('approved'));
+
+        $context = $service->getLastRoutingContext();
+        $this->assertSame($group->id, $context['group_id']);
+        $this->assertSame($group->nameshort, $context['group_name']);
+        $this->assertSame($user->id, $context['user_id']);
+        $this->assertArrayNotHasKey('routing_reason', $context);
+        // The join key back to messages.tnpostid for the email-side comparison.
+        $this->assertSame(Message::where('tnpostid', $postId)->first()->id, $context['message_id']);
+    }
+
+    public function test_pending_context_omits_the_pending_reason(): void
+    {
+        // The email path computes the same reason and keeps it out of its Loki
+        // context (case 9), so including it here would read as a difference
+        // between the paths where none exists.
+        $user = $this->createTestUser(['lastlocation' => null]);  // unmapped -> pending
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $post = $this->makePost(['post_id' => 'tn-ctx-pending-'.uniqid(), 'user_id' => $user->id]);
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('pending', $service->ingest($post, $group));
+        $this->assertSame(RoutingResult::PENDING, GroupPostIngestionService::outcomeFor('pending'));
+        $this->assertArrayNotHasKey('routing_reason', $service->getLastRoutingContext());
+    }
+
+    public function test_duplicate_sets_a_duplicate_reason_and_nothing_else(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $postId = 'tn-ctx-dup-'.uniqid();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: Already ingested',
+            'textbody' => 'body',
+            'source' => 'TN-API',
+            'tnpostid' => $postId,
+            'date' => now(),
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now(),
+        ]);
+
+        $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+        $service = $this->makeService();
+
+        $this->assertSame('duplicate', $service->ingest($post, $group));
+        $this->assertSame(RoutingResult::DROPPED, GroupPostIngestionService::outcomeFor('duplicate'));
+        // dropped() REPLACES the context, so an early drop carries the reason
+        // and nothing else — exactly as the email path's early drops do.
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_DUPLICATE],
+            $service->getLastRoutingContext(),
+        );
+    }
+
+    public function test_unknown_user_sets_the_email_paths_own_reason_wording(): void
+    {
+        // Mirrors email-path case 2, including its omission of group context.
+        $group = $this->createTestGroup();
+        $post = $this->makePost(['post_id' => 'tn-ctx-unknown-'.uniqid(), 'user_id' => 999999999]);
+        $service = $this->makeService(dryRun: true);
+
+        $this->assertSame('skipped', $service->ingest($post, $group));
+        $this->assertSame(
+            ['routing_reason' => 'Post from unknown user'],
+            $service->getLastRoutingContext(),
+        );
+    }
+
+    public function test_prohibited_keeps_group_context_but_sets_no_reason(): void
+    {
+        // Mirrors email-path case 6, which returns DROPPED without going through
+        // dropped() and so carries group/user context and no routing_reason.
+        $locationId = $this->createTestLocation();
+        $user = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'PROHIBITED']);
+
+        $post = $this->makePost(['post_id' => 'tn-ctx-prohibited-'.uniqid(), 'user_id' => $user->id]);
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('dropped', $service->ingest($post, $group));
+
+        $context = $service->getLastRoutingContext();
+        $this->assertArrayNotHasKey('routing_reason', $context);
+        $this->assertSame($group->id, $context['group_id']);
+        $this->assertSame($user->id, $context['user_id']);
+        $this->assertArrayNotHasKey('message_id', $context);
+    }
+
+    public function test_crosspost_sets_a_crosspost_reason_explaining_the_divergence(): void
+    {
+        // A TN per-group COPY is discarded (Freegle ripples instead), whereas
+        // the email path ingests one message per group copy. That volume
+        // difference is intended, so it must be explained in the stream rather
+        // than looking like posts going missing.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $post = $this->makePost([
+            'post_id' => 'tn-ctx-crosspost-'.uniqid(),
+            'user_id' => $user->id,
+            'group_id' => '8444',  // TN's per-group copy.
+        ]);
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('crosspost', $service->ingest($post, $group));
+        $this->assertSame(RoutingResult::DROPPED, GroupPostIngestionService::outcomeFor('crosspost'));
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_CROSSPOST],
+            $service->getLastRoutingContext(),
+        );
+    }
+
+    public function test_context_is_reset_between_posts(): void
+    {
+        // Mirrors IncomingMailService::route() clearing the context at entry:
+        // without it, a drop would inherit the previous post's group/user.
+        $locationId = $this->createTestLocation();
+        $user = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $service = $this->makeService(dryRun: false);
+
+        $service->ingest($this->makePost(['post_id' => 'tn-ctx-first-'.uniqid(), 'user_id' => $user->id]), $group);
+        $this->assertArrayHasKey('message_id', $service->getLastRoutingContext());
+
+        // A crosspost drops before any group/user context is set.
+        $service->ingest($this->makePost([
+            'post_id' => 'tn-ctx-second-'.uniqid(),
+            'user_id' => $user->id,
+            'group_id' => '8444',
+        ]), $group);
+
+        $this->assertSame(
+            ['routing_reason' => GroupPostIngestionService::REASON_CROSSPOST],
+            $service->getLastRoutingContext(),
+            'Context from the previous post must not leak into this one',
+        );
+    }
+
+    public function test_repost_routes_like_any_other_source_post(): void
+    {
+        // Reposts are no longer de-duplicated (they match the email path: a
+        // repost is a new source post and creates its own message), so there is
+        // no special repost outcome — it routes, and is logged, exactly like a
+        // first-time post. This is what closed the old "what subtype should
+        // `reposted` use?" question.
+        $locationId = $this->createTestLocation();
+        $user = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $original = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: Electric sander',
+            'textbody' => 'body',
+            'source' => 'TN-API',
+            'tnpostid' => 'tn-ctx-orig-'.uniqid(),
+            'date' => now()->subDays(2),
+            'lat' => 55.9533,
+            'lng' => -3.1883,
+        ]);
+        MessageGroup::create([
+            'msgid' => $original->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(2),
+        ]);
+
+        $postId = 'tn-ctx-repost-'.uniqid();
+        $post = $this->makePost([
+            'post_id' => $postId,
+            'user_id' => $user->id,
+            'title' => 'Electric sander',
+            'type' => 'offer',
+            'latitude' => 55.9533,
+            'longitude' => -3.1883,
+            'date' => now()->toIso8601String(),
+        ]);
+        $service = $this->makeService(dryRun: false);
+
+        $this->assertSame('approved', $service->ingest($post, $group));
+
+        $context = $service->getLastRoutingContext();
+        $this->assertArrayNotHasKey('routing_reason', $context);
+        // Its own new message, not the original.
+        $this->assertSame(Message::where('tnpostid', $postId)->first()->id, $context['message_id']);
+        $this->assertNotSame($original->id, $context['message_id']);
     }
 }
