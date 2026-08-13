@@ -484,6 +484,52 @@ func TestGetDashboardHappiness(t *testing.T) {
 	assert.Greater(t, len(happy), 0, "Should have at least one happiness entry")
 }
 
+// Happiness reads the nightly stats rollup (the rows stats:generate-daily writes at 02:30)
+// and tops up only the days the rollup has not reached yet. This proves both halves: a
+// rollup row for yesterday plus a raw outcome recorded today must add up.
+func TestGetDashboardHappinessFromStatsRollupPlusToday(t *testing.T) {
+	prefix := uniquePrefix("DashHappyRollup")
+	db := database.DBConn
+	groupID, _, token := createModDashboardFixtures(t, prefix)
+
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	db.Exec("INSERT INTO stats (date, end, groupid, type, count) VALUES (?, ?, ?, 'Happy', 4)", yesterday, yesterday, groupID)
+	db.Exec("INSERT INTO stats (date, end, groupid, type, count) VALUES (?, ?, ?, 'Fine', 2)", yesterday, yesterday, groupID)
+
+	// One more Happy recorded today, which the rollup cannot know about yet.
+	var msgID uint64
+	db.Raw("SELECT msgid FROM messages_groups WHERE groupid = ? LIMIT 1", groupID).Scan(&msgID)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, timestamp) VALUES (?, 'Taken', 'Happy', NOW())", msgID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM stats WHERE groupid = ?", groupID)
+		db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+	})
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=Happiness&group=%d&jwt=%s", groupID, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	comps := result["components"].(map[string]interface{})
+	rows, ok := comps["Happiness"].([]interface{})
+	assert.True(t, ok, "Happiness should be an array")
+
+	counts := map[string]float64{}
+	for _, r := range rows {
+		row := r.(map[string]interface{})
+		counts[row["happiness"].(string)] = row["count"].(float64)
+	}
+
+	assert.Equal(t, float64(5), counts["Happy"], "4 from the rollup plus 1 recorded today")
+	assert.Equal(t, float64(2), counts["Fine"], "rollup only")
+
+	// Highest count first.
+	first := rows[0].(map[string]interface{})
+	assert.Equal(t, "Happy", first["happiness"])
+}
+
 func TestGetDashboardPopularPostsWithGroup(t *testing.T) {
 	prefix := uniquePrefix("DashPP")
 	groupID, _, token := createModDashboardFixtures(t, prefix)
