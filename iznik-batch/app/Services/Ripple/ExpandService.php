@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -414,10 +415,11 @@ class ExpandService
             // times seconds apart returned 194, 179 and 189 rows: it churns while you
             // look at it, and 189 of those posts were still alive with none deleted.
             //
-            // So absence has to persist before it counts. A post that is genuinely gone
-            // stays gone and is removed a few minutes later; a post that blinks out of
-            // the index is left alone.
-            $msgids = $this->confirmAbsentBeyondGrace($absent, $onlyMsgid !== null);
+            // So rather than trust the index, ask the tables it is built from whether each
+            // of these posts is supposed to be in it. A post that no longer qualifies has
+            // really gone and is removed now; one that still qualifies has merely blinked
+            // out mid-rebuild and is left alone.
+            $msgids = $this->confirmGenuinelyGone($absent);
 
             if (empty($msgids)) {
                 return;
@@ -446,117 +448,40 @@ class ExpandService
     }
 
     /**
-     * How long a post must stay missing from messages_spatial before its reach row is
-     * removed.
+     * Of the reach rows whose post is missing from the spatial index, which posts have
+     * genuinely gone?
      *
-     * messages:update-spatial-index runs every five minutes and rewrites its rows as it
-     * goes, so fifteen minutes is three of those cycles - long enough that a post which
-     * is still absent has genuinely gone rather than being between rebuilds. The cost of
-     * waiting is that a post which really has been taken keeps rippling for a few more
-     * minutes, which is the same order as the expansion tick itself.
-     */
-    private const STALE_GRACE_MINUTES = 15;
-
-    /**
-     * Of the reach rows whose post is currently missing from the spatial index, which
-     * have been missing long enough to act on?
-     *
-     * The first-seen-missing times live in a file on the batch host rather than in the
-     * database. Only this container ever reads or writes them, they are worthless if
-     * lost (the worst case is one more grace period before a genuinely dead post is
-     * removed), and putting them in a table would replicate a write per churning post
-     * per minute to every node - which is the cost this is trying to remove.
+     * Asks the tables the index is built from, rather than waiting to see whether the
+     * absence sticks. That is an exact answer instead of a guess, it needs nothing
+     * remembered between runs, and a post that really has been withdrawn stops rippling
+     * straight away instead of a quarter of an hour later.
      *
      * @param  int[]  $absent
      * @return int[]
      */
-    private function confirmAbsentBeyondGrace(array $absent, bool $scoped): array
+    private function confirmGenuinelyGone(array $absent): array
     {
-        // A scoped run (--msgid) is someone asking about one post deliberately, so it
-        // keeps the old immediate behaviour rather than making them wait a quarter hour.
-        if ($scoped) {
-            return $absent;
+        if (empty($absent)) {
+            return [];
         }
 
-        $now = Carbon::now()->getTimestamp();
-        $seen = $this->readAbsenceLog();
-        $confirmed = [];
-        $next = [];
+        $alive = array_flip(MessageSpatialService::stillQualifyForIndex($absent));
 
+        $gone = [];
         foreach ($absent as $msgid) {
-            $first = $seen[$msgid] ?? $now;
-            $next[$msgid] = $first;
-
-            if ($now - $first >= self::STALE_GRACE_MINUTES * 60) {
-                $confirmed[] = $msgid;
+            if (!isset($alive[$msgid])) {
+                $gone[] = $msgid;
             }
         }
 
-        // Anything not in $absent this time has come back, so its timer is dropped by
-        // virtue of not being carried into $next.
-        $this->writeAbsenceLog($next);
-
-        if ($absent && !$confirmed) {
-            Log::info('ripple: all currently-missing reach rows are within the grace period', [
-                'missing' => count($absent),
+        if ($blips = count($absent) - count($gone)) {
+            Log::info('ripple: posts missing from the spatial index but still live, left alone', [
+                'blips' => $blips,
+                'gone' => count($gone),
             ]);
         }
 
-        return $confirmed;
-    }
-
-    private function absenceLogPath(): string
-    {
-        return storage_path('app/ripple/absent-since.json');
-    }
-
-    /** @return array<int, int> msgid => unix time first seen missing */
-    private function readAbsenceLog(): array
-    {
-        $path = $this->absenceLogPath();
-
-        if (!is_file($path)) {
-            return [];
-        }
-
-        $decoded = json_decode((string) @file_get_contents($path), true);
-
-        if (!is_array($decoded)) {
-            // Unreadable state means every post looks newly missing, so nothing is
-            // removed this pass and the timers start again. Safe direction.
-            Log::warning('ripple: absence log unreadable, restarting the grace timers');
-
-            return [];
-        }
-
-        $out = [];
-        foreach ($decoded as $msgid => $first) {
-            $out[(int) $msgid] = (int) $first;
-        }
-
-        return $out;
-    }
-
-    /** @param array<int, int> $seen */
-    private function writeAbsenceLog(array $seen): void
-    {
-        $path = $this->absenceLogPath();
-        $dir = dirname($path);
-
-        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
-            Log::warning('ripple: could not create the absence-log directory; grace timers will not persist');
-
-            return;
-        }
-
-        // Write via a temporary file so a run interrupted mid-write cannot leave a
-        // half-written file that reads as corrupt on the next pass.
-        $tmp = $path . '.' . getmypid() . '.tmp';
-
-        if (@file_put_contents($tmp, json_encode($seen)) === false || !@rename($tmp, $path)) {
-            @unlink($tmp);
-            Log::warning('ripple: could not store the absence log; grace timers will not persist');
-        }
+        return $gone;
     }
 
     /**

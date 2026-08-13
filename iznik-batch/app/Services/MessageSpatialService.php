@@ -45,6 +45,50 @@ class MessageSpatialService
         return $stats;
     }
 
+    /**
+     * Of the posts given, which ones are supposed to be in messages_spatial right now?
+     *
+     * The index is rebuilt continually, deleting and re-inserting rows as it goes, so a
+     * post can be missing from it for a moment while being perfectly alive. Anything that
+     * wants to read "not in the index" as "this post has gone" has to tell those two
+     * apart, and the way to do that is to ask the same question the index itself asks.
+     *
+     * This deliberately lives next to upsertRecentMessages, whose conditions it repeats,
+     * so that when the rules for being indexed change both move together.
+     *
+     * @param  int[]  $msgids
+     * @return int[]  those that qualify
+     */
+    public static function stillQualifyForIndex(array $msgids): array
+    {
+        if (empty($msgids)) {
+            return [];
+        }
+
+        $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));
+
+        return DB::table('messages')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->join('users', 'users.id', '=', 'messages.fromuser')
+            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
+            ->whereIn('messages.id', $msgids)
+            ->where('messages_groups.arrival', '>=', $cutoff)
+            ->whereNotNull('messages.lat')
+            ->whereNotNull('messages.lng')
+            ->whereNull('messages.deleted')
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('users.deleted')
+            ->where(function ($q) {
+                $q->whereNull('messages_outcomes.outcome')
+                    ->orWhereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]);
+            })
+            ->distinct()
+            ->pluck('messages.id')
+            ->map(static fn ($id) => (int) $id)
+            ->all();
+    }
+
     private function upsertRecentMessages(bool $dryRun = false): int
     {
         $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));

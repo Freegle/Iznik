@@ -634,40 +634,44 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * Put a post past the stale-reach grace period.
+     * Say that a post has actually gone.
      *
-     * removeStaleAndRetract waits for a post to stay missing from messages_spatial
-     * before dropping its reach row, because that table is rebuilt every five minutes
-     * and a live post drops out of it and back all day. Tests that are about what
-     * happens to a genuinely gone post say so by pre-dating its absence, rather than
-     * rehearsing the wait.
+     * removeStaleAndRetract does not act on a post just because it is missing from
+     * messages_spatial - that table is rebuilt every five minutes and a live post drops
+     * out of it and back all day. It asks whether the post still belongs in the index,
+     * so a test about a post that has gone has to make it genuinely gone rather than
+     * only removing the index row.
      */
-    private function ageOutOfSpatialGrace(int $msgid, int $minutesAgo = 60): void
+    private function markPostGone(int $msgid): void
     {
-        $path = storage_path('app/ripple/absent-since.json');
-        @mkdir(dirname($path), 0775, true);
-
-        $seen = is_file($path) ? (json_decode((string) file_get_contents($path), true) ?: []) : [];
-        $seen[(string) $msgid] = now()->subMinutes($minutesAgo)->getTimestamp();
-
-        file_put_contents($path, json_encode($seen));
+        DB::table('messages')->where('id', $msgid)->update(['deleted' => now()]);
+        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
     }
 
     /**
-     * The churn this grace period exists for: a post that blinks out of the spatial
-     * index and comes back must keep its reach row. Deleting it also retracted the
-     * post's copies from every group it had rippled into and forced a full rebuild -
-     * routing searches and a large polygon write per post - and on production that was
-     * about 85% of all initialisation work.
+     * The churn this check exists for: a post that blinks out of the spatial index while
+     * it is being rebuilt must keep its reach row. Deleting it also retracted the post's
+     * copies from every group it had rippled into and forced a full rebuild - routing
+     * searches and a large polygon write per post - and on production that was about 85%
+     * of all initialisation work.
      */
     public function test_reach_survives_a_post_briefly_missing_from_spatial(): void
     {
         Http::fake();
         $user = $this->createTestUser();
+        $group = $this->createTestGroup();
         $message = Message::create([
             'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
             'subject' => 'OFFER: blinks', 'textbody' => 'x', 'source' => 'Platform',
             'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        // Live and approved, so it belongs in the index. It is simply not in it at this
+        // instant, which is what the rebuild does to every post it touches.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1),
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
@@ -679,12 +683,48 @@ class ExpandServiceTest extends TestCase
 
         $stats = $this->service()->process(false, 500);
 
-        $this->assertSame(0, $stats['removed'], 'a post missing for the first time is given time to come back');
+        $this->assertSame(0, $stats['removed'], 'a live post missing from the index must not be treated as gone');
         $this->assertSame(
             1,
             DB::table('rippling_reach')->where('msgid', $message->id)->count(),
             'the reach row must survive a blink out of the spatial index'
         );
+    }
+
+    /**
+     * The other half of the same decision: once the post really has gone, it is acted on
+     * straight away rather than after a wait.
+     */
+    public function test_reach_is_dropped_as_soon_as_the_post_has_really_gone(): void
+    {
+        Http::fake();
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: withdrawn', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1),
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+        );
+
+        $this->markPostGone((int) $message->id);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['removed']);
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $message->id)->count());
     }
 
     public function test_removes_reach_for_post_no_longer_in_spatial(): void
@@ -705,8 +745,8 @@ class ExpandServiceTest extends TestCase
             [$message->id, self::WKT, self::WKT, now()->subDays(1)]
         );
 
-        // Gone for a while, not just this instant - see ageOutOfSpatialGrace.
-        $this->ageOutOfSpatialGrace($message->id);
+        // Genuinely gone, not just absent from the index - see markPostGone.
+        $this->markPostGone((int) $message->id);
 
         $stats = $this->service()->process(false, 500);
 
@@ -2246,7 +2286,7 @@ class ExpandServiceTest extends TestCase
         // The post leaves the browsable set (withdrawn/taken/deleted -> gone from
         // messages_spatial), and stays gone rather than blinking out between rebuilds.
         DB::table('messages_spatial')->where('msgid', $msgid)->delete();
-        $this->ageOutOfSpatialGrace($msgid);
+        $this->markPostGone($msgid);
 
         // Origin group removed from the trial: scope no longer covers the origin.
         $nonCoveringScope = 'POLYGON((-3.30 55.90,-3.10 55.90,-3.10 56.00,-3.30 56.00,-3.30 55.90))';
@@ -2559,20 +2599,18 @@ class ExpandServiceTest extends TestCase
         return [$msgid, $posterId, $groupB];
     }
 
-    /** The post is removed from the browsable set (rejected on origin / withdrawn): it leaves messages_spatial. */
     /**
-     * The post has left the spatial index, and stayed gone.
+     * The post is removed from the browsable set (rejected on origin / withdrawn), so it
+     * leaves messages_spatial.
      *
-     * removeStaleAndRetract waits out a grace period before acting on an absence,
-     * because messages_spatial is rebuilt every five minutes and a live post drops out
-     * of it and back all day. These tests are about a post that has genuinely gone, so
-     * they say so rather than rehearsing the wait - see ageOutOfSpatialGrace, and
-     * test_reach_survives_a_post_briefly_missing_from_spatial for the other case.
+     * removeStaleAndRetract does not act on absence from the index alone, because that
+     * table is rebuilt every five minutes and a live post drops out of it and back all
+     * day. These tests are about a post that has genuinely gone, so they make it gone -
+     * see test_reach_survives_a_post_briefly_missing_from_spatial for the other case.
      */
     private function leaveSpatial(int $msgid): void
     {
-        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
-        $this->ageOutOfSpatialGrace($msgid);
+        $this->markPostGone($msgid);
     }
 
     /**
@@ -2614,7 +2652,7 @@ class ExpandServiceTest extends TestCase
             [$message->id, $lat, $lng, self::WKT, self::WKT, now()->subHours(2)]
         );
 
-        $this->ageOutOfSpatialGrace((int) $message->id);
+        $this->markPostGone((int) $message->id);
 
         return [(int) $message->id, (int) $groupB->id, (int) $user->id];
     }
