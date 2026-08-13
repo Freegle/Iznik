@@ -228,10 +228,23 @@ Schedule::command('messages:auto-repost')
 
 // Chase up messages with replies but no outcome.
 // V1: cron/chaseup.php
-Schedule::command('messages:chase-up')
+//
+// Without --skip-languishing this also scanned for languishing posts every hour. That
+// scan finds the same ~1,840 posts each time, and notifyLanguishing will only raise one
+// notification per person per day regardless, so 23 of the 24 daily scans could never
+// do anything. It has its own schedule below.
+Schedule::command('messages:chase-up --skip-languishing')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('messages:chase-up'))
+    ->runInBackground();
+
+// The languishing-posts scan, once a day. It raises an in-app notification rather than
+// sending mail, so the time only needs to be somewhere sensible in the member's day.
+Schedule::command('messages:chase-up --languishing-only')
+    ->dailyAt('09:00')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('messages:chase-up-languishing'))
     ->runInBackground();
 
 // Deduplicate searches.
