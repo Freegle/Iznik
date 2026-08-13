@@ -5,10 +5,12 @@ import (
 	json2 "encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -164,28 +166,32 @@ func GetDashboard(c *fiber.Ctx) error {
 }
 
 func getComponent(comp string, groupIDs []uint64, startQ, endQ string, systemwide, isMod bool) interface{} {
+	// The moderator checks stay OUTSIDE the cache below: a non-moderator must never reach
+	// a cached moderator-only answer, and returning before compute is set guarantees it.
+	var compute func() interface{}
+
 	switch comp {
 	case "RecentCounts":
-		return getRecentCounts(groupIDs, startQ, endQ)
+		compute = func() interface{} { return getRecentCounts(groupIDs, startQ, endQ) }
 	case "PopularPosts":
-		return getPopularPosts(groupIDs, startQ, endQ, systemwide)
+		compute = func() interface{} { return getPopularPosts(groupIDs, startQ, endQ, systemwide) }
 	case "UsersPosting":
 		if !isMod {
 			return nil
 		}
-		return getUsersPosting(groupIDs, startQ, endQ)
+		compute = func() interface{} { return getUsersPosting(groupIDs, startQ, endQ) }
 	case "UsersReplying":
 		if !isMod {
 			return nil
 		}
-		return getUsersReplying(groupIDs, startQ, endQ)
+		compute = func() interface{} { return getUsersReplying(groupIDs, startQ, endQ) }
 	case "ModeratorsActive":
 		if !isMod {
 			return nil
 		}
-		return getModeratorsActive(groupIDs)
+		compute = func() interface{} { return getModeratorsActive(groupIDs) }
 	case "MessageBreakdown":
-		return getMessageBreakdown(groupIDs, startQ, endQ)
+		compute = func() interface{} { return getMessageBreakdown(groupIDs, startQ, endQ) }
 	case "Activity", "Replies", "ApprovedMessageCount",
 		"Weight", "Outcomes", "ActiveUsers", "ApprovedMemberCount":
 		// ApprovedMemberCount (community member counts) is public — group size is
@@ -195,21 +201,48 @@ func getComponent(comp string, groupIDs []uint64, startQ, endQ string, systemwid
 		if modOnly && !isMod {
 			return nil
 		}
-		return getStatsTimeSeries(comp, groupIDs, startQ, endQ)
+		compute = func() interface{} { return getStatsTimeSeries(comp, groupIDs, startQ, endQ) }
 	case "Donations":
-		return getDonations(groupIDs, startQ, endQ, systemwide)
+		compute = func() interface{} { return getDonations(groupIDs, startQ, endQ, systemwide) }
 	case "Happiness":
 		if !isMod {
 			return nil
 		}
-		return getHappiness(groupIDs, startQ, endQ, systemwide)
+		compute = func() interface{} { return getHappiness(groupIDs, startQ, endQ) }
 	case "DiscourseTopics":
 		if !isMod {
 			return nil
 		}
-		return getDiscourseTopics()
+		compute = func() interface{} { return getDiscourseTopics() }
 	}
-	return nil
+
+	if compute == nil {
+		return nil
+	}
+
+	ttl := componentTTL(comp, rangeDaysBetween(startQ, endQ))
+	if ttl <= 0 {
+		return compute()
+	}
+	return cachedComponent(componentCacheKey(comp, groupIDs, startQ, endQ, systemwide), ttl, compute)
+}
+
+// rangeDaysBetween is how many days the requested dashboard range spans, used only to pick
+// a cache TTL. Unparseable dates return 0, which lands on the shorter TTL - the safe side.
+func rangeDaysBetween(startQ, endQ string) int {
+	start, err := time.Parse("2006-01-02", startQ)
+	if err != nil {
+		return 0
+	}
+	end, err := time.Parse("2006-01-02", endQ)
+	if err != nil {
+		return 0
+	}
+	days := int(end.Sub(start).Hours() / 24)
+	if days < 0 {
+		return 0
+	}
+	return days
 }
 
 func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
@@ -449,7 +482,14 @@ const dashboardBatch = 1500
 // dashboardDeadline bounds each whole chunked walk. The fiber request context can't be used
 // for this (fasthttp only cancels it on server shutdown), so without an explicit deadline an
 // abandoned systemwide/wide-range request would keep stepping through every remaining window.
-const dashboardDeadline = 60 * time.Second
+//
+// It sits below the load balancer's 50s timeout ON PURPOSE. At the old 60s the two limits
+// were the wrong way round: the gateway gave up first, so a systemwide-year UsersReplying
+// (observed hitting the ceiling three times in one night) burned the full minute on db3 and
+// then delivered its answer to nobody, while the client - having seen a timeout, not an
+// answer - retried onto the same node. Finishing inside the gateway's window means the
+// caller always gets a reply, even an empty one, and stops retrying.
+const dashboardDeadline = 40 * time.Second
 
 // arrivalWindow is one bounded sub-range of a dashboard date range, as produced by
 // arrivalWindows: scan it as [Start, End) normally, or [Start, End] when LastInclusive - the
@@ -879,41 +919,169 @@ func getDonations(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 	return result
 }
 
-func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map[string]interface{} {
+// happinessTypes are the three stats rollup rows that together make the happiness
+// histogram. They match StatsGenerationService's TYPE_FEEDBACK_* constants and the
+// messages_outcomes.happiness enum.
+var happinessTypes = []string{"Happy", "Fine", "Unhappy"}
+
+// getHappiness returns the Happy/Fine/Unhappy histogram for the range.
+//
+// It reads the nightly stats rollup, which stats:generate-daily has been writing at 02:30
+// all along - Happiness was the last dashboard component still re-aggregating
+// messages_outcomes raw on every request, joining through messages and messages_groups
+// across the whole range. Every sibling component (Activity, Replies, Outcomes, Weight,
+// ActiveUsers...) already reads this table; see getStatsTimeSeries, whose shape this
+// deliberately mirrors.
+//
+// Two consequences worth knowing about, both making Happiness consistent with the rest of
+// the dashboard rather than special:
+//
+//   - Counts are now native-distinct. The rollup counts COUNT(DISTINCT msgid) per group over
+//     native posts (messages_groups.rippled_in = 0); the raw query counted one row per
+//     (outcome x messages_groups match), so a crossposted post counted once per group it was
+//     in, and a rippled-out copy counted again. Totals therefore drop slightly where
+//     crossposting or rippling is common.
+//   - Systemwide sums the same per-group rows as every other systemwide component, instead
+//     of being the one component that scanned messages_outcomes with no group join at all.
+//     It needs no branch of its own: resolveGroupIDs already expands a systemwide request
+//     into the full list of published groups.
+//
+// The rollup only reaches yesterday, so today is added from the raw table as one bounded
+// single-day query, and if the rollup is missing or behind the whole range falls back to
+// the raw query so a failed nightly run shows stale-but-present data rather than nothing.
+func getHappiness(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
+	if len(groupIDs) == 0 {
+		return []map[string]interface{}{}
+	}
+
 	db := database.DBConn
 
+	// How far the rollup actually reaches for this scope. DATE_FORMAT rather than a bare
+	// MAX(date) so the answer is a plain YYYY-MM-DD string whichever way the driver is
+	// configured to hand back DATE columns. NULL means the nightly job has never written
+	// for these groups.
+	type maxDateRow struct {
+		MaxDate *string
+	}
+	var maxRow maxDateRow
+	db.Table("stats").Select("DATE_FORMAT(MAX(date), '%Y-%m-%d') AS max_date").
+		Where("type IN ? AND groupid IN ? AND date >= ? AND date < ?", happinessTypes, groupIDs, startQ, endQ).
+		Scan(&maxRow)
+	rollupEnd := maxRow.MaxDate
+
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	if rollupEnd == nil || *rollupEnd == "" || (*rollupEnd < yesterday && *rollupEnd < endQ) {
+		// Either no rollup at all for this scope, or it has fallen behind. Serve the raw
+		// answer rather than a truncated one, and say so - a persistent gap here means
+		// stats:generate-daily is failing and should be visible.
+		logHappinessFallback(rollupEnd)
+		return happinessFromRaw(db, groupIDs, startQ, endQ)
+	}
+
+	totals := map[string]int{}
+
+	type StatsRow struct {
+		Type  string
+		Count *int64
+	}
+	var rows []StatsRow
+	db.Table("stats").Select("type, SUM(count) AS count").
+		Where("type IN ? AND groupid IN ? AND date >= ? AND date < ?", happinessTypes, groupIDs, startQ, endQ).
+		Group("type").Scan(&rows)
+	for _, r := range rows {
+		if r.Count != nil {
+			totals[r.Type] += int(*r.Count)
+		}
+	}
+
+	// Top up the days the rollup has not covered yet - normally just today. endQ is already
+	// the requested end date plus one day (see GetDashboard), so this is a half-open range.
+	topUpStart := nextDay(*rollupEnd)
+	if topUpStart != "" && topUpStart < endQ {
+		for _, r := range happinessFromRaw(db, groupIDs, topUpStart, endQ) {
+			happiness, _ := r["happiness"].(string)
+			count, _ := r["count"].(int)
+			totals[happiness] += count
+		}
+	}
+
+	return sortedHappiness(totals)
+}
+
+// happinessFromRaw aggregates messages_outcomes directly for [startQ, endQ). It is both the
+// today top-up and the fallback when the rollup is unusable, so it matches the rollup's
+// semantics: native posts only (rippled_in = 0) and each message counted once per group.
+func happinessFromRaw(db *gorm.DB, groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
 	type HappyRow struct {
 		Count     int
 		Happiness string
 	}
 
 	var rows []HappyRow
-	if systemwide {
-		db.Table("messages_outcomes").
-			Select("COUNT(*) AS count, happiness").
-			Where("timestamp >= ? AND timestamp <= ? AND happiness IS NOT NULL", startQ, endQ).
-			Group("happiness").
-			Order("count DESC").
-			Scan(&rows)
-	} else if len(groupIDs) > 0 {
-		db.Table("messages_outcomes").
-			Select("COUNT(*) AS count, happiness").
-			Joins("INNER JOIN messages ON messages.id = messages_outcomes.msgid").
-			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid").
-			Where("timestamp >= ? AND timestamp <= ? AND messages_groups.groupid IN (?) AND happiness IS NOT NULL", startQ, endQ, groupIDs).
-			Group("happiness").
-			Order("count DESC").
-			Scan(&rows)
-	}
+	db.Table("messages_outcomes").
+		Select("COUNT(DISTINCT messages_outcomes.msgid) AS count, messages_outcomes.happiness").
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid AND messages_groups.rippled_in = 0").
+		Where("messages_outcomes.timestamp >= ? AND messages_outcomes.timestamp < ? AND messages_groups.groupid IN (?) AND messages_outcomes.happiness IS NOT NULL",
+			startQ, endQ, groupIDs).
+		Group("messages_outcomes.happiness").
+		Scan(&rows)
 
-	result := make([]map[string]interface{}, len(rows))
-	for i, r := range rows {
-		result[i] = map[string]interface{}{
-			"count":     r.Count,
-			"happiness": r.Happiness,
+	totals := map[string]int{}
+	for _, r := range rows {
+		totals[r.Happiness] += r.Count
+	}
+	return sortedHappiness(totals)
+}
+
+// sortedHappiness renders the histogram highest count first, with the happiness label as a
+// deterministic tie-break (the replaced ORDER BY count DESC had no secondary key, so ties
+// were never guaranteed an order). Zero buckets are dropped, as an aggregate produced none.
+func sortedHappiness(totals map[string]int) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(totals))
+	for _, h := range happinessTypes {
+		if totals[h] > 0 {
+			result = append(result, map[string]interface{}{"count": totals[h], "happiness": h})
 		}
 	}
+	sort.Slice(result, func(i, j int) bool {
+		ci := result[i]["count"].(int)
+		cj := result[j]["count"].(int)
+		if ci != cj {
+			return ci > cj
+		}
+		return result[i]["happiness"].(string) < result[j]["happiness"].(string)
+	})
 	return result
+}
+
+// nextDay returns the day after a "2006-01-02" date, or "" if it will not parse.
+func nextDay(date string) string {
+	d, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return ""
+	}
+	return d.AddDate(0, 0, 1).Format("2006-01-02")
+}
+
+// happinessFallbackMu throttles the fallback notice: if the nightly stats run stops, every
+// dashboard load takes this path, and one log line per request would bury the signal.
+var (
+	happinessFallbackMu   sync.Mutex
+	happinessFallbackLast time.Time
+)
+
+func logHappinessFallback(rollupEnd *string) {
+	happinessFallbackMu.Lock()
+	defer happinessFallbackMu.Unlock()
+	if time.Since(happinessFallbackLast) < 10*time.Minute {
+		return
+	}
+	happinessFallbackLast = time.Now()
+	if rollupEnd == nil {
+		log.Printf("dashboard: Happiness falling back to raw messages_outcomes - no stats rollup rows for this scope")
+	} else {
+		log.Printf("dashboard: Happiness falling back to raw messages_outcomes - stats rollup only reaches %s", *rollupEnd)
+	}
 }
 
 func getDiscourseTopics() interface{} {
