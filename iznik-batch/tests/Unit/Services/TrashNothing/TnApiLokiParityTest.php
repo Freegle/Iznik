@@ -95,54 +95,168 @@ class TnApiLokiParityTest extends TestCase
         ], $overrides);
     }
 
-    public function test_api_entry_has_the_same_shape_as_an_email_path_entry(): void
+    /**
+     * Runs ONE TN post through BOTH real ingestion paths and diffs the two Loki
+     * entries they produce.
+     *
+     * This is the test the whole section exists for. The other tests here check
+     * the API entry against a hand-built email entry, which only proves the two
+     * SCHEMAS agree; this one proves the two PATHS agree — same post in, same
+     * routing outcome and same context out.
+     *
+     * The email side runs IncomingMailService::route() for real and then emits
+     * the Loki entry exactly as IncomingMailController::receive() does. The test
+     * plays the controller's role rather than modifying it: the email path is
+     * frozen, and EmailReplaySyncer (the parity tool's email side) deliberately
+     * does not emit these entries — see plans/tn-api-post-ingestion.md I.6.
+     *
+     * Both sides are pointed at the SAME user and group, so a difference in the
+     * compared fields is a real divergence rather than test-fixture noise.
+     */
+    public function test_both_paths_produce_the_same_loki_entry_for_the_same_post_content(): void
     {
-        // An email-path entry for an approved group post, exactly as
-        // IncomingMailController::receive() emits it.
-        $this->loki->logIncomingEmail(
-            'poster@example.com',
-            'testgroup@groups.ilovefreegle.org',
-            'poster@example.com',
-            'OFFER: Bookshelf (Edinburgh)',
-            '<abc123@mail.example.com>',
-            RoutingResult::APPROVED->value,
-            ['group_id' => 42, 'group_name' => 'testgroup', 'user_id' => 7, 'message_id' => 999],
-        );
-
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $user = $this->createMappedUser();
-        $this->createMembership($user, $group);
+        $userEmail = $this->createTestUserEmail($user, ['preferred' => 1]);
+        // MODERATED, not DEFAULT, deliberately: a DEFAULT poster walks into an
+        // already-documented divergence — IncomingMailService::handleGroupPost()
+        // no longer auto-approves DEFAULT posters on arrival (they wait for the
+        // content-check job) while GroupPostIngestionService::ingest() still
+        // does, so identical content would route Pending vs Approved for reasons
+        // that have nothing to do with Loki. MODERATED pends on both paths,
+        // isolating what this test is actually for. Same reasoning as
+        // EmailApiParityTest::seedParityUser().
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'MODERATED']);
 
+        // The two paths deliberately synthesize the SAME messages.messageid for a
+        // given TN post_id (see EmailReplaySyncer::parseCsvRow), and the API
+        // path's idempotency check keys on tnpostid — so running both against
+        // one post_id in a single database makes the second path see the first
+        // path's row and skip as a duplicate. Each side therefore gets its own
+        // post_id for the SAME post content. Nothing being compared below
+        // depends on the id: the routing decision and its context come from the
+        // content, group and user, which are identical for both.
+        $emailPostId = 'tn-bothpaths-email-'.uniqid();
+        $apiPostId = 'tn-bothpaths-api-'.uniqid();
+        $title = 'Old wooden bookshelf';
+        $subject = 'OFFER: '.$title;
+
+        // --- email path: parse a TN post email, route it, emit as the controller does
+        $envelopeTo = $group->nameshort.'@'.config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        $raw = $this->buildTnPostEmail($userEmail->email, $envelopeTo, $subject, $emailPostId);
+
+        $parser = app(\App\Services\Mail\Incoming\MailParserService::class);
+        $mailService = app(\App\Services\Mail\Incoming\IncomingMailService::class);
+
+        $parsed = $parser->parse($raw, $userEmail->email, $envelopeTo);
+        $emailResult = $mailService->route($parsed);
+
+        // Verbatim from IncomingMailController::receive().
+        $this->loki->logIncomingEmail(
+            $userEmail->email,
+            $envelopeTo,
+            $parsed->fromAddress,
+            $parsed->subject ?? '',
+            $parsed->messageId ?? '',
+            $emailResult->value,
+            $mailService->getLastRoutingContext(),
+        );
+
+        // --- API path: the same post, through the real syncer
         $this->processPost($this->makeSyncer(), $this->makePost([
+            'post_id' => $apiPostId,
             'user_id' => $user->id,
+            'title' => $title,
             'latitude' => 55.9533,
             'longitude' => -3.1883,
         ]));
 
-        [$email, $api] = $this->routedEntries();
+        $entries = $this->routedEntries();
+        $this->assertCount(2, $entries, 'Expected one entry from each path');
+        [$email, $api] = $entries;
 
-        // Both sides routed Approved, so the subtype must match too — this is a
-        // like-for-like comparison, not just a structural one.
-        $this->assertSame(RoutingResult::APPROVED->value, $api['labels']['subtype']);
+        // Guard: if the email path dropped the post before reaching the group
+        // post handler, the comparison below would be vacuous.
+        $this->assertSame(
+            RoutingResult::PENDING->value,
+            $email['message']['routing_outcome'],
+            'Email path did not ingest the post, so there is nothing meaningful to compare'
+        );
 
-        // Same label keys, and identical values on every label but source.
-        $this->assertSame(array_keys($email['labels']), array_keys($api['labels']));
+        // Labels: identical but for source.
         $this->assertSame('incoming_mail', $email['labels']['source']);
         $this->assertSame('tn_api', $api['labels']['source']);
         unset($email['labels']['source'], $api['labels']['source']);
-        $this->assertSame($email['labels'], $api['labels']);
+        $this->assertSame($email['labels'], $api['labels'], 'Label sets diverged between the paths');
 
-        // The API entry carries every field the email entry does. It also adds
-        // tn_post_id, which the email path structurally cannot supply — see
-        // section I.5a — so this is a subset check in that direction only.
+        // The API entry carries every field the email entry does, and exactly
+        // one extra (tn_post_id).
         $this->assertSame(
             [],
             array_diff(array_keys($email['message']), array_keys($api['message'])),
-            'API routing entry is missing fields the email path emits'
+            'API entry is missing fields the email path emits'
         );
         $this->assertSame(['tn_post_id'], array_values(array_diff(
             array_keys($api['message']), array_keys($email['message'])
         )));
+
+        // The fields that must agree: same post, same group, same user, so the
+        // same routing decision and the same describing context.
+        foreach (['routing_outcome', 'subject', 'group_id', 'group_name', 'user_id'] as $field) {
+            $this->assertSame(
+                $email['message'][$field] ?? null,
+                $api['message'][$field] ?? null,
+                "Field '{$field}' diverged between the email and API paths"
+            );
+        }
+
+        // Neither path sets a routing_reason on a clean approval.
+        $this->assertArrayNotHasKey('routing_reason', $email['message']);
+        $this->assertArrayNotHasKey('routing_reason', $api['message']);
+
+        // Fields that differ BY DESIGN, asserted explicitly so the divergence
+        // stays deliberate rather than drifting unnoticed:
+        //  - envelope_from/from_address: the API path has no SMTP envelope.
+        //  - message_id: each path created its own messages row.
+        //  - tn_post_id: API-only, see I.5a.
+        $this->assertSame($userEmail->email, $email['message']['envelope_from']);
+        $this->assertSame('', $api['message']['envelope_from']);
+        $this->assertSame($userEmail->email, $email['message']['from_address']);
+        $this->assertSame('', $api['message']['from_address']);
+        $this->assertIsInt($email['message']['message_id']);
+        $this->assertIsInt($api['message']['message_id']);
+        $this->assertSame($apiPostId, $api['message']['tn_post_id']);
+        $this->assertArrayNotHasKey('tn_post_id', $email['message']);
+    }
+
+    /**
+     * A TN group-post email, headers matching EmailReplaySyncer::buildRawEmail().
+     *
+     * X-Trash-Nothing-Secret must be PRESENT (even empty) or
+     * IncomingMailService::shouldSkipSpamCheck()'s unconfigured-secret fallback
+     * never fires and the post routes as spam instead.
+     */
+    private function buildTnPostEmail(string $from, string $to, string $subject, string $postId): string
+    {
+        $headers = [
+            'From' => $from,
+            'To' => $to,
+            'Subject' => $subject,
+            'Date' => now()->format('D, d M Y H:i:s O'),
+            'Message-ID' => '<'.$postId.'@tn.trashnothing.com>',
+            'X-Trash-Nothing-Secret' => (string) config('freegle.mail.trashnothing_secret', ''),
+            'X-Trash-Nothing-Post-Id' => $postId,
+            'X-Trash-Nothing-Post-Coordinates' => '55.9533,-3.1883',
+            'MIME-Version' => '1.0',
+            'Content-Type' => 'text/plain; charset=utf-8',
+        ];
+
+        $lines = [];
+        foreach ($headers as $name => $value) {
+            $lines[] = "{$name}: {$value}";
+        }
+
+        return implode("\r\n", $lines)."\r\n\r\nGood condition, free to collect.";
     }
 
     public function test_emits_exactly_one_entry_per_ingested_post(): void
