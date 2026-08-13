@@ -1067,6 +1067,14 @@ return [
         // Number of such stale-pending tasks tolerated before breaching.
         'background_tasks_backlog_threshold' => (int) env('FREEGLE_MONITORING_BG_TASKS_BACKLOG', 0),
 
+        // tn:sync — alert if no TrashNothing post has been ingested into
+        // `messages` (tnpostid set) within this many hours. TN is a high-volume
+        // feed, so a gap this long means TN is down or our ingestion is failing
+        // every cycle. Only evaluated when FREEGLE_TN_INGEST_POSTS_VIA_API is on.
+        'tn_posts_max_age_hours' => (int) env('FREEGLE_MONITORING_TN_POSTS_MAX_AGE_HOURS', 6),
+        // Minimum TN posts expected within that window.
+        'tn_posts_min_expected' => (int) env('FREEGLE_MONITORING_TN_POSTS_MIN', 1),
+
         // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
         // refresh hasn't written a row within this many days.
         'mobile_cidrs_max_age_days' => (int) env('FREEGLE_MONITORING_MOBILE_CIDRS_MAX_AGE_DAYS', 40),
