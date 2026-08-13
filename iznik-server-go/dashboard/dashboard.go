@@ -5,12 +5,10 @@ import (
 	json2 "encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -919,36 +917,32 @@ func getDonations(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 	return result
 }
 
-// happinessTypes are the three stats rollup rows that together make the happiness
-// histogram. They match StatsGenerationService's TYPE_FEEDBACK_* constants and the
-// messages_outcomes.happiness enum.
+// happinessTypes are the three ratings a member can leave, in the order the enum
+// declares them.
 var happinessTypes = []string{"Happy", "Fine", "Unhappy"}
 
 // getHappiness returns the Happy/Fine/Unhappy histogram for the range.
 //
-// It reads the nightly stats rollup, which stats:generate-daily has been writing at 02:30
-// all along - Happiness was the last dashboard component still re-aggregating
-// messages_outcomes raw on every request, joining through messages and messages_groups
-// across the whole range. Every sibling component (Activity, Replies, Outcomes, Weight,
-// ActiveUsers...) already reads this table; see getStatsTimeSeries, whose shape this
-// deliberately mirrors.
+// A rating is one member's view of how their post went, so it is ONE vote however many
+// groups the post touched. Getting that wrong is what the old query did: it joined
+// messages_outcomes to messages_groups and counted the join rows, so every rating was
+// multiplied by the number of group rows the post had - including the rows rippling
+// creates as a post spreads. Measured against production over the last 90 days, that
+// counted 110,885 where there were 25,715 ratings: an overcount of more than four
+// times, and one that grew as rippling reached further.
 //
-// Two consequences worth knowing about, both making Happiness consistent with the rest of
-// the dashboard rather than special:
+// Counting distinct messages_outcomes rows fixes it. Restricting the join to native
+// rows (rippled_in = 0) keeps a post attributed to the group it was posted on, which is
+// what makes a per-group dashboard mean anything; the DISTINCT is what stops a
+// crossposted or rippled post voting more than once.
 //
-//   - Counts are now native-distinct. The rollup counts COUNT(DISTINCT msgid) per group over
-//     native posts (messages_groups.rippled_in = 0); the raw query counted one row per
-//     (outcome x messages_groups match), so a crossposted post counted once per group it was
-//     in, and a rippled-out copy counted again. Totals therefore drop slightly where
-//     crossposting or rippling is common.
-//   - Systemwide sums the same per-group rows as every other systemwide component, instead
-//     of being the one component that scanned messages_outcomes with no group join at all.
-//     It needs no branch of its own: resolveGroupIDs already expands a systemwide request
-//     into the full list of published groups.
-//
-// The rollup only reaches yesterday, so today is added from the raw table as one bounded
-// single-day query, and if the rollup is missing or behind the whole range falls back to
-// the raw query so a failed nightly run shows stale-but-present data rather than nothing.
+// This deliberately does NOT read the nightly stats rollup. Those rows are per group,
+// so summing them across a moderator's groups reintroduces exactly the multiplication
+// being removed - a post on two of their groups would count twice. Other components can
+// sum that rollup because their figures are per-group by definition; happiness is not.
+// The repeat cost is handled by the component cache instead: measured at 5.6s for a
+// systemwide year on production, which is paid once per scope per cache window rather
+// than on every dashboard load.
 func getHappiness(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
 	if len(groupIDs) == 0 {
 		return []map[string]interface{}{}
@@ -956,62 +950,6 @@ func getHappiness(groupIDs []uint64, startQ, endQ string) []map[string]interface
 
 	db := database.DBConn
 
-	// How far the rollup actually reaches for this scope. DATE_FORMAT rather than a bare
-	// MAX(date) so the answer is a plain YYYY-MM-DD string whichever way the driver is
-	// configured to hand back DATE columns. NULL means the nightly job has never written
-	// for these groups.
-	type maxDateRow struct {
-		MaxDate *string
-	}
-	var maxRow maxDateRow
-	db.Table("stats").Select("DATE_FORMAT(MAX(date), '%Y-%m-%d') AS max_date").
-		Where("type IN ? AND groupid IN ? AND date >= ? AND date < ?", happinessTypes, groupIDs, startQ, endQ).
-		Scan(&maxRow)
-	rollupEnd := maxRow.MaxDate
-
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-	if rollupEnd == nil || *rollupEnd == "" || (*rollupEnd < yesterday && *rollupEnd < endQ) {
-		// Either no rollup at all for this scope, or it has fallen behind. Serve the raw
-		// answer rather than a truncated one, and say so - a persistent gap here means
-		// stats:generate-daily is failing and should be visible.
-		logHappinessFallback(rollupEnd)
-		return happinessFromRaw(db, groupIDs, startQ, endQ)
-	}
-
-	totals := map[string]int{}
-
-	type StatsRow struct {
-		Type  string
-		Count *int64
-	}
-	var rows []StatsRow
-	db.Table("stats").Select("type, SUM(count) AS count").
-		Where("type IN ? AND groupid IN ? AND date >= ? AND date < ?", happinessTypes, groupIDs, startQ, endQ).
-		Group("type").Scan(&rows)
-	for _, r := range rows {
-		if r.Count != nil {
-			totals[r.Type] += int(*r.Count)
-		}
-	}
-
-	// Top up the days the rollup has not covered yet - normally just today. endQ is already
-	// the requested end date plus one day (see GetDashboard), so this is a half-open range.
-	topUpStart := nextDay(*rollupEnd)
-	if topUpStart != "" && topUpStart < endQ {
-		for _, r := range happinessFromRaw(db, groupIDs, topUpStart, endQ) {
-			happiness, _ := r["happiness"].(string)
-			count, _ := r["count"].(int)
-			totals[happiness] += count
-		}
-	}
-
-	return sortedHappiness(totals)
-}
-
-// happinessFromRaw aggregates messages_outcomes directly for [startQ, endQ). It is both the
-// today top-up and the fallback when the rollup is unusable, so it matches the rollup's
-// semantics: native posts only (rippled_in = 0) and each message counted once per group.
-func happinessFromRaw(db *gorm.DB, groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
 	type HappyRow struct {
 		Count     int
 		Happiness string
@@ -1019,7 +957,7 @@ func happinessFromRaw(db *gorm.DB, groupIDs []uint64, startQ, endQ string) []map
 
 	var rows []HappyRow
 	db.Table("messages_outcomes").
-		Select("COUNT(DISTINCT messages_outcomes.msgid) AS count, messages_outcomes.happiness").
+		Select("COUNT(DISTINCT messages_outcomes.id) AS count, messages_outcomes.happiness").
 		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid AND messages_groups.rippled_in = 0").
 		Where("messages_outcomes.timestamp >= ? AND messages_outcomes.timestamp < ? AND messages_groups.groupid IN (?) AND messages_outcomes.happiness IS NOT NULL",
 			startQ, endQ, groupIDs).
@@ -1030,12 +968,14 @@ func happinessFromRaw(db *gorm.DB, groupIDs []uint64, startQ, endQ string) []map
 	for _, r := range rows {
 		totals[r.Happiness] += r.Count
 	}
+
 	return sortedHappiness(totals)
 }
 
-// sortedHappiness renders the histogram highest count first, with the happiness label as a
-// deterministic tie-break (the replaced ORDER BY count DESC had no secondary key, so ties
-// were never guaranteed an order). Zero buckets are dropped, as an aggregate produced none.
+// sortedHappiness renders the histogram highest count first, with the rating name as a
+// deterministic tie-break (the replaced ORDER BY count DESC had no secondary key, so
+// ties were never guaranteed an order). Zero buckets are dropped, as an aggregate
+// produced none.
 func sortedHappiness(totals map[string]int) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(totals))
 	for _, h := range happinessTypes {
@@ -1052,36 +992,6 @@ func sortedHappiness(totals map[string]int) []map[string]interface{} {
 		return result[i]["happiness"].(string) < result[j]["happiness"].(string)
 	})
 	return result
-}
-
-// nextDay returns the day after a "2006-01-02" date, or "" if it will not parse.
-func nextDay(date string) string {
-	d, err := time.Parse("2006-01-02", date)
-	if err != nil {
-		return ""
-	}
-	return d.AddDate(0, 0, 1).Format("2006-01-02")
-}
-
-// happinessFallbackMu throttles the fallback notice: if the nightly stats run stops, every
-// dashboard load takes this path, and one log line per request would bury the signal.
-var (
-	happinessFallbackMu   sync.Mutex
-	happinessFallbackLast time.Time
-)
-
-func logHappinessFallback(rollupEnd *string) {
-	happinessFallbackMu.Lock()
-	defer happinessFallbackMu.Unlock()
-	if time.Since(happinessFallbackLast) < 10*time.Minute {
-		return
-	}
-	happinessFallbackLast = time.Now()
-	if rollupEnd == nil {
-		log.Printf("dashboard: Happiness falling back to raw messages_outcomes - no stats rollup rows for this scope")
-	} else {
-		log.Printf("dashboard: Happiness falling back to raw messages_outcomes - stats rollup only reaches %s", *rollupEnd)
-	}
 }
 
 func getDiscourseTopics() interface{} {

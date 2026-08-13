@@ -259,10 +259,3 @@ func TestSortedHappiness_EmptyIsEmptySlice(t *testing.T) {
 	assert.NotNil(t, got)
 	assert.Empty(t, got)
 }
-
-func TestNextDay(t *testing.T) {
-	assert.Equal(t, "2026-01-02", nextDay("2026-01-01"))
-	assert.Equal(t, "2026-03-01", nextDay("2026-02-28"))
-	assert.Equal(t, "2025-01-01", nextDay("2024-12-31"))
-	assert.Equal(t, "", nextDay("not-a-date"))
-}
