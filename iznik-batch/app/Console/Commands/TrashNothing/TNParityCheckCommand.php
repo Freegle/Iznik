@@ -7,10 +7,10 @@ use App\Services\Mail\Incoming\IncomingMailService;
 use App\Services\Mail\Incoming\MailParserService;
 use App\Services\TrashNothing\Sync\EmailReplaySyncer;
 use App\Services\TrashNothing\Sync\ParityComparer;
+use App\Services\TrashNothing\Sync\PostLogCsvFetcher;
 use App\Services\TrashNothing\Sync\PostSyncer;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -25,7 +25,8 @@ use Illuminate\Support\Facades\Log;
  * Each path runs inside a rolled-back transaction so neither writes persist.
  * The date window for the API path is derived from the CSV (oldest/newest post date).
  *
- * Live mode (default): downloads fd-post-log.csv and calls the TN API.
+ * Live mode (default): uses the locally cached fd-post-log.csv (downloading it
+ * only if there is no cached copy, or --refresh-csv is passed) and calls the TN API.
  * Local-testing mode:  uses fixture CSV and fixture API JSON files.
  *
  * PRODUCTION SAFETY NOTE:
@@ -39,11 +40,11 @@ use Illuminate\Support\Facades\Log;
  */
 class TNParityCheckCommand extends Command
 {
-    private const CSV_URL = 'https://trashnothing.com/cimg/fd-post-log.csv';
     private const POST_ID_PREFIX = 'post_id=';
 
     protected $signature = 'tn:parity-check
                             {--local-testing : Use fixture files instead of live CSV / live TN API}
+                            {--refresh-csv : Re-download the TN post-log CSV even if a cached copy exists}
                             {--date-min= : Only process emails/posts on or after this UTC timestamp (ISO-8601, e.g. 2026-07-22T10:00:00Z). Overrides the oldest-CSV-date used as the API from-date.}
                             {--date-max= : Only process emails/posts on or before this UTC timestamp (ISO-8601). Overrides the newest-CSV-date used as the API to-date. Pin this safely in the past (e.g. an hour or more ago) to avoid false Layer 1 misses from TN\'s own indexing lag on its most recent posts — see plans/tn-api-post-ingestion.md section Q.}';
 
@@ -55,6 +56,7 @@ class TNParityCheckCommand extends Command
         IncomingMailService $mailService,
     ): int {
         $localTesting = (bool) $this->option('local-testing');
+        $refreshCsv   = (bool) $this->option('refresh-csv');
         $dateMin      = $this->option('date-min') ?: null;
         $dateMax      = $this->option('date-max') ?: null;
 
@@ -62,8 +64,8 @@ class TNParityCheckCommand extends Command
         // paths to actually build them — replaces the injected instance.
         $loki = $this->isolateLokiOutput();
 
-        // ── 1. Download (or load) the CSV ──────────────────────────────────
-        $csvText = $this->loadCsvText($localTesting);
+        // ── 1. Load the CSV (from cache, or downloading if needed) ─────────
+        $csvText = $this->loadCsvText($localTesting, $refreshCsv);
 
         if ($csvText === null) {
             $this->error('Failed to load post-log CSV.');
@@ -95,6 +97,8 @@ class TNParityCheckCommand extends Command
         $this->line('Running email path…');
 
         $emailLines = $this->captureTraceLogs(function () use ($localTesting, $loki, $parser, $mailService, $dateMin, $dateMax) {
+            // The CSV was already fetched above, so this reuses the cached copy
+            // regardless of --refresh-csv — no second download of the same file.
             $syncer = new EmailReplaySyncer($localTesting, $loki, $parser, $mailService);
             $syncer->sync($dateMin, $dateMax);
         });
@@ -317,7 +321,7 @@ class TNParityCheckCommand extends Command
         $this->line('');
     }
 
-    private function loadCsvText(bool $localTesting): ?string
+    private function loadCsvText(bool $localTesting, bool $refreshCsv): ?string
     {
         if ($localTesting) {
             $path = base_path('tests/fixtures/tn_sync/fd_post_log.csv');
@@ -328,19 +332,22 @@ class TNParityCheckCommand extends Command
             return (string) file_get_contents($path);
         }
 
-        // The CSV is ~15MB and grows daily, and the cache-buster below means
-        // every run is an origin fetch. Laravel's 30s default covers the whole
-        // body transfer, so a slow-but-working origin (~13KB/s has been seen)
-        // aborts mid-download; give the body room and retry the flaky ones.
-        $url      = self::CSV_URL . '?_=' . bin2hex(random_bytes(8));
-        $response = Http::connectTimeout(10)->timeout(300)->retry(3, 2000)->get($url);
+        $fetcher = new PostLogCsvFetcher();
 
-        if (!$response->successful()) {
-            $this->error("CSV download failed (HTTP {$response->status()}): {$url}");
+        $this->line(
+            (!$refreshCsv && $fetcher->isCached())
+                ? "Using cached CSV: {$fetcher->cachePath()} (--refresh-csv to re-download)"
+                : 'Downloading CSV (~15MB) from TN…'
+        );
+
+        $csvText = $fetcher->fetch($refreshCsv);
+
+        if ($csvText === null) {
+            $this->error('CSV download failed — see log for details.');
             return null;
         }
 
-        return $response->body();
+        return $csvText;
     }
 
     /**

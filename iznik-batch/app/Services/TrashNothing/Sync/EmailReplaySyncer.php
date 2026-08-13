@@ -9,7 +9,6 @@ use App\Services\LokiService;
 use App\Services\Mail\Incoming\IncomingMailService;
 use App\Services\Mail\Incoming\MailParserService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -22,9 +21,10 @@ use Illuminate\Support\Facades\Log;
  * mode, because it exists specifically to exercise the real legacy write
  * path for comparison. Run it against a disposable test database.
  *
- * Data source: https://trashnothing.com/cimg/fd-post-log.csv (downloaded
- * with a cache-busting query string on each run). In --local-testing mode,
- * uses tests/fixtures/tn_sync/fd_post_log.csv instead.
+ * Data source: https://trashnothing.com/cimg/fd-post-log.csv, cached on local
+ * disk by PostLogCsvFetcher and only re-downloaded when no cached copy exists
+ * or $forceRefreshCsv is set. In --local-testing mode, uses
+ * tests/fixtures/tn_sync/fd_post_log.csv instead.
  *
  * CSV columns expected (case-insensitive):
  *   Body, Date, From, Subject, To, X-Trash-Nothing-Ip-Hash,
@@ -38,7 +38,6 @@ use Illuminate\Support\Facades\Log;
  */
 class EmailReplaySyncer
 {
-    private const CSV_URL          = 'https://trashnothing.com/cimg/fd-post-log.csv';
     private const FIXTURE_CSV_PATH = 'tests/fixtures/tn_sync/fd_post_log.csv';
 
     public function __construct(
@@ -50,6 +49,9 @@ class EmailReplaySyncer
         // need a scenario-specific fixture file instead of the shared default.
         // Defaults to FIXTURE_CSV_PATH.
         private readonly ?string $fixtureCsvPath = null,
+        // Force a fresh download of the post-log CSV even if a cached copy exists.
+        private readonly bool $forceRefreshCsv = false,
+        private readonly ?PostLogCsvFetcher $csvFetcher = null,
     ) {}
 
     /**
@@ -136,19 +138,13 @@ class EmailReplaySyncer
             return $this->loadRecordsFromFixtureCsv();
         }
 
-        // Append a random suffix to prevent any proxy or CDN from serving a stale copy.
-        $url      = self::CSV_URL . '?_=' . bin2hex(random_bytes(8));
-        $response = Http::get($url);
+        $csvText = ($this->csvFetcher ?? new PostLogCsvFetcher())->fetch($this->forceRefreshCsv);
 
-        if (!$response->successful()) {
-            Log::error('TN sync: failed to download post-log CSV', [
-                'status' => $response->status(),
-                'url'    => self::CSV_URL,
-            ]);
+        if ($csvText === null) {
             return [];
         }
 
-        return $this->parseCsvText($response->body());
+        return $this->parseCsvText($csvText);
     }
 
     private function loadRecordsFromFixtureCsv(): array
