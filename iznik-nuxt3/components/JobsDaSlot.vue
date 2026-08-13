@@ -50,6 +50,7 @@
 import {
   computed,
   ref,
+  watch,
   onMounted,
   onBeforeUnmount,
   defineAsyncComponent,
@@ -111,25 +112,41 @@ const { shouldShowModal, recordShown } = useJobsFollowUpModal()
 
 const followUpModal = ref(null)
 
-const me = authStore.user
-const lat = me?.lat
-const lng = me?.lng
+// REACTIVE, deliberately. This used to be `const me = authStore.user` with `lat`/`lng`
+// as plain consts read once at setup, and a fetch that ran only if they happened to be
+// there at that instant. The sticky footer slot mounts with the layout, so whenever the
+// session had not hydrated yet - routinely in the app, which restores a token rather
+// than a cookie - lat/lng were undefined, the fetch never ran, and nothing ever
+// triggered a retry because a `computed` over a captured plain object cannot update.
+// The slot then rendered nothing while still reporting success (see below), leaving a
+// 123px grey band with no ad in it.
+const me = computed(() => authStore.user)
+const lat = computed(() => me.value?.lat)
+const lng = computed(() => me.value?.lng)
 
-const location = computed(() => me?.settings?.mylocation?.name || null)
+const location = computed(() => me.value?.settings?.mylocation?.name || null)
 
-if (location.value && lat && lng) {
-  try {
-    await jobStore.fetch(lat, lng)
-  } catch (e) {
-    console.log('Jobs fetch failed', e)
-  }
-}
+// Fetch as soon as we have somewhere to fetch for, and again if the member moves.
+// immediate covers the case where the session was already there at setup.
+watch(
+  [location, lat, lng],
+  async ([loc, la, ln]) => {
+    if (!loc || !la || !ln) return
+
+    try {
+      await jobStore.fetch(la, ln)
+    } catch (e) {
+      console.log('Jobs fetch failed', e)
+    }
+  },
+  { immediate: true }
+)
 
 let refreshTimer = null
 const AD_REFRESH_TIMEOUT = 31000
 
 onMounted(() => {
-  emit('rendered', true)
+  emit('rendered', hasContent.value)
   refreshTimer = setTimeout(() => {
     // We only show the jobs for a while.  If people don't engage with them on initial page load they're not likely
     // to, so we might as well shift to showing other ads so that we get some revenue.
@@ -164,6 +181,22 @@ const list = computed(() => {
 const displayedJobs = computed(() => {
   return props.listOnly ? list.value.slice(0, 10) : list.value.slice(0, 20)
 })
+
+// Whether this slot is actually showing anything - the same condition as the template's
+// own v-if, so the two cannot disagree. Declared after `list` because the watch below
+// reads it immediately, and `list` is a const in the same setup scope.
+const hasContent = computed(() => Boolean(location.value && list.value.length))
+
+// Report what we ACTUALLY rendered. An unconditional emit('rendered', true) in onMounted
+// is what left a 123px grey band with nothing in it at the bottom of every page whose
+// jobs list was empty: ExternalDa believed an ad had rendered, so LayoutCommon set
+// stickyAdRendered=1, reserved the height, applied the .sticky-ad-zone tint and showed
+// the "Hate ads?" CTA - while the collapse path (.adNotShown, padding-bottom 0) needs
+// stickyAdRendered === 0 and so could never fire.
+//
+// Re-emitted on change because the jobs arrive asynchronously: the first answer is
+// usually "nothing yet" and the caller has to hear the second one.
+watch(hasContent, (has) => emit('rendered', has))
 
 /* IDs of the jobs currently displayed in this slot, passed to the modal so
  * it can exclude them and show different ads. */

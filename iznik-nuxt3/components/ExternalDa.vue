@@ -17,9 +17,12 @@
         class="d-flex w-100 justify-content-md-around"
         :style="maxWidth ? `max-width: ${maxWidth}` : ''"
       >
-        <!-- Use job ads as fallback when main ads fail to load -->
+        <!-- Use job ads as fallback when main ads fail to load. jobsEmpty guards against
+             falling back into a slot that has already told us it has nothing: without it
+             the fallback re-mounts the same empty jobs list and the reserved space stays
+             blank, which is the bug this whole path exists to avoid. -->
         <JobsDaSlot
-          v-if="jobs"
+          v-if="jobs && !jobsEmpty"
           :min-width="minWidth"
           :max-width="maxWidth"
           :min-height="minHeight"
@@ -30,7 +33,7 @@
           :class="{
             'text-center': maxWidth === '100vw',
           }"
-          @rendered="rippleRendered"
+          @rendered="jobsRendered"
         />
         <!-- Final fallback: donate ad if job ads not enabled -->
         <nuxt-link v-else to="/adsoff" style="display: block; max-width: 100%">
@@ -62,7 +65,7 @@
               :class="{
                 'text-center': maxWidth === '100vw',
               }"
-              @rendered="rippleRendered"
+              @rendered="jobsRendered"
               @borednow="setBored"
             />
             <OurPlaywireDa
@@ -367,6 +370,20 @@ async function checkStillVisible() {
   } else {
     emit('rendered', false)
   }
+}
+
+// The jobs slot has nothing to show. Distinct from an ad network failing to fill: the
+// jobs list is ours, so retrying it is pointless, and re-mounting it as the "fallback"
+// just leaves the reserved space blank. Latch it and let rippleRendered fall through to
+// the donate banner, which fills the band we have already reserved.
+const jobsEmpty = ref(false)
+
+function jobsRendered(rendered) {
+  if (!rendered) {
+    jobsEmpty.value = true
+  }
+
+  rippleRendered(rendered)
 }
 
 function rippleRendered(rendered) {
