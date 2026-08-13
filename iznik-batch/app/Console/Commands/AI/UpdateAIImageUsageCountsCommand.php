@@ -3,6 +3,7 @@
 namespace App\Console\Commands\AI;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -37,7 +38,35 @@ class UpdateAIImageUsageCountsCommand extends Command
     // config table, so there is no schema step.
     private const CURSOR_KEY = 'ai.usage_counts_cursor';
 
+    // Both modes take this same lock, so the nightly full run and an hourly incremental
+    // one can never be in flight together. Laravel's own withoutOverlapping() cannot do
+    // this: it keys the mutex on the command string, and "ai:usage-counts:update" and
+    // "ai:usage-counts:update --full" are different strings, so each only ever excludes
+    // another copy of itself. Without a shared lock the nightly run - which takes long
+    // enough that the next hourly tick fires while it is still going - finishes last and
+    // stores the cursor it read at the start, moving it backwards. The incremental pass
+    // adds to the counts rather than setting them, so everything between the two cursor
+    // positions gets counted twice, and it stays wrong until the following night.
+    private const RUN_LOCK_KEY = 'ai:usage-counts:run';
+
     public function handle(): int
+    {
+        $lock = Cache::lock(self::RUN_LOCK_KEY, 3600);
+
+        if (!$lock->get()) {
+            $this->info('Another ai:usage-counts:update run is in progress; exiting.');
+
+            return Command::SUCCESS;
+        }
+
+        try {
+            return $this->updateCounts();
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function updateCounts(): int
     {
         // The highest attachment id that exists right now. Both paths work strictly up to
         // this id and then store it, so a row inserted while we run is left for the next
@@ -175,6 +204,17 @@ class UpdateAIImageUsageCountsCommand extends Command
 
     private function writeCursor(int $upTo): void
     {
+        // Only ever forward. The run lock stops the two scheduled jobs overlapping, but
+        // the id this is called with comes from MAX(id) on a cluster that splits reads
+        // and writes, so a read from a node that is behind can hand back a smaller
+        // number than the cursor already holds. Storing it would make the next pass add
+        // the counts for that range a second time.
+        $current = $this->readCursor();
+
+        if ($current !== null && $upTo <= $current) {
+            return;
+        }
+
         DB::table('config')->upsert(
             [['key' => self::CURSOR_KEY, 'value' => (string) $upTo]],
             ['key'],

@@ -136,12 +136,18 @@ class AutoRepostService
                 continue;
             }
 
+            // Cast the same way applyDueWindow does. The database is asked for candidates
+            // using a window built from whole numbers, and this decides what to do with
+            // them; if the two rounded a fraction differently, a post could pass the test
+            // here that the window had already excluded, and it would never be reposted.
+            // Every community stores whole numbers today, so this changes nothing now -
+            // it just stops the two halves being able to disagree.
             $interval = $msg->type === Message::TYPE_OFFER
-                ? ($reposts['offer'] ?? 3)
-                : ($reposts['wanted'] ?? 7);
+                ? (int) ($reposts['offer'] ?? 3)
+                : (int) ($reposts['wanted'] ?? 7);
 
             // V1: max age check — messages older than interval * (max + 1) days.
-            $maxAge = $interval * (($reposts['max'] ?? 5) + 1);
+            $maxAge = $interval * ((int) ($reposts['max'] ?? 5) + 1);
             if ($msg->hoursago >= $maxAge * 24) {
                 $stats['skipped']++;
                 continue;
