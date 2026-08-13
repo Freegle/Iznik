@@ -836,6 +836,24 @@ class ContentCheckService
         return $result === 1;
     }
 
+    // Like safePreg, but returns the substring the pattern actually matched
+    // rather than a bool. Regex-mode concern keywords store a PATTERN (e.g.
+    // 'crack\s+cocaine'), not a literal word, so the mod-facing reason needs
+    // what the pattern matched in the post text, not the pattern itself -
+    // otherwise the flag notice reads as regex soup (Discourse #10024).
+    private function safePregCapture(string $pattern, string $subject): ?string
+    {
+        $result = @preg_match($pattern, $subject, $matches);
+        if (preg_last_error() !== PREG_NO_ERROR) {
+            Log::warning('ContentCheck: invalid regex pattern', [
+                'pattern' => $pattern,
+                'error'   => preg_last_error_msg(),
+            ]);
+            return null;
+        }
+        return $result === 1 ? $matches[0] : null;
+    }
+
     // -------------------------------------------------------------------------
     // Concern keywords — unified table replacing worrywords + spam_keywords.
     // Supports match_mode (fuzzy/literal/regex), global + per-group scope,
@@ -871,8 +889,13 @@ class ContentCheckService
                 continue;
             }
 
+            // For regex mode, $word is a PATTERN rather than the literal text
+            // to display - capture what it actually matched so the mod-facing
+            // reason names real text from the post, not the pattern.
+            $matchedText = null;
+
             $matched = match ($kw->match_mode) {
-                'regex'   => $this->safePreg('/' . $word . '/i', $original),
+                'regex'   => ($matchedText = $this->safePregCapture('/' . $word . '/i', $original)) !== null,
                 'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
                 default   => $this->matchesFuzzy($haystack, $word),
             };
@@ -892,12 +915,14 @@ class ContentCheckService
                 continue;
             }
 
+            $displayWord = $matchedText ?? $word;
+
             return [
                 'check'    => self::CHECK_CONCERN_KEYWORD,
                 'category' => $kw->category,
                 'action'   => $kw->action ?? 'flag',
-                'keyword'  => $word,
-                'detail'   => "Matched concern keyword '{$word}'",
+                'keyword'  => $displayWord,
+                'detail'   => "Matched concern keyword '{$displayWord}'",
             ];
         }
 

@@ -95,7 +95,7 @@
                 value="current"
                 checked
               />
-              Current (30-min)</label
+              Current (grows to 45-min)</label
             >
             <label
               ><input
@@ -151,13 +151,15 @@
           <div class="rpl-slider-label">
             <span>Maximum reach</span>
           </div>
+          <!-- value is set from REACH_CEILING_MINUTES on init (setupRipplingExplorer);
+               this attribute is the pre-hydration default and must match it. -->
           <input
             id="rippling-time-slider"
             type="range"
             min="1"
             max="60"
             step="1"
-            value="30"
+            value="45"
           />
           <div
             style="
@@ -170,10 +172,15 @@
           >
             <span>Short</span><span>Long</span>
           </div>
-          <div id="rippling-time-help" class="rpl-slider-help">
-            The default setting is the reach we actually use in production now.
-            Raise it only to explore a larger, hypothetical reach.
-          </div>
+          <!-- Filled from reachSliderHelp() on init so the numbers come from one place. -->
+          <div id="rippling-time-help" class="rpl-slider-help"></div>
+          <!-- The dropped marker's own band and cap, from /town/near. Empty until a
+               marker exists, and stays empty when density cannot be measured. -->
+          <div
+            id="rippling-recipient-cap"
+            class="rpl-slider-help"
+            style="display: none"
+          ></div>
         </div>
 
         <!-- Inbound: pie chart + counts (the result of "what's in") -->
@@ -479,6 +486,10 @@ const catchmentLegend = ref([])
 const props = defineProps({
   spatialUrl: { type: String, default: 'http://localhost:8196' },
   jwt: { type: String, default: '' },
+  // apiv2, for /town/near — the ONLY source of a point's density band and cap that
+  // isn't a fourth reimplementation of the band policy. Empty disables the lookup and
+  // the band line simply stays hidden.
+  apiv2Url: { type: String, default: '' },
   // Minimal mode (e.g. embedded in the per-post reach modal): hide the controls
   // panel and legend, leaving just the map, the ripple point and the time scrubber.
   minimal: { type: Boolean, default: false },
