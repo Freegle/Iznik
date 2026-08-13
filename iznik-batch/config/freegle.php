@@ -201,6 +201,21 @@ return [
         // Rate-limit retry policy (V1 Utils::curlWithRetry: 60 retries, 1s delay).
         'max_retries' => (int) env('DISCOURSE_MAX_RETRIES', 60),
         'retry_delay_s' => (int) env('DISCOURSE_RETRY_DELAY_S', 1),
+
+        // The annual AGM category (discourse:agm). Only staff and this group
+        // may start topics in it; everyone else may read and reply.
+        'agm' => [
+            'announcers_group' => env('DISCOURSE_AGM_ANNOUNCERS_GROUP', 'Announcers'),
+            'colour' => env('DISCOURSE_AGM_COLOUR', '0088CC'),
+            'text_colour' => env('DISCOURSE_AGM_TEXT_COLOUR', 'FFFFFF'),
+            // Seeds the "About the ... category" topic. :name is the category name.
+            'description' => env(
+                'DISCOURSE_AGM_DESCRIPTION',
+                'All users of Discourse have been put on settings so that they are watching this group. '
+                .'You can switch this off, if you wish, by clicking on the user-cog icon at the top of the page '
+                .'and then select "+ Tracking" then remove ":name" from your Watched list.'
+            ),
+        ],
     ],
 
     // PayPal NVP/SOAP API (V1 paypal_download.php fallback transaction downloader).
