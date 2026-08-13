@@ -38,6 +38,8 @@ class EmailApiParityTest extends TestCase
 
     private int $fakeLocationId;
 
+    private string $lokiLogPath;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -61,6 +63,27 @@ class EmailApiParityTest extends TestCase
         Http::fake([
             '*/v1/postcodes/knn*' => Http::response(['results' => [['id' => $this->fakeLocationId, 'distance' => 0]]], 200),
         ]);
+
+        // Layer 5 compares the two paths' Loki entries, which LokiService only
+        // builds when enabled. Point it at a throwaway directory and bind that
+        // instance so both syncers resolve the configured one — the comparison
+        // reads the entries from the [LOKI] trace lines, not from these files.
+        $this->lokiLogPath = sys_get_temp_dir() . '/parity-loki-' . uniqid('', true);
+        mkdir($this->lokiLogPath, 0777, true);
+        config(['freegle.loki.enabled' => true, 'freegle.loki.log_path' => $this->lokiLogPath]);
+        $this->app->instance(LokiService::class, new LokiService);
+    }
+
+    protected function tearDown(): void
+    {
+        if (isset($this->lokiLogPath) && is_dir($this->lokiLogPath)) {
+            foreach (glob($this->lokiLogPath . '/*.log') as $file) {
+                unlink($file);
+            }
+            @rmdir($this->lokiLogPath);
+        }
+
+        parent::tearDown();
     }
 
     // -------------------------------------------------------------------------
@@ -256,6 +279,218 @@ class EmailApiParityTest extends TestCase
      * Runs both paths against the named scenario's fixture directory and
      * returns ParityComparer::computeLayers()'s result.
      */
+    // -------------------------------------------------------------------------
+    // Layer 5 — Loki entry parity
+    //
+    // Layers 1-4 compare what each path wrote to the DATABASE. Layer 5 compares
+    // what each path reported to LOKI, which is a separate contract: the two
+    // streams are queried together, so a shape difference breaks the comparison
+    // even when the ingestion itself was correct.
+    // -------------------------------------------------------------------------
+
+    public function test_layer5_silent_when_both_paths_report_the_same_loki_entry(): void
+    {
+        $layers = $this->runAllCleanScenario();
+
+        $this->assertGreaterThan(0, $layers['lokiEntriesSeen'], 'Both paths must emit Loki entries for Layer 5 to mean anything');
+        $this->assertGreaterThan(0, $layers['layer5Compared'], 'Layer 5 should have compared at least one overlapping post');
+        $this->assertEmpty($layers['layer5Mismatches'], 'Layer 5 must be silent when both paths report identical entries');
+    }
+
+    public function test_layer5_flags_a_differing_field_between_the_two_entries(): void
+    {
+        // Driven by synthetic trace lines rather than fixtures: making the two
+        // real paths disagree on a Loki field would mean deliberately breaking
+        // one of them, whereas the point here is the comparison logic itself.
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', ['subject' => 'OFFER: Sofa']),
+            $this->syntheticLines('api', 'tn_api', ['subject' => 'OFFER: Something else']),
+        );
+
+        $this->assertNotEmpty($layers['layer5Mismatches']);
+        $this->assertStringContainsString('subject differs', $layers['layer5Mismatches'][0]);
+    }
+
+    public function test_layer5_flags_a_label_difference(): void
+    {
+        // subtype is a label as well as a message field, so a routing-outcome
+        // divergence shows up as both — the label check is what guarantees the
+        // two streams stay queryable as one.
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', ['routing_outcome' => 'Pending'], subtype: 'Pending'),
+            $this->syntheticLines('api', 'tn_api', ['routing_outcome' => 'Approved'], subtype: 'Approved'),
+        );
+
+        $this->assertNotEmpty($layers['layer5Mismatches']);
+        $this->assertStringContainsString('labels differ', implode(' | ', $layers['layer5Mismatches']));
+    }
+
+    public function test_layer5_flags_a_post_only_one_path_reported_to_loki(): void
+    {
+        $emailLines = $this->syntheticLines('email', 'incoming_mail', []);
+        // API side handles the post but emits no Loki entry at all.
+        $apiLines = array_values(array_filter(
+            $this->syntheticLines('api', 'tn_api', []),
+            fn (string $line) => !str_contains($line, '[LOKI]'),
+        ));
+
+        $layers = (new ParityComparer())->computeLayers($emailLines, $apiLines);
+
+        $this->assertNotEmpty($layers['layer5Mismatches']);
+        $this->assertStringContainsString('only the email path emitted a Loki entry', $layers['layer5Mismatches'][0]);
+    }
+
+    public function test_layer5_ignores_the_fields_that_differ_by_design(): void
+    {
+        // envelope_from/from_address/message_id differ between the paths for
+        // structural reasons (no SMTP envelope; separate messages rows), and
+        // tn_post_id is API-only. None may be reported as a mismatch.
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', [
+                'envelope_from' => 'poster@example.com',
+                'from_address'  => 'poster@example.com',
+                'message_id'    => 111,
+            ]),
+            $this->syntheticLines('api', 'tn_api', [
+                'envelope_from' => '',
+                'from_address'  => '',
+                'message_id'    => 222,
+                'tn_post_id'    => 'tn-l5-1',
+            ]),
+        );
+
+        $this->assertEmpty($layers['layer5Mismatches'], 'By-design differences must not be reported: ' . implode(' | ', $layers['layer5Mismatches']));
+    }
+
+    public function test_layer5_does_not_flag_divergent_outcomes_that_layer4_already_explains(): void
+    {
+        // Regression for a false positive found on live data (2026-08-04
+        // window, post_id=47102958). The post was already ingested by an
+        // earlier run, so the email path took its duplicate-messageid branch
+        // (case 10: keeps group/user context, omits message_id, still reports
+        // Pending) while the API path took its postAlreadyExists() branch
+        // (routing_reason only, Dropped). Both are correct and both mirror the
+        // email path's own context rules — but comparing label VALUES and
+        // message KEY SETS unconditionally reported them as a Loki failure.
+        //
+        // Layer 4 already reports this pair as a divergence; Layer 5 must not
+        // double-report it as a hard failure.
+        $emailLines = array_merge(
+            $this->syntheticLines('email', 'incoming_mail', [
+                'group_id' => 7,
+                'group_name' => 'testgroup',
+                'user_id' => 42,
+            ], subtype: 'Pending'),
+            [],
+        );
+
+        // API side: dropped as a duplicate, so no messages row at all and a
+        // context of routing_reason only.
+        $apiEntry = [
+            'timestamp' => '2026-07-10T12:00:00+00:00',
+            'labels' => ['app' => 'freegle', 'source' => 'tn_api', 'type' => 'routed', 'subtype' => 'Dropped'],
+            'message' => [
+                'envelope_from' => '',
+                'envelope_to' => 'testgroup@groups.ilovefreegle.org',
+                'from_address' => '',
+                'subject' => 'OFFER: Sofa',
+                'message_id' => 'tn-l5-1@tn.trashnothing.com-7',
+                'routing_outcome' => 'Dropped',
+                'routing_reason' => 'duplicate',
+                'tn_post_id' => 'tn-l5-1',
+            ],
+        ];
+        $apiLines = [
+            'TN-SYNC-TRACE [POST-RESULT] post_id=tn-l5-1 result=duplicate',
+            'TN-SYNC-TRACE [LOKI] post_id=tn-l5-1 entry=' . json_encode($apiEntry),
+        ];
+
+        $layers = (new ParityComparer())->computeLayers($emailLines, $apiLines);
+
+        $this->assertEmpty(
+            $layers['layer5Mismatches'],
+            'Layer 5 must not report a pair whose outcomes legitimately diverged: ' . implode(' | ', $layers['layer5Mismatches']),
+        );
+        $this->assertSame(1, $layers['layer5StructureOnly'], 'The pair should have been structure-checked only');
+        $this->assertNotEmpty($layers['layer4Divergences'], 'Layer 4 is where this pair belongs');
+    }
+
+    public function test_layer5_still_flags_structural_breakage_on_a_divergent_pair(): void
+    {
+        // The structural checks are outcome-independent, so they must still
+        // fire even for a pair Layer 5 only structure-checks. Here the API
+        // entry's subtype label contradicts its own routing_outcome field — a
+        // dashboard filtering on one and reading the other would disagree.
+        $emailLines = $this->syntheticLines('email', 'incoming_mail', [], subtype: 'Pending');
+
+        $apiEntry = [
+            'timestamp' => '2026-07-10T12:00:00+00:00',
+            'labels' => ['app' => 'freegle', 'source' => 'tn_api', 'type' => 'routed', 'subtype' => 'Dropped'],
+            'message' => [
+                'envelope_from' => '', 'envelope_to' => 'g@x', 'from_address' => '',
+                'subject' => 'OFFER: Sofa', 'message_id' => 1,
+                'routing_outcome' => 'Approved',  // contradicts the subtype label
+            ],
+        ];
+        $apiLines = [
+            'TN-SYNC-TRACE [POST-RESULT] post_id=tn-l5-1 result=duplicate',
+            'TN-SYNC-TRACE [LOKI] post_id=tn-l5-1 entry=' . json_encode($apiEntry),
+        ];
+
+        $layers = (new ParityComparer())->computeLayers($emailLines, $apiLines);
+
+        $this->assertStringContainsString(
+            'does not match routing_outcome',
+            implode(' | ', $layers['layer5Mismatches']),
+        );
+    }
+
+    /**
+     * Minimal trace lines for one post: an outcome, a messages-row write (so
+     * the pair counts as same-group and therefore value-comparable), and the
+     * Loki entry itself.
+     *
+     * @param  array<string, mixed>  $messageOverrides  merged into the entry's message
+     * @return string[]
+     */
+    private function syntheticLines(string $side, string $source, array $messageOverrides, string $subtype = 'Pending'): array
+    {
+        $postId = 'tn-l5-1';
+        $resultTag = $side === 'email' ? 'EMAIL-RESULT' : 'POST-RESULT';
+
+        $entry = [
+            'timestamp' => '2026-07-10T12:00:00+00:00',
+            'labels' => [
+                'app' => 'freegle',
+                'source' => $source,
+                'type' => 'routed',
+                'subtype' => $subtype,
+            ],
+            'message' => array_merge([
+                'envelope_from' => '',
+                'envelope_to' => 'testgroup@groups.ilovefreegle.org',
+                'from_address' => '',
+                'subject' => 'OFFER: Sofa',
+                'message_id' => 1,
+                'routing_outcome' => $subtype,
+                'group_id' => 7,
+                'group_name' => 'testgroup',
+                'user_id' => 42,
+            ], $messageOverrides),
+        ];
+
+        return [
+            "TN-SYNC-TRACE [{$resultTag}] post_id={$postId} result={$subtype}",
+            'TN-SYNC-TRACE [WRITE] table=messages op=insert set=' . json_encode([
+                'tnpostid' => $postId,
+                'groupid' => 7,
+                'fromuser' => 42,
+                'subject' => 'OFFER: Sofa',
+            ]),
+            "TN-SYNC-TRACE [LOKI] post_id={$postId} entry=" . json_encode($entry),
+        ];
+    }
+
     private function runScenario(string $scenario, string $from, string $to): array
     {
         $fixtureDir = self::FIXTURE_BASE . '/' . $scenario;

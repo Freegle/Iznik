@@ -53,7 +53,7 @@ class ParityComparer
      */
     public static function isRelevantTraceLine(string $text): bool
     {
-        return (bool) preg_match('/TN-SYNC-TRACE \[(POST-RESULT|EMAIL-RESULT|POST-SKIP|POST|EMAIL)\]/', $text)
+        return (bool) preg_match('/TN-SYNC-TRACE \[(POST-RESULT|EMAIL-RESULT|POST-SKIP|POST|EMAIL|LOKI)\]/', $text)
             || (bool) preg_match('/TN-SYNC-TRACE \[WRITE\] table=/', $text);
     }
 
@@ -81,6 +81,8 @@ class ParityComparer
      *     layer1Missing: string[], layer1Details: array<string, string>,
      *     layer2Extra: string[],
      *     overlapCount: int, layer3Mismatches: string[], layer4Divergences: string[],
+     *     layer5Mismatches: string[], layer5Compared: int, layer5StructureOnly: int,
+     *     lokiEntriesSeen: int,
      * }
      */
     public function computeLayers(array $emailLines, array $apiLines): array
@@ -93,6 +95,8 @@ class ParityComparer
         $emailPostDetails  = $this->parsePostDetails($emailLines);
         $emailStubUserIds  = $this->parseStubUserIds($emailLines);
         $apiStubUserIds    = $this->parseStubUserIds($apiLines);
+        $emailLokiEntries  = $this->parseLokiEntries($emailLines);
+        $apiLokiEntries    = $this->parseLokiEntries($apiLines);
 
         // Drop the API path's discarded per-group copies before anything else
         // uses apiResults/apiMessages — see excludeApiCrossposts() docblock.
@@ -159,6 +163,17 @@ class ParityComparer
             );
         }
 
+        // Layer 5: Loki entry parity (hard fail) — see compareLokiEntries().
+        [$layer5Mismatches, $layer5Compared, $layer5StructureOnly] = $this->compareLokiEntries(
+            $overlap,
+            $emailLokiEntries,
+            $apiLokiEntries,
+            $emailMessages,
+            $apiMessages,
+            $emailStubUserIds,
+            $apiStubUserIds,
+        );
+
         $emailIngestedCount = count(array_filter($emailResults, static fn (string $r) => in_array($r, self::INGESTED_RESULTS, true)));
         $apiIngestedCount   = count(array_filter($apiResults, static fn (string $r) => in_array($r, self::INGESTED_RESULTS, true)));
 
@@ -175,6 +190,16 @@ class ParityComparer
             'overlapCount'        => count($overlap),
             'layer3Mismatches'    => $layer3Mismatches,
             'layer4Divergences'   => $layer4Divergences,
+            'layer5Mismatches'    => $layer5Mismatches,
+            'layer5Compared'      => $layer5Compared,
+            // Pairs where the two paths resolved different groups (or one never
+            // created a messages row), so only the outcome-independent
+            // structural checks applied — the same pairs Layer 4 reports.
+            'layer5StructureOnly' => $layer5StructureOnly,
+            // Distinguishes "compared and clean" from "nothing to compare"
+            // (Loki disabled for the run) — a silent zero would otherwise read
+            // as a pass.
+            'lokiEntriesSeen'     => count($emailLokiEntries) + count($apiLokiEntries),
         ];
     }
 
@@ -486,6 +511,299 @@ class ParityComparer
             }
         }
         return $messages;
+    }
+
+    /**
+     * Labels that must be IDENTICAL between the two paths' Loki entries.
+     * `source` is excluded because it is the one label deliberately allowed to
+     * differ (incoming_mail vs tn_api) — see LokiService::SOURCE_TN_API.
+     */
+    private const LOKI_IGNORED_LABELS = ['source'];
+
+    /**
+     * Message keys excluded from the KEY-SET comparison, because one path
+     * legitimately has them and the other does not:
+     *  - tn_post_id: API-only; the email path cannot carry it (section I.5a).
+     *  - dry_run: only present when the API path runs with --dry-run.
+     */
+    private const LOKI_IGNORED_KEYS = ['tn_post_id', 'dry_run'];
+
+    /**
+     * Message fields whose VALUES must match when the two paths agree on the
+     * group. Deliberately excludes:
+     *  - envelope_from / from_address: the API path has no SMTP envelope.
+     *  - message_id: each path created its own messages row, so the numeric ids
+     *    differ by construction.
+     *  - user_id: handled separately, gated on stub-created users (see
+     *    parseStubUserIds() — a freshly stubbed poster has no shared identity
+     *    across the paths, so its id is not a meaningful comparison).
+     */
+    private const LOKI_COMPARED_FIELDS = ['routing_outcome', 'subject', 'group_id', 'group_name', 'routing_reason'];
+
+    /**
+     * Parses `TN-SYNC-TRACE [LOKI] post_id=X entry={json}` lines into a
+     * post_id => decoded-entry map.
+     *
+     * Emitted by each path's CALLER — EmailReplaySyncer for the email path,
+     * PostSyncer for the API path — mirroring where production emits its Loki
+     * entry (IncomingMailController / PostSyncer respectively). Traced rather
+     * than read back from incoming_mail.log because the email path's entry
+     * carries no tn_post_id and so could not otherwise be correlated per post.
+     *
+     * @param  string[]  $lines
+     * @return array<string, array<string, mixed>>
+     */
+    public function parseLokiEntries(array $lines): array
+    {
+        $entries = [];
+        foreach ($lines as $line) {
+            if (!preg_match('/TN-SYNC-TRACE \[LOKI\] post_id=(\S+) entry=(.*)$/', $line, $m)) {
+                continue;
+            }
+            $decoded = json_decode($m[2], true);
+            if (is_array($decoded)) {
+                $entries[$m[1]] = $decoded;
+            }
+        }
+        return $entries;
+    }
+
+    /**
+     * Message keys ALWAYS present on both paths, because LokiService::
+     * buildRoutedMessage() writes them unconditionally. Everything else in the
+     * message comes from the routing context, which legitimately varies by
+     * branch — see the docblock on compareLokiEntries().
+     */
+    private const LOKI_FIXED_FIELDS = [
+        'envelope_from', 'envelope_to', 'from_address', 'subject', 'message_id', 'routing_outcome',
+    ];
+
+    /**
+     * Layer 5 — Loki entry parity (hard fail).
+     *
+     * Layers 1-4 compare what each path wrote to the DATABASE. This one
+     * compares what each path reported to LOKI, a separate contract: the two
+     * streams are consumed together by one query spanning both `source`
+     * values, so a divergence there breaks the comparison even when ingestion
+     * itself was correct.
+     *
+     * Split into two levels, for the same reason Layers 3 and 4 are split:
+     *
+     *  - STRUCTURAL, checked for every overlapping post. Only invariants that
+     *    hold REGARDLESS of routing outcome: the label key set, the two
+     *    expected `source` values, presence of the always-written message
+     *    fields, and internal consistency between the `subtype` label and the
+     *    `routing_outcome` field.
+     *
+     *  - OUTCOME-DEPENDENT, checked only where both paths created a messages
+     *    row on the SAME group. Label VALUES (`subtype` is the outcome), the
+     *    context key set, and the compared field values all legitimately
+     *    differ when the two paths reached different outcomes — that is not a
+     *    logging bug, it is the routing difference Layer 4 already reports.
+     *
+     * The distinction was found the hard way on live data: a post already
+     * ingested by an earlier run made the email path take its duplicate-
+     * messageid branch (keeping group/user context, no message_id) while the
+     * API path took its postAlreadyExists() branch (routing_reason only). Both
+     * are correct, and both are exactly what the email path does — but an
+     * unconditional key-set comparison reported them as a Loki failure.
+     *
+     * @param  string[]  $overlap  post_ids present on both paths
+     * @param  array<string, array<string, mixed>>  $emailEntries
+     * @param  array<string, array<string, mixed>>  $apiEntries
+     * @param  array<string, array<string, mixed>>  $emailMessages
+     * @param  array<string, array<string, mixed>>  $apiMessages
+     * @param  int[]  $emailStubUserIds
+     * @param  int[]  $apiStubUserIds
+     * @return array{0: string[], 1: int, 2: int}  [mismatches, fullyComparedCount, structureOnlyCount]
+     */
+    private function compareLokiEntries(
+        array $overlap,
+        array $emailEntries,
+        array $apiEntries,
+        array $emailMessages,
+        array $apiMessages,
+        array $emailStubUserIds,
+        array $apiStubUserIds,
+    ): array {
+        $mismatches    = [];
+        $fullyCompared = 0;
+        $structureOnly = 0;
+
+        foreach ($overlap as $postId) {
+            $email = $emailEntries[$postId] ?? null;
+            $api   = $apiEntries[$postId] ?? null;
+
+            // A path that handled the post but reported nothing to Loki is
+            // itself a failure: the item silently vanishes from the stream.
+            if ($email === null || $api === null) {
+                if ($email === null && $api === null) {
+                    continue;  // Neither side emitted — Loki disabled for this run.
+                }
+                $mismatches[] = sprintf(
+                    'post_id=%s: only the %s path emitted a Loki entry',
+                    $postId,
+                    $email !== null ? 'email' : 'API',
+                );
+                continue;
+            }
+
+            $mismatches = array_merge($mismatches, $this->diffLokiStructure($postId, $email, $api));
+
+            // Outcome-dependent checks need the two paths to have landed the
+            // post on the same group — otherwise the outcomes, and therefore
+            // the context each carries, legitimately differ.
+            $emailMsg = $emailMessages[$postId] ?? null;
+            $apiMsg   = $apiMessages[$postId] ?? null;
+            $sameGroup = $emailMsg !== null && $apiMsg !== null
+                && (string) ($emailMsg['groupid'] ?? '') === (string) ($apiMsg['groupid'] ?? '');
+
+            if (!$sameGroup) {
+                $structureOnly++;
+                continue;
+            }
+
+            $fullyCompared++;
+            $mismatches = array_merge(
+                $mismatches,
+                $this->diffLokiOutcome($postId, $email, $api, $emailMsg, $apiMsg, $emailStubUserIds, $apiStubUserIds),
+            );
+        }
+
+        return [$mismatches, $fullyCompared, $structureOnly];
+    }
+
+    /**
+     * Outcome-INDEPENDENT checks: these must hold for every post, whatever
+     * either path decided to do with it.
+     *
+     * @return string[]
+     */
+    private function diffLokiStructure(string $postId, array $email, array $api): array
+    {
+        $mismatches = [];
+
+        $emailLabelKeys = array_keys($email['labels'] ?? []);
+        $apiLabelKeys   = array_keys($api['labels'] ?? []);
+        sort($emailLabelKeys);
+        sort($apiLabelKeys);
+        if ($emailLabelKeys !== $apiLabelKeys) {
+            $mismatches[] = sprintf(
+                'post_id=%s: label key sets differ: email=%s api=%s',
+                $postId,
+                json_encode($emailLabelKeys),
+                json_encode($apiLabelKeys),
+            );
+        }
+
+        foreach ([['email', $email, 'incoming_mail'], ['api', $api, 'tn_api']] as [$side, $entry, $expectedSource]) {
+            if (($entry['labels']['source'] ?? null) !== $expectedSource) {
+                $mismatches[] = sprintf(
+                    'post_id=%s: %s entry has source=%s, expected %s',
+                    $postId,
+                    $side,
+                    var_export($entry['labels']['source'] ?? null, true),
+                    $expectedSource,
+                );
+            }
+
+            $missing = array_values(array_diff(self::LOKI_FIXED_FIELDS, array_keys($entry['message'] ?? [])));
+            if ($missing !== []) {
+                $mismatches[] = sprintf(
+                    'post_id=%s: %s entry is missing always-present field(s) %s',
+                    $postId,
+                    $side,
+                    json_encode($missing),
+                );
+            }
+
+            // The subtype label and the routing_outcome field are two copies of
+            // the same value; a dashboard filtering on one and reading the
+            // other would silently disagree if they ever drifted.
+            if (($entry['labels']['subtype'] ?? null) !== ($entry['message']['routing_outcome'] ?? null)) {
+                $mismatches[] = sprintf(
+                    'post_id=%s: %s entry subtype label (%s) does not match routing_outcome (%s)',
+                    $postId,
+                    $side,
+                    var_export($entry['labels']['subtype'] ?? null, true),
+                    var_export($entry['message']['routing_outcome'] ?? null, true),
+                );
+            }
+        }
+
+        return $mismatches;
+    }
+
+    /**
+     * Outcome-DEPENDENT checks, valid only once both paths are known to have
+     * landed the post on the same group.
+     *
+     * @return string[]
+     */
+    private function diffLokiOutcome(
+        string $postId,
+        array $email,
+        array $api,
+        array $emailMsg,
+        array $apiMsg,
+        array $emailStubUserIds,
+        array $apiStubUserIds,
+    ): array {
+        $mismatches = [];
+
+        $emailLabels = array_diff_key($email['labels'] ?? [], array_flip(self::LOKI_IGNORED_LABELS));
+        $apiLabels   = array_diff_key($api['labels'] ?? [], array_flip(self::LOKI_IGNORED_LABELS));
+        if ($emailLabels !== $apiLabels) {
+            $mismatches[] = sprintf(
+                'post_id=%s: labels differ: email=%s api=%s',
+                $postId,
+                json_encode($emailLabels),
+                json_encode($apiLabels),
+            );
+        }
+
+        $emailKeys = array_values(array_diff(array_keys($email['message'] ?? []), self::LOKI_IGNORED_KEYS));
+        $apiKeys   = array_values(array_diff(array_keys($api['message'] ?? []), self::LOKI_IGNORED_KEYS));
+        sort($emailKeys);
+        sort($apiKeys);
+        if ($emailKeys !== $apiKeys) {
+            $mismatches[] = sprintf(
+                'post_id=%s: message field sets differ: email-only=%s api-only=%s',
+                $postId,
+                json_encode(array_values(array_diff($emailKeys, $apiKeys))),
+                json_encode(array_values(array_diff($apiKeys, $emailKeys))),
+            );
+        }
+
+        foreach (self::LOKI_COMPARED_FIELDS as $field) {
+            $emailValue = $email['message'][$field] ?? null;
+            $apiValue   = $api['message'][$field] ?? null;
+            if ((string) $emailValue !== (string) $apiValue) {
+                $mismatches[] = sprintf(
+                    'post_id=%s: %s differs: email=%s api=%s',
+                    $postId,
+                    $field,
+                    var_export($emailValue, true),
+                    var_export($apiValue, true),
+                );
+            }
+        }
+
+        // user_id only when neither side stub-created this poster during the
+        // run — same gate classifyOverlapPost() applies to `result`.
+        $emailStubbed = in_array((int) ($emailMsg['fromuser'] ?? 0), $emailStubUserIds, true);
+        $apiStubbed   = in_array((int) ($apiMsg['fromuser'] ?? 0), $apiStubUserIds, true);
+        if (!$emailStubbed && !$apiStubbed
+            && (string) ($email['message']['user_id'] ?? '') !== (string) ($api['message']['user_id'] ?? '')) {
+            $mismatches[] = sprintf(
+                'post_id=%s: user_id differs: email=%s api=%s',
+                $postId,
+                var_export($email['message']['user_id'] ?? null, true),
+                var_export($api['message']['user_id'] ?? null, true),
+            );
+        }
+
+        return $mismatches;
     }
 
     /**

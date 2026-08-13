@@ -144,6 +144,12 @@ class LokiService
 
     /**
      * Log an incoming email routing event.
+     *
+     * @return array|null  The entry written, or null when Loki is disabled.
+     *                     Returned (rather than void) so a caller can trace
+     *                     what it emitted — tn:parity-check diffs the two
+     *                     paths' entries against each other. Callers that
+     *                     ignore the return value are unaffected.
      */
     public function logIncomingEmail(
         string $envelopeFrom,
@@ -153,16 +159,20 @@ class LokiService
         string $messageId,
         string $routingOutcome,
         array $context = [],
-    ): void {
+    ): ?array {
         if (! $this->enabled) {
-            return;
+            return null;
         }
 
-        $this->writeLog('incoming_mail.log', $this->buildRoutedEntry(
+        $entry = $this->buildRoutedEntry(
             self::SOURCE_INCOMING_MAIL,
             $routingOutcome,
             $this->buildRoutedMessage($envelopeFrom, $envelopeTo, $fromAddress, $subject, $messageId, $routingOutcome, $context),
-        ));
+        );
+
+        $this->writeLog('incoming_mail.log', $entry);
+
+        return $entry;
     }
 
     /**
@@ -186,16 +196,20 @@ class LokiService
         string $messageId,
         string $routingOutcome,
         array $context = [],
-    ): void {
+    ): ?array {
         if (! $this->enabled) {
-            return;
+            return null;
         }
 
-        $this->writeLog('incoming_mail.log', $this->buildRoutedEntry(
+        $entry = $this->buildRoutedEntry(
             self::SOURCE_TN_API,
             $routingOutcome,
             $this->buildRoutedMessage($envelopeFrom, $envelopeTo, $fromAddress, $subject, $messageId, $routingOutcome, $context),
-        ));
+        );
+
+        $this->writeLog('incoming_mail.log', $entry);
+
+        return $entry;
     }
 
     /**

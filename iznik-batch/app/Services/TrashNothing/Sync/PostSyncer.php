@@ -308,7 +308,7 @@ class PostSyncer
             $context['dry_run'] = true;
         }
 
-        $this->loki->logIngestedPost(
+        $entry = $this->loki->logIngestedPost(
             // No SMTP envelope on this path; mirrors the null/synthesized values
             // createMessage() writes to messages.envelopefrom/fromaddr.
             envelopeFrom: '',
@@ -324,6 +324,12 @@ class PostSyncer
             routingOutcome: $outcome->value,
             context: $context,
         );
+
+        // The entry itself, keyed by post_id, for ParityComparer's Loki layer —
+        // the API-side counterpart of EmailReplaySyncer's identical line.
+        if ($entry !== null) {
+            Log::info('TN-SYNC-TRACE [LOKI] post_id=' . $postId . ' entry=' . json_encode($entry));
+        }
     }
 
     /**

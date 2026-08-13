@@ -285,6 +285,32 @@ class EmailReplaySyncer
                 'group_id'   => $groupId,
                 'result'     => $result->value,
             ]);
+
+            // Emit the email path's routed Loki entry exactly as
+            // IncomingMailController::receive() does, so tn:parity-check has an
+            // email-side entry to diff the API path's against.
+            //
+            // This syncer is the email path's CALLER in the parity harness — the
+            // same role the controller plays in production — so emitting here
+            // reproduces production behaviour rather than altering it.
+            // IncomingMailService itself is untouched, as required.
+            $entry = $this->loki->logIncomingEmail(
+                $envelopeFrom,
+                $envelopeTo,
+                $parsed->fromAddress,
+                $parsed->subject ?? '',
+                $parsed->messageId ?? '',
+                $result->value,
+                $this->mailService->getLastRoutingContext(),
+            );
+
+            // The entry itself, keyed by post_id, for ParityComparer's Loki
+            // layer. Traced rather than read back from the log file because the
+            // email path's entry carries no tn_post_id (see section I.5a) and so
+            // cannot otherwise be correlated with the API path's.
+            if ($entry !== null) {
+                Log::info('TN-SYNC-TRACE [LOKI] post_id=' . $postId . ' entry=' . json_encode($entry));
+            }
         } catch (\Throwable $e) {
             Log::error('TN sync: email replay failed', [
                 'post_id' => $postId,

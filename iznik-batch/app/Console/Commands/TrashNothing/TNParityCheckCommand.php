@@ -58,6 +58,10 @@ class TNParityCheckCommand extends Command
         $dateMin      = $this->option('date-min') ?: null;
         $dateMax      = $this->option('date-max') ?: null;
 
+        // Layer 5 compares the two paths' Loki entries, which requires both
+        // paths to actually build them — replaces the injected instance.
+        $loki = $this->isolateLokiOutput();
+
         // ── 1. Download (or load) the CSV ──────────────────────────────────
         $csvText = $this->loadCsvText($localTesting);
 
@@ -117,10 +121,38 @@ class TNParityCheckCommand extends Command
     }
 
     /**
+     * Forces Loki entry generation for this run, into a throwaway directory.
+     *
+     * Layer 5 needs both paths to build their Loki entries, which LokiService
+     * skips entirely when freegle.loki.enabled is false (the default outside
+     * production). Redirecting the log path keeps a parity run — which replays
+     * real posts through both ingestion paths — from injecting duplicate
+     * entries into the production Loki stream that ModTools' dashboards read.
+     *
+     * The comparison itself reads the entries from the [LOKI] trace lines, not
+     * from these files; the directory exists only because LokiService always
+     * writes what it builds.
+     */
+    private function isolateLokiOutput(): LokiService
+    {
+        $dir = sys_get_temp_dir() . '/tn-parity-loki-' . getmypid();
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+
+        config(['freegle.loki.enabled' => true, 'freegle.loki.log_path' => $dir]);
+        $this->line("Loki entries redirected to {$dir} (not the production stream).");
+
+        // LokiService reads config in its constructor, so this must be built
+        // after the config() call above.
+        return new LokiService;
+    }
+
+    /**
      * Runs the four-layer comparison, refines Layer 1 misses via a live
      * single-post lookup fallback (see reclassifyLayer1Misses()), and prints
      * a plaintext summary + failure lists. Returns Command::FAILURE if
-     * Layer 1 or Layer 3 found problems, Command::SUCCESS otherwise
+     * Layer 1, Layer 3 or Layer 5 found problems, Command::SUCCESS otherwise
      * (Layers 2/4 are informational only).
      */
     private function compareAndReport(array $emailLines, array $apiLines, PostSyncer $apiSyncer, bool $localTesting, string $from, string $to): int
@@ -135,12 +167,12 @@ class TNParityCheckCommand extends Command
 
         $this->printReport($layers);
 
-        if (empty($layers['layer1Missing']) && empty($layers['layer3Mismatches'])) {
-            $this->info('PASS: no coverage gaps and no same-group parity mismatches.');
+        if (empty($layers['layer1Missing']) && empty($layers['layer3Mismatches']) && empty($layers['layer5Mismatches'])) {
+            $this->info('PASS: no coverage gaps, no same-group parity mismatches, no Loki divergence.');
             return Command::SUCCESS;
         }
 
-        $this->error('FAIL: see Layer 1/3 failures above.');
+        $this->error('FAIL: see Layer 1/3/5 failures above.');
         return Command::FAILURE;
     }
 
@@ -213,6 +245,12 @@ class TNParityCheckCommand extends Command
         $this->line('Layer 2 (extra, api-only): ' . count($layers['layer2Extra']));
         $this->line('Layer 3 (same-group):      overlap=' . $layers['overlapCount'] . ' mismatches=' . count($layers['layer3Mismatches']));
         $this->line('Layer 4 (divergence):      ' . count($layers['layer4Divergences']));
+        $this->line(
+            'Layer 5 (Loki entries):    compared=' . $layers['layer5Compared']
+            . ' structure-only=' . $layers['layer5StructureOnly']
+            . ' mismatches=' . count($layers['layer5Mismatches'])
+            . ($layers['lokiEntriesSeen'] === 0 ? '  [NOT CHECKED — no Loki entries emitted; is freegle.loki.enabled set?]' : '')
+        );
         if (isset($layers['layer1Deleted']) || isset($layers['layer1BumpedOutOfWindow']) || isset($layers['layer1ResolvedOutcome'])) {
             $this->line('Layer 1 (filtered out):    deleted=' . count($layers['layer1Deleted'] ?? []) . ' bumped_out_of_window=' . count($layers['layer1BumpedOutOfWindow'] ?? []) . ' resolved_outcome=' . count($layers['layer1ResolvedOutcome'] ?? []));
         }
@@ -236,6 +274,7 @@ class TNParityCheckCommand extends Command
         $this->printSection('Layer 2 (informational) — posts the API path covered that the email path never saw:', $layer2ExtraLines);
         $this->printSection('Layer 3 FAILURES — same group on both paths, but content/outcome differs:', $layers['layer3Mismatches'], isFailure: true);
         $this->printSection('Layer 4 (informational) — overlapping posts with no meaningful same-group comparison:', $layers['layer4Divergences']);
+        $this->printSection('Layer 5 FAILURES — the two paths reported different Loki entries for the same post:', $layers['layer5Mismatches'], isFailure: true);
     }
 
     /**
@@ -289,8 +328,12 @@ class TNParityCheckCommand extends Command
             return (string) file_get_contents($path);
         }
 
+        // The CSV is ~15MB and grows daily, and the cache-buster below means
+        // every run is an origin fetch. Laravel's 30s default covers the whole
+        // body transfer, so a slow-but-working origin (~13KB/s has been seen)
+        // aborts mid-download; give the body room and retry the flaky ones.
         $url      = self::CSV_URL . '?_=' . bin2hex(random_bytes(8));
-        $response = Http::get($url);
+        $response = Http::connectTimeout(10)->timeout(300)->retry(3, 2000)->get($url);
 
         if (!$response->successful()) {
             $this->error("CSV download failed (HTTP {$response->status()}): {$url}");
