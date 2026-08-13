@@ -455,10 +455,24 @@ Schedule::command('users:update-lastaccess')
 
 // Update chat reply-expectation tracking and per-user reply-time metrics.
 // V1: cron/chat_expected.php (every 5 minutes)
+//
+// Every five minutes this only looks at chats that have had a new message, or a
+// rippling-held reply released, since the last run - a waiting message cannot stop
+// waiting otherwise. It used to re-ask about all ~1,925 waiting messages each time and
+// rewrite the same answer back, which is where ~550k no-op writes a day came from.
 Schedule::command('chats:update-expected')
     ->everyFiveMinutes()
     ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('chats:update-expected'))
+    ->runInBackground();
+
+// The nightly backstop: re-check every waiting message, catching anything the two
+// triggers above cannot see. 04:30 sits in the quiet gap after the purge/stats cluster
+// and clear of db1's 04:00-04:17 backup window.
+Schedule::command('chats:update-expected --full')
+    ->dailyAt('04:30')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('chats:update-expected-full'))
     ->runInBackground();
 
 // Send calendar invites and chat reminders for arranged handover trysts.
