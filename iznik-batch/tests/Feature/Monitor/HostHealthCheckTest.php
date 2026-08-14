@@ -98,6 +98,18 @@ class HostHealthCheckTest extends TestCase
         $this->assertStringContainsString('linux-base libc6', $result->message);
     }
 
+    public function test_reboot_package_names_lose_their_version_and_dedupe(): void
+    {
+        $result = $this->evaluate($this->probeOutput(
+            reboot: 'yes',
+            rebootPkgs: 'linux-image-5.15.0-186-generic linux-base libc6 linux-image-5.15.0-181-generic',
+        ));
+
+        $this->assertTrue($result->isBreach());
+        $this->assertStringContainsString('(linux-image-generic linux-base libc6)', $result->message);
+        $this->assertStringNotContainsString('5.15', $result->message);
+    }
+
     public function test_pending_security_updates_are_a_warning_with_the_count(): void
     {
         $result = $this->evaluate($this->probeOutput(security: 3));
