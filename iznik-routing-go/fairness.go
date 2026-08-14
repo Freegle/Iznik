@@ -31,8 +31,8 @@ type QuintileResult struct {
 // quintileMultiplier returns the time-budget multiplier for a node of quintile q
 // at the given fairness weight W ∈ [0,1].
 //
-//   W=0: all quintiles get multiplier 1.0 (standard isochrone)
-//   W=1: Q1 gets 2.0, Q2 gets 1.75, Q3 gets 1.5, Q4 gets 1.25, Q5 gets 1.0
+//	W=0: all quintiles get multiplier 1.0 (standard isochrone)
+//	W=1: Q1 gets 2.0, Q2 gets 1.75, Q3 gets 1.5, Q4 gets 1.25, Q5 gets 1.0
 //
 // Unknown quintile (0) is treated as middle (Q3 equivalent).
 func quintileMultiplier(q Quintile, W float32) float32 {
@@ -56,12 +56,7 @@ func quintileMultiplier(q Quintile, W float32) float32 {
 // When g.Deprivation is nil, only the standard polygon is populated.
 func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode, fairnessWeight float32) FairnessResult {
 	// Clamp fairness weight.
-	if fairnessWeight < 0 {
-		fairnessWeight = 0
-	}
-	if fairnessWeight > 1 {
-		fairnessWeight = 1
-	}
+	fairnessWeight = float32(clampFairnessWeight(float64(fairnessWeight)))
 
 	// Max exploration limit: for Q1 at full fairness weight, time = base × (1 + W×1.0).
 	maxMult := float32(1.0) + fairnessWeight
@@ -179,3 +174,14 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 	return result
 }
 
+// clampFairnessWeight holds the fairness weight to [0,1]. One place, so the isochrone endpoint
+// and the ripple overflow lane cannot drift apart on what an out-of-range weight means.
+func clampFairnessWeight(w float64) float64 {
+	if w < 0 {
+		return 0
+	}
+	if w > 1 {
+		return 1
+	}
+	return w
+}

@@ -318,3 +318,46 @@ func TestRuralOverflow_SkipsBandsTheCommittedReachAlreadyCovers(t *testing.T) {
 		t.Errorf("expected no rings when the committed reach covers every band, got %d", len(none))
 	}
 }
+
+// The two lanes must never both apply to one post. Which one applies is decided by whether the
+// headcount cap bound, because that is where each problem was measured to live: capped reaches
+// are at deprivation parity but exclude members inside their own budget, while ceiling-bound
+// reaches have no headcount problem but under-serve Q1 by about 40%.
+func TestOverflowLanes_AreMutuallyExclusive(t *testing.T) {
+	url := stubSpatial(t, 51.4545, -2.5879, 400, 0.08)
+	both := "&rural_access=1&fairness_weight=1"
+
+	capped := getSchedule(t, url, overflowOrigin+"&target_users=50"+both)
+	_, rural := capped["overflow_rural"]
+	_, fair := capped["overflow_fairness"]
+	if !rural {
+		t.Error("a cap-bound reach should get the rural lane")
+	}
+	if fair {
+		t.Error("a cap-bound reach must not also get the fairness lane")
+	}
+
+	uncapped := getSchedule(t, url, overflowOrigin+"&target_users=100000"+both)
+	_, rural2 := uncapped["overflow_rural"]
+	_, fair2 := uncapped["overflow_fairness"]
+	if rural2 {
+		t.Error("a reach the cap never bound must not get the rural lane")
+	}
+	if !fair2 {
+		t.Errorf("a ceiling-bound reach should get the fairness lane: keys %v", keysOfMap(uncapped))
+	}
+}
+
+// Both flags off must leave the response exactly as it is today.
+func TestOverflowLanes_ResponseUnchangedWhenBothOff(t *testing.T) {
+	url := stubSpatial(t, 51.4545, -2.5879, 400, 0.08)
+
+	before := getSchedule(t, url, overflowOrigin+"&target_users=100000")
+	after := getSchedule(t, url, overflowOrigin+"&target_users=100000&rural_access=0&fairness_weight=0")
+
+	a, _ := json.Marshal(before)
+	b, _ := json.Marshal(after)
+	if string(a) != string(b) {
+		t.Errorf("flags off changed the response:\n%s\nvs\n%s", a, b)
+	}
+}

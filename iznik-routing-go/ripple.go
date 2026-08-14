@@ -341,6 +341,13 @@ type rippleScheduleResponse struct {
 	// rural_access was requested AND the cap actually bound - see ruraloverflow.go. omitempty
 	// on purpose: with the feature off the response must be byte-identical to before.
 	OverflowRural map[string]*GeoJSONPolygon `json:"overflow_rural,omitempty"`
+	// OverflowFairness is one ring per deprivation quintile that earns a stretch, for reaches
+	// the cap never bound (where the measured Q1 deficit lives). Mutually exclusive with
+	// OverflowRural - see the branch in handleRippleSchedule. omitempty for dark shipping.
+	OverflowFairness map[string]*GeoJSONPolygon `json:"overflow_fairness,omitempty"`
+	// FairnessBudgetMin is the widest stretched budget actually routed, so the stored reach
+	// records what was done rather than what happened to be configured at the time.
+	FairnessBudgetMin float64 `json:"fairness_budget_min,omitempty"`
 }
 
 // wantRuralAccess parses the rural_access query parameter. Off unless explicitly asked for, so
@@ -589,26 +596,46 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			maxDriveMin = float64(fwt[effectiveTotal-1].seconds) / 60.0
 		}
 
-		// Rural-access overflow (see ruraloverflow.go). Only for reaches the CAP cut short:
-		// where it did not bind, the reach already went to the ceiling and there is nothing
-		// beyond it to admit anyone to, so the rings would be cost with no beneficiary.
+		// The two overflow lanes are MUTUALLY EXCLUSIVE, decided by whether the headcount cap
+		// actually bound. That split is not tidiness: it is where each problem was measured to
+		// live. Reaches the cap cut short are already at deprivation parity but exclude members
+		// who are inside their own travel budget, so they get the rural lane. Reaches that ran
+		// to the ceiling have no headcount problem but under-serve Q1 by about 40%, so they get
+		// the fairness lane. Running both on one post would spend compute on a problem that
+		// post does not have.
 		var overflowRural map[string]*GeoJSONPolygon
-		if capBound && wantRuralAccess(c.Query("rural_access", "0")) {
-			// polygons=0 (what the batch sends) skips the resolution, so derive it here.
-			// Same derivation the tick polygons use, so the rings are on the same grid.
-			ringRes := res
-			if ringRes <= 0 {
-				ringRes = NetworkResolution(g, iso.ReachedNodes, mode)
+		var overflowFairness *fairnessOverflowResult
+
+		if capBound {
+			if wantRuralAccess(c.Query("rural_access", "0")) {
+				// polygons=0 (what the batch sends) skips the resolution, so derive it here.
+				// Same derivation the tick polygons use, so the rings are on the same grid.
+				ringRes := res
+				if ringRes <= 0 {
+					ringRes = NetworkResolution(g, iso.ReachedNodes, mode)
+				}
+				overflowRural = ruralOverflowRings(g, iso.ReachedNodes, ringRes, maxMinutes, maxDriveMin)
 			}
-			overflowRural = ruralOverflowRings(g, iso.ReachedNodes, ringRes, maxMinutes, maxDriveMin)
+		} else if w, _ := strconv.ParseFloat(c.Query("fairness_weight", "0"), 64); w > 0 {
+			maxQ, err := strconv.Atoi(c.Query("fairness_max_quintile", "1"))
+			if err != nil {
+				maxQ = 1
+			}
+			overflowFairness = fairnessOverflowRings(g, latF, lngF, mode, maxMinutes, w, maxQ)
 		}
 
-		return c.JSON(rippleScheduleResponse{
+		// Named schedResp, not resp: the within_coords call above already holds `resp`.
+		schedResp := rippleScheduleResponse{
 			TotalFreeglers:    total,
 			MaxDriveMin:       maxDriveMin,
 			Schedule:          schedule,
 			ReachableGroupIDs: reachableGroups,
 			OverflowRural:     overflowRural,
-		})
+		}
+		if overflowFairness != nil {
+			schedResp.OverflowFairness = overflowFairness.Rings
+			schedResp.FairnessBudgetMin = overflowFairness.BudgetMinutes
+		}
+		return c.JSON(schedResp)
 	}
 }
