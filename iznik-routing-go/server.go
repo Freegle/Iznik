@@ -167,6 +167,78 @@ func handleCatchment(g *Graph) fiber.Handler {
 	}
 }
 
+// handleDriveTime handles GET /v1/drive-time?lat=&lng=&tolat=&tolng=&max_minutes=&mode=
+//
+// The road time between two points, as a single number. It exists so the site can answer
+// "when will this post's reach expand to cover me": that needs the member's drive time from
+// the post's origin, which is then compared against the drive-time budget stored on each
+// tick of the post's reach schedule.
+//
+// The alternatives were both far more expensive for a number we immediately throw away.
+// Materialising a tick's isochrone via /v1/catchment costs ~0.5s and ~1.2MB of polygon;
+// bisecting on /v1/isochrone costs several of those. The Dijkstra underneath is the same
+// one, bounded the same way. Measured on the UK graph, this budget-bounded search is ~40ms
+// at 30 minutes and ~10ms at 15, so the answer is cheap enough to show unprompted.
+//
+// Direction matters and matches the reach. rippling_reach tick polygons come from the point
+// form of /v1/catchment, which is a plain outward Isochrone from the post's origin, so this
+// measures origin -> member too. Measuring the other way would disagree with the stored
+// polygon wherever one-way roads do.
+//
+// reachable:false means "not within max_minutes", which is a real answer rather than an
+// error: it is how the caller learns the reach will never grow to cover this member, and
+// so that their held reply waits for the reach to finish instead.
+func handleDriveTime(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		lat, err := strconv.ParseFloat(c.Query("lat"), 64)
+		if err != nil || lat == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lat required")
+		}
+		lng, err := strconv.ParseFloat(c.Query("lng"), 64)
+		if err != nil || lng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lng required")
+		}
+		toLat, err := strconv.ParseFloat(c.Query("tolat"), 64)
+		if err != nil || toLat == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "tolat required")
+		}
+		toLng, err := strconv.ParseFloat(c.Query("tolng"), 64)
+		if err != nil || toLng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "tolng required")
+		}
+
+		// Bounded like every other search here. The ceiling is 120 to match
+		// handleGroupProximity; callers pass the post's own final tick budget, which is
+		// well under that, and the cost scales with it.
+		minutes, _ := strconv.ParseFloat(c.Query("max_minutes", "60"), 64)
+		if minutes <= 0 || minutes > 120 {
+			minutes = 60
+		}
+		mode := parseMode(c.Query("mode", "drive"))
+
+		dest := nearestNodeForMode(g, toLat, toLng, mode)
+		if dest == noNode {
+			// Off the road graph entirely (mid-sea coordinates, or a mode with no
+			// network here). Not reachable, and not an error.
+			return c.JSON(fiber.Map{"reachable": false})
+		}
+
+		targets := []NodeID{dest}
+		bbox := boundingBox(g, targets, lat, lng, 0.15)
+		costs, _ := costToTargets(g, lat, lng, targets, float32(minutes*60), mode, bbox)
+
+		cost, reached := costs[dest]
+		if !reached {
+			return c.JSON(fiber.Map{"reachable": false})
+		}
+
+		return c.JSON(fiber.Map{
+			"reachable": true,
+			"drive_min": float64(cost) / 60,
+		})
+	}
+}
+
 // handleGroupExtent returns the group's own road "diameter": the widest road drive-time between
 // two points inside the group. It sets a yardstick on the catchment view — a post rippling in
 // from no further away than the group already spans internally is unremarkable.
@@ -406,6 +478,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/fairness", handleFairness(g))
 	v1.Get("/catchment", handleCatchment(g))
 	v1.Get("/group-proximity", handleGroupProximity(g))
+	v1.Get("/drive-time", handleDriveTime(g))
 	v1.Get("/group-extent", handleGroupExtent(g))
 	v1.Get("/group-actives", handleGroupActives())
 	v1.Get("/nearby-freeglers", handleNearbyFreeglers(g, spatialURL))

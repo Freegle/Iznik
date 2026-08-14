@@ -17,23 +17,12 @@
         class="d-flex w-100 justify-content-md-around"
         :style="maxWidth ? `max-width: ${maxWidth}` : ''"
       >
-        <!-- Use job ads as fallback when main ads fail to load -->
-        <JobsDaSlot
-          v-if="jobs"
-          :min-width="minWidth"
-          :max-width="maxWidth"
-          :min-height="minHeight"
-          :max-height="maxHeight"
-          :hide-header="hideJobsHeader"
-          :list-only="listOnly"
-          :placement="placement"
-          :class="{
-            'text-center': maxWidth === '100vw',
-          }"
-          @rendered="rippleRendered"
-        />
-        <!-- Final fallback: donate ad if job ads not enabled -->
-        <nuxt-link v-else to="/adsoff" style="display: block; max-width: 100%">
+        <!-- The donate banner, and ONLY the donate banner. This block is reached from a
+             single place: the app without cookies, which cannot run a real ad at all, so a
+             banner here is genuine content rather than something filling a hole. Routing
+             failed ad loads through it instead (8b8b18176) is what reserved 123px for
+             nothing when the jobs list was also empty. -->
+        <nuxt-link to="/adsoff" style="display: block; max-width: 100%">
           <img
             src="/donate/SupportFreegle_970x250px_20May20215.png"
             alt="Please donate to help keep Freegle running"
@@ -266,11 +255,10 @@ function visibilityChanged(visible) {
               prebidRetry++
 
               if (prebidRetry > 20) {
-                // Give up.  Probably blocked - show fallback donation ad.
-                console.log('Give up on prebid load - showing fallback')
-                fallbackAdVisible.value = true
-                adShown.value = true
-                emit('rendered', true)
+                // Give up. Probably blocked, so report no ad and let the band collapse.
+                console.log('Give up on prebid load')
+                adShown.value = false
+                emit('rendered', false)
               } else {
                 // Try again for prebid later.
                 visibleAndScriptsLoadedTimer = setTimeout(() => {
@@ -296,11 +284,10 @@ function visibilityChanged(visible) {
             tcDataRetry++
 
             if (tcDataRetry > 50) {
-              // Give up.  Probably blocked - show fallback donation ad.
-              console.log('Give up on TC data load - showing fallback')
-              fallbackAdVisible.value = true
-              adShown.value = true
-              emit('rendered', true)
+              // Give up. Probably blocked, so report no ad and let the band collapse.
+              console.log('Give up on TC data load')
+              adShown.value = false
+              emit('rendered', false)
             } else {
               visibleAndScriptsLoadedTimer = window.setTimeout(() => {
                 visibilityChanged(visible)
@@ -338,14 +325,25 @@ async function checkStillVisible() {
     const myEmail = me.value?.email
 
     const runtimeConfig = useRuntimeConfig()
-    const userSite = runtimeConfig.public.USER_SITE
-    const userSite2 = userSite.replace('www.', '')
-    console.log('Consider system', myEmail, userSite, userSite2)
+    // USER_SITE is a URL - 'https://www.ilovefreegle.org' by default and in the deployed
+    // env - so the old test, `myEmail.includes(userSite)` with a `replace('www.', '')`
+    // variant, could never match: no email address contains 'https://'. Ad suppression for
+    // our own accounts was therefore dead in production. It only looked right in tests,
+    // where the fixture set USER_SITE to a bare 'ilovefreegle.org'.
+    //
+    // Compare the email's DOMAIN against the site's HOST instead, allowing subdomains so
+    // someone@mail.ilovefreegle.org still counts.
+    const host = String(runtimeConfig.public.USER_SITE ?? '')
+      .replace(/^https?:\/\//, '')
+      .replace(/^www\./, '')
+      .replace(/\/.*$/, '')
+      .toLowerCase()
+    const emailDomain = myEmail ? myEmail.split('@').pop().toLowerCase() : ''
+    const isSystemAccount = Boolean(
+      host && emailDomain && (emailDomain === host || emailDomain.endsWith('.' + host))
+    )
 
-    if (
-      myEmail &&
-      (myEmail.includes(userSite) || myEmail.includes(userSite2))
-    ) {
+    if (isSystemAccount) {
       console.log('Ads disabled as system account')
       emit('rendered', false)
     } else if (recentDonor.value) {
@@ -359,10 +357,9 @@ async function checkStillVisible() {
         showingAds
       )
       useMiscStore().adsDisabled = true
-      // Show fallback donation ad instead of empty space
-      fallbackAdVisible.value = true
-      adShown.value = true
-      emit('rendered', true)
+      adShown.value = false
+      emit('rendered', false)
+      emit('disabled')
     }
   } else {
     emit('rendered', false)
@@ -370,17 +367,12 @@ async function checkStillVisible() {
 }
 
 function rippleRendered(rendered) {
-  if (rendered) {
-    adShown.value = true
-    emit('rendered', true)
-  } else {
-    // Ad failed to render - show fallback donation ad
-    console.log('Ad failed to render - showing fallback')
-    useMiscStore().adsDisabled = true
-    fallbackAdVisible.value = true
-    adShown.value = true
-    emit('rendered', true)
-  }
+  // Report the truth. 8b8b18176 replaced this with "show a donate banner and claim
+  // rendered:true", which is why an unfilled slot left a 123px band behind: the caller
+  // reserves space on a true, and LayoutCommon's collapse (.adNotShown, padding-bottom 0)
+  // only fires on stickyAdRendered === 0. Nothing to show means collapse, as it did before.
+  adShown.value = rendered
+  emit('rendered', rendered)
 }
 
 // When the ad (or its fallback — Jobs list, donate banner) is rendered we

@@ -682,5 +682,53 @@ describe('ChatReplyPane', () => {
       expect(wrapper.find('.reply-card__composer').exists()).toBe(true)
       expect(wrapper.text()).not.toContain('go ahead and reply')
     })
+
+    it('says when the post is due to reach here when the API sends an estimate', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        replyeligible: false,
+        reachesyouat: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+        reachesyoufully: true,
+      })
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('[data-testid="reach-blocked-eta"]').exists()).toBe(
+        true
+      )
+      // Normalised: the sentence wraps across template lines.
+      expect(wrapper.text().replace(/\s+/g, ' ')).toContain(
+        "It's due to reach you in about 3 hours"
+      )
+      // The open-ended wording is what the estimate replaces, so it must not
+      // survive alongside it.
+      expect(wrapper.text()).not.toContain('as soon as it does')
+    })
+
+    it('says when the reply goes anyway when the reach will never cover them', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        replyeligible: false,
+        reachesyouat: new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString(),
+        reachesyoufully: false,
+      })
+      const wrapper = await createWrapper()
+
+      expect(wrapper.text().replace(/\s+/g, ' ')).toContain(
+        "we'll pass yours on in about 3 hours"
+      )
+    })
+
+    it('falls back to the open-ended wording when there is no estimate', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        replyeligible: false,
+      })
+      const wrapper = await createWrapper()
+
+      expect(wrapper.find('[data-testid="reach-blocked-eta"]').exists()).toBe(
+        false
+      )
+      expect(wrapper.text()).toContain('as soon as it does')
+    })
   })
 })

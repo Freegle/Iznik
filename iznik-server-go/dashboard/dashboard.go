@@ -164,28 +164,32 @@ func GetDashboard(c *fiber.Ctx) error {
 }
 
 func getComponent(comp string, groupIDs []uint64, startQ, endQ string, systemwide, isMod bool) interface{} {
+	// The moderator checks stay OUTSIDE the cache below: a non-moderator must never reach
+	// a cached moderator-only answer, and returning before compute is set guarantees it.
+	var compute func() interface{}
+
 	switch comp {
 	case "RecentCounts":
-		return getRecentCounts(groupIDs, startQ, endQ)
+		compute = func() interface{} { return getRecentCounts(groupIDs, startQ, endQ) }
 	case "PopularPosts":
-		return getPopularPosts(groupIDs, startQ, endQ, systemwide)
+		compute = func() interface{} { return getPopularPosts(groupIDs, startQ, endQ, systemwide) }
 	case "UsersPosting":
 		if !isMod {
 			return nil
 		}
-		return getUsersPosting(groupIDs, startQ, endQ)
+		compute = func() interface{} { return getUsersPosting(groupIDs, startQ, endQ) }
 	case "UsersReplying":
 		if !isMod {
 			return nil
 		}
-		return getUsersReplying(groupIDs, startQ, endQ)
+		compute = func() interface{} { return getUsersReplying(groupIDs, startQ, endQ) }
 	case "ModeratorsActive":
 		if !isMod {
 			return nil
 		}
-		return getModeratorsActive(groupIDs)
+		compute = func() interface{} { return getModeratorsActive(groupIDs) }
 	case "MessageBreakdown":
-		return getMessageBreakdown(groupIDs, startQ, endQ)
+		compute = func() interface{} { return getMessageBreakdown(groupIDs, startQ, endQ) }
 	case "Activity", "Replies", "ApprovedMessageCount",
 		"Weight", "Outcomes", "ActiveUsers", "ApprovedMemberCount":
 		// ApprovedMemberCount (community member counts) is public — group size is
@@ -195,21 +199,48 @@ func getComponent(comp string, groupIDs []uint64, startQ, endQ string, systemwid
 		if modOnly && !isMod {
 			return nil
 		}
-		return getStatsTimeSeries(comp, groupIDs, startQ, endQ)
+		compute = func() interface{} { return getStatsTimeSeries(comp, groupIDs, startQ, endQ) }
 	case "Donations":
-		return getDonations(groupIDs, startQ, endQ, systemwide)
+		compute = func() interface{} { return getDonations(groupIDs, startQ, endQ, systemwide) }
 	case "Happiness":
 		if !isMod {
 			return nil
 		}
-		return getHappiness(groupIDs, startQ, endQ, systemwide)
+		compute = func() interface{} { return getHappiness(groupIDs, startQ, endQ) }
 	case "DiscourseTopics":
 		if !isMod {
 			return nil
 		}
-		return getDiscourseTopics()
+		compute = func() interface{} { return getDiscourseTopics() }
 	}
-	return nil
+
+	if compute == nil {
+		return nil
+	}
+
+	ttl := componentTTL(comp, rangeDaysBetween(startQ, endQ))
+	if ttl <= 0 {
+		return compute()
+	}
+	return cachedComponent(componentCacheKey(comp, groupIDs, startQ, endQ, systemwide), ttl, compute)
+}
+
+// rangeDaysBetween is how many days the requested dashboard range spans, used only to pick
+// a cache TTL. Unparseable dates return 0, which lands on the shorter TTL - the safe side.
+func rangeDaysBetween(startQ, endQ string) int {
+	start, err := time.Parse("2006-01-02", startQ)
+	if err != nil {
+		return 0
+	}
+	end, err := time.Parse("2006-01-02", endQ)
+	if err != nil {
+		return 0
+	}
+	days := int(end.Sub(start).Hours() / 24)
+	if days < 0 {
+		return 0
+	}
+	return days
 }
 
 func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
@@ -449,7 +480,14 @@ const dashboardBatch = 1500
 // dashboardDeadline bounds each whole chunked walk. The fiber request context can't be used
 // for this (fasthttp only cancels it on server shutdown), so without an explicit deadline an
 // abandoned systemwide/wide-range request would keep stepping through every remaining window.
-const dashboardDeadline = 60 * time.Second
+//
+// It sits below the load balancer's 50s timeout ON PURPOSE. At the old 60s the two limits
+// were the wrong way round: the gateway gave up first, so a systemwide-year UsersReplying
+// (observed hitting the ceiling three times in one night) burned the full minute on db3 and
+// then delivered its answer to nobody, while the client - having seen a timeout, not an
+// answer - retried onto the same node. Finishing inside the gateway's window means the
+// caller always gets a reply, even an empty one, and stops retrying.
+const dashboardDeadline = 40 * time.Second
 
 // arrivalWindow is one bounded sub-range of a dashboard date range, as produced by
 // arrivalWindows: scan it as [Start, End) normally, or [Start, End] when LastInclusive - the
@@ -879,7 +917,37 @@ func getDonations(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 	return result
 }
 
-func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map[string]interface{} {
+// happinessTypes are the three ratings a member can leave, in the order the enum
+// declares them.
+var happinessTypes = []string{"Happy", "Fine", "Unhappy"}
+
+// getHappiness returns the Happy/Fine/Unhappy histogram for the range.
+//
+// A rating is one member's view of how their post went, so it is ONE vote however many
+// groups the post touched. Getting that wrong is what the old query did: it joined
+// messages_outcomes to messages_groups and counted the join rows, so every rating was
+// multiplied by the number of group rows the post had - including the rows rippling
+// creates as a post spreads. Measured against production over the last 90 days, that
+// counted 110,885 where there were 25,715 ratings: an overcount of more than four
+// times, and one that grew as rippling reached further.
+//
+// Counting distinct messages_outcomes rows fixes it. Restricting the join to native
+// rows (rippled_in = 0) keeps a post attributed to the group it was posted on, which is
+// what makes a per-group dashboard mean anything; the DISTINCT is what stops a
+// crossposted or rippled post voting more than once.
+//
+// This deliberately does NOT read the nightly stats rollup. Those rows are per group,
+// so summing them across a moderator's groups reintroduces exactly the multiplication
+// being removed - a post on two of their groups would count twice. Other components can
+// sum that rollup because their figures are per-group by definition; happiness is not.
+// The repeat cost is handled by the component cache instead: measured at 5.6s for a
+// systemwide year on production, which is paid once per scope per cache window rather
+// than on every dashboard load.
+func getHappiness(groupIDs []uint64, startQ, endQ string) []map[string]interface{} {
+	if len(groupIDs) == 0 {
+		return []map[string]interface{}{}
+	}
+
 	db := database.DBConn
 
 	type HappyRow struct {
@@ -888,31 +956,41 @@ func getHappiness(groupIDs []uint64, startQ, endQ string, systemwide bool) []map
 	}
 
 	var rows []HappyRow
-	if systemwide {
-		db.Table("messages_outcomes").
-			Select("COUNT(*) AS count, happiness").
-			Where("timestamp >= ? AND timestamp <= ? AND happiness IS NOT NULL", startQ, endQ).
-			Group("happiness").
-			Order("count DESC").
-			Scan(&rows)
-	} else if len(groupIDs) > 0 {
-		db.Table("messages_outcomes").
-			Select("COUNT(*) AS count, happiness").
-			Joins("INNER JOIN messages ON messages.id = messages_outcomes.msgid").
-			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid").
-			Where("timestamp >= ? AND timestamp <= ? AND messages_groups.groupid IN (?) AND happiness IS NOT NULL", startQ, endQ, groupIDs).
-			Group("happiness").
-			Order("count DESC").
-			Scan(&rows)
+	db.Table("messages_outcomes").
+		Select("COUNT(DISTINCT messages_outcomes.id) AS count, messages_outcomes.happiness").
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages_outcomes.msgid AND messages_groups.rippled_in = 0").
+		Where("messages_outcomes.timestamp >= ? AND messages_outcomes.timestamp < ? AND messages_groups.groupid IN (?) AND messages_outcomes.happiness IS NOT NULL",
+			startQ, endQ, groupIDs).
+		Group("messages_outcomes.happiness").
+		Scan(&rows)
+
+	totals := map[string]int{}
+	for _, r := range rows {
+		totals[r.Happiness] += r.Count
 	}
 
-	result := make([]map[string]interface{}, len(rows))
-	for i, r := range rows {
-		result[i] = map[string]interface{}{
-			"count":     r.Count,
-			"happiness": r.Happiness,
+	return sortedHappiness(totals)
+}
+
+// sortedHappiness renders the histogram highest count first, with the rating name as a
+// deterministic tie-break (the replaced ORDER BY count DESC had no secondary key, so
+// ties were never guaranteed an order). Zero buckets are dropped, as an aggregate
+// produced none.
+func sortedHappiness(totals map[string]int) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(totals))
+	for _, h := range happinessTypes {
+		if totals[h] > 0 {
+			result = append(result, map[string]interface{}{"count": totals[h], "happiness": h})
 		}
 	}
+	sort.Slice(result, func(i, j int) bool {
+		ci := result[i]["count"].(int)
+		cj := result[j]["count"].(int)
+		if ci != cj {
+			return ci > cj
+		}
+		return result[i]["happiness"].(string) < result[j]["happiness"].(string)
+	})
 	return result
 }
 

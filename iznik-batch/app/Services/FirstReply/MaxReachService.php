@@ -332,10 +332,17 @@ class MaxReachService
                 if (is_array($ticks) && !empty($ticks) && $row->arrival !== null) {
                     $tick = $this->firstTickCovering($ticks, (float) $row->lat, (float) $row->lng);
                     if ($tick !== null) {
-                        // Tick 1 is live from arrival; tick k (k>=2) starts at
-                        // hazardHours[k-2], which is the threshold that promotes
-                        // the post INTO that tick.
-                        $dueHours = $tick >= 2 ? ($hazard[$tick - 2] ?? null) : 0;
+                        // Tick 1 is live from arrival (it is the clamped initial value, not a
+                        // threshold); tick k (k>=2) starts at hazardHours[k-1], the threshold
+                        // that promotes the post INTO that tick.
+                        //
+                        // hazardHours is 0-indexed and $tick is 1-based, so this is [$tick - 1],
+                        // matching ReachService::tickForElapsedHours (which sets tick = $i + 1
+                        // once elapsed >= hazardHours[$i]) and nextExpansionAfter. Live rows
+                        // agree: reaches that finish at tick k do so exactly hazardHours[k]
+                        // hours after arrival - tick 1 at 3.0h, tick 4 at 24.0h, tick 8 at
+                        // 168.0h - which is the moment they would have advanced again.
+                        $dueHours = $tick >= 2 ? ($hazard[$tick - 1] ?? null) : 0;
                         if ($dueHours !== null) {
                             $due = Carbon::parse($row->arrival)->addHours((float) $dueHours);
                             $repliedAt = Carbon::parse($row->created_at);

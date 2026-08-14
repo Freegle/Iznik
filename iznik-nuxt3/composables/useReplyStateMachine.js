@@ -767,9 +767,12 @@ export function useReplyStateMachine(messageId, options = {}) {
 
     // Rippling-out reply HOLD: a rippled-out post whose reach hasn't reached this member yet
     // (replyeligible === false) is NO LONGER blocked here. We let the send proceed — the server
-    // creates the reply and HOLDS it (rippling_held_replies), then delivers it when the post
-    // ripples to the member. The composer shows an info notice ("we'll pass it on when it reaches
-    // you") and the sender sees their message with a "waiting to send" badge. isNotInReachError
+    // creates the reply and HOLDS it (rippling_held_replies) so that people closer to the item
+    // get first go, then passes it on: on a due time worked out from how far they are, or sooner
+    // if the ripple reaches them first. The composer shows an info notice saying when the
+    // post is due to reach them (reachesyouat) and the sender sees their message with a
+    // "waiting to send" badge.
+    // isNotInReachError
     // below stays as a backstop only for the brief deploy window when an older server, not yet
     // running the hold path, might still answer the send with a 403 not_in_reach.
 

@@ -2,6 +2,7 @@ package message
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
@@ -26,15 +27,56 @@ import (
 // reject, inside inner_bound an authoritative accept, and only the band between
 // touches the ~178KB exact polygon; POINT (completed) bounds fall back to the
 // exact test.
+//
+// The query itself is ReachBlockedOrigins; this is the membership-only view of
+// it for the callers that do not need the origins.
 func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
-	blocked := make(map[uint64]bool)
+	origins := ReachBlockedOrigins(msgids, lat, lng)
+	blocked := make(map[uint64]bool, len(origins))
+	for msgid := range origins {
+		blocked[msgid] = true
+	}
+
+	return blocked
+}
+
+// ReachOrigin is what a blocked post's reach row says about itself: the already-blurred
+// point the reach was grown from, and the timetable it will grow on. Ok is false when
+// the row has no origin, which is possible on rows written before the columns were
+// populated - callers must not treat (0,0) as a location.
+type ReachOrigin struct {
+	Lat float64
+	Lng float64
+	Ok  bool
+	// Schedule and Arrival are what turn a member's drive time into a date: the tick
+	// whose drive-time budget first reaches them, and when that tick goes live.
+	// Schedule is nil when the column is empty or unusable.
+	Schedule []rippling.ScheduleTick
+	Arrival  *time.Time
+}
+
+// ReachBlockedOrigins is ReachBlockedSet with the reach origin of each blocked
+// post, for sizing the reply-delay estimate shown to a member who is about to
+// reply to something that has not rippled to them yet.
+//
+// It is the same single query - the blocked rows are already being read, so
+// carrying two more columns off them costs nothing, and the delay is then pure
+// arithmetic. That matters because this sits on the feed's hot path: an estimate
+// that needed its own query (or worse, a routing call) per post would not be
+// worth showing.
+func ReachBlockedOrigins(msgids []uint64, lat, lng float64) map[uint64]ReachOrigin {
+	blocked := make(map[uint64]ReachOrigin)
 	if len(msgids) == 0 || (lat == 0 && lng == 0) {
 		return blocked
 	}
 
 	db := database.DBConn
 	var rows []struct {
-		Msgid uint64 `gorm:"column:msgid"`
+		Msgid    uint64     `gorm:"column:msgid"`
+		Lat      *float64   `gorm:"column:lat"`
+		Lng      *float64   `gorm:"column:lng"`
+		Schedule *string    `gorm:"column:schedule"`
+		Arrival  *time.Time `gorm:"column:arrival"`
 	}
 	var err error
 	if rippling.ReachBoundsReady(db) {
@@ -50,18 +92,25 @@ func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
 		expr, exprArgs := rippling.ReachInReachExpr(lng, lat, utils.SRID)
 		whereArgs := append([]interface{}{msgids}, exprArgs...)
 		err = db.Table("rippling_reach rr").
-			Select("rr.msgid").
+			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
 			Where("rr.msgid IN (?) AND NOT "+expr, whereArgs...).
 			Scan(&rows).Error
 	} else {
 		err = db.Table("rippling_reach").
-			Select("msgid").
+			Select("msgid, lat, lng, schedule, arrival").
 			Where("msgid IN ? AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0", msgids, lng, lat, utils.SRID).
 			Scan(&rows).Error
 	}
 	if err == nil {
 		for _, r := range rows {
-			blocked[r.Msgid] = true
+			origin := ReachOrigin{Arrival: r.Arrival}
+			if r.Lat != nil && r.Lng != nil {
+				origin.Lat, origin.Lng, origin.Ok = *r.Lat, *r.Lng, true
+			}
+			if r.Schedule != nil {
+				origin.Schedule = rippling.ParseSchedule(*r.Schedule)
+			}
+			blocked[r.Msgid] = origin
 		}
 	}
 	return blocked

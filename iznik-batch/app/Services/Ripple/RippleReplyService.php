@@ -216,7 +216,7 @@ class RippleReplyService
     }
 
     /**
-     * How long a reply from $miles away from the item waits before it is delivered.
+     * How long a reply from $miles OUTSIDE THE REACH BOUNDARY waits before delivery.
      *
      * The hold exists so people near the item get first go, and a bounded delay is
      * the whole of it. Coverage cannot be the only exit: three in four held repliers
@@ -224,11 +224,25 @@ class RippleReplyService
      * for coverage strands them until the max-reach backstop days later, by which
      * time a quarter to a third of items have gone.
      *
-     * Distance is measured from the item, not from the edge of the reach, because both
-     * ends of it are stored exactly (the reach row's blurred origin and the replier's
-     * own location) and it needs no geometry. Everyone held is outside the current
-     * reach by definition, so within that set "further from the item" is the ordering
-     * that matters - and it is the one the poster cares about too.
+     * The distance is from the nearest point on the reach isochrone, NOT from the item.
+     * What this models is a buffer band hugging the boundary: a reply from just outside
+     * the line is, in practice, one of the locals, because the boundary is a modelled
+     * drive-time contour and not a fact about who can collect. "How far past the edge
+     * are you" is the question that separates a near-miss from someone genuinely distant.
+     *
+     * Measuring from the item instead - which this did until now - ranks held repliers
+     * consistently at a single instant, but is the wrong input for a timer, because the
+     * reach moves and the distance from the item does not. It also scales with something
+     * irrelevant: on live rows, a replier 0.36 miles outside the boundary was charged 55
+     * minutes because the item happened to be 13.2 miles away, and another 1.47 miles
+     * outside was charged 42 for an item 8.9 miles off. Both are near-misses; the wait
+     * was decided by the size of the isochrone rather than by them.
+     *
+     * Measured over 566 held replies across two days on live, this takes the mean wait
+     * from 50.8 to 29.2 minutes. The 269 of them sitting within two miles of the boundary
+     * - very nearly half - go from 37.5 minutes to 17.1, which is about the base wait,
+     * which is the intent. Five get marginally longer: their reach polygon does not
+     * contain its own origin, so the edge is a shade further than the centre.
      */
     public function delayMinutesForMiles(float $miles): float
     {
@@ -248,25 +262,83 @@ class RippleReplyService
     {
         $origin = $this->reachOrigin($msgid);
 
-        return $origin === null ? null : $this->dueFrom($origin, $heldAt, $lat, $lng);
+        return $origin === null ? null : $this->dueFrom($msgid, $origin, $heldAt, $lat, $lng);
     }
 
     /**
      * As dueAt, with the reach origin already in hand - the sweep looks it up once per
-     * post rather than once per held reply.
+     * post rather than once per held reply. The origin is only the fallback measure now;
+     * the real one is the distance past the reach boundary.
      *
      * @param array{lat:float,lng:float} $origin
      */
-    private function dueFrom(array $origin, Carbon $heldAt, ?float $lat, ?float $lng): Carbon
+    private function dueFrom(int $msgid, array $origin, Carbon $heldAt, ?float $lat, ?float $lng): Carbon
     {
         // Unknown replier location: the distance term is unmeasurable, so they get the
         // base delay. That is the safe end - it never holds someone longer for being
         // unlocatable, and coverage cannot release them either (that test needs a point).
-        $miles = ($lat === null || $lng === null)
-            ? 0.0
-            : GreatCircle::distanceMiles($origin['lat'], $origin['lng'], $lat, $lng);
+        if ($lat === null || $lng === null) {
+            return $heldAt->copy()->addMinutes($this->delayMinutesForMiles(0.0));
+        }
+
+        $miles = $this->milesOutsideReach($msgid, $lat, $lng);
+
+        if ($miles === null) {
+            // No usable reach geometry (unreadable or invalid polygon). Fall back to the
+            // old measure rather than dropping the stamp: a hold with no due time is the
+            // failure mode the delay exists to prevent, so a worse number beats none.
+            Log::warning("ripple: falling back to origin distance for {$msgid}");
+            $miles = GreatCircle::distanceMiles($origin['lat'], $origin['lng'], $lat, $lng);
+        }
 
         return $heldAt->copy()->addMinutes($this->delayMinutesForMiles($miles));
+    }
+
+    /**
+     * How far ($lat,$lng) lies beyond the post's current reach boundary, in miles, or
+     * null when it cannot be measured. Zero for a point inside the reach.
+     *
+     * Deliberately re-tagged, not trusted. rippling_reach.polygon is DECLARED SRID 3857
+     * but stores raw lng/lat degrees, a site-wide mislabel. ST_Distance on it as stored
+     * therefore returns coordinate degrees, which are anisotropic - the same number means
+     * a different distance north-south than east-west - and cannot be turned into miles.
+     * Re-tagging to 4326 makes it a genuine geographic distance in metres.
+     *
+     * NO ST_SwapXY, despite 4326 being nominally latitude-first. Measured on this server,
+     * ST_Distance under 4326 reads X as longitude and Y as latitude, which is exactly the
+     * order the rows already store: London to Birmingham comes out at 101.2 miles
+     * untouched and 138.7 with the axes swapped, against a true 101.6. Swapping "to be
+     * correct" silently reinterprets UK coordinates as sitting near the equator, and the
+     * error is plausible enough in size to pass unnoticed.
+     *
+     * This is a per-row query against a polygon that averages about a megabyte, measured
+     * at ~12ms each on live. That is affordable here because it runs once when a reply is
+     * held and once per sweep for rows still waiting, and it is worth paying: recomputing
+     * as the reach grows is the point, since the distance past the edge shrinks as the
+     * isochrone advances on the replier.
+     */
+    private function milesOutsideReach(int $msgid, float $lat, float $lng): ?float
+    {
+        try {
+            $row = DB::selectOne(
+                'SELECT ST_Distance(
+                        ST_SRID(polygon, 4326),
+                        ST_SRID(POINT(?, ?), 4326)
+                    ) AS metres
+                 FROM rippling_reach WHERE msgid = ?',
+                [$lng, $lat, $msgid]
+            );
+        } catch (\Throwable $e) {
+            Log::warning("ripple: milesOutsideReach failed for {$msgid}: {$e->getMessage()}");
+
+            return null;
+        }
+
+        if ($row === null || $row->metres === null) {
+            return null;
+        }
+
+        return ((float) $row->metres) / 1609.344;
     }
 
     /** @return array{lat:float,lng:float}|null */
@@ -345,6 +417,7 @@ class RippleReplyService
 
         foreach ($held as $row) {
             $due = $this->dueFrom(
+                $msgid,
                 $origin,
                 Carbon::parse($row->created_at),
                 $row->lat === null ? null : (float) $row->lat,

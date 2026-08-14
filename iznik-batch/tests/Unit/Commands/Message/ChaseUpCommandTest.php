@@ -88,4 +88,56 @@ class ChaseUpCommandTest extends TestCase
 
         $this->artisan('messages:chase-up')->assertExitCode(Command::SUCCESS);
     }
+
+    /**
+     * The hourly run skips the languishing scan, which finds the same posts every time
+     * and can raise at most one notification per person per day. The other two cheap
+     * sub-passes must keep running hourly.
+     */
+    public function test_skip_languishing_leaves_the_other_passes_hourly(): void
+    {
+        $service = $this->createMock(ChaseUpService::class);
+        $service->expects($this->once())->method('tidyOutcomes')->willReturn(1);
+        $service->expects($this->once())->method('processIntendedOutcomes')->willReturn(2);
+        $service->expects($this->never())->method('notifyLanguishing');
+        $service->expects($this->once())->method('process')
+            ->willReturn(['chased' => 3, 'skipped' => 0, 'errors' => 0]);
+
+        $this->app->instance(ChaseUpService::class, $service);
+
+        $this->artisan('messages:chase-up', ['--skip-languishing' => true])
+            ->expectsOutputToContain('Tidied 1 outcomes')
+            ->expectsOutputToContain('Processed 2 intended outcomes')
+            ->expectsOutputToContain('Chased: 3')
+            ->assertExitCode(Command::SUCCESS);
+    }
+
+    /** The daily run does the languishing scan and nothing else. */
+    public function test_languishing_only_runs_just_that_scan(): void
+    {
+        $service = $this->createMock(ChaseUpService::class);
+        $service->expects($this->never())->method('tidyOutcomes');
+        $service->expects($this->never())->method('processIntendedOutcomes');
+        $service->expects($this->once())->method('notifyLanguishing')->with(false)->willReturn(9);
+        $service->expects($this->never())->method('process');
+
+        $this->app->instance(ChaseUpService::class, $service);
+
+        $this->artisan('messages:chase-up', ['--languishing-only' => true])
+            ->expectsOutputToContain('Found 9 languishing posts')
+            ->assertExitCode(Command::SUCCESS);
+    }
+
+    public function test_languishing_only_honours_dry_run(): void
+    {
+        $service = $this->createMock(ChaseUpService::class);
+        $service->expects($this->once())->method('notifyLanguishing')->with(true)->willReturn(0);
+        $service->expects($this->never())->method('process');
+
+        $this->app->instance(ChaseUpService::class, $service);
+
+        $this->artisan('messages:chase-up', ['--languishing-only' => true, '--dry-run' => true])
+            ->expectsOutputToContain('no changes will be made')
+            ->assertExitCode(Command::SUCCESS);
+    }
 }

@@ -33,14 +33,28 @@ type routingResponse struct {
 
 // FetchIsochroneWKTFromRoutingServer calls the internal spatial server and
 // returns a WKT POLYGON for the requested transport mode.
-// Returns empty string on failure or when SPATIAL_SERVER_URL is not set.
+// Returns empty string on failure, and the caller then falls back to Mapbox.
+//
+// ROUTING_EVAL_URL is the routing container's INTERNAL, no-auth port (8194). It is not
+// interchangeable with the other two spatial env vars, and getting this wrong is silent:
+//
+//	SPATIAL_SERVER_URL  http://spatial:8196       same container, EXTERNAL port, JWT + mod only
+//	SPATIAL_KNN_URL     http://spatial-knn:8194   a different container (KNN), no /v1/isochrone
+//
+// This read SPATIAL_SERVER_URL, so every call answered 401, returned "" here, and sent the
+// caller to Mapbox instead - paying a third party for isochrones our own router serves free,
+// with nothing user-visible to give it away. See the warning at docker-compose.yml:790.
 func FetchIsochroneWKTFromRoutingServer(transport string, lat, lng float64, minutes int) string {
-	// SPATIAL_SERVER_URL is the canonical name; ROUTING_SERVER_URL is kept for backward compat.
-	base := os.Getenv("SPATIAL_SERVER_URL")
+	base := os.Getenv("ROUTING_EVAL_URL")
 	if base == "" {
+		// ROUTING_SERVER_URL is kept for backward compat with deployments that set it.
 		base = os.Getenv("ROUTING_SERVER_URL")
 	}
 	if base == "" {
+		// Unset still means "skip the routing server and use Mapbox", as before. Not
+		// defaulted to spatial:8194: that would take away the ability to turn the
+		// routing server off, and the client's timeout is 60s, so a host that hangs
+		// rather than refusing would stall every isochrone before falling back.
 		return ""
 	}
 

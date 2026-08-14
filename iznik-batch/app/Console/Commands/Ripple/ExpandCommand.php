@@ -68,9 +68,11 @@ class ExpandCommand extends Command
         // Mirror the current trial group set (RIPPLE_WITHIN_GROUPS) into the shared
         // `config` table (key 'ripple.within_groups') so the Go API - which runs on a
         // different server and can't read this batch env var - can scope the rippling
-        // dashboard to just the trial groups. Cheap upsert; skipped on --dry-run.
+        // dashboard to just the trial groups. Alongside it, publish the hazard schedule for
+        // the same reason. Cheap upserts; skipped on --dry-run.
         if (!$dryRun) {
             $this->publishTrialGroups();
+            $this->publishHazardHours();
         }
 
         $limit = max(1, (int) $this->option('limit'));
@@ -134,6 +136,30 @@ class ExpandCommand extends Command
 
         DB::table('config')->upsert(
             [['key' => 'ripple.within_groups', 'value' => implode(',', $withinGroups)]],
+            ['key'],
+            ['value'],
+        );
+    }
+
+    /**
+     * Publish the hazard schedule into the shared `config` table.
+     *
+     * Tick k of a post's reach becomes live at arrival + hazard_hours[k-1], so this is
+     * what lets the API turn "the tick whose drive-time budget would cover you" into a
+     * date it can show a member. The schedule is owned by this container, and the API
+     * runs elsewhere, so it is published rather than restated as env vars where the two
+     * could silently drift and we would quote an arrival that never happens.
+     */
+    protected function publishHazardHours(): void
+    {
+        DB::table('config')->upsert(
+            [[
+                'key' => 'ripple.hazard_hours',
+                'value' => json_encode(array_values(array_map(
+                    'intval',
+                    (array) config('freegle.ripple.hazard_hours', [1, 3, 6, 12, 24, 48, 72, 120, 168])
+                ))),
+            ]],
             ['key'],
             ['value'],
         );

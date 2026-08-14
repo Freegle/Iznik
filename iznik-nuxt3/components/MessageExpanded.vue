@@ -210,7 +210,7 @@
                     class="time"
                     @click.stop
                   >
-                    <v-icon icon="clock" />{{ timeAgo }}
+                    <v-icon icon="clock" />{{ ageBadge }}
                   </span>
                   <span
                     v-b-tooltip.hover.click.blur="{
@@ -447,8 +447,14 @@
                 variant="info"
                 class="mb-2"
               >
-                This hasn't reached your area yet — but go ahead and reply.
-                We'll pass it on to the owner as soon as it does.
+                <span v-if="reachNotice" data-testid="reach-blocked-eta">
+                  This hasn't reached your area yet, but go ahead and reply.
+                  {{ reachNotice }}
+                </span>
+                <span v-else>
+                  This hasn't reached your area yet — but go ahead and reply.
+                  We'll pass it on to the owner as soon as it does.
+                </span>
               </NoticeMessage>
               <div
                 v-if="replyable && !replied && !message.successful"
@@ -532,8 +538,14 @@
           variant="info"
           class="mb-2"
         >
-          This hasn't reached your area yet — but go ahead and reply. We'll pass
-          it on to the owner as soon as it does.
+          <span v-if="reachNotice" data-testid="reach-blocked-eta">
+            This hasn't reached your area yet, but go ahead and reply.
+            {{ reachNotice }}
+          </span>
+          <span v-else>
+            This hasn't reached your area yet — but go ahead and reply. We'll
+            pass it on to the owner as soon as it does.
+          </span>
         </NoticeMessage>
         <div
           v-if="replyable && !replied && !message.successful"
@@ -666,8 +678,10 @@ import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
+import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
+import { reachNoticeSentence } from '~/composables/reachArrival'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
@@ -744,6 +758,14 @@ const {
   poster,
 } = useMessageDisplay(props.id)
 
+// The same badge the summary card shows, so a post reads identically before and after you
+// click it: how long it has been available to YOU, plus "first posted N days" when it was
+// written materially earlier (reposted, or rippled to you late). Falls back to the plain age
+// when the server has not supplied visibleSince.
+const ageBadge = computed(
+  () => postAgeBadge(message.value, { wide: true }) || timeAgo.value
+)
+
 /* Alt text for the item photos. It used to be the literal "Item Photo" / "Thumbnail"
 on every image on the site, which tells a screen reader nothing and gives Google Images
 nothing to match a search against. */
@@ -784,6 +806,16 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 // until the reach engine populates rippling_reach.
 const reachBlocked = computed(
   () => message.value?.replyeligible === false && !fromme.value
+)
+
+// When the post is due to reach here, as a sentence. Null when the API sent no
+// estimate (routing unavailable, or the block is a ban rather than the reach), and
+// the notice then falls back to saying only that we'll pass it on.
+const reachNotice = computed(() =>
+  reachNoticeSentence(
+    message.value?.reachesyouat,
+    message.value?.reachesyoufully
+  )
 )
 
 // For a bulk offer the catalogue below (BulkItemsInterest) lists the items and

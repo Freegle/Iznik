@@ -19,17 +19,38 @@ class GroupMaintenanceService
             'groups_updated' => 0,
         ];
 
-        $groups = DB::table('groups')->select('id', 'nameshort')->get();
+        // Two grouped passes over memberships rather than a pair of counts for every
+        // group in turn. With ~507 groups that was 1,014 separate range scans of a
+        // 4.96M-row table every hour; this is two scans the groupid index walks once
+        // each.
+        //
+        // keep-raw: the query builder has no way to put an aggregate column beside a
+        // grouped column - selectRaw/DB::raw is the only way to express COUNT(*) here.
+        $memberCounts = DB::table('memberships')
+            ->groupBy('groupid')
+            ->selectRaw('groupid, COUNT(*) AS cnt')
+            ->pluck('cnt', 'groupid');
+
+        // keep-raw: same aggregate-beside-grouped-column limitation.
+        $modCounts = DB::table('memberships')
+            ->whereIn('role', ['Owner', 'Moderator'])
+            ->groupBy('groupid')
+            ->selectRaw('groupid, COUNT(*) AS cnt')
+            ->pluck('cnt', 'groupid');
+
+        $groups = DB::table('groups')->select('id', 'membercount', 'modcount')->get();
 
         foreach ($groups as $group) {
-            $memberCount = DB::table('memberships')
-                ->where('groupid', $group->id)
-                ->count();
+            // A group with no members at all appears in neither result.
+            $memberCount = (int) ($memberCounts[$group->id] ?? 0);
+            $modCount = (int) ($modCounts[$group->id] ?? 0);
 
-            $modCount = DB::table('memberships')
-                ->where('groupid', $group->id)
-                ->whereIn('role', ['Owner', 'Moderator'])
-                ->count();
+            // Only write where the answer changed. Most groups neither gain nor lose a
+            // member in a given hour, and every write here is copied to all three
+            // database nodes.
+            if ((int) $group->membercount === $memberCount && (int) $group->modcount === $modCount) {
+                continue;
+            }
 
             if (!$dryRun) {
                 DB::table('groups')
