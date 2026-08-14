@@ -32,6 +32,17 @@ cd "$REPO"
 
 echo "=== Yesterday script update: $(date) ==="
 
+# Never rewrite a script that is currently executing. bash reads a script incrementally as it
+# runs, so replacing the file underneath a running restore makes it resume at a byte offset in
+# different text - which fails in ways that look nothing like the cause. The update normally
+# runs 15 minutes before the restore starts, but a long or hand-triggered one can still be in
+# flight. Skipping costs a day; corrupting the nightly restore costs more.
+if pgrep -f "auto-restore-latest.sh" >/dev/null 2>&1 ||
+   pgrep -f "nightly-refresh-lvm.sh" >/dev/null 2>&1; then
+    echo "A restore is running - leaving the scripts alone. Will update on the next run."
+    exit 0
+fi
+
 git fetch --quiet origin "$BRANCH"
 REMOTE="origin/$BRANCH"
 
