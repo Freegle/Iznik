@@ -133,6 +133,7 @@ import { getDistance } from '~/composables/useMap'
 import { filterMessagesByDistance } from '~/composables/useDistance'
 import { sortBrowseMessages } from '~/composables/useMessageSort'
 import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
+import { useMessageStore } from '~/stores/message'
 import { useNearbyStore } from '~/stores/nearby'
 
 import JoinWithConfirm from '~/components/JoinWithConfirm'
@@ -264,6 +265,7 @@ const emit = defineEmits([
 const miscStore = useMiscStore()
 const groupStore = useGroupStore()
 const authStore = useAuthStore()
+const messageStore = useMessageStore()
 const nearbyStore = useNearbyStore()
 const me = computed(() => authStore.user)
 
@@ -410,7 +412,18 @@ const filteredMessages = computed(() => {
 // "Closest" now orders by the server's per-post distance (the value shown on each badge),
 // so the map centre is no longer needed here.
 function sortMessages(messages) {
-  return sortBrowseMessages(messages, props.selectedSort)
+  // The list we sort here is the nearby-feed SUMMARY, which does not carry visibleSince - the
+  // full message fetched for each card does. Without this the badge and the order came from
+  // different clocks again: cards showed 16, 8, 10, 5 days while the sort quietly ordered them
+  // 28 Jul, 26 Jul, 25 Jul, 25 Jul by the original arrival. Only old, rippled or reposted posts
+  // diverge, which is why the top of the feed looked right and the tail did not.
+  const enriched = (messages || []).map((m) => {
+    if (m?.visibleSince) return m
+    const full = messageStore.byId(m?.id)
+    return full?.visibleSince ? { ...m, visibleSince: full.visibleSince } : m
+  })
+
+  return sortBrowseMessages(enriched, props.selectedSort)
 }
 
 const sortedMessagesOnMap = computed(() => {

@@ -8,6 +8,52 @@ set -e
 BACKUP_BUCKET="gs://freegle_backup_uk"
 STATE_FILE="/var/www/FreegleDocker/yesterday/data/current-backup.json"
 LOG_FILE="/var/log/yesterday-auto-restore.log"
+API="${YESTERDAY_API:-http://localhost:8082}"
+
+# What one poll of a running restore concludes: done, failed, or waiting.
+#
+# Three sources, and they do not agree when a restore dies:
+#
+#   current-backup            written by the restore itself when it lands. Believed first: the
+#                             API container SHUTS DOWN during a restore, so its job record can
+#                             come back frozen at "starting" for a load that finished fine.
+#   restore-status            the status file, written by the refresh script's EXIT trap. This
+#                             is the only source that survives the restore dying.
+#   backups/<date>/progress   the API's IN-MEMORY job. Never learns the refresh has gone.
+#
+# On 2026-08-13 the refresh died at 08:51:07 with ENOSPC and wrote "failed" to the status file,
+# but this loop was only reading the in-memory job, so it logged "starting (0%)" every 30
+# seconds for another 70 minutes and then blamed a 4-hour timeout. The status file is consulted
+# now - but only when it names the backup we are waiting for, or yesterday's recorded failure
+# would abort the very restore sent to fix it.
+restore_poll_verdict() {
+    local want_date="$1"
+
+    local loaded; loaded="$(curl -s "$API/api/current-backup" | jq -r '.date // ""')"
+    [ "$loaded" = "$want_date" ] && { echo "done"; return; }
+
+    local file; file="$(curl -s "$API/api/restore-status")"
+    local file_status; file_status="$(echo "$file" | jq -r '.status // ""')"
+    local file_date;   file_date="$(echo "$file" | jq -r '.backupDate // ""')"
+    if [ "$file_status" = "failed" ] && [ "$file_date" = "$want_date" ]; then
+        echo "failed"
+        return
+    fi
+
+    local status; status="$(curl -s "$API/api/backups/${want_date}/progress" | jq -r '.status')"
+    case "$status" in
+        completed) echo "done" ;;
+        failed)    echo "failed" ;;
+        "" | null) echo "unknown" ;;
+        *)         echo "waiting" ;;
+    esac
+}
+
+# Sourced by test-restore-poll.sh, which exercises the function above rather than a copy of it.
+# Nothing below here runs in that case.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
 
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -161,34 +207,23 @@ if echo "$API_RESPONSE" | grep -q "Started loading"; then
 
         echo "[$(date +%H:%M:%S)] Status: $STATUS ($PERCENT%) - $MESSAGE"
 
-        # Ground truth beats the job record. The API container SHUTS DOWN during
-        # a restore, so its in-memory job can come back frozen at "starting" for
-        # a restore that has since finished perfectly well — on 2026-08-06 the
-        # load completed at 08:56 and this loop still reported "did not complete
-        # within 4 hours". current-backup is written by the restore itself, so
-        # if it names our date, we are done whatever the job says.
-        LOADED=$(curl -s http://localhost:8082/api/current-backup | jq -r '.date // ""')
-        if [ "$LOADED" = "$LATEST_DATE" ]; then
-            echo ""
-            echo "✅ Auto-restore completed successfully (confirmed by current-backup)"
-            echo "Yesterday environment now running backup from $LATEST_DATE"
-            COMPLETED=1
-            break
-        fi
+        VERDICT=$(restore_poll_verdict "$LATEST_DATE")
 
-        if [ "$STATUS" = "completed" ]; then
+        if [ "$VERDICT" = "done" ]; then
             echo ""
             echo "✅ Auto-restore completed successfully"
             echo "Yesterday environment now running backup from $LATEST_DATE"
             COMPLETED=1
             break
-        elif [ "$STATUS" = "failed" ]; then
+        elif [ "$VERDICT" = "failed" ]; then
             echo ""
             echo "❌ Auto-restore failed"
             ERROR=$(echo "$PROGRESS" | jq -r '.error')
-            echo "Error: $ERROR"
+            FILE_MESSAGE=$(curl -s "$API/api/restore-status" | jq -r '.message // ""')
+            echo "Error: ${ERROR:-none} ${FILE_MESSAGE:+(status file: $FILE_MESSAGE)}"
+            echo "   Logs: journalctl -u yesterday-restore-monitor --since today"
             exit 1
-        elif [ -z "$STATUS" ] || [ "$STATUS" = "null" ]; then
+        elif [ "$VERDICT" = "unknown" ]; then
             # API restarted or job evaporated — no point polling a job
             # nobody is tracking any more.
             NULL_POLLS=$((NULL_POLLS + 1))

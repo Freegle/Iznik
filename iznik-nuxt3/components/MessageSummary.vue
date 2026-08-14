@@ -146,6 +146,7 @@
 
 <script setup>
 import { computed, toRef } from 'vue'
+import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { useMiscStore } from '~/stores/misc'
 import { useOrientation } from '~/composables/useOrientation'
@@ -244,6 +245,13 @@ const locationText = computed(() => {
 })
 
 const displayTimeAgo = computed(() => {
+  // The badge and the feed order read the SAME clock (visibleSince): how long this has been
+  // available to you. When the post was first written materially earlier - reposted, or
+  // rippled to you late - the badge says so, short on a phone and spelled out from lg up.
+  // Falls back to the plain age when the server has not supplied the field.
+  const badge = postAgeBadge(message.value, { wide: isLgPlus.value })
+  if (badge) return badge
+
   return isLgPlus.value ? timeAgoExpanded.value : timeAgo.value
 })
 

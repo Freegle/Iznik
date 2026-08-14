@@ -55,10 +55,23 @@ type reachCandidateRow struct {
 	// Posted is the ORIGINAL post arrival (messages.arrival), stable across
 	// rippling. It is what the client's "Newest posted" sort and the card's time
 	// badge mean, so exposing it lets the feed order agree with the badge.
-	Posted  time.Time `gorm:"column:posted"`
-	Unseen  bool      `gorm:"column:unseen"`
-	Views   int64     `gorm:"column:views"`
-	Replies int64     `gorm:"column:replies"`
+	Posted time.Time `gorm:"column:posted"`
+	// VisibleSince is the earliest this post could have been seen: the oldest arrival
+	// across the groups it is live on. It is the ONE clock the feed uses - both the
+	// "Newest posted" order and the card's time badge - so the list can never contradict
+	// the dates printed on it.
+	//
+	// It moves for the two reasons a post legitimately becomes available later than it was
+	// written: a repost (the giver re-offering it, which updates the group row) and a ripple
+	// into a further group. Ordering by it means a repost lifts the post back up, which is
+	// the point of reposting.
+	//
+	// LIMITATION: this is the oldest arrival across ALL the post's groups, not just the ones
+	// this viewer can see, which would need their membership set threading into the query.
+	VisibleSince time.Time `gorm:"column:visiblesince"`
+	Unseen       bool      `gorm:"column:unseen"`
+	Views        int64     `gorm:"column:views"`
+	Replies      int64     `gorm:"column:replies"`
 	// ReachLat/ReachLng/ReachWKT describe the post's rippling_reach row (the
 	// origin the reach grew from, and the current reach polygon as WKT).
 	// Empty/zero when the post has no reach row (own-posts arm only; the
@@ -108,19 +121,20 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 	comps := Score(distanceMetres, reachMetres, ageHours, int(r.Views), int(r.Replies), false, w, env)
 
 	return message.MessageSummary{
-		ID:         r.ID,
-		Successful: r.Successful,
-		Promised:   r.Promised,
-		Groupid:    r.Groupid,
-		Type:       r.Type,
-		Arrival:    r.Arrival,
-		Posted:     r.Posted,
-		Lat:        blurLat,
-		Lng:        blurLng,
-		Unseen:     r.Unseen,
-		Distance:   distanceMiles,
-		Score:      comps.Total,
-		Mine:       r.Fromuser != 0 && r.Fromuser == myid,
+		ID:           r.ID,
+		Successful:   r.Successful,
+		Promised:     r.Promised,
+		Groupid:      r.Groupid,
+		Type:         r.Type,
+		Arrival:      r.Arrival,
+		Posted:       r.Posted,
+		VisibleSince: r.VisibleSince,
+		Lat:          blurLat,
+		Lng:          blurLng,
+		Unseen:       r.Unseen,
+		Distance:     distanceMiles,
+		Score:        comps.Total,
+		Mine:         r.Fromuser != 0 && r.Fromuser == myid,
 	}
 }
 
@@ -146,6 +160,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
 			"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
+			"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = ms.msgid AND mgv.deleted = 0), m.arrival) AS visiblesince, "+
 			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
@@ -352,6 +367,9 @@ func Messages(c *fiber.Ctx) error {
 				"ANY_VALUE(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
 				"ANY_VALUE(mg.groupid) AS groupid, m.type, m.fromuser AS fromuser, "+
 				"MAX(mg.arrival) AS arrival, m.arrival AS posted, "+
+				// MIN where arrival takes MAX: the earliest group landing is when this first
+				// became available, which is what the feed orders and dates by.
+				"MIN(mg.arrival) AS visiblesince, "+
 				"ANY_VALUE(CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END) AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
@@ -544,6 +562,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
 				"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
+				"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = ms.msgid AND mgv.deleted = 0), m.arrival) AS visiblesince, "+
 				"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
@@ -580,17 +599,18 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			for _, cand := range candidates {
 				blurLat, blurLng := utils.Blur(cand.Lat, cand.Lng, utils.BLUR_USER)
 				res = append(res, message.MessageSummary{
-					ID:         cand.ID,
-					Successful: cand.Successful,
-					Promised:   cand.Promised,
-					Groupid:    cand.Groupid,
-					Type:       cand.Type,
-					Arrival:    cand.Arrival,
-					Posted:     cand.Posted,
-					Lat:        blurLat,
-					Lng:        blurLng,
-					Unseen:     cand.Unseen,
-					Mine:       cand.Fromuser != 0 && cand.Fromuser == myid,
+					ID:           cand.ID,
+					Successful:   cand.Successful,
+					Promised:     cand.Promised,
+					Groupid:      cand.Groupid,
+					Type:         cand.Type,
+					Arrival:      cand.Arrival,
+					Posted:       cand.Posted,
+					VisibleSince: cand.VisibleSince,
+					Lat:          blurLat,
+					Lng:          blurLng,
+					Unseen:       cand.Unseen,
+					Mine:         cand.Fromuser != 0 && cand.Fromuser == myid,
 				})
 			}
 		}

@@ -134,9 +134,14 @@ export function useMessageDisplay(messageId) {
   // a 7-hour-old post read "1 hour" while "Newest posted" (correctly) sorted it
   // by original post time, so the feed order looked shuffled. Use the ORIGIN
   // row (rippled_in = 0; absent on non-rippled feeds where !rippled_in is true).
+  // The same number the feed sorts by (useMessageSort), so the order can never contradict the
+  // dates on the cards. It used to pick the origin group's arrival and fall back to the
+  // ripple-bumped summary arrival - a different clock from the sort's.
   const displayTimestamp = computed(() => {
-    const origin = message.value?.groups?.find((g) => !g.rippled_in)
-    return origin?.arrival || message.value?.arrival || message.value?.date
+    const m = message.value
+    if (m?.visibleSince) return m.visibleSince
+    const origin = m?.groups?.find((g) => !g.rippled_in)
+    return origin?.arrival || m?.arrival || m?.date
   })
 
   const timeAgo = computed(() => {

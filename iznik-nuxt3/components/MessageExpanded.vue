@@ -210,7 +210,7 @@
                     class="time"
                     @click.stop
                   >
-                    <v-icon icon="clock" />{{ timeAgo }}
+                    <v-icon icon="clock" />{{ ageBadge }}
                   </span>
                   <span
                     v-b-tooltip.hover.click.blur="{
@@ -678,6 +678,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
+import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import { reachNoticeSentence } from '~/composables/reachArrival'
@@ -756,6 +757,14 @@ const {
   categoryIcon,
   poster,
 } = useMessageDisplay(props.id)
+
+// The same badge the summary card shows, so a post reads identically before and after you
+// click it: how long it has been available to YOU, plus "first posted N days" when it was
+// written materially earlier (reposted, or rippled to you late). Falls back to the plain age
+// when the server has not supplied visibleSince.
+const ageBadge = computed(
+  () => postAgeBadge(message.value, { wide: true }) || timeAgo.value
+)
 
 /* Alt text for the item photos. It used to be the literal "Item Photo" / "Thumbnail"
 on every image on the site, which tells a screen reader nothing and gives Google Images
