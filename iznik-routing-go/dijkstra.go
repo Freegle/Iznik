@@ -3,6 +3,7 @@ package main
 import (
 	"container/heap"
 	"math"
+	"sort"
 )
 
 // IsochroneResult is the set of nodes reachable within a time budget.
@@ -105,7 +106,6 @@ func nearestNodeForMode(g *Graph, lat, lng float64, mode Mode) NodeID {
 	return nearestNodeLinear(g, lat, lng, mode)
 }
 
-// nearestNodeGrid searches the spatial grid, expanding outward until a valid node is found.
 // initialCostFor returns the fixed per-trip overhead seeded at the origin of
 // a mode's Dijkstra (driveStartupSecs for Drive; nothing for walk/cycle), so
 // every drive-time product - isochrones, ripple ticks, drive_min - includes
@@ -130,6 +130,7 @@ func snappableForMode(g *Graph, id NodeID, mode Mode) bool {
 	return true
 }
 
+// nearestNodeGrid searches the spatial grid, expanding outward until a valid node is found.
 func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 	baseRow := int16(lat / gridRes)
 	baseCol := int16(lng / gridRes)
@@ -162,6 +163,61 @@ func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 		}
 	}
 	return best
+}
+
+// nearestNodesForMode returns up to k snap candidates for a mode, nearest
+// first.  Callers that need an ARRIVABLE node (e.g. evaluating a destination
+// against an isochrone) should try candidates in order: the single nearest
+// node can sit on a one-way that can be left but never arrived at, which a
+// component filter cannot catch.
+func nearestNodesForMode(g *Graph, lat, lng float64, mode Mode, k int) []NodeID {
+	if g.Grid == nil {
+		if id := nearestNodeLinear(g, lat, lng, mode); id != noNode {
+			return []NodeID{id}
+		}
+		return nil
+	}
+	baseRow := int16(lat / gridRes)
+	baseCol := int16(lng / gridRes)
+	type cand struct {
+		id NodeID
+		d  float64
+	}
+	var cands []cand
+	haveEnoughAt := int16(-1)
+	for radius := int16(0); radius <= 10; radius++ {
+		// one extra ring after reaching k candidates: a nearer node can sit
+		// in a farther cell
+		if haveEnoughAt >= 0 && radius > haveEnoughAt+1 {
+			break
+		}
+		for dr := -radius; dr <= radius; dr++ {
+			for dc := -radius; dc <= radius; dc++ {
+				if dr != -radius && dr != radius && dc != -radius && dc != radius {
+					continue
+				}
+				for _, id := range g.Grid.cells[[2]int16{baseRow + dr, baseCol + dc}] {
+					if !snappableForMode(g, id, mode) {
+						continue
+					}
+					n := g.Nodes[id]
+					cands = append(cands, cand{id, haversineM(lat, lng, float64(n.Lat), float64(n.Lng))})
+				}
+			}
+		}
+		if len(cands) >= k && haveEnoughAt < 0 {
+			haveEnoughAt = radius
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].d < cands[j].d })
+	if len(cands) > k {
+		cands = cands[:k]
+	}
+	out := make([]NodeID, len(cands))
+	for i, c := range cands {
+		out[i] = c.id
+	}
+	return out
 }
 
 // nearestNodeLinear is the O(N) fallback scan when no grid is present.
