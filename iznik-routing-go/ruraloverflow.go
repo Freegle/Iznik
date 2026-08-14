@@ -37,22 +37,37 @@ var ruralBandCeilings = []struct {
 }
 
 // ruralOverflowRings slices one polygon per band ceiling out of an ALREADY-COMPUTED reached-node
-// set. There is no second Dijkstra: since PR #1308 every post routes to the ceiling anyway, so
-// the wider rings are already paid for.
+// set. There is no second Dijkstra: since PR #1308 every post routes to the ceiling anyway.
+//
+// The Dijkstra is free, but the POLYGONS ARE NOT. Measured on the UK graph from a Birmingham
+// origin: roughly 0.15s at 20 minutes, 0.8s at 30, 2.5s at 45. The batch deliberately sends
+// polygons=0 because per-tick polygon building dominated this endpoint's cost, so every ring
+// built here hands some of that back. Two things keep it in proportion:
+//
+//   - only cap-bound posts get rings at all (the caller's job, roughly a third of reaches), and
+//   - committedMinutes below skips any band that cannot admit a single extra person.
 //
 // Returns nil when there is nothing worth shipping, so the caller can omit the field entirely
 // rather than send empty geometry.
 //
 // ceilingMinutes is how far the Dijkstra actually ran. Rings beyond it cannot be honoured (the
-// nodes simply are not there), so they are clamped to it; a clamped ring is still correct, just
-// no wider than what was routed.
-func ruralOverflowRings(g *Graph, reached map[NodeID]float32, res float64, ceilingMinutes float64) map[string]*GeoJSONPolygon {
+// nodes are not there), so they are clamped to it; a clamped ring is still correct, just no
+// wider than what was routed.
+//
+// committedMinutes is how far the committed reach already got. A band whose ceiling is at or
+// inside that is skipped: every member it would admit is already admitted by the reach proper,
+// so the polygon would be pure cost for nobody. For a post capped at 28 minutes this drops the
+// dense (20 minute) ring; for one capped at 35 it leaves only the sparse ring to build.
+func ruralOverflowRings(g *Graph, reached map[NodeID]float32, res float64, ceilingMinutes, committedMinutes float64) map[string]*GeoJSONPolygon {
 	if len(reached) == 0 || res <= 0 {
 		return nil
 	}
 
 	out := make(map[string]*GeoJSONPolygon, len(ruralBandCeilings))
 	for _, band := range ruralBandCeilings {
+		if band.minutes <= committedMinutes {
+			continue // admits nobody the committed reach has not already admitted
+		}
 		limit := band.minutes
 		if limit > ceilingMinutes {
 			limit = ceilingMinutes

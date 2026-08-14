@@ -600,7 +600,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			if ringRes <= 0 {
 				ringRes = NetworkResolution(g, iso.ReachedNodes, mode)
 			}
-			overflowRural = ruralOverflowRings(g, iso.ReachedNodes, ringRes, maxMinutes)
+			overflowRural = ruralOverflowRings(g, iso.ReachedNodes, ringRes, maxMinutes, maxDriveMin)
 		}
 
 		return c.JSON(rippleScheduleResponse{

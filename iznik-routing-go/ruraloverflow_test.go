@@ -166,7 +166,7 @@ func assertRingsGrowWithCeiling(t *testing.T) {
 	prev := 0.0
 	var seen []float64
 	for _, ceiling := range []float64{2, 5, 10} {
-		rings := ruralOverflowRings(g, iso.ReachedNodes, res, ceiling)
+		rings := ruralOverflowRings(g, iso.ReachedNodes, res, ceiling, 0)
 		if rings == nil {
 			t.Fatalf("no rings at ceiling %g", ceiling)
 		}
@@ -284,3 +284,37 @@ func math_absShoelace(ring [][2]float64) float64 {
 }
 
 var _ = fmt.Sprintf
+
+// A band whose ceiling is already inside the committed reach can admit nobody, so building its
+// polygon is cost with no beneficiary. Polygon building is the expensive part of this endpoint
+// (the batch sends polygons=0 precisely to avoid it), so skipping those bands is what keeps the
+// lane affordable.
+func TestRuralOverflow_SkipsBandsTheCommittedReachAlreadyCovers(t *testing.T) {
+	g := getTestGraph(t)
+	iso := Isochrone(g, 51.4545, -2.5879, 45*60, Drive)
+	res := NetworkResolution(g, iso.ReachedNodes, Drive)
+
+	// Nothing committed: every band is worth building.
+	all := ruralOverflowRings(g, iso.ReachedNodes, res, 45, 0)
+	if len(all) != len(ruralBandCeilings) {
+		t.Errorf("expected all %d bands with nothing committed, got %d", len(ruralBandCeilings), len(all))
+	}
+
+	// Committed to 28 minutes (the measured Birmingham case): dense (20) is already covered.
+	capped := ruralOverflowRings(g, iso.ReachedNodes, res, 45, 28)
+	if _, present := capped["dense"]; present {
+		t.Error("dense ring built even though the committed reach already went further")
+	}
+	for _, band := range []string{"medium", "sparse"} {
+		if _, present := capped[band]; !present {
+			t.Errorf("missing %q ring, which does reach past the committed 28 minutes", band)
+		}
+	}
+
+	// Committed past every band ceiling: there is nothing left to offer, so ship nothing at all
+	// rather than a set of rings that admit no one.
+	none := ruralOverflowRings(g, iso.ReachedNodes, res, 45, 45)
+	if none != nil {
+		t.Errorf("expected no rings when the committed reach covers every band, got %d", len(none))
+	}
+}
