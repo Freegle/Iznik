@@ -65,6 +65,11 @@ type Graph struct {
 	Edges       []Edge  // flat edge list in CSR order
 	Grid        *Grid
 	Deprivation *DeprivationIndex
+	// DriveSnappable[id] is false for nodes in tiny disconnected drive
+	// fragments (marina loops, private estates): drive-mode snapping skips
+	// them so a postcode beside one doesn't become unroutable.  Genuine
+	// islands are big components and stay snappable.  nil = no filtering.
+	DriveSnappable []bool
 }
 
 // NodeCount returns the number of valid nodes (excluding sentinel at index 0).
@@ -81,8 +86,9 @@ func (g *Graph) EdgesFrom(id NodeID) []Edge {
 // realistic average speeds (which include junctions, urban congestion etc).
 //
 // Spot-check vs public OSRM demo + Google Maps for two ~30-mile UK routes:
-//   Oxford OX3 8GH → Highclere: ours 30 min, OSRM 40 min, Google 53 min
-//   Newcastle NE1  → Alnwick:   ours 30 min, OSRM 40 min, Google 45 min
+//
+//	Oxford OX3 8GH → Highclere: ours 30 min, OSRM 40 min, Google 53 min
+//	Newcastle NE1  → Alnwick:   ours 30 min, OSRM 40 min, Google 45 min
 //
 // So our free-flow times are ~33% optimistic vs OSRM and ~50-77% vs Google.
 // Set ROUTING_DRIVE_SPEED_FACTOR (default 1.0) to apply a global multiplier
@@ -116,50 +122,90 @@ var highwaySpeed = func() map[string][3]float32 {
 	return base
 }()
 
-// driveSpeedFactorsByClass scales drive speeds per OSM highway class to match
-// real-world UK driving speeds.  OSM speed limits alone are 30-40 % too
-// optimistic vs reality because we don't model junctions, urban congestion or
-// traffic.
+// ─── Drive-time calibration ──────────────────────────────────────────────────
 //
-// Calibrated from the DfT congestion statistics (updated 14 May 2026, data
-// through Dec 2025):
+// The drive-time model separates LINK SPEED from NODE DELAY:
 //
-//	Strategic Road Network (motorways + major A): 56.4 mph avg vs 70 mph limit → 0.81×
-//	Local A-roads, urban:                         17.2 mph avg vs 30 mph limit → 0.57×
-//	Local A-roads, rural:                         34.3 mph avg vs 60 mph limit → 0.57×
+//	edge drive secs = distM / (base speed × class factor)  +  junction penalties
 //
-// Source:
+// where the base speed is the parsed maxspeed tag when present (else the
+// class default from highwaySpeed), and the penalties price traffic signals,
+// junctions, crossings and roundabouts individually.  A fixed per-trip
+// startup overhead (driveStartupSecs) covers pulling out / local manoeuvring
+// and is seeded into the origin cost of every drive Dijkstra.
 //
-//	https://www.gov.uk/government/statistical-data-sets/average-speed-delay-and-reliability-of-travel-times-cgn
-//	Tables CGN0404 (SRN) and CGN0503 (local A-roads).
+// Parameters were fitted against ~2,500 Google Routes API journeys sampled
+// across the whole UK (stratified: population-weighted, area-uniform, city
+// cores, London, sparse rural, estuary crossings; Tuesday 10:30 departures,
+// traffic-aware), using cmd/calibrate, which decomposes each routed path into
+// per-class free-flow seconds + feature counts, fits by weighted least
+// squares, re-routes under the new parameters and repeats until stable.
+// On the 30% holdout never used for fitting, the median abs error fell from
+// 16.3% to 7.4% and the mean abs error from 28.7% to 13.6% (n=770).
 //
-// The urban-vs-rural shortfall is the same proportion (0.57×) on local
-// A-roads once normalised by speed limit — cities are slower because their
-// limits are lower, not because they have extra congestion on top.  So no
-// per-postcode density modifier is needed; per-road-class is enough.
+// The previous DfT-derived blanket factors (0.81 SRN / 0.57 A-road / 0.50
+// residential) crammed junction delay into link speed, which over-penalised
+// rural roads (few junctions per km) by ~35% and still under-penalised dense
+// cities.  Splitting link speed from node delay fixes both ends at once.
 //
-// Residential/unclassified/service: not directly measured by DfT; set to 0.50
-// as a conservative estimate (slower than A-roads due to side friction).
+// Factors are per class × {untagged, tagged} because a maxspeed-tagged way's
+// base is the legal limit while an untagged way's base is a conservative
+// default; one shared factor cannot fit both.  Tagged factors are capped at
+// 1.05 (you cannot average above the limit); untagged factors are capped at
+// the class's plausible legal ceiling over its default base.
 //
-// ROUTING_DRIVE_SPEED_FACTOR env var still applies as a uniform extra
-// multiplier on top of the per-class factor (1.0 = no extra scaling).
-var driveSpeedFactorsByClass = map[string]float32{
-	"motorway":      0.81,
-	"motorway_link": 0.81,
-	"trunk":         0.81,
-	"trunk_link":    0.81,
-	"primary":       0.57,
-	"primary_link":  0.57,
-	"secondary":     0.57,
-	"secondary_link": 0.57,
-	"tertiary":      0.57,
-	"tertiary_link": 0.57,
-	"residential":   0.50,
-	"unclassified":  0.50,
-	"living_street": 0.50,
-	"service":       0.50,
-	"track":         0.50,
+// To recalibrate (e.g. after major OSM or traffic shifts): see
+// cmd/calibrate/main.go — sample pairs, collect Google ground truth, fit,
+// then transcribe the fitted values here and in drivePenalties /
+// driveStartupSecs.
+//
+// ROUTING_DRIVE_SPEED_FACTOR still applies as a uniform extra multiplier on
+// top of the per-class factor (1.0 = no extra scaling).
+
+// driveClassFactors[tag] = {factor without maxspeed tag, factor with tag}.
+// Untagged factors above 1.0 mean the class's default base speed was too
+// conservative (an untagged rural A-road really averages ~41 mph, not the
+// 31 mph the 13.9 m/s default implies); tagged factors below 1.0 are the
+// fraction of the posted limit achieved.  The untagged motorway factor is
+// pinned to the tagged value rather than fitted: untagged motorways carry
+// 0.04% of sampled drive time, far too thin to fit.
+var driveClassFactors = map[string][2]float32{
+	"motorway":       {0.79, 0.79},
+	"motorway_link":  {0.79, 0.79},
+	"trunk":          {0.88, 0.73},
+	"trunk_link":     {0.88, 0.73},
+	"primary":        {1.32, 0.77},
+	"primary_link":   {1.32, 0.77},
+	"secondary":      {1.47, 0.73},
+	"secondary_link": {1.47, 0.73},
+	"tertiary":       {1.60, 0.72},
+	"tertiary_link":  {1.60, 0.72},
+	"unclassified":   {1.27, 0.50},
+	"residential":    {0.72, 0.72},
+	"living_street":  {0.72, 0.72},
+	"service":        {1.58, 1.05},
+	"track":          {1.58, 1.05},
 }
+
+// driveFallbackFactor is used for unrecognised highway classes (treated as
+// A-road equivalent).
+var driveFallbackFactor = [2]float32{1.32, 0.77}
+
+// drivePenalties are fixed seconds added to the DRIVE time of an edge whose
+// to-node carries the feature (paid on arrival at the node, whichever
+// direction it is approached from), or, for Roundabout, on each edge of a
+// junction=roundabout way / into a mini_roundabout node.  The Junction
+// penalty applies at nodes shared by >=3 drivable ways (or 2 with an interior
+// reference: a T-junction), except on motorway/trunk (grade-separated) and
+// where a signal already prices the delay.
+var drivePenalties = struct {
+	Signal, Crossing, Roundabout, Junction float32
+}{Signal: 8.9, Crossing: 2.7, Roundabout: 0.3, Junction: 0.9}
+
+// driveStartupSecs is the fixed per-trip drive overhead, seeded as the origin
+// cost in every drive-mode Dijkstra so that isochrones, ripple ticks and
+// drive_min all include it consistently.
+const driveStartupSecs float32 = 38
 
 // driveSpeedFactorOverride is an optional uniform multiplier applied on top
 // of the per-class factor.  Default 1.0 (no extra scaling); set
@@ -175,12 +221,70 @@ var driveSpeedFactorOverride = func() float32 {
 }()
 
 // driveSpeedFactorFor returns the calibrated factor for a given OSM
-// highway=* tag.  Falls back to 0.57 (A-road equivalent) for unknown classes.
-func driveSpeedFactorFor(highwayTag string) float32 {
-	if f, ok := driveSpeedFactorsByClass[highwayTag]; ok {
-		return f * driveSpeedFactorOverride
+// highway=* tag, depending on whether a maxspeed tag was parsed for the way.
+func driveSpeedFactorFor(highwayTag string, maxspeedTagged bool) float32 {
+	pair, ok := driveClassFactors[highwayTag]
+	if !ok {
+		pair = driveFallbackFactor
 	}
-	return 0.57 * driveSpeedFactorOverride
+	if maxspeedTagged {
+		return pair[1] * driveSpeedFactorOverride
+	}
+	return pair[0] * driveSpeedFactorOverride
+}
+
+// srnHighway reports whether a highway tag is part of the strategic road
+// network (grade-separated: exempt from the junction penalty).
+func srnHighway(h string) bool {
+	switch h {
+	case "motorway", "motorway_link", "trunk", "trunk_link":
+		return true
+	}
+	return false
+}
+
+// Node feature flags collected at build time (not stored on the runtime
+// graph; penalties are folded into edge seconds).
+const (
+	nodeFlagSignal uint8 = 1 << iota
+	nodeFlagMiniRoundabout
+	nodeFlagCrossing
+	nodeFlagJunction
+)
+
+// nodeFlagForTag maps a node-level highway=* tag to its feature flag (0 = none).
+func nodeFlagForTag(v string) uint8 {
+	switch v {
+	case "traffic_signals":
+		return nodeFlagSignal
+	case "mini_roundabout":
+		return nodeFlagMiniRoundabout
+	case "crossing":
+		return nodeFlagCrossing
+	}
+	return 0
+}
+
+// drivePenaltySecs returns the fixed seconds to add to a drive edge that
+// travels into a node with toFlags, along a way of the given highway class
+// (roundaboutWay = junction=roundabout).  Mirrors cmd/calibrate exactly —
+// the fitted coefficients only transfer if the feature definitions match.
+func drivePenaltySecs(highwayTag string, roundaboutWay bool, toFlags uint8) float32 {
+	var p float32
+	if toFlags&nodeFlagSignal != 0 {
+		p += drivePenalties.Signal
+	}
+	if roundaboutWay || toFlags&nodeFlagMiniRoundabout != 0 {
+		p += drivePenalties.Roundabout
+	}
+	if toFlags&nodeFlagJunction != 0 && !srnHighway(highwayTag) &&
+		toFlags&nodeFlagSignal == 0 && !roundaboutWay {
+		p += drivePenalties.Junction
+	}
+	if toFlags&nodeFlagCrossing != 0 {
+		p += drivePenalties.Crossing
+	}
+	return p
 }
 
 // BuildGraph reads an OSM PBF file and returns a compact routing graph.
@@ -198,6 +302,7 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 		nodeOSMIDs []int64
 		speeds     [3]float32
 		oneway     bool
+		info       wayDriveInfo
 	}
 	var ways []wayRecord
 	refSet := make(map[int64]struct{}, 65_000_000)
@@ -209,7 +314,7 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 		if !ok || len(w.Nodes) < 2 {
 			continue
 		}
-		speeds, oneway := waySpeedsAndOneway(w)
+		speeds, oneway, info := waySpeedsAndOneway(w)
 		if speeds[0] < 0 && speeds[1] < 0 && speeds[2] < 0 {
 			continue
 		}
@@ -218,7 +323,7 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 			refs[i] = int64(n.ID)
 			refSet[int64(n.ID)] = struct{}{}
 		}
-		ways = append(ways, wayRecord{refs, speeds, oneway})
+		ways = append(ways, wayRecord{refs, speeds, oneway, info})
 	}
 	if err := sc1.Err(); err != nil {
 		return nil, err
@@ -247,8 +352,38 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 	N := len(rawIDs)
 	nodes := make([]Node, N+1) // [0] = unused sentinel
 
+	// Junction detection, way-based: a node is a junction if it is referenced
+	// by >=3 drivable ways, or by 2 with at least one INTERIOR reference (a
+	// T-junction).  Two ways merely sharing an endpoint is the common
+	// way-segment boundary (a tag change mid-road), not a junction.
+	nodeFlags := make([]uint8, N+1)
+	{
+		wayRefCnt := make([]uint8, N+1)
+		interior := make([]bool, N+1)
+		for _, w := range ways {
+			if w.speeds[Drive] < 0 {
+				continue
+			}
+			for i, ref := range w.nodeOSMIDs {
+				if id, found := nodeSeq(ref); found {
+					if wayRefCnt[id] < 255 {
+						wayRefCnt[id]++
+					}
+					if i > 0 && i < len(w.nodeOSMIDs)-1 {
+						interior[id] = true
+					}
+				}
+			}
+		}
+		for id := NodeID(1); id <= NodeID(N); id++ {
+			if wayRefCnt[id] >= 3 || (wayRefCnt[id] == 2 && interior[id]) {
+				nodeFlags[id] |= nodeFlagJunction
+			}
+		}
+	}
+
 	log.Printf("spatial-server: pass 2 (node coordinates, N=%d)", N)
-	// ── Pass 2: populate node coordinates ─────────────────────────────────────
+	// ── Pass 2: populate node coordinates + junction-feature tags ─────────────
 	if _, err := f.Seek(0, 0); err != nil {
 		return nil, err
 	}
@@ -263,6 +398,11 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 		id, found := nodeSeq(int64(nd.ID))
 		if found {
 			nodes[id] = Node{Lat: float32(nd.Lat), Lng: float32(nd.Lon)}
+			for _, t := range nd.Tags {
+				if t.Key == "highway" {
+					nodeFlags[id] |= nodeFlagForTag(t.Value)
+				}
+			}
 		}
 	}
 	if err := sc2.Err(); err != nil {
@@ -309,9 +449,17 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 					secs[m] = float32(distM) / w.speeds[m]
 				}
 			}
-			tempEdges = append(tempEdges, tempEdge{from, to, secs})
+			fwd := secs
+			if fwd[Drive] >= 0 {
+				fwd[Drive] += drivePenaltySecs(w.info.Highway, w.info.Roundabout, nodeFlags[to])
+			}
+			tempEdges = append(tempEdges, tempEdge{from, to, fwd})
 			if !w.oneway {
-				tempEdges = append(tempEdges, tempEdge{to, from, secs})
+				bwd := secs
+				if bwd[Drive] >= 0 {
+					bwd[Drive] += drivePenaltySecs(w.info.Highway, w.info.Roundabout, nodeFlags[from])
+				}
+				tempEdges = append(tempEdges, tempEdge{to, from, bwd})
 			}
 		}
 	}
@@ -374,21 +522,94 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 	}
 	log.Printf("spatial-server: grid built (%d cells)", len(g.Grid.cells))
 
+	g.DriveSnappable = computeDriveSnappable(g)
+
 	return g, nil
 }
 
+// minDriveComponentNodes is the component-size threshold below which nodes
+// are treated as fragments for drive snapping.  The effective threshold is
+// min(this, size of the largest drive component) so small raw-built graphs
+// (tests, tooling) still behave sensibly.  On the UK pbf ~1.1% of drive
+// nodes sit in sub-1000-node fragments; real islands are far larger.
+const minDriveComponentNodes = 1000
+
+// computeDriveSnappable unions nodes over drive-usable edges (undirected) and
+// marks nodes in components of at least min(minDriveComponentNodes, largest)
+// nodes as snappable for drive routing.
+func computeDriveSnappable(g *Graph) []bool {
+	n := len(g.Nodes) - 1
+	if n <= 0 {
+		return nil
+	}
+	parent := make([]NodeID, n+1)
+	for i := range parent {
+		parent[i] = NodeID(i)
+	}
+	find := func(x NodeID) NodeID {
+		for parent[x] != x {
+			parent[x] = parent[parent[x]]
+			x = parent[x]
+		}
+		return x
+	}
+	for from := NodeID(1); from <= NodeID(n); from++ {
+		for _, e := range g.EdgesFrom(from) {
+			if e.Seconds[Drive] < 0 {
+				continue
+			}
+			ra, rb := find(from), find(e.To)
+			if ra != rb {
+				parent[ra] = rb
+			}
+		}
+	}
+	size := make([]int32, n+1)
+	largest := int32(0)
+	for id := NodeID(1); id <= NodeID(n); id++ {
+		r := find(id)
+		size[r]++
+		if size[r] > largest {
+			largest = size[r]
+		}
+	}
+	threshold := int32(minDriveComponentNodes)
+	if largest < threshold {
+		threshold = largest
+	}
+	ok := make([]bool, n+1)
+	nFrag := 0
+	for id := NodeID(1); id <= NodeID(n); id++ {
+		if size[find(id)] >= threshold {
+			ok[id] = true
+		} else {
+			nFrag++
+		}
+	}
+	if nFrag > 0 {
+		log.Printf("spatial-server: %d nodes in drive fragments below %d nodes (excluded from drive snapping)", nFrag, threshold)
+	}
+	return ok
+}
+
 // RawNodeSpec describes a node for BuildGraphFromRaw.
+// Highway optionally carries a node-level highway=* tag ("traffic_signals",
+// "mini_roundabout", "crossing") mirroring OSM node tags.
 type RawNodeSpec struct {
 	OSMID    int64
 	Lat, Lng float64
+	Highway  string
 }
 
 // RawWaySpec describes a way for BuildGraphFromRaw.
 // Highway must match a key in highwaySpeed (e.g. "residential", "motorway").
+// Junction set to "roundabout" mirrors the OSM junction=roundabout tag
+// (implies oneway, and each edge carries the roundabout penalty).
 type RawWaySpec struct {
-	NodeIDs []int64
-	Highway string
-	Oneway  bool
+	NodeIDs  []int64
+	Highway  string
+	Oneway   bool
+	Junction string
 }
 
 // BuildGraphFromRaw constructs a routing Graph from explicit node/way data.
@@ -399,16 +620,47 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 
 	osmToSeq := make(map[int64]NodeID, N)
 	nodes := make([]Node, N+1) // [0] = unused sentinel
+	nodeFlags := make([]uint8, N+1)
 	for i, n := range rawNodes {
 		id := NodeID(i + 1)
 		osmToSeq[n.OSMID] = id
 		nodes[id] = Node{Lat: float32(n.Lat), Lng: float32(n.Lng)}
+		if n.Highway != "" {
+			nodeFlags[id] |= nodeFlagForTag(n.Highway)
+		}
 	}
 
 	if dep != nil {
 		for i := NodeID(1); i <= NodeID(N); i++ {
 			nd := &nodes[i]
 			nd.Quintile = dep.Lookup(float64(nd.Lat), float64(nd.Lng))
+		}
+	}
+
+	// Way-based junction detection over drivable ways, mirroring BuildGraph.
+	{
+		wayRefCnt := make([]uint8, N+1)
+		interior := make([]bool, N+1)
+		for _, w := range rawWays {
+			speeds, ok := highwaySpeed[w.Highway]
+			if !ok || speeds[Drive] < 0 {
+				continue
+			}
+			for i, ref := range w.NodeIDs {
+				if id, found := osmToSeq[ref]; found {
+					if wayRefCnt[id] < 255 {
+						wayRefCnt[id]++
+					}
+					if i > 0 && i < len(w.NodeIDs)-1 {
+						interior[id] = true
+					}
+				}
+			}
+		}
+		for id := NodeID(1); id <= NodeID(N); id++ {
+			if wayRefCnt[id] >= 3 || (wayRefCnt[id] == 2 && interior[id]) {
+				nodeFlags[id] |= nodeFlagJunction
+			}
 		}
 	}
 
@@ -422,11 +674,14 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 		if !ok {
 			continue
 		}
-		// Apply the DfT-calibrated per-road-class factor to match the
-		// PBF path (waySpeedsAndOneway).  Without this, raw-built graphs
-		// (tests + offline tooling) would diverge from production.
+		roundabout := w.Junction == "roundabout"
+		oneway := w.Oneway || roundabout
+		// Apply the calibrated per-road-class factor to match the PBF path
+		// (waySpeedsAndOneway).  Without this, raw-built graphs (tests +
+		// offline tooling) would diverge from production.  RawWaySpec carries
+		// no maxspeed, so the untagged factor applies.
 		if speeds[Drive] > 0 {
-			speeds[Drive] *= driveSpeedFactorFor(w.Highway)
+			speeds[Drive] *= driveSpeedFactorFor(w.Highway, false)
 		}
 		for i := 0; i < len(w.NodeIDs)-1; i++ {
 			from, ok1 := osmToSeq[w.NodeIDs[i]]
@@ -444,9 +699,17 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 					secs[m] = float32(distM) / speeds[m]
 				}
 			}
-			tempEdges = append(tempEdges, tempEdge{from, to, secs})
-			if !w.Oneway {
-				tempEdges = append(tempEdges, tempEdge{to, from, secs})
+			fwd := secs
+			if fwd[Drive] >= 0 {
+				fwd[Drive] += drivePenaltySecs(w.Highway, roundabout, nodeFlags[to])
+			}
+			tempEdges = append(tempEdges, tempEdge{from, to, fwd})
+			if !oneway {
+				bwd := secs
+				if bwd[Drive] >= 0 {
+					bwd[Drive] += drivePenaltySecs(w.Highway, roundabout, nodeFlags[from])
+				}
+				tempEdges = append(tempEdges, tempEdge{to, from, bwd})
 			}
 		}
 	}
@@ -482,16 +745,30 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 		}
 	}
 
+	g.DriveSnappable = computeDriveSnappable(g)
+
 	return g
 }
 
-// waySpeedsAndOneway returns per-mode speeds (m/s, -1 = unusable) and whether oneway.
-func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
+// wayDriveInfo carries the way-level facts the drive-time model needs beyond
+// raw speeds: the highway class (for the junction-penalty SRN exemption),
+// whether the way is a roundabout, and whether a maxspeed tag was parsed
+// (which selects the tagged-vs-untagged speed factor).
+type wayDriveInfo struct {
+	Highway        string
+	Roundabout     bool
+	MaxspeedTagged bool
+}
+
+// waySpeedsAndOneway returns per-mode speeds (m/s, -1 = unusable), whether
+// oneway, and the drive info for the way.
+func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool, wayDriveInfo) {
 	tags := w.TagMap()
 	highway := tags["highway"]
+	info := wayDriveInfo{Highway: highway}
 	speeds, ok := highwaySpeed[highway]
 	if !ok {
-		return [3]float32{-1, -1, -1}, false
+		return [3]float32{-1, -1, -1}, false, info
 	}
 
 	if tags["foot"] == "no" {
@@ -523,20 +800,22 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
 	if ms := tags["maxspeed"]; ms != "" && speeds[Drive] > 0 {
 		if s := parseMaxspeed(ms); s > 0 {
 			speeds[Drive] = s
+			info.MaxspeedTagged = true
 		}
 	}
 
-	// Apply DfT-calibrated per-road-class factor at the end so it covers
+	// Apply the calibrated per-road-class factor at the end so it covers
 	// both the highwaySpeed defaults and any maxspeed-tagged overrides.
 	if speeds[Drive] > 0 {
-		speeds[Drive] *= driveSpeedFactorFor(highway)
+		speeds[Drive] *= driveSpeedFactorFor(highway, info.MaxspeedTagged)
 	}
 
 	oneway := tags["oneway"] == "yes" || tags["oneway"] == "1"
 	if tags["junction"] == "roundabout" {
 		oneway = true
+		info.Roundabout = true
 	}
-	return speeds, oneway
+	return speeds, oneway, info
 }
 
 // parseMaxspeed parses a maxspeed tag value into m/s. Returns 0 if unparseable.

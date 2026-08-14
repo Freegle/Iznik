@@ -56,11 +56,12 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) Isoc
 
 	dist := make(map[NodeID]float32)
 	distM := make(map[NodeID]float32)
-	dist[origin] = 0
+	start := initialCostFor(mode)
+	dist[origin] = start
 	distM[origin] = 0
 
 	q := &pq{}
-	heap.Push(q, &item{id: origin, cost: 0})
+	heap.Push(q, &item{id: origin, cost: start})
 
 	for q.Len() > 0 {
 		cur := heap.Pop(q).(*item)
@@ -105,6 +106,30 @@ func nearestNodeForMode(g *Graph, lat, lng float64, mode Mode) NodeID {
 }
 
 // nearestNodeGrid searches the spatial grid, expanding outward until a valid node is found.
+// initialCostFor returns the fixed per-trip overhead seeded at the origin of
+// a mode's Dijkstra (driveStartupSecs for Drive; nothing for walk/cycle), so
+// every drive-time product - isochrones, ripple ticks, drive_min - includes
+// the startup overhead consistently.
+func initialCostFor(mode Mode) float32 {
+	if mode == Drive {
+		return driveStartupSecs
+	}
+	return 0
+}
+
+// snappableForMode reports whether a node is a valid snap target for a mode:
+// it must have a usable edge, and for Drive it must not sit in a tiny
+// disconnected fragment (see computeDriveSnappable).
+func snappableForMode(g *Graph, id NodeID, mode Mode) bool {
+	if !hasEdgeForMode(g, id, mode) {
+		return false
+	}
+	if mode == Drive && g.DriveSnappable != nil && !g.DriveSnappable[id] {
+		return false
+	}
+	return true
+}
+
 func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 	baseRow := int16(lat / gridRes)
 	baseCol := int16(lng / gridRes)
@@ -120,7 +145,7 @@ func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 				}
 				ids := g.Grid.cells[[2]int16{baseRow + dr, baseCol + dc}]
 				for _, id := range ids {
-					if !hasEdgeForMode(g, id, mode) {
+					if !snappableForMode(g, id, mode) {
 						continue
 					}
 					n := g.Nodes[id]
@@ -144,7 +169,7 @@ func nearestNodeLinear(g *Graph, lat, lng float64, mode Mode) NodeID {
 	var best NodeID
 	bestDist := math.MaxFloat64
 	for id := NodeID(1); id < NodeID(len(g.Nodes)); id++ {
-		if !hasEdgeForMode(g, id, mode) {
+		if !snappableForMode(g, id, mode) {
 			continue
 		}
 		n := g.Nodes[id]
