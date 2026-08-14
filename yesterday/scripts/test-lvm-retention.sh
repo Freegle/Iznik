@@ -138,6 +138,45 @@ stub_reset "snap_20260806" 95
 ( ylvm_require_pool_headroom ) >/dev/null 2>&1
 assert_eq "1" "$?" "refuses an apply that the pool cannot absorb"
 
+# ---- Apply headroom, sized from the data ------------------------------------
+#
+# The 14 Aug failure. The flat 15% check passed at 02:47 - "Thin pool 74% used, 26% free —
+# enough to apply" - and the apply then ran for 95 minutes and died on ENOSPC at 05:08.
+#
+# 26% of the pool was ~156G. The staged datadir was ~188G, and every block of it that differs
+# from what the snapshots pin has to be allocated fresh. A percentage cannot answer the question
+# "will this copy fit", because the answer depends on how big the copy is. So ask that instead.
+
+echo "Apply headroom sized from the staged data"
+
+# Stub the two measurements the check now makes.
+stub_sizes() {
+    STUB_POOL_FREE_BYTES="$1"
+    STUB_STAGE_BYTES="$2"
+    ylvm_pool_free_bytes() { echo "$STUB_POOL_FREE_BYTES"; }
+    ylvm_stage_used_bytes() { echo "$STUB_STAGE_BYTES"; }
+}
+
+GB=$((1024 * 1024 * 1024))
+
+# 8. The 14 Aug numbers: 156G free, 188G staged. Must refuse - and refuse at 02:47, not 05:08.
+stub_reset "snap_20260811 snap_20260812" 74
+stub_sizes $((156 * GB)) $((188 * GB))
+( ylvm_require_pool_headroom ) >/dev/null 2>&1
+assert_eq "1" "$?" "refuses an apply larger than the free pool, however healthy the percentage"
+
+# 9. Plenty of room for the copy: proceed.
+stub_reset "snap_20260812" 40
+stub_sizes $((300 * GB)) $((188 * GB))
+( ylvm_require_pool_headroom ) >/dev/null 2>&1
+assert_eq "0" "$?" "allows an apply the pool can absorb"
+
+# 10. Unmeasurable staged size: fall back to the percentage rather than blocking the restore.
+stub_reset "snap_20260812" 40
+stub_sizes $((300 * GB)) ""
+( ylvm_require_pool_headroom ) >/dev/null 2>&1
+assert_eq "0" "$?" "falls back to the percentage when the staged size cannot be read"
+
 echo
 if [ "$FAILURES" -eq 0 ]; then
     echo "All retention tests passed."

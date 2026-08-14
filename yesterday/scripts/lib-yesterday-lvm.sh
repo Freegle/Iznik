@@ -105,6 +105,18 @@ EOF
 ylvm_apply_stage_to_active() {
     local percona_version; percona_version="$(cat "$YLVM_COMPOSE_DIR/yesterday/data/percona-version" 2>/dev/null || echo)"
     mountpoint -q "$YLVM_ACTIVE_MNT" || ylvm_die "Active $YLVM_ACTIVE_MNT not mounted"
+
+    # Give the pool back whatever active has already freed. Staging is trimmed before every
+    # stream (ylvm_prepare_to_stage) but active never was, and neither volume is mounted with
+    # `discard` - so blocks released inside active by previous applies stayed charged to the pool.
+    #
+    # Worth doing, but do not expect much: a block can only return to the pool if NO snapshot
+    # still references it. Measured on the VM with two snapshots present, fstrim reported 75.7GiB
+    # trimmable and actually returned 2.2G - the rest was pinned. Snapshots, not untrimmed space,
+    # are what make an apply need close to a second full copy.
+    ylvm_log "Trimming active to return freed blocks to the pool ..."
+    fstrim "$YLVM_ACTIVE_MNT" 2>/dev/null || true
+
     ylvm_log "rsync --inplace staging -> active (changed blocks only) ..."
     rsync -a --inplace --no-whole-file --delete \
         "$YLVM_STAGE_MNT/" "$YLVM_ACTIVE_MNT/"
@@ -150,12 +162,33 @@ ylvm_snapshots_oldest_first() {
         | tr -d ' ' | grep "^${YLVM_SNAP_PREFIX}" | sort
 }
 
+# Free data space in the thin pool, in bytes.
+ylvm_pool_free_bytes() {
+    local size used
+    size="$(lvs --noheadings --units b --nosuffix -o lv_size "$YLVM_VG/$YLVM_POOL" 2>/dev/null | tr -d ' ' | awk -F. '{print $1}')"
+    used="$(ylvm_pool_data_percent)"
+    [ -n "$size" ] && [ -n "$used" ] || return 0
+    echo $(( size * (100 - used) / 100 ))
+}
+
+# Bytes occupied by the prepared datadir waiting in staging.
+ylvm_stage_used_bytes() {
+    df -B1 --output=used "$YLVM_STAGE_MNT" 2>/dev/null | tail -1 | tr -d ' '
+}
+
 # Refuse to begin an apply that the pool cannot absorb. rsync onto the active
 # volume forces a copy-on-write of every changed block against every snapshot
 # holding the old one, so starting with almost no free data space does not
 # degrade — it stalls the pool into out-of-data-space mode and takes percona
 # with it. Failing here is loud, instant and explains itself; failing halfway
 # through is a four-hour poll at 0% and a datadir in an unknown state.
+#
+# Sized from the staged data, not from a percentage. On 2026-08-14 the flat 15%
+# check passed at 02:47 ("74% used, 26% free — enough to apply"), and the apply
+# then ran for 95 minutes and died on ENOSPC. 26% of the pool was ~156G against a
+# ~188G staged datadir: a percentage cannot answer "will this copy fit", because
+# the answer depends on how big the copy is. Worst case every staged block differs
+# from what the snapshots pin, so require room for the whole of it.
 ylvm_require_pool_headroom() {
     local used; used="$(ylvm_pool_data_percent)"
     if [ -z "$used" ]; then
@@ -168,7 +201,21 @@ ylvm_require_pool_headroom() {
         ylvm_die "Thin pool $YLVM_VG/$YLVM_POOL is ${used}% full (need ${YLVM_POOL_MIN_FREE}% free to apply a backup). Snapshots present: $(ylvm_snapshots_oldest_first | tr '\n' ' '). Remove older snapshots with lvremove, or grow the pool."
     fi
 
-    ylvm_log "Thin pool ${used}% used, ${free}% free — enough to apply."
+    # The percentage is only the floor. What actually matters is whether the copy fits.
+    local free_bytes staged_bytes
+    free_bytes="$(ylvm_pool_free_bytes)"
+    staged_bytes="$(ylvm_stage_used_bytes)"
+
+    if [ -z "$free_bytes" ] || [ -z "$staged_bytes" ] || [ "$staged_bytes" -eq 0 ] 2>/dev/null; then
+        ylvm_log "Thin pool ${used}% used, ${free}% free — enough to apply (staged size unknown)."
+        return 0
+    fi
+
+    if [ "$free_bytes" -lt "$staged_bytes" ]; then
+        ylvm_die "Thin pool $YLVM_VG/$YLVM_POOL has $((free_bytes / 1024 / 1024 / 1024))G free but the staged datadir is $((staged_bytes / 1024 / 1024 / 1024))G, and applying it can have to allocate all of that against the snapshots holding the old blocks. Snapshots present: $(ylvm_snapshots_oldest_first | tr '\n' ' '). Remove snapshots with lvremove, or grow the pool."
+    fi
+
+    ylvm_log "Thin pool ${used}% used, $((free_bytes / 1024 / 1024 / 1024))G free for a $((staged_bytes / 1024 / 1024 / 1024))G apply — enough."
 }
 
 # Retention. $YLVM_KEEP is a ceiling on how many days we would LIKE; the pool
