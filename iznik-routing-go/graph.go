@@ -582,12 +582,14 @@ func computeDriveSnappable(g *Graph) []bool {
 	for id := NodeID(1); id <= NodeID(n); id++ {
 		if size[find(id)] >= threshold {
 			ok[id] = true
-		} else {
+		} else if hasEdgeForMode(g, id, Drive) {
+			// Only count real drive nodes in the log: walk-only nodes are
+			// singleton "components" here and were never drive-snappable.
 			nFrag++
 		}
 	}
 	if nFrag > 0 {
-		log.Printf("spatial-server: %d nodes in drive fragments below %d nodes (excluded from drive snapping)", nFrag, threshold)
+		log.Printf("spatial-server: %d drive nodes in fragments below %d nodes (excluded from drive snapping)", nFrag, threshold)
 	}
 	return ok
 }
