@@ -475,6 +475,116 @@ Section Q's crosspost/repost dedup (`ParityComparer::dedupeApiCrosspostsAndRepos
 - Two earlier candidate decisions are **closed as ruled out** by the email-path freeze, with their consequences recorded in I.5a and I.6: adding `tn_post_id` to the email-side entry (join instead via the FD msgid → `messages.tnpostid`, which only works for outcomes that created a message — everything else is aggregate-only), and having `EmailReplaySyncer` emit `logIncomingEmail()` (so Loki parity is checkable only against live production traffic, never from `tn:parity-check`).
 - See section P: the ModTools-side gate that reads `messages_groups.mod_messaging_allowed` before allowing a moderator to message a poster directly. Deliberately deferred — there's no existing contact-poster feature to gate, so this needs a concrete feature design before implementation, not just a wiring task.
 
+### S. Post-cutover coverage verification via the incoming email archive ✅ implemented
+
+**Files** (all additive; `IncomingMailService` untouched):
+- `iznik-batch/app/Services/TrashNothing/Verify/TnEmailRoutingGate.php` ✅
+- `iznik-batch/app/Services/TrashNothing/Verify/ArchiveInventoryService.php` ✅
+- `iznik-batch/app/Services/TrashNothing/Verify/CoverageVerifier.php` ✅
+- `iznik-batch/app/Console/Commands/TrashNothing/TNVerifyEmailCoverageCommand.php` — `tn:verify-email-coverage` ✅
+- `PostSyncer::lookupPostById()` gains `group_id` + `post`; new `ingestFetchedPost()`; `RESOLVED_OUTCOMES` moved here from `TNParityCheckCommand` so both consumers share one definition ✅
+- Tests: `TnEmailRoutingGateTest`, `ArchiveInventoryServiceTest`, `CoverageVerifierTest`, `TNVerifyEmailCoverageCommandTest` ✅
+
+**Three deviations from the design below, all found during implementation:**
+
+1. **The skip predicate needed widening in what it *excludes*.** The design said "targetGroupName !== null && TN post header". That is wrong: `MailParserService::analyzeEnvelopeTo()` strips the `-volunteers`/`-auto` suffix and *still* reports a `targetGroupName`, so the predicate as designed would have swallowed volunteer mail, which `route()` handles in Phase 4 — before group posts. `isToVolunteers`/`isToAuto` are now excluded explicitly, with `isChatNotificationReply()` checked defensively alongside. Covered by `TnEmailRoutingGateTest::test_ignores_volunteers_address_even_with_the_tn_header`.
+2. **The archive's `routing_outcome` is now recorded, not left absent.** S.2 accepted losing it as a consequence of not calling `route()`. In fact the callers can still call `recordOutcome()` themselves, so they stamp `TnEmailRoutingGate::OUTCOME_SKIPPED` (`'SkippedTnApi'`) — deliberately not a `RoutingResult` value, since nothing routed it. Strictly better than the designed behaviour and free. The verifier still does not depend on the field.
+3. **`unplaceable` is checked before the API lookup, not after.** The S.4 table implies the API call comes first. Checking placement locally first is both cheaper (a post that places nowhere needs no request against a 2-req/s limit) and safe: crossposts always carry real coordinates, so the local check cannot swallow one. Pinned by `CoverageVerifierTest::test_a_post_outside_every_group_boundary_is_expected_absent`, which asserts no lookup happens.
+
+**One guard the design did not call for**: the command refuses to run unless `skip_email_routing` is on (override with `--force`). Both paths stamp `messages.tnpostid`, so while the email path is still routing, a "covered" post proves nothing about the API path — the check would report a clean bill of health that means nothing. The schedule entry is gated on the same flag.
+
+**Alerting**: the command fails only on the escalations in S.5 (repeat miss, backfill cap breached, backfill error), never on a genuine miss alone — section Q's persistent TN-side gap means a small residue of misses is the expected steady state, and failing on it would train everyone to ignore the command. Volume-based alerting on the Loki counts covers the space in between.
+
+---
+
+Original design follows.
+
+Once `FREEGLE_TN_INGEST_POSTS_VIA_API` is on and the email path is switched off, `tn:parity-check` stops working: Layers 3 and 5 compare what each path *wrote*, and the email path no longer writes anything. What remains necessary is Layer 1 — **coverage**: proof that every post TN emailed us also got ingested by the API path. This section designs a standing production check for exactly that, using the incoming email archive as an independent witness.
+
+The email side is reduced from an *ingestion path* to an *inventory*. That is a large simplification: no disposable database, no rolled-back transactions, no running two paths in parallel. Just "here are the post ids that arrived by email; are they all in `messages`?"
+
+#### S.1 Why the archive works as the witness
+
+- Both production entry points archive the raw email **before** routing: `IncomingMailController::receive()` (`app/Http/Controllers/IncomingMailController.php:50`, the Postfix→HTTP path) and `IncomingMailCommand` (`app/Console/Commands/IncomingMailCommand.php:56`, CLI). Archiving therefore survives switching routing off, because it happens first.
+- `batch-prod` bind-mounts `./iznik-batch:/var/www/html` (`docker-compose.yml:1682`), so `storage/incoming-archive` is on the host filesystem, and the same container both receives mail and runs the scheduler. No volume plumbing or cross-host copying is needed.
+- Archive format (`IncomingArchiveService`): `storage/incoming-archive/YYYY-MM-DD/HHMMSS_rand.json`, containing `version`, `timestamp` (ISO-8601 UTC), `envelope.from`/`envelope.to`, base64 `raw_email`, and `routing_outcome` stamped afterwards by `recordOutcome()`.
+- Retention is 48h, enforced hourly by `mail:cleanup-archive` (`routes/console.php:761`), deleting by **mtime**.
+
+Chosen over the alternatives (TN's `fd-post-log.csv`, a Postfix-level sink, or a Loki-to-Loki diff) because it is already built, already running in production, and captures the raw email — so a flagged miss can be diagnosed from the actual message rather than from a post id alone.
+
+#### S.2 Switching the email path off — caller-level skip
+
+**Decision**: config-flagged early return in the two callers, after archiving, before `route()`. `IncomingMailService` stays frozen.
+
+**The skip predicate must be precise, or chat breaks.** TN chat replies still arrive by email and remain in scope (section E). The two are disjoint by envelope recipient and both are visible to the caller after `parse()`:
+
+- chat replies — Phase 2 of `route()`, gated on `isChatNotificationReply()` (`IncomingMailService.php:118`), i.e. `notify-`/`replyto-` addresses.
+- group posts — Phase 5, gated on `$email->targetGroupName !== null` (`IncomingMailService.php:179`).
+
+So skip **only** when `targetGroupName !== null` **and** `getTrashNothingPostId() !== null` (`ParsedEmail.php:361`). Anything else — chat replies, bounces, direct mail, non-TN group posts — routes exactly as before.
+
+Accepted consequences, both of which follow from not calling `route()`:
+- `recordOutcome()` never fires for these, so the archived `routing_outcome` stays absent. The verifier must not depend on that field.
+- No `logIncomingEmail()` entry, so TN posts disappear from the ModTools incoming-email dashboard (`iznik-nuxt3/modtools/stores/emailtracking.js:407-450`). They are still visible on the API path's own routed stream under its own `source` label; extending the dashboard to query both sources is a follow-up, deliberately not in scope here.
+
+#### S.3 The command
+
+`tn:verify-email-coverage`, scheduled hourly, over a window `[now − lag − interval − overlap, now − lag]`.
+
+- **lag = 8h** (decision: 6–12h). Comfortably inside 48h retention with ~39h of slack for a missed or repeated run, and orders of magnitude beyond the ~30s TN indexing lag measured in section Q.
+- **overlap ≈ 15 min**, mirroring the sync's own backward overlap (section B). Re-checking a covered post is free and idempotent, so overlap generously rather than risk losing a boundary post.
+- **Window from the JSON `timestamp` field, never file mtime** — `recordOutcome()` rewrites the file, so mtime means different things on different paths.
+
+Pipeline:
+
+1. Select the date directories intersecting the window, then prefilter on the `HHMMSS` filename prefix before opening anything.
+2. Cheap substring scan of the decoded `raw_email` for `X-Trash-Nothing-Post-Id` to select TN posts; full `MailParserService::parse()` only on the hits, to recover post id, coordinates (`ParsedEmail::getTrashNothingCoordinates()`, `:377`) and subject. Avoids MIME-parsing every non-TN email in the window.
+3. Batched `SELECT tnpostid FROM messages WHERE tnpostid IN (…)`. Present ⇒ covered, done.
+4. Reclassify every absentee (S.4) before calling it a miss.
+5. Auto-ingest genuine misses under the rails in S.5.
+6. Report via `logBatchJob('tn:verify-email-coverage', …)` so it is queryable and alertable alongside the existing streams.
+
+#### S.4 Reclassifying absentees — the part that matters
+
+A naive existence check produces constant false alarms. **Decision: one `GET /posts/{id}` per absentee**, reusing the machinery already built for `tn:parity-check`.
+
+`PostSyncer::lookupPostById()` (`PostSyncer.php:349-367`) currently returns `status`/`date`/`outcome`; it needs **`group_id` added**. That single call then resolves every class below at once:
+
+| class | signal | verdict |
+|---|---|---|
+| **Crosspost copy** | `group_id` non-empty | **Expected absent.** The dominant category. |
+| Deleted on TN | 404 → `status=not_found` | Expected absent |
+| Resolved before sync ran | `outcome` ∈ `RESOLVED_OUTCOMES` | Expected absent |
+| Date bumped out of window | `date` outside `[from, to]` | Expected absent |
+| Unplaceable | see below | Real coverage loss |
+| Everything else | — | **Genuine miss** |
+
+**Crossposts are the reason this cannot be skipped.** Per `GroupPostIngestionService::REASON_CROSSPOST` (`GroupPostIngestionService.php:49-58`), the email path receives one email per TN group and ingests each as its own message, so an item crossposted to N groups yields **N email-path messages but exactly one API-path message**. N−1 archived post ids will never have a `messages` row, by design. Only the source post (empty `group_id`) is ingested — commit `d5f0b4983`.
+
+The `(subject, lat, lng)` heuristic is **not** an acceptable substitute: it was deliberately deleted in that same commit (see section Q's `excludeApiCrossposts()` note), and it cannot detect deleted or resolved posts at all.
+
+**Unplaceable posts** need reconstructing rather than looking up. The API path drops posts with no coordinates or outside all group bounds (`PostSyncer::REASON_NO_COORDINATES` / `REASON_NOT_IN_ANY_GROUP_BOUNDS`). Post-cutover there is no email-path verdict to compare against — but running `Location::groupsNear()` on the email's own `X-Trash-Nothing-Post-Coordinates` recovers the decision independently. If the email's coordinates *do* resolve to a group and the post still isn't ingested, that is precisely the Layer 1 regression this whole check exists to catch, and it must never be filed as "expected absent".
+
+**The known TN-side gap** (section Q, 2026-07-29) means a low, roughly constant residue of genuine misses that are not Freegle regressions. Alert thresholds must tolerate it; tune after observing real volumes.
+
+#### S.5 On a genuine miss — auto-ingest, behind rails
+
+**Decision: report *and* auto-ingest**, making the verifier a self-healing backstop rather than only a detector. Because it writes member-visible data on a schedule, it needs rails:
+
+1. **Reuse `PostSyncer::processPost()`** on the fetched post rather than reimplementing. That inherits coordinate-based group resolution, `freegle_group_ids` consent handling and the single-Loki-entry emission invariant for free. Requires only a public entry point for a single already-fetched post.
+2. **Ingest only true source posts** — `group_id` empty, `status=found`, outcome unresolved. Auto-ingesting a crosspost copy would recreate exactly the duplication the API path exists to eliminate. Every other class in S.4 is expected-absent and must never be written.
+3. **Idempotent by construction** — `GroupPostIngestionService::ingest()` already skips on an existing `tnpostid` (`REASON_DUPLICATE`), so overlapping windows and re-runs are safe.
+4. **Cap per run** (e.g. 20). Above the cap, ingest **nothing** and alert loudly: a mass miss means the sync is broken, and quietly backfilling hundreds of hours-late posts is worse than paging a human.
+5. **Age guard** — refuse posts whose TN `date` is far older than the window. A very stale post surfacing suddenly is more likely a data problem than a real miss.
+6. **Escalate on repeat** — an auto-ingested post must read as covered on the next run. If it does not, ingestion is failing rather than lagging: hard alert.
+7. **Ship report-only first.** The flag should default to detection-only until the observed miss population matches what S.4 predicts; only then enable writes. The crosspost share in particular is unknown until measured against real traffic.
+
+#### S.6 Reporting
+
+`logBatchJob('tn:verify-email-coverage', 'completed'|'failed')` carrying: files scanned, TN posts found, covered, absent, per-class reclassification counts (crosspost / deleted / resolved / bumped / unplaceable / genuine), auto-ingested count, and the window. Genuine misses listed by post id.
+
+Note this is a *batch* stream entry, not a routed one — the same split section I draws between per-post routing entries and run-level events. Auto-ingested posts emit their own routed entry through `processPost()`; adding a `backfill` marker key to that entry is additive and safe for the ModTools dashboard, which maps a fixed allowlist of keys rather than iterating them (`emailtracking.js:430-450`). This does **not** reopen I.5a's ruling against adding `tn_post_id` to the *email-side* entry — that concerned the frozen email path, which by this point is off.
+
 ## Resolved decisions
 
 2. **Comparison tooling** — superseded by `TNParityCheckCommand` (`tn:parity-check`), see section Q. Originally decided as "no dedicated tool, manual Loki inspection only"; a dedicated artisan command was built after all, but its comparison model needed a redesign once it became clear the two paths are not expected to be byte-identical (see section Q). ⚠️ superseded

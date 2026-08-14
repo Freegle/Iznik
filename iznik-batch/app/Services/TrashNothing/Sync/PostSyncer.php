@@ -24,6 +24,22 @@ class PostSyncer
     // TN API rate limit is 2 requests/second; enforce a minimum 750ms gap.
     private const MIN_REQUEST_INTERVAL_US = 750_000;
 
+    /**
+     * Outcomes meaning the post was never going to be posted to FD anyway, so
+     * /posts/all correctly excludes it — absence is not a coverage regression.
+     *
+     * Per the OpenAPI Post model, outcome is one of satisfied/withdrawn/
+     * promised/expired (offers) or satisfied/withdrawn/expired (wanted).
+     * 'deleted' isn't a real outcome value — a deleted post 404s, and
+     * lookupPostById() reports that as status=not_found — but is matched
+     * defensively in case TN ever returns it as one.
+     *
+     * Lives here, next to lookupPostById() which produces the values it is
+     * compared against, so tn:parity-check (Layer 1 reclassification) and
+     * tn:verify-email-coverage (section S.4) share one definition.
+     */
+    public const RESOLVED_OUTCOMES = ['satisfied', 'withdrawn', 'deleted'];
+
     // routing_reason values for the skips this class decides itself, before
     // ingestion is reached. API-only — no email-path branch produces them.
     private const REASON_NO_COORDINATES = 'no-coordinates';
@@ -32,6 +48,10 @@ class PostSyncer
 
     private GroupPostIngestionService $ingestionService;
     private float $lastRequestTime = 0.0;
+
+    // Set only for the duration of ingestFetchedPost(), so a backfilled post's
+    // routed Loki entry is distinguishable from one the scheduled sync caught.
+    private bool $backfill = false;
 
     public function __construct(
         private bool $dryRun,
@@ -308,6 +328,13 @@ class PostSyncer
             $context['dry_run'] = true;
         }
 
+        // Additive, like dry_run and tn_post_id: ModTools' incoming dashboard
+        // maps a fixed allowlist of keys rather than iterating them, so an extra
+        // key cannot break it. Section S.6.
+        if ($this->backfill) {
+            $context['backfill'] = true;
+        }
+
         $entry = $this->loki->logIngestedPost(
             // No SMTP envelope on this path; mirrors the null/synthesized values
             // createMessage() writes to messages.envelopefrom/fromaddr.
@@ -344,7 +371,16 @@ class PostSyncer
      * going to be posted to FD in the first place. See plans/
      * tn-api-post-ingestion.md section Q for the confirmed live examples.
      *
-     * @return array{status: 'found'|'not_found'|'error', date: string|null, outcome: string|null}
+     * `group_id` and `post` additionally serve tn:verify-email-coverage (see
+     * plans/tn-api-post-ingestion.md section S.4): a non-empty `group_id` marks
+     * a TN per-group COPY of a source post, which the API path discards by
+     * design (GroupPostIngestionService::REASON_CROSSPOST), so its absence from
+     * `messages` is expected rather than a coverage gap. `post` is the fetched
+     * model itself, returned so a caller that decides to ingest the post can
+     * hand it straight to ingestFetchedPost() instead of spending a second
+     * request against a 2-req/s rate limit.
+     *
+     * @return array{status: 'found'|'not_found'|'error', date: string|null, outcome: string|null, group_id: string|null, post: \OpenAPI\Client\Model\Post|null}
      */
     public function lookupPostById(string $postId): array
     {
@@ -353,16 +389,46 @@ class PostSyncer
         try {
             $post = $this->buildApiClient()->getPost($postId);
             return [
-                'status'  => 'found',
-                'date'    => $post->getDate()?->format(self::ISO_UTC),
-                'outcome' => $post->getOutcome(),
+                'status'   => 'found',
+                'date'     => $post->getDate()?->format(self::ISO_UTC),
+                'outcome'  => $post->getOutcome(),
+                'group_id' => $post->getGroupId(),
+                'post'     => $post,
             ];
         } catch (ApiException $e) {
             if ($e->getCode() === 404) {
-                return ['status' => 'not_found', 'date' => null, 'outcome' => null];
+                return ['status' => 'not_found', 'date' => null, 'outcome' => null, 'group_id' => null, 'post' => null];
             }
             Log::warning('TN parity: single-post lookup failed', ['post_id' => $postId, 'error' => $e->getMessage()]);
-            return ['status' => 'error', 'date' => null, 'outcome' => null];
+            return ['status' => 'error', 'date' => null, 'outcome' => null, 'group_id' => null, 'post' => null];
+        }
+    }
+
+    /**
+     * Ingest one already-fetched post, outside the date-range sync loop.
+     *
+     * The backfill entry point for tn:verify-email-coverage (section S.5 rail
+     * 1): rather than reimplementing ingestion, it reuses processPost() whole,
+     * so coordinate-based group resolution, freegle_group_ids consent handling,
+     * duplicate suppression and the exactly-one-Loki-entry-per-post invariant
+     * all behave identically to a normal sync. The only difference is the
+     * `backfill` marker added to the routed entry (see logRoutedPost()), so the
+     * stream distinguishes "the sync caught this" from "the verifier had to go
+     * back for it".
+     *
+     * Callers must check group_id/outcome/status themselves first — this method
+     * deliberately does not re-litigate whether the post *should* be ingested,
+     * because the decision needs context (the email inventory) that PostSyncer
+     * does not have.
+     */
+    public function ingestFetchedPost(mixed $post): void
+    {
+        $this->backfill = true;
+
+        try {
+            $this->processPost($post, null);
+        } finally {
+            $this->backfill = false;
         }
     }
 

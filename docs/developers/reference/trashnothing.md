@@ -1,9 +1,10 @@
 ---
-last_reviewed: 2026-08-08
+last_reviewed: 2026-08-14
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
   - iznik-batch/app/Console/Commands/TrashNothing/**
+  - iznik-batch/app/Services/TrashNothing/Verify/**
   - iznik-batch/app/Models/UserDeletion.php
 ---
 
@@ -73,6 +74,63 @@ The `sourceheader` field stores the message origin:
 - `TN-Web` - Posted via TN website
 - `TN-Mobile` - Posted via TN mobile app
 - `Platform` - Posted via Freegle directly
+
+### Post Ingestion via API, and the email cutover
+
+Posts are moving from the email path above to the TN public API. `tn:sync`
+(`TNSyncCommand`) drives `PostSyncer` → `GroupPostIngestionService`, gated on
+`FREEGLE_TN_INGEST_POSTS_VIA_API`. The email path (`IncomingMailService`) is
+deliberately frozen and untouched while both run.
+
+Two differences from the email path are intentional, not bugs, and both matter
+when reading any coverage report:
+
+- **Group placement is by coordinates**, via `Location::groupsNear()` on the
+  post's own lat/lng — never TN's `group_id`, which is TN's internal ID and
+  drifts from Freegle's boundaries.
+- **Crossposts collapse.** TN gives every per-group copy of a post its own post
+  id and emails each one, so the email path creates N messages for an item
+  crossposted to N groups. The API path ingests only the source post (empty
+  `group_id`) and discards the copies, letting Freegle's own rippling do the
+  cross-posting — see `GroupPostIngestionService::REASON_CROSSPOST`.
+
+### Verifying nothing is dropped after the cutover
+
+Once the email path stops routing, `tn:parity-check` no longer works: it compares
+what each path *wrote*, and only one path writes. `tn:verify-email-coverage`
+replaces it, checking coverage only.
+
+| Piece | Role |
+|---|---|
+| `TnEmailRoutingGate` | Decides which inbound mail stops being routed. Narrow by design — a wider predicate silently drops mail, and TN chat replies must keep routing. |
+| `ArchiveInventoryService` | Lists the TN posts that arrived in a window — the independent witness. Walks the archive via the shared `IncomingArchiveReader` (also used by `mail:recover-dropped-merged`); only the TN-specific selection and keying live here. |
+| `CoverageVerifier` | Checks each against `messages.tnpostid` and classifies the absences. |
+| `TNVerifyEmailCoverageCommand` | Orchestrates, backfills, reports. |
+
+Both mail entry points archive the raw email *before* routing
+(`IncomingMailController::receive()`, `IncomingMailCommand`), which is what makes
+the archive usable once routing stops. Archive retention is 48h
+(`mail:cleanup-archive`) and that is the hard bound on how far behind real time
+verification can run — the default lag is 8h.
+
+**Most absences are expected**, and a report that treated them as misses would be
+unusable. `CoverageVerifier` separates crosspost copies (the largest category),
+posts outside every group boundary, deleted posts, resolved outcomes
+(`PostSyncer::RESOLVED_OUTCOMES`) and posts whose TN `date` was bumped out of the
+window, from genuine gaps. Distinguishing them needs a single-post
+`GET /posts/{id}` per absence — `PostSyncer::lookupPostById()`.
+
+Genuine misses can be backfilled automatically (`FREEGLE_TN_VERIFY_AUTO_INGEST`,
+off by default) via `PostSyncer::ingestFetchedPost()`, which reuses the normal
+ingestion path and tags the resulting Loki entry `backfill`. The rails are in the
+command: source posts only, a per-run cap that alerts rather than backfilling en
+masse, an age guard, and escalation when a post we already backfilled is still
+missing. Note a persistent gap between TN's partner email feed and their public
+API means a small residue of genuine misses is the expected steady state, so the
+command fails only on those escalations, not on any miss at all.
+
+Design rationale and the live evidence behind each rule are in
+`plans/tn-api-post-ingestion.md` section S.
 
 ### Photo Handling
 

@@ -180,15 +180,6 @@ class TNParityCheckCommand extends Command
         return Command::FAILURE;
     }
 
-    // Outcomes meaning the post was never going to be posted to FD anyway, so
-    // /posts/all correctly excludes it — not a coverage regression. Per the
-    // OpenAPI Post model docblock, outcome is one of satisfied/withdrawn/
-    // promised/expired (offers) or satisfied/withdrawn/expired (wanted);
-    // 'deleted' isn't a real outcome value (a deleted post 404s instead, see
-    // the not_found branch below) but is matched defensively in case TN ever
-    // returns it as one.
-    private const RESOLVED_OUTCOMES = ['satisfied', 'withdrawn', 'deleted'];
-
     /**
      * For each Layer 1 candidate miss, looks the post up directly by ID
      * (bypassing the date-range listing) and splits it into four buckets:
@@ -220,7 +211,7 @@ class TNParityCheckCommand extends Command
                 continue;
             }
 
-            if ($result['status'] === 'found' && in_array($result['outcome'], self::RESOLVED_OUTCOMES, true)) {
+            if ($result['status'] === 'found' && in_array($result['outcome'], PostSyncer::RESOLVED_OUTCOMES, true)) {
                 $resolved[] = "post_id={$postId} outcome={$result['outcome']}";
                 continue;
             }
