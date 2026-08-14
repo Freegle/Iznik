@@ -67,6 +67,35 @@ func handleIsochrone(g *Graph) fiber.Handler {
 	}
 }
 
+// handleQuintile handles GET /v1/quintile?lat=&lng=
+//
+// Returns the IMD deprivation quintile of the nearest LSOA centroid: 1 = most deprived,
+// 5 = least, 0 = no data. This server already holds the index (deprivation.go) purely for the
+// fairness isochrone, so a member's quintile can be answered here without anything else in the
+// estate needing to load or understand IMD data.
+//
+// It exists so the batch can stamp settings.deprivationQuintile onto members once, rather than
+// every consumer doing a nearest-centroid search of its own. No Dijkstra, no graph traversal:
+// this is a grid lookup and costs microseconds.
+func handleQuintile(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		lat, err1 := strconv.ParseFloat(c.Query("lat"), 64)
+		lng, err2 := strconv.ParseFloat(c.Query("lng"), 64)
+		if err1 != nil || err2 != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
+		}
+		if g.Deprivation == nil {
+			// No index loaded. Answer honestly rather than implying "not deprived":
+			// 0 already means "unknown" to every caller of Lookup.
+			return c.JSON(fiber.Map{"quintile": 0, "available": false})
+		}
+		return c.JSON(fiber.Map{
+			"quintile":  int(g.Deprivation.Lookup(lat, lng)),
+			"available": true,
+		})
+	}
+}
+
 // handleFairness handles GET /v1/fairness?lat=&lng=&minutes=&mode=&fairness=
 func handleFairness(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -476,6 +505,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	}
 	v1.Get("/isochrone", handleIsochrone(g))
 	v1.Get("/fairness", handleFairness(g))
+	v1.Get("/quintile", handleQuintile(g))
 	v1.Get("/catchment", handleCatchment(g))
 	v1.Get("/group-proximity", handleGroupProximity(g))
 	v1.Get("/drive-time", handleDriveTime(g))

@@ -336,6 +336,17 @@ type rippleScheduleResponse struct {
 	// (plan 2026-07-06). Present (non-null) when computed, so batch can tell it
 	// apart from an older server that omits the field. No omitempty on purpose.
 	ReachableGroupIDs []int64 `json:"reachable_group_ids"`
+	// OverflowRural is one ring per density-band ceiling, for members the audience cap shut
+	// out of a post they are within their own travel-time budget of. Present only when
+	// rural_access was requested AND the cap actually bound - see ruraloverflow.go. omitempty
+	// on purpose: with the feature off the response must be byte-identical to before.
+	OverflowRural map[string]*GeoJSONPolygon `json:"overflow_rural,omitempty"`
+}
+
+// wantRuralAccess parses the rural_access query parameter. Off unless explicitly asked for, so
+// the lane ships dark and every existing caller is unaffected.
+func wantRuralAccess(v string) bool {
+	return v == "1" || v == "true"
 }
 
 // handleRippleSchedule produces the density-driven ripple schedule for a given
@@ -573,8 +584,23 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		// TotalFreeglers stays the real reachable pool so callers can see how far
 		// below the pool the cap bound (for dark-compute measurement).
 		maxDriveMin := maxMinutes
-		if effectiveTotal < total {
+		capBound := effectiveTotal < total
+		if capBound {
 			maxDriveMin = float64(fwt[effectiveTotal-1].seconds) / 60.0
+		}
+
+		// Rural-access overflow (see ruraloverflow.go). Only for reaches the CAP cut short:
+		// where it did not bind, the reach already went to the ceiling and there is nothing
+		// beyond it to admit anyone to, so the rings would be cost with no beneficiary.
+		var overflowRural map[string]*GeoJSONPolygon
+		if capBound && wantRuralAccess(c.Query("rural_access", "0")) {
+			// polygons=0 (what the batch sends) skips the resolution, so derive it here.
+			// Same derivation the tick polygons use, so the rings are on the same grid.
+			ringRes := res
+			if ringRes <= 0 {
+				ringRes = NetworkResolution(g, iso.ReachedNodes, mode)
+			}
+			overflowRural = ruralOverflowRings(g, iso.ReachedNodes, ringRes, maxMinutes)
 		}
 
 		return c.JSON(rippleScheduleResponse{
@@ -582,6 +608,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			MaxDriveMin:       maxDriveMin,
 			Schedule:          schedule,
 			ReachableGroupIDs: reachableGroups,
+			OverflowRural:     overflowRural,
 		})
 	}
 }
