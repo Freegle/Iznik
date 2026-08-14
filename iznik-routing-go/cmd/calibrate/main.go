@@ -88,9 +88,12 @@ func classOf(highway string) int {
 		return 5
 	case "residential", "living_street":
 		return 6
-	case "service", "track":
+	case "service":
 		return 7
 	}
+	// track is NOT drivable in production (highwaySpeed sets Drive=-1), so the
+	// harness must not route over it either or the fitted factors transfer to
+	// a graph with different topology.
 	return -1
 }
 
@@ -111,7 +114,7 @@ func classDefaultSpeed(highway string) float32 {
 		return 8.3
 	case "living_street":
 		return 2.8
-	case "service", "track":
+	case "service":
 		return 4.2
 	}
 	return -1
@@ -898,6 +901,7 @@ func main() {
 	iters := flag.Int("iters", 4, "fit iterations")
 	out := flag.String("out", "out.json", "output path")
 	trimPct := flag.Float64("trim", 0.02, "fraction of worst residuals excluded from fit")
+	weightFloorS := flag.Float64("weightfloor", 0, "floor (seconds) applied to y in the 1/y^2 WLS weight; 0 = pure relative weighting.  A floor stops a handful of very short trips dominating the intercept-like coefficients (c0, penalties)")
 	flag.Parse()
 
 	var pairs []pairRec
@@ -1045,6 +1049,7 @@ func main() {
 				log.Printf("iter %d: %d topology-divergent rows excluded from fit", it, nDivergent)
 			}
 			// trim worst residuals under CURRENT params
+			nTrimmed := 0
 			if *trimPct > 0 && len(rows) > 50 {
 				type resid struct {
 					ape float64
@@ -1057,6 +1062,7 @@ func main() {
 				}
 				sort.Slice(rs, func(a, b int) bool { return rs[a].ape > rs[b].ape })
 				nTrim := int(float64(len(rows)) * *trimPct)
+				nTrimmed = nTrim
 				drop := map[int]bool{}
 				for _, r := range rs[:nTrim] {
 					drop[r.k] = true
@@ -1076,7 +1082,11 @@ func main() {
 			for k, rw := range rows {
 				X[k] = rw.x
 				y[k] = rw.y
-				w[k] = 1 / (rw.y * rw.y) // relative-error weighting
+				wy := rw.y
+				if *weightFloorS > 0 && wy < *weightFloorS {
+					wy = *weightFloorS
+				}
+				w[k] = 1 / (wy * wy) // relative-error weighting (floored)
 			}
 			lb := make([]float64, nBeta)
 			lb[0] = 0
@@ -1110,7 +1120,7 @@ func main() {
 					trGoog = append(trGoog, r.GoogS)
 				}
 			}
-			info := iterInfo{Params: next, Train: computeMetrics(trPred, trGoog), Holdout: computeMetrics(hoPred, hoGoog)}
+			info := iterInfo{Params: next, Train: computeMetrics(trPred, trGoog), Holdout: computeMetrics(hoPred, hoGoog), NTrim: nTrimmed}
 			history = append(history, info)
 			log.Printf("iter %d: factors=%v c0=%.1f pSig=%.1f pRbt=%.1f pJunc=%.1f pCross=%.2f | train MAPE %.1f%% med %.1f%% | holdout MAPE %.1f%% med %.1f%% bias %+.1f%%",
 				it, fmtFactors(next.Factors), next.C0, next.PSignal, next.PRbt, next.PJunc, next.PCross,

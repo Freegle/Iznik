@@ -42,7 +42,10 @@ re-run that calibration if road conditions or OSM data shift materially.
    pairs.json -google google-results.jsonl -mode route -out baseline.json`
    (default params = the shipped model) and `node scripts/analyze.js
    baseline.json`.
-5. Fit: `-mode fit -iters 5 -out fit.json`.  Check the per-iteration log:
+5. Fit: `-mode fit -iters 5 -weightfloor 480 -out fit.json` (the floor stops
+   a handful of very short trips dominating the intercept-like coefficients
+   via the 1/y^2 relative weighting; holdout metrics are insensitive to it
+   but the fitted c0 is much more stable).  Check the per-iteration log:
    factors should settle by iteration 3.  Check per-feature time mass before
    trusting a fitted value (the harness's `speed_secs` decomposition): a
    factor carrying <1% of drive time is noise — pin it rather than fit it.

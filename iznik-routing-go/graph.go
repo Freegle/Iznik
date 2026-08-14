@@ -139,7 +139,9 @@ var highwaySpeed = func() map[string][3]float32 {
 // cores, London, sparse rural, estuary crossings; Tuesday 10:30 departures,
 // traffic-aware), using cmd/calibrate, which decomposes each routed path into
 // per-class free-flow seconds + feature counts, fits by weighted least
-// squares, re-routes under the new parameters and repeats until stable.
+// squares (relative-error weighting with an 8-minute floor so a handful of
+// very short trips cannot dominate the intercept-like coefficients),
+// re-routes under the new parameters and repeats until stable.
 // On the 30% holdout never used for fitting, the median abs error fell from
 // 16.3% to 7.4% and the mean abs error from 28.7% to 13.6% (n=770).
 //
@@ -172,24 +174,28 @@ var highwaySpeed = func() map[string][3]float32 {
 var driveClassFactors = map[string][2]float32{
 	"motorway":       {0.79, 0.79},
 	"motorway_link":  {0.79, 0.79},
-	"trunk":          {0.88, 0.73},
-	"trunk_link":     {0.88, 0.73},
-	"primary":        {1.32, 0.77},
-	"primary_link":   {1.32, 0.77},
-	"secondary":      {1.47, 0.73},
-	"secondary_link": {1.47, 0.73},
-	"tertiary":       {1.60, 0.72},
-	"tertiary_link":  {1.60, 0.72},
-	"unclassified":   {1.27, 0.50},
-	"residential":    {0.72, 0.72},
-	"living_street":  {0.72, 0.72},
-	"service":        {1.58, 1.05},
-	"track":          {1.58, 1.05},
+	"trunk":          {0.91, 0.74},
+	"trunk_link":     {0.91, 0.74},
+	"primary":        {1.29, 0.74},
+	"primary_link":   {1.29, 0.74},
+	"secondary":      {1.44, 0.71},
+	"secondary_link": {1.44, 0.71},
+	"tertiary":       {1.59, 0.72},
+	"tertiary_link":  {1.59, 0.72},
+	"unclassified":   {1.27, 0.46},
+	"residential":    {0.69, 0.73},
+	"living_street":  {0.69, 0.73},
+	"service":        {1.81, 1.00},
 }
+
+// (highway=track has no entry: highwaySpeed marks it undrivable, so a factor
+// for it would be dead code.  service's TAGGED factor is pinned to 1.00
+// rather than fitted: tagged service ways carry 0.2% of sampled drive time,
+// too thin to fit, and the unconstrained fit ran into the 1.05 cap.)
 
 // driveFallbackFactor is used for unrecognised highway classes (treated as
 // A-road equivalent).
-var driveFallbackFactor = [2]float32{1.32, 0.77}
+var driveFallbackFactor = [2]float32{1.29, 0.74}
 
 // drivePenalties are fixed seconds added to the DRIVE time of an edge whose
 // to-node carries the feature (paid on arrival at the node, whichever
@@ -200,12 +206,12 @@ var driveFallbackFactor = [2]float32{1.32, 0.77}
 // where a signal already prices the delay.
 var drivePenalties = struct {
 	Signal, Crossing, Roundabout, Junction float32
-}{Signal: 8.9, Crossing: 2.7, Roundabout: 0.3, Junction: 0.9}
+}{Signal: 7.7, Crossing: 3.4, Roundabout: 0.1, Junction: 0.6}
 
 // driveStartupSecs is the fixed per-trip drive overhead, seeded as the origin
 // cost in every drive-mode Dijkstra so that isochrones, ripple ticks and
 // drive_min all include it consistently.
-const driveStartupSecs float32 = 38
+const driveStartupSecs float32 = 57
 
 // driveSpeedFactorOverride is an optional uniform multiplier applied on top
 // of the per-class factor.  Default 1.0 (no extra scaling); set

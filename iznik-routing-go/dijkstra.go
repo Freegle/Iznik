@@ -3,7 +3,6 @@ package main
 import (
 	"container/heap"
 	"math"
-	"sort"
 )
 
 // IsochroneResult is the set of nodes reachable within a time budget.
@@ -183,7 +182,24 @@ func nearestNodesForMode(g *Graph, lat, lng float64, mode Mode, k int) []NodeID 
 		id NodeID
 		d  float64
 	}
-	var cands []cand
+	// Bounded insertion into a k-sized sorted array: dense urban cells hold
+	// thousands of nodes and this runs on a live request path, so we must not
+	// collect-and-sort them all.
+	best := make([]cand, 0, k)
+	insert := func(c cand) {
+		if len(best) == k && c.d >= best[k-1].d {
+			return
+		}
+		pos := len(best)
+		for pos > 0 && best[pos-1].d > c.d {
+			pos--
+		}
+		if len(best) < k {
+			best = append(best, cand{})
+		}
+		copy(best[pos+1:], best[pos:len(best)-1])
+		best[pos] = c
+	}
 	haveEnoughAt := int16(-1)
 	for radius := int16(0); radius <= 10; radius++ {
 		// one extra ring after reaching k candidates: a nearer node can sit
@@ -201,20 +217,16 @@ func nearestNodesForMode(g *Graph, lat, lng float64, mode Mode, k int) []NodeID 
 						continue
 					}
 					n := g.Nodes[id]
-					cands = append(cands, cand{id, haversineM(lat, lng, float64(n.Lat), float64(n.Lng))})
+					insert(cand{id, haversineM(lat, lng, float64(n.Lat), float64(n.Lng))})
 				}
 			}
 		}
-		if len(cands) >= k && haveEnoughAt < 0 {
+		if len(best) >= k && haveEnoughAt < 0 {
 			haveEnoughAt = radius
 		}
 	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].d < cands[j].d })
-	if len(cands) > k {
-		cands = cands[:k]
-	}
-	out := make([]NodeID, len(cands))
-	for i, c := range cands {
+	out := make([]NodeID, len(best))
+	for i, c := range best {
 		out[i] = c.id
 	}
 	return out

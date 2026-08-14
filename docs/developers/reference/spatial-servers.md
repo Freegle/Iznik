@@ -83,7 +83,7 @@ The model prices the two things that actually consume driving time separately:
   and
 - **stopping** — a few seconds for every traffic signal, junction, pedestrian
   crossing and roundabout the route passes through, plus a fixed
-  half-a-minute-ish of "setting off" overhead per trip.
+  minute-ish of "setting off" overhead per trip.
 
 On journeys the calibration was never shown, half of all estimates are now
 within about 7% of Google's answer, and the typical error halved compared with
