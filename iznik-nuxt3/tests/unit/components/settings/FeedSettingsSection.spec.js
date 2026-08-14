@@ -115,7 +115,9 @@ describe('FeedSettingsSection', () => {
     const wrapper = mountWith()
     await slider(wrapper).vm.$emit('change', 10)
     await flushPromises()
-    expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 10)
+    // false = no reach outline. Feed settings has no map to shade, so it must not make the
+    // routing server trace a boundary nobody draws; only browse asks for that.
+    expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 10, false)
     expect(saveAndGet).toHaveBeenCalledTimes(1)
     expect(me.value.settings.browseMaxMinutes).toBe(10)
     expect(me.value.settings.browseMaxDistance).toBe(4)
