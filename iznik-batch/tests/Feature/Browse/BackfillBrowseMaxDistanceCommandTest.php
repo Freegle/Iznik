@@ -501,4 +501,51 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
 
         $this->artisan('browse:backfill-max-distance')->assertSuccessful();
     }
+
+    /**
+     * --missing-only exists because the invariant DECAYS. The full pass walks every user
+     * (~2.9M rows on live) and is deliberately not scheduled, but browseReachMaxDistance has
+     * no other writer, so a member who joins after a run gets no band limit ever - and since
+     * posts ripple out to the widest budget and rely on each member being held to their own
+     * band, that member sits permanently on "no limit" inbound. Narrowed this way the pass is
+     * small enough to run regularly.
+     */
+    public function testMissingOnlyTouchesOnlyMembersWithNoBandLimit(): void
+    {
+        $this->fakeMedium(8.5);
+
+        $needsOne = $this->userWith([]);                                  // nothing at all
+        $hasDefault = $this->userWith(['browseReachMaxDistance' => 8.5]); // already covered
+        $hasOwnChoice = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 8.5]);
+
+        $this->artisan('browse:backfill-max-distance', ['--missing-only' => true])
+            ->assertSuccessful();
+
+        $this->assertArrayHasKey(
+            'browseReachMaxDistance',
+            $this->settingsOf($needsOne),
+            'a member with no band limit must be given one'
+        );
+
+        // The other two must be left alone: this pass closes the gap, it does not
+        // re-reconcile members who already have something.
+        $this->assertSame(8.5, $this->settingsOf($hasDefault)['browseReachMaxDistance']);
+        $this->assertSame(8.5, $this->settingsOf($hasOwnChoice)['browseMaxDistance']);
+        $this->assertArrayNotHasKey('browseReachMaxDistance', $this->settingsOf($hasOwnChoice));
+    }
+
+    /**
+     * Without the flag the full pass still reconciles members who already have settings, which
+     * every other test in this file relies on. If --missing-only leaked into the default the
+     * migration pass would quietly stop doing its job.
+     */
+    public function testTheFullPassStillReconcilesExistingSettings(): void
+    {
+        $this->fakeMedium(8.5);
+        $id = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 1]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(8.5, $this->chosenDistanceOf($id), 'the full pass must still reconcile');
+    }
 }

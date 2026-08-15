@@ -146,6 +146,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
                             {--limit=0 : Stop after this many corrections (0 = no limit)}
                             {--since-days=90 : Also give a default to members active within this many days (0 = only those who already have a setting)}
                             {--epsilon-miles=0.5 : Leave pairs alone when the recomputed radius is within this of the stored one}
+                            {--missing-only : Only members with no band limit at all, the cheap pass that keeps new members covered}
                             {--dry-run : Report what would change without writing}';
 
     protected $description = 'Put each member on their own density band travel-time budget, and reconcile the derived browseMaxDistance';
@@ -170,6 +171,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
         $sinceDays = max(0, (int) $this->option('since-days'));
         $epsilon = max(0.0, (float) $this->option('epsilon-miles'));
         $apiBase = rtrim(config('freegle.town_near_url'), '/');
+        $missingOnly = (bool) $this->option('missing-only');
 
         $stats = [
             'scanned' => 0,
@@ -179,7 +181,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
             'lookup_failed' => 0,
         ];
 
-        $this->selection($sinceDays)
+        $this->selection($sinceDays, $missingOnly)
             ->orderBy('id')
             ->chunkById($chunk, function ($users) use ($dryRun, $limit, $epsilon, $apiBase, &$stats) {
                 foreach ($users as $user) {
@@ -261,13 +263,36 @@ class BackfillBrowseMaxDistanceCommand extends Command
      * shown or mailed a post, who needs the band default materialised before the
      * wider ripple reaches them.
      */
-    private function selection(int $sinceDays)
+    private function selection(int $sinceDays, bool $missingOnly = false)
     {
         $query = User::query()->whereNull('deleted');
 
         // keep-raw: JSON_EXTRACT path predicates have no query-builder equivalent;
         // whereJsonContains tests containment, not presence of a key.
         $hasSetting = "(JSON_EXTRACT(settings, '$.browseMaxMinutes') IS NOT NULL OR JSON_EXTRACT(settings, '$.browseMaxDistance') IS NOT NULL)";
+
+        // --missing-only: just the members with NOTHING holding them to a band - neither the
+        // default nor a choice of their own. Everyone else is already consistent or is a
+        // reconciliation this pass does not need to do.
+        //
+        // This exists because the invariant decays. The full pass is a walk of every user
+        // (~2.9M rows on live) and is deliberately not scheduled, but a member who joins
+        // after it runs gets no band default, ever - and since posts ripple out to the widest
+        // budget and rely on each member being held back to their own band, that member is
+        // permanently on "no limit" inbound. Narrowed this way the pass is small enough to
+        // run regularly and close that gap.
+        if ($missingOnly) {
+            $query->whereRaw("JSON_EXTRACT(settings, '$.".self::DEFAULT_KEY."') IS NULL")
+                ->whereRaw("JSON_EXTRACT(settings, '$.browseMaxDistance') IS NULL");
+
+            // Recency still applies: there is no point deriving a band for someone who has
+            // not been near the place in months, and it is what keeps this pass cheap.
+            if ($sinceDays > 0) {
+                $query->where('lastaccess', '>=', now()->subDays($sinceDays));
+            }
+
+            return $query;
+        }
 
         if ($sinceDays === 0) {
             return $query->whereRaw($hasSetting);
