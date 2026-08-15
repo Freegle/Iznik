@@ -92,6 +92,12 @@ over toll crossings (nobody pays the Mersey tunnel toll to collect a free
 toaster, so estimates near those crossings assume the long way round), and we
 don't model ferries, so islands are treated as unreachable by road.
 
+The model also knows three British road facts that generic speed tables miss:
+the national speed limit is 60&nbsp;mph on ordinary two-way roads and only
+70&nbsp;mph on dual carriageways; single-track roads with passing places (the
+Highlands, the islands, much of rural Wales) are driven at about 28&nbsp;mph
+whatever the signs say; and unpaved lanes are slower still.
+
 The calibration tooling lives in `iznik-routing-go/cmd/calibrate` and can be
 re-run if road conditions or OpenStreetMap data shift materially.
 

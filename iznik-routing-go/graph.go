@@ -174,18 +174,18 @@ var highwaySpeed = func() map[string][3]float32 {
 var driveClassFactors = map[string][2]float32{
 	"motorway":       {0.79, 0.79},
 	"motorway_link":  {0.79, 0.79},
-	"trunk":          {0.91, 0.74},
-	"trunk_link":     {0.91, 0.74},
-	"primary":        {1.29, 0.74},
-	"primary_link":   {1.29, 0.74},
-	"secondary":      {1.44, 0.71},
-	"secondary_link": {1.44, 0.71},
-	"tertiary":       {1.59, 0.72},
-	"tertiary_link":  {1.59, 0.72},
-	"unclassified":   {1.27, 0.46},
-	"residential":    {0.69, 0.73},
-	"living_street":  {0.69, 0.73},
-	"service":        {1.81, 1.00},
+	"trunk":          {0.88, 0.74},
+	"trunk_link":     {0.88, 0.74},
+	"primary":        {1.42, 0.78},
+	"primary_link":   {1.42, 0.78},
+	"secondary":      {1.46, 0.74},
+	"secondary_link": {1.46, 0.74},
+	"tertiary":       {1.63, 0.76},
+	"tertiary_link":  {1.63, 0.76},
+	"unclassified":   {1.25, 0.52},
+	"residential":    {0.73, 0.74},
+	"living_street":  {0.73, 0.74},
+	"service":        {1.82, 1.00},
 }
 
 // (highway=track has no entry: highwaySpeed marks it undrivable, so a factor
@@ -195,7 +195,7 @@ var driveClassFactors = map[string][2]float32{
 
 // driveFallbackFactor is used for unrecognised highway classes (treated as
 // A-road equivalent).
-var driveFallbackFactor = [2]float32{1.29, 0.74}
+var driveFallbackFactor = [2]float32{1.42, 0.78}
 
 // drivePenalties are fixed seconds added to the DRIVE time of an edge whose
 // to-node carries the feature (paid on arrival at the node, whichever
@@ -205,13 +205,28 @@ var driveFallbackFactor = [2]float32{1.29, 0.74}
 // reference: a T-junction), except on motorway/trunk (grade-separated) and
 // where a signal already prices the delay.
 var drivePenalties = struct {
-	Signal, Crossing, Roundabout, Junction float32
-}{Signal: 7.7, Crossing: 3.4, Roundabout: 0.1, Junction: 0.6}
+	Signal, Crossing, Roundabout, Junction, Yield float32
+}{Signal: 8.7, Crossing: 2.7, Roundabout: 0.2, Junction: 0.9, Yield: 2.9}
 
 // driveStartupSecs is the fixed per-trip drive overhead, seeded as the origin
 // cost in every drive-mode Dijkstra so that isochrones, ripple ticks and
 // drive_min all include it consistently.
-const driveStartupSecs float32 = 57
+const driveStartupSecs float32 = 58
+
+// Single-track roads (two-way with lanes=1, or carrying two or more
+// highway=passing_place nodes - Highland and island roads) are driven at a
+// speed set by physical narrowness, not by class or signed limit.  They use a
+// FIXED base of the 60mph single-carriageway national limit times this
+// calibrated factor: 26.8 x 0.47 = 12.6 m/s = ~28mph, matching observed
+// single-track driving speeds.
+const (
+	driveSingleTrackFactor float32 = 0.47
+	singleTrackBaseMS      float32 = 26.8
+)
+
+// unpavedBaseCapMS caps the BASE speed of unpaved-surface ways before the
+// class factor applies (OSRM caps these surfaces at 40 km/h).
+const unpavedBaseCapMS float32 = 11.1
 
 // driveSpeedFactorOverride is an optional uniform multiplier applied on top
 // of the per-class factor.  Default 1.0 (no extra scaling); set
@@ -256,6 +271,8 @@ const (
 	nodeFlagMiniRoundabout
 	nodeFlagCrossing
 	nodeFlagJunction
+	nodeFlagYield        // highway=give_way or highway=stop
+	nodeFlagPassingPlace // highway=passing_place (single-track marker)
 )
 
 // nodeFlagForTag maps a node-level highway=* tag to its feature flag (0 = none).
@@ -267,6 +284,10 @@ func nodeFlagForTag(v string) uint8 {
 		return nodeFlagMiniRoundabout
 	case "crossing":
 		return nodeFlagCrossing
+	case "give_way", "stop":
+		return nodeFlagYield
+	case "passing_place":
+		return nodeFlagPassingPlace
 	}
 	return 0
 }
@@ -289,6 +310,9 @@ func drivePenaltySecs(highwayTag string, roundaboutWay bool, toFlags uint8) floa
 	}
 	if toFlags&nodeFlagCrossing != 0 {
 		p += drivePenalties.Crossing
+	}
+	if toFlags&nodeFlagYield != 0 {
+		p += drivePenalties.Yield
 	}
 	return p
 }
@@ -431,8 +455,30 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 		from, to NodeID
 		secs     [3]float32
 	}
+	singleTrackMS := singleTrackBaseMS * driveSingleTrackFactor * driveSpeedFactorOverride
 	var tempEdges []tempEdge
 	for _, w := range ways {
+		singleTrack := w.info.SingleTrack
+		if !singleTrack && !w.oneway && w.speeds[Drive] > 0 {
+			// A way carrying two or more passing-place nodes is a
+			// single-track road even without a lanes tag (common on Highland
+			// and island roads).  Two or more, so a junction node shared with
+			// a single-track side road cannot mark a normal road.
+			nPass := 0
+			for _, ref := range w.nodeOSMIDs {
+				if id, found := nodeSeq(ref); found && nodeFlags[id]&nodeFlagPassingPlace != 0 {
+					nPass++
+					if nPass >= 2 {
+						singleTrack = true
+						break
+					}
+				}
+			}
+		}
+		driveMS := w.speeds[Drive]
+		if singleTrack && driveMS > 0 {
+			driveMS = singleTrackMS
+		}
 		for i := 0; i < len(w.nodeOSMIDs)-1; i++ {
 			from, ok1 := nodeSeq(w.nodeOSMIDs[i])
 			to, ok2 := nodeSeq(w.nodeOSMIDs[i+1])
@@ -449,10 +495,14 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 			distM := haversineM(float64(nf.Lat), float64(nf.Lng), float64(nt.Lat), float64(nt.Lng))
 			var secs [3]float32
 			for m := 0; m < 3; m++ {
-				if w.speeds[m] < 0 {
+				sp := w.speeds[m]
+				if Mode(m) == Drive {
+					sp = driveMS
+				}
+				if sp < 0 {
 					secs[m] = -1
 				} else {
-					secs[m] = float32(distM) / w.speeds[m]
+					secs[m] = float32(distM) / sp
 				}
 			}
 			fwd := secs
@@ -612,12 +662,16 @@ type RawNodeSpec struct {
 // RawWaySpec describes a way for BuildGraphFromRaw.
 // Highway must match a key in highwaySpeed (e.g. "residential", "motorway").
 // Junction set to "roundabout" mirrors the OSM junction=roundabout tag
-// (implies oneway, and each edge carries the roundabout penalty).
+// (implies oneway, and each edge carries the roundabout penalty).  Lanes,
+// Maxspeed and Surface mirror the corresponding OSM way tags.
 type RawWaySpec struct {
 	NodeIDs  []int64
 	Highway  string
 	Oneway   bool
 	Junction string
+	Lanes    string
+	Maxspeed string
+	Surface  string
 }
 
 // BuildGraphFromRaw constructs a routing Graph from explicit node/way data.
@@ -677,6 +731,7 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 		secs     [3]float32
 	}
 	var tempEdges []tempEdge
+	singleTrackMS := singleTrackBaseMS * driveSingleTrackFactor * driveSpeedFactorOverride
 	for _, w := range rawWays {
 		speeds, ok := highwaySpeed[w.Highway]
 		if !ok {
@@ -684,12 +739,38 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 		}
 		roundabout := w.Junction == "roundabout"
 		oneway := w.Oneway || roundabout
-		// Apply the calibrated per-road-class factor to match the PBF path
-		// (waySpeedsAndOneway).  Without this, raw-built graphs (tests +
-		// offline tooling) would diverge from production.  RawWaySpec carries
-		// no maxspeed, so the untagged factor applies.
+		// Mirror the PBF path (waySpeedsAndOneway): maxspeed with carriageway
+		// context, unpaved base cap, per-class factor, single-track override.
+		// Without this, raw-built graphs (tests + offline tooling) would
+		// diverge from production.
+		tagged := false
+		if w.Maxspeed != "" && speeds[Drive] > 0 {
+			if sp := parseMaxspeedCtx(w.Maxspeed, oneway && !roundabout); sp > 0 {
+				speeds[Drive] = sp
+				tagged = true
+			}
+		}
+		if speeds[Drive] > unpavedBaseCapMS && unpavedSurface(w.Surface, "") {
+			speeds[Drive] = unpavedBaseCapMS
+		}
 		if speeds[Drive] > 0 {
-			speeds[Drive] *= driveSpeedFactorFor(w.Highway, false)
+			speeds[Drive] *= driveSpeedFactorFor(w.Highway, tagged)
+		}
+		singleTrack := !oneway && w.Lanes == "1"
+		if !singleTrack && !oneway && speeds[Drive] > 0 {
+			nPass := 0
+			for _, ref := range w.NodeIDs {
+				if id, found := osmToSeq[ref]; found && nodeFlags[id]&nodeFlagPassingPlace != 0 {
+					nPass++
+					if nPass >= 2 {
+						singleTrack = true
+						break
+					}
+				}
+			}
+		}
+		if singleTrack && speeds[Drive] > 0 {
+			speeds[Drive] = singleTrackMS
 		}
 		for i := 0; i < len(w.NodeIDs)-1; i++ {
 			from, ok1 := osmToSeq[w.NodeIDs[i]]
@@ -766,6 +847,8 @@ type wayDriveInfo struct {
 	Highway        string
 	Roundabout     bool
 	MaxspeedTagged bool
+	SingleTrack    bool // two-way way with lanes=1 (may also be set at edge
+	// build when the way carries >=2 passing-place nodes)
 }
 
 // waySpeedsAndOneway returns per-mode speeds (m/s, -1 = unusable), whether
@@ -805,11 +888,25 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool, wayDriveInfo) {
 	if tags["toll"] == "yes" {
 		speeds[Drive] = -1
 	}
+	oneway := tags["oneway"] == "yes" || tags["oneway"] == "1"
+	if tags["junction"] == "roundabout" {
+		oneway = true
+		info.Roundabout = true
+	}
+
 	if ms := tags["maxspeed"]; ms != "" && speeds[Drive] > 0 {
-		if s := parseMaxspeed(ms); s > 0 {
+		// A dual carriageway is mapped as a pair of oneway ways; a roundabout
+		// is oneway but not a dual carriageway.
+		if s := parseMaxspeedCtx(ms, oneway && !info.Roundabout); s > 0 {
 			speeds[Drive] = s
 			info.MaxspeedTagged = true
 		}
+	}
+
+	// Unpaved surfaces cap the base speed (OSRM caps these at 40 km/h)
+	// before the class factor applies.
+	if speeds[Drive] > unpavedBaseCapMS && unpavedSurface(tags["surface"], tags["tracktype"]) {
+		speeds[Drive] = unpavedBaseCapMS
 	}
 
 	// Apply the calibrated per-road-class factor at the end so it covers
@@ -818,12 +915,46 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool, wayDriveInfo) {
 		speeds[Drive] *= driveSpeedFactorFor(highway, info.MaxspeedTagged)
 	}
 
-	oneway := tags["oneway"] == "yes" || tags["oneway"] == "1"
-	if tags["junction"] == "roundabout" {
-		oneway = true
-		info.Roundabout = true
+	// Single-track: a two-way road mapped with one lane.  The final speed is
+	// resolved at edge build (BuildGraph may also promote a way with >=2
+	// passing-place nodes).
+	if !oneway && tags["lanes"] == "1" {
+		info.SingleTrack = true
 	}
 	return speeds, oneway, info
+}
+
+// parseMaxspeedCtx resolves a maxspeed tag with carriageway context: the GB
+// national limit is 70mph on dual carriageways (mapped as oneway ways in OSM;
+// roundabouts are oneway but not dual carriageways) and 60mph on single
+// carriageways.
+func parseMaxspeedCtx(ms string, dualCarriageway bool) float32 {
+	switch ms {
+	case "national", "GB:national", "GB:nsl":
+		if dualCarriageway {
+			return 31.3
+		}
+		return 26.8
+	case "GB:nsl_single":
+		return 26.8
+	case "GB:nsl_dual":
+		return 31.3
+	}
+	return parseMaxspeed(ms)
+}
+
+// unpavedSurface reports whether surface/tracktype tags say the way is not
+// sealed road.
+func unpavedSurface(surface, tracktype string) bool {
+	switch surface {
+	case "unpaved", "gravel", "fine_gravel", "dirt", "ground", "grass", "compacted", "sand", "mud", "earth", "pebblestone", "rock", "woodchips":
+		return true
+	}
+	switch tracktype {
+	case "grade3", "grade4", "grade5":
+		return true
+	}
+	return false
 }
 
 // parseMaxspeed parses a maxspeed tag value into m/s. Returns 0 if unparseable.

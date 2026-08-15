@@ -45,10 +45,24 @@ const nClasses = 8
 
 // Speed features are per class x {untagged, tagged}: a maxspeed-tagged way's
 // base speed is the legal limit, an untagged way's base is a conservative
-// class default, so one shared factor cannot fit both.
-const nSpeed = nClasses * 2
+// class default, so one shared factor cannot fit both.  One extra feature
+// replaces the class feature entirely for single-track roads (two-way with
+// lanes=1, or carrying passing places - Highland and island roads): their
+// real speed is set by physical narrowness, not class.  Single-track ways
+// use a FIXED base of 26.8 m/s (the 60mph single-carriageway national limit)
+// so the one fitted factor means the same real-world speed whatever the
+// underlying class - a class-relative base made a fitted 0.53 mean 30mph on
+// an A-road but 8km/h on a service road, which wrecked route choice.
+const (
+	nSpeed             = nClasses*2 + 1
+	featureSingleTrack = nClasses * 2
+	singleTrackBaseMS  = 26.8
+)
 
-func speedFeature(class uint8, tagged bool) int {
+func speedFeature(class uint8, tagged bool, flags uint16) int {
+	if flags&flagSingleTrack != 0 {
+		return featureSingleTrack
+	}
 	i := int(class) * 2
 	if tagged {
 		i++
@@ -60,6 +74,9 @@ func speedFeature(class uint8, tagged bool) int {
 // limit (1.05 allows measurement slack); untagged ways cannot exceed the
 // class's plausible legal ceiling over the conservative default base.
 func factorCap(feature int) float64 {
+	if feature == featureSingleTrack {
+		return 1.0 // cannot beat the single-carriageway national limit
+	}
 	if feature%2 == 1 {
 		return 1.05
 	}
@@ -144,15 +161,54 @@ func parseMaxspeed(s string) float32 {
 	return 0
 }
 
+// parseMaxspeedCtx resolves UK national-limit values with carriageway
+// context: the national limit is 70mph on dual carriageways (mapped as
+// oneway ways in OSM) but 60mph on single carriageways.  Production's
+// parseMaxspeed treats both as 70, which overstates the base on every
+// single-carriageway national-limit road.
+func parseMaxspeedCtx(ms string, oneway bool) float32 {
+	switch ms {
+	case "national", "GB:national", "GB:nsl":
+		if oneway {
+			return 31.3
+		}
+		return 26.8
+	case "GB:nsl_single":
+		return 26.8
+	case "GB:nsl_dual":
+		return 31.3
+	}
+	return parseMaxspeed(ms)
+}
+
+// unpavedSurface reports whether surface/tracktype tags say the way is not
+// sealed road.
+func unpavedSurface(surface, tracktype string) bool {
+	switch surface {
+	case "unpaved", "gravel", "fine_gravel", "dirt", "ground", "grass", "compacted", "sand", "mud", "earth", "pebblestone", "rock", "woodchips":
+		return true
+	}
+	switch tracktype {
+	case "grade3", "grade4", "grade5":
+		return true
+	}
+	return false
+}
+
 // ---------- attributed graph ----------
 
 const (
-	flagRoundabout uint8 = 1 << iota // edge is part of a roundabout way
-	flagToSignal                     // edge's to-node is highway=traffic_signals
-	flagToMiniRbt                    // to-node is highway=mini_roundabout
-	flagToCrossing                   // to-node is a pedestrian crossing (zebra / signals)
-	flagToJunction                   // to-node is a way-based junction (set post-build)
-	flagTagged                       // way had a parsed maxspeed tag (base speed = the limit)
+	flagRoundabout   uint16 = 1 << iota // edge is part of a roundabout way
+	flagToSignal                        // edge's to-node is highway=traffic_signals
+	flagToMiniRbt                       // to-node is highway=mini_roundabout
+	flagToCrossing                      // to-node is a pedestrian crossing (zebra / signals)
+	flagToJunction                      // to-node is a way-based junction (set post-build)
+	flagTagged                          // way had a parsed maxspeed tag (base speed = the limit)
+	flagSingleTrack                     // two-way way with lanes=1 (single-track road)
+	flagUnpaved                         // surface/tracktype says unpaved
+	flagToYield                         // to-node is highway=give_way or highway=stop
+	flagToCalming                       // to-node carries a traffic_calming=* tag (unused: fitted zero)
+	flagPassingPlace                    // node is highway=passing_place (single-track marker)
 )
 
 type calEdge struct {
@@ -160,7 +216,7 @@ type calEdge struct {
 	FreeSecs float32 // seconds at unfactored free-flow speed (maxspeed tag or class default)
 	DistM    float32
 	Class    uint8
-	Flags    uint8
+	Flags    uint16
 }
 
 type calGraph struct {
@@ -235,12 +291,14 @@ func buildCalGraph(pbfPath string) (*calGraph, error) {
 	defer f.Close()
 
 	type wayRec struct {
-		refs   []int64
-		free   float32 // unfactored free-flow m/s
-		class  uint8
-		oneway bool
-		rbt    bool
-		tagged bool
+		refs        []int64
+		free        float32 // unfactored free-flow m/s
+		class       uint8
+		oneway      bool
+		rbt         bool
+		tagged      bool
+		singleTrack bool
+		unpaved     bool
 	}
 	var ways []wayRec
 	refSet := make(map[int64]struct{}, 40_000_000)
@@ -271,24 +329,35 @@ func buildCalGraph(pbfPath string) (*calGraph, error) {
 		if free <= 0 {
 			continue
 		}
-		tagged := false
-		if ms := tags["maxspeed"]; ms != "" {
-			if s := parseMaxspeed(ms); s > 0 {
-				free = s
-				tagged = true
-			}
-		}
 		oneway := tags["oneway"] == "yes" || tags["oneway"] == "1"
 		rbt := tags["junction"] == "roundabout"
 		if rbt {
 			oneway = true
 		}
+		tagged := false
+		if ms := tags["maxspeed"]; ms != "" {
+			if s := parseMaxspeedCtx(ms, oneway); s > 0 {
+				free = s
+				tagged = true
+			}
+		}
+		// Single-track: a two-way road mapped with one lane.  (Ways carrying
+		// passing-place nodes are also marked single-track at edge build.)
+		singleTrack := !oneway && tags["lanes"] == "1"
+		// Unpaved surfaces cap the base speed (OSRM caps these at 40km/h);
+		// fitted as a separate feature this carried 0.2% of drive time -
+		// noise - so a fixed engine-style cap is used instead.
+		if unpavedSurface(tags["surface"], tags["tracktype"]) && free > 11.1 {
+			free = 11.1
+		}
+		unpaved := false
+		_ = unpaved
 		refs := make([]int64, len(w.Nodes))
 		for i, n := range w.Nodes {
 			refs[i] = int64(n.ID)
 			refSet[int64(n.ID)] = struct{}{}
 		}
-		ways = append(ways, wayRec{refs, free, uint8(cls), oneway, rbt, tagged})
+		ways = append(ways, wayRec{refs, free, uint8(cls), oneway, rbt, tagged, singleTrack, false})
 	}
 	if err := sc1.Err(); err != nil {
 		return nil, err
@@ -313,7 +382,7 @@ func buildCalGraph(pbfPath string) (*calGraph, error) {
 	N := len(rawIDs)
 	lat := make([]float32, N+1)
 	lng := make([]float32, N+1)
-	nodeFlag := make([]uint8, N+1) // signal / mini-rbt / crossing flags per node
+	nodeFlag := make([]uint16, N+1) // signal / mini-rbt / crossing / yield / calming flags per node
 
 	log.Printf("calibrate: pass 2 (node coords + tags, N=%d)", N)
 	if _, err := f.Seek(0, 0); err != nil {
@@ -342,7 +411,14 @@ func buildCalGraph(pbfPath string) (*calGraph, error) {
 					nodeFlag[id] |= flagToMiniRbt
 				case "crossing":
 					nodeFlag[id] |= flagToCrossing
+				case "give_way", "stop":
+					nodeFlag[id] |= flagToYield
+				case "passing_place":
+					nodeFlag[id] |= flagPassingPlace
 				}
+			}
+			if t.Key == "traffic_calming" {
+				nodeFlag[id] |= flagToCalming
 			}
 		}
 	}
@@ -357,12 +433,33 @@ func buildCalGraph(pbfPath string) (*calGraph, error) {
 	}
 	var tempEdges []tempEdge
 	for _, w := range ways {
-		var wf uint8
+		var wf uint16
 		if w.rbt {
 			wf |= flagRoundabout
 		}
 		if w.tagged {
 			wf |= flagTagged
+		}
+		singleTrack := w.singleTrack
+		if !singleTrack && !w.oneway {
+			// A way carrying passing places is a single-track road even when
+			// lanes= is untagged (common on Highland and island roads).  Two
+			// or more, so a junction node shared with a single-track side
+			// road cannot mark a normal road.
+			nPass := 0
+			for _, ref := range w.refs {
+				if id, ok := nodeSeq(ref); ok && nodeFlag[id]&flagPassingPlace != 0 {
+					nPass++
+				}
+			}
+			singleTrack = nPass >= 2
+		}
+		if singleTrack {
+			wf |= flagSingleTrack
+		}
+		free := w.free
+		if singleTrack {
+			free = singleTrackBaseMS
 		}
 		for i := 0; i < len(w.refs)-1; i++ {
 			from, ok1 := nodeSeq(w.refs[i])
@@ -377,10 +474,10 @@ func buildCalGraph(pbfPath string) (*calGraph, error) {
 				continue
 			}
 			distM := float32(haversineM(float64(lat[from]), float64(lng[from]), float64(lat[to]), float64(lng[to])))
-			fw := calEdge{To: to, DistM: distM, FreeSecs: distM / w.free, Class: w.class, Flags: wf | (nodeFlag[to] &^ flagRoundabout)}
+			fw := calEdge{To: to, DistM: distM, FreeSecs: distM / free, Class: w.class, Flags: wf | (nodeFlag[to] &^ flagRoundabout)}
 			tempEdges = append(tempEdges, tempEdge{from, fw})
 			if !w.oneway {
-				bw := calEdge{To: from, DistM: distM, FreeSecs: distM / w.free, Class: w.class, Flags: wf | (nodeFlag[from] &^ flagRoundabout)}
+				bw := calEdge{To: from, DistM: distM, FreeSecs: distM / free, Class: w.class, Flags: wf | (nodeFlag[from] &^ flagRoundabout)}
 				tempEdges = append(tempEdges, tempEdge{to, bw})
 			}
 		}
@@ -509,12 +606,14 @@ func buildCalGraph(pbfPath string) (*calGraph, error) {
 // ---------- parameters & routing ----------
 
 type params struct {
-	Factors [nSpeed]float64 `json:"factors"`
-	PSignal float64         `json:"p_signal"`     // secs per traffic-signal node traversed
-	PRbt    float64         `json:"p_roundabout"` // secs per roundabout/mini-rbt edge entered
-	PJunc   float64         `json:"p_junction"`   // secs per >=3-way junction node traversed (non-SRN edge)
-	PCross  float64         `json:"p_crossing"`   // secs per pedestrian-crossing node traversed
-	C0      float64         `json:"c0"`           // fixed per-trip overhead secs
+	Factors  [nSpeed]float64 `json:"factors"`
+	PSignal  float64         `json:"p_signal"`     // secs per traffic-signal node traversed
+	PRbt     float64         `json:"p_roundabout"` // secs per roundabout/mini-rbt edge entered
+	PJunc    float64         `json:"p_junction"`   // secs per >=3-way junction node traversed (non-SRN edge)
+	PCross   float64         `json:"p_crossing"`   // secs per pedestrian-crossing node traversed
+	PYield   float64         `json:"p_yield"`      // secs per give-way/stop node traversed
+	PCalming float64         `json:"p_calming"`    // secs per traffic-calming node traversed
+	C0       float64         `json:"c0"`           // fixed per-trip overhead secs
 }
 
 func prodParams() params {
@@ -524,6 +623,7 @@ func prodParams() params {
 		f[c*2] = perClass[c]
 		f[c*2+1] = perClass[c]
 	}
+	f[featureSingleTrack] = 0.6 // starting value only; the fit moves it
 	return params{Factors: f}
 }
 
@@ -535,11 +635,13 @@ type features struct {
 	NRbt      int               `json:"n_rbt"`
 	NJunc     int               `json:"n_junc"`
 	NCross    int               `json:"n_cross"`
+	NYield    int               `json:"n_yield"`
+	NCalming  int               `json:"n_calming"`
 }
 
 // edgeWeight computes the edge cost under params.
 func edgeWeight(e *calEdge, p *params) float64 {
-	w := float64(e.FreeSecs) / p.Factors[speedFeature(e.Class, e.Flags&flagTagged != 0)]
+	w := float64(e.FreeSecs) / p.Factors[speedFeature(e.Class, e.Flags&flagTagged != 0, e.Flags)]
 	if e.Flags&flagToSignal != 0 {
 		w += p.PSignal
 	}
@@ -555,12 +657,18 @@ func edgeWeight(e *calEdge, p *params) float64 {
 	if e.Flags&flagToCrossing != 0 {
 		w += p.PCross
 	}
+	if e.Flags&flagToYield != 0 {
+		w += p.PYield
+	}
+	if e.Flags&flagToCalming != 0 {
+		w += p.PCalming
+	}
 	return w
 }
 
 // countsFor returns which penalty counters an edge increments (mirrors edgeWeight).
 func countsFor(e *calEdge, ft *features) {
-	ft.SpeedSecs[speedFeature(e.Class, e.Flags&flagTagged != 0)] += float64(e.FreeSecs)
+	ft.SpeedSecs[speedFeature(e.Class, e.Flags&flagTagged != 0, e.Flags)] += float64(e.FreeSecs)
 	ft.ClassDist[e.Class] += float64(e.DistM)
 	if e.Flags&flagToSignal != 0 {
 		ft.NSignal++
@@ -573,6 +681,12 @@ func countsFor(e *calEdge, ft *features) {
 	}
 	if e.Flags&flagToCrossing != 0 {
 		ft.NCross++
+	}
+	if e.Flags&flagToYield != 0 {
+		ft.NYield++
+	}
+	if e.Flags&flagToCalming != 0 {
+		ft.NCalming++
 	}
 }
 
@@ -692,8 +806,8 @@ type routedRec struct {
 // ---------- fitting ----------
 
 // designRow builds the regression row for a routed pair.
-// beta layout: [c0, invF0..invF15, pSig, pRbt, pJunc, pCross]
-const nBeta = 1 + nSpeed + 4
+// beta layout: [c0, invF0..invF16, pSig, pRbt, pJunc, pCross, pYield]
+const nBeta = 1 + nSpeed + 5
 
 func designRow(ft *features) []float64 {
 	x := make([]float64, nBeta)
@@ -705,6 +819,7 @@ func designRow(ft *features) []float64 {
 	x[1+nSpeed+1] = float64(ft.NRbt)
 	x[1+nSpeed+2] = float64(ft.NJunc)
 	x[1+nSpeed+3] = float64(ft.NCross)
+	x[1+nSpeed+4] = float64(ft.NYield)
 	return x
 }
 
@@ -729,6 +844,7 @@ func betaToParams(beta []float64) params {
 	p.PRbt = beta[1+nSpeed+1]
 	p.PJunc = beta[1+nSpeed+2]
 	p.PCross = beta[1+nSpeed+3]
+	p.PYield = beta[1+nSpeed+4]
 	return p
 }
 
@@ -1110,7 +1226,7 @@ func main() {
 				for c := 0; c < nSpeed; c++ {
 					pred += xr[1+c] / next.Factors[c]
 				}
-				pred += xr[1+nSpeed+0]*next.PSignal + xr[1+nSpeed+1]*next.PRbt + xr[1+nSpeed+2]*next.PJunc + xr[1+nSpeed+3]*next.PCross
+				pred += xr[1+nSpeed+0]*next.PSignal + xr[1+nSpeed+1]*next.PRbt + xr[1+nSpeed+2]*next.PJunc + xr[1+nSpeed+3]*next.PCross + xr[1+nSpeed+4]*next.PYield
 				r.PredS = pred
 				if holdoutSet[r.ID] {
 					hoPred = append(hoPred, pred)
@@ -1122,8 +1238,8 @@ func main() {
 			}
 			info := iterInfo{Params: next, Train: computeMetrics(trPred, trGoog), Holdout: computeMetrics(hoPred, hoGoog), NTrim: nTrimmed}
 			history = append(history, info)
-			log.Printf("iter %d: factors=%v c0=%.1f pSig=%.1f pRbt=%.1f pJunc=%.1f pCross=%.2f | train MAPE %.1f%% med %.1f%% | holdout MAPE %.1f%% med %.1f%% bias %+.1f%%",
-				it, fmtFactors(next.Factors), next.C0, next.PSignal, next.PRbt, next.PJunc, next.PCross,
+			log.Printf("iter %d: factors=%v c0=%.1f pSig=%.1f pRbt=%.1f pJunc=%.1f pCross=%.2f pYield=%.2f pCalm=%.2f | train MAPE %.1f%% med %.1f%% | holdout MAPE %.1f%% med %.1f%% bias %+.1f%%",
+				it, fmtFactors(next.Factors), next.C0, next.PSignal, next.PRbt, next.PJunc, next.PCross, next.PYield, next.PCalming,
 				info.Train.MAPE*100, info.Train.MedAPE*100, info.Holdout.MAPE*100, info.Holdout.MedAPE*100, info.Holdout.Bias*100)
 			cur = next
 		}
@@ -1166,11 +1282,16 @@ func fmtFactors(f [nSpeed]float64) string {
 		if i > 0 {
 			s += " "
 		}
-		suffix := "u"
-		if i%2 == 1 {
-			suffix = "t"
+		switch i {
+		case featureSingleTrack:
+			s += fmt.Sprintf("strk=%.2f", v)
+		default:
+			suffix := "u"
+			if i%2 == 1 {
+				suffix = "t"
+			}
+			s += fmt.Sprintf("%s.%s=%.2f", classNames[i/2][:4], suffix, v)
 		}
-		s += fmt.Sprintf("%s.%s=%.2f", classNames[i/2][:4], suffix, v)
 	}
 	return s + "]"
 }
