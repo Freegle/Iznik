@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-12
+last_reviewed: 2026-08-15
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -397,6 +397,28 @@ A community switching ripple-out off retracts the same way - see §4a.
   `browseMaxMinutes`, and the routing-derived radius for it in `browseReachMaxDistance`. On
   live only 2,900 of 121,000 recently-active members had ever set one, so without that pass
   the wider ripple would reach a city member with everything inside 45 minutes of a post.
+
+  **That pass is the single writer of `browseReachMaxDistance`, and it has two failure modes
+  worth knowing, because both were live for weeks and neither was visible.**
+
+  *It can be pointed nowhere.* The radius comes from a `/town/near` call, and a member whose
+  lookup fails is deliberately left alone rather than given a wrong cap - which means left with
+  NO band limit. So a broken endpoint does not shrink the pass, it voids it. Measured
+  2026-08-15: `BROWSE_TOWN_NEAR_URL` was unset on the batch host, so every call went to the
+  compose-internal default, which does not resolve there. 1,018 of 2,260 scanned members
+  failed, and across 202,837 active members not one held a band radius: 147,891 had nothing
+  and 54,951 held the unlimited sentinel (sparse members, who return it before needing a
+  lookup). The banding was therefore inert in production while the command reported success.
+  It now fails when a quarter of lookups fail AND at least 20 have failed, so the config error
+  is loud. `batch-prod` must set `BROWSE_TOWN_NEAR_URL`; the compose default is unreachable
+  from its network.
+
+  *It decays.* Nothing else writes the key, so a member who joins after a run has no band
+  limit, ever. Two scheduled passes close that: `--missing-only` daily (members with nothing
+  recorded, which after a full pass is just new joiners) and the full pass monthly, which also
+  RECONCILES existing values - the narrow one never revisits anyone, so it cannot follow a
+  member who moves from a village to a city, nor an area that has grown denser since its
+  members were measured.
 
   **`browseReachMaxDistance` is a separate key from `browseMaxDistance`, and the split is
   load-bearing.** `browseMaxDistance` is the member's own choice and applies in BOTH
