@@ -434,4 +434,71 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
         $this->assertSame(8.5, $this->chosenDistanceOf($id));
         $this->assertArrayNotHasKey('browseReachMaxDistance', $this->settingsOf($id));
     }
+
+    /**
+     * A member whose radius lookup fails is SKIPPED, and a skipped member keeps no band
+     * limit at all - so a broken lookup does not shrink this command's effect, it voids it.
+     * Measured on production 2026-08-15: BROWSE_TOWN_NEAR_URL was unset on the batch host, so
+     * every call went to the compose-internal default which does not resolve there. 1,018 of
+     * 2,260 scanned members failed, ZERO of 202,837 active members held a band radius, and the
+     * command reported success every night regardless.
+     */
+    public function testFailsLoudlyWhenMostRadiusLookupsFail(): void
+    {
+        // Density answers (so members are banded medium and DO need a radius), but the
+        // routing-backed radius endpoint is unreachable - the production failure exactly.
+        $results = [];
+        for ($i = 0; $i < 400; $i++) {
+            $results[] = ['id' => $i + 1, 'extra' => ['lat' => 53.4 + (2.5 * ($i + 1) / 400) / 69.05, 'lng' => -1.3]];
+        }
+        Http::fake([
+            '*userapproxlocs*' => Http::response(['results' => $results]),
+            '*town/near*' => Http::response(null, 500),
+        ]);
+
+        // Enough to be systemic rather than a handful: the alarm needs both a high failure
+        // RATE and an absolute floor, so that a --limit run or a single unlucky member
+        // cannot fail the nightly job.
+        foreach (range(1, 25) as $n) {
+            $this->userWith(['browseMaxMinutes' => 25]);
+        }
+
+        $this->artisan('browse:backfill-max-distance')->assertFailed();
+    }
+
+    /**
+     * The alarm must not fire on the honest case: a lookup can fail for one member without
+     * meaning the endpoint is broken, and failing the whole nightly run over that would be
+     * its own kind of noise.
+     */
+    public function testStaysSuccessfulWhenOnlyAFewLookupsFail(): void
+    {
+        $this->fakeMedium(8.5);
+        foreach (range(1, 8) as $n) {
+            $this->userWith(['browseMaxMinutes' => 25]);
+        }
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+    }
+
+    /**
+     * A single member whose lookup fails is left alone and the run still succeeds - existing,
+     * intended behaviour. The alarm must not turn that into a nightly job failure, which is
+     * why it needs an absolute floor as well as a rate.
+     */
+    public function testASingleFailedLookupDoesNotFailTheRun(): void
+    {
+        $results = [];
+        for ($i = 0; $i < 400; $i++) {
+            $results[] = ['id' => $i + 1, 'extra' => ['lat' => 53.4 + (2.5 * ($i + 1) / 400) / 69.05, 'lng' => -1.3]];
+        }
+        Http::fake([
+            '*userapproxlocs*' => Http::response(['results' => $results]),
+            '*town/near*' => Http::response(null, 500),
+        ]);
+
+        $this->userWith(['browseMaxMinutes' => 25]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+    }
 }

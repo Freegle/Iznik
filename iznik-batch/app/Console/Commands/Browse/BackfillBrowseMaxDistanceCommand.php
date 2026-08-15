@@ -124,6 +124,23 @@ class BackfillBrowseMaxDistanceCommand extends Command
     /** ~110m: a radius in miles cannot tell two members this close apart. */
     private const RADIUS_MEMO_DP = 3;
 
+    /**
+     * Fail the command when at least this fraction of radius lookups fail. A skipped member
+     * keeps no band limit at all, so a broken lookup voids the run rather than shrinking it.
+     * Generous on purpose: isolated failures are normal, a quarter of them is a config error.
+     */
+    private const LOOKUP_FAILURE_ALARM = 0.25;
+
+    /**
+     * ...but only once this many have failed outright. A member whose lookup fails is
+     * deliberately left alone rather than given a wrong cap, and a run over a handful of
+     * members (a --limit run, or a single member in a test) can hit 100% honestly. Both
+     * conditions together mean "systemic", which is the only thing worth failing over: a
+     * nightly run scans ~200k, so scattered failures stay far below the rate while a broken
+     * endpoint trips both at once.
+     */
+    private const LOOKUP_FAILURE_MIN = 20;
+
     protected $signature = 'browse:backfill-max-distance
                             {--chunk=200 : Users per DB chunk}
                             {--limit=0 : Stop after this many corrections (0 = no limit)}
@@ -187,6 +204,52 @@ class BackfillBrowseMaxDistanceCommand extends Command
 
         if (! $dryRun && $stats['corrected'] > 0) {
             Log::info('browse:backfill-max-distance', $stats);
+        }
+
+        // A member whose radius lookup fails is SKIPPED, and a skipped member keeps no band
+        // limit at all - so a broken lookup does not degrade this command, it silently voids
+        // it. That is not hypothetical: BROWSE_TOWN_NEAR_URL was unset on the production
+        // batch host, so every call went to the compose-internal default, which does not
+        // resolve there. Measured 2026-08-15: 1,018 of 2,260 scanned members failed the
+        // lookup, and across 202,837 active members ZERO held a band radius - 147,891 had
+        // nothing stored and 54,951 held the unlimited sentinel (sparse members, who return
+        // the sentinel before ever needing a lookup). The per-member density banding was
+        // therefore inert in production while this command reported success every night.
+        //
+        // Fail loudly instead. The threshold is deliberately generous: individual lookups can
+        // fail for honest reasons (a member on a boat, a routing hiccup), but a large fraction
+        // failing means the endpoint is wrong or unreachable, which is a config error and
+        // needs a human.
+        $attempted = $stats['corrected'] + $stats['already_consistent'] + $stats['lookup_failed'];
+        if ($attempted > 0) {
+            $failureRate = $stats['lookup_failed'] / $attempted;
+
+            if ($failureRate >= self::LOOKUP_FAILURE_ALARM
+                && $stats['lookup_failed'] < self::LOOKUP_FAILURE_MIN) {
+                // Too few to call it systemic, but still worth saying out loud rather than
+                // burying in a count: these members came away with no band limit.
+                $this->warn(sprintf(
+                    'Radius lookups failed for %d of %d members; those members keep no band limit.',
+                    $stats['lookup_failed'],
+                    $attempted,
+                ));
+            }
+
+            if ($failureRate >= self::LOOKUP_FAILURE_ALARM
+                && $stats['lookup_failed'] >= self::LOOKUP_FAILURE_MIN) {
+                $this->error(sprintf(
+                    'Radius lookups failed for %d of %d members (%.0f%%). Those members keep NO band limit, '
+                    . 'so this run has left the density banding inert rather than merely incomplete. '
+                    . 'Check BROWSE_TOWN_NEAR_URL is set and reachable from this container (currently %s).',
+                    $stats['lookup_failed'],
+                    $attempted,
+                    $failureRate * 100,
+                    $apiBase !== '' ? $apiBase : '(empty)',
+                ));
+                Log::error('browse:backfill-max-distance lookup failures', $stats + ['api_base' => $apiBase]);
+
+                return Command::FAILURE;
+            }
         }
 
         return Command::SUCCESS;
