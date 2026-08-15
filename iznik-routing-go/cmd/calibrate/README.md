@@ -60,6 +60,33 @@ re-run that calibration if road conditions or OSM data shift materially.
    `docs/developers/reference/spatial-servers.md` if the accuracy story
    changes.
 
+## Measured and rejected
+
+Candidate features tested against the same ground truth and NOT shipped, so
+they are not re-litigated from scratch (all tested 2026-08 on the 2,530-journey
+sample with a paired per-route holdout comparison):
+
+- **lit=yes as an urban proxy for unsigned local roads** (fitted 0.78 vs the
+  0.81 residential class factor - nearly identical) and **way sinuosity >=
+  1.35 derating for unsigned rural roads** (fitted 1.30 vs 1.42-1.68 class
+  factors, correctly signed): combined mass only 1.4% of drive time, and on
+  the routes actually carrying that mass the paired holdout comparison was
+  exactly 34 better / 34 worse - a coin flip.  The aggregate median gain came
+  from coefficient reshuffling, not from the features.
+- **Splitting the signal penalty into isolated vs coordinated** (another
+  signal within 300m, a green-wave proxy): the fit finds a strikingly
+  plausible split - isolated signals ~23s, coordinated corridor signals ~8s,
+  where the shipped blanket value is 8.7s - but the paired holdout comparison
+  is 257 better / 267 worse overall and only 96/81 on signal-heavy routes,
+  below any shipping bar.  Worth revisiting with a bigger sample or once a
+  learned correction layer exists; the coefficient split itself is the most
+  promising unshipped signal found this round.
+- **A class-relative single-track factor** (one factor multiplying each way's
+  own class base): rejected in favour of the shipped fixed-base design - one
+  factor across bases from 4.2 to 26.8 m/s meant 8 km/h on service roads,
+  which corrupted route choice (a Kyle of Lochalsh pair went from 10 to 29
+  minutes against Google's 6.5).
+
 ## Known, deliberate divergences from Google
 
 - Toll crossings (Mersey tunnels, Dartford, Humber, Tyne, M6 Toll) are
