@@ -52,6 +52,65 @@ ylvm_find_backup() {
 
 # Prepare a full backup for a date into the staging mount, leaving a clean,
 # crash-recovered InnoDB datadir at $YLVM_STAGE_MNT. Also writes the percona
+# ---- Streaming the backup out of GCS ----------------------------------------
+#
+# Attempts allowed at pulling the backup. The stream is ~58GB over about six
+# minutes, and a single dropped connection anywhere in it fails the whole
+# nightly refresh: `set -euo pipefail` aborts, and the only other trigger is
+# tomorrow's 06:00 cron, so one blip costs a whole day of freshness. That is not
+# hypothetical - it killed the refresh on 2026-07-16 and again on 2026-08-14,
+# both with `xb_stream_read_chunk(): my_read() failed`, and the second left
+# Freegle serving a three-day-old copy of production.
+#
+# Bounded rather than infinite: a missing or corrupt object will never come good,
+# and the nightly window is finite.
+export YLVM_STREAM_ATTEMPTS="${YLVM_STREAM_ATTEMPTS:-3}"
+export YLVM_STREAM_BACKOFF="${YLVM_STREAM_BACKOFF:-60}"   # seconds, multiplied by attempt number
+
+# Empty staging and hand the blocks back to the thin pool. Belt-and-braces
+# alongside the `discard` mount option: without the fstrim, staging's pool
+# footprint accumulates across refreshes, because rm on a thin volume does not
+# free pool blocks by itself.
+ylvm_clear_stage() {
+    ylvm_log "Clearing staging $YLVM_STAGE_MNT ..."
+    rm -rf "${YLVM_STAGE_MNT:?}"/* "${YLVM_STAGE_MNT}"/.[!.]* 2>/dev/null || true
+    fstrim "$YLVM_STAGE_MNT" 2>/dev/null || true
+}
+
+# One attempt at the stream. Separated out so the retry loop is testable without
+# GCS: the tests stub this, not the pipe, because modelling the pipe would test
+# bash's pipefail rather than our retry.
+ylvm_stream_once() {
+    gcloud storage cat "$1" | xbstream -x -C "$YLVM_STAGE_MNT"
+}
+
+# Stream with bounded retries and growing backoff. Returns non-zero when every
+# attempt failed, so the caller still dies (and the EXIT trap still writes a
+# "failed" status) rather than proceeding with a half-extracted datadir.
+ylvm_stream_with_retry() {
+    local backup_file="$1"
+    local attempts="${YLVM_STREAM_ATTEMPTS:-3}"
+    local attempt=1
+
+    while :; do
+        ylvm_log "Streaming + extracting to staging (attempt $attempt/$attempts) ..."
+        if ylvm_stream_once "$backup_file"; then
+            return 0
+        fi
+        if [ "$attempt" -ge "$attempts" ]; then
+            ylvm_log "Stream failed on attempt $attempt/$attempts; giving up."
+            return 1
+        fi
+        # A failed extraction leaves partial files behind, and xbstream would
+        # extract the retry ON TOP of them - a datadir mixed from two streams,
+        # which would not surface until prepare, or worse, in the served data.
+        ylvm_log "Stream failed on attempt $attempt/$attempts; clearing staging and retrying."
+        ylvm_clear_stage
+        sleep $(( attempt * ${YLVM_STREAM_BACKOFF:-60} ))
+        attempt=$(( attempt + 1 ))
+    done
+}
+
 # my.cnf (matching restore-backup.sh) so the same image/params are used.
 ylvm_prepare_to_stage() {
     local date8="$1"
@@ -60,15 +119,9 @@ ylvm_prepare_to_stage() {
     ylvm_log "Backup: $backup_file"
 
     mountpoint -q "$YLVM_STAGE_MNT" || ylvm_die "Staging $YLVM_STAGE_MNT not mounted (run setup-lvm-thin.sh)"
-    ylvm_log "Clearing staging $YLVM_STAGE_MNT ..."
-    rm -rf "${YLVM_STAGE_MNT:?}"/* "${YLVM_STAGE_MNT}"/.[!.]* 2>/dev/null || true
-    # Return the just-freed blocks to the thin pool. Belt-and-braces alongside the
-    # `discard` mount option — without this, staging's pool footprint accumulates
-    # across refreshes (rm on a thin volume doesn't free pool blocks by itself).
-    fstrim "$YLVM_STAGE_MNT" 2>/dev/null || true
+    ylvm_clear_stage
 
-    ylvm_log "Streaming + extracting to staging ..."
-    gcloud storage cat "$backup_file" | xbstream -x -C "$YLVM_STAGE_MNT"
+    ylvm_stream_with_retry "$backup_file" || ylvm_die "Streaming $backup_file failed after $YLVM_STREAM_ATTEMPTS attempt(s)"
 
     ylvm_log "Decompressing .zst files (parallel) ..."
     find "$YLVM_STAGE_MNT" -type f -name "*.zst" -print0 | xargs -0 -P "$(nproc)" -I {} zstd -d --rm {}
