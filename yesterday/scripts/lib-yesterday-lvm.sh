@@ -291,6 +291,54 @@ ylvm_set_restore_status() {
 EOF
 }
 
+# ---- Keeping the status honest while a long refresh runs --------------------
+#
+# The API decides a restore is stale, and reports `idle` / "No active restore",
+# when restore-status.json has not been written for YLVM_STATUS_STALE_MINUTES.
+# The refresh writes "preparing" once at the start and "completed" at the end,
+# and the rsync apply ALONE runs longer than that window on a full backup. So a
+# perfectly healthy restore reports as dead partway through, and is
+# indistinguishable from one that really has died - which is the signal the
+# staleness check exists to give.
+#
+# Observed 2026-08-15: the 06:00 refresh was 2h13m in, rsync running normally,
+# staging prepared, and the API had been reporting "No active restore" for over
+# an hour.
+#
+# The heartbeat rewrites the file periodically with the current phase, so
+# staleness once again means what it says.
+export YLVM_HEARTBEAT_INTERVAL="${YLVM_HEARTBEAT_INTERVAL:-60}"
+
+YLVM_HEARTBEAT_PID=""
+
+# Record the phase, refresh the status, and keep refreshing it until the next
+# call or ylvm_heartbeat_stop. Safe to call repeatedly.
+ylvm_phase() {
+    local message="$1" date8="$2"
+    ylvm_heartbeat_stop
+    ylvm_set_restore_status "preparing" "$message" "$date8"
+
+    # A subshell rather than a named background script: it inherits the config
+    # it needs, and dies with the refresh if that is killed outright.
+    (
+        while sleep "$YLVM_HEARTBEAT_INTERVAL"; do
+            ylvm_set_restore_status "preparing" "$message" "$date8"
+        done
+    ) &
+    YLVM_HEARTBEAT_PID=$!
+}
+
+# Stop the heartbeat. MUST be called before writing any terminal status, or the
+# heartbeat would overwrite "completed"/"failed" with "preparing" and the run
+# would look stuck forever.
+ylvm_heartbeat_stop() {
+    if [ -n "$YLVM_HEARTBEAT_PID" ]; then
+        kill "$YLVM_HEARTBEAT_PID" 2>/dev/null || true
+        wait "$YLVM_HEARTBEAT_PID" 2>/dev/null || true
+        YLVM_HEARTBEAT_PID=""
+    fi
+}
+
 # Write the set of instantly-switchable days to a file the backup-browser API
 # reads (mounted as /data in the yesterday-api container). The UI uses this to
 # show which dates are a ~1-min switch vs a full ~1-2h restore.
