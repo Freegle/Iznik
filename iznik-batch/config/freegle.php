@@ -637,6 +637,31 @@ return [
             'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', false),
             'target_users' => (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000),
         ],
+        // Rural-access overflow. The extent cap above sizes a post's audience by the NEAREST
+        // N members, which in a dense area binds long before the travel-time ceiling: measured
+        // on live, a post outside Birmingham stopped at 28.0 minutes on exactly 4,000 members
+        // while a sparse-band moderator 31.4 minutes away, whose own slider was already at the
+        // 45-minute maximum, was shut out. This asks the routing server for one ring per band
+        // ceiling alongside the capped reach, so that member can find the post. It adds nobody
+        // to the mail or to a group's copy of the post.
+        'rural_access' => [
+            'enabled' => filter_var(env('RIPPLE_RURAL_ACCESS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        ],
+        // Demographic-fairness overflow. Measured on live: members in the most deprived fifth
+        // are reached by ~457 posts per 30 days against ~574 for every other fifth, while
+        // membership is flat across fifths. That shortfall is NOT caused by the extent cap
+        // (capped reaches are at parity); it sits in the reaches that run to the ceiling, which
+        // are mostly rural-origin, because rural areas are rarely classed as most-deprived.
+        // So this stretches the budget for deprived RECIPIENTS on exactly those reaches.
+        //
+        // max_quintile defaults to 1 because the shortfall is a knee at the most deprived
+        // fifth rather than a gradient, and because one fifth needs one traced ring rather
+        // than four. Raising it buys the full linear gradient at proportionate cost.
+        'fairness' => [
+            'enabled' => filter_var(env('RIPPLE_FAIRNESS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'weight' => (float) env('RIPPLE_FAIRNESS_WEIGHT', 0.0),
+            'max_quintile' => (int) env('RIPPLE_FAIRNESS_MAX_QUINTILE', 1),
+        ],
         // Unified-digest score-ordering (see App\Services\Ripple\DigestPostScorer).
         // Mirrors the /rippling "Digest preview" weights. Tunable via env without a deploy.
         'score' => [

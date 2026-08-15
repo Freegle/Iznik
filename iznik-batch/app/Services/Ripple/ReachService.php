@@ -43,6 +43,30 @@ class ReachService
     /** Stage-A audience cap: nearest-freegler ceiling per post, 0 = off. */
     private int $targetUsers;
 
+    /**
+     * Rural-access overflow: ask the routing server for one ring per density-band ceiling
+     * alongside the capped reach, so a member the HEADCOUNT shut out of a post they are
+     * within their own travel budget of can still find it. Off unless configured, and the
+     * routing server omits the field entirely when it is not asked for, so the stored
+     * schedule is unchanged until this is turned on.
+     */
+    private bool $ruralAccess;
+
+    /**
+     * Demographic-fairness overflow: stretch the travel-time budget for deprived recipients
+     * on the reaches the cap never bound, which is where the measured shortfall is. Weight 0
+     * (the default) is a complete no-op end to end.
+     */
+    private float $fairnessWeight;
+
+    /**
+     * How far down the deprivation scale the stretch reaches. 1 = the most deprived fifth
+     * only, which is both what the measurement supports (the shortfall is a knee at the most
+     * deprived fifth, with the other four within about 7% of each other) and far cheaper,
+     * needing one traced ring rather than four.
+     */
+    private int $fairnessMaxQuintile;
+
     /** @var int[] hours-since-arrival thresholds, one per expansion tick */
     private array $hazardHours;
 
@@ -59,6 +83,13 @@ class ReachService
         $this->targetUsers = config('freegle.ripple.extent.enabled')
             ? max(0, (int) config('freegle.ripple.extent.target_users', 0))
             : 0;
+        // Both overflow lanes: read once here, mirroring targetUsers above, and sent only
+        // when enabled so an unconfigured deployment gets a byte-identical schedule.
+        $this->ruralAccess = (bool) config('freegle.ripple.rural_access.enabled', false);
+        $this->fairnessWeight = config('freegle.ripple.fairness.enabled', false)
+            ? max(0.0, min(1.0, (float) config('freegle.ripple.fairness.weight', 0.0)))
+            : 0.0;
+        $this->fairnessMaxQuintile = max(1, min(4, (int) config('freegle.ripple.fairness.max_quintile', 1)));
         $this->hazardHours = config('freegle.ripple.hazard_hours', [1, 3, 6, 12, 24, 48, 72, 120, 168]);
     }
 
@@ -270,6 +301,19 @@ class ReachService
         if ($this->targetUsers > 0) {
             $params['target_users'] = $this->targetUsers;
         }
+
+        // The two lanes are mutually exclusive PER POST, but which one applies depends on
+        // whether the cap actually bound for that post, which only the routing server knows
+        // once it has counted. So both are offered here and it picks; asking for both costs
+        // nothing when neither applies.
+        if ($this->ruralAccess) {
+            $params['rural_access'] = 1;
+        }
+        if ($this->fairnessWeight > 0) {
+            $params['fairness_weight'] = $this->fairnessWeight;
+            $params['fairness_max_quintile'] = $this->fairnessMaxQuintile;
+        }
+
         return $params;
     }
 
