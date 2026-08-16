@@ -676,4 +676,169 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertSame(1, (int) $check->o, 'restored outer bound contains the polygon');
         $this->assertSame(1, (int) $check->i, 'restored inner bound is NULL or inside the polygon');
     }
+
+    /** Seed a live, approved, located post that fully qualifies for the index. Returns msgid. */
+    private function eligiblePost(): int
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: table (London)',
+            'textbody' => 'A table.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => 51.5,
+            'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+
+        return (int) $message->id;
+    }
+
+    /** Put the eligible post in the index too (some tests need the row present first). */
+    private function indexPost(int $msgid): void
+    {
+        $groupid = DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$msgid, $groupid, Message::TYPE_OFFER, now()->subDays(5)]
+        );
+    }
+
+    /**
+     * A post can carry conflicting outcome rows: the write paths clean outcomes up on
+     * transition (reposting deletes them, extending a deadline deletes Expired), but a
+     * few paths skip that, leaving e.g. an old Expired row next to a newer Taken one.
+     * The latest row is the post's current state. Expired-then-Taken means completed,
+     * so the post stays in the index marked successful — before this rule, the outcome
+     * pass deleted it off the stale Expired row every run and the upsert re-added it.
+     */
+    public function test_latest_outcome_wins_expired_then_taken_stays_indexed(): void
+    {
+        $msgid = $this->eligiblePost();
+        $this->indexPost($msgid);
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid, 'outcome' => Message::OUTCOME_EXPIRED, 'timestamp' => now()->subHours(2),
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => now()->subHours(1),
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(1, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+        $this->assertEquals(1, (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('successful'));
+    }
+
+    /** The mirror case: Taken then Withdrawn. The newer Withdrawn row wins; the post leaves the index. */
+    public function test_latest_outcome_wins_taken_then_withdrawn_removed(): void
+    {
+        $msgid = $this->eligiblePost();
+        $this->indexPost($msgid);
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => now()->subHours(2),
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid, 'outcome' => Message::OUTCOME_WITHDRAWN, 'timestamp' => now()->subHours(1),
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+    }
+
+    /**
+     * The add side must apply the same latest-row rule as the outcome pass, or the two
+     * disagree and the post is added by one and deleted by the other every single run.
+     */
+    public function test_upsert_does_not_readd_when_latest_outcome_withdrawn(): void
+    {
+        $msgid = $this->eligiblePost();
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => now()->subHours(2),
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid, 'outcome' => Message::OUTCOME_WITHDRAWN, 'timestamp' => now()->subHours(1),
+        ]);
+
+        $stats = $this->service->updateSpatialIndex();
+
+        $this->assertSame(0, $stats['upserted_recent'], 'a post whose latest outcome is negative must not be (re)added');
+        $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+    }
+
+    public function test_still_qualify_includes_live_post(): void
+    {
+        $msgid = $this->eligiblePost();
+        $this->assertSame([$msgid], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
+
+    /** Taken/Received posts stay in the index, so they still qualify. */
+    public function test_still_qualify_includes_completed_post(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_outcomes')->insert(['msgid' => $msgid, 'outcome' => Message::OUTCOME_TAKEN]);
+        $this->assertSame([$msgid], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
+
+    public function test_still_qualify_excludes_latest_withdrawn_despite_older_taken(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => now()->subHours(2),
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgid, 'outcome' => Message::OUTCOME_WITHDRAWN, 'timestamp' => now()->subHours(1),
+        ]);
+        $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
+
+    public function test_still_qualify_excludes_deleted_message(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages')->where('id', $msgid)->update(['deleted' => now()]);
+        $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
+
+    public function test_still_qualify_excludes_soft_deleted_membership(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['deleted' => 1]);
+        $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
+
+    public function test_still_qualify_excludes_non_approved_membership(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+        $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
+
+    public function test_still_qualify_excludes_deleted_user(): void
+    {
+        $msgid = $this->eligiblePost();
+        $fromuser = DB::table('messages')->where('id', $msgid)->value('fromuser');
+        DB::table('users')->where('id', $fromuser)->update(['deleted' => now()]);
+        $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
+
+    public function test_still_qualify_excludes_aged_out_post(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_groups')->where('msgid', $msgid)
+            ->update(['arrival' => now()->subDays(MessageSpatialService::RECENT_DAYS + 9)]);
+        $this->assertSame([], MessageSpatialService::stillQualifyForIndex([$msgid]));
+    }
 }

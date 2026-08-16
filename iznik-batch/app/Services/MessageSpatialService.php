@@ -48,13 +48,19 @@ class MessageSpatialService
     /**
      * Of the posts given, which ones are supposed to be in messages_spatial right now?
      *
-     * The index is rebuilt continually, deleting and re-inserting rows as it goes, so a
-     * post can be missing from it for a moment while being perfectly alive. Anything that
-     * wants to read "not in the index" as "this post has gone" has to tell those two
-     * apart, and the way to do that is to ask the same question the index itself asks.
+     * A post can be missing from the index while being perfectly alive. The index job's
+     * age pass (removeOldMessages) drops a post when ANY of its messages_groups rows is
+     * over the 31-day window - including dead ones, such as the tombstones left behind
+     * (deleted=1) when a rippled-in copy is retracted. An old post whose arrival was
+     * refreshed by a repost still has a live qualifying membership too, so the next
+     * run's upsert puts it straight back: on production ~3,000 posts are deleted at the
+     * end of every index run and re-added by the next, absent for minutes of every
+     * cycle, over a thousand of them actively rippling.
      *
-     * This deliberately lives next to upsertRecentMessages, whose conditions it repeats,
-     * so that when the rules for being indexed change both move together.
+     * Anything that wants to read "not in the index" as "this post has gone" has to
+     * tell those apart from genuinely-removed posts, by asking the same question the
+     * index's add side asks. This shares qualifyingMemberships() with
+     * upsertRecentMessages so the writer and the reader cannot drift apart.
      *
      * @param  int[]  $msgids
      * @return int[]  those that qualify
@@ -65,39 +71,28 @@ class MessageSpatialService
             return [];
         }
 
-        $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));
-
-        return DB::table('messages')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
-            ->join('users', 'users.id', '=', 'messages.fromuser')
-            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
+        return self::qualifyingMemberships()
             ->whereIn('messages.id', $msgids)
-            ->where('messages_groups.arrival', '>=', $cutoff)
-            ->whereNotNull('messages.lat')
-            ->whereNotNull('messages.lng')
-            ->whereNull('messages.deleted')
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('messages_groups.deleted', 0)
-            ->whereNull('users.deleted')
-            ->where(function ($q) {
-                $q->whereNull('messages_outcomes.outcome')
-                    ->orWhereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]);
-            })
             ->distinct()
             ->pluck('messages.id')
             ->map(static fn ($id) => (int) $id)
             ->all();
     }
 
-    private function upsertRecentMessages(bool $dryRun = false): int
+    /**
+     * Base query for "this post belongs in the index via this membership": recent
+     * arrival, located, live post on a live approved membership from a live user, and
+     * no disqualifying current outcome. Shared by the add side (upsertRecentMessages)
+     * and by stillQualifyForIndex, the check ripple:expand uses before treating an
+     * absence as a removal - one predicate, so the two cannot disagree.
+     */
+    private static function qualifyingMemberships(): \Illuminate\Database\Query\Builder
     {
         $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));
 
-        $msgs = DB::table('messages')
+        $q = DB::table('messages')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->join('users', 'users.id', '=', 'messages.fromuser')
-            ->leftJoin('messages_spatial', 'messages_spatial.msgid', '=', 'messages_groups.msgid')
-            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
             ->where('messages_groups.arrival', '>=', $cutoff)
             ->whereNotNull('messages.lat')
             ->whereNotNull('messages.lng')
@@ -110,12 +105,47 @@ class MessageSpatialService
             // e.g. autorepost — should not have touched a dead membership either; see
             // AutoRepostService::getCandidates.)
             ->where('messages_groups.deleted', 0)
-            ->whereNull('users.deleted')
+            ->whereNull('users.deleted');
+
+        return self::joinLatestOutcome($q, 'messages.id')
             ->where(function ($q) {
-                // Include messages with no outcome, or Taken/Received (same as V1: outcome IS NULL OR outcome IN ('Taken','Received'))
+                // No outcome, or completed (Taken/Received posts stay in the index). Anything
+                // else disqualifies. Same value set as V1; what changed is that only the
+                // LATEST outcome row is consulted (see joinLatestOutcome).
                 $q->whereNull('messages_outcomes.outcome')
                     ->orWhereIn('messages_outcomes.outcome', [Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]);
-            })
+            });
+    }
+
+    /**
+     * LEFT JOIN the one messages_outcomes row that states the post's CURRENT outcome.
+     *
+     * A post's outcome is its latest row. The write paths treat the table that way:
+     * reposting deletes previous outcomes, extending a deadline deletes Expired, and
+     * Taken/Received/Withdrawn are permanent once current. A few posts still carry
+     * both an old row and a newer contradicting one (write paths that skipped the
+     * cleanup), and for those the newest row wins. Joining ALL rows instead - as V1
+     * and this port originally did - made the passes disagree with each other: the
+     * add side saw the Taken row and added the post, the outcome pass saw the Expired
+     * row and deleted it, every run, forever.
+     */
+    private static function joinLatestOutcome($query, string $msgidColumn)
+    {
+        return $query->leftJoin('messages_outcomes', function ($join) use ($msgidColumn) {
+            $join->on('messages_outcomes.msgid', '=', $msgidColumn)
+                ->whereNotExists(function ($sub) {
+                    $sub->select('newer_outcome.id')
+                        ->from('messages_outcomes as newer_outcome')
+                        ->whereColumn('newer_outcome.msgid', 'messages_outcomes.msgid')
+                        ->whereColumn('newer_outcome.id', '>', 'messages_outcomes.id');
+                });
+        });
+    }
+
+    private function upsertRecentMessages(bool $dryRun = false): int
+    {
+        $msgs = self::qualifyingMemberships()
+            ->leftJoin('messages_spatial', 'messages_spatial.msgid', '=', 'messages_groups.msgid')
             ->where(function ($q) {
                 $q->whereNull('messages_spatial.msgid')
                     ->orWhereRaw('ST_X(messages_spatial.point) != messages.lng')
@@ -162,8 +192,12 @@ class MessageSpatialService
 
     private function updateOutcomesAndPromises(bool $dryRun = false): int
     {
-        $msgs = DB::table('messages_spatial')
-            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages_spatial.msgid')
+        // joinLatestOutcome yields at most one outcome row per post, so the remove
+        // decision below is made on the post's CURRENT outcome. (V1 ordered this query
+        // by outcome timestamp as if the newest row would win, but processed every row,
+        // so any old Expired/Withdrawn row deleted a post the add side had just
+        // re-added - the two passes fought over the same post every run.)
+        $msgs = self::joinLatestOutcome(DB::table('messages_spatial'), 'messages_spatial.msgid')
             ->leftJoin('messages_promises', 'messages_promises.msgid', '=', 'messages_spatial.msgid')
             ->select(
                 'messages_spatial.id',
@@ -173,7 +207,6 @@ class MessageSpatialService
                 'messages_outcomes.outcome',
                 'messages_promises.promisedat',
             )
-            ->orderByDesc('messages_outcomes.timestamp')
             ->get();
 
         $count = 0;

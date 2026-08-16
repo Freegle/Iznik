@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-14
+last_reviewed: 2026-08-16
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -406,6 +406,15 @@ Back-to-Pending) is frozen: its copies persist for per-group moderation and are 
 retracted, so re-approval restores the copy without re-rippling.
 
 A community switching ripple-out off retracts the same way - see §4a.
+
+When a post genuinely leaves the browsable set - deleted, withdrawn, expired, rejected on its
+origin group, or aged out - `removeStaleAndRetract` drops its reach row and retracts every
+rippled-in copy. Absence from `messages_spatial` alone does not trigger this: the index job
+routinely deletes still-qualifying posts at the end of one run and re-adds them during the
+next (its age pass trips on dead memberships, such as retracted-copy tombstones), so the
+expander instead asks the source tables whether each absent post still belongs in the index
+(`stillQualifyForIndex`, which shares its conditions with the index's add pass). Where a post
+carries conflicting outcome rows, its latest row states its outcome.
 
 ## 7. Consumers of the reach
 
