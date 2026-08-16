@@ -419,6 +419,24 @@ class ReachService
     }
 
     /**
+     * The widest stretched budget the fairness lane would route to for a given ceiling, or
+     * null when the lane is off. Used by the reuse guard: a stored ring computed under a
+     * different weight is not this post's ring, so it must be recomputed rather than
+     * inherited - the same argument as the reach-budget guard beside it.
+     *
+     * Mirrors the routing server's own arithmetic (fairnessoverflow.go): the widest budget is
+     * the most deprived fifth's, ceiling x (1 + W).
+     */
+    public function fairnessBudgetMinutes(float $ceilingMinutes): ?float
+    {
+        if ($this->fairnessWeight <= 0) {
+            return null;
+        }
+
+        return $ceilingMinutes * (1.0 + $this->fairnessWeight);
+    }
+
+    /**
      * The tick index (1-based) a post should be at after $elapsedHours since
      * arrival, per the hazard schedule. Clamped to [1, totalTicks].
      */
