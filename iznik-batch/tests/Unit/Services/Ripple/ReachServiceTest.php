@@ -421,4 +421,56 @@ class ReachServiceTest extends TestCase
 
         Http::assertSent(fn ($request) => str_contains($request->url(), 'fairness_max_quintile=1'));
     }
+
+    public function test_parseScheduleResponse_carries_the_rural_rings(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_rural' => [
+                'dense' => ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[[0, 0], [1, 0], [1, 1], [0, 0]]]]],
+                'sparse' => ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[[0, 0], [3, 0], [3, 3], [0, 0]]]]],
+            ],
+        ]);
+
+        $this->assertNotNull($parsed['overflow_bounds']);
+        $this->assertArrayHasKey('rural', $parsed['overflow_bounds']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['rural']['dense']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['rural']['sparse']);
+        $this->assertArrayNotHasKey('fairness', $parsed['overflow_bounds']);
+    }
+
+    public function test_parseScheduleResponse_carries_the_fairness_rings_and_the_budget_applied(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_fairness' => [
+                '1' => ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[[0, 0], [4, 0], [4, 4], [0, 0]]]]],
+            ],
+            'fairness_budget_min' => 67.5,
+        ]);
+
+        $this->assertArrayHasKey('fairness', $parsed['overflow_bounds']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['fairness']['1']);
+        // The budget actually routed, not whatever is configured when the row is later read.
+        $this->assertSame(67.5, $parsed['overflow_bounds']['fairness_budget_min']);
+    }
+
+    /**
+     * NULL must mean "no lane applied", never "a lane that produced nothing". A row read back
+     * as an empty array would look like an admissible-to-nobody lane rather than no lane.
+     */
+    public function test_parseScheduleResponse_gives_null_overflow_when_no_lane_applied(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+        ]);
+        $this->assertNull($parsed['overflow_bounds']);
+
+        // An empty lane object from the server is the same thing as no lane.
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_rural' => [],
+        ]);
+        $this->assertNull($parsed['overflow_bounds']);
+    }
 }

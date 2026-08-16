@@ -365,7 +365,57 @@ class ReachService
             // water/toll-correct ripple-targeting signal. Empty when the server
             // omits it (older build); the gate treats [] as "not available".
             'reachable_group_ids' => array_map('intval', $body['reachable_group_ids'] ?? []),
+            // The overflow lanes' rings, when a lane was asked for and applied. Absent on
+            // older servers and whenever both lanes are off, so null means "no lane", never
+            // "a lane with nothing in it".
+            'overflow_bounds' => $this->parseOverflow($body),
         ];
+    }
+
+    /**
+     * Turn the routing server's overflow rings into the JSON stored on rippling_reach.
+     *
+     * The server decides WHICH lane a post gets, from whether the audience cap actually bound
+     * for it, so at most one of these is ever present. Geometry is converted to WKT here for
+     * the same reason the tick polygons are: it is what MySQL's ST_GeomFromText wants and what
+     * the fallback containment test reads back.
+     *
+     * Returns null rather than an empty array when there is nothing, so a row's NULL is
+     * unambiguous: no lane applied, as against a lane that produced no drawable ring.
+     */
+    private function parseOverflow(array $body): ?array
+    {
+        $out = [];
+
+        foreach (['overflow_rural' => 'rural', 'overflow_fairness' => 'fairness'] as $key => $name) {
+            $rings = $body[$key] ?? null;
+            if (! is_array($rings) || empty($rings)) {
+                continue;
+            }
+            $converted = [];
+            foreach ($rings as $band => $geom) {
+                $wkt = $this->polygonToWkt($geom);
+                if ($wkt !== null) {
+                    $converted[(string) $band] = $wkt;
+                }
+            }
+            if (! empty($converted)) {
+                $out[$name] = $converted;
+            }
+        }
+
+        if (empty($out)) {
+            return null;
+        }
+
+        // Record the weight actually applied, not the weight configured at read time: a row
+        // written under one weight must not be read as though it had another, and the reuse
+        // guard compares this to decide whether a stored schedule is still valid.
+        if (isset($out['fairness']) && isset($body['fairness_budget_min'])) {
+            $out['fairness_budget_min'] = (float) $body['fairness_budget_min'];
+        }
+
+        return $out;
     }
 
     /**
