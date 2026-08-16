@@ -398,6 +398,16 @@ A community switching ripple-out off retracts the same way - see §4a.
   live only 2,900 of 121,000 recently-active members had ever set one, so without that pass
   the wider ripple would reach a city member with everything inside 45 minutes of a post.
 
+  The same pass records the band NAME in `settings.browseDensityBand`, because the budget it
+  derives cannot be read backwards to recover it: an explicit choice is rescaled *within* the
+  band, so 20 minutes means either a dense member on their cap or a sparse member who asked
+  for less, and afterwards the two are the same number. Anything that has to admit a member
+  against something chosen per band - the rural overflow lane, when enabled, picks one ring
+  per band - needs the band itself. It is stamped for members whose budget needs no correction as well,
+  which is most of them: a value written only alongside a correction would be missing for the
+  bulk of the membership, which is the same shape of silent near-inertness as the two failure
+  modes below.
+
   **That pass is the single writer of `browseReachMaxDistance`, and it has two failure modes
   worth knowing, because both were live for weeks and neither was visible.**
 

@@ -107,6 +107,14 @@ class BackfillBrowseMaxDistanceCommand extends Command
     private const DEFAULT_KEY = 'browseReachMaxDistance';
 
     /**
+     * The member's measured density band, recorded so the read side does not have to
+     * re-measure it per row. Says something about the area, not about the member, and is
+     * already implied by the budget derived from it - so it carries nothing that the
+     * settings blob does not already expose.
+     */
+    private const BAND_KEY = 'browseDensityBand';
+
+    /**
      * The bounds the time-based slider had before it became band-aware. The old top
      * stop is what a stored value has to be read against to know what fraction of
      * their range the member was asking for. Must stay in step with
@@ -177,6 +185,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
             'scanned' => 0,
             'corrected' => 0,
             'already_consistent' => 0,
+            'band_stamped' => 0,
             'no_location' => 0,
             'lookup_failed' => 0,
         ];
@@ -195,16 +204,17 @@ class BackfillBrowseMaxDistanceCommand extends Command
             });
 
         $this->info(sprintf(
-            '%d scanned: %d %s, %d already consistent, %d skipped (no location), %d skipped (lookup failed).',
+            '%d scanned: %d %s, %d band stamped, %d already consistent, %d skipped (no location), %d skipped (lookup failed).',
             $stats['scanned'],
             $stats['corrected'],
             $dryRun ? 'would be corrected' : 'corrected',
+            $stats['band_stamped'],
             $stats['already_consistent'],
             $stats['no_location'],
             $stats['lookup_failed'],
         ));
 
-        if (! $dryRun && $stats['corrected'] > 0) {
+        if (! $dryRun && ($stats['corrected'] > 0 || $stats['band_stamped'] > 0)) {
             Log::info('browse:backfill-max-distance', $stats);
         }
 
@@ -222,7 +232,11 @@ class BackfillBrowseMaxDistanceCommand extends Command
         // fail for honest reasons (a member on a boat, a routing hiccup), but a large fraction
         // failing means the endpoint is wrong or unreachable, which is a config error and
         // needs a human.
-        $attempted = $stats['corrected'] + $stats['already_consistent'] + $stats['lookup_failed'];
+        // band_stamped belongs here with the other successes: those members got through both
+        // lookups. Leaving it out would shrink the denominator as members move into that
+        // bucket and make a healthy run's failure rate climb towards the alarm on its own.
+        $attempted = $stats['corrected'] + $stats['already_consistent']
+            + $stats['band_stamped'] + $stats['lookup_failed'];
         if ($attempted > 0) {
             $failureRate = $stats['lookup_failed'] / $attempted;
 
@@ -336,6 +350,14 @@ class BackfillBrowseMaxDistanceCommand extends Command
             return;
         }
 
+        // The band NAME, not just its consequences. browseMaxMinutes cannot stand in for it:
+        // a member who narrowed the slider is rescaled within their band, so 20 minutes means
+        // "dense member" or "rural member who wants less" and the two are indistinguishable
+        // afterwards. Anything reading a member's band back - the rural overflow lane picks
+        // one ring per band - needs the band itself, and this command is the only place that
+        // measures it.
+        $bandStale = ($settings[self::BAND_KEY] ?? null) !== $cap['band'];
+
         $capMinutes = (int) round($cap['max_minutes']);
         $desiredMinutes = $this->rescale($minutes, $capMinutes);
         $desired = $this->desiredDistance($loc, $desiredMinutes, $capMinutes, $apiBase);
@@ -346,6 +368,22 @@ class BackfillBrowseMaxDistanceCommand extends Command
         }
 
         if ($desiredMinutes === $minutes && $this->consistent($current, $desired, $epsilon)) {
+            // Consistent budget, but possibly no band recorded - and that is the common case,
+            // not the rare one: the members whose budget is already right are exactly the ones
+            // a correcting pass never writes to. Stamping only when correcting would leave the
+            // band missing for most of the membership and the lane reading it near-inert, the
+            // same shape of failure as the missing endpoint this command already alarms on.
+            if ($bandStale) {
+                if (! $dryRun) {
+                    $settings[self::BAND_KEY] = $cap['band'];
+                    $user->settings = $settings;
+                    $user->save();
+                }
+                $stats['band_stamped']++;
+
+                return;
+            }
+
             $stats['already_consistent']++;
 
             return;
@@ -367,6 +405,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
         if (! $dryRun) {
             $settings['browseMaxMinutes'] = $desiredMinutes;
             $settings[$targetKey] = $desired;
+            $settings[self::BAND_KEY] = $cap['band'];
             $user->settings = $settings;
             $user->save();
         }

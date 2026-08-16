@@ -548,4 +548,83 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
 
         $this->assertSame(8.5, $this->chosenDistanceOf($id), 'the full pass must still reconcile');
     }
+
+    /**
+     * The measured band is recorded, not just the budget derived from it. Nothing downstream
+     * can recover it afterwards: the budget is rescaled within the band, so a member on 20
+     * minutes is either a city member on their cap or a rural member who asked for less, and
+     * the two are the same number. The rural overflow lane admits a member against the ring
+     * for THEIR band, so it needs the band itself.
+     */
+    public function testRecordsTheMeasuredDensityBand(): void
+    {
+        $this->fakeMedium(8.5);
+        $id = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 1]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame('medium', $this->settingsOf($id)['browseDensityBand'] ?? null);
+    }
+
+    /**
+     * The case that decides whether recording the band is worth anything: a member whose
+     * budget is ALREADY right. They are the majority - the whole point of a reconciling pass
+     * is that most rows need no reconciling - and a correcting pass never writes to them. If
+     * the band were only stamped alongside a correction, it would be missing for most of the
+     * membership and the lane reading it would be near-inert while every run reported success.
+     */
+    public function testStampsTheBandOnAMemberWhoseBudgetIsAlreadyRight(): void
+    {
+        $this->fakeMedium();
+        $id = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 8.2]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame('medium', $this->settingsOf($id)['browseDensityBand'] ?? null);
+        // ...and the budget it left alone is still left alone.
+        $this->assertSame(8.2, $this->distanceOf($id));
+    }
+
+    /** A member already carrying the right band is not rewritten for the sake of it. */
+    public function testAnUpToDateBandIsNotRestamped(): void
+    {
+        $this->fakeMedium();
+        $this->userWith([
+            'browseMaxMinutes' => 25,
+            'browseMaxDistance' => 8.2,
+            'browseDensityBand' => 'medium',
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')
+            ->expectsOutputToContain('0 band stamped, 1 already consistent')
+            ->assertSuccessful();
+    }
+
+    public function testDryRunDoesNotStampTheBand(): void
+    {
+        $this->fakeMedium();
+        $id = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 8.2]);
+
+        $this->artisan('browse:backfill-max-distance --dry-run')->assertSuccessful();
+
+        $this->assertArrayNotHasKey('browseDensityBand', $this->settingsOf($id));
+    }
+
+    /**
+     * A band that has changed - a member who moved, or a town that grew - is corrected. The
+     * stamp is a measurement, not a one-off initialisation.
+     */
+    public function testAStaleBandIsCorrected(): void
+    {
+        $this->fakeMedium();
+        $id = $this->userWith([
+            'browseMaxMinutes' => 25,
+            'browseMaxDistance' => 8.2,
+            'browseDensityBand' => 'sparse',
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame('medium', $this->settingsOf($id)['browseDensityBand'] ?? null);
+    }
 }
