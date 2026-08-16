@@ -273,6 +273,17 @@ class CommunityNewsEmailService
             ->where('memberships.collection', 'Approved')
             ->where('users.newslettersallowed', 1)
             ->whereNull('users.deleted')
+            // Recently-active only, matching the digest convention
+            // (UnifiedDigestService: Engage::USER_INACTIVE = 365*12*3600s =
+            // 182.5 days; NULL lastaccess = new member who has never logged
+            // in, still included). Without this gate the 2026-08-15 send
+            // spooled 643,931 mails — every member of every enabled group
+            // however dormant — and the dead mailboxes among them caused a
+            // mass deferral storm at the relay.
+            ->where(function ($q) {
+                $q->whereNull('users.lastaccess')
+                  ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
+            })
             // The ModTools "Send newsletters to members?" group toggle
             // (settings.newsletter). For Community News this defaults OFF —
             // stricter than StoriesNewsletterService's default-on — so a group
