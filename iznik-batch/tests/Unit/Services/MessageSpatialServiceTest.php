@@ -704,13 +704,13 @@ class MessageSpatialServiceTest extends TestCase
         return (int) $message->id;
     }
 
-    /** Put the eligible post in the index too (some tests need the row present first). */
+    /** Put the eligible post in the index too (some tests need the row present first), mirroring its membership exactly. */
     private function indexPost(int $msgid): void
     {
-        $groupid = DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $mg = DB::table('messages_groups')->where('msgid', $msgid)->first(['groupid', 'arrival']);
         DB::statement(
             "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
-            [$msgid, $groupid, Message::TYPE_OFFER, now()->subDays(5)]
+            [$msgid, $mg->groupid, Message::TYPE_OFFER, $mg->arrival]
         );
     }
 
@@ -838,6 +838,211 @@ class MessageSpatialServiceTest extends TestCase
         $this->service->updateSpatialIndex();
 
         $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+    }
+
+    /**
+     * messages_spatial holds ONE row per post, and everything downstream reads its
+     * groupid as the post's own community. A post rippled into other groups has
+     * several qualifying memberships, and the upsert used to select EVERY one whose
+     * groupid/arrival differed from the stored row, rewriting the same row to a
+     * different membership each run - the recorded community and arrival ping-ponged
+     * forever, ~182K row rewrites per run for a ~56K-row table. One membership must
+     * represent the post: the origin (non-rippled) one, latest arrival first.
+     */
+    public function test_upsert_keeps_spatial_row_on_the_origin_membership(): void
+    {
+        $msgid = $this->eligiblePost();
+        $originGroup = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $this->indexPost($msgid);
+
+        // A live rippled-in copy with a FRESHER arrival must not steal the row.
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $originArrival = DB::table('messages_groups')
+            ->where('msgid', $msgid)->where('groupid', $originGroup)->value('arrival');
+        $row = DB::table('messages_spatial')->where('msgid', $msgid)->first(['groupid', 'arrival']);
+        $this->assertNotNull($row);
+        $this->assertSame($originGroup, (int) $row->groupid, 'the spatial row must stay on the origin membership');
+        // Second precision: messages_groups returns microseconds, messages_spatial does not.
+        $this->assertSame(
+            substr((string) $originArrival, 0, 19),
+            substr((string) $row->arrival, 0, 19),
+            'the recorded arrival is the origin membership\'s too'
+        );
+    }
+
+    /**
+     * The other half of the ping-pong: once the row matches its post's representative
+     * membership, the next run must have nothing left to rewrite. Measured as a
+     * dry-run candidate delta because the suite's shared DB contributes its own rows.
+     */
+    public function test_upsert_converges_after_one_run(): void
+    {
+        $this->service->updateSpatialIndex();
+        $baseline = $this->service->updateSpatialIndex(true)['upserted_recent'];
+
+        $msgid = $this->eligiblePost();
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertSame(
+            $baseline,
+            $this->service->updateSpatialIndex(true)['upserted_recent'],
+            'after one run the post must no longer be an upsert candidate'
+        );
+
+        // And the row itself is stable: another real run leaves it where it is.
+        $chosen = (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid');
+        $this->service->updateSpatialIndex();
+        $this->assertSame(
+            $chosen,
+            (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid'),
+            'the recorded group must not change between runs'
+        );
+    }
+
+    /** Within the same class (two rippled copies), the fresher arrival represents the post. */
+    public function test_representative_prefers_fresher_arrival_within_same_class(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
+        $groupB = $this->createTestGroup();
+        $groupC = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            ['msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subDays(2), 'deleted' => 0, 'rippled_in' => 1],
+            ['msgid' => $msgid, 'groupid' => $groupC->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1],
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertSame(
+            (int) $groupC->id,
+            (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid'),
+            'the fresher rippled copy wins within the rippled class'
+        );
+    }
+
+    /** Exact ties (same class, same arrival) break on the lower groupid, so exactly one row wins. */
+    public function test_representative_breaks_exact_ties_by_lower_groupid(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
+        $arrival = now()->subDays(1)->startOfMinute();
+        $groupB = $this->createTestGroup();
+        $groupC = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            ['msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => $arrival, 'deleted' => 0, 'rippled_in' => 1],
+            ['msgid' => $msgid, 'groupid' => $groupC->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => $arrival, 'deleted' => 0, 'rippled_in' => 1],
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertSame(
+            min((int) $groupB->id, (int) $groupC->id),
+            (int) DB::table('messages_spatial')->where('msgid', $msgid)->value('groupid'),
+            'an exact tie must resolve deterministically to the lower groupid'
+        );
+    }
+
+    /**
+     * The fallback when only a rippled copy keeps the post alive: it is still the
+     * post's one row in browse, recorded against the rippled group.
+     */
+    public function test_indexes_post_kept_alive_only_by_rippled_copy(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $row = DB::table('messages_spatial')->where('msgid', $msgid)->first(['groupid']);
+        $this->assertNotNull($row, 'a live rippled membership keeps the post browsable');
+        $this->assertSame((int) $groupB->id, (int) $row->groupid);
+    }
+
+    /**
+     * The immediate-add path must consider the same CANDIDATES as the reconciler, not
+     * just apply the same ordering. A membership outside the 31-day window is not a
+     * candidate: adding it puts the post into browse for five minutes until
+     * removeOldMessages takes it straight back out.
+     */
+    public function test_add_approved_message_ignores_out_of_window_membership(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
+
+        $this->service->addApprovedMessage($msgid);
+
+        $this->assertEquals(
+            0,
+            DB::table('messages_spatial')->where('msgid', $msgid)->count(),
+            'an out-of-window membership must not be added, or the reconciler immediately removes it again'
+        );
+    }
+
+    /**
+     * When the origin membership has aged out of the window but a live rippled copy is
+     * fresh - the approval that typically triggers this call - the rippled copy is the
+     * representative, exactly as the reconciler would choose. Recording the stale
+     * origin instead made a just-approved post sort as weeks old in browse.
+     */
+    public function test_add_approved_message_picks_fresh_rippled_copy_over_stale_origin(): void
+    {
+        $msgid = $this->eligiblePost();
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
+        ]);
+
+        $this->service->addApprovedMessage($msgid);
+
+        $row = DB::table('messages_spatial')->where('msgid', $msgid)->first(['groupid']);
+        $this->assertNotNull($row);
+        $this->assertSame(
+            (int) $groupB->id,
+            (int) $row->groupid,
+            'the fresh rippled copy is the representative when the origin is out of the window'
+        );
+    }
+
+    /** The immediate-add path must pick the same representative membership as the reconciler. */
+    public function test_add_approved_message_prefers_origin_membership(): void
+    {
+        $msgid = $this->eligiblePost();
+        $originGroup = (int) DB::table('messages_groups')->where('msgid', $msgid)->value('groupid');
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1), 'deleted' => 0, 'rippled_in' => 1,
+        ]);
+
+        $this->service->addApprovedMessage($msgid);
+
+        $row = DB::table('messages_spatial')->where('msgid', $msgid)->first(['groupid']);
+        $this->assertNotNull($row);
+        $this->assertSame($originGroup, (int) $row->groupid, 'immediate add must not record a rippled group as the post\'s own');
     }
 
     public function test_still_qualify_includes_live_post(): void
