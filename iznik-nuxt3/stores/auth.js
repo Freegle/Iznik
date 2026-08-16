@@ -102,6 +102,18 @@ export const useAuthStore = defineStore({
           // We have logged in.
           this.forceLogin = false
         }
+
+        // Resume a compose submit that was deferred until login (e.g. the
+        // poster's email was already registered so we forced a login). This is
+        // gated on being logged in, NOT on forceLogin — forceLogin is not
+        // persisted, so after a page refresh mid-login only the persisted
+        // pendingSubmit (and draft) survive, and we still resume from here.
+        const composeStore = useComposeStore()
+        if (composeStore.pendingSubmit) {
+          composeStore
+            .resumePendingSubmit()
+            .catch((e) => console.log('Resume deferred submit failed', e))
+        }
       } else {
         this.user = null
       }
@@ -220,6 +232,11 @@ export const useAuthStore = defineStore({
       this.config = config
       this.loggedInEver = loggedInEver
       this.$api = api
+
+      // Drop any login-gated compose submit: it belongs to the user who just logged
+      // out, and the compose store is persisted separately, so it would otherwise
+      // survive and auto-fire on the NEXT person's login on this device.
+      useComposeStore().clearPendingSubmit()
 
       // Restore normal request handling now that logout is complete.
       exitLogoutMode()

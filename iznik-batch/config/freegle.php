@@ -1019,6 +1019,30 @@ return [
         'api_key' => env('FREEBIE_ALERTS_KEY', ''),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Auto-approve (delayed) for NULL-status ("auto-moderated") members
+    |--------------------------------------------------------------------------
+    |
+    | Site-wide defaults for messages:auto-approve-clean. A group may override
+    | delay_minutes / quality_check_percent via settings.autoapprove.* (an
+    | absent or 0 delay override falls back to the site default below).
+    |
+    | - delay_minutes:          how long a content-check-clean post stays in
+    |                           Pending before auto-approval, giving mods and
+    |                           microvolunteers a chance to intervene.
+    | - quality_check_percent:  percentage of otherwise-eligible posts held back
+    |                           in Pending for a manual mod quality check (0 = none).
+    | - danger_log_days:        how far back to look for negative moderation log
+    |                           entries that veto auto-approval.
+    |
+    */
+    'autoapprove' => [
+        'delay_minutes'         => (int) env('FREEGLE_AUTOAPPROVE_DELAY_MINUTES', 20),
+        'quality_check_percent' => (int) env('FREEGLE_AUTOAPPROVE_QUALITY_CHECK_PCT', 0),
+        'danger_log_days'       => (int) env('FREEGLE_AUTOAPPROVE_DANGER_LOG_DAYS', 90),
+    ],
+
     'email_health' => [
         'incoming_window_hours' => env('FREEGLE_EMAIL_HEALTH_INCOMING_WINDOW_HOURS', 2),
         'outgoing_min_per_hour' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_MIN_PER_HOUR', 10),

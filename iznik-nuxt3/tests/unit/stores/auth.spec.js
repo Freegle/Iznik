@@ -58,8 +58,17 @@ vi.mock('@capgo/capacitor-social-login', () => ({
   SocialLogin: { initialize: vi.fn(), logout: vi.fn() },
 }))
 
+// A controllable compose-store mock so we can verify the resume-after-login wiring
+// in setUser(). resumePendingSubmit returns a promise because setUser calls .catch()
+// on it.
+const mockCompose = vi.hoisted(() => ({
+  pendingSubmit: null,
+  clearPendingSubmit: vi.fn(),
+  resumePendingSubmit: vi.fn(() => Promise.resolve()),
+}))
+
 vi.mock('~/stores/compose', () => ({
-  useComposeStore: () => ({}),
+  useComposeStore: () => mockCompose,
 }))
 
 const mockFetchBatch = vi.fn()
@@ -85,8 +94,28 @@ describe('auth store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    mockCompose.pendingSubmit = null
     store = useAuthStore()
     store.init({ public: { BUILD_DATE: '2026-01-01' }, app: {} })
+  })
+
+  describe('resume deferred submit on login', () => {
+    it('fires resumePendingSubmit when a deferred submit is pending', () => {
+      mockCompose.pendingSubmit = {
+        message: { type: 'Offer', item: 'Sofa' },
+        email: 'a@b.com',
+        options: {},
+        at: Date.now(),
+      }
+      store.setUser({ id: 42, displayname: 'Test' })
+      expect(mockCompose.resumePendingSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not fire resumePendingSubmit when nothing is pending', () => {
+      mockCompose.pendingSubmit = null
+      store.setUser({ id: 42, displayname: 'Test' })
+      expect(mockCompose.resumePendingSubmit).not.toHaveBeenCalled()
+    })
   })
 
   describe('initial state', () => {

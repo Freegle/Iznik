@@ -182,6 +182,9 @@ async function next() {
       if (!inuse) {
         await freegleIt('Wanted', router)
       } else if (!loggedIn.value) {
+        // Their email belongs to an existing account: remember the post so it
+        // submits automatically once they have logged in (survives a refresh).
+        composeStore.deferSubmit('Wanted')
         authStore.forceLogin = true
       } else {
         emailBelongsToSomeoneElse.value = true

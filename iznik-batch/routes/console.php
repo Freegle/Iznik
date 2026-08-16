@@ -201,6 +201,17 @@ Schedule::command('ripple:proximity-notes')
     ->sendOutputTo(cronLog('ripple:proximity-notes'))
     ->runInBackground();
 
+// Auto-approve content-check-clean posts from NULL-status ("auto-moderated") members
+// after the configured delay (default 20 min), unless danger signals are present and
+// excluding a quality-check sample. Runs every minute so the window is honoured tightly.
+Schedule::command('messages:auto-approve-clean')
+    ->everyMinute()
+    // Bounded expiry (matches the other every-minute jobs): a killed run self-heals
+    // in 15 min instead of Laravel's 24h default - see SchedulerResilienceTest.
+    ->withoutOverlapping(15)
+    ->sendOutputTo(cronLog('messages:auto-approve-clean'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.

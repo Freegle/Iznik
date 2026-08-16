@@ -148,6 +148,17 @@
             :key="'rippling-analytics-' + ripplingBump"
           />
         </b-tab>
+
+        <!-- Moderation Tab -->
+        <b-tab @click="onModerationTab">
+          <template #title>
+            <h2 class="ms-2 me-2">Moderation</h2>
+          </template>
+          <ModSysAdminModerationStats
+            v-if="showModeration"
+            :key="'moderation-' + moderationBump"
+          />
+        </b-tab>
       </b-tabs>
     </div>
     <NoticeMessage v-else variant="warning">
@@ -186,6 +197,8 @@ const showRecommendations = ref(false)
 const recommendationsBump = ref(0)
 const showReengage = ref(false)
 const reengageBump = ref(0)
+const showModeration = ref(false)
+const moderationBump = ref(0)
 
 // Top-level tab index per deep-link query param. Outgoing/incoming both open the
 // Mail tab; scrolling/recommendations/reengagement all open the Behaviour tab.
@@ -202,6 +215,7 @@ const topTabMap = {
   recommendations: 3,
   reengagement: 3,
   rippling: 4,
+  moderation: 5,
 }
 
 function onHousekeepingTab() {
@@ -259,6 +273,11 @@ function onRipplingTab() {
   ripplingBump.value = Date.now()
 }
 
+function onModerationTab() {
+  showModeration.value = true
+  moderationBump.value = Date.now()
+}
+
 onMounted(() => {
   const tab = route.query.tab
   if (tab && topTabMap[tab] !== undefined) {
@@ -282,6 +301,7 @@ onMounted(() => {
       behaviourSubTab.value = 2
       onReengageTab()
     } else if (tab === 'rippling') onRipplingTab()
+    else if (tab === 'moderation') onModerationTab()
   } else {
     // Default to showing housekeeping
     onHousekeepingTab()
@@ -309,9 +329,7 @@ onMounted(() => {
   padding: 0.4rem 1.1rem;
   border-radius: 2rem;
   border: 1px solid transparent;
-  transition:
-    color 0.12s ease,
-    background-color 0.12s ease,
+  transition: color 0.12s ease, background-color 0.12s ease,
     box-shadow 0.12s ease;
 }
 

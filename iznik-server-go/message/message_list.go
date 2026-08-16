@@ -2,6 +2,7 @@ package message
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -452,6 +453,11 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	fromuserStr := c.Query("fromuser", "0")
 	fromuser, _ := strconv.ParseUint(fromuserStr, 10, 64)
+	// Optional oversight view of the Approved collection (non-search listing):
+	//   checked — live posts auto-approved via the automated checks, from
+	//             auto-moderated (NULL posting status) members
+	//   trusted — live posts from trusted (group-settings) members
+	filter := c.Query("filter", "")
 
 	var msgIDs []uint64
 
@@ -568,11 +574,35 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			branchArgs = []interface{}{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
 		}
 
+		// Optional moderation filter. Values are matched against a fixed set, so the
+		// injected SQL is constant (no user-supplied text reaches the query).
+		filterJoin := ""
+		filterWhere := ""
+		// The Checked/Trusted oversight queues show only posts a mod has NOT yet
+		// marked checked, within the auto-check window — so the list matches the
+		// session work-count badge and clears as posts are checked.
+		checkedWindow := fmt.Sprintf(
+			"AND mg.checkedat IS NULL AND mg.arrival >= NOW() - INTERVAL %d DAY ",
+			utils.MESSAGE_CHECK_WINDOW_DAYS,
+		)
+		switch filter {
+		case "checked":
+			// Auto-approved (approvedby NULL) from auto-moderated (NULL) members.
+			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
+			filterWhere = "AND mg.approvedby IS NULL AND mem.ourPostingStatus IS NULL " + checkedWindow
+		case "trusted":
+			// Went live without moderation from trusted (group-settings) members.
+			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
+			filterWhere = "AND mg.approvedby IS NULL AND (mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED') " + checkedWindow
+		}
+
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
+			filterJoin +
 			"WHERE mg.groupid = %GID% AND " + collectionFilter + " AND mg.deleted = 0 " +
 			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
+			filterWhere +
 			contentcheckFilter + " "
 
 		if fromuser > 0 {

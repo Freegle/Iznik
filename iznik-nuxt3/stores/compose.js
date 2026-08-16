@@ -8,18 +8,25 @@ import {
   isNumericOnlyBody,
 } from '~/composables/useItemValidation'
 
+// Templates for the synthetic Offer/Wanted entries the `all` getter returns when
+// the user hasn't started composing one of each type yet. These are TEMPLATES —
+// the getter must spread a fresh copy each time and never hand back (or mutate)
+// these module-level objects, otherwise edits to one compose leak into the next.
 const defaultOffer = {
-  id: 0,
   type: 'Offer',
   text: '',
   attachments: [],
 }
 const defaultWanted = {
-  id: 1,
   type: 'Wanted',
   text: '',
   attachments: [],
 }
+
+// How long a deferred (login-gated) submit stays valid. After this it is treated as
+// abandoned and is NOT auto-posted on a later login — guards against a stale draft
+// being silently submitted out of nowhere days later.
+const PENDING_SUBMIT_TTL = 60 * 60 * 1000 // 1 hour
 
 export const useComposeStore = defineStore({
   id: 'compose',
@@ -43,6 +50,12 @@ export const useComposeStore = defineStore({
     max: 4,
     uploading: false,
     lastSubmitted: 0,
+    // True while a submit (a normal freegleIt or a login-deferred resume) is in
+    // flight. Guards against a second concurrent submit of the same drafts - e.g.
+    // the user clicking "Freegle it!" while the detached resume-after-login submit
+    // is still running - which would otherwise double-post. Reset in init() too, in
+    // case a hard crash mid-submit persisted it truthy.
+    submitting: false,
     // In-progress bulk "clearance" (pages/give/clearance.vue). Held here so it
     // survives a refresh via this store's localStorage persistence — a clearance
     // holds far more (many items + photos) than a normal post, so losing it hurts.
@@ -51,11 +64,18 @@ export const useComposeStore = defineStore({
     // reason: if we have to interrupt them to log in, app.vue rebuilds the whole
     // app and the modal goes with it, so without this what they typed is gone.
     storyDraft: null,
+    // A submit deferred until the user logs in. The whole store is persisted to
+    // localStorage, so this (and the draft) survive a page refresh during the
+    // forced-login flow and the submit resumes automatically afterwards.
+    pendingSubmit: null,
   }),
   actions: {
     init(config) {
       this.config = config
       this.$api = api(config)
+      // Never start a session mid-submit: clear a stale flag that a crash between
+      // setting submitting=true and the finally could have persisted to localStorage.
+      this.submitting = false
     },
     // Save / clear the in-progress clearance draft (persisted to localStorage).
     saveClearanceDraft(draft) {
@@ -213,6 +233,145 @@ export const useComposeStore = defineStore({
 
       this._progress++
       return ret.id
+    },
+    // Single-call submit: build the flat payload and post it in ONE request via
+    // PUT /message/submit (create + attach + join + post). Attachments go inline
+    // by externaluid (the tusd uid) — no fake/numeric attachment ids, no
+    // separate POST /image, no draft round-trip. This is the simplified path that
+    // replaces createDraft + submitDraft; the old two-step actions are kept for
+    // edit/repost and backwards compatibility.
+    async submitSingle(message, email, options = {}) {
+      if (!this.$api) {
+        throw new Error('Compose store not initialized - $api is not available')
+      }
+      if (!this.postcode?.id) {
+        throw new Error(
+          'No postcode set - please go back and enter your postcode'
+        )
+      }
+
+      const all = message.attachments || []
+      // Suppress the AI illustration when the user uploaded a real photo.
+      const real = all.filter((a) => !(a.externalmods && a.externalmods.ai))
+      const chosen = real.length ? real : all
+      const attachments = chosen
+        .map((a) => ({
+          externaluid: a.ouruid || a.externaluid,
+          externalmods: a.externalmods,
+        }))
+        .filter((a) => a.externaluid)
+
+      const data = {
+        type: message.type,
+        item: message.item,
+        textbody: message.description || '',
+        groupid: this.group,
+        locationid: this.postcode.id,
+        availablenow: message.availablenow,
+        email,
+        attachments,
+      }
+      if (options.deadline) {
+        data.deadline = options.deadline
+      }
+      if (options.deliverypossible !== undefined) {
+        data.deliverypossible = options.deliverypossible
+      }
+      if (options.ai_declined) {
+        // Tell the server the user declined the AI illustration, so the
+        // illustrations cron does not re-inject a cached AI image later.
+        data.ai_declined = true
+      }
+
+      const ret = await this.$api.message.submit(
+        data,
+        (d) => d?.error !== 403 // 403 = posting prohibited/banned (mod choice, not a server error)
+      )
+
+      // For unauthenticated users the server creates the account and returns
+      // auth tokens — store them so the user is logged in afterwards.
+      if (ret.jwt && ret.persistent) {
+        const authStore = useAuthStore()
+        authStore.setAuth(ret.jwt, ret.persistent)
+      }
+
+      return ret // { id, groupid, newuser?, newpassword? }
+    },
+    // Defer a submit until the user has logged in — used when their email is
+    // already registered so we must force a login first. Persisted (whole store
+    // is), so it survives a page refresh mid-login.
+    setPendingSubmit(message, email, options = {}) {
+      // Stamp it so a stale deferral (user abandoned login, comes back much later)
+      // is not silently auto-posted on some future unrelated login.
+      this.pendingSubmit = { message, email, options, at: Date.now() }
+    },
+    clearPendingSubmit() {
+      this.pendingSubmit = null
+    },
+    // Capture the post currently being composed (of the given type) so it can be
+    // submitted automatically once the user has logged in. Called from the page
+    // submit handlers just before they force a login. The whole store is
+    // persisted, so this survives a refresh during the login flow.
+    deferSubmit(type) {
+      const message = this.messages.find(
+        (m) => m && m.type === type && !m.submitted && !m.repostof
+      )
+      if (!message) {
+        return
+      }
+      const options = {}
+      if (message.deadline) {
+        options.deadline = new Date(message.deadline).toISOString()
+      }
+      if (message.deliveryPossible !== undefined) {
+        options.deliverypossible = message.deliveryPossible
+      }
+      if (message.aiDeclined) {
+        options.ai_declined = true
+      }
+      this.setPendingSubmit(message, this.email, options)
+    },
+    // Fire the deferred submit exactly once, after login completes. Called from
+    // the auth store's setUser() when a forced login clears. On success we land
+    // the user on My Posts, matching the normal freegleIt navigation.
+    async resumePendingSubmit() {
+      const pending = this.pendingSubmit
+      if (!pending) {
+        return null
+      }
+      // Drop the marker up front so a later, unrelated login can't replay it and so
+      // it can never double-fire.
+      this.pendingSubmit = null
+      // Ignore a stale deferral: if the user abandoned the login and only logged in
+      // much later (or logged in for some other reason entirely), don't auto-post an
+      // old draft out of nowhere. The draft itself is left untouched.
+      if (pending.at && Date.now() - pending.at > PENDING_SUBMIT_TTL) {
+        return null
+      }
+      // A submit is already running (e.g. the user also clicked "Freegle it!" while
+      // this deferred resume was firing). Never post the same draft twice.
+      if (this.submitting) {
+        return null
+      }
+      this.submitting = true
+      try {
+        const ret = await this.submitSingle(
+          pending.message,
+          pending.email,
+          pending.options
+        )
+        // Only reached on success (submitSingle throws otherwise — and we deliberately
+        // do NOT clear the draft on failure, so the user can retry rather than lose it).
+        // Clear just the submitted type so a parallel draft of the other type survives,
+        // then land on My Posts.
+        this.clearMessagesOfType(pending.message?.type)
+        if (ret?.id) {
+          navigateTo({ name: 'myposts' })
+        }
+        return ret
+      } finally {
+        this.submitting = false
+      }
     },
     async submitDraft(id, email, options = {}) {
       console.log('Submit draft', id, email, options)
@@ -494,6 +653,21 @@ export const useComposeStore = defineStore({
       }
     },
     async submit(params) {
+      if (this.submitting) {
+        // A submit is already running (typically the login-deferred resume fired
+        // from setUser()). Firing a second one for the same not-yet-submitted
+        // drafts would create a duplicate post, so bail out cleanly - the in-flight
+        // submit will complete and navigate to My Posts on its own.
+        return []
+      }
+      this.submitting = true
+      try {
+        return await this._submitInner(params)
+      } finally {
+        this.submitting = false
+      }
+    },
+    async _submitInner(params) {
       // This is the most important bit of code in the client :-).  We have our messages in the compose store.
       //
       // For messages we've just created, the server has a two stage process - create a draft and submit it, so that's
@@ -545,22 +719,24 @@ export const useComposeStore = defineStore({
           }
 
           if (!message.repostof) {
-            // This is a draft we have composed on the client, which doesn't have a corresponding server message yet.
-            // We need to:
-            // - create a drafted
-            // - submit it
-            // - mark it in our store as submitted.
-            console.log('Create draft')
-            const id = await this.createDraft(message, this.email)
-            console.log('Created draft', id)
-
-            const { groupid, newuser, newpassword } = await this.submitDraft(
-              id,
+            // A new post composed on the client. ONE call creates the message,
+            // attaches the photos inline (by tusd externaluid), auto-joins
+            // the group and posts it — no draft round-trip, no client-side
+            // attachment ids, no separate image-link step. This is the heart of
+            // the compose simplification.
+            const ret = await this.submitSingle(
+              message,
               this.email,
               submitOptions
             )
+            this._progress++
 
-            result = { id, groupid, newuser, newpassword }
+            result = {
+              id: ret.id,
+              groupid: ret.groupid,
+              newuser: ret.newuser,
+              newpassword: ret.newpassword,
+            }
           } else {
             // This is one of our existing messages which we are reposting.  We need to convert it back to a draft,
             // edit it (to update it from our client data), and then submit.
@@ -572,42 +748,40 @@ export const useComposeStore = defineStore({
             if (message.attachments) {
               const hasRealPhoto = message.attachments.some(
                 (a) =>
-                  a.id &&
-                  typeof a.id === 'number' &&
-                  !(a.externalmods && a.externalmods.ai)
+                  !(a.externalmods && a.externalmods.ai) &&
+                  ((a.id && typeof a.id === 'number') ||
+                    a.ouruid ||
+                    a.externaluid)
               )
 
-              for (const att in message.attachments) {
-                const attachment = message.attachments[att]
-                if (attachment.externalmods && attachment.externalmods.ai) {
-                  // AI illustrations: include only when there is no real user photo.
-                  if (!hasRealPhoto) {
-                    if (typeof attachment.id === 'number') {
-                      // Already a real server-side id — use it directly.
-                      attids.push(attachment.id)
-                    } else if (attachment.ouruid) {
-                      // Materialise the attachment via POST /image so the PATCH
-                      // receives a valid uint64 id (never a synthetic 'ai-...' string).
-                      try {
-                        const result = await this.$api.image.post({
-                          externaluid: attachment.ouruid,
-                          externalmods: { ai: true },
-                        })
-                        if (result.id) {
-                          attids.push(result.id)
-                        }
-                      } catch (e) {
-                        console.error(
-                          'Failed to create AI illustration attachment:',
-                          e
-                        )
-                      }
-                    }
-                  }
+              for (const attachment of message.attachments) {
+                const isAi =
+                  attachment.externalmods && attachment.externalmods.ai
+                // Suppress the AI illustration when a real photo is present.
+                if (isAi && hasRealPhoto) {
                   continue
                 }
                 if (attachment.id && typeof attachment.id === 'number') {
                   attids.push(attachment.id)
+                } else if (attachment.ouruid || attachment.externaluid) {
+                  // Repost reuses the old PATCH-by-id path, but Phase-5 photos and
+                  // AI illustrations are carried inline (externaluid, no numeric id).
+                  // Materialise them now so the edit keeps them rather than dropping
+                  // them silently.
+                  try {
+                    const result = await this.$api.image.post({
+                      externaluid: attachment.ouruid || attachment.externaluid,
+                      externalmods: attachment.externalmods,
+                    })
+                    if (result.id) {
+                      attids.push(result.id)
+                    }
+                  } catch (e) {
+                    console.error(
+                      'Failed to materialise attachment for repost:',
+                      e
+                    )
+                  }
                 }
               }
             }
@@ -642,7 +816,9 @@ export const useComposeStore = defineStore({
       }
 
       console.log('Done')
-      this.clearMessages()
+      // Clear only the type we just submitted, so a parallel draft of the other type
+      // (e.g. a Wanted composed alongside this Offer) is not wiped.
+      this.clearMessagesOfType(params.type)
 
       // We might have done this logged out.  By the time it has completed we will have an account, so we want to make
       // sure that the login page pops up rather than the signup page.
@@ -688,6 +864,25 @@ export const useComposeStore = defineStore({
     clearMessages() {
       this.messages = []
     },
+    // Clear the posts we just submitted of a given type, preserving a parallel
+    // (non-submitted) draft of the other type. We drop both anything of this type
+    // and anything already marked submitted — markSubmitted() strips the type off a
+    // submitted message, so a type check alone would leave the submitted stub behind.
+    // Falls back to clearing everything if no type is given.
+    clearMessagesOfType(type) {
+      if (!type) {
+        this.messages = []
+        return
+      }
+      this.messages = this.messages.filter(
+        // Keep un-submitted drafts of a different type, and also keep an un-submitted
+        // repost of this type: a login-deferred resume submits only the single
+        // captured draft, so a parallel repost-in-progress of the same type must not
+        // be silently wiped. (After a normal submit() every processed message - reposts
+        // included - is already marked submitted, so this never leaves a stub behind.)
+        (m) => m && !m.submitted && (m.type !== type || m.repostof)
+      )
+    },
   },
   getters: {
     message: (state) => (id) => {
@@ -726,15 +921,14 @@ export const useComposeStore = defineStore({
       // This can also happen, it seems, during the initial load before the Pinia
       // state has been restored.  We used to try to spot when the store didn't have the right messages and fix them
       // up, but because the state hadn't been restored we actually lost what was in there.
+      // Fresh copies, flagged synthetic: they have no row in messages[] (callers
+      // gate writes on composeStore.messages[m.id]) so they can never create the
+      // sparse-array corruption the dual Offer/Wanted defaults used to cause.
       if (!gotOffer) {
-        const m = defaultOffer
-        m.id = ret.length
-        ret.push(m)
+        ret.push({ ...defaultOffer, id: ret.length, synthetic: true })
       }
       if (!gotWanted) {
-        const m = defaultWanted
-        m.id = ret.length
-        ret.push(m)
+        ret.push({ ...defaultWanted, id: ret.length, synthetic: true })
       }
 
       return ret

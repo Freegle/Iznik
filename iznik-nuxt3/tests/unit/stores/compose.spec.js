@@ -4,12 +4,14 @@ import { setActivePinia, createPinia } from 'pinia'
 const mockMessagePut = vi.fn()
 const mockJoinAndPost = vi.fn()
 const mockImagePost = vi.fn()
+const mockMessageSubmit = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
     message: {
       put: mockMessagePut,
       joinAndPost: mockJoinAndPost,
+      submit: mockMessageSubmit,
     },
     image: {
       post: mockImagePost,
@@ -579,6 +581,627 @@ describe('compose store', () => {
     })
   })
 
+  describe('submitSingle (single-call submit)', () => {
+    it('throws when no postcode set', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      await expect(
+        store.submitSingle({ type: 'Offer', item: 'Test' }, 'a@b.com')
+      ).rejects.toThrow('No postcode')
+    })
+
+    it('posts the whole message in one call with attachments inline by externaluid', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+
+      const ret = await store.submitSingle(
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'Good condition',
+          availablenow: 1,
+          attachments: [{ ouruid: 'uid-a' }, { ouruid: 'uid-b' }],
+        },
+        'test@example.com',
+        { deadline: '2026-07-01', deliverypossible: false }
+      )
+
+      expect(ret).toEqual({ id: 99, groupid: 10 })
+      // Exactly one API call — no draft, no POST /image, no JoinAndPost.
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+      expect(mockMessagePut).not.toHaveBeenCalled()
+      expect(mockJoinAndPost).not.toHaveBeenCalled()
+      expect(mockImagePost).not.toHaveBeenCalled()
+      expect(mockMessageSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'Offer',
+          item: 'Sofa',
+          textbody: 'Good condition',
+          groupid: 10,
+          locationid: 123,
+          availablenow: 1,
+          email: 'test@example.com',
+          deadline: '2026-07-01',
+          deliverypossible: false,
+          attachments: [{ externaluid: 'uid-a' }, { externaluid: 'uid-b' }],
+        }),
+        expect.any(Function)
+      )
+    })
+
+    it('suppresses the AI illustration when a real photo is present', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 1, groupid: 10 })
+
+      await store.submitSingle(
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          attachments: [
+            { ouruid: 'real-photo' },
+            { ouruid: 'ai-img', externalmods: { ai: true } },
+          ],
+        },
+        'test@example.com'
+      )
+
+      const payload = mockMessageSubmit.mock.calls[0][0]
+      expect(payload.attachments).toEqual([{ externaluid: 'real-photo' }])
+    })
+
+    it('includes the AI illustration when there is no real photo', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 1, groupid: 10 })
+
+      await store.submitSingle(
+        {
+          type: 'Wanted',
+          item: 'Sofa',
+          attachments: [{ ouruid: 'ai-img', externalmods: { ai: true } }],
+        },
+        'test@example.com'
+      )
+
+      const payload = mockMessageSubmit.mock.calls[0][0]
+      expect(payload.attachments).toEqual([
+        { externaluid: 'ai-img', externalmods: { ai: true } },
+      ])
+    })
+
+    it('stores auth tokens returned for a new user', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({
+        id: 1,
+        groupid: 10,
+        jwt: 'jwt-x',
+        persistent: { id: 5 },
+        newuser: true,
+        newpassword: 'pw',
+      })
+
+      const ret = await store.submitSingle(
+        { type: 'Offer', item: 'Sofa', attachments: [] },
+        'new@example.com'
+      )
+
+      expect(mockSetAuth).toHaveBeenCalledWith('jwt-x', { id: 5 })
+      expect(ret.newpassword).toBe('pw')
+    })
+
+    it('sends ai_declined when the user declined the AI illustration', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 1, groupid: 10 })
+
+      await store.submitSingle(
+        { type: 'Offer', item: 'Sofa', attachments: [] },
+        'a@b.com',
+        { ai_declined: true }
+      )
+
+      expect(mockMessageSubmit.mock.calls[0][0].ai_declined).toBe(true)
+    })
+  })
+
+  describe('deferred submit / resume after login', () => {
+    it('setPendingSubmit stores the intent (persisted with the store)', () => {
+      const store = useComposeStore()
+      const msg = { type: 'Offer', item: 'Sofa' }
+      store.setPendingSubmit(msg, 'a@b.com', { deadline: '2026-07-01' })
+      expect(store.pendingSubmit).toEqual({
+        message: msg,
+        email: 'a@b.com',
+        options: { deadline: '2026-07-01' },
+        at: expect.any(Number),
+      })
+    })
+
+    it('resumePendingSubmit fires the deferred submit once and clears the flag', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 42, groupid: 10 })
+      store.setPendingSubmit(
+        { type: 'Offer', item: 'Sofa', attachments: [{ ouruid: 'u1' }] },
+        'a@b.com'
+      )
+
+      const ret = await store.resumePendingSubmit()
+
+      expect(ret).toEqual({ id: 42, groupid: 10 })
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+      expect(store.pendingSubmit).toBeNull()
+      // After resuming, the user lands on My Posts (matching freegleIt).
+      expect(navigateTo).toHaveBeenCalledWith({ name: 'myposts' })
+      // A second call is a no-op (fires exactly once).
+      expect(await store.resumePendingSubmit()).toBeNull()
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    it('resumePendingSubmit is a no-op while a submit is already in flight', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      // Pretend a normal freegleIt submit is already running.
+      store.submitting = true
+      store.setPendingSubmit(
+        { type: 'Offer', item: 'Sofa', attachments: [] },
+        'a@b.com'
+      )
+
+      const ret = await store.resumePendingSubmit()
+
+      // Must not fire a second submit for the same draft (would double-post), and
+      // must still consume the marker so it can never replay later.
+      expect(ret).toBeNull()
+      expect(mockMessageSubmit).not.toHaveBeenCalled()
+      expect(store.pendingSubmit).toBeNull()
+    })
+
+    it('resume submits the deferred draft but preserves an in-progress repost of the same type', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      store.messages = [
+        // The brand-new Offer being composed (what deferSubmit captured).
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'New Sofa',
+          submitted: false,
+          attachments: [],
+        },
+        // A separate repost-in-progress of the SAME type - must not be wiped.
+        {
+          id: 1,
+          type: 'Offer',
+          item: 'Old Chair',
+          submitted: false,
+          repostof: 555,
+          attachments: [],
+        },
+      ]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+      store.setPendingSubmit(store.messages[0], 'a@b.com')
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.resumePendingSubmit()
+
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+      const remaining = store.messages.filter(Boolean)
+      expect(remaining).toHaveLength(1)
+      expect(remaining[0].repostof).toBe(555)
+      expect(remaining[0].item).toBe('Old Chair')
+
+      logSpy.mockRestore()
+    })
+
+    it('submit() is a no-op while another submit is in flight (no duplicate post)', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          attachments: [],
+        },
+      ]
+      // Hold the first submit open so it is still in flight for the second call.
+      let resolveSubmit
+      mockMessageSubmit.mockReturnValue(
+        new Promise((resolve) => {
+          resolveSubmit = resolve
+        })
+      )
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      const first = store.submit({ type: 'Offer' })
+      expect(store.submitting).toBe(true)
+
+      // Second click while the first is pending: clean no-op, API not hit again.
+      const second = await store.submit({ type: 'Offer' })
+      expect(second).toEqual([])
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+
+      resolveSubmit({ id: 42, groupid: 10 })
+      await first
+      expect(store.submitting).toBe(false)
+
+      logSpy.mockRestore()
+    })
+
+    it('init() clears a stale submitting flag persisted from a crashed submit', () => {
+      const store = useComposeStore()
+      store.submitting = true
+      store.init({ public: {} })
+      expect(store.submitting).toBe(false)
+    })
+
+    it('resumePendingSubmit is a no-op when nothing is pending', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      expect(await store.resumePendingSubmit()).toBeNull()
+      expect(mockMessageSubmit).not.toHaveBeenCalled()
+    })
+
+    it('deferSubmit captures the composing post and its options', () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.email = 'a@b.com'
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          deadline: '2026-07-01',
+          deliveryPossible: true,
+          attachments: [{ ouruid: 'u1' }],
+        },
+      ]
+
+      store.deferSubmit('Offer')
+
+      expect(store.pendingSubmit.email).toBe('a@b.com')
+      expect(store.pendingSubmit.message.item).toBe('Sofa')
+      expect(store.pendingSubmit.options).toEqual({
+        deadline: new Date('2026-07-01').toISOString(),
+        deliverypossible: true,
+      })
+    })
+
+    it('deferSubmit does nothing when there is no matching post', () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.messages = [{ id: 0, type: 'Wanted', item: 'x', submitted: false }]
+      store.deferSubmit('Offer')
+      expect(store.pendingSubmit).toBeNull()
+    })
+
+    it('deferSubmit ignores reposts and already-submitted posts', () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.messages = [
+        { id: 0, type: 'Offer', item: 'a', submitted: true },
+        { id: 1, type: 'Offer', item: 'b', submitted: false, repostof: 5 },
+      ]
+      store.deferSubmit('Offer')
+      expect(store.pendingSubmit).toBeNull()
+    })
+
+    it('deferSubmit captures the ai_declined flag', () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.email = 'a@b.com'
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          aiDeclined: true,
+        },
+      ]
+      store.deferSubmit('Offer')
+      expect(store.pendingSubmit.options.ai_declined).toBe(true)
+    })
+
+    it('does NOT auto-post a stale deferral (older than the TTL)', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      // Simulate a deferral made long ago (beyond the 1h TTL).
+      store.pendingSubmit = {
+        message: { type: 'Offer', item: 'Old', attachments: [] },
+        email: 'a@b.com',
+        options: {},
+        at: Date.now() - 2 * 60 * 60 * 1000,
+      }
+
+      const ret = await store.resumePendingSubmit()
+
+      expect(ret).toBeNull()
+      expect(mockMessageSubmit).not.toHaveBeenCalled()
+      // The stale marker is dropped (so it never fires) but the draft is untouched.
+      expect(store.pendingSubmit).toBeNull()
+    })
+
+    it('keeps the composed draft if the resumed submit fails', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      store.messages = [
+        { id: 0, type: 'Offer', item: 'Sofa', submitted: false },
+      ]
+      mockMessageSubmit.mockRejectedValue(new Error('boom'))
+      store.setPendingSubmit(
+        { type: 'Offer', item: 'Sofa', attachments: [] },
+        'a@b.com'
+      )
+
+      await expect(store.resumePendingSubmit()).rejects.toThrow('boom')
+
+      // Fires once (marker cleared) but the draft is preserved for a manual retry.
+      expect(store.pendingSubmit).toBeNull()
+      expect(store.messages).toHaveLength(1)
+    })
+  })
+
+  describe('submit() — new post uses the single call', () => {
+    it('routes a freshly-composed post through submitSingle, not the draft dance', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'Good condition',
+          availablenow: 1,
+          submitted: false,
+          deadline: '2026-07-01',
+          deliveryPossible: true,
+          attachments: [{ ouruid: 'uid-a' }],
+        },
+      ]
+      mockMessageSubmit.mockResolvedValue({
+        id: 99,
+        groupid: 10,
+        newuser: true,
+        newpassword: 'pw',
+      })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      const results = await store.submit({ type: 'Offer' })
+
+      // Single call — old draft/image/JoinAndPost path is not used for new posts.
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+      expect(mockMessagePut).not.toHaveBeenCalled()
+      expect(mockJoinAndPost).not.toHaveBeenCalled()
+      expect(mockImagePost).not.toHaveBeenCalled()
+
+      // Options threaded through: deadline sent as a plain date (messages.deadline
+      // is a DATE column - an ISO datetime gets rejected under strict sql_mode,
+      // see Discourse #9481), delivery passed on.
+      const payload = mockMessageSubmit.mock.calls[0][0]
+      expect(payload.deadline).toBe('2026-07-01')
+      expect(payload.deliverypossible).toBe(true)
+      expect(payload.attachments).toEqual([{ externaluid: 'uid-a' }])
+
+      // Return contract preserved for freegleIt (id/groupid/newuser/newpassword).
+      expect(results).toEqual([
+        { id: 99, groupid: 10, newuser: true, newpassword: 'pw' },
+      ])
+
+      // The store is cleared after a successful submit.
+      expect(store.messages).toEqual([])
+
+      logSpy.mockRestore()
+    })
+
+    it('clears only the submitted type, preserving a parallel draft of the other type', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          attachments: [],
+        },
+        {
+          id: 1,
+          type: 'Wanted',
+          item: 'Drill',
+          submitted: false,
+          attachments: [],
+        },
+      ]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // The Wanted draft survives; the Offer is gone.
+      expect(store.messages).toHaveLength(1)
+      expect(store.messages[0].type).toBe('Wanted')
+      expect(store.messages[0].item).toBe('Drill')
+
+      logSpy.mockRestore()
+    })
+
+    it('still uses the old draft path for reposts (back-compat)', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [{ id: 5 }],
+        },
+      ]
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // Repost keeps the preserved multi-step path; submitSingle is not used.
+      expect(mockMessageSubmit).not.toHaveBeenCalled()
+      expect(mockMessagePatch).toHaveBeenCalledTimes(1)
+      expect(mockJoinAndPost).toHaveBeenCalledTimes(1)
+      // The existing photo already has a numeric id, so no materialisation.
+      expect(mockImagePost).not.toHaveBeenCalled()
+
+      logSpy.mockRestore()
+    })
+
+    it('materialises an inline (Phase-5) photo added during a repost', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          repostof: 99,
+          // A new photo added via PhotoUploader carries only the inline uid.
+          attachments: [{ ouruid: 'uid-new' }],
+        },
+      ]
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockImagePost.mockResolvedValue({ id: 321 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // The inline photo is materialised and its id reaches the PATCH payload.
+      expect(mockImagePost).toHaveBeenCalledWith({
+        externaluid: 'uid-new',
+        externalmods: undefined,
+      })
+      expect(mockMessagePatch.mock.calls[0][0].attachments).toEqual([321])
+
+      logSpy.mockRestore()
+    })
+
+    it('materialises an AI illustration on repost when there is no real photo', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [{ ouruid: 'ai-uid', externalmods: { ai: true } }],
+        },
+      ]
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockImagePost.mockResolvedValue({ id: 654 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // AI illustration kept (materialised) since there is no real photo.
+      expect(mockImagePost).toHaveBeenCalledWith({
+        externaluid: 'ai-uid',
+        externalmods: { ai: true },
+      })
+      expect(mockMessagePatch.mock.calls[0][0].attachments).toEqual([654])
+
+      logSpy.mockRestore()
+    })
+
+    it('suppresses the AI illustration on repost when a real inline photo is present', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [
+            { ouruid: 'real-uid' },
+            { ouruid: 'ai-uid', externalmods: { ai: true } },
+          ],
+        },
+      ]
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockImagePost.mockResolvedValue({ id: 777 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // Only the real photo is materialised; the AI illustration is dropped.
+      expect(mockImagePost).toHaveBeenCalledTimes(1)
+      expect(mockImagePost).toHaveBeenCalledWith({
+        externaluid: 'real-uid',
+        externalmods: undefined,
+      })
+      expect(mockMessagePatch.mock.calls[0][0].attachments).toEqual([777])
+
+      logSpy.mockRestore()
+    })
+  })
+
   describe('createDraft', () => {
     it('throws when not initialized', async () => {
       const store = useComposeStore()
@@ -694,8 +1317,7 @@ describe('compose store', () => {
       const store = useComposeStore()
       store.init({ public: {} })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      mockMessagePut.mockResolvedValue({ id: 77 })
-      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockMessageSubmit.mockResolvedValue({ id: 77, groupid: 10 })
 
       store.setEmail('test@a.com')
       store.setPostcode({
@@ -714,12 +1336,14 @@ describe('compose store', () => {
 
       // messages.deadline is a DATE column: under strict sql_mode MySQL
       // rejects an ISO datetime ("2026-09-03T00:00:00.000Z") outright, and
-      // the give-flow deadline was silently lost (Discourse #9481).
-      expect(mockJoinAndPost).toHaveBeenCalledWith(
-        77,
-        'test@a.com',
-        expect.objectContaining({ deadline: '2026-09-03' })
+      // the give-flow deadline was silently lost (Discourse #9481). A new
+      // (non-repost) post now goes through the single-call submit, not
+      // joinAndPost, but the same plain-date truncation still applies.
+      expect(mockMessageSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ deadline: '2026-09-03' }),
+        expect.any(Function)
       )
+      expect(mockJoinAndPost).not.toHaveBeenCalled()
       logSpy.mockRestore()
     })
   })

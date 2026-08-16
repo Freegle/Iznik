@@ -195,7 +195,9 @@ async function submitWanted() {
       if (inuse) {
         if (!loggedIn.value) {
           // User is not logged in and the email belongs to an existing account.
-          // Force them to log in rather than showing the merge dialog.
+          // Force them to log in rather than showing the merge dialog. Remember
+          // the post so it submits automatically after login (survives refresh).
+          composeStore.deferSubmit('Wanted')
           authStore.forceLogin = true
           return
         }

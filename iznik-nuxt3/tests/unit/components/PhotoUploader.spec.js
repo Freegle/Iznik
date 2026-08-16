@@ -201,7 +201,7 @@ describe('PhotoUploader', () => {
         stubs: {
           PhotoCard: {
             template:
-              '<div class="photo-card" :data-ouruid="ouruid" :data-uploading="uploading" :data-error="error" :data-show-rotate="showRotate" @click="$emit(\'select\')"><button class="remove-btn" @click.stop="$emit(\'remove\')" /><button class="rotate-btn" @click.stop="$emit(\'rotate\')" /><button class="retry-btn" @click.stop="$emit(\'retry\')" /><button class="quality-btn" @click.stop="$emit(\'showQuality\')" /></div>',
+              '<div class="photo-card" :data-ouruid="ouruid" :data-uploading="uploading" :data-error="error" :data-show-rotate="showRotate" :data-rotate="externalmods && externalmods.rotate" @click="$emit(\'select\')"><button class="remove-btn" @click.stop="$emit(\'remove\')" /><button class="rotate-btn" @click.stop="$emit(\'rotate\')" /><button class="retry-btn" @click.stop="$emit(\'retry\')" /><button class="quality-btn" @click.stop="$emit(\'showQuality\')" /></div>',
             props: [
               'ouruid',
               'src',
@@ -387,9 +387,9 @@ describe('PhotoUploader', () => {
       ).toBe('uid1')
     })
 
-    it('shows rotate button when photo has id', () => {
+    it('shows rotate button once a photo is uploaded (has ouruid)', () => {
       createWrapper({
-        modelValue: [{ id: 1, ouruid: 'uid1', path: '/photo1.jpg' }],
+        modelValue: [{ ouruid: 'uid1', path: '/photo1.jpg' }],
       })
       expect(
         wrapper
@@ -398,7 +398,7 @@ describe('PhotoUploader', () => {
       ).toBe('true')
     })
 
-    it('hides rotate button when photo has no id', () => {
+    it('hides rotate button while still uploading (no ouruid yet)', () => {
       createWrapper({
         modelValue: [{ tempId: 'temp-1', preview: 'blob://preview' }],
       })
@@ -561,28 +561,26 @@ describe('PhotoUploader', () => {
   })
 
   describe('photo rotation', () => {
-    it('calls imageStore.post on rotate', async () => {
+    // Phase 5: rotation is applied client-side (externalmods) and persisted inline
+    // by the single submit call — there is NO POST /image round-trip.
+    it('rotates locally without a server round-trip', async () => {
       createWrapper({
-        modelValue: [{ id: 42, ouruid: 'uid1', path: '/photo1.jpg' }],
+        modelValue: [{ ouruid: 'uid1', path: '/photo1.jpg' }],
       })
 
       await wrapper.find('.featured-photo .rotate-btn').trigger('click')
       await flushPromises()
 
-      expect(mockImageStore.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 42,
-          rotate: 90,
-          type: 'Message',
-        })
-      )
+      expect(
+        wrapper.find('.featured-photo .photo-card').attributes('data-rotate')
+      ).toBe('90')
+      expect(mockImageStore.post).not.toHaveBeenCalled()
     })
 
     it('accumulates rotation degrees', async () => {
       createWrapper({
         modelValue: [
           {
-            id: 42,
             ouruid: 'uid1',
             path: '/photo1.jpg',
             externalmods: { rotate: 90 },
@@ -593,19 +591,16 @@ describe('PhotoUploader', () => {
       await wrapper.find('.featured-photo .rotate-btn').trigger('click')
       await flushPromises()
 
-      expect(mockImageStore.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 42,
-          rotate: 180,
-        })
-      )
+      expect(
+        wrapper.find('.featured-photo .photo-card').attributes('data-rotate')
+      ).toBe('180')
+      expect(mockImageStore.post).not.toHaveBeenCalled()
     })
 
     it('wraps rotation at 360 degrees', async () => {
       createWrapper({
         modelValue: [
           {
-            id: 42,
             ouruid: 'uid1',
             path: '/photo1.jpg',
             externalmods: { rotate: 270 },
@@ -616,22 +611,9 @@ describe('PhotoUploader', () => {
       await wrapper.find('.featured-photo .rotate-btn').trigger('click')
       await flushPromises()
 
-      expect(mockImageStore.post).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 42,
-          rotate: 0,
-        })
-      )
-    })
-
-    it('does not rotate photo without id', async () => {
-      createWrapper({
-        modelValue: [{ tempId: 'temp-1', preview: '/preview.jpg' }],
-      })
-
-      await wrapper.find('.featured-photo .rotate-btn').trigger('click')
-      await flushPromises()
-
+      expect(
+        wrapper.find('.featured-photo .photo-card').attributes('data-rotate')
+      ).toBe('0')
       expect(mockImageStore.post).not.toHaveBeenCalled()
     })
   })
@@ -1574,19 +1556,16 @@ describe('PhotoUploader', () => {
 
   // AssertFlip test — Step 1: documents the buggy behaviour (PASSES on current code).
   // Step 2 (inverted) is below and FAILS until the fix lands.
-  describe('AI image pruning via Uppy upload (web mode) — bug: handleUppySuccess does not remove AI photos', () => {
+  describe('AI image pruning via Uppy upload (web mode)', () => {
     beforeEach(() => {
       mockMobileStore.isApp = false
     })
 
     it('Uppy upload removes AI-generated image once user uploads their own photo', async () => {
-      // BUG: handleUppySuccess (the web/Uppy upload path) does not filter out
-      // AI-generated photos after a real upload, unlike the mobile uploadPhoto path
-      // which calls: photos.value = photos.value.filter((p) => !p.externalmods?.ai)
+      // The web/Uppy upload path (handleUppySuccess) must filter out AI-generated
+      // photos after a real upload, just like the mobile uploadPhoto path.
       createWrapper({
-        modelValue: [
-          { id: 99, externalmods: { ai: true }, ouruid: 'ai-uid-1' },
-        ],
+        modelValue: [{ ouruid: 'ai-uid-1', externalmods: { ai: true } }],
       })
       await flushPromises()
 
@@ -1597,7 +1576,7 @@ describe('PhotoUploader', () => {
       expect(completeCall).toBeDefined()
       const handleUppySuccess = completeCall[1]
 
-      // Simulate Uppy completing a real photo upload (imageStore.post mock returns id:1)
+      // Simulate Uppy completing a real photo upload.
       await handleUppySuccess({
         successful: [
           {
@@ -1608,12 +1587,13 @@ describe('PhotoUploader', () => {
       })
       await flushPromises()
 
-      // After the fix: AI photo should be gone, only the real photo remains.
-      // FAILS on current (buggy) code because handleUppySuccess never filters AI photos.
+      // AI photo gone; only the real photo remains, carried inline by its uid
+      // (Phase 5: no POST /image, so no numeric id).
       const aiPhotos = wrapper.vm.photos.filter((p) => p.externalmods?.ai)
       expect(aiPhotos.length).toBe(0)
       expect(wrapper.vm.photos).toHaveLength(1)
-      expect(wrapper.vm.photos[0].id).toBe(1)
+      expect(wrapper.vm.photos[0].ouruid).toBe('freegletusd-realphoto456')
+      expect(mockImageStore.post).not.toHaveBeenCalled()
     })
   })
 
@@ -1851,19 +1831,16 @@ describe('PhotoUploader', () => {
     })
   })
 
-  // The bytes go up via tus, then we register them with the API.  That second
-  // call is what has to finish for the photo to stop being "uploading", and the
-  // give flow has no exits while it is: Next is gated on anyUploading and Skip
-  // only renders in the empty state.  So if the register call never settles the
-  // member is not just missing a photo, they cannot post at all - and compose
-  // persists that to their next visit.  This happened live: the API layer
-  // awaited a connection check that polled for ever, so a 200 that had already
-  // come back was never read (see composables/useFetchRetry.js).  That is fixed
-  // at source, but the flow should not depend on the API layer never hanging.
-  describe('registering the uploaded photo hangs', () => {
-    async function startUploadThatHangs() {
-      mockImageStore.post.mockReturnValueOnce(new Promise(() => {}))
-
+  // The bytes go up via tus; that used to be followed by a second call to
+  // register the photo with the API, and if THAT call never settled the photo
+  // stayed "uploading" forever - the give flow has no exits while it is: Next
+  // is gated on anyUploading and Skip only renders in the empty state. Phase 5
+  // (see applyUploadedUid) removed that second call altogether: the uid tus
+  // hands back on success IS the attachment reference, applied synchronously,
+  // so there is no longer an await between "bytes up" and "not uploading" for
+  // a slow or hung connection to get stuck in.
+  describe('finishing an upload after tus reports success', () => {
+    it('stops being "uploading" synchronously, with no server round-trip', async () => {
       createWrapper({ modelValue: [] })
       await flushPromises()
 
@@ -1873,85 +1850,10 @@ describe('PhotoUploader', () => {
       mockTusUpload._options.onProgress(100, 100)
       mockTusUpload._options.onSuccess()
       await flushPromises()
-    }
 
-    it('leaves the photo uploading while the register call is still outstanding', async () => {
-      vi.useFakeTimers()
-      try {
-        await startUploadThatHangs()
-
-        expect(wrapper.vm.photos[0].uploading).toBe(true)
-        expect(wrapper.vm.photos[0].progress).toBe(100)
-      } finally {
-        vi.useRealTimers()
-      }
-    })
-
-    it('gives the photo up as failed rather than blocking the flow for ever', async () => {
-      vi.useFakeTimers()
-      try {
-        await startUploadThatHangs()
-
-        await vi.advanceTimersByTimeAsync(61000)
-
-        expect(wrapper.vm.photos[0].uploading).toBe(false)
-        expect(wrapper.vm.photos[0].error).toBe(true)
-      } finally {
-        vi.useRealTimers()
-      }
-    })
-
-    // The tray syncs to the persisted compose store through a watcher that Vue
-    // stops when this component unmounts.  So if we go away while an upload is
-    // outstanding, the last thing written to the store says uploading:true, and
-    // when the upload does settle it mutates an object nothing is listening to.
-    // The store keeps uploading:true for ever, the give flow gates Next on it,
-    // and it is restored in that state on the next visit.  Live, the member
-    // navigated off the photos page 22s after the reply came back, which is
-    // what made her lockout permanent rather than momentary.
-    it('does not leave the tray saying uploading when we navigate away mid-upload', async () => {
-      // Stand in for the compose store: whatever the component last pushed out
-      // is what gets persisted and restored on the next visit.
-      const pushedOut = []
-
-      mockImageStore.post.mockReturnValueOnce(new Promise(() => {}))
-      createWrapper({
-        modelValue: [],
-        'onUpdate:modelValue': (v) => pushedOut.push(v),
-      })
-      await flushPromises()
-
-      wrapper.vm.processPhoto('/photo.jpg')
-      await flushPromises()
-      mockTusUpload._options.onProgress(100, 100)
-      mockTusUpload._options.onSuccess()
-      await flushPromises()
-
-      expect(pushedOut.length).toBeGreaterThan(0)
-      expect(pushedOut.at(-1)[0].uploading).toBe(true)
-
-      wrapper.unmount()
-      await flushPromises()
-
-      const persisted = pushedOut.at(-1)[0]
-      expect(persisted.uploading).toBe(false)
-      expect(persisted.error).toBe(true)
-    })
-
-    it('offers retry and delete once it has failed, so there is a way forward', async () => {
-      vi.useFakeTimers()
-      try {
-        await startUploadThatHangs()
-        await vi.advanceTimersByTimeAsync(61000)
-      } finally {
-        vi.useRealTimers()
-      }
-
-      await flushPromises()
-
-      const card = wrapper.find('.photo-card')
-      expect(card.attributes('data-error')).toBe('true')
-      expect(card.attributes('data-uploading')).toBe('false')
+      expect(wrapper.vm.photos[0].uploading).toBe(false)
+      expect(wrapper.vm.photos[0].ouruid).toBe('freegletusd-abc123')
+      expect(mockImageStore.post).not.toHaveBeenCalled()
     })
   })
 })

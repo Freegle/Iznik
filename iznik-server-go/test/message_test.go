@@ -5844,6 +5844,185 @@ func TestListMessagesMT_LimboUserMessageNotReturned(t *testing.T) {
 	db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", posterID)
 }
 
+func TestListMessagesMT_FilterChecked(t *testing.T) {
+	// filter=checked returns live posts auto-approved (approvedby IS NULL) from
+	// auto-moderated (NULL posting status) members — not trusted-member posts and
+	// not mod-approved posts.
+	prefix := uniquePrefix("lstmt_checked")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	nullPoster := CreateTestUser(t, prefix+"_null", "User")
+	defaultPoster := CreateTestUser(t, prefix+"_default", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, nullPoster, groupID, "Member")
+	CreateTestMembership(t, defaultPoster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", nullPoster, groupID)
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", defaultPoster, groupID)
+	_, modToken := CreateTestSession(t, modID)
+
+	checkedMsg := CreateTestMessage(t, nullPoster, groupID, prefix+" auto checked", 52.0, -1.0)
+	trustedMsg := CreateTestMessage(t, defaultPoster, groupID, prefix+" trusted live", 52.0, -1.0)
+	modApprovedMsg := CreateTestMessage(t, nullPoster, groupID, prefix+" mod approved", 52.0, -1.0)
+	// A post a mod has already marked checked must drop off the queue.
+	alreadyCheckedMsg := CreateTestMessage(t, nullPoster, groupID, prefix+" already checked", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL WHERE msgid IN (?, ?, ?)", checkedMsg, trustedMsg, alreadyCheckedMsg)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=? WHERE msgid=?", modID, modApprovedMsg)
+	db.Exec("UPDATE messages_groups SET checkedat=NOW(), checkedby=? WHERE msgid=?", modID, alreadyCheckedMsg)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=checked&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+	foundChecked, foundTrusted, foundMod, foundAlready := false, false, false, false
+	for _, id := range msgs {
+		switch id {
+		case float64(checkedMsg):
+			foundChecked = true
+		case float64(trustedMsg):
+			foundTrusted = true
+		case float64(modApprovedMsg):
+			foundMod = true
+		case float64(alreadyCheckedMsg):
+			foundAlready = true
+		}
+	}
+	assert.True(t, foundChecked, "auto-approved post from NULL member should appear under checked")
+	assert.False(t, foundTrusted, "trusted-member post should not appear under checked")
+	assert.False(t, foundMod, "mod-approved post should not appear under checked")
+	assert.False(t, foundAlready, "a post already marked checked should not appear under checked")
+
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, alreadyCheckedMsg)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg, alreadyCheckedMsg)
+}
+
+func TestListMessagesMT_FilterTrusted(t *testing.T) {
+	// filter=trusted returns live posts (approvedby IS NULL) from trusted
+	// (DEFAULT/UNMODERATED posting status) members — not auto-moderated NULL
+	// members and not mod-approved posts.
+	prefix := uniquePrefix("lstmt_trusted")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	nullPoster := CreateTestUser(t, prefix+"_null", "User")
+	defaultPoster := CreateTestUser(t, prefix+"_default", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, nullPoster, groupID, "Member")
+	CreateTestMembership(t, defaultPoster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", nullPoster, groupID)
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", defaultPoster, groupID)
+	_, modToken := CreateTestSession(t, modID)
+
+	checkedMsg := CreateTestMessage(t, nullPoster, groupID, prefix+" auto checked", 52.0, -1.0)
+	trustedMsg := CreateTestMessage(t, defaultPoster, groupID, prefix+" trusted live", 52.0, -1.0)
+	modApprovedMsg := CreateTestMessage(t, defaultPoster, groupID, prefix+" mod approved", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL WHERE msgid IN (?, ?)", checkedMsg, trustedMsg)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=? WHERE msgid=?", modID, modApprovedMsg)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=trusted&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+	foundChecked, foundTrusted, foundMod := false, false, false
+	for _, id := range msgs {
+		switch id {
+		case float64(checkedMsg):
+			foundChecked = true
+		case float64(trustedMsg):
+			foundTrusted = true
+		case float64(modApprovedMsg):
+			foundMod = true
+		}
+	}
+	assert.True(t, foundTrusted, "trusted-member post should appear under trusted")
+	assert.False(t, foundChecked, "auto-moderated NULL-member post should not appear under trusted")
+	assert.False(t, foundMod, "mod-approved post should not appear under trusted")
+
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?)", checkedMsg, trustedMsg, modApprovedMsg)
+}
+
+func TestListMessagesMT_MarkChecked(t *testing.T) {
+	// Marking the checked bucket sets checkedat/checkedby and removes the posts
+	// from the checked oversight queue.
+	prefix := uniquePrefix("lstmt_markchk")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	nullPoster := CreateTestUser(t, prefix+"_null", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, nullPoster, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	db.Exec("UPDATE memberships SET ourPostingStatus = NULL WHERE userid = ? AND groupid = ?", nullPoster, groupID)
+	_, modToken := CreateTestSession(t, modID)
+
+	msg1 := CreateTestMessage(t, nullPoster, groupID, prefix+" auto checked 1", 52.0, -1.0)
+	msg2 := CreateTestMessage(t, nullPoster, groupID, prefix+" auto checked 2", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL WHERE msgid IN (?, ?)", msg1, msg2)
+
+	listURL := fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=checked&jwt=%s", groupID, modToken)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", listURL, nil))
+	var before map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&before)
+	beforeMsgs, _ := before["messages"].([]interface{})
+	assert.GreaterOrEqual(t, len(beforeMsgs), 2, "both posts should be in the checked queue before marking")
+
+	// Mark the whole checked bucket for this group checked.
+	markBody := fmt.Sprintf(`{"groupid": %d, "filter": "checked"}`, groupID)
+	markReq := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", modToken), strings.NewReader(markBody))
+	markReq.Header.Set("Content-Type", "application/json")
+	markResp, err := getApp().Test(markReq)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, markResp.StatusCode)
+
+	// checkedat/checkedby are now set.
+	var checkedCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid IN (?, ?) AND checkedat IS NOT NULL AND checkedby = ?",
+		msg1, msg2, modID).Scan(&checkedCount)
+	assert.Equal(t, int64(2), checkedCount, "both posts should be marked checked")
+
+	// They no longer appear under the checked queue.
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", listURL, nil))
+	var after map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&after)
+	afterMsgs, _ := after["messages"].([]interface{})
+	for _, id := range afterMsgs {
+		assert.NotEqual(t, float64(msg1), id, "checked post should leave the queue")
+		assert.NotEqual(t, float64(msg2), id, "checked post should leave the queue")
+	}
+
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", msg1, msg2)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", msg1, msg2)
+}
+
+func TestMarkCheckedUnauthorized(t *testing.T) {
+	// Non-mods can't mark posts checked.
+	prefix := uniquePrefix("markchk_unauth")
+	groupID := CreateTestGroup(t, prefix)
+	regularID := CreateTestUser(t, prefix+"_regular", "User")
+	CreateTestMembership(t, regularID, groupID, "Member")
+	_, regularToken := CreateTestSession(t, regularID)
+
+	markBody := fmt.Sprintf(`{"groupid": %d, "filter": "checked"}`, groupID)
+	markReq := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/modtools/messages/markchecked?jwt=%s", regularToken), strings.NewReader(markBody))
+	markReq.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(markReq)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode)
+}
+
 func TestListMessagesPendingUnauthorized(t *testing.T) {
 	prefix := uniquePrefix("lstmsg_pend_unauth")
 
