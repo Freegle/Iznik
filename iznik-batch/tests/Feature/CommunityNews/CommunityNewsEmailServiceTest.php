@@ -119,6 +119,23 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->locate($u4, 51.49, -0.13);
         $this->createMembership($u4, $g1);
 
+        // Dormant for over the digest inactivity threshold (182.5 days) -> no
+        // mail. The 2026-08-15 send went to every member however inactive
+        // (643,931 mails) and dead dormant mailboxes mass-deferred the relay.
+        $u5 = $this->createTestUser(['email_preferred' => 'u5@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $u5->lastaccess = now()->subDays(200);
+        $u5->save();
+        $this->locate($u5, 51.50, -0.12);
+        $this->createMembership($u5, $g1);
+
+        // NULL lastaccess (never logged in, e.g. brand-new member) -> still
+        // mailed, matching the digest convention.
+        $u6 = $this->createTestUser(['email_preferred' => 'u6@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $u6->lastaccess = null;
+        $u6->save();
+        $this->locate($u6, 51.50, -0.12);
+        $this->createMembership($u6, $g1);
+
         $area = CommunityNewsArea::create([
             'anchorgroupid' => min($g1->id, $g2->id), 'name' => 'Testville', 'intro' => 'A few nice things.',
             'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g1->id, $g2->id], 'groupcount' => 2,
@@ -131,12 +148,14 @@ class CommunityNewsEmailServiceTest extends TestCase
         $result = $this->svc()->sendWeekly();
 
         $sent = Mail::sent(CommunityNewsMail::class);
-        $this->assertSame(2, $result['sent']);
-        $this->assertCount(2, $sent);
+        $this->assertSame(3, $result['sent']);
+        $this->assertCount(3, $sent);
         $this->assertCount(1, $sent->filter(fn ($m) => $m->userId === $u1->id)); // deduped
         $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u4->id));
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u2->id)); // opted out
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u3->id)); // bouncing
+        $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u5->id)); // dormant >182.5d
+        $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u6->id));  // never logged in
 
         // Bookkeeping: item marked emailed, area cadence stamped.
         $this->assertNotNull(CommunityNewsItem::where('areaid', $area->id)->first()->emailed_at);
