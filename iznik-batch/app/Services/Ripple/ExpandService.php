@@ -401,23 +401,18 @@ class ExpandService
 
             $absent = array_map(static fn ($r) => (int) $r->msgid, $stale);
 
-            // Absent from messages_spatial does not mean gone. The index job's age pass
-            // (removeOldMessages) deletes any post with a messages_groups row older than
-            // 31 days - including DEAD rows, such as the tombstones left behind
-            // (deleted=1) when a rippled-in copy is retracted - while its add pass
-            // restores any post that still has a live qualifying membership, such as an
-            // old post whose arrival a repost refreshed. Those posts are therefore
-            // deleted at the end of every index run and re-added mid-way through the
-            // next: ~3,000 of them on production, absent for minutes of every cycle,
-            // over a thousand of them rippling.
-            //
-            // Treating each absence as "the post has gone" deleted the reach row,
-            // retracted the post's copies from every group it had rippled into (leaving
-            // MORE tombstones, feeding the loop), and then initialiseNew built the whole
-            // thing again from scratch - routing searches and a large polygon write to
-            // the cluster's write node, per post, over and over. On production that was
-            // about 85% of all initialisation work: 11,656 initialisations in one day
-            // against 1,635 genuinely new posts, with 8,802 reach rows dropped.
+            // Absent from messages_spatial does not mean gone. The index job can be
+            // down, or die between its delete and add passes - and historically its age
+            // pass deleted ~3,000 still-qualifying posts at the end of every run off
+            // their dead memberships' arrivals (retracted-copy tombstones; fixed in
+            // removeOldMessages alongside this check). Treating each absence as "the
+            // post has gone" deleted the reach row, retracted the post's copies from
+            // every group it had rippled into (leaving MORE tombstones, feeding the
+            // loop), and then initialiseNew built the whole thing again from scratch -
+            // routing searches and a large polygon write to the cluster's write node,
+            // per post. On production that was about 85% of all initialisation work:
+            // 11,656 initialisations in one day against 1,635 genuinely new posts, with
+            // 8,802 reach rows dropped.
             //
             // So rather than trust the index, ask the tables it is built from whether each
             // of these posts is supposed to be in it. A post that no longer qualifies has

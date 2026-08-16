@@ -637,9 +637,9 @@ class ExpandServiceTest extends TestCase
      * Say that a post has actually gone.
      *
      * removeStaleAndRetract does not act on a post just because it is missing from
-     * messages_spatial - the index job deletes still-qualifying posts at the end of
-     * every run (its age pass trips on dead memberships, e.g. retracted-copy
-     * tombstones) and re-adds them the next run. It asks whether the post still
+     * messages_spatial - a live post can be absent while the index job is down or
+     * mid-run (and historically its age pass deleted thousands of still-qualifying
+     * posts every run off their dead memberships). It asks whether the post still
      * belongs in the index, so a test about a post that has gone has to make it
      * genuinely gone rather than only removing the index row.
      */
@@ -650,13 +650,13 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * The churn this check exists for: the index job deletes thousands of
-     * still-qualifying posts at the end of every run (its age pass trips on their dead
-     * memberships) and re-adds them the next run, so a live post is routinely absent
-     * for minutes. Such a post must keep its reach row. Dropping it also retracted the
-     * post's copies from every group it had rippled into and forced a full rebuild -
-     * routing searches and a large polygon write per post - and on production that was
-     * about 85% of all initialisation work.
+     * The churn this check exists for: the index job's age pass used to delete
+     * thousands of still-qualifying posts at the end of every run (tripping on their
+     * dead memberships) and re-add them the next run, and the job can still be down or
+     * mid-run, so a live post can be absent from the index. Such a post must keep its
+     * reach row. Dropping it also retracted the post's copies from every group it had
+     * rippled into and forced a full rebuild - routing searches and a large polygon
+     * write per post - and on production that was about 85% of all initialisation work.
      */
     public function test_reach_survives_a_post_briefly_missing_from_spatial(): void
     {
@@ -669,7 +669,7 @@ class ExpandServiceTest extends TestCase
             'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
         ]);
         // Live and approved, so it belongs in the index. It is simply not in it at this
-        // instant, exactly as the index job leaves qualifying posts between its runs.
+        // instant, as when the index job is down or between its delete and add passes.
         MessageGroup::create([
             'msgid' => $message->id,
             'groupid' => $group->id,
@@ -2690,11 +2690,10 @@ class ExpandServiceTest extends TestCase
      * The post is removed from the browsable set (rejected on origin / withdrawn), so it
      * leaves messages_spatial.
      *
-     * removeStaleAndRetract does not act on absence from the index alone, because the
-     * index job routinely deletes still-qualifying posts at the end of a run and
-     * re-adds them the next. These tests are about a post that has genuinely gone, so
-     * they make it gone - see test_reach_survives_a_post_briefly_missing_from_spatial
-     * for the other case.
+     * removeStaleAndRetract does not act on absence from the index alone, because a
+     * live post can be absent while the index job is down or mid-run. These tests are
+     * about a post that has genuinely gone, so they make it gone - see
+     * test_reach_survives_a_post_briefly_missing_from_spatial for the other case.
      */
     private function leaveSpatial(int $msgid): void
     {

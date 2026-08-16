@@ -786,6 +786,60 @@ class MessageSpatialServiceTest extends TestCase
         $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
     }
 
+    /**
+     * THE production churn case: an old post revived by a repost (fresh live membership)
+     * still carries stale DEAD memberships - the tombstones left when its rippled-in
+     * copies were retracted. The age pass must not delete it off those: a post is only
+     * over-age when NO live approved membership is within the window. Before this rule
+     * ~3,000 such posts were deleted at the end of every index run and re-added by the
+     * next, flickering out of browse for minutes of every cycle.
+     */
+    public function test_keeps_reposted_post_despite_stale_dead_tombstones(): void
+    {
+        $msgid = $this->eligiblePost();
+        $this->indexPost($msgid);
+
+        // Two retracted-copy tombstones from an earlier ripple, now over the window.
+        $groupB = $this->createTestGroup();
+        $groupC = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            ['msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subDays(40), 'deleted' => 1, 'rippled_in' => 1],
+            ['msgid' => $msgid, 'groupid' => $groupC->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+                'arrival' => now()->subDays(45), 'deleted' => 1, 'rippled_in' => 1],
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(
+            1,
+            DB::table('messages_spatial')->where('msgid', $msgid)->count(),
+            'stale DEAD memberships must not age a freshly-reposted post out of the index'
+        );
+    }
+
+    /**
+     * The same rule the other way round: a dead membership must not KEEP a post in
+     * either. Only live approved memberships count, on both sides of the age decision.
+     */
+    public function test_removes_post_whose_only_fresh_membership_is_dead(): void
+    {
+        $msgid = $this->eligiblePost();
+        $this->indexPost($msgid);
+        // The live membership ages out...
+        DB::table('messages_groups')->where('msgid', $msgid)->update(['arrival' => now()->subDays(40)]);
+        // ...and the only fresh membership is a dead tombstone.
+        $groupB = $this->createTestGroup();
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgid, 'groupid' => $groupB->id, 'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1), 'deleted' => 1, 'rippled_in' => 1,
+        ]);
+
+        $this->service->updateSpatialIndex();
+
+        $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+    }
+
     public function test_still_qualify_includes_live_post(): void
     {
         $msgid = $this->eligiblePost();

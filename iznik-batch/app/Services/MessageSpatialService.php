@@ -48,19 +48,16 @@ class MessageSpatialService
     /**
      * Of the posts given, which ones are supposed to be in messages_spatial right now?
      *
-     * A post can be missing from the index while being perfectly alive. The index job's
-     * age pass (removeOldMessages) drops a post when ANY of its messages_groups rows is
-     * over the 31-day window - including dead ones, such as the tombstones left behind
-     * (deleted=1) when a rippled-in copy is retracted. An old post whose arrival was
-     * refreshed by a repost still has a live qualifying membership too, so the next
-     * run's upsert puts it straight back: on production ~3,000 posts are deleted at the
-     * end of every index run and re-added by the next, absent for minutes of every
-     * cycle, over a thousand of them actively rippling.
+     * The index can be missing a post that is perfectly alive: the index job can be
+     * down, or die between its delete and add passes - and historically its age pass
+     * deleted ~3,000 still-qualifying posts at the end of every run off their dead
+     * memberships' arrivals (removeOldMessages, fixed alongside this check). Reading
+     * those absences as "the post has gone" was retracting live posts' rippling
+     * reaches by the thousand per day.
      *
-     * Anything that wants to read "not in the index" as "this post has gone" has to
-     * tell those apart from genuinely-removed posts, by asking the same question the
-     * index's add side asks. This shares qualifyingMemberships() with
-     * upsertRecentMessages so the writer and the reader cannot drift apart.
+     * So anything that wants to read "not in the index" as "this post has gone" asks
+     * here first. This shares qualifyingMemberships() with upsertRecentMessages so
+     * the writer and the reader cannot drift apart.
      *
      * @param  int[]  $msgids
      * @return int[]  those that qualify
@@ -288,9 +285,28 @@ class MessageSpatialService
     {
         $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));
 
+        // A post is over-age only when NO live approved membership is within the
+        // window - the same memberships the add side would index it from. Only live
+        // rows count on both sides of the decision: a dead membership can neither
+        // age a post out nor keep it in.
+        //
+        // This pass originally joined ALL memberships and deleted on ANY stale one
+        // (as V1 did), which tripped over dead rows - the tombstones a retracted
+        // rippled-in copy leaves behind (deleted=1). An old post revived by a repost
+        // has a fresh live membership too, so ~3,000 such posts were deleted at the
+        // end of every run off their tombstones' arrivals and re-added by the next
+        // run's upsert: out of browse for minutes of every cycle, completed flags
+        // wiped and rewritten, and (before stillQualifyForIndex) thousands of
+        // spurious reach retractions and re-initialisations a day.
         $rows = DB::table('messages_spatial')
-            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_spatial.msgid')
-            ->where('messages_groups.arrival', '<', $cutoff)
+            ->whereNotExists(function ($sub) use ($cutoff) {
+                $sub->select('messages_groups.msgid')
+                    ->from('messages_groups')
+                    ->whereColumn('messages_groups.msgid', 'messages_spatial.msgid')
+                    ->where('messages_groups.arrival', '>=', $cutoff)
+                    ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+                    ->where('messages_groups.deleted', 0);
+            })
             ->select('messages_spatial.id', 'messages_spatial.msgid')
             ->get();
 
