@@ -154,8 +154,13 @@ func erode(grid [][]bool) {
 // keeping the result closed. The ring is split at its first vertex and the vertex
 // farthest from it, and each open chain is simplified independently, which is the
 // standard way to apply DP to a closed ring without collapsing it.
+//
+// A tolerance of zero or less means "do not simplify" and returns the ring untouched.
+// The sandwich bounds always pass a positive tolerance; the guard is for callers that
+// treat 0 as "off" (DisplayRing), where DP at tol=0 would still quietly drop collinear
+// points and so would not be the no-op the caller asked for.
 func simplifyRing(ring [][2]float64, tol float64) [][2]float64 {
-	if len(ring) <= 4 {
+	if len(ring) <= 4 || tol <= 0 {
 		return ring
 	}
 	// Drop the closing duplicate for processing.

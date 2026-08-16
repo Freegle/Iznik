@@ -551,7 +551,7 @@ describe('PostFilters', () => {
     // The sentinel defers to the server's own reach, which grows every post to the
     // widest band's budget - so it only means "as far as I would go" for a member whose
     // own band earns that ceiling. A sparse member at their top stop is exactly that case.
-    it('stores BROWSE_DISTANCE_UNLIMITED (and skips routing) at the top stop when the band is the ceiling', async () => {
+    it('stores BROWSE_DISTANCE_UNLIMITED (and derives no radius) at the top stop when the band is the ceiling', async () => {
       mockFetchNear.mockResolvedValue({
         cap_minutes: 45,
         density_band: 'sparse',
@@ -571,7 +571,12 @@ describe('PostFilters', () => {
       expect(mockMe.value.settings.browseMaxDistance).toBe(
         Number.MAX_SAFE_INTEGER
       )
-      expect(mockFetchNear).not.toHaveBeenCalled() // the top stop needs no reach lookup
+      // The top stop needs no RADIUS - it stores the sentinel and defers to the server's own
+      // reach. It does still need the reach SHAPE, or dragging to the top would leave the map
+      // shading the narrower travel time the member just dragged away from. So there is exactly
+      // one lookup, and it is the one that asks for the polygon.
+      expect(mockFetchNear).toHaveBeenCalledTimes(1)
+      expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 45, true)
       const emitted = wrapper.emitted('update:selectedMaxDistance')
       expect(emitted[emitted.length - 1]).toEqual([Number.MAX_SAFE_INTEGER])
     })
@@ -584,7 +589,9 @@ describe('PostFilters', () => {
       input.element.value = 10
       await input.trigger('change')
       await flushPromises()
-      expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 10)
+      // true = also fetch the reach outline: browse draws a map, so it takes the shape from
+      // the routing pass this lookup already runs rather than routing it again.
+      expect(mockFetchNear).toHaveBeenCalledWith(51.5, -0.1, 10, true)
       expect(mockMe.value.settings.browseMaxMinutes).toBe(10)
       expect(mockMe.value.settings.browseMaxDistance).toBe(4) // mocked reach_radius_miles
       expect(wrapper.emitted('update:selectedMaxDistance')[0]).toEqual([4])

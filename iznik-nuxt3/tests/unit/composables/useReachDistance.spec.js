@@ -278,3 +278,207 @@ describe('useReachDistance density-aware maximum', () => {
     expect(maxMinutes.value).toBe(BROWSE_MINUTES_FALLBACK_MAX)
   })
 })
+
+// The browse map shades the member's real drive-time reach. Its shape comes from the very
+// same /town/near call this composable already makes for the radius, so the map never routes
+// the reach a second time - but only when the caller asks, so the Feed settings slider (which
+// draws no map) keeps paying nothing for it.
+describe('useReachDistance reach overlay', () => {
+  let useReachDistance
+  let useReachOverlay
+
+  const FEATURE = {
+    type: 'Feature',
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 0],
+        ],
+      ],
+    },
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockMe.value = {
+      lat: 53.4,
+      lng: -1.3,
+      settings: { browseMaxMinutes: 15, browseMaxDistance: 6 },
+    }
+    clearNuxtState()
+    ;({ useReachDistance } = await import('~/composables/useReachDistance'))
+    ;({ useReachOverlay } = await import('~/composables/useReachOverlay'))
+  })
+
+  it('does not ask for the polygon by default', async () => {
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 8.5 })
+    const { onSliderChange } = useReachDistance()
+
+    await onSliderChange(25)
+
+    expect(mockFetchNear).toHaveBeenCalledWith(53.4, -1.3, 25, false)
+    expect(useReachOverlay().reachGeoJSON.value).toBeNull()
+  })
+
+  it('asks for the polygon and publishes it when the caller wants a map', async () => {
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 8.5,
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange } = useReachDistance(null, { withPolygon: true })
+
+    await onSliderChange(25)
+
+    expect(mockFetchNear).toHaveBeenCalledWith(53.4, -1.3, 25, true)
+    expect(useReachOverlay().reachGeoJSON.value).toEqual(FEATURE)
+  })
+
+  // Dragging to the far-right stop takes the "no limit" shortcut, which skips the radius
+  // derivation. Without an explicit refresh the map would keep shading the travel time the
+  // member just dragged away from.
+  it('refreshes the shape at the no-limit stop, where no radius is derived', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: BROWSE_MINUTES_MAX,
+      density_band: 'sparse',
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange, loadCap } = useReachDistance(null, {
+      withPolygon: true,
+    })
+    await loadCap()
+    mockFetchNear.mockClear()
+
+    await onSliderChange(BROWSE_MINUTES_MAX)
+
+    expect(mockFetchNear).toHaveBeenCalledWith(
+      53.4,
+      -1.3,
+      BROWSE_MINUTES_MAX,
+      true
+    )
+    expect(useReachOverlay().reachGeoJSON.value).toEqual(FEATURE)
+  })
+
+  it('clears the shape when the routing lookup fails, rather than leaving a stale one', async () => {
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 8.5,
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange } = useReachDistance(null, { withPolygon: true })
+    await onSliderChange(25)
+    expect(useReachOverlay().reachGeoJSON.value).toEqual(FEATURE)
+
+    mockFetchNear.mockRejectedValue(new Error('routing down'))
+    await onSliderChange(10)
+
+    expect(useReachOverlay().reachGeoJSON.value).toBeNull()
+  })
+
+  it('clears the shape when there is no location to draw a reach from', async () => {
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 8.5,
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange } = useReachDistance(null, { withPolygon: true })
+    await onSliderChange(25)
+    expect(useReachOverlay().reachGeoJSON.value).toEqual(FEATURE)
+
+    mockMe.value.lat = null
+    mockMe.value.lng = null
+    await onSliderChange(10)
+
+    expect(useReachOverlay().reachGeoJSON.value).toBeNull()
+  })
+
+  // A response with no shape (routing answered, but the reach traced nothing drawable) must
+  // leave nothing behind either.
+  it('clears the shape when the answer carries no polygon', async () => {
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 8.5,
+      reach_polygon: FEATURE,
+    })
+    const { onSliderChange } = useReachDistance(null, { withPolygon: true })
+    await onSliderChange(25)
+
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 4 })
+    await onSliderChange(10)
+
+    expect(useReachOverlay().reachGeoJSON.value).toBeNull()
+  })
+})
+
+// A member who has never touched the slider sits at the top stop, but the top stop is their
+// density band's cap and the client does not know it until the server says so. The first
+// call therefore has to guess (the flat fallback), and the shape it brings back describes
+// the wrong travel time for anyone whose band is not the fallback.
+describe('useReachDistance reach overlay for an unset slider', () => {
+  let useReachDistance
+  let useReachOverlay
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    // No browseMaxMinutes: the slider sits at whatever the cap turns out to be.
+    mockMe.value = { lat: 53.4, lng: -1.3, settings: {} }
+    clearNuxtState()
+    ;({ useReachDistance } = await import('~/composables/useReachDistance'))
+    ;({ useReachOverlay } = await import('~/composables/useReachOverlay'))
+  })
+
+  function polygonFor(minutes) {
+    return {
+      type: 'Feature',
+      minutes,
+      geometry: { type: 'Polygon', coordinates: [] },
+    }
+  }
+
+  it('redraws the shape for the real cap once the server reports it', async () => {
+    mockFetchNear.mockImplementation((lat, lng, minutes) =>
+      Promise.resolve({
+        cap_minutes: 45,
+        density_band: 'sparse',
+        reach_polygon: polygonFor(minutes),
+      })
+    )
+    const { loadCap } = useReachDistance(null, { withPolygon: true })
+
+    await loadCap()
+
+    // First asked for the flat fallback, then again for the 45 the server reported.
+    expect(mockFetchNear).toHaveBeenCalledWith(
+      53.4,
+      -1.3,
+      BROWSE_MINUTES_FALLBACK_MAX,
+      true
+    )
+    expect(mockFetchNear).toHaveBeenLastCalledWith(53.4, -1.3, 45, true)
+    expect(useReachOverlay().reachGeoJSON.value.minutes).toBe(45)
+  })
+
+  it('does not redraw when the cap turns out to be the one we guessed', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: BROWSE_MINUTES_FALLBACK_MAX,
+      density_band: 'medium',
+      reach_polygon: polygonFor(BROWSE_MINUTES_FALLBACK_MAX),
+    })
+    const { loadCap } = useReachDistance(null, { withPolygon: true })
+
+    await loadCap()
+
+    expect(mockFetchNear).toHaveBeenCalledTimes(1)
+  })
+
+  // The extra call is for the map alone, so a caller that draws no map must not make it.
+  it('does not redraw for a caller that did not ask for a polygon', async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { loadCap } = useReachDistance()
+
+    await loadCap()
+
+    expect(mockFetchNear).toHaveBeenCalledTimes(1)
+  })
+})
