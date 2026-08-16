@@ -72,6 +72,40 @@ class ExpandService
     }
 
     /** Has the density-sizing migration run? Without it the cap still applies, unrecorded. */
+    /**
+     * Is rippling_reach.overflow_bounds present? Mirrors densityColumnsReady so the overflow
+     * lanes can ship before the migration has run everywhere.
+     *
+     * Unlike density_band, this is consulted by ALL THREE write paths (init INSERT, advanceDue
+     * UPDATE, recomputeReach shrink UPDATE). density_band was wired into only the first, which
+     * is why it is NULL on ~89% of rows.
+     */
+    private static ?bool $overflowColumn = null;
+
+    private function overflowColumnReady(): bool
+    {
+        if (self::$overflowColumn === null) {
+            try {
+                self::$overflowColumn = Schema::hasColumn('rippling_reach', 'overflow_bounds');
+            } catch (\Throwable) {
+                self::$overflowColumn = false;
+            }
+        }
+
+        return self::$overflowColumn;
+    }
+
+    /**
+     * The overflow rings for a schedule, as JSON for storage, or null when no lane applied.
+     * One place, so all three write paths encode identically.
+     */
+    private function overflowJson(?array $schedule): ?string
+    {
+        $bounds = $schedule['overflow_bounds'] ?? null;
+
+        return is_array($bounds) && ! empty($bounds) ? json_encode($bounds) : null;
+    }
+
     private function densityColumnsReady(): bool
     {
         if (self::$densityColumns === null) {
@@ -302,18 +336,25 @@ class ExpandService
             // UPDATE auto-bump) so the reach mailer never reconsiders this row.
             // Polygon + derived bounds in ONE statement; envelope retry on throw.
             [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
+            // recomputeReach genuinely RE-DERIVES the schedule, so the overflow rings change
+            // with it and have to be rewritten here. (advanceDue does not: it only moves the
+            // tick pointer along an already-stored schedule, and the rings belong to the reach
+            // as a whole rather than to a tick, so there is nothing for it to update.)
+            $withOverflow = $this->overflowColumnReady();
+            $ovSet = $withOverflow ? ', overflow_bounds = ?' : '';
             $shrinkSql = fn (string $set): string => 'UPDATE rippling_reach
                     SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $set . ',
-                        schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?,
+                        schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?' . $ovSet . ',
                         updated_at = updated_at
                   WHERE msgid = ?';
-            $shrinkTail = [
+            $shrinkTail = array_merge([
                 json_encode($ticks),
                 json_encode($this->tickReachableIds($entry, $schedule)),
                 (int) $schedule['total_freeglers'],
                 $schedule['max_drive_min'],
+            ], $withOverflow ? [$this->overflowJson($schedule)] : [], [
                 $row->msgid,
-            ];
+            ]);
             try {
                 DB::statement($shrinkSql($boundsSet), array_merge([$storeWkt], $boundsParams, $shrinkTail));
             } catch (\Throwable $e) {
@@ -941,9 +982,14 @@ class ExpandService
                 $reuseParams[] = $p['lng'];
             }
             $capCol = $this->densityColumnsReady() ? ', max_minutes_cap' : '';
+            // The overflow rings must be carried across a reuse too. Rebuilding the reused
+            // schedule from only ticks/total/max_drive - which is what happened before - leaves
+            // the column NULL on every reused row, and reuse is commonest exactly where posts
+            // cluster. That is the mechanism that left density_band NULL on ~89% of rows.
+            $ovCol = $this->overflowColumnReady() ? ', overflow_bounds' : '';
             // keep-raw: row-constructor `(lat, lng) IN ((?,?),(?,?)...)` - the builder cannot render a tuple IN
             $existing = DB::select(
-                'SELECT lat, lng, schedule, total_freeglers, max_drive_min' . $capCol . '
+                'SELECT lat, lng, schedule, total_freeglers, max_drive_min' . $capCol . $ovCol . '
                  FROM rippling_reach
                  WHERE schedule IS NOT NULL AND (lat, lng) IN (' . $placeholders . ')',
                 $reuseParams
@@ -970,10 +1016,29 @@ class ExpandService
                 if (!is_array($ticks) || empty($ticks)) {
                     continue;
                 }
+                $reusedOverflow = $ovCol !== '' && ! empty($e->overflow_bounds)
+                    ? json_decode($e->overflow_bounds, true)
+                    : null;
+
+                // A fairness ring computed under a DIFFERENT weight is not this post's ring,
+                // however co-located the two posts are - the same argument as the reach-budget
+                // guard above. Recompute rather than inherit a stretch nobody asked for.
+                if (is_array($reusedOverflow) && isset($reusedOverflow['fairness'])) {
+                    $storedBudget = isset($reusedOverflow['fairness_budget_min'])
+                        ? (float) $reusedOverflow['fairness_budget_min']
+                        : null;
+                    $wantBudget = $this->reach->fairnessBudgetMinutes($ceiling);
+                    if ($storedBudget === null || $wantBudget === null
+                        || abs($storedBudget - $wantBudget) > 0.001) {
+                        continue;
+                    }
+                }
+
                 $scheduleByKey[$k] = [
                     'ticks' => $ticks,
                     'total_freeglers' => (int) $e->total_freeglers,
                     'max_drive_min' => (float) $e->max_drive_min,
+                    'overflow_bounds' => is_array($reusedOverflow) ? $reusedOverflow : null,
                 ];
                 unset($distinctOrigins[$k]); // reused - do not recompute this origin on the routing server
                 $stats['reused'] = ($stats['reused'] ?? 0) + 1;
@@ -1070,18 +1135,22 @@ class ExpandService
                     // envelope retry if derivation throws on pathological geometry.
                     $ready = $this->bounds->ready();
                     $withDensity = $this->densityColumnsReady();
+                    $withOverflow = $this->overflowColumnReady();
+                    $overflowJson = $this->overflowJson($schedule);
                     $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
-                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $poly): string {
+                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $withOverflow, $poly): string {
                         $cols = $ready ? ', outer_bound, inner_bound' : '';
                         $vals = $ready ? ", $outerExpr, $innerExpr" : '';
                         $dup = $ready ? ', outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)' : '';
-                        $dCols = $withDensity ? ', density_band, density_radius_miles, max_minutes_cap' : '';
-                        $dVals = $withDensity ? ', ?, ?, ?' : '';
-                        $dDup = $withDensity
+                        $dCols = ($withDensity ? ', density_band, density_radius_miles, max_minutes_cap' : '')
+                            . ($withOverflow ? ', overflow_bounds' : '');
+                        $dVals = ($withDensity ? ', ?, ?, ?' : '') . ($withOverflow ? ', ?' : '');
+                        $dDup = ($withDensity
                             ? ', density_band = VALUES(density_band),
                                 density_radius_miles = VALUES(density_radius_miles),
                                 max_minutes_cap = VALUES(max_minutes_cap)'
-                            : '';
+                            : '')
+                            . ($withOverflow ? ', overflow_bounds = VALUES(overflow_bounds)' : '');
 
                         return 'INSERT INTO rippling_reach
                            (msgid, lat, lng, polygon' . $cols . ', arrival, mode, tick, total_ticks,
@@ -1103,7 +1172,8 @@ class ExpandService
                         json_encode($schedule['ticks']),
                         json_encode($this->tickReachableIds($entry, $schedule)),
                         $next, $status,
-                    ], $withDensity ? [$cap['band'], $cap['radius_miles'], $ceiling] : []);
+                    ], $withDensity ? [$cap['band'], $cap['radius_miles'], $ceiling] : [],
+                       $withOverflow ? [$overflowJson] : []);
                     $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $poly): void {
                         $head = [$row->msgid, $lat, $lng, $wkt];
                         try {

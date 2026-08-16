@@ -13,6 +13,7 @@ use App\Services\Ripple\DigestPostScorer;
 use App\Services\Ripple\DistancePreferenceFilter;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -623,6 +624,183 @@ class UnifiedDigestService
      * haven't joined is not appropriate; non-members within reach discover the post via browse and
      * the daily digest. Do not "fix" the JOIN to include non-members.
      */
+    /** Memoized presence of rippling_reach.overflow_bounds. Null until first checked. */
+    private static ?bool $overflowColumn = null;
+
+    /** Test-only: forget the memoized overflow-column check. */
+    public static function forgetOverflowColumn(): void
+    {
+        self::$overflowColumn = null;
+    }
+
+    /**
+     * The rural-access overflow rings for a post, as an extra containment branch on the
+     * recipient query: one ring per density band, admitting a member whose OWN band earns
+     * the wider travel budget even though the capped reach stopped short of them.
+     *
+     * Returns ['', []] whenever the lane cannot apply, and that is a stronger statement than
+     * "false": with no rings the clause is ABSENT, so the query compiles to exactly what it
+     * was before this existed and costs exactly what it cost. A disabled lane cannot slow the
+     * mail path down.
+     *
+     * The rings are read here and bound as parameters rather than extracted inside the query.
+     * rippling_reach is one row per post, so an ST_GeomFromText over a JSON_EXTRACT in the
+     * WHERE clause would re-parse the SAME polygon for every candidate member - tens of
+     * thousands of identical parses on a large group, in the mail path.
+     *
+     * Binding the band name as a parameter rather than building a '$.rural.<band>' path also
+     * keeps a member's stored settings value data rather than syntax.
+     *
+     * Only the bands actually present are considered. The routing server deliberately omits
+     * any band at or inside the committed reach, because every member it would admit is
+     * already admitted by the reach proper - so an absent band means "already covered", not
+     * "missing".
+     *
+     * @return array{0: string, 1: array<int, mixed>}
+     */
+    private function overflowBranch(int $msgid, string $point): array
+    {
+        $none = ['', [], null];
+
+        $ruralOn = (bool) config('freegle.ripple.rural_access.enabled', false);
+        $fairnessOn = (bool) config('freegle.ripple.fairness.enabled', false);
+        if (! $ruralOn && ! $fairnessOn) {
+            return $none;
+        }
+
+        try {
+            // Memoized: this runs once per post in the reach-mail pass, and the schema does
+            // not change under it mid-run.
+            self::$overflowColumn ??= Schema::hasColumn('rippling_reach', 'overflow_bounds');
+            if (! self::$overflowColumn) {
+                return $none;
+            }
+
+            $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_bounds');
+            $bounds = is_string($raw) ? json_decode($raw, true) : null;
+            if (! is_array($bounds)) {
+                return $none;
+            }
+
+            $srid = (int) config('freegle.srid', 3857);
+
+            // A post carries rings from ONE lane: the routing server picks by whether the
+            // audience cap actually bound, and never sends both. So this reads whichever it
+            // sent rather than trying to combine them.
+            if ($ruralOn && is_array($bounds['rural'] ?? null) && ! empty($bounds['rural'])) {
+                $sql = '';
+                $params = [];
+                foreach ($bounds['rural'] as $band => $wkt) {
+                    if (! is_string($wkt) || $wkt === '') {
+                        continue;
+                    }
+                    // The band equality is exclusive, so nested rings cannot admit one member twice.
+                    $sql .= " OR (JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) = ?"
+                        . " AND ST_Contains(ST_GeomFromText(?, ?), $point))";
+                    $params[] = (string) $band;
+                    $params[] = $wkt;
+                    $params[] = $srid;
+                    $params[] = $srid; // the point's own SRID, repeated per branch
+                }
+
+                return $sql === '' ? $none : [$sql, $params, 'rural'];
+            }
+
+            if ($fairnessOn && is_array($bounds['fairness'] ?? null) && ! empty($bounds['fairness'])) {
+                // No per-member test here, deliberately: the ring says who is close enough
+                // under the stretched budget, and WHICH of those the stretch was for is
+                // decided afterwards, by the deprivation fifth. That is not in this database
+                // - the spatial server holds the index - so it is answered in one call for
+                // the people the ring adds rather than stored against anybody.
+                $sql = '';
+                $params = [];
+                foreach ($bounds['fairness'] as $q => $wkt) {
+                    if (! is_string($wkt) || $wkt === '' || ! is_numeric($q)) {
+                        continue;
+                    }
+                    $sql .= " OR ST_Contains(ST_GeomFromText(?, ?), $point)";
+                    $params[] = $wkt;
+                    $params[] = $srid;
+                    $params[] = $srid;
+                }
+
+                return $sql === '' ? $none : [$sql, $params, 'fairness'];
+            }
+
+            return $none;
+        } catch (\Throwable $e) {
+            // A post that cannot be checked for overflow still gets its normal reach mail.
+            Log::warning('ripple: overflow branch unavailable', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+
+            return $none;
+        }
+    }
+
+    /**
+     * Drop the people a fairness ring admitted who are not who it was for.
+     *
+     * The ring is a stretched isochrone, so on its own it just widens the reach for everyone
+     * inside it - which is a bigger radius, not fairness. The stretch is earned by the
+     * deprivation fifth, so that has to be tested before anyone extra is mailed.
+     *
+     * Asked of the spatial server, in ONE call, for only the people the ring added: it already
+     * holds the IMD index for the isochrone itself, so nothing else has to load or retain IMD
+     * data and no inferred deprivation attribute is written against an individual anywhere.
+     *
+     * Fails CLOSED. If the lookup is unavailable the extra people are dropped and the post
+     * mails its normal reach, because the alternative - mailing everyone the stretched ring
+     * covers - is the widened-radius behaviour this filter exists to prevent.
+     *
+     * @param  array<int, object>  $rows  recipient rows carrying in_primary and resolved coords
+     * @return array<int, object>
+     */
+    private function filterFairnessRows(array $rows, int $msgid): array
+    {
+        $extra = array_values(array_filter($rows, fn ($r) => (int) ($r->in_primary ?? 1) === 0));
+        if (empty($extra)) {
+            return $rows;
+        }
+
+        $maxQuintile = max(1, min(4, (int) config('freegle.ripple.fairness.max_quintile', 1)));
+        $points = array_map(
+            fn ($r) => [(float) $r->resolved_lat, (float) $r->resolved_lng],
+            $extra
+        );
+
+        try {
+            $base = rtrim((string) config('freegle.routing_server_url'), '/');
+            $response = Http::timeout(10)->post($base . '/v1/quintiles', ['points' => $points]);
+            $quintiles = $response->successful() ? ($response->json('quintiles') ?? null) : null;
+
+            // A short or missing array cannot be matched back to people by position, and a
+            // mismatched one would attribute one member's deprivation to another.
+            if (! is_array($quintiles) || count($quintiles) !== count($extra)) {
+                throw new \RuntimeException('quintile lookup returned '
+                    . (is_array($quintiles) ? count($quintiles) : 'nothing')
+                    . ' answers for ' . count($extra) . ' points');
+            }
+        } catch (\Throwable $e) {
+            Log::warning('ripple: fairness quintile lookup failed, dropping overflow recipients', [
+                'msgid' => $msgid, 'extra' => count($extra), 'error' => $e->getMessage(),
+            ]);
+            $quintiles = null;
+        }
+
+        $keep = [];
+        foreach ($extra as $i => $row) {
+            // 0 means "no data", which is not a claim that they are deprived.
+            $q = $quintiles === null ? 0 : (int) ($quintiles[$i] ?? 0);
+            if ($q >= 1 && $q <= $maxQuintile) {
+                $keep[(int) $row->id] = true;
+            }
+        }
+
+        return array_values(array_filter(
+            $rows,
+            fn ($r) => (int) ($r->in_primary ?? 1) === 1 || isset($keep[(int) $r->id])
+        ));
+    }
+
     public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false): int
     {
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
@@ -641,16 +819,39 @@ class UnifiedDigestService
             // as resolveUserLatLng, so the distance-preference filter below measures from
             // exactly the point that decided reach-polygon membership, not a second,
             // possibly-divergent resolution.
-            $recipientRows = collect(DB::select(
-                "SELECT DISTINCT u.id AS id,
-                       CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+            // One definition of the member's point, used by the projection, by the reach
+            // containment and by any overflow ring - so a member cannot be admitted on one
+            // resolution and then measured from another.
+            $latExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
                                  AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
                             THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                            ELSE l.lat END AS resolved_lat,
-                       CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                            ELSE l.lat END";
+            $lngExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
                                  AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
                             THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                            ELSE l.lng END AS resolved_lng
+                            ELSE l.lng END";
+            $point = "ST_SRID(POINT($lngExpr, $latExpr), ?)";
+
+            [$overflowSql, $overflowParams, $overflowLane] = $this->overflowBranch($msgid, $point);
+
+            // Which arm admitted each member. Only needed to tell "already in the reach" from
+            // "added by a ring", and only the fairness lane acts on it - so it is projected
+            // just for that lane rather than paying for a second containment test on every
+            // post. NOTE: this sits before the WHERE in the SQL text, so its SRID parameter
+            // comes FIRST in the array below.
+            $primaryFlag = '';
+            $primaryParams = [];
+            if ($overflowLane === 'fairness') {
+                $primaryFlag = ", ST_Contains(mr.polygon, $point) AS in_primary";
+                $primaryParams[] = $srid;
+            }
+
+            // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText) and the
+            // JSON_EXTRACT point resolution have no query-builder equivalent.
+            $recipientRows = collect(DB::select(
+                "SELECT DISTINCT u.id AS id,
+                       $latExpr AS resolved_lat,
+                       $lngExpr AS resolved_lng$primaryFlag
                  FROM messages_groups mg
                  JOIN rippling_reach mr ON mr.msgid = mg.msgid
                  JOIN memberships m ON m.groupid = mg.groupid
@@ -663,21 +864,20 @@ class UnifiedDigestService
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received')
                        )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
-                   AND ST_Contains(mr.polygon, ST_SRID(POINT(
-                         CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                   AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
-                              THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                              ELSE l.lng END,
-                         CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                   AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
-                              THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                              ELSE l.lat END
-                       ), ?))
+                   AND (ST_Contains(mr.polygon, $point)$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
                        )",
-                [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid]
+                array_merge(
+                    $primaryParams,
+                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid],
+                    $overflowParams
+                )
             ));
+
+            if ($overflowLane === 'fairness') {
+                $recipientRows = collect($this->filterFairnessRows($recipientRows->all(), $msgid));
+            }
 
             $recipientIds = $recipientRows->pluck('id')->map(fn ($v) => (int) $v)->all();
 
