@@ -80,7 +80,15 @@ class CommunityNewsEmailService
                 })
                 ->orderBy('id')
                 ->limit($maxItems)
-                ->get();
+                ->get()
+                // Backstop for the event_date filter above: the research model
+                // omits event_date on most items — including ones whose own
+                // blurb names a day ("On Saturday 8 August ...", mailed six
+                // days late on 2026-08-14) — so also drop anything whose TEXT
+                // says it is already over. May leave the email under
+                // $maxItems; fewer items beats stale ones.
+                ->reject(fn ($i) => MentionedDates::visiblyOver($i, now()))
+                ->values();
 
             if ($items->isEmpty()) {
                 continue;

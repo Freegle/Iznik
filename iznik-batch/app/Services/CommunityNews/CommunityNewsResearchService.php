@@ -444,7 +444,7 @@ class CommunityNewsResearchService
         {$seedBlock}
         Find up to {$maxItems} interesting, genuinely local community happenings for readers here, this week or in the next couple of weeks.
 
-        If an item happens on a particular day, give that day as "date" in YYYY-MM-DD form. Today is {$today}, so work out the actual date of anything described as "Saturday" or "next week". Give the FIRST day for something running over several days. Leave "date" out entirely when the item is not a dated event — an ongoing service, a new footpath, a refurbished library — and never guess: an omitted date is much better than a wrong one.
+        If an item happens on a particular day, give that day as "date" in YYYY-MM-DD form. Today is {$today}, so work out the actual date of anything described as "Saturday" or "next week". Give the FINAL day for something running over several days — readers stop being shown an item once its date has passed, and a multi-day event is still worth going to until it ends. If your blurb mentions a specific day ("Saturday 8 August"), you MUST also supply the matching "date" — blurb and date must always agree. Leave "date" out only when the item genuinely has no date — an ongoing service, a new footpath, a refurbished library — and never guess: for an undated item, an omitted date is much better than a wrong one.
 
         Then reply with ONLY a JSON object — no prose, no code fences — in exactly this shape:
         {"intro":"one or two warm, quirky sentences introducing this week's round-up for {$name}","items":[{"title":"punchy title","blurb":"~45-word friendly description","url":"the source URL you found","source":"the site or organisation name","date":"YYYY-MM-DD or omitted"}]}
