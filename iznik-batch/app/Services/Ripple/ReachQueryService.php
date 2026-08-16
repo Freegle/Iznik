@@ -140,7 +140,9 @@ class ReachQueryService
             $q = $this->quintileFor($lat, $lng);
             $max = max(1, min(4, (int) config('freegle.ripple.fairness.max_quintile', 1)));
             if ($q !== null && $q >= 1 && $q <= $max) {
-                return '$.fairness.' . $q;
+                // Quoted: a JSON path member that is a number is not a bare identifier, so
+                // $.fairness.1 does not address the ring - it silently matches nothing.
+                return '$.fairness."' . $q . '"';
             }
         }
 

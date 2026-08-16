@@ -107,7 +107,9 @@ func viewerFairnessPath(lat, lng float32) string {
 		return ""
 	}
 
-	return "$.fairness." + strconv.Itoa(q)
+	// Quoted: a JSON path member that is a number is not a bare identifier, so
+	// $.fairness.1 does not address the ring - it silently matches nothing.
+	return "$.fairness.\"" + strconv.Itoa(q) + "\""
 }
 
 // viewerOverflowPath is the one place browse decides which ring, if any, could let this viewer
