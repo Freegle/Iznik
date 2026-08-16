@@ -389,6 +389,51 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertNull(CommunityNewsItem::where('title', 'Yesterday jumble sale')->first()->emailed_at);
     }
 
+    /**
+     * The research model omits event_date on most items — including ones whose
+     * own blurb names the day (the 2026-08-14 send mailed a food festival six
+     * days gone). When event_date is NULL, the item's TEXT is the backstop.
+     */
+    public function test_leaves_out_undated_items_whose_text_says_they_are_over(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'textdate@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville', 'intro' => 'A few nice things.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+
+        // No event_date, but the blurb names a day six days gone - must not go out.
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Food festival',
+            'snippet' => 'On Saturday ' . now()->subDays(6)->format('j F Y') . ', the square fills with stalls.',
+            'url' => 'https://example.org/foodfest', 'source' => 'Council',
+            'researched_at' => now()->subDays(3),
+        ]);
+        // No event_date, blurb names a day still to come - must go out.
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'Family fun day',
+            'snippet' => 'On Saturday ' . now()->addDays(8)->format('j F Y') . ', the park hosts games and music.',
+            'url' => 'https://example.org/funday', 'source' => 'Parks',
+            'researched_at' => now()->subDays(3),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $titles = array_column($sent->first()->items, 'title');
+        $this->assertContains('Family fun day', $titles);
+        $this->assertNotContains('Food festival', $titles);
+        $this->assertNull(CommunityNewsItem::where('title', 'Food festival')->first()->emailed_at);
+    }
+
     /** Something on today is still worth telling people about - they can still go. */
     public function test_includes_an_event_happening_today(): void
     {
