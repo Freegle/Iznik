@@ -74,9 +74,9 @@ func handleIsochrone(g *Graph) fiber.Handler {
 // fairness isochrone, so a member's quintile can be answered here without anything else in the
 // estate needing to load or understand IMD data.
 //
-// It exists so the batch can stamp settings.deprivationQuintile onto members once, rather than
-// every consumer doing a nearest-centroid search of its own. No Dijkstra, no graph traversal:
-// this is a grid lookup and costs microseconds.
+// No Dijkstra, no graph traversal: this is a grid lookup and costs microseconds. The single
+// form is for one-off questions ("what fifth is this postcode in?"); consumers deciding a
+// whole set of people at once want handleQuintiles below instead.
 func handleQuintile(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		lat, err1 := strconv.ParseFloat(c.Query("lat"), 64)
@@ -93,6 +93,57 @@ func handleQuintile(g *Graph) fiber.Handler {
 			"quintile":  int(g.Deprivation.Lookup(lat, lng)),
 			"available": true,
 		})
+	}
+}
+
+// quintilesRequest is a batch of points to classify.
+type quintilesRequest struct {
+	Points [][2]float64 `json:"points"` // [lat, lng] pairs
+}
+
+// maxQuintilesBatch bounds one request. The lookup itself is microseconds, so this is about
+// request size rather than compute: a caller wanting more should page, and a caller sending
+// more by accident should be told rather than quietly served a truncated answer.
+const maxQuintilesBatch = 5000
+
+// handleQuintiles handles POST /v1/quintiles with {"points": [[lat,lng], ...]}
+//
+// Answers the deprivation fifth for many points in one call, in the order given: 1 = most
+// deprived, 5 = least, 0 = no data.
+//
+// This exists because of how the fairness lane is READ. The stretched ring decides who is
+// geographically eligible, and that is a containment test the database does; the fifth then
+// decides which of those people the stretch was actually FOR. Only the people the ring adds
+// need classifying - not the membership - so the batch is small and bounded by the extra
+// audience rather than by group size.
+//
+// Answering here rather than storing a fifth against each member is deliberate: this server
+// already holds the index for the isochrone itself, so nothing else in the estate has to load,
+// understand, or retain IMD data, and no inferred deprivation attribute is written against an
+// individual anywhere.
+func handleQuintiles(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req quintilesRequest
+		if err := c.BodyParser(&req); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+		}
+		if len(req.Points) > maxQuintilesBatch {
+			return fiber.NewError(fiber.StatusBadRequest, "too many points")
+		}
+		if g.Deprivation == nil {
+			// Honest "unknown" for every point, same as the single form: 0 already means
+			// unknown to every caller, and a shorter array would misalign with the input.
+			return c.JSON(fiber.Map{
+				"quintiles": make([]int, len(req.Points)),
+				"available": false,
+			})
+		}
+
+		out := make([]int, len(req.Points))
+		for i, p := range req.Points {
+			out[i] = int(g.Deprivation.Lookup(p[0], p[1]))
+		}
+		return c.JSON(fiber.Map{"quintiles": out, "available": true})
 	}
 }
 
@@ -506,6 +557,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/isochrone", handleIsochrone(g))
 	v1.Get("/fairness", handleFairness(g))
 	v1.Get("/quintile", handleQuintile(g))
+	v1.Post("/quintiles", handleQuintiles(g))
 	v1.Get("/catchment", handleCatchment(g))
 	v1.Get("/group-proximity", handleGroupProximity(g))
 	v1.Get("/drive-time", handleDriveTime(g))
