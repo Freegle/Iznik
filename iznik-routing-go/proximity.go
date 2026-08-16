@@ -48,9 +48,13 @@ func costToTargets(g *Graph, lat, lng float64, targets []NodeID, maxSecs float32
 	}
 
 	dist := make(map[NodeID]float32, 4096)
-	dist[origin] = 0
+	// Seed the per-trip startup overhead exactly like Isochrone does: the
+	// reach tick polygons come from Isochrone, and /v1/drive-time's contract
+	// is to MATCH the reach, so both must count time from the same zero.
+	start := initialCostFor(mode)
+	dist[origin] = start
 	q := &pq{}
-	heap.Push(q, &item{id: origin, cost: 0})
+	heap.Push(q, &item{id: origin, cost: start})
 
 	for q.Len() > 0 && remaining > 0 {
 		cur := heap.Pop(q).(*item)
@@ -187,8 +191,10 @@ func groupDiameter(g *Graph, seeds []NodeID, mode Mode, maxSecs float32) (from, 
 
 // groupProximity, for an offer at (offerLat,offerLng) rippling into a group whose candidate
 // points are `seeds`, returns:
-//   closest  — the in-group point nearest the offer by road (P), with the offer→P drive-time.
-//   furthest — the in-group point furthest FROM P by road (Q), with the P→Q drive-time.
+//
+//	closest  — the in-group point nearest the offer by road (P), with the offer→P drive-time.
+//	furthest — the in-group point furthest FROM P by road (Q), with the P→Q drive-time.
+//
 // It backs the moderator line "this post is quicker to get to for Freeglers in {P} than {P} is
 // to {Q}", which should only be shown when closest.DriveMin < furthest.DriveMin.
 func groupProximity(g *Graph, offerLat, offerLng float64, seeds []NodeID, mode Mode, maxSecs float32) (closest, furthest ProxPoint, ok bool) {
