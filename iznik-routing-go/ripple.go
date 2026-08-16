@@ -33,6 +33,13 @@ type rippleEvalRequest struct {
 	PointsOnly bool `json:"points_only,omitempty"`
 	// Frontier also returns the isochrone's road-distance reach range (frontier_{min,max}_miles).
 	Frontier bool `json:"frontier,omitempty"`
+	// PolygonSimplifyM, when positive, also returns the reach's SHAPE as a display polygon,
+	// simplified to that many metres (see displaypolygon.go). It exists because the browse
+	// map's coverage overlay wants the shape of the very same reach /town/near is already
+	// asking about: the Dijkstra below dominates the cost and has to run either way, so
+	// taking the polygon from it costs only the trace, and never a second routing pass.
+	// Omit it (or pass <= 0) and the response is byte-for-byte what it was.
+	PolygonSimplifyM float64 `json:"polygon_simplify_m,omitempty"`
 }
 
 type rippleEvalPoint struct {
@@ -48,6 +55,11 @@ type rippleEvalResponse struct {
 	// requested.
 	FrontierMedianMiles *float64 `json:"frontier_median_miles,omitempty"`
 	FrontierMaxMiles    *float64 `json:"frontier_max_miles,omitempty"`
+	// Polygon is the reach's outline for DISPLAY, present only when polygon_simplify_m was
+	// positive and the reach traced something drawable. It is an approximation of the
+	// boundary by construction, so it must never be used for containment - the exact
+	// polygon from /v1/catchment is what reach membership is decided on.
+	Polygon *GeoJSONPolygon `json:"polygon,omitempty"`
 }
 
 // handleRippleEval returns, for a post at (lat, lng), each input point's
@@ -151,11 +163,19 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 		results := make([]rippleEvalPoint, len(req.Points))
 		for i, p := range req.Points {
 			lng, lat := p[0], p[1]
-			nid := nearestNodeForMode(g, lat, lng, mode)
-			if nid == noNode {
-				continue
+			// Try the few nearest snap candidates, not just the single
+			// nearest: a point can snap to a one-way node that is leavable
+			// but never arrivable, which would misreport the whole trip as
+			// unreachable (e.g. Plympton -> Plymstock).
+			var t float32
+			ok := false
+			for _, nid := range nearestNodesForMode(g, lat, lng, mode, 4) {
+				if tt, reached := iso.ReachedNodes[nid]; reached {
+					t = tt
+					ok = true
+					break
+				}
 			}
-			t, ok := iso.ReachedNodes[nid]
 			if !ok {
 				continue
 			}
@@ -173,6 +193,9 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 			fmed, fmax := frontierMilesMedianMax(g, req.Lat, req.Lng, iso.DistM)
 			out.FrontierMedianMiles = &fmed
 			out.FrontierMaxMiles = &fmax
+		}
+		if req.PolygonSimplifyM > 0 {
+			out.Polygon = displayPolygonFor(g, iso.ReachedNodes, mode, req.PolygonSimplifyM)
 		}
 		return c.JSON(out)
 	}

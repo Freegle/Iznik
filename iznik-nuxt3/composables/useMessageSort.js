@@ -38,7 +38,15 @@ export function sortBrowseMessages(messages, selectedSort) {
   // 9844). Fall back to `m.arrival` only when `posted` is absent (older cached feeds); guard
   // against the Go zero-time sentinel (serialised as year 0001, i.e. a large negative epoch)
   // that appears on any path that didn't populate posted.
+  // ONE clock, shared with the card badge (usePostAgeBadge): visibleSince is the earliest
+  // this member could have seen the post - the oldest arrival across the groups it is live on.
+  // Ordering by anything else is how the feed came to show 5 days, 4 days, 5 days, 2 hours and
+  // still be "sorted": the badge read a group arrival while this read m.posted, which never
+  // moves. A repost bumps visibleSince and so lifts the post, which is what a repost is for.
+  // posted is kept as the fallback for feeds cached before the server field existed.
   const recencyTs = (m) => {
+    const visible = m.visibleSince ? new Date(m.visibleSince).getTime() : NaN
+    if (Number.isFinite(visible) && visible > 0) return visible
     const posted = m.posted ? new Date(m.posted).getTime() : NaN
     if (Number.isFinite(posted) && posted > 0) return posted
     return new Date(m.arrival).getTime()

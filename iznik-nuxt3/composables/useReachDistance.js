@@ -1,6 +1,7 @@
 import { ref, computed, watch, getCurrentInstance, onMounted } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
+import { useReachOverlay } from '~/composables/useReachOverlay'
 import api from '~/api'
 import {
   BROWSE_DISTANCE_UNLIMITED,
@@ -23,11 +24,18 @@ import {
 // server for this member's own cap and tops out there. Until that answer arrives - and whenever
 // density cannot be measured - the flat cap applies, so the slider is never wider than something
 // the server will honour.
-export function useReachDistance(onPersisted) {
+//
+// `withPolygon` additionally asks /town/near for the OUTLINE of the chosen travel time and
+// publishes it via useReachOverlay, for the browse map to shade. It rides on these calls rather
+// than having its own because the routing pass that produces the shape is the one this composable
+// already makes; the Feed settings slider leaves it off, and so pays nothing for a map it has not
+// got. See useReachOverlay for why the shape is an illustration and never a containment test.
+export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
   const authStore = useAuthStore()
   const { me } = useMe()
   const runtimeConfig = useRuntimeConfig()
   const apiInstance = api(runtimeConfig)
+  const { nextReachSeq, publishReach, clearReach } = useReachOverlay()
 
   // The top of the slider for this member. Starts at the flat cap and narrows or widens once the
   // server reports the band. BROWSE_MINUTES_MAX is the ceiling across all bands: a server that
@@ -60,14 +68,28 @@ export function useReachDistance(onPersisted) {
   async function fetchNear(minutes) {
     const lat = me.value?.lat
     const lng = me.value?.lng
-    if (!lat && !lng) return null
+    if (!lat && !lng) {
+      // No location means no reach to draw. Clear rather than leave the last member's
+      // shape shaded on the map after a logout.
+      if (withPolygon) clearReach()
+      return null
+    }
+    // Claim the sequence number BEFORE awaiting, so an earlier-issued call that lands later
+    // is recognised as stale and does not overwrite a newer shape.
+    const seq = withPolygon ? nextReachSeq() : null
     try {
-      const r = await apiInstance.town.fetchNear(lat, lng, minutes)
+      const r = await apiInstance.town.fetchNear(lat, lng, minutes, withPolygon)
       if (typeof r?.cap_minutes === 'number' && r.cap_minutes > 0) {
         maxMinutes.value = Math.min(r.cap_minutes, BROWSE_MINUTES_MAX)
       }
+      if (withPolygon) {
+        publishReach(seq, r?.reach_polygon ?? null)
+      }
       return r
     } catch (e) {
+      // A failed lookup leaves the cap and radius alone (best-effort), but the shape must
+      // not be left behind: it would shade a travel time the slider no longer shows.
+      if (withPolygon) publishReach(seq, null)
       return null
     }
   }
@@ -86,11 +108,23 @@ export function useReachDistance(onPersisted) {
   // same divergence that had members seeing only old posts. So we persist the correction once,
   // rather than displaying one thing and filtering by another.
   async function loadCap() {
-    await fetchNear(savedMinutes.value)
+    const asked = savedMinutes.value
+    await fetchNear(asked)
 
     const saved = me.value?.settings?.browseMaxMinutes
     if (typeof saved === 'number' && saved > maxMinutes.value) {
       await onSliderChange(maxMinutes.value)
+      return
+    }
+
+    // A member who has never touched the slider sits at the top stop, and before the server
+    // answers we do not know where that is - so the first call had to ask for the flat
+    // fallback. Now that we know their real cap, the shape we drew is for the wrong travel
+    // time: a rural member's slider says 45 minutes over a 30-minute shape, a city member's
+    // says 20 over the same. Redraw it. Only the shape needs this; the cap and the radius are
+    // already right (the sentinel, or a value the member chose).
+    if (withPolygon && savedMinutes.value !== asked) {
+      await fetchNear(savedMinutes.value)
     }
   }
 
@@ -112,6 +146,10 @@ export function useReachDistance(onPersisted) {
       sliderValue.value = minutes
       await authStore.saveAndGet({ settings })
       if (onPersisted) onPersisted(BROWSE_DISTANCE_UNLIMITED)
+      // This branch skips the radius derivation because "no limit" needs no radius - but the
+      // map still has to be told, or dragging from 20 minutes to the top would leave the
+      // 20-minute shape shaded under a slider that now says no limit.
+      if (withPolygon) await fetchNear(minutes)
       return
     }
 

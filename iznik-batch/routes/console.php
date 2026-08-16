@@ -865,8 +865,14 @@ Schedule::command('mail:reengage')
 // Record whether a tip drove a real action (login/reply/post within the window)
 // for onboarding sends, so per-tip/arm/segment effectiveness and control-arm
 // lift can be graphed in the sysadmin dashboard. Runs after the day's sends.
+// Moved off 16:30, which stacked it onto the tail of the day's engagement sends at the
+// busiest hour on the read node, for no reason: it sends nothing and only records
+// whether a tip drove an action. Each check queries the full outcome window anchored at
+// the send, so it is complete whenever it runs - an eleven-hour shift can delay a row's
+// first check but cannot lose an outcome, and the row is re-checked daily for 74 days.
+// 02:50 rather than 02:45 leaves the AI image recount that slot to itself.
 Schedule::command('mail:reengage-outcomes')
-    ->dailyAt('16:30')
+    ->dailyAt('02:50')
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('mail:reengage-outcomes'))
     ->runInBackground();

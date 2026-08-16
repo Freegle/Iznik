@@ -474,7 +474,9 @@ describe('PostMap', () => {
 
       // Swallowed, not propagated...
       expect(
-        logSpy.mock.calls.some((c) => String(c[0]).includes('Ignore leaflet exception'))
+        logSpy.mock.calls.some((c) =>
+          String(c[0]).includes('Ignore leaflet exception')
+        )
       ).toBe(true)
 
       // ...and the map is still live: it framed itself and the parent was told it is ready.
@@ -1202,6 +1204,83 @@ describe('PostMap', () => {
       // The near cluster should still be enclosed.
       ;[messages[0], messages[1], messages[2]].forEach((m) => {
         expect(pointInPolygon([m.lng, m.lat], ring)).toBe(true)
+      })
+    })
+
+    // The hull only ever answered "where did the posts we happen to have land". When the
+    // distance slider has published the member's real drive-time reach, that is what the
+    // map shades instead: it answers the question the slider actually asks.
+    describe('reach overlay preferred over the hull', () => {
+      const REACH = {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [
+              [-0.5, 51.2],
+              [0.3, 51.2],
+              [0.3, 51.9],
+              [-0.5, 51.9],
+              [-0.5, 51.2],
+            ],
+          ],
+        },
+      }
+
+      const HULL_MESSAGES = [
+        { id: 1, lat: 51.5, lng: -0.1, distance: 1, groupid: 1 },
+        { id: 2, lat: 51.6, lng: -0.2, distance: 2, groupid: 1 },
+        { id: 3, lat: 51.45, lng: -0.05, distance: 3, groupid: 1 },
+      ]
+      let useReachOverlay
+
+      beforeEach(async () => {
+        clearNuxtState()
+        ;({ useReachOverlay } = await import('~/composables/useReachOverlay'))
+      })
+
+      it('shades the published reach instead of the post hull', async () => {
+        const { nextReachSeq, publishReach } = useReachOverlay()
+        publishReach(nextReachSeq(), REACH)
+
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        const geoJsonEls = wrapper.findAllComponents({ name: 'LGeoJson' })
+        expect(geoJsonEls.length).toBe(1)
+        expect(geoJsonEls[0].props('geojson')).toEqual(REACH)
+      })
+
+      // Pages with no distance slider (explore, the landing pages) publish no reach, and
+      // there the hull is still the right answer - they have no travel-time setting for a
+      // reach to be drawn from.
+      it('falls back to the post hull when no reach has been published', async () => {
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        const geo = wrapper.findComponent({ name: 'LGeoJson' }).props('geojson')
+        expect(geo.type).toBe('Polygon')
+        HULL_MESSAGES.forEach((m) => {
+          expect(pointInPolygon([m.lng, m.lat], geo.coordinates[0])).toBe(true)
+        })
+      })
+
+      // A reach that was cleared (routing down, no location) must hand back to the hull
+      // rather than leave the map with nothing shaded.
+      it('returns to the hull when the reach is cleared', async () => {
+        const { nextReachSeq, publishReach, clearReach } = useReachOverlay()
+        publishReach(nextReachSeq(), REACH)
+        clearReach()
+
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        const geo = wrapper.findComponent({ name: 'LGeoJson' }).props('geojson')
+        expect(geo).not.toEqual(REACH)
+        expect(geo.type).toBe('Polygon')
       })
     })
   })
