@@ -761,11 +761,18 @@ class MessageSpatialServiceTest extends TestCase
     /**
      * The add side must apply the same latest-row rule as the outcome pass, or the two
      * disagree and the post is added by one and deleted by the other every single run.
+     *
+     * The suite's DB is shared, so other tests' committed messages contribute to
+     * upserted_recent. Measure the steady candidate count with dry runs (pure reads)
+     * before and after seeding this post: the count must not grow for a post whose
+     * latest outcome is negative.
      */
     public function test_upsert_does_not_readd_when_latest_outcome_withdrawn(): void
     {
-        $msgid = $this->eligiblePost();
+        $this->service->updateSpatialIndex();
+        $baseline = $this->service->updateSpatialIndex(true)['upserted_recent'];
 
+        $msgid = $this->eligiblePost();
         DB::table('messages_outcomes')->insert([
             'msgid' => $msgid, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => now()->subHours(2),
         ]);
@@ -775,7 +782,7 @@ class MessageSpatialServiceTest extends TestCase
 
         $stats = $this->service->updateSpatialIndex();
 
-        $this->assertSame(0, $stats['upserted_recent'], 'a post whose latest outcome is negative must not be (re)added');
+        $this->assertSame($baseline, $stats['upserted_recent'], 'a post whose latest outcome is negative must not be (re)added');
         $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
     }
 
