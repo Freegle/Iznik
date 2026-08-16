@@ -642,8 +642,11 @@ return [
         // on live, a post outside Birmingham stopped at 28.0 minutes on exactly 4,000 members
         // while a sparse-band moderator 31.4 minutes away, whose own slider was already at the
         // 45-minute maximum, was shut out. This asks the routing server for one ring per band
-        // ceiling alongside the capped reach, so that member can find the post. It adds nobody
-        // to the mail or to a group's copy of the post.
+        // ceiling alongside the capped reach, so that member can find the post - on browse and
+        // in the newly-reached mail, since a member who cannot be told about the post is barely
+        // less shut out than one who cannot see it. It does NOT add the post to a group's copy:
+        // the mail path stays members-only, so this reaches people who have already joined a
+        // group the post is on, never a cold recipient.
         'rural_access' => [
             'enabled' => filter_var(env('RIPPLE_RURAL_ACCESS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
         ],

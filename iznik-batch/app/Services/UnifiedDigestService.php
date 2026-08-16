@@ -623,6 +623,85 @@ class UnifiedDigestService
      * haven't joined is not appropriate; non-members within reach discover the post via browse and
      * the daily digest. Do not "fix" the JOIN to include non-members.
      */
+    /** Memoized presence of rippling_reach.overflow_bounds. Null until first checked. */
+    private static ?bool $overflowColumn = null;
+
+    /** Test-only: forget the memoized overflow-column check. */
+    public static function forgetOverflowColumn(): void
+    {
+        self::$overflowColumn = null;
+    }
+
+    /**
+     * The rural-access overflow rings for a post, as an extra containment branch on the
+     * recipient query: one ring per density band, admitting a member whose OWN band earns
+     * the wider travel budget even though the capped reach stopped short of them.
+     *
+     * Returns ['', []] whenever the lane cannot apply, and that is a stronger statement than
+     * "false": with no rings the clause is ABSENT, so the query compiles to exactly what it
+     * was before this existed and costs exactly what it cost. A disabled lane cannot slow the
+     * mail path down.
+     *
+     * The rings are read here and bound as parameters rather than extracted inside the query.
+     * rippling_reach is one row per post, so an ST_GeomFromText over a JSON_EXTRACT in the
+     * WHERE clause would re-parse the SAME polygon for every candidate member - tens of
+     * thousands of identical parses on a large group, in the mail path.
+     *
+     * Binding the band name as a parameter rather than building a '$.rural.<band>' path also
+     * keeps a member's stored settings value data rather than syntax.
+     *
+     * Only the bands actually present are considered. The routing server deliberately omits
+     * any band at or inside the committed reach, because every member it would admit is
+     * already admitted by the reach proper - so an absent band means "already covered", not
+     * "missing".
+     *
+     * @return array{0: string, 1: array<int, mixed>}
+     */
+    private function ruralOverflowBranch(int $msgid, string $point): array
+    {
+        if (! config('freegle.ripple.rural_access.enabled', false)) {
+            return ['', []];
+        }
+
+        try {
+            // Memoized: this runs once per post in the reach-mail pass, and the schema does
+            // not change under it mid-run.
+            self::$overflowColumn ??= Schema::hasColumn('rippling_reach', 'overflow_bounds');
+            if (! self::$overflowColumn) {
+                return ['', []];
+            }
+
+            $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_bounds');
+            $rings = is_string($raw) ? (json_decode($raw, true)['rural'] ?? null) : null;
+            if (! is_array($rings) || empty($rings)) {
+                return ['', []];
+            }
+
+            $srid = (int) config('freegle.srid', 3857);
+            $sql = '';
+            $params = [];
+            foreach ($rings as $band => $wkt) {
+                if (! is_string($wkt) || $wkt === '') {
+                    continue;
+                }
+                // The band equality is exclusive, so nested rings cannot admit one member twice.
+                $sql .= " OR (JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) = ?"
+                    . " AND ST_Contains(ST_GeomFromText(?, ?), $point))";
+                $params[] = (string) $band;
+                $params[] = $wkt;
+                $params[] = $srid;
+                $params[] = $srid; // the point's own SRID, repeated per branch
+            }
+
+            return $sql === '' ? ['', []] : [$sql, $params];
+        } catch (\Throwable $e) {
+            // A post that cannot be checked for overflow still gets its normal reach mail.
+            Log::warning('ripple: rural overflow branch unavailable', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+
+            return ['', []];
+        }
+    }
+
     public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false): int
     {
         if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
@@ -641,16 +720,27 @@ class UnifiedDigestService
             // as resolveUserLatLng, so the distance-preference filter below measures from
             // exactly the point that decided reach-polygon membership, not a second,
             // possibly-divergent resolution.
-            $recipientRows = collect(DB::select(
-                "SELECT DISTINCT u.id AS id,
-                       CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+            // One definition of the member's point, used by the projection, by the reach
+            // containment and by any overflow ring - so a member cannot be admitted on one
+            // resolution and then measured from another.
+            $latExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
                                  AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
                             THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                            ELSE l.lat END AS resolved_lat,
-                       CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
+                            ELSE l.lat END";
+            $lngExpr = "CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
                                  AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
                             THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                            ELSE l.lng END AS resolved_lng
+                            ELSE l.lng END";
+            $point = "ST_SRID(POINT($lngExpr, $latExpr), ?)";
+
+            [$overflowSql, $overflowParams] = $this->ruralOverflowBranch($msgid, $point);
+
+            // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText) and the
+            // JSON_EXTRACT point resolution have no query-builder equivalent.
+            $recipientRows = collect(DB::select(
+                "SELECT DISTINCT u.id AS id,
+                       $latExpr AS resolved_lat,
+                       $lngExpr AS resolved_lng
                  FROM messages_groups mg
                  JOIN rippling_reach mr ON mr.msgid = mg.msgid
                  JOIN memberships m ON m.groupid = mg.groupid
@@ -663,20 +753,14 @@ class UnifiedDigestService
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received')
                        )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
-                   AND ST_Contains(mr.polygon, ST_SRID(POINT(
-                         CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                   AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
-                              THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lng') AS DECIMAL(10,6))
-                              ELSE l.lng END,
-                         CASE WHEN JSON_EXTRACT(u.settings, '$.mylocation.lat') IS NOT NULL
-                                   AND JSON_EXTRACT(u.settings, '$.mylocation.lng') IS NOT NULL
-                              THEN CAST(JSON_EXTRACT(u.settings, '$.mylocation.lat') AS DECIMAL(10,6))
-                              ELSE l.lat END
-                       ), ?))
+                   AND (ST_Contains(mr.polygon, $point)$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
                        )",
-                [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid]
+                array_merge(
+                    [Membership::EMAIL_FREQUENCY_IMMEDIATE, $msgid, now()->subDays(90), $srid],
+                    $overflowParams
+                )
             ));
 
             $recipientIds = $recipientRows->pluck('id')->map(fn ($v) => (int) $v)->all();
