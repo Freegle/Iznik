@@ -128,10 +128,13 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->locate($u5, 51.50, -0.12);
         $this->createMembership($u5, $g1);
 
-        // NULL lastaccess (never logged in, e.g. brand-new member) -> still
-        // mailed, matching the digest convention.
+        // Dormant but inside the threshold -> still mailed (the boundary's
+        // other side). NULL lastaccess is untestable — the column is NOT NULL
+        // DEFAULT CURRENT_TIMESTAMP, so no real user can carry it — but the
+        // whereNull arm stays in the query as belt-and-braces matching the
+        // digest convention.
         $u6 = $this->createTestUser(['email_preferred' => 'u6@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
-        $u6->lastaccess = null;
+        $u6->lastaccess = now()->subDays(100);
         $u6->save();
         $this->locate($u6, 51.50, -0.12);
         $this->createMembership($u6, $g1);
@@ -155,7 +158,7 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u2->id)); // opted out
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u3->id)); // bouncing
         $this->assertFalse($sent->contains(fn ($m) => $m->userId === $u5->id)); // dormant >182.5d
-        $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u6->id));  // never logged in
+        $this->assertTrue($sent->contains(fn ($m) => $m->userId === $u6->id));  // dormant 100d, inside threshold
 
         // Bookkeeping: item marked emailed, area cadence stamped.
         $this->assertNotNull(CommunityNewsItem::where('areaid', $area->id)->first()->emailed_at);
