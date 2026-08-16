@@ -198,7 +198,7 @@ func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOn
 		unseenFilter = "AND ml.msgid IS NULL "
 	}
 
-	reachWhere, pointArgs := reachContainmentSQL(db, latlng.Lng, latlng.Lat)
+	reachWhere, pointArgs := reachOrOverflowSQL(db, myid, latlng.Lng, latlng.Lat)
 
 	// Two independent shape axes -
 	// unseenFilter (a plain bool toggle) and reachWhere (a live-DB-gated

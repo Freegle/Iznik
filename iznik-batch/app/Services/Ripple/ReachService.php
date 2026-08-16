@@ -415,6 +415,24 @@ class ReachService
             $out['fairness_budget_min'] = (float) $body['fairness_budget_min'];
         }
 
+        // The bounding box of every ring, as [minLng, minLat, maxLng, maxLat].
+        //
+        // This is what makes the rings readable on the BROWSE feed. There, unlike the mail,
+        // every candidate row is a different post with a different ring, so the exact test has
+        // to parse a polygon per row - on the path every request goes through. Four numeric
+        // comparisons against a box reject almost every row before that happens, which is the
+        // same shape as the cheap outer/inner bounds check already sitting in front of the
+        // exact reach polygon.
+        //
+        // Stored beside the rings rather than in a column of its own precisely because it is
+        // only ever a prefilter: it is never consulted without the exact test behind it, so it
+        // needs no spatial index, and keeping it here costs no migration and cannot drift out
+        // of step with the rings it describes.
+        $bbox = $this->ringsBbox($out);
+        if ($bbox !== null) {
+            $out['bbox'] = $bbox;
+        }
+
         return $out;
     }
 
@@ -526,6 +544,46 @@ class ReachService
             'outer' => $this->polygonToWkt($body['catchment_outer'] ?? null),
             'inner' => $this->polygonToWkt($body['catchment_inner'] ?? null),
         ];
+    }
+
+    /**
+     * The box enclosing every ring in a parsed overflow set, as [minLng, minLat, maxLng, maxLat].
+     *
+     * Taken from the WKT actually stored rather than from the source geometry, so the box can
+     * never describe a ring different from the one it ships with. Returns null if no ring
+     * yielded a usable coordinate, which keeps "no rings" and "a box covering nothing" distinct.
+     *
+     * @param  array<string, mixed>  $out
+     * @return array{0: float, 1: float, 2: float, 3: float}|null
+     */
+    private function ringsBbox(array $out): ?array
+    {
+        $minLng = $minLat = INF;
+        $maxLng = $maxLat = -INF;
+        $seen = false;
+
+        foreach (['rural', 'fairness'] as $lane) {
+            foreach (($out[$lane] ?? []) as $wkt) {
+                if (!is_string($wkt) || !preg_match('/^POLYGON\(\((.*)\)\)$/', $wkt, $m)) {
+                    continue;
+                }
+                foreach (explode(',', $m[1]) as $pair) {
+                    $parts = preg_split('/\s+/', trim($pair));
+                    if (count($parts) < 2 || !is_numeric($parts[0]) || !is_numeric($parts[1])) {
+                        continue;
+                    }
+                    $lng = (float) $parts[0];
+                    $lat = (float) $parts[1];
+                    $minLng = min($minLng, $lng);
+                    $maxLng = max($maxLng, $lng);
+                    $minLat = min($minLat, $lat);
+                    $maxLat = max($maxLat, $lat);
+                    $seen = true;
+                }
+            }
+        }
+
+        return $seen ? [$minLng, $minLat, $maxLng, $maxLat] : null;
     }
 
     private function polygonToWkt(?array $polygon): ?string
