@@ -139,3 +139,52 @@ func TestCreateChatMessage_ReportDoesNotJoinGroup(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", reporterID, groupID).Scan(&cnt)
 	assert.Equal(t, 0, cnt, "reporting a post (User2Mod) must NOT join the reporter to the group")
 }
+
+// A replier who is ALREADY in one of the post's groups must not be joined to another one.
+// The join picks the post's lowest group id, which after rippling is usually a copy the
+// replier has no connection to: a Leeds member replied to a Leeds post that had rippled
+// into Bradford minutes earlier, and because Bradford's id sorts first she was signed up
+// to Bradford, unsubscribed, and complained on ChitChat (2026-08-17).
+func TestCreateChatMessage_ReplyDoesNotJoinWhenAlreadySharingAGroup(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("replynojoin")
+
+	homeGroup := CreateTestGroup(t, prefix+"_home")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+	// The post's other group must sort FIRST, so the old code would have picked it.
+	if rippledGroup > homeGroup {
+		homeGroup, rippledGroup = rippledGroup, homeGroup
+	}
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, homeGroup, "Member")
+	msgID := CreateTestMessage(t, posterID, homeGroup, "OFFER: already-a-member test item", 51.5, -0.1)
+	// The post also sits on the lower-numbered group, as a rippled-in copy would.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)",
+		msgID, rippledGroup)
+
+	// The replier is already a member of the group the post is native to.
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	CreateTestMembership(t, replierID, homeGroup, "Member")
+
+	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	_, token := CreateTestSession(t, replierID)
+	var payload chat.ChatMessage
+	payload.Message = "I'd like this please"
+	payload.Refmsgid = &msgID
+	s, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, token), bytes.NewBuffer(s))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode, "the reply is accepted")
+
+	var joinedElsewhere int
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", replierID, rippledGroup).Scan(&joinedElsewhere)
+	assert.Equal(t, 0, joinedElsewhere,
+		"a replier already in one of the post's groups must not be joined to another")
+
+	// ...and their existing membership is untouched.
+	var stillHome int
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", replierID, homeGroup).Scan(&stillHome)
+	assert.Equal(t, 1, stillHome, "their existing membership is left alone")
+}
