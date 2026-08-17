@@ -3,12 +3,13 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
- * Nuxt 4 defines neither process.client nor process.server - the guards read
- * undefined and the "client-only" code silently never runs in a real build
- * (this killed the app's Android back button and iOS detection before it was
- * caught). The eslint rule nuxt/prefer-import-meta errors on it, but eslint
- * only gates changed files at commit time via a local hook; this spec makes
- * the whole suite fail wherever it runs, CI included.
+ * Nuxt 3's vite builder defined process.client/process.server; Nuxt 4's defines
+ * neither, so a surviving guard reads undefined and its "client-only" code
+ * silently never runs. The Nuxt 4 upgrade converted about a hundred of these
+ * and missed two, which would have shipped the app's Android back button and
+ * iOS detection quietly dead. The eslint rule nuxt/prefer-import-meta errors on
+ * the pattern, but eslint only gates changed files at commit time via a local
+ * hook; this spec makes the whole suite fail wherever it runs, CI included.
  *
  * Unit tests can never catch the runtime symptom themselves: the vitest
  * transform substitutes import.meta.client to a literal, so the only reliable

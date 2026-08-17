@@ -887,8 +887,9 @@ describe('mobile store', () => {
         .mockImplementation(() => {})
       // initBackButton now guards with `import.meta.client` like its siblings,
       // which the vitest transform substitutes to true at build time — so
-      // nothing needs setting here. (It used to read `process.client`, which
-      // Nuxt 4 no longer defines: the guard was never true in a real build.)
+      // nothing needs setting here. (It read `process.client`, which Nuxt 3's
+      // vite builder defined as true but Nuxt 4's does not define at all, so
+      // the upgrade would have shipped this listener silently unregistered.)
     })
 
     afterEach(() => {
