@@ -83,6 +83,41 @@ class AppServiceProvider extends ServiceProvider
         $this->checkRequiredBinaries();
         $this->registerSpamCheckListener();
         $this->blockMigrationsInProduction();
+        $this->stampLogsWithCommandLine();
+    }
+
+    /**
+     * Stamp every log record (and the Sentry scope) with this process's
+     * command line. A fatal error carries no PHP stack — 21-28 memory-
+     * exhaustion fatals a day appeared in Sentry from 2026-08-12 as bare
+     * "Allowed memory size exhausted at Connection.php:413" with no way to
+     * tell which of the ~90 scheduled commands had died. With argv on the
+     * record, the crash names its process.
+     */
+    protected function stampLogsWithCommandLine(): void
+    {
+        if (! $this->app->runningInConsole()) {
+            return;
+        }
+
+        $argv = implode(' ', array_slice($_SERVER['argv'] ?? [], 0, 6));
+        if ($argv === '') {
+            return;
+        }
+
+        Log::getLogger()->pushProcessor(function ($record) use ($argv) {
+            $record->extra['argv'] = $argv;
+
+            return $record;
+        });
+
+        // Same guard as the other Sentry call sites (EmailHealthCommand):
+        // the helpers aren't loaded in every environment.
+        if (function_exists('\Sentry\configureScope')) {
+            \Sentry\configureScope(function ($scope) use ($argv) {
+                $scope->setTag('argv', mb_substr($argv, 0, 200));
+            });
+        }
     }
 
     /**
