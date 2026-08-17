@@ -215,7 +215,12 @@ func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
 
 	// The replier lives beside the NEAR group and is a member of neither.
 	replierID := CreateTestUser(t, prefix+"_replier", "User")
-	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.mylocation.lat', 51.5, '$.mylocation.lng', -0.1) WHERE id = ?", replierID)
+	// JSON_SET will not create a path whose parent is missing, so setting
+	// '$.mylocation.lat' on a user with no mylocation silently does nothing and
+	// GetLatLng then returns 0,0, which skips the nearest-group query entirely.
+	// Set the object, the way every other location fixture in this suite does.
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", replierID)
 
 	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
 	_, token := CreateTestSession(t, replierID)
