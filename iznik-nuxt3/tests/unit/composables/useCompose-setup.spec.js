@@ -240,9 +240,7 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
       it('excludes messages saved by a different user', () => {
         mockAuthUser = { id: 1 }
         mockComposeStore.messages = byId({ id: 1, type: 'Offer' })
-        mockComposeStore.all = [
-          { id: 1, type: 'Offer', savedBy: 999 },
-        ]
+        mockComposeStore.all = [{ id: 1, type: 'Offer', savedBy: 999 }]
         const api = mod.setup('Offer')
         expect(api.ids.value).toEqual([])
       })
@@ -423,7 +421,6 @@ describe('useCompose setup()/clearItem()/postcodeClear()/freegleIt()', () => {
     })
 
     it('flags wentWrong when the rejection has no message at all', async () => {
-      // eslint-disable-next-line prefer-promise-reject-errors
       mockComposeStore.submit.mockRejectedValue({})
       mockComposeStore.messages = [{ id: 1, type: 'Offer' }]
       const api = mod.setup('Offer')

@@ -68,7 +68,9 @@ describe('RipplingDigestModal', () => {
   describe('member-supplied text is escaped', () => {
     it('does not let a crafted subject inject markup', async () => {
       const wrapper = openWith({
-        top_picks: [post({ subject: 'OFFER: <script>alert(1)</script> (Camden)' })],
+        top_picks: [
+          post({ subject: 'OFFER: <script>alert(1)</script> (Camden)' }),
+        ],
       })
       await wrapper.vm.$nextTick()
 
@@ -93,7 +95,9 @@ describe('RipplingDigestModal', () => {
       // The subject carries "WANTED:" and the row renders the type separately, so leaving
       // the prefix would read "Wanted: WANTED: Bookcase".
       const wrapper = openWith({
-        top_picks: [post({ subject: 'WANTED: Bookcase (Camden)', msgtype: 'Wanted' })],
+        top_picks: [
+          post({ subject: 'WANTED: Bookcase (Camden)', msgtype: 'Wanted' }),
+        ],
       })
       await wrapper.vm.$nextTick()
 
@@ -102,7 +106,9 @@ describe('RipplingDigestModal', () => {
     })
 
     it('shows "< 1 mile" rather than a rounded zero for something on the doorstep', async () => {
-      const wrapper = openWith({ top_picks: [post({ lat: 51.5001, lng: -0.1201 })] })
+      const wrapper = openWith({
+        top_picks: [post({ lat: 51.5001, lng: -0.1201 })],
+      })
       await wrapper.vm.$nextTick()
 
       expect(wrapper.text()).toContain('< 1 mile')
@@ -110,7 +116,9 @@ describe('RipplingDigestModal', () => {
 
     it('rounds a real distance to whole miles', async () => {
       // ~0.15 degrees of latitude is roughly 10 miles.
-      const wrapper = openWith({ top_picks: [post({ lat: 51.65, lng: -0.12 })] })
+      const wrapper = openWith({
+        top_picks: [post({ lat: 51.65, lng: -0.12 })],
+      })
       await wrapper.vm.$nextTick()
 
       expect(wrapper.text()).toMatch(/\d+ miles/)
@@ -125,7 +133,9 @@ describe('RipplingDigestModal', () => {
       expect(single.text()).not.toContain('Posted to:')
 
       const cross = openWith({
-        top_picks: [post({ posted_to_names: ['Camden Freegle', 'Islington Freegle'] })],
+        top_picks: [
+          post({ posted_to_names: ['Camden Freegle', 'Islington Freegle'] }),
+        ],
       })
       await cross.vm.$nextTick()
       expect(cross.text()).toContain('Posted to:')
@@ -169,7 +179,9 @@ describe('RipplingDigestModal', () => {
     it('separates the posts that came and went since the last digest', async () => {
       const wrapper = openWith({
         top_picks: [post()],
-        came_and_went: [post({ msgid: 3, subject: 'OFFER: Gone already (Camden)' })],
+        came_and_went: [
+          post({ msgid: 3, subject: 'OFFER: Gone already (Camden)' }),
+        ],
       })
       await wrapper.vm.$nextTick()
 
@@ -182,7 +194,10 @@ describe('RipplingDigestModal', () => {
   describe('openCluster', () => {
     it('names how many posts share the exact coordinate', async () => {
       const wrapper = mount(RipplingDigestModal)
-      wrapper.vm.openCluster([post({ _rank: 1 }), post({ msgid: 2, _rank: 2 })], ...MEMBER)
+      wrapper.vm.openCluster(
+        [post({ _rank: 1 }), post({ msgid: 2, _rank: 2 })],
+        ...MEMBER
+      )
       await wrapper.vm.$nextTick()
 
       expect(wrapper.text()).toContain('2 posts here')
@@ -249,7 +264,12 @@ describe('RipplingDigestModal', () => {
 
     it('breaks the score into its three components', async () => {
       const wrapper = openOne(
-        post({ score: 0.75, score_close: 0.5, score_budget: 0.15, score_anchor: 0.1 })
+        post({
+          score: 0.75,
+          score_close: 0.5,
+          score_budget: 0.15,
+          score_anchor: 0.1,
+        })
       )
       await wrapper.vm.$nextTick()
 
@@ -261,7 +281,12 @@ describe('RipplingDigestModal', () => {
 
     it('shows a missing score component as 0.00 rather than blank or NaN', async () => {
       const wrapper = openOne(
-        post({ score: undefined, score_close: undefined, score_budget: undefined, score_anchor: undefined })
+        post({
+          score: undefined,
+          score_close: undefined,
+          score_budget: undefined,
+          score_anchor: undefined,
+        })
       )
       await wrapper.vm.$nextTick()
 

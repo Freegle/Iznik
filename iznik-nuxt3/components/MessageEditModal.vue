@@ -179,8 +179,8 @@ const OurUploader = defineAsyncComponent(
   () => import('~/components/OurUploader')
 )
 const PostItem = defineAsyncComponent(() => import('./PostItem'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('./MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('./MessagePhotosModal')
 )
 
 const props = defineProps({

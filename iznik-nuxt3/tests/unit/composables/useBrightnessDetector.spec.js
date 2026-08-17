@@ -292,10 +292,6 @@ describe('analyzeBrightness', () => {
         this.height = 64
       }
 
-      get src() {
-        return undefined
-      }
-
       set src(_v) {
         this._src = _v
         // Trigger onload asynchronously, simulating a loaded image

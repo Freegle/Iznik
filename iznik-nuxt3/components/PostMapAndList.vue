@@ -72,14 +72,17 @@
           class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
         >
           <!-- eslint-disable-next-line -->
-          Need help?  Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
+          Need help? Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
         </p>
         <p
           v-if="showStartMessage"
           class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
         >
           <!-- eslint-disable-next-line -->
-          If there's no community for your area, would you like to start one? <ExternalLink href="mailto:newgroups@ilovefreegle.org">Get in touch!</ExternalLink>
+          If there's no community for your area, would you like to start one?
+          <ExternalLink href="mailto:newgroups@ilovefreegle.org"
+            >Get in touch!</ExternalLink
+          >
         </p>
       </div>
       <div v-else>

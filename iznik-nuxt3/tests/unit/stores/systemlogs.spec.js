@@ -213,7 +213,7 @@ describe('systemlogs store', () => {
 
     it('falls back to a generic error message', async () => {
       const store = useSystemLogsStore()
-      // eslint-disable-next-line prefer-promise-reject-errors
+
       mockSystemLogsFetch.mockRejectedValue({})
 
       await store.fetchSummaries()
@@ -431,9 +431,7 @@ describe('systemlogs store', () => {
 
     it('builds a standalone node for a summary without a trace_id', () => {
       const store = useSystemLogsStore()
-      store.summaries = [
-        { first_log: { id: 1, source: 'logs_table' } },
-      ]
+      store.summaries = [{ first_log: { id: 1, source: 'logs_table' } }]
 
       const tree = store.logsAsTree
 

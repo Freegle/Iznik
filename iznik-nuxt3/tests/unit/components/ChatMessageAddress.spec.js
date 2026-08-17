@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import ChatMessageAddress from '~/components/ChatMessageAddress.vue'
 
 const { mockOtheruser, mockChatmessage, mockMe } = vi.hoisted(() => {

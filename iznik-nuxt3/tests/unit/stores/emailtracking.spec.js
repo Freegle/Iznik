@@ -158,7 +158,7 @@ describe('emailtracking store', () => {
 
     it('sets a default error message on failure', async () => {
       const store = useEmailTrackingStore()
-      // eslint-disable-next-line prefer-promise-reject-errors
+
       mockFetchStats.mockRejectedValue({})
 
       await store.fetchStats()
@@ -221,13 +221,16 @@ describe('emailtracking store', () => {
 
       await store.fetchStatsByType()
 
-      expect(mockFetchStatsByType).toHaveBeenCalledWith({ start: 's', end: 'e' })
+      expect(mockFetchStatsByType).toHaveBeenCalledWith({
+        start: 's',
+        end: 'e',
+      })
       expect(store.statsByType).toEqual([{ email_type: 'x' }])
     })
 
     it('records a default error message on failure', async () => {
       const store = useEmailTrackingStore()
-      // eslint-disable-next-line prefer-promise-reject-errors
+
       mockFetchStatsByType.mockRejectedValue({})
 
       await store.fetchStatsByType()
@@ -239,7 +242,7 @@ describe('emailtracking store', () => {
   describe('fetchDigestPositions error path', () => {
     it('records a default error message on failure', async () => {
       const store = useEmailTrackingStore()
-      // eslint-disable-next-line prefer-promise-reject-errors
+
       mockFetchDigestPositions.mockRejectedValue({})
 
       await store.fetchDigestPositions()
@@ -290,7 +293,7 @@ describe('emailtracking store', () => {
 
     it('records a default error message on failure', async () => {
       const store = useEmailTrackingStore()
-      // eslint-disable-next-line prefer-promise-reject-errors
+
       mockFetchReengageEffectiveness.mockRejectedValue({})
 
       await store.fetchReengageEffectiveness()
@@ -360,7 +363,7 @@ describe('emailtracking store', () => {
 
     it('records a default error message on failure', async () => {
       const store = useEmailTrackingStore()
-      // eslint-disable-next-line prefer-promise-reject-errors
+
       mockFetchTopClickedLinks.mockRejectedValue({})
 
       await store.fetchClickedLinks()
@@ -478,7 +481,9 @@ describe('emailtracking store', () => {
 
       await store.fetchUserEmails(123)
 
-      expect(store.userEmailsError).toBe('No email history found for user #123.')
+      expect(store.userEmailsError).toBe(
+        'No email history found for user #123.'
+      )
     })
 
     it('sets a friendly error message on rejection, keyed by email', async () => {

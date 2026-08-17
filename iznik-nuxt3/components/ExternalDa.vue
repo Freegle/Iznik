@@ -340,7 +340,9 @@ async function checkStillVisible() {
       .toLowerCase()
     const emailDomain = myEmail ? myEmail.split('@').pop().toLowerCase() : ''
     const isSystemAccount = Boolean(
-      host && emailDomain && (emailDomain === host || emailDomain.endsWith('.' + host))
+      host &&
+      emailDomain &&
+      (emailDomain === host || emailDomain.endsWith('.' + host))
     )
 
     if (isSystemAccount) {

@@ -34,7 +34,6 @@ export default defineEventHandler(async (event) => {
   const params = new URLSearchParams({ u: uid, k: key, t: 'all' })
 
   try {
-    // eslint-disable-next-line no-undef
     await $fetch(apiV2 + '/user/unsubscribe?' + params.toString(), {
       method: 'POST',
     })

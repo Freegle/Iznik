@@ -13,7 +13,10 @@ describe('ModEmailDateFilter', () => {
   function fetchPayload(defaultPreset) {
     const wrapper = mount(ModEmailDateFilter, { props: { defaultPreset } })
     const events = wrapper.emitted('fetch')
-    expect(events, 'the panel fetches on mount, without waiting for a click').toBeTruthy()
+    expect(
+      events,
+      'the panel fetches on mount, without waiting for a click'
+    ).toBeTruthy()
     return events[0][0]
   }
 

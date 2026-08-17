@@ -65,7 +65,12 @@ const stubs = {
   'nuxt-link': defineComponent({ render: () => h('a') }),
 }
 
-const AT = { id: 1, lat: 53.7, lng: -2.7, settings: { mylocation: { name: 'Preston' } } }
+const AT = {
+  id: 1,
+  lat: 53.7,
+  lng: -2.7,
+  settings: { mylocation: { name: 'Preston' } },
+}
 
 async function mountSlot() {
   const wrapper = mount(JobsDaSlot, { global: { stubs } })

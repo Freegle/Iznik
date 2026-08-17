@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest'
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from 'vitest'
 
 // useNavbar() calls onMounted() at module top level (outside a real component),
 // same workaround already used elsewhere in useNavbar.spec.js: stub it as a
@@ -85,7 +93,11 @@ function stubStores() {
     }),
   }))
   vi.doMock('~/stores/notification', () => ({
-    useNotificationStore: () => ({ count: 0, fetchCount: vi.fn(), fetchList: vi.fn() }),
+    useNotificationStore: () => ({
+      count: 0,
+      fetchCount: vi.fn(),
+      fetchList: vi.fn(),
+    }),
   }))
   vi.doMock('~/stores/chat', () => ({
     useChatStore: () => ({

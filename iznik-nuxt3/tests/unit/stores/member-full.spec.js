@@ -116,9 +116,7 @@ describe('member store — actions beyond fetchMembers/spamignore/askMerge', () 
       mockApproveMember.mockRejectedValueOnce(conflict)
       mockMembershipFetch.mockResolvedValue({ member: { id: 1 } })
 
-      await expect(
-        store.approve({ id: 1, groupid: 2 })
-      ).rejects.toThrow()
+      await expect(store.approve({ id: 1, groupid: 2 })).rejects.toThrow()
       expect(mockMembershipFetch).toHaveBeenCalledWith({
         userid: 1,
         groupid: 2,
@@ -159,7 +157,13 @@ describe('member store — actions beyond fetchMembers/spamignore/askMerge', () 
         8: { id: 8, userid: 1, groupid: 9 },
       }
 
-      await store.delete({ id: 1, groupid: 2, subject: 's', stdmsgid: 3, body: 'b' })
+      await store.delete({
+        id: 1,
+        groupid: 2,
+        subject: 's',
+        stdmsgid: 3,
+        body: 'b',
+      })
 
       expect(mockDelete).toHaveBeenCalledWith(1, 2, 's', 3, 'b')
       expect(store.list[7]).toBeUndefined()

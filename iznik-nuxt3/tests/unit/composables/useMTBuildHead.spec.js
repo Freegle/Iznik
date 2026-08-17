@@ -16,7 +16,9 @@ describe('buildHead', () => {
     buildHead = mod.buildHead
   })
 
-  const runtimeConfig = { public: { MODTOOLS_SITE: 'https://modtools.example' } }
+  const runtimeConfig = {
+    public: { MODTOOLS_SITE: 'https://modtools.example' },
+  }
 
   it('builds meta/link/title using the given image', () => {
     const head = buildHead(

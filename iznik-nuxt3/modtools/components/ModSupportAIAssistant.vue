@@ -406,10 +406,21 @@
               <!-- Live progress for a long tool run (the member snapshot can
                    take minutes on a big account) - a moving bar with elapsed
                    time is the difference between "working" and "broken". -->
-              <div v-if="toolProgress" class="dump-progress mb-2" data-testid="dump-progress">
+              <div
+                v-if="toolProgress"
+                class="dump-progress mb-2"
+                data-testid="dump-progress"
+              >
                 <div class="small text-muted mb-1">
-                  Building member snapshot: {{ toolProgress.section || 'starting' }}
-                  ({{ toolProgress.percent }}%<span v-if="toolProgress.etaMs">, ~{{ Math.round(toolProgress.etaMs / 1000) }}s left</span><span v-else-if="toolProgress.elapsedMs">, {{ Math.round(toolProgress.elapsedMs / 1000) }}s elapsed</span>)
+                  Building member snapshot:
+                  {{ toolProgress.section || 'starting' }} ({{
+                    toolProgress.percent
+                  }}%<span v-if="toolProgress.etaMs"
+                    >, ~{{ Math.round(toolProgress.etaMs / 1000) }}s left</span
+                  ><span v-else-if="toolProgress.elapsedMs"
+                    >, {{ Math.round(toolProgress.elapsedMs / 1000) }}s
+                    elapsed</span
+                  >)
                 </div>
                 <b-progress
                   :value="toolProgress.percent"

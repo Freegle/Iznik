@@ -26,8 +26,16 @@ describe('RipplingLegend', () => {
       const swatches = wrapper.findAll('.rpl-leg-swatch')
       const styles = swatches.map((s) => s.attributes('style') || '')
 
-      expect(styles.some((s) => s.includes('rgb(255, 0, 0)') || s.includes('#ff0000'))).toBe(true)
-      expect(styles.some((s) => s.includes('rgb(0, 255, 0)') || s.includes('#00ff00'))).toBe(true)
+      expect(
+        styles.some(
+          (s) => s.includes('rgb(255, 0, 0)') || s.includes('#ff0000')
+        )
+      ).toBe(true)
+      expect(
+        styles.some(
+          (s) => s.includes('rgb(0, 255, 0)') || s.includes('#00ff00')
+        )
+      ).toBe(true)
     })
 
     it('renders one entry per band, plus the group-area key', () => {

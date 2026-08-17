@@ -241,8 +241,8 @@ import {
 const FINALISE_TIMEOUT_MS = 60000
 
 const draggable = defineAsyncComponent(() => import('vuedraggable'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
 
 const props = defineProps({

@@ -238,7 +238,10 @@ describe('spammer store — actions beyond addAll/confirm', () => {
 
     it('refreshes via the held-conflict path when the patch is refused by another mod', async () => {
       const conflict = new Error('held')
-      conflict.response = { status: 409, data: { heldby: 2, heldbyname: 'Bob' } }
+      conflict.response = {
+        status: 409,
+        data: { heldby: 2, heldbyname: 'Bob' },
+      }
       mockPatch.mockRejectedValue(conflict)
       mockFetch.mockResolvedValue({ spammers: [], context: null })
 
