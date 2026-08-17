@@ -514,4 +514,65 @@ class CommunityNewsEmailServiceTest extends TestCase
         $this->assertCount(1, $sent);
         $this->assertContains('New cycle path opens', array_column($sent->first()->items, 'title'));
     }
+
+    /**
+     * Intros are stored on the area and reused for a week, so a mixed-language
+     * greeting written before the parse-time backstop existed (12 live Welsh
+     * areas as of 2026-08-17) would keep going out until re-research. The send
+     * path strips it too, so a stored "Shwmae, Wrecsam!" never reaches members.
+     */
+    public function test_strips_a_stored_welsh_greeting_intro_at_send_time(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'welsh@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville',
+            'intro' => 'Shwmae, Testville! The balloons are inflating.',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
+            'url' => 'https://example.org/x', 'source' => 'S', 'researched_at' => now(),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $this->assertSame('The balloons are inflating.', $sent->first()->intro);
+    }
+
+    /** A stored intro that is ONLY a greeting falls back to the stock line. */
+    public function test_greeting_only_stored_intro_falls_back_to_default(): void
+    {
+        config(['freegle.mail.enabled_types' => 'CommunityNews']);
+
+        $g = $this->createTestGroup(['lat' => 51.50, 'lng' => -0.12, 'settings' => ['communitynews' => 1, 'newsletter' => 1]]);
+        $this->catchment($g);
+        $u = $this->createTestUser(['email_preferred' => 'croeso@test.com', 'newslettersallowed' => 1, 'bouncing' => 0]);
+        $this->locate($u, 51.50, -0.12);
+        $this->createMembership($u, $g);
+
+        $area = CommunityNewsArea::create([
+            'anchorgroupid' => $g->id, 'name' => 'Testville',
+            'intro' => 'Croeso i mid August',
+            'lat' => 51.5, 'lng' => -0.12, 'groupids' => [$g->id], 'groupcount' => 1,
+        ]);
+        CommunityNewsItem::create([
+            'areaid' => $area->id, 'title' => 'T', 'snippet' => 'B',
+            'url' => 'https://example.org/x', 'source' => 'S', 'researched_at' => now(),
+        ]);
+
+        $this->svc()->sendWeekly();
+
+        $sent = Mail::sent(CommunityNewsMail::class);
+        $this->assertCount(1, $sent);
+        $this->assertSame("Here's a little round-up of what's going on around Testville.", $sent->first()->intro);
+    }
 }

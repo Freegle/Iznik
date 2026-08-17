@@ -303,6 +303,10 @@ class CommunityNewsResearchService
         }
 
         $intro = isset($json['intro']) && is_string($json['intro']) ? $this->replaceEmDashes(trim($json['intro'])) : '';
+        // Zero mixed language: a token "Shwmae, Caernarfon!" opening never
+        // reaches the stored intro, however the model phrases it. Items are
+        // exempt - a Welsh event NAME is a name, not a greeting.
+        $intro = IntroLanguage::stripForeignGreeting($intro);
 
         $items = [];
         foreach ((array) ($json['items'] ?? []) as $it) {
@@ -423,6 +427,7 @@ class CommunityNewsResearchService
         - Keep everything genuinely LOCAL to {$name} (or clearly within it). If you can't find enough real local material, return fewer items — quality over quantity.
         - Do NOT include repair cafés or Restart/Fixit-style repair events — Freegle already lists these separately (synced from the Restart Project and Repair Café Wales), so they would be duplicates.
         - UK English. Light, second-person, roughly 40-60 words per item: what it is and why someone might fancy it. No hashtags, no marketing-speak, at most the occasional emoji.
+        - Write ENTIRELY in English, the intro included, even for areas in Wales or Scotland. Never open with or sprinkle in greetings or phrases from Welsh, Gaelic or any other language ("Croeso", "Shwmae", "Bore da"): a half-and-half opening like "Croeso i mid August" reads as tokenism, not warmth. Welsh or Gaelic NAMES of places, events and organisations (the Eisteddfod, a Menter Iaith event) are fine when that is their real name.
         - Where it fits NATURALLY, end an item with a short, playful Freegle tie-in — one sentence linking the story to giving or asking for things on your local Freegle community ("Need dancing shoes? Ask on Freegle", "Got records gathering dust? Someone nearby would love them"). Skip it where it would feel forced; never salesy.
         - Give dates ABSOLUTELY ("Saturday 2 August", "until 14 September"), never relatively ("this Saturday", "tomorrow", "next week") — items may be published up to a couple of weeks after you write them, so relative dates go stale.
         - Don't plug Freegle itself unless a Freegle event genuinely comes up.
@@ -447,7 +452,7 @@ class CommunityNewsResearchService
         If an item happens on a particular day, give that day as "date" in YYYY-MM-DD form. Today is {$today}, so work out the actual date of anything described as "Saturday" or "next week". Give the FINAL day for something running over several days — readers stop being shown an item once its date has passed, and a multi-day event is still worth going to until it ends. If your blurb mentions a specific day ("Saturday 8 August"), you MUST also supply the matching "date" — blurb and date must always agree. Leave "date" out only when the item genuinely has no date — an ongoing service, a new footpath, a refurbished library — and never guess: for an undated item, an omitted date is much better than a wrong one.
 
         Then reply with ONLY a JSON object — no prose, no code fences — in exactly this shape:
-        {"intro":"one or two warm, quirky sentences introducing this week's round-up for {$name}","items":[{"title":"punchy title","blurb":"~45-word friendly description","url":"the source URL you found","source":"the site or organisation name","date":"YYYY-MM-DD or omitted"}]}
+        {"intro":"one or two warm, quirky sentences in UK English introducing this week's round-up for {$name}","items":[{"title":"punchy title","blurb":"~45-word friendly description","url":"the source URL you found","source":"the site or organisation name","date":"YYYY-MM-DD or omitted"}]}
         USER;
     }
 

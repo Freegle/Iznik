@@ -296,4 +296,62 @@ class CommunityNewsResearchServiceTest extends TestCase
             $this->assertNull($items[0]['date'], "expected '{$raw}' to be rejected as an event date");
         }
     }
+
+    /**
+     * Welsh-named areas coax the model into token Welsh greetings ("Croeso i
+     * mid August", "Shwmae, Caernarfon!") on an otherwise-English intro. The
+     * deterministic backstop strips the greeting sentence at parse time so a
+     * mixed-language intro can never be stored, however the model phrases it.
+     */
+    public function test_parse_strips_a_token_welsh_greeting_from_the_intro(): void
+    {
+        $text = json_encode([
+            'intro' => 'Croeso i mid August, Wrecsam! The balloons are inflating and the parks are humming.',
+            'items' => [
+                ['title' => 'T', 'blurb' => 'b', 'url' => 'https://ok.org', 'source' => 'S'],
+            ],
+        ]);
+
+        [$intro] = $this->svc()->parse($text, 6);
+
+        $this->assertSame('The balloons are inflating and the parks are humming.', $intro);
+    }
+
+    /** Item titles are exempt: a Welsh EVENT name is a name, not a greeting. */
+    public function test_parse_leaves_welsh_named_items_alone(): void
+    {
+        $text = json_encode([
+            'intro' => 'x',
+            'items' => [
+                ['title' => 'Croeso i Gaerdydd festival', 'blurb' => 'A weekend of Welsh music.', 'url' => 'https://ok.org', 'source' => 'S'],
+            ],
+        ]);
+
+        [, $items] = $this->svc()->parse($text, 6);
+
+        $this->assertSame('Croeso i Gaerdydd festival', $items[0]['title']);
+    }
+
+    /** The prompts must pin the output language, intro included. */
+    public function test_research_prompts_demand_english_only(): void
+    {
+        config(['freegle.communitynews.anthropic_api_key' => 'test-key']);
+
+        $json = json_encode(['intro' => 'x', 'items' => [
+            ['title' => 'T', 'blurb' => 'b', 'url' => 'https://ok.org', 'source' => 'S'],
+        ]]);
+        Http::fake(['api.anthropic.com/*' => Http::response([
+            'stop_reason' => 'end_turn',
+            'content' => [['type' => 'text', 'text' => $json]],
+        ], 200)]);
+
+        $this->svc()->researchArea($this->area());
+
+        Http::assertSent(function ($request) {
+            $body = $request->data();
+
+            return str_contains($body['system'] ?? '', 'ENTIRELY in English')
+                && str_contains($body['messages'][0]['content'] ?? '', 'in UK English');
+        });
+    }
 }

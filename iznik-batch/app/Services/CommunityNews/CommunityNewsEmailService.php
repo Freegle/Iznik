@@ -111,7 +111,12 @@ class CommunityNewsEmailService
                 ];
             })->all();
 
-            $intro = $area->intro ?: "Here's a little round-up of what's going on around {$area->name}.";
+            // Intros are stored and reused for up to a week, so strip token
+            // Welsh/Gaelic greetings at send time too - an intro written before
+            // the parse-time backstop existed would otherwise keep going out
+            // until the area is next researched.
+            $intro = IntroLanguage::stripForeignGreeting((string) ($area->intro ?? ''))
+                ?: "Here's a little round-up of what's going on around {$area->name}.";
             $story = $this->pickStory($groupIds, $area);
 
             $sentForArea = 0;
