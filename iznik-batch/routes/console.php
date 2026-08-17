@@ -635,32 +635,55 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 }
 
 // "Still lagging" alert — one hour after the 07:00-12:00 daily window closes, check whether the
-// morning run kept up. Counts recently-active daily recipients (sent within the last 7 days, so
-// this excludes the permanently-inactive who never get a digest and the never-sent) who did NOT
-// get today's digest. In steady state the morning window clears them and this is ~0; a large
-// count means we're under capacity and the lag is rotating (see streamDailyOverdueFirst) — the
+// morning run kept up. Counts daily recipients who did NOT get today's digest. In steady state
+// the morning window clears them and this is ~0; a large count means we're under capacity — the
 // signal to add throughput/hardware. Logged at error level so it reaches Sentry; fires daily
 // until capacity catches up, which is the intended KPI, not noise.
+//
+// This used to count only people whose last digest was within seven days, to leave out the
+// permanently-inactive and the never-sent. That also left out anyone who had fallen more than a
+// week behind, which is the group the alert most needs to report: measured on production
+// 2026-08-17, 2,003 members who are still using the site, are not bouncing, and still have a
+// community set to a daily digest had not had one for over a week, and 384 of them had not had
+// one for over a month. None of them appeared in this number. The claim that the lag rotates
+// fairly and nobody is permanently starved was not true, and this was the reason nobody could
+// see that.
+//
+// So the seven-day window is gone, and dormancy is excluded by asking whether the member has
+// used the site rather than by how long ago we last managed to mail them. Never-sent recipients
+// still have no row here, so they are still out of scope.
 Schedule::call(function () {
     $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC')->toDateTimeString();
-    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(7)->setTimezone('UTC')->toDateTimeString();
+    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(30)->setTimezone('UTC')->toDateTimeString();
 
-    $lagging = \Illuminate\Support\Facades\DB::table('users_digests')
-        ->where('mode', 'daily')
-        ->where('lastsent', '>=', $activeSinceUtc)
-        ->where('lastsent', '<', $londonDayStartUtc)
+    $laggingQuery = \Illuminate\Support\Facades\DB::table('users_digests')
+        ->join('users', 'users.id', '=', 'users_digests.userid')
+        ->where('users_digests.mode', 'daily')
+        ->where('users_digests.lastsent', '<', $londonDayStartUtc)
+        ->whereNull('users.deleted')
+        ->where('users.lastaccess', '>=', $activeSinceUtc);
+
+    $lagging = (clone $laggingQuery)->count();
+
+    // How much of that is more than a week old. The old measure could not see any of this, so
+    // report it separately: a rising figure here means the backlog is not rotating but settling
+    // on the same people.
+    $overAWeek = (clone $laggingQuery)
+        ->where('users_digests.lastsent', '<', \Carbon\Carbon::parse($londonDayStartUtc)->subDays(7)->toDateTimeString())
         ->count();
 
     $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
     if ($lagging > $threshold) {
         \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the 07:00-12:00 window', [
             'lagging_active_recipients' => $lagging,
+            'of_which_over_a_week_behind' => $overAWeek,
             'threshold' => $threshold,
             'checked_at' => 'London 13:00',
         ]);
     } else {
         \Illuminate\Support\Facades\Log::info('Daily digest kept up with the morning window', [
             'lagging_active_recipients' => $lagging,
+            'of_which_over_a_week_behind' => $overAWeek,
         ]);
     }
 })
