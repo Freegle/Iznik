@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-06
+last_reviewed: 2026-08-17
 covers:
   - iznik-server-go/chat/chatprompt.go
   - iznik-nuxt3/components/ChatMessagePrompt.vue

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-10
+last_reviewed: 2026-08-17
 owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/DonateLinkService.php

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-01
+last_reviewed: 2026-08-17
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
