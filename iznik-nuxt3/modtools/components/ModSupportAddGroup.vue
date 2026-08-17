@@ -37,7 +37,7 @@
       <b-form-text>
         Core Group Area. Draw with
         <!-- eslint-disable-next-line -->
-        <ExternalLink href="https://arthur-e.github.io/Wicket/sandbox-gmaps3.html">this</ExternalLink>.
+        <ExternalLink href="https://freegle.github.io/Wicket/">this</ExternalLink>.
       </b-form-text>
       <b-form-textarea
         v-model="cga"
