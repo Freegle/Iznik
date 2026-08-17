@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, flushPromises } from '@vue/test-utils'
+import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref, computed } from 'vue'
 import PendingPage from '~/modtools/pages/messages/pending/[[id]]/[[term]].vue'
@@ -20,7 +20,7 @@ const mockSummarykey = ref(false)
 const mockSummary = computed(() => false)
 const mockMessages = ref([])
 const mockVisibleMessages = ref([])
-const mockWork = computed(() => 0)
+const mockWork = ref(0)
 const mockNextAfterRemoved = ref(null)
 const mockGetMessages = vi.fn()
 const mockListingIds = ref(new Set())
@@ -206,6 +206,7 @@ describe('PendingPage', () => {
     mockWorkType.value = null
     mockMessages.value = []
     mockVisibleMessages.value = []
+    mockWork.value = 0
     mockLimit.value = 10
     mockDistance.value = 10
     mockModGroupStore.received = true
@@ -225,6 +226,70 @@ describe('PendingPage', () => {
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
       expect(wrapper.text()).toContain('no messages at the moment')
+    })
+
+    // Discourse 10037: the group dropdown remembers its selection in
+    // localStorage and silently re-applies it on every visit, while the
+    // Pending badge in the menu counts work across every community. A
+    // moderator whose remembered community happens to have nothing pending
+    // sees a bare "no messages" page and a badge insisting there is work.
+    // Two moderators reported it as "I can't moderate on desktop".
+    it('names the filtered community and the outstanding count when the filter is hiding work', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      // A component left mounted by an earlier test still watches the shared
+      // groupid ref and re-derives group from the store, so the store has to
+      // agree about which community this is.
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockWork.value = 3
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('Skelmersdale Freegle')
+      expect(wrapper.text()).toContain('3')
+      expect(wrapper.text()).toContain('Show all my communities')
+    })
+
+    it('keeps the plain empty notice when nothing is pending anywhere', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      // A component left mounted by an earlier test still watches the shared
+      // groupid ref and re-derives group from the store, so the store has to
+      // agree about which community this is.
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockWork.value = 0
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('no messages at the moment')
+      expect(wrapper.text()).not.toContain('Show all my communities')
+    })
+
+    it('keeps the plain empty notice when already showing all communities', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 0
+      mockWork.value = 3
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).not.toContain('Show all my communities')
     })
 
     it('shows loading message when groups not yet received', async () => {
@@ -346,6 +411,103 @@ describe('PendingPage', () => {
       expect(mockState.complete).not.toHaveBeenCalled()
       expect(mockState.loaded).toHaveBeenCalled()
     })
-  })
 
+    it('clearing the filter also forgets it, so the next visit is not filtered again (Discourse 10037)', async () => {
+      mockMessages.value = []
+      mockBusy.value = false
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      // A component left mounted by an earlier test still watches the shared
+      // groupid ref and re-derives group from the store, so the store has to
+      // agree about which community this is.
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockWork.value = 3
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      await wrapper.vm.showAllCommunities()
+
+      expect(mockGroupid.value).toBe(0)
+      // ModGroupSelect only persists a choice made through the dropdown
+      // itself, so clearing the filter from here has to forget the
+      // remembered value too - otherwise the next mount restores it.
+      expect(mockMiscStore.set).toHaveBeenCalledWith({
+        key: 'groupselect-pending',
+        value: 0,
+      })
+    })
+
+    it('revives the infinite loader when work is outstanding but nothing is showing (Discourse 10037)', async () => {
+      // loadMore() calls $state.complete() on an empty response, and
+      // InfiniteLoading stops its retry loop for good once complete - only
+      // an :identifier change revives it. Without this, one empty or failed
+      // fetch leaves the list dead until the moderator touches the dropdown.
+      mockMessages.value = []
+      mockBusy.value = false
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      const before = wrapper.vm.bump
+
+      mockWork.value = 4
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.bump).toBe(before + 1)
+    })
+
+    it('surfaces a failed fetch as a retryable error rather than a dead spinner', async () => {
+      // The server no longer answers a failed listing query with an empty
+      // 200 (message_list.go), so the frontend has to cope with the error.
+      // Left unhandled, the exception escapes loadMore(), InfiniteLoading
+      // stays in 'loading' for ever and busy stays true, which suppresses
+      // every notice - the moderator gets a permanent spinner.
+      mockMessages.value = []
+      mockShow.value = 0
+      mockMessageStore.fetchMessagesMT.mockRejectedValue(new Error('boom'))
+      const wrapper = mountComponent()
+      const mockState = { loaded: vi.fn(), complete: vi.fn() }
+
+      await wrapper.vm.loadMore(mockState)
+      await wrapper.vm.$nextTick()
+
+      expect(mockBusy.value).toBe(false)
+      expect(wrapper.text()).toContain('Try again')
+
+      const before = wrapper.vm.bump
+      await wrapper.vm.retryLoad()
+      expect(wrapper.vm.bump).toBe(before + 1)
+    })
+
+    it('does not treat an expired session as a load failure', async () => {
+      mockMessages.value = []
+      mockShow.value = 0
+      const err = new Error('Unauthorised')
+      err.response = { status: 401 }
+      mockMessageStore.fetchMessagesMT.mockRejectedValue(err)
+      const wrapper = mountComponent()
+      const mockState = { loaded: vi.fn(), complete: vi.fn() }
+
+      await wrapper.vm.loadMore(mockState)
+      await wrapper.vm.$nextTick()
+
+      expect(mockBusy.value).toBe(false)
+      expect(wrapper.text()).not.toContain('Try again')
+    })
+
+    it('does not refetch on a work count change while messages are showing', async () => {
+      mockMessages.value = [{ id: 1 }]
+      mockBusy.value = false
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      const before = wrapper.vm.bump
+
+      mockWork.value = 4
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.bump).toBe(before)
+    })
+  })
 })
