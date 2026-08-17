@@ -2,14 +2,7 @@
   <div style="display: none"></div>
 </template>
 <script setup>
-import {
-  ref,
-  onMounted,
-  onBeforeUnmount,
-  getCurrentInstance,
-  watch,
-  computed,
-} from 'vue'
+import { onMounted, onBeforeUnmount, getCurrentInstance, watch } from 'vue'
 import simpleheat from 'simpleheat'
 
 const props = defineProps({
@@ -51,14 +44,8 @@ const props = defineProps({
 let heatLayer = null
 let L = null
 let mapInstance = null
-let mapObject = null
-let parentContainer = null
-const options = null
-const propsBinder = null
 
 const instance = getCurrentInstance()
-const parentReady = ref(false)
-const ready = ref(false)
 
 defineExpose({
   addLatLng: (latlng) => {
@@ -305,24 +292,6 @@ watch(
   { deep: true }
 )
 
-const parentLeafletObject = computed(() => {
-  if (!instance?.parent) return null
-  const realParent = findRealParent(instance.parent)
-  return realParent?.leafletObject || null
-})
-
-watch(
-  parentLeafletObject,
-  (leafletObject) => {
-    if (leafletObject && mapObject && !parentContainer) {
-      parentContainer = leafletObject
-      parentContainer.addLayer(mapObject, !props.visible)
-      parentReady.value = true
-    }
-  },
-  { immediate: true }
-)
-
 onMounted(() => {
   setTimeout(() => {
     if (instance && instance.parent) {
@@ -349,17 +318,6 @@ onMounted(() => {
       heatLayer = new HeatLayerClass(props.latLngs, options)
       mapInstance.addLayer(heatLayer)
     }
-
-    if (props.max) {
-      options.max = props.max
-    }
-    if (props.gradient) {
-      options.gradient = props.gradient
-    }
-
-    mapObject = new window.L.HeatLayer(props.latLngs, options)
-    propsBinder(instance.proxy, mapObject, props)
-    ready.value = true
   }, 100)
 })
 

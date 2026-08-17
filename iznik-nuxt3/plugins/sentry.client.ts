@@ -68,11 +68,16 @@ export default defineNuxtPlugin((nuxtApp) => {
         app: vueApp,
         dsn: config.public.SENTRY_DSN,
         // Vue error-handler wiring (replaces the removed attachErrorHandler()
-        // and createTracingMixins() calls from the v7 SDK).
+        // and createTracingMixins() calls from the v7 SDK). The tracing knobs
+        // MUST sit inside tracingOptions - the v10 SDK never reads them as
+        // top-level siblings of dsn, it silently falls back to
+        // trackComponents: false and the component spans vanish.
         attachProps: true,
-        trackComponents: true,
-        timeout: 2000,
-        hooks: ['activate', 'mount', 'update'],
+        tracingOptions: {
+          trackComponents: true,
+          timeout: 2000,
+          hooks: ['activate', 'mount', 'update'],
+        },
         // Some errors seem benign, and so we ignore them on the client side rather than clutter our sentry logs.
         ignoreErrors: [
           'ResizeObserver loop limit exceeded', // Benign - see https://stackoverflow.com/questions/49384120/resizeobserver-loop-limit-exceeded

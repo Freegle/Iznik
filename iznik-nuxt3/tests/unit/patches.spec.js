@@ -55,11 +55,36 @@ describe('patch-package guards are applied', () => {
     const at = src.indexOf(
       'const unmountComponent = (instance, parentSuspense, doRemove) => {'
     )
-    expect(at, 'unmountComponent not found - vue internals moved').toBeGreaterThan(0)
+    expect(
+      at,
+      'unmountComponent not found - vue internals moved'
+    ).toBeGreaterThan(0)
     expect(
       src.slice(at, at + 200).includes('if (!instance) {'),
       'unmountComponent is missing the null-instance guard'
     ).toBe(true)
+  })
+
+  it('vue-leaflet: moveend and MutationObserver teardown guards are applied', () => {
+    // The debounced moveend handler fires after map.remove() (leafletRef is
+    // never nulled), and LIcon's observer can attach to a null ref when the
+    // async setup resolves after unmount. Both guarded via the patch; the es
+    // build is what vite serves, the cjs build is what nitro requires.
+    for (const build of ['vue-leaflet.es.js', 'vue-leaflet.cjs.js']) {
+      const src = read('@vue-leaflet/vue-leaflet/dist', build)
+      const moveendAt = src.indexOf('moveend:')
+      expect(moveendAt, `${build}: moveend handler not found`).toBeGreaterThan(
+        0
+      )
+      expect(
+        src.slice(moveendAt, moveendAt + 80).includes('try'),
+        `${build}: moveend handler is missing its try/catch teardown guard`
+      ).toBe(true)
+      expect(
+        /\.value\s?&&\s?new MutationObserver/.test(src),
+        `${build}: MutationObserver.observe is missing its null-ref guard`
+      ).toBe(true)
+    }
   })
 
   it('every patch file matches the installed version of its package', () => {
