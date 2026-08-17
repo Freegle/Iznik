@@ -160,11 +160,26 @@ const mockNuxtApp = {
 // Mock useCookie
 ;(globalThis as Record<string, unknown>).useCookie = () => ref(null)
 
-// Mock useState
+// Mock useState. Nuxt's useState is KEYED AND SHARED: two callers passing the same key get
+// the same ref, which is the whole point of it and what composables built on it rely on
+// (useReachOverlay hands the browse map a shape the distance slider fetched). Returning a
+// fresh ref per call, as this did, silently turned every such composable into per-caller
+// state, so a test could pass while the components never actually saw each other's writes.
+//
+// Real Nuxt scopes these per SSR request. Here the module is the scope, so a spec that
+// shares a key across cases must reset between them: call clearNuxtState() in beforeEach.
+const nuxtStateStore = new Map<string, unknown>()
 ;(globalThis as Record<string, unknown>).useState = (
   key: string,
   init?: () => unknown
-) => ref(init ? init() : null)
+) => {
+  if (!nuxtStateStore.has(key)) {
+    nuxtStateStore.set(key, ref(typeof init === 'function' ? init() : null))
+  }
+  return nuxtStateStore.get(key)
+}
+;(globalThis as Record<string, unknown>).clearNuxtState = () =>
+  nuxtStateStore.clear()
 
 // Mock useFetch
 ;(globalThis as Record<string, unknown>).useFetch = vi

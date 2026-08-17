@@ -313,11 +313,18 @@ describe('ExternalDa', () => {
       expect(wrapper.emitted('rendered')).toContainEqual([true])
     })
 
-    it('shows fallback when ad fails to render', () => {
+    // Was "shows fallback when ad fails to render", pinning the behaviour 8b8b18176
+    // introduced: turn on the donate fallback and report rendered:true. That is the bug -
+    // the caller reserves 123px on a true, and when the fallback itself had nothing to draw
+    // (an empty jobs list) the band stayed blank, which is what got reported from the app.
+    // Nothing to show now means say so, and the band collapses as it did before that commit.
+    // See ExternalDaCollapse.spec.js for the full contract.
+    it('reports no ad, and shows no fallback, when the ad fails to render', () => {
       const wrapper = createWrapper()
       wrapper.vm.rippleRendered(false)
-      expect(wrapper.vm.fallbackAdVisible).toBe(true)
-      expect(mockMiscStore.adsDisabled).toBe(true)
+      expect(wrapper.emitted('rendered')).toContainEqual([false])
+      expect(wrapper.vm.fallbackAdVisible).toBe(false)
+      expect(mockMiscStore.adsDisabled).toBe(false)
     })
   })
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-12
+last_reviewed: 2026-08-14
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -7,6 +7,10 @@ covers:
   - iznik-server-go/rippling/**
   - iznik-server-go/density/**
   - iznik-nuxt3/composables/useReachDistance.js
+  - iznik-nuxt3/composables/useReachOverlay.js
+  - iznik-nuxt3/components/PostMap.vue
+  - iznik-routing-go/displaypolygon.go
+  - iznik-server-go/town/**
   - iznik-nuxt3/modtools/components/ModSysAdminRipplingDensity.vue
   - iznik-nuxt3/modtools/components/ModSysAdminRipplingAnalytics.vue
 ---
@@ -104,15 +108,36 @@ this member inside the reach?" (`ST_Contains`). The conversion (`polygon.go`,
    `TestIsochronePolygon_DoesNotBridgeRiver`, guards the case we know about), and genuinely
    sparse road areas keep their holes - which is accurate, since nobody lives in them.
 4. **Trace the boundary - and stop.** The filled cells' outline becomes the polygon, with
-   only exactly-collinear points removed (lossless). There is **no shape smoothing anywhere**:
-   not server-side simplification, not client-side corner-rounding. The displayed boundary is
-   exactly the computed one.
+   only exactly-collinear points removed (lossless). The reach polygon gets **no shape
+   smoothing**: not server-side simplification, not client-side corner-rounding. The
+   displayed boundary is exactly the computed one.
 
 Why so strict about smoothing: the drawn reach is how moderators and developers debug
 rippling. Any smoothing step (server-side line simplification, client-side corner-rounding)
 moves the boundary by design - and where the boundary hugs a river bank, the rounded curve
 bulges across the water, showing the reach touching a far bank it cannot actually reach. A
 display that does not match the computation cannot be debugged against it.
+
+#### The one exception: the browse map's coverage overlay
+
+The browse map shades **the member's own travel-time reach** (see 7c), which is a different
+object from a post's reach: nothing is decided by it, nobody debugs rippling against it, and
+it has to cross the wire on every slider change. That one consumer asks for a **simplified**
+polygon, via `polygon_simplify_m` on `/v1/ripple-eval` (`displaypolygon.go`, `DisplayRing`):
+Douglas-Peucker at a caller-chosen tolerance, then coordinates rounded to 5dp (~1m).
+
+The saving is why it exists. A 45-minute drive reach traces ~27,000 vertices and ~1.2MB of
+GeoJSON; at 100m it is ~2,000 vertices and ~40KB, under 10KB gzipped.
+
+The cost is that the boundary moves, which is exactly the objection above - so the tolerance
+was measured rather than picked. Against the exact polygon for a 45-minute reach around
+Edinburgh, the simplified shape disagrees over 0.96% of its area at 50m, 1.66% at 100m, 2.84%
+at 200m, 4.85% at 400m; past 200m it also starts systematically inflating (area ratio 1.012 at
+400m) instead of just wobbling either side. `/town/near` uses **100m**.
+
+This is opt-in and off by default at every level - the request field, the `?polygon=1` query
+parameter, and the `withPolygon` option on `useReachDistance` - so nothing that needs the exact
+boundary can pick it up by accident.
 
 ### 2b. Rejected polygon approaches
 
@@ -132,7 +157,9 @@ display that does not match the computation cannot be debugged against it.
   the road graph, not the raster.
 - **Douglas-Peucker simplification + client corner-smoothing.** Rejected as above: any
   approximating step can move the boundary across a barrier. The cost of removing them is a
-  larger polygon (~4x the vertices), paid knowingly.
+  larger polygon (~4x the vertices), paid knowingly. (Still rejected for the reach polygon.
+  The browse coverage overlay does simplify, deliberately and separately - see the exception
+  above.)
 
 ## 3. Sizing the reach: the extent governor
 
@@ -634,6 +661,38 @@ budget=1, anchor=0` for both today - closeness × engagement-decay):
   (`config/freegle.php`).
 
 Design spec: `docs/superpowers/specs/2026-06-22-digest-rippling-score-ordering-design.md`.
+
+### 7c. The browse map's shaded area
+
+The browse map shades the area the distance slider describes: **the member's own drive-time
+reach**, traced over the road network from their location for the minutes the slider is set to.
+
+It comes back from `/town/near?polygon=1` as `reach_polygon`, and it is free. That endpoint
+already runs the routing pass - it is how the slider converts minutes into the mile radius it
+stores in `browseMaxDistance` (§7) - so asking for the shape as well costs only the boundary
+trace, never a second Dijkstra. Measured on the UK graph for Edinburgh: `/town/near` takes
+69ms / 109ms / 264ms at 20 / 30 / 45 minutes today, and 153ms / 337ms / 837ms with the shape.
+
+`useReachDistance({ withPolygon: true })` publishes it through `useReachOverlay`, a small piece
+of shared state, and `PostMap` subscribes. That indirection exists so the map does not route the
+reach a second time; the alternative was the map making its own identical call. `PostFilters`
+(browse) sets the flag. The Feed settings slider does not, and so pays nothing for a map it has
+not got. A sequence number in `useReachOverlay` drops out-of-order responses, so dragging the
+slider leaves the map showing the travel time the member settled on rather than whichever
+response landed last.
+
+**What it does NOT mean.** It is an illustration of how far the *member* can travel, not the set
+of posts they can see. A post ripples out from its OWN origin with its own budget (§3a), so a
+post can reach a member who could not have reached it in the same time - and at the no-limit stop
+the server's own reach governs, which is wider still. The list itself stays filtered by
+`browseMaxDistance`, the crow-flies radius, so the shading and the list are close but not
+identical. Never use `reach_polygon` for containment; it is also simplified (§2a).
+
+`PostMap` falls back to a convex hull of the posts currently shown whenever no reach has been
+published - pages with no slider (explore, the landing pages), a member with no known location,
+or a routing failure. That hull is what the overlay used to be in all cases. It answered "where
+did the posts we happen to have land", which drifts with whatever is on offer and says nothing
+about travel time, so the reach wins wherever we have it.
 
 ## 8. Kill switches and key config (`config/freegle.php` `ripple.*`)
 

@@ -43,6 +43,9 @@ export default createConfigForNuxt({
           getCurrentInstance: 'readonly',
           useAsyncData: 'readonly',
           useLazyAsyncData: 'readonly',
+          useState: 'readonly',
+          // Test-only: tests/unit/setup.ts exposes this to reset keyed useState between cases.
+          clearNuxtState: 'readonly',
           createApp: 'readonly',
           useNuxtApp: 'readonly',
           useLoadingIndicator: 'readonly',

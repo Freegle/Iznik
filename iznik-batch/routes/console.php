@@ -228,10 +228,23 @@ Schedule::command('messages:auto-repost')
 
 // Chase up messages with replies but no outcome.
 // V1: cron/chaseup.php
-Schedule::command('messages:chase-up')
+//
+// Without --skip-languishing this also scanned for languishing posts every hour. That
+// scan finds the same ~1,840 posts each time, and notifyLanguishing will only raise one
+// notification per person per day regardless, so 23 of the 24 daily scans could never
+// do anything. It has its own schedule below.
+Schedule::command('messages:chase-up --skip-languishing')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('messages:chase-up'))
+    ->runInBackground();
+
+// The languishing-posts scan, once a day. It raises an in-app notification rather than
+// sending mail, so the time only needs to be somewhere sensible in the member's day.
+Schedule::command('messages:chase-up --languishing-only')
+    ->dailyAt('09:00')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('messages:chase-up-languishing'))
     ->runInBackground();
 
 // Deduplicate searches.
@@ -447,18 +460,46 @@ Schedule::command('users:update-modmails')
 
 // Hourly fallback users.lastaccess update from chat / membership activity.
 // V1: cron/lastaccess.php
+//
+// Hourly, this only looks at activity since the last run. Unbounded it joined users
+// against the whole history of chat_messages and the 4.96M-row memberships table with
+// a predicate no index can help, costing ~4,145 seconds of database time a day to find
+// about 37 users.
 Schedule::command('users:update-lastaccess')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('users:update-lastaccess'))
     ->runInBackground();
 
+// The nightly unbounded pass. Not optional: narrowing the hourly one is only safe
+// because this still covers activity written with a timestamp older than the window.
+// 03:45 is clear of the purge and stats cluster and of db1's 04:00-04:17 backup.
+Schedule::command('users:update-lastaccess --full')
+    ->dailyAt('03:45')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('users:update-lastaccess-full'))
+    ->runInBackground();
+
 // Update chat reply-expectation tracking and per-user reply-time metrics.
 // V1: cron/chat_expected.php (every 5 minutes)
+//
+// Every five minutes this only looks at chats that have had a new message, or a
+// rippling-held reply released, since the last run - a waiting message cannot stop
+// waiting otherwise. It used to re-ask about all ~1,925 waiting messages each time and
+// rewrite the same answer back, which is where ~550k no-op writes a day came from.
 Schedule::command('chats:update-expected')
     ->everyFiveMinutes()
     ->withoutOverlapping(15)
     ->sendOutputTo(cronLog('chats:update-expected'))
+    ->runInBackground();
+
+// The nightly backstop: re-check every waiting message, catching anything the two
+// triggers above cannot see. 04:30 sits in the quiet gap after the purge/stats cluster
+// and clear of db1's 04:00-04:17 backup window.
+Schedule::command('chats:update-expected --full')
+    ->dailyAt('04:30')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('chats:update-expected-full'))
     ->runInBackground();
 
 // Send calendar invites and chat reminders for arranged handover trysts.
@@ -824,8 +865,14 @@ Schedule::command('mail:reengage')
 // Record whether a tip drove a real action (login/reply/post within the window)
 // for onboarding sends, so per-tip/arm/segment effectiveness and control-arm
 // lift can be graphed in the sysadmin dashboard. Runs after the day's sends.
+// Moved off 16:30, which stacked it onto the tail of the day's engagement sends at the
+// busiest hour on the read node, for no reason: it sends nothing and only records
+// whether a tip drove an action. Each check queries the full outcome window anchored at
+// the send, so it is complete whenever it runs - an eleven-hour shift can delay a row's
+// first check but cannot lose an outcome, and the row is re-checked daily for 74 days.
+// 02:50 rather than 02:45 leaves the AI image recount that slot to itself.
 Schedule::command('mail:reengage-outcomes')
-    ->dailyAt('16:30')
+    ->dailyAt('02:50')
     ->withoutOverlapping(60)
     ->sendOutputTo(cronLog('mail:reengage-outcomes'))
     ->runInBackground();
@@ -1211,10 +1258,25 @@ Schedule::command('donations:update-ads-target')
 // =============================================================================
 
 // Update usage counts for AI images (how many posts use each image).
+//
+// Hourly, this only counts attachments added since the last run - a primary-key range
+// over the last hour's rows. The full JSON_EXTRACT scan of all 31.6M messages_attachments
+// rows (and the ~50k single-row UPDATEs that followed it) runs once overnight instead of
+// 24 times a day, on a counter whose measured net change is ~8 rows an hour.
 Schedule::command('ai:usage-counts:update')
     ->hourly()
     ->withoutOverlapping(120)
     ->sendOutputTo(cronLog('ai:usage-counts:update'))
+    ->runInBackground();
+
+// The nightly ground truth: rebuilds every count, which is also what corrects the
+// decrements the hourly delta cannot see (purged messages, rotated images).
+// 02:45 rather than 02:30 keeps it clear of the purge/stats cluster that occupies
+// 02:00-02:34.
+Schedule::command('ai:usage-counts:update --full')
+    ->dailyAt('02:45')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('ai:usage-counts:update-full'))
     ->runInBackground();
 
 

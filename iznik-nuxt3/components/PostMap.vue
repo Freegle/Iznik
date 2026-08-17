@@ -115,6 +115,7 @@ import {
   smoothGeoJSON,
   buildCoverageGeoJSON,
 } from '~/composables/useReachPolygon'
+import { useReachOverlay } from '~/composables/useReachOverlay'
 import {
   isWithinDistance,
   filterMessagesByDistance,
@@ -382,12 +383,17 @@ const messagesForMap = computed(() => {
     : []
 })
 
+// The member's real drive-time reach, traced over the road network by the routing server and
+// published by the distance slider (see useReachOverlay). Null on pages with no slider, when
+// there's no known location, or if routing was unavailable.
+const { reachGeoJSON } = useReachOverlay()
+
 // A smoothed convex hull enclosing the posts currently shown, as an indication
 // of the area covered. The true reach is travel-time-based (not a simple
 // radius), so this is only an approximation - but it shrinks as the slider is
 // pulled in, giving a visual sense of coverage. See buildCoverageGeoJSON for why
 // this is an outward-rounded hull rather than Chaikin smoothing.
-const coverageGeoJSON = computed(() => {
+const hullGeoJSON = computed(() => {
   // Drawn for BOTH the nearby and "all my communities" views (not gated on showIsochrones,
   // which is nearby-only). It is just a hull of the posts currently shown, so it adapts to the
   // distance slider the same way on either view. Falls back to null (no polygon) when there
@@ -396,6 +402,14 @@ const coverageGeoJSON = computed(() => {
     .filter((m) => m.lat != null || m.lng != null)
     .map((m) => [m.lng, m.lat])
   return buildCoverageGeoJSON(points)
+})
+
+// Prefer the real reach; fall back to the hull. The hull only ever answered "where did the
+// posts we happen to have land", which drifts with whatever is currently for offer and says
+// nothing about travel time. The reach answers the question the slider actually asks, so it
+// wins whenever we have it.
+const coverageGeoJSON = computed(() => {
+  return reachGeoJSON.value || hullGeoJSON.value
 })
 
 const isochrones = computed(() => {
@@ -429,13 +443,20 @@ const isochroneGEOJSONs = computed(() => {
 const isochroneOptions = computed(() => {
   // Faded fill so post pins remain clearly visible; soft border echoes the
   // rippling explorer's reach polygon style.
+  //
+  // The BORDER carries the shape, so it is nearly opaque. These settings were tuned for the
+  // old post hull, which was a small compact ring sitting right among the pins - there, a
+  // 0.5-opacity line read fine. The real travel-time reach is far bigger and more ragged,
+  // its boundary sits out among busy OSM tiles rather than next to the posts, and at 0.5 it
+  // disappeared into them entirely (checked in a browser: the overlay was drawing correctly
+  // and was simply not visible). The fill stays low for the same reason it always was.
   return {
     fillColor: ISOCHRONE_COLOR,
     fill: true,
     fillOpacity: 0.12,
     color: ISOCHRONE_COLOR,
     weight: 2,
-    opacity: 0.5,
+    opacity: 0.9,
   }
 })
 

@@ -31,8 +31,8 @@ type QuintileResult struct {
 // quintileMultiplier returns the time-budget multiplier for a node of quintile q
 // at the given fairness weight W ∈ [0,1].
 //
-//   W=0: all quintiles get multiplier 1.0 (standard isochrone)
-//   W=1: Q1 gets 2.0, Q2 gets 1.75, Q3 gets 1.5, Q4 gets 1.25, Q5 gets 1.0
+//	W=0: all quintiles get multiplier 1.0 (standard isochrone)
+//	W=1: Q1 gets 2.0, Q2 gets 1.75, Q3 gets 1.5, Q4 gets 1.25, Q5 gets 1.0
 //
 // Unknown quintile (0) is treated as middle (Q3 equivalent).
 func quintileMultiplier(q Quintile, W float32) float32 {
@@ -78,9 +78,10 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 	maxReachM := modeMaxSpeed(mode) * float64(maxLimit)
 
 	dist := make(map[NodeID]float32, 4096)
-	dist[origin] = 0
+	start := initialCostFor(mode)
+	dist[origin] = start
 	pqueue := &pq{}
-	heap.Push(pqueue, &item{id: origin, cost: 0})
+	heap.Push(pqueue, &item{id: origin, cost: start})
 
 	for pqueue.Len() > 0 {
 		cur := heap.Pop(pqueue).(*item)
@@ -178,4 +179,3 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 
 	return result
 }
-

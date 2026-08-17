@@ -206,8 +206,17 @@ func (Message) TableName() string {
 // Message represents a posting (offer or wanted)
 // swagger:model Message
 type Message struct {
-	ID                 uint64              `json:"id" gorm:"primary_key"`
-	Arrival            time.Time           `json:"arrival"`
+	ID      uint64    `json:"id" gorm:"primary_key"`
+	Arrival time.Time `json:"arrival"`
+	// VisibleSince is the earliest this post could have been seen: the oldest arrival across
+	// the groups it is live on. The feed orders by it and the card dates by it, so the list
+	// cannot contradict the dates printed on it.
+	//
+	// Arrival above is messages.arrival - when it was first written - which is NOT the same
+	// thing once a post has been reposted or has rippled: this browse view was ordering by
+	// Arrival while the card showed a group arrival, so a 20-day-old post displaying "5 days"
+	// sat above a 3-hour-old one.
+	VisibleSince       time.Time           `json:"visibleSince"`
 	Date               time.Time           `json:"date"`
 	Fromuser           uint64              `json:"fromuser"`
 	Subject            string              `json:"subject"`
@@ -497,6 +506,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// both proven by the retired ormharness (shapes.json /
 				// TestTier3Shapes_08bb471351a0, removed in d22ba1d6c).
 				selectCols := "messages.id, messages.arrival, messages.date, messages.fromuser, " +
+					// Oldest live-group arrival: when this first became available to anyone. A repost
+					// bumps that row, so this follows it, which is what makes a repost lift the post.
+					"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = messages.id AND mgv.deleted = 0), messages.arrival) AS visible_since, " +
 					"messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid, " +
 					"deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, "
 				if isMod {
@@ -1080,12 +1092,25 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		if len(reachBlocked) > 0 {
 			hazard := rippling.LoadHazardHours(db)
 
+			// Per-request backstop on top of FetchDriveTime's process-wide cap, cache
+			// and breaker: "blocked posts are a small minority of any feed" is false for
+			// a viewer outside the reach of many rippling posts (2026-08-13: one viewer's
+			// polls drove ~600 routing searches/min and a load-31 spike on the routing
+			// host). Past the cap the remaining blocked posts simply carry no ETA — the
+			// hold itself is still reported.
+			const maxCoverageLookups = 24
+			lookups := 0
+
 			var covMu sync.Mutex
 			var covWg sync.WaitGroup
 			for msgid, origin := range reachBlocked {
 				if !origin.Ok || origin.Arrival == nil || len(origin.Schedule) == 0 {
 					continue
 				}
+				if lookups >= maxCoverageLookups {
+					break
+				}
+				lookups++
 				covWg.Add(1)
 				go func(msgid uint64, origin ReachOrigin) {
 					defer covWg.Done()

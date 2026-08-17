@@ -62,6 +62,51 @@ class GroupMaintenanceServiceTest extends TestCase
         $this->assertEquals(2, $group->modcount);
     }
 
+    /**
+     * Most groups neither gain nor lose a member in a given hour, and every write here
+     * is copied to all three database nodes - so an unchanged group must not be written.
+     */
+    public function test_leaves_groups_whose_counts_have_not_changed(): void
+    {
+        $group = $this->createTestGroup();
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $this->createMembership($user1, $group, ['role' => Membership::ROLE_OWNER]);
+        $this->createMembership($user2, $group, ['role' => Membership::ROLE_MEMBER]);
+
+        // First run brings the stored counts in line.
+        $this->service->updateMemberCounts();
+        $group->refresh();
+        $this->assertEquals(2, $group->membercount);
+        $this->assertEquals(1, $group->modcount);
+
+        // Second run has nothing to do for this group.
+        $before = DB::table('groups')->where('id', $group->id)->first();
+        $this->service->updateMemberCounts();
+        $after = DB::table('groups')->where('id', $group->id)->first();
+
+        $this->assertEquals($before->membercount, $after->membercount);
+        $this->assertEquals($before->modcount, $after->modcount);
+    }
+
+    public function test_counts_are_not_leaked_between_groups(): void
+    {
+        $a = $this->createTestGroup();
+        $b = $this->createTestGroup();
+        $this->createMembership($this->createTestUser(), $a, ['role' => Membership::ROLE_MEMBER]);
+        $this->createMembership($this->createTestUser(), $a, ['role' => Membership::ROLE_OWNER]);
+        $this->createMembership($this->createTestUser(), $b, ['role' => Membership::ROLE_MEMBER]);
+
+        $this->service->updateMemberCounts();
+
+        $a->refresh();
+        $b->refresh();
+        $this->assertEquals(2, $a->membercount);
+        $this->assertEquals(1, $a->modcount);
+        $this->assertEquals(1, $b->membercount);
+        $this->assertEquals(0, $b->modcount);
+    }
+
     public function test_handles_group_with_no_members(): void
     {
         $group = $this->createTestGroup();

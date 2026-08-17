@@ -541,7 +541,7 @@ describe('ModMessage', () => {
         REAL_WORRY
       )
       await flushPromises()
-      expect(wrapper.text()).toContain('This group moderates all posts')
+      expect(wrapper.text()).toContain('This group moderated all posts')
     })
 
     it('accepts reasons already parsed into an array', async () => {
@@ -667,8 +667,8 @@ describe('ModMessage', () => {
       ])
       await flushPromises()
       const text = wrapper.text()
-      expect(occurrences(text, 'This group moderates all posts')).toBe(1)
-      expect(text).not.toContain('Flagged: This group moderates all posts')
+      expect(occurrences(text, 'This group moderated all posts')).toBe(1)
+      expect(text).not.toContain('Flagged: This group moderated all posts')
     })
 
     it('leaves the missing-location advice to the notice that already gives it', async () => {
@@ -720,7 +720,7 @@ describe('ModMessage', () => {
       ])
       await flushPromises()
       expect(
-        occurrences(wrapper.text(), "This member's posts are moderated")
+        occurrences(wrapper.text(), "This member's posts were moderated")
       ).toBe(1)
     })
   })

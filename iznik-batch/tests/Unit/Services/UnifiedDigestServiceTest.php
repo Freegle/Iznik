@@ -1571,6 +1571,41 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(6, $stats['emails_sent']);
     }
 
+    /**
+     * A group with no immediate members must not re-scan the same messages on every
+     * tick. Without a cursor advance its scan window would grow without limit, which is
+     * the way dropping the eligible-groups pre-filter could have cost more than it saved.
+     */
+    public function test_group_with_no_immediate_members_still_advances_its_cursor(): void
+    {
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+
+        $daily = $this->createTestUser();
+        $this->createMembership($daily, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $this->seedImmediateCursor($group);
+        $message = $this->createTestMessage($poster, $group);
+        $this->makeImmediateReady($message);
+
+        $this->service->sendDigests(
+            UnifiedDigestService::MODE_IMMEDIATE, null, null, false, $group->id
+        );
+
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+
+        $this->assertEquals(
+            $message->id,
+            (int) $cursor->msgid,
+            'the cursor must move past a message nobody was mailed, or it is rescanned for ever'
+        );
+    }
+
     public function test_immediate_advances_groups_digests_cursor(): void
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
@@ -1626,7 +1661,18 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $second['emails_sent'], 'Cursor msgid must keep same-arrival messages from re-firing');
     }
 
-    public function test_immediate_skips_groups_with_no_immediate_members(): void
+    /**
+     * Renamed and re-pointed with the eligible-groups EXISTS removed.
+     *
+     * It used to assert groups_processed === 0, and its comment named the whereExists()
+     * as the reason. That filter cost roughly one and a half cores of the database
+     * sustained to skip 12 groups out of 505, so it is gone; the group is walked now.
+     *
+     * The guarantee members actually rely on is the second assertion, and it is
+     * untouched: nobody who has not asked for immediate mail receives any. That holds
+     * because the recipient query applies the same condition the EXISTS did.
+     */
+    public function test_immediate_sends_nothing_to_groups_with_no_immediate_members(): void
     {
         config(['freegle.digest.immediate_allowlist' => '*']);
 
@@ -1644,10 +1690,8 @@ class UnifiedDigestServiceTest extends TestCase
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
 
-        // The whereExists() filter in sendImmediateDigests should skip the
-        // group entirely because no membership has emailfrequency=-1.
-        $this->assertEquals(0, $stats['groups_processed']);
-        $this->assertEquals(0, $stats['emails_sent']);
+        $this->assertEquals(1, $stats['groups_processed'], 'the group is walked, not pre-filtered out');
+        $this->assertEquals(0, $stats['emails_sent'], 'nobody on it has asked for immediate mail');
     }
 
     public function test_immediate_limit_caps_groups_processed_per_run(): void
