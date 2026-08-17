@@ -885,19 +885,14 @@ describe('mobile store', () => {
       historyBackSpy = vi
         .spyOn(window.history, 'back')
         .mockImplementation(() => {})
-      // initBackButton guards with `process.client` (not `import.meta.client`,
-      // unlike its siblings — the vitest transform only substitutes the latter
-      // at build time, so this one has to be set on the real Node global).
-      // Without this the test's outcome depended on whether some earlier,
-      // unrelated spec file in the same worker had already left
-      // process.client=true behind — a pre-existing cross-file pollution bug
-      // that made this suite flaky depending on file/worker scheduling.
-      process.client = true
+      // initBackButton now guards with `import.meta.client` like its siblings,
+      // which the vitest transform substitutes to true at build time — so
+      // nothing needs setting here. (It used to read `process.client`, which
+      // Nuxt 4 no longer defines: the guard was never true in a real build.)
     })
 
     afterEach(() => {
       historyBackSpy.mockRestore()
-      delete process.client
     })
 
     it('registers a backButton listener', () => {

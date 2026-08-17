@@ -308,7 +308,7 @@ export const useMobileStore = defineStore('mobile', {
     },
 
     initBackButton(App) {
-      if (process.client) {
+      if (import.meta.client) {
         // Once any JS listener is registered, Capacitor's native default (which
         // swallows the back button/gesture once the webview history is empty,
         // trapping the user in the app) no longer runs. Mirror that default's
