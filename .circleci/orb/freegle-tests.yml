@@ -1468,7 +1468,17 @@ commands:
             fi
 
             echo "📦 Installing npm dependencies..."
-            npm ci --prefer-offline --no-audit
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci --prefer-offline --no-audit; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
 
             echo "🔧 Running nuxi prepare..."
             npx nuxi prepare
@@ -2559,7 +2569,17 @@ jobs:
                 fi
                 cd "$NUXT_DIR"
                 echo "running" > /tmp/vitest-result
-                npm ci --prefer-offline --no-audit
+                # codeload rate-limits (429) the GitHub tarball dependency in the lock
+                # file, which npm's own --fetch-retries does not cover. Retry the whole
+                # install with backoff; clamp stays an `if` so the loop body's status is
+                # the clamp's, not a failed test (see docker/embedding-sidecar).
+                n=0; delay=15; until npm ci --prefer-offline --no-audit; do
+                  n=$((n+1))
+                  [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+                  echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+                  sleep "$delay"; delay=$((delay*2))
+                  if [ "$delay" -gt 120 ]; then delay=120; fi
+                done
                 npx nuxi prepare
                 npm run test:unit:run -- --reporter=verbose --coverage 2>&1 | tee /tmp/vitest-output.log
                 EXIT_CODE=${PIPESTATUS[0]}
@@ -3418,7 +3438,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3567,7 +3598,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3576,7 +3618,19 @@ jobs:
             - node_modules
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3824,7 +3878,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3833,7 +3898,19 @@ jobs:
             - node_modules
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -4145,7 +4222,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -4313,12 +4401,35 @@ jobs:
           auto_rerun_delay: 10s
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -4523,7 +4634,17 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
             npm install @rollup/rollup-darwin-arm64 @oxc-parser/binding-darwin-arm64 @oxc-transform/binding-darwin-arm64 @oxc-minify/binding-darwin-arm64 --prefer-offline || true
           max_auto_reruns: 3
           auto_rerun_delay: 10s
@@ -4835,7 +4956,17 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
             npm update @freegle/capacitor-push-notifications-cap7
           max_auto_reruns: 3
           auto_rerun_delay: 10s
@@ -5016,7 +5147,17 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
             npm install @rollup/rollup-darwin-arm64 @oxc-parser/binding-darwin-arm64 @oxc-transform/binding-darwin-arm64 @oxc-minify/binding-darwin-arm64 --prefer-offline || true
             npm update @freegle/capacitor-push-notifications-cap7
           max_auto_reruns: 3
