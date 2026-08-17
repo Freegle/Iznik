@@ -1780,7 +1780,11 @@ class IncomingMailService
         [$lat, $lng] = $latlng;
         $service = app(RippleReplyService::class);
 
-        if ($service->shouldHold($msgid, $lat, $lng)) {
+        // Their own density band, so a replier the rural-access ring covers is not held for
+        // being outside a reach that a headcount, rather than distance, cut short.
+        $band = $replier->settings['browseDensityBand'] ?? null;
+
+        if ($service->shouldHold($msgid, $lat, $lng, is_string($band) ? $band : null)) {
             $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng, $source);
             Log::info('ripple:held-external-reply', [
                 'msgid' => $msgid,

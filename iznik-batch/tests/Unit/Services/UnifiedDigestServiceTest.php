@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -3257,5 +3258,214 @@ class UnifiedDigestServiceTest extends TestCase
             'externalmods must be eager-loaded so the push can distinguish AI illustrations from real photos'
         );
         $this->assertSame(['ai' => true], json_decode($attachment->externalmods, true));
+    }
+
+    /**
+     * The rural-access overflow lane, on the mail path.
+     *
+     * A member whose own density band earns the wider travel budget can sit outside a reach
+     * that the audience cap stopped short - the case this lane exists for: measured on live, a
+     * post outside Birmingham stopped at 28.0 minutes on exactly 4,000 members while a
+     * sparse-band moderator 31.4 minutes away, already at the 45-minute maximum, was shut out.
+     *
+     * Sets up one member outside the reach polygon but inside the sparse ring, and asserts the
+     * SAME setup both ways round the flag - so neither expectation can be satisfied by the
+     * member simply never being mailable.
+     *
+     * @return array{0: \App\Models\User, 1: \App\Models\Message}
+     */
+    private function seedOverflowCase(
+        ?string $band,
+        string $ringWkt = 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))',
+        string $lane = 'rural',
+        string $ringKey = 'sparse'
+    ): array {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+        UnifiedDigestService::forgetOverflowColumn();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $settings = [
+            'mylocation' => ['lat' => 51.5, 'lng' => 0.4],
+            // The sentinel: their own preference must not be what excludes them, or the test
+            // would pass for the wrong reason.
+            'browseReachMaxDistance' => 9007199254740991,
+            'browseMaxMinutes' => 45,
+        ];
+        if ($band !== null) {
+            $settings['browseDensityBand'] = $band;
+        }
+        $member->settings = $settings;
+        $member->save();
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: rural overflow (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('r', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+
+        // The committed reach stops at lng 0.0 - well short of the member at 0.4.
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)
+            ->update(['overflow_bounds' => json_encode([$lane => [$ringKey => $ringWkt]])]);
+
+        return [$member, $msg];
+    }
+
+    /** Answer the spatial server's batch deprivation lookup with one fifth per point. */
+    private function fakeQuintiles(array $quintiles): void
+    {
+        Http::fake(['*/v1/quintiles' => Http::response(['quintiles' => $quintiles, 'available' => true])]);
+    }
+
+    private function wasMailed(int $msgid, int $userid): bool
+    {
+        return DB::table('rippling_reach_notified')
+            ->where('msgid', $msgid)->where('userid', $userid)->exists();
+    }
+
+    public function test_rural_overflow_does_not_mail_outside_the_reach_when_the_lane_is_off(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => false]);
+        [$member, $msg] = $this->seedOverflowCase('sparse');
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertFalse(
+            $this->wasMailed($msg->id, $member->id),
+            'rings are stored but the lane is off, so the reach polygon alone decides'
+        );
+    }
+
+    public function test_rural_overflow_mails_a_member_whose_own_band_earns_the_wider_budget(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        [$member, $msg] = $this->seedOverflowCase('sparse');
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertTrue(
+            $this->wasMailed($msg->id, $member->id),
+            'outside the capped reach but inside their own band ring - the case the lane exists for'
+        );
+    }
+
+    public function test_rural_overflow_does_not_mail_a_member_of_a_different_band(): void
+    {
+        // Inside the sparse ring geographically, but a dense-band member has not earned that
+        // budget: the ring belongs to the band, not to the area.
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        [$member, $msg] = $this->seedOverflowCase('dense');
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertFalse(
+            $this->wasMailed($msg->id, $member->id),
+            'a dense-band member inside the sparse ring must not be admitted by it'
+        );
+    }
+
+    /**
+     * The fairness lane, on the mail path.
+     *
+     * The ring is a STRETCHED isochrone, so containment alone would simply widen the reach for
+     * everyone inside it - a bigger radius, not fairness. The stretch is earned by the
+     * deprivation fifth, and that lives only in the spatial server, so it is asked there for
+     * the people the ring adds rather than stored against anybody.
+     */
+    private function seedFairnessCase(): array
+    {
+        return $this->seedOverflowCase(null, 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', 'fairness', '1');
+    }
+
+    public function test_fairness_overflow_mails_a_member_in_the_most_deprived_fifth(): void
+    {
+        config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
+        [$member, $msg] = $this->seedFairnessCase();
+        $this->fakeQuintiles([1]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertTrue(
+            $this->wasMailed($msg->id, $member->id),
+            'outside the committed reach, inside the stretched ring, and in the fifth the stretch is for'
+        );
+    }
+
+    public function test_fairness_overflow_does_not_mail_a_member_outside_the_target_fifth(): void
+    {
+        // Same geography, same ring, different person: containment got them considered, the
+        // fifth is what decides. Without this the lane is just a wider radius for everyone.
+        config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
+        [$member, $msg] = $this->seedFairnessCase();
+        $this->fakeQuintiles([4]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertFalse(
+            $this->wasMailed($msg->id, $member->id),
+            'inside the stretched ring but not in the fifth it was stretched for'
+        );
+    }
+
+    public function test_fairness_overflow_drops_the_extra_recipients_when_deprivation_is_unavailable(): void
+    {
+        // Fail CLOSED. Mailing everyone the stretched ring covers is exactly the
+        // widened-radius behaviour the fifth exists to prevent, so an unavailable lookup must
+        // cost the lane its extra people rather than hand them all the mail.
+        config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
+        [$member, $msg] = $this->seedFairnessCase();
+        Http::fake(['*/v1/quintiles' => Http::response(null, 500)]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertFalse($this->wasMailed($msg->id, $member->id));
+    }
+
+    public function test_fairness_overflow_drops_the_extra_recipients_on_a_misaligned_answer(): void
+    {
+        // Answers are matched back to people BY POSITION, so a short array would attribute one
+        // member's deprivation to another. Refusing the whole answer is the only safe reading.
+        config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
+        [$member, $msg] = $this->seedFairnessCase();
+        $this->fakeQuintiles([]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertFalse($this->wasMailed($msg->id, $member->id));
+    }
+
+    public function test_fairness_overflow_sends_nothing_when_the_lane_is_off(): void
+    {
+        config(['freegle.ripple.fairness.enabled' => false]);
+        [$member, $msg] = $this->seedFairnessCase();
+        Http::fake(['*/v1/quintiles' => Http::response(['quintiles' => [1], 'available' => true])]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertFalse($this->wasMailed($msg->id, $member->id));
+        Http::assertNothingSent();
+    }
+
+    public function test_rural_overflow_does_not_mail_a_member_with_no_band_recorded(): void
+    {
+        // The backfill has not reached them yet. Absent must mean "not eligible" rather than
+        // "matches anything", or the lane would widen the mail for the whole membership the
+        // moment it was switched on.
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        [$member, $msg] = $this->seedOverflowCase(null);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertFalse(
+            $this->wasMailed($msg->id, $member->id),
+            'no band recorded must not be admitted by any ring'
+        );
     }
 }

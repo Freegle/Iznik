@@ -43,6 +43,30 @@ class ReachService
     /** Stage-A audience cap: nearest-freegler ceiling per post, 0 = off. */
     private int $targetUsers;
 
+    /**
+     * Rural-access overflow: ask the routing server for one ring per density-band ceiling
+     * alongside the capped reach, so a member the HEADCOUNT shut out of a post they are
+     * within their own travel budget of can still find it. Off unless configured, and the
+     * routing server omits the field entirely when it is not asked for, so the stored
+     * schedule is unchanged until this is turned on.
+     */
+    private bool $ruralAccess;
+
+    /**
+     * Demographic-fairness overflow: stretch the travel-time budget for deprived recipients
+     * on the reaches the cap never bound, which is where the measured shortfall is. Weight 0
+     * (the default) is a complete no-op end to end.
+     */
+    private float $fairnessWeight;
+
+    /**
+     * How far down the deprivation scale the stretch reaches. 1 = the most deprived fifth
+     * only, which is both what the measurement supports (the shortfall is a knee at the most
+     * deprived fifth, with the other four within about 7% of each other) and far cheaper,
+     * needing one traced ring rather than four.
+     */
+    private int $fairnessMaxQuintile;
+
     /** @var int[] hours-since-arrival thresholds, one per expansion tick */
     private array $hazardHours;
 
@@ -59,6 +83,13 @@ class ReachService
         $this->targetUsers = config('freegle.ripple.extent.enabled')
             ? max(0, (int) config('freegle.ripple.extent.target_users', 0))
             : 0;
+        // Both overflow lanes: read once here, mirroring targetUsers above, and sent only
+        // when enabled so an unconfigured deployment gets a byte-identical schedule.
+        $this->ruralAccess = (bool) config('freegle.ripple.rural_access.enabled', false);
+        $this->fairnessWeight = config('freegle.ripple.fairness.enabled', false)
+            ? max(0.0, min(1.0, (float) config('freegle.ripple.fairness.weight', 0.0)))
+            : 0.0;
+        $this->fairnessMaxQuintile = max(1, min(4, (int) config('freegle.ripple.fairness.max_quintile', 1)));
         $this->hazardHours = config('freegle.ripple.hazard_hours', [1, 3, 6, 12, 24, 48, 72, 120, 168]);
     }
 
@@ -270,6 +301,19 @@ class ReachService
         if ($this->targetUsers > 0) {
             $params['target_users'] = $this->targetUsers;
         }
+
+        // The two lanes are mutually exclusive PER POST, but which one applies depends on
+        // whether the cap actually bound for that post, which only the routing server knows
+        // once it has counted. So both are offered here and it picks; asking for both costs
+        // nothing when neither applies.
+        if ($this->ruralAccess) {
+            $params['rural_access'] = 1;
+        }
+        if ($this->fairnessWeight > 0) {
+            $params['fairness_weight'] = $this->fairnessWeight;
+            $params['fairness_max_quintile'] = $this->fairnessMaxQuintile;
+        }
+
         return $params;
     }
 
@@ -321,7 +365,93 @@ class ReachService
             // water/toll-correct ripple-targeting signal. Empty when the server
             // omits it (older build); the gate treats [] as "not available".
             'reachable_group_ids' => array_map('intval', $body['reachable_group_ids'] ?? []),
+            // The overflow lanes' rings, when a lane was asked for and applied. Absent on
+            // older servers and whenever both lanes are off, so null means "no lane", never
+            // "a lane with nothing in it".
+            'overflow_bounds' => $this->parseOverflow($body),
         ];
+    }
+
+    /**
+     * Turn the routing server's overflow rings into the JSON stored on rippling_reach.
+     *
+     * The server decides WHICH lane a post gets, from whether the audience cap actually bound
+     * for it, so at most one of these is ever present. Geometry is converted to WKT here for
+     * the same reason the tick polygons are: it is what MySQL's ST_GeomFromText wants and what
+     * the fallback containment test reads back.
+     *
+     * Returns null rather than an empty array when there is nothing, so a row's NULL is
+     * unambiguous: no lane applied, as against a lane that produced no drawable ring.
+     */
+    private function parseOverflow(array $body): ?array
+    {
+        $out = [];
+
+        foreach (['overflow_rural' => 'rural', 'overflow_fairness' => 'fairness'] as $key => $name) {
+            $rings = $body[$key] ?? null;
+            if (! is_array($rings) || empty($rings)) {
+                continue;
+            }
+            $converted = [];
+            foreach ($rings as $band => $geom) {
+                $wkt = $this->polygonToWkt($geom);
+                if ($wkt !== null) {
+                    $converted[(string) $band] = $wkt;
+                }
+            }
+            if (! empty($converted)) {
+                $out[$name] = $converted;
+            }
+        }
+
+        if (empty($out)) {
+            return null;
+        }
+
+        // Record the weight actually applied, not the weight configured at read time: a row
+        // written under one weight must not be read as though it had another, and the reuse
+        // guard compares this to decide whether a stored schedule is still valid.
+        if (isset($out['fairness']) && isset($body['fairness_budget_min'])) {
+            $out['fairness_budget_min'] = (float) $body['fairness_budget_min'];
+        }
+
+        // The bounding box of every ring, as [minLng, minLat, maxLng, maxLat].
+        //
+        // This is what makes the rings readable on the BROWSE feed. There, unlike the mail,
+        // every candidate row is a different post with a different ring, so the exact test has
+        // to parse a polygon per row - on the path every request goes through. Four numeric
+        // comparisons against a box reject almost every row before that happens, which is the
+        // same shape as the cheap outer/inner bounds check already sitting in front of the
+        // exact reach polygon.
+        //
+        // Stored beside the rings rather than in a column of its own precisely because it is
+        // only ever a prefilter: it is never consulted without the exact test behind it, so it
+        // needs no spatial index, and keeping it here costs no migration and cannot drift out
+        // of step with the rings it describes.
+        $bbox = $this->ringsBbox($out);
+        if ($bbox !== null) {
+            $out['bbox'] = $bbox;
+        }
+
+        return $out;
+    }
+
+    /**
+     * The widest stretched budget the fairness lane would route to for a given ceiling, or
+     * null when the lane is off. Used by the reuse guard: a stored ring computed under a
+     * different weight is not this post's ring, so it must be recomputed rather than
+     * inherited - the same argument as the reach-budget guard beside it.
+     *
+     * Mirrors the routing server's own arithmetic (fairnessoverflow.go): the widest budget is
+     * the most deprived fifth's, ceiling x (1 + W).
+     */
+    public function fairnessBudgetMinutes(float $ceilingMinutes): ?float
+    {
+        if ($this->fairnessWeight <= 0) {
+            return null;
+        }
+
+        return $ceilingMinutes * (1.0 + $this->fairnessWeight);
     }
 
     /**
@@ -414,6 +544,46 @@ class ReachService
             'outer' => $this->polygonToWkt($body['catchment_outer'] ?? null),
             'inner' => $this->polygonToWkt($body['catchment_inner'] ?? null),
         ];
+    }
+
+    /**
+     * The box enclosing every ring in a parsed overflow set, as [minLng, minLat, maxLng, maxLat].
+     *
+     * Taken from the WKT actually stored rather than from the source geometry, so the box can
+     * never describe a ring different from the one it ships with. Returns null if no ring
+     * yielded a usable coordinate, which keeps "no rings" and "a box covering nothing" distinct.
+     *
+     * @param  array<string, mixed>  $out
+     * @return array{0: float, 1: float, 2: float, 3: float}|null
+     */
+    private function ringsBbox(array $out): ?array
+    {
+        $minLng = $minLat = INF;
+        $maxLng = $maxLat = -INF;
+        $seen = false;
+
+        foreach (['rural', 'fairness'] as $lane) {
+            foreach (($out[$lane] ?? []) as $wkt) {
+                if (!is_string($wkt) || !preg_match('/^POLYGON\(\((.*)\)\)$/', $wkt, $m)) {
+                    continue;
+                }
+                foreach (explode(',', $m[1]) as $pair) {
+                    $parts = preg_split('/\s+/', trim($pair));
+                    if (count($parts) < 2 || !is_numeric($parts[0]) || !is_numeric($parts[1])) {
+                        continue;
+                    }
+                    $lng = (float) $parts[0];
+                    $lat = (float) $parts[1];
+                    $minLng = min($minLng, $lng);
+                    $maxLng = max($maxLng, $lng);
+                    $minLat = min($minLat, $lat);
+                    $maxLat = max($maxLat, $lat);
+                    $seen = true;
+                }
+            }
+        }
+
+        return $seen ? [$minLng, $minLat, $maxLng, $maxLat] : null;
     }
 
     private function polygonToWkt(?array $polygon): ?string
