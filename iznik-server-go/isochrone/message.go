@@ -791,16 +791,26 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	// through to the SQL containment path below, unchanged.
 	spatialIn, spatialPartial, useSpatial := spatialReachIDs(latlng)
 
+	// The rasters answer only the committed reach. The feed additionally admits
+	// via the viewer's overflow ring (reachOrOverflowSQL), so the badge must ask
+	// the same question or it undercounts what the feed shows — the exact
+	// badge/feed disagreement this whole path exists to prevent. The ring is a
+	// bbox-prefiltered test over the few rows carrying overflow_bounds, so
+	// keeping it in SQL does not undo the raster saving.
+	ringPath := viewerOverflowPath(db, myid, latlng.Lat, latlng.Lng)
+
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
 		// Viewer sets no inbound limit: one COUNT over the shared reach-arm membership,
 		// which also carries the OUTBOUND author cap and the held-for-moderation filter
 		// - so this fast path can never disagree with the feed about which posts exist
 		// to be counted.
 		if useSpatial {
-			if len(spatialIn)+len(spatialPartial) == 0 {
+			// Zero raster ids does not mean zero for a ring viewer: their ring
+			// can admit posts the committed reach does not cover.
+			if len(spatialIn)+len(spatialPartial) == 0 && ringPath == "" {
 				return 0
 			}
-			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial).
+			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringPath).
 				Select("COUNT(DISTINCT ms.msgid)").
 				Scan(&count)
 			return count
@@ -817,10 +827,12 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	// badge poll ~849ms a call for no benefit.
 	var cands []reachCandidateRow
 	if useSpatial {
-		if len(spatialIn)+len(spatialPartial) == 0 {
+		// Same ring caveat as the fast COUNT above: empty raster buckets do not
+		// mean an empty candidate set for a ring viewer.
+		if len(spatialIn)+len(spatialPartial) == 0 && ringPath == "" {
 			return 0
 		}
-		reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial).
+		reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringPath).
 			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
 			Scan(&cands)
 	} else {

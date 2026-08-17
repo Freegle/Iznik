@@ -20,6 +20,7 @@ package isochrone
 import (
 	"os"
 
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
@@ -61,13 +62,25 @@ func spatialReachIDs(latlng utils.LatLng) (in []int64, partial []int64, ok bool)
 // had this re-check folded into its exact polygon test; the in bucket had no
 // reference to rippling_reach at all, so it counted held posts. Requiring a live
 // non-held row for both closes that, and costs one primary-key lookup per id.
-func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64) *gorm.DB {
-	// One concatenated WHERE string in a single Where() call — same GORM
-	// extra-paren gotcha as reachCandidateQuery (see there).
-	//
-	// EXISTS rather than a join: it also means a reach row that has been deleted
-	// outright (retraction) drops the id, instead of it staying countable on the
-	// strength of a raster entry alone.
+// fromIDsWhere builds the containment WHERE for reachCandidateQueryFromIDs:
+// the two raster buckets, plus — when the viewer has one — their overflow
+// ring as a third arm. The rasters only answer the committed reach, and the
+// feed (reachOrOverflowSQL) additionally admits via the ring, so the badge
+// must too or it undercounts the feed. Every arm requires a live non-held
+// reach row, so a held or retracted post cannot be counted in on the
+// strength of a raster entry or a ring alone. Pure so the composition is
+// unit-testable.
+func fromIDsWhere(in, partial []int64, latlng utils.LatLng, ringPath string) (string, []interface{}) {
+	ringArm := ""
+	var ringArgs []interface{}
+	if ringPath != "" {
+		ringWhere, ringWhereArgs := rippling.RuralOverflowWhere(float64(latlng.Lng), float64(latlng.Lat), utils.SRID, ringPath)
+		ringArm = "OR EXISTS (" +
+			"SELECT 1 FROM rippling_reach rr WHERE rr.msgid = ms.msgid " +
+			"AND rr.status != 'held' AND " + ringWhere + ") "
+		ringArgs = ringWhereArgs
+	}
+
 	whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " +
 		"AND ((ms.msgid IN (?) AND EXISTS (" +
 		"SELECT 1 FROM rippling_reach r1 WHERE r1.msgid = ms.msgid " +
@@ -75,15 +88,25 @@ func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, i
 		"OR (ms.msgid IN (?) AND EXISTS (" +
 		"SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = ms.msgid " +
 		"AND r2.status != 'held' " +
-		"AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?))))) " +
+		"AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) " +
+		ringArm + ") " +
 		authorReachCapWhere
 
 	// GORM renders an empty slice as IN (NULL) — never matches — which is
 	// exactly right for an empty in or partial list.
 	whereArgs := []interface{}{
 		in, partial, latlng.Lng, latlng.Lat, utils.SRID,
-		BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat,
 	}
+	whereArgs = append(whereArgs, ringArgs...)
+	whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
+
+	return whereSQL, whereArgs
+}
+
+func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64, ringPath string) *gorm.DB {
+	// One concatenated WHERE string in a single Where() call — same GORM
+	// extra-paren gotcha as reachCandidateQuery (see there).
+	whereSQL, whereArgs := fromIDsWhere(in, partial, latlng, ringPath)
 
 	return db.Table("messages_spatial ms").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").

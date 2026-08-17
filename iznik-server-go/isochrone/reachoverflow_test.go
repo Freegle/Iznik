@@ -148,3 +148,32 @@ func TestViewerFairnessPath_EmptyWhenDeprivationCannotBeAnswered(t *testing.T) {
 		t.Errorf("unanswerable deprivation must yield no path, got %q", p)
 	}
 }
+
+// The badge's id-list query must carry the viewer's ring as a third containment
+// arm - and only for viewers who have one. Without it, a ring-admitted post
+// appears in the feed but not the badge count.
+func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
+	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
+
+	plain, plainArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, "")
+	if strings.Contains(plain, "overflow_bounds") {
+		t.Fatalf("no ring path must mean no ring arm, got %q", plain)
+	}
+	if len(plainArgs) != 9 {
+		t.Fatalf("plain arg count = %d, want 9 (in, partial, lng, lat, srid + 4 author-cap)", len(plainArgs))
+	}
+
+	ringed, ringedArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, "$.rural.sparse")
+	if !strings.Contains(ringed, "overflow_bounds") {
+		t.Fatalf("ring path must add the ring arm, got %q", ringed)
+	}
+	if !strings.Contains(ringed, "rr.status != 'held' AND (rr.overflow_bounds IS NOT NULL") {
+		t.Fatalf("ring arm must require a live non-held reach row, got %q", ringed)
+	}
+	if len(ringedArgs) != 16 {
+		t.Fatalf("ringed arg count = %d, want 16 (9 + the ring's 7)", len(ringedArgs))
+	}
+	if ringedArgs[7] != "$.rural.sparse" {
+		t.Fatalf("ring path must bind in the ring arm's slot, got %v at index 7", ringedArgs[7])
+	}
+}
