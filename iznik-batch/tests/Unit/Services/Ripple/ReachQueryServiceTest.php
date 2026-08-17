@@ -179,6 +179,30 @@ class ReachQueryServiceTest extends TestCase
         $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
     }
 
+    public function test_ring_admissions_are_counted_by_day_and_lane(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedRing($msgid);
+        DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->delete();
+
+        $svc = new ReachQueryService();
+        $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
+        $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
+
+        // Two admissions, one row, today's date: the answer to "how many did
+        // the lane let in today". Admissions via the committed reach must not
+        // count - only the ring path does.
+        $row = DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->first();
+        $this->assertNotNull($row);
+        $this->assertSame(2, (int) $row->count);
+        $this->assertSame(now()->toDateString(), (string) $row->day);
+
+        $inside = DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->value('count');
+        $this->assertTrue($svc->isWithinReach($msgid, 51.5, -0.1, 'sparse')); // inside the committed reach
+        $this->assertSame((int) $inside, (int) DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->value('count'));
+    }
+
     public function test_ring_does_not_admit_a_member_of_another_band(): void
     {
         config(['freegle.ripple.rural_access.enabled' => true]);

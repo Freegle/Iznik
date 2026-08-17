@@ -173,6 +173,20 @@ class ReachQueryService
         }
     }
 
+    /** One more admit for today's row of this lane's counter. */
+    private function countAdmit(string $event): void
+    {
+        try {
+            DB::table('rippling_event_metrics')->upsert(
+                [['day' => now()->toDateString(), 'event' => $event, 'count' => 1]],
+                ['day', 'event'],
+                ['count' => DB::raw('count + 1')]
+            );
+        } catch (\Throwable $e) {
+            // Counting must never cost anyone their reply.
+        }
+    }
+
     /**
      * Is this point inside a ring that would let them in?
      *
@@ -199,7 +213,19 @@ class ReachQueryService
                 [$msgid, $path, $lng, $lat]
             );
 
-            return (bool) ($row->within ?? 0);
+            $within = (bool) ($row->within ?? 0);
+
+            if ($within) {
+                // The day's how-many-did-the-lane-let-in count. This is the only
+                // place either lane admits anyone (the apiv2 ring helper has no
+                // callers yet), so without a count here the lanes' effect is
+                // invisible and "is it working?" has no answer. Same ledger the
+                // reply_blocked counter uses; best-effort, so metrics can never
+                // break a reply flow.
+                $this->countAdmit(str_starts_with($path, '$.rural') ? 'rural_admitted' : 'fairness_admitted');
+            }
+
+            return $within;
         } catch (\Throwable $e) {
             // Same posture as isWithinReach: an unreadable ring means "not within", never an
             // exception into a reply flow.
