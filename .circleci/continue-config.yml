@@ -38,7 +38,7 @@ orbs:
   # Gradle distribution cache for build-android (1.1.374/1.1.375 - see
   # production pipeline #10729 on 4140acbb3, which lost a release to a
   # "Connection reset" fetching gradle-8.11.1-all.zip from services.gradle.org).
-  freegle: freegle/tests@1.1.376
+  freegle: freegle/tests@1.1.378
 
 jobs:
   mark-ci-passed:
@@ -298,7 +298,7 @@ workflows:
       # ACTIVATION (do together, after this merges to master):
       #   1. Publish the orb from master so freegle/check-release-divergence exists:
       #        source .env && ~/.local/bin/circleci orb publish .circleci/orb/freegle-tests.yml freegle/tests@<next>
-      #   2. Bump the `freegle: freegle/tests@…` pin above to that new version.
+      #   2. Bump the `freegle: freegle/tests@1.1.378…` pin above to that new version.
       #   3. Uncomment the job below.
       # Referencing an unpublished orb job in this ACTIVE workflow would fail the whole
       # promote, so it stays commented until the orb version that defines it is pinned.
