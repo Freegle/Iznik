@@ -1279,11 +1279,22 @@ class ExpandService
 
     private function advanceDue(bool $dryRun, int $limit, array &$stats, ?int $onlyMsgid = null, ?string $withinPolyWkt = null): void
     {
+        // Named columns, NOT select * : this table's rows average ~600KB
+        // (polygon) with schedule JSON, max_polygon and the sandwich bounds on
+        // top, so an unqualified fetch of a 500-row due batch materialises
+        // gigabytes in one fetchAll. That was the 21-28 memory-exhaustion
+        // fatals a day from 2026-08-12 (argv-attributed to ripple:expand):
+        // the density resize + re-init churn made due batches big enough to
+        // blow the 1GB limit. schedule - the one big column each advance
+        // genuinely needs - is fetched per row inside the loop, so at most one
+        // row's schedule is in memory at a time.
         $rows = DB::table('rippling_reach')
+            ->select(['msgid', 'lat', 'lng', 'tick', 'min_tick', 'total_ticks', 'arrival'])
             ->where('status', 'expanding')
             ->whereNotNull('next_expansion_at')
             ->where('next_expansion_at', '<=', now())
             ->when($onlyMsgid !== null, fn ($q) => $q->where('msgid', $onlyMsgid))
+            // keep-raw: ST_Contains/ST_GeomFromText are spatial functions the builder cannot render
             ->when($withinPolyWkt !== null, fn ($q) => $q->whereRaw(
                 'ST_Contains(ST_GeomFromText(?, ' . self::SRID . '), ST_SRID(POINT(lng, lat), ' . self::SRID . '))',
                 [$withinPolyWkt]
@@ -1293,7 +1304,8 @@ class ExpandService
 
         foreach ($rows as $row) {
             try {
-                $ticks = json_decode($row->schedule, true);
+                $schedule = DB::table('rippling_reach')->where('msgid', $row->msgid)->value('schedule');
+                $ticks = json_decode($schedule, true);
                 if (!is_array($ticks) || empty($ticks)) {
                     $stats['skipped']++;
                     continue;
