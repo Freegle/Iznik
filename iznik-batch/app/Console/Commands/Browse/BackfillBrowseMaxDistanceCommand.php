@@ -107,6 +107,14 @@ class BackfillBrowseMaxDistanceCommand extends Command
     private const DEFAULT_KEY = 'browseReachMaxDistance';
 
     /**
+     * The member's measured density band, recorded so the read side does not have to
+     * re-measure it per row. Says something about the area, not about the member, and is
+     * already implied by the budget derived from it - so it carries nothing that the
+     * settings blob does not already expose.
+     */
+    private const BAND_KEY = 'browseDensityBand';
+
+    /**
      * The bounds the time-based slider had before it became band-aware. The old top
      * stop is what a stored value has to be read against to know what fraction of
      * their range the member was asking for. Must stay in step with
@@ -124,11 +132,29 @@ class BackfillBrowseMaxDistanceCommand extends Command
     /** ~110m: a radius in miles cannot tell two members this close apart. */
     private const RADIUS_MEMO_DP = 3;
 
+    /**
+     * Fail the command when at least this fraction of radius lookups fail. A skipped member
+     * keeps no band limit at all, so a broken lookup voids the run rather than shrinking it.
+     * Generous on purpose: isolated failures are normal, a quarter of them is a config error.
+     */
+    private const LOOKUP_FAILURE_ALARM = 0.25;
+
+    /**
+     * ...but only once this many have failed outright. A member whose lookup fails is
+     * deliberately left alone rather than given a wrong cap, and a run over a handful of
+     * members (a --limit run, or a single member in a test) can hit 100% honestly. Both
+     * conditions together mean "systemic", which is the only thing worth failing over: a
+     * nightly run scans ~200k, so scattered failures stay far below the rate while a broken
+     * endpoint trips both at once.
+     */
+    private const LOOKUP_FAILURE_MIN = 20;
+
     protected $signature = 'browse:backfill-max-distance
                             {--chunk=200 : Users per DB chunk}
                             {--limit=0 : Stop after this many corrections (0 = no limit)}
                             {--since-days=90 : Also give a default to members active within this many days (0 = only those who already have a setting)}
                             {--epsilon-miles=0.5 : Leave pairs alone when the recomputed radius is within this of the stored one}
+                            {--missing-only : Only members with no band limit at all, the cheap pass that keeps new members covered}
                             {--dry-run : Report what would change without writing}';
 
     protected $description = 'Put each member on their own density band travel-time budget, and reconcile the derived browseMaxDistance';
@@ -153,16 +179,18 @@ class BackfillBrowseMaxDistanceCommand extends Command
         $sinceDays = max(0, (int) $this->option('since-days'));
         $epsilon = max(0.0, (float) $this->option('epsilon-miles'));
         $apiBase = rtrim(config('freegle.town_near_url'), '/');
+        $missingOnly = (bool) $this->option('missing-only');
 
         $stats = [
             'scanned' => 0,
             'corrected' => 0,
             'already_consistent' => 0,
+            'band_stamped' => 0,
             'no_location' => 0,
             'lookup_failed' => 0,
         ];
 
-        $this->selection($sinceDays)
+        $this->selection($sinceDays, $missingOnly)
             ->orderBy('id')
             ->chunkById($chunk, function ($users) use ($dryRun, $limit, $epsilon, $apiBase, &$stats) {
                 foreach ($users as $user) {
@@ -176,17 +204,68 @@ class BackfillBrowseMaxDistanceCommand extends Command
             });
 
         $this->info(sprintf(
-            '%d scanned: %d %s, %d already consistent, %d skipped (no location), %d skipped (lookup failed).',
+            '%d scanned: %d %s, %d band stamped, %d already consistent, %d skipped (no location), %d skipped (lookup failed).',
             $stats['scanned'],
             $stats['corrected'],
             $dryRun ? 'would be corrected' : 'corrected',
+            $stats['band_stamped'],
             $stats['already_consistent'],
             $stats['no_location'],
             $stats['lookup_failed'],
         ));
 
-        if (! $dryRun && $stats['corrected'] > 0) {
+        if (! $dryRun && ($stats['corrected'] > 0 || $stats['band_stamped'] > 0)) {
             Log::info('browse:backfill-max-distance', $stats);
+        }
+
+        // A member whose radius lookup fails is SKIPPED, and a skipped member keeps no band
+        // limit at all - so a broken lookup does not degrade this command, it silently voids
+        // it. That is not hypothetical: BROWSE_TOWN_NEAR_URL was unset on the production
+        // batch host, so every call went to the compose-internal default, which does not
+        // resolve there. Measured 2026-08-15: 1,018 of 2,260 scanned members failed the
+        // lookup, and across 202,837 active members ZERO held a band radius - 147,891 had
+        // nothing stored and 54,951 held the unlimited sentinel (sparse members, who return
+        // the sentinel before ever needing a lookup). The per-member density banding was
+        // therefore inert in production while this command reported success every night.
+        //
+        // Fail loudly instead. The threshold is deliberately generous: individual lookups can
+        // fail for honest reasons (a member on a boat, a routing hiccup), but a large fraction
+        // failing means the endpoint is wrong or unreachable, which is a config error and
+        // needs a human.
+        // band_stamped belongs here with the other successes: those members got through both
+        // lookups. Leaving it out would shrink the denominator as members move into that
+        // bucket and make a healthy run's failure rate climb towards the alarm on its own.
+        $attempted = $stats['corrected'] + $stats['already_consistent']
+            + $stats['band_stamped'] + $stats['lookup_failed'];
+        if ($attempted > 0) {
+            $failureRate = $stats['lookup_failed'] / $attempted;
+
+            if ($failureRate >= self::LOOKUP_FAILURE_ALARM
+                && $stats['lookup_failed'] < self::LOOKUP_FAILURE_MIN) {
+                // Too few to call it systemic, but still worth saying out loud rather than
+                // burying in a count: these members came away with no band limit.
+                $this->warn(sprintf(
+                    'Radius lookups failed for %d of %d members; those members keep no band limit.',
+                    $stats['lookup_failed'],
+                    $attempted,
+                ));
+            }
+
+            if ($failureRate >= self::LOOKUP_FAILURE_ALARM
+                && $stats['lookup_failed'] >= self::LOOKUP_FAILURE_MIN) {
+                $this->error(sprintf(
+                    'Radius lookups failed for %d of %d members (%.0f%%). Those members keep NO band limit, '
+                    . 'so this run has left the density banding inert rather than merely incomplete. '
+                    . 'Check BROWSE_TOWN_NEAR_URL is set and reachable from this container (currently %s).',
+                    $stats['lookup_failed'],
+                    $attempted,
+                    $failureRate * 100,
+                    $apiBase !== '' ? $apiBase : '(empty)',
+                ));
+                Log::error('browse:backfill-max-distance lookup failures', $stats + ['api_base' => $apiBase]);
+
+                return Command::FAILURE;
+            }
         }
 
         return Command::SUCCESS;
@@ -198,13 +277,36 @@ class BackfillBrowseMaxDistanceCommand extends Command
      * shown or mailed a post, who needs the band default materialised before the
      * wider ripple reaches them.
      */
-    private function selection(int $sinceDays)
+    private function selection(int $sinceDays, bool $missingOnly = false)
     {
         $query = User::query()->whereNull('deleted');
 
         // keep-raw: JSON_EXTRACT path predicates have no query-builder equivalent;
         // whereJsonContains tests containment, not presence of a key.
         $hasSetting = "(JSON_EXTRACT(settings, '$.browseMaxMinutes') IS NOT NULL OR JSON_EXTRACT(settings, '$.browseMaxDistance') IS NOT NULL)";
+
+        // --missing-only: just the members with NOTHING holding them to a band - neither the
+        // default nor a choice of their own. Everyone else is already consistent or is a
+        // reconciliation this pass does not need to do.
+        //
+        // This exists because the invariant decays. The full pass is a walk of every user
+        // (~2.9M rows on live) and is deliberately not scheduled, but a member who joins
+        // after it runs gets no band default, ever - and since posts ripple out to the widest
+        // budget and rely on each member being held back to their own band, that member is
+        // permanently on "no limit" inbound. Narrowed this way the pass is small enough to
+        // run regularly and close that gap.
+        if ($missingOnly) {
+            $query->whereRaw("JSON_EXTRACT(settings, '$.".self::DEFAULT_KEY."') IS NULL")
+                ->whereRaw("JSON_EXTRACT(settings, '$.browseMaxDistance') IS NULL");
+
+            // Recency still applies: there is no point deriving a band for someone who has
+            // not been near the place in months, and it is what keeps this pass cheap.
+            if ($sinceDays > 0) {
+                $query->where('lastaccess', '>=', now()->subDays($sinceDays));
+            }
+
+            return $query;
+        }
 
         if ($sinceDays === 0) {
             return $query->whereRaw($hasSetting);
@@ -248,6 +350,14 @@ class BackfillBrowseMaxDistanceCommand extends Command
             return;
         }
 
+        // The band NAME, not just its consequences. browseMaxMinutes cannot stand in for it:
+        // a member who narrowed the slider is rescaled within their band, so 20 minutes means
+        // "dense member" or "rural member who wants less" and the two are indistinguishable
+        // afterwards. Anything reading a member's band back - the rural overflow lane picks
+        // one ring per band - needs the band itself, and this command is the only place that
+        // measures it.
+        $bandStale = ($settings[self::BAND_KEY] ?? null) !== $cap['band'];
+
         $capMinutes = (int) round($cap['max_minutes']);
         $desiredMinutes = $this->rescale($minutes, $capMinutes);
         $desired = $this->desiredDistance($loc, $desiredMinutes, $capMinutes, $apiBase);
@@ -258,6 +368,22 @@ class BackfillBrowseMaxDistanceCommand extends Command
         }
 
         if ($desiredMinutes === $minutes && $this->consistent($current, $desired, $epsilon)) {
+            // Consistent budget, but possibly no band recorded - and that is the common case,
+            // not the rare one: the members whose budget is already right are exactly the ones
+            // a correcting pass never writes to. Stamping only when correcting would leave the
+            // band missing for most of the membership and the lane reading it near-inert, the
+            // same shape of failure as the missing endpoint this command already alarms on.
+            if ($bandStale) {
+                if (! $dryRun) {
+                    $settings[self::BAND_KEY] = $cap['band'];
+                    $user->settings = $settings;
+                    $user->save();
+                }
+                $stats['band_stamped']++;
+
+                return;
+            }
+
             $stats['already_consistent']++;
 
             return;
@@ -279,6 +405,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
         if (! $dryRun) {
             $settings['browseMaxMinutes'] = $desiredMinutes;
             $settings[$targetKey] = $desired;
+            $settings[self::BAND_KEY] = $cap['band'];
             $user->settings = $settings;
             $user->save();
         }

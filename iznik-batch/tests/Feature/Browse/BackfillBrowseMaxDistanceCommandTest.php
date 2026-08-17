@@ -434,4 +434,197 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
         $this->assertSame(8.5, $this->chosenDistanceOf($id));
         $this->assertArrayNotHasKey('browseReachMaxDistance', $this->settingsOf($id));
     }
+
+    /**
+     * A member whose radius lookup fails is SKIPPED, and a skipped member keeps no band
+     * limit at all - so a broken lookup does not shrink this command's effect, it voids it.
+     * Measured on production 2026-08-15: BROWSE_TOWN_NEAR_URL was unset on the batch host, so
+     * every call went to the compose-internal default which does not resolve there. 1,018 of
+     * 2,260 scanned members failed, ZERO of 202,837 active members held a band radius, and the
+     * command reported success every night regardless.
+     */
+    public function testFailsLoudlyWhenMostRadiusLookupsFail(): void
+    {
+        // Density answers (so members are banded medium and DO need a radius), but the
+        // routing-backed radius endpoint is unreachable - the production failure exactly.
+        $results = [];
+        for ($i = 0; $i < 400; $i++) {
+            $results[] = ['id' => $i + 1, 'extra' => ['lat' => 53.4 + (2.5 * ($i + 1) / 400) / 69.05, 'lng' => -1.3]];
+        }
+        Http::fake([
+            '*userapproxlocs*' => Http::response(['results' => $results]),
+            '*town/near*' => Http::response(null, 500),
+        ]);
+
+        // Enough to be systemic rather than a handful: the alarm needs both a high failure
+        // RATE and an absolute floor, so that a --limit run or a single unlucky member
+        // cannot fail the nightly job.
+        foreach (range(1, 25) as $n) {
+            $this->userWith(['browseMaxMinutes' => 25]);
+        }
+
+        $this->artisan('browse:backfill-max-distance')->assertFailed();
+    }
+
+    /**
+     * The alarm must not fire on the honest case: a lookup can fail for one member without
+     * meaning the endpoint is broken, and failing the whole nightly run over that would be
+     * its own kind of noise.
+     */
+    public function testStaysSuccessfulWhenOnlyAFewLookupsFail(): void
+    {
+        $this->fakeMedium(8.5);
+        foreach (range(1, 8) as $n) {
+            $this->userWith(['browseMaxMinutes' => 25]);
+        }
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+    }
+
+    /**
+     * A single member whose lookup fails is left alone and the run still succeeds - existing,
+     * intended behaviour. The alarm must not turn that into a nightly job failure, which is
+     * why it needs an absolute floor as well as a rate.
+     */
+    public function testASingleFailedLookupDoesNotFailTheRun(): void
+    {
+        $results = [];
+        for ($i = 0; $i < 400; $i++) {
+            $results[] = ['id' => $i + 1, 'extra' => ['lat' => 53.4 + (2.5 * ($i + 1) / 400) / 69.05, 'lng' => -1.3]];
+        }
+        Http::fake([
+            '*userapproxlocs*' => Http::response(['results' => $results]),
+            '*town/near*' => Http::response(null, 500),
+        ]);
+
+        $this->userWith(['browseMaxMinutes' => 25]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+    }
+
+    /**
+     * --missing-only exists because the invariant DECAYS. The full pass walks every user
+     * (~2.9M rows on live) and is deliberately not scheduled, but browseReachMaxDistance has
+     * no other writer, so a member who joins after a run gets no band limit ever - and since
+     * posts ripple out to the widest budget and rely on each member being held to their own
+     * band, that member sits permanently on "no limit" inbound. Narrowed this way the pass is
+     * small enough to run regularly.
+     */
+    public function testMissingOnlyTouchesOnlyMembersWithNoBandLimit(): void
+    {
+        $this->fakeMedium(8.5);
+
+        $needsOne = $this->userWith([]);                                  // nothing at all
+        $hasDefault = $this->userWith(['browseReachMaxDistance' => 8.5]); // already covered
+        $hasOwnChoice = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 8.5]);
+
+        $this->artisan('browse:backfill-max-distance', ['--missing-only' => true])
+            ->assertSuccessful();
+
+        $this->assertArrayHasKey(
+            'browseReachMaxDistance',
+            $this->settingsOf($needsOne),
+            'a member with no band limit must be given one'
+        );
+
+        // The other two must be left alone: this pass closes the gap, it does not
+        // re-reconcile members who already have something.
+        $this->assertSame(8.5, $this->settingsOf($hasDefault)['browseReachMaxDistance']);
+        $this->assertSame(8.5, $this->settingsOf($hasOwnChoice)['browseMaxDistance']);
+        $this->assertArrayNotHasKey('browseReachMaxDistance', $this->settingsOf($hasOwnChoice));
+    }
+
+    /**
+     * Without the flag the full pass still reconciles members who already have settings, which
+     * every other test in this file relies on. If --missing-only leaked into the default the
+     * migration pass would quietly stop doing its job.
+     */
+    public function testTheFullPassStillReconcilesExistingSettings(): void
+    {
+        $this->fakeMedium(8.5);
+        $id = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 1]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(8.5, $this->chosenDistanceOf($id), 'the full pass must still reconcile');
+    }
+
+    /**
+     * The measured band is recorded, not just the budget derived from it. Nothing downstream
+     * can recover it afterwards: the budget is rescaled within the band, so a member on 20
+     * minutes is either a city member on their cap or a rural member who asked for less, and
+     * the two are the same number. The rural overflow lane admits a member against the ring
+     * for THEIR band, so it needs the band itself.
+     */
+    public function testRecordsTheMeasuredDensityBand(): void
+    {
+        $this->fakeMedium(8.5);
+        $id = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 1]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame('medium', $this->settingsOf($id)['browseDensityBand'] ?? null);
+    }
+
+    /**
+     * The case that decides whether recording the band is worth anything: a member whose
+     * budget is ALREADY right. They are the majority - the whole point of a reconciling pass
+     * is that most rows need no reconciling - and a correcting pass never writes to them. If
+     * the band were only stamped alongside a correction, it would be missing for most of the
+     * membership and the lane reading it would be near-inert while every run reported success.
+     */
+    public function testStampsTheBandOnAMemberWhoseBudgetIsAlreadyRight(): void
+    {
+        $this->fakeMedium();
+        $id = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 8.2]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame('medium', $this->settingsOf($id)['browseDensityBand'] ?? null);
+        // ...and the budget it left alone is still left alone.
+        $this->assertSame(8.2, $this->distanceOf($id));
+    }
+
+    /** A member already carrying the right band is not rewritten for the sake of it. */
+    public function testAnUpToDateBandIsNotRestamped(): void
+    {
+        $this->fakeMedium();
+        $this->userWith([
+            'browseMaxMinutes' => 25,
+            'browseMaxDistance' => 8.2,
+            'browseDensityBand' => 'medium',
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')
+            ->expectsOutputToContain('0 band stamped, 1 already consistent')
+            ->assertSuccessful();
+    }
+
+    public function testDryRunDoesNotStampTheBand(): void
+    {
+        $this->fakeMedium();
+        $id = $this->userWith(['browseMaxMinutes' => 25, 'browseMaxDistance' => 8.2]);
+
+        $this->artisan('browse:backfill-max-distance --dry-run')->assertSuccessful();
+
+        $this->assertArrayNotHasKey('browseDensityBand', $this->settingsOf($id));
+    }
+
+    /**
+     * A band that has changed - a member who moved, or a town that grew - is corrected. The
+     * stamp is a measurement, not a one-off initialisation.
+     */
+    public function testAStaleBandIsCorrected(): void
+    {
+        $this->fakeMedium();
+        $id = $this->userWith([
+            'browseMaxMinutes' => 25,
+            'browseMaxDistance' => 8.2,
+            'browseDensityBand' => 'sparse',
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame('medium', $this->settingsOf($id)['browseDensityBand'] ?? null);
+    }
 }

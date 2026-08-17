@@ -334,4 +334,143 @@ class ReachServiceTest extends TestCase
         $this->assertNull($geom['outer']);
         $this->assertNull($geom['inner']);
     }
+
+    public function test_schedule_omits_both_overflow_lanes_by_default(): void
+    {
+        // Dark by default: neither lane touches the request, so an unconfigured deployment
+        // gets a byte-identical schedule and the stored reach is unchanged.
+        config(['freegle.ripple.rural_access.enabled' => false]);
+        config(['freegle.ripple.fairness.enabled' => false]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => !str_contains($request->url(), 'rural_access')
+            && !str_contains($request->url(), 'fairness_weight'));
+    }
+
+    public function test_schedule_asks_for_rural_rings_when_enabled(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        config(['freegle.ripple.fairness.enabled' => false]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'rural_access=1')
+            && !str_contains($request->url(), 'fairness_weight'));
+    }
+
+    public function test_schedule_sends_fairness_weight_and_quintile_when_enabled(): void
+    {
+        config(['freegle.ripple.fairness.enabled' => true]);
+        config(['freegle.ripple.fairness.weight' => 0.5]);
+        config(['freegle.ripple.fairness.max_quintile' => 1]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'fairness_weight=0.5')
+            && str_contains($request->url(), 'fairness_max_quintile=1'));
+    }
+
+    /**
+     * Weight zero is the deliberate first rollout step: the flag on, the plumbing exercised
+     * end to end, and no behaviour change. It must therefore send nothing, or the routing
+     * server would run the extra road-network search for a stretch of exactly zero.
+     */
+    public function test_schedule_sends_no_fairness_at_zero_weight(): void
+    {
+        config(['freegle.ripple.fairness.enabled' => true]);
+        config(['freegle.ripple.fairness.weight' => 0.0]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => !str_contains($request->url(), 'fairness_weight'));
+    }
+
+    /**
+     * A misconfigured weight must be clamped here rather than trusted. The routing server
+     * clamps too, but a value of 5 silently becoming 1 at the far end is harder to explain
+     * than one that never leaves.
+     */
+    public function test_schedule_clamps_a_fairness_weight_above_one(): void
+    {
+        config(['freegle.ripple.fairness.enabled' => true]);
+        config(['freegle.ripple.fairness.weight' => 5.0]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'fairness_weight=1'));
+    }
+
+    /**
+     * The most deprived fifth only, by default. The measured shortfall is a knee there rather
+     * than a gradient across all five, and one fifth needs one traced ring rather than four.
+     */
+    public function test_fairness_defaults_to_the_most_deprived_fifth_only(): void
+    {
+        config(['freegle.ripple.fairness.enabled' => true]);
+        config(['freegle.ripple.fairness.weight' => 0.5]);
+        config(['freegle.ripple.fairness.max_quintile' => null]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'fairness_max_quintile=1'));
+    }
+
+    public function test_parseScheduleResponse_carries_the_rural_rings(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_rural' => [
+                'dense' => ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[[0, 0], [1, 0], [1, 1], [0, 0]]]]],
+                'sparse' => ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[[0, 0], [3, 0], [3, 3], [0, 0]]]]],
+            ],
+        ]);
+
+        $this->assertNotNull($parsed['overflow_bounds']);
+        $this->assertArrayHasKey('rural', $parsed['overflow_bounds']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['rural']['dense']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['rural']['sparse']);
+        $this->assertArrayNotHasKey('fairness', $parsed['overflow_bounds']);
+    }
+
+    public function test_parseScheduleResponse_carries_the_fairness_rings_and_the_budget_applied(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_fairness' => [
+                '1' => ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[[0, 0], [4, 0], [4, 4], [0, 0]]]]],
+            ],
+            'fairness_budget_min' => 67.5,
+        ]);
+
+        $this->assertArrayHasKey('fairness', $parsed['overflow_bounds']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['fairness']['1']);
+        // The budget actually routed, not whatever is configured when the row is later read.
+        $this->assertSame(67.5, $parsed['overflow_bounds']['fairness_budget_min']);
+    }
+
+    /**
+     * NULL must mean "no lane applied", never "a lane that produced nothing". A row read back
+     * as an empty array would look like an admissible-to-nobody lane rather than no lane.
+     */
+    public function test_parseScheduleResponse_gives_null_overflow_when_no_lane_applied(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+        ]);
+        $this->assertNull($parsed['overflow_bounds']);
+
+        // An empty lane object from the server is the same thing as no lane.
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_rural' => [],
+        ]);
+        $this->assertNull($parsed['overflow_bounds']);
+    }
 }

@@ -90,7 +90,7 @@ class RippleReplyService
      * is charged against the posts that can least afford it, because a poster
      * cannot tell a delayed first reply from no interest at all.
      */
-    public function shouldHold(int $msgid, ?float $lat, ?float $lng): bool
+    public function shouldHold(int $msgid, ?float $lat, ?float $lng, ?string $band = null): bool
     {
         if ($lat === null || $lng === null) {
             return false;
@@ -98,7 +98,7 @@ class RippleReplyService
         if (!$this->hasReach($msgid)) {
             return false;
         }
-        if ($this->reach->isWithinReach($msgid, $lat, $lng)) {
+        if ($this->reach->isWithinReach($msgid, $lat, $lng, $band)) {
             return false;
         }
 
@@ -474,9 +474,16 @@ class RippleReplyService
      */
     public function releaseCovered(int $msgid): int
     {
-        $held = DB::table('rippling_held_replies')
-            ->where('msgid', $msgid)
-            ->where('status', 'held')
+        // The replier's density band comes along for the ride, because a reply held from
+        // someone the rural-access ring covers should be released by that ring too - the
+        // hold is meant to be temporary, and a hold nothing can ever release is just a
+        // silent refusal.
+        $held = DB::table('rippling_held_replies as h')
+            ->leftJoin('users as u', 'u.id', '=', 'h.replieruserid')
+            ->where('h.msgid', $msgid)
+            ->where('h.status', 'held')
+            // keep-raw: JSON_UNQUOTE(JSON_EXTRACT(...)) has no query-builder equivalent.
+            ->selectRaw("h.*, JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band")
             ->get();
 
         $released = 0;
@@ -484,7 +491,7 @@ class RippleReplyService
             if ($row->lat === null || $row->lng === null) {
                 continue;
             }
-            if (!$this->reach->isWithinReach($msgid, (float) $row->lat, (float) $row->lng)) {
+            if (!$this->reach->isWithinReach($msgid, (float) $row->lat, (float) $row->lng, $row->density_band ?? null)) {
                 continue;
             }
             $this->release($row->id, 'covered');

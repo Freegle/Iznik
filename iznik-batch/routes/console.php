@@ -154,6 +154,39 @@ Schedule::command('ripple:release-replies')
     ->sendOutputTo(cronLog('ripple:release-replies'))
     ->runInBackground();
 
+// Keep every member on the travel-time budget their own surroundings justify.
+//
+// settings.browseReachMaxDistance is what holds each member to their own density band. Posts
+// ripple out to the widest budget any band earns ON THE UNDERSTANDING that each recipient is
+// then held back to theirs, so a member without it receives posts from up to 45 minutes away -
+// exactly what the banding exists to prevent. This command is the only thing that writes it.
+//
+// Two passes, because they answer different questions.
+//
+// --missing-only: members with NOTHING recorded, which after the initial backfill is just
+// people who have joined since. Small, so it can run daily and no new member is ever left
+// uncovered. Without it the gap reopens the day after any manual pass, which is how 202,837
+// active members came to hold not one band radius between them (see the command's docblock).
+Schedule::command('browse:backfill-max-distance', ['--missing-only'])
+    ->dailyAt('04:20')
+    ->withoutOverlapping(360)
+    ->sendOutputTo(cronLog('browse:backfill-max-distance-missing'))
+    ->runInBackground();
+
+// The full pass, which also RECONCILES members who already have a value. Needed because
+// --missing-only never revisits anyone: it cannot follow a member who moves from a village to
+// a city, nor an area that has grown denser since its members were measured. Monthly and
+// off-peak because it walks every user (~2.9M rows) and makes a routing call per distinct
+// location, so it is far too heavy to run often.
+Schedule::command('browse:backfill-max-distance')
+    ->monthlyOn(1, '02:40')
+    // 12h, not the 24h default: a killed run's lock has to self-heal well inside a day
+    // (SchedulerResilienceTest, incident 2026-07-02). Measured, the full pass takes roughly
+    // six hours, so this leaves headroom without letting a dead run block the next month's.
+    ->withoutOverlapping(720)
+    ->sendOutputTo(cronLog('browse:backfill-max-distance-full'))
+    ->runInBackground();
+
 // First reply: getting one in quickly, and making the wait bearable when there isn't one.
 // All three are gated by freegle.firstreply.* and are no-ops until those are switched on.
 if (config('freegle.firstreply.enabled')) {
