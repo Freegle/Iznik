@@ -1287,9 +1287,12 @@ class ExpandService
         // the density resize + re-init churn made due batches big enough to
         // blow the 1GB limit. schedule - the one big column each advance
         // genuinely needs - is fetched per row inside the loop, so at most one
-        // row's schedule is in memory at a time.
+        // row's schedule is in memory at a time. This list must cover every
+        // $row-> use to the END of this function - rejected_groups is read
+        // ~60 lines down for the secondary-reject clip, and leaving it out
+        // silently skipped the clip (caught by the two clip tests in CI).
         $rows = DB::table('rippling_reach')
-            ->select(['msgid', 'lat', 'lng', 'tick', 'min_tick', 'total_ticks', 'arrival'])
+            ->select(['msgid', 'lat', 'lng', 'tick', 'min_tick', 'total_ticks', 'arrival', 'rejected_groups'])
             ->where('status', 'expanding')
             ->whereNotNull('next_expansion_at')
             ->where('next_expansion_at', '<=', now())
