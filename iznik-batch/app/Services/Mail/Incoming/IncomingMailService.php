@@ -3858,6 +3858,12 @@ class IncomingMailService
             }
 
             $html = $response->body();
+            if (trim($html) === '') {
+                // loadHTML('') throws ValueError on PHP 8 - the @ silences
+                // warnings, not thrown Errors (same trap as the link-preview
+                // cron, fixed together 2026-08-17).
+                return [];
+            }
             $doc = new \DOMDocument;
             @$doc->loadHTML($html);
 
