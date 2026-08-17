@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -128,6 +129,11 @@ func MarkSeen(c *fiber.Ctx) error {
 			}
 		}
 	}
+
+	// The badge count is remembered for a few seconds (see the browsecount package). Marking
+	// posts seen is the one change that must show at once, because the badge dropping is how
+	// the member knows it worked, so forget their count here rather than let it stand.
+	browsecount.Invalidate(myid)
 
 	return c.JSON(fiber.Map{
 		"success": true,

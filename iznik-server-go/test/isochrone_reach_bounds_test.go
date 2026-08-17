@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
@@ -142,6 +143,12 @@ func TestNearbyCountSandwichBounds(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	countOf := func() float64 {
+		// The badge is allowed to be a few seconds behind a post arriving or changing
+		// (see the browsecount package, whose own tests cover that). This test is about
+		// which posts the counting SQL includes, so ask afresh each time rather than
+		// measure the reuse.
+		browsecount.Invalidate(viewerID)
+
 		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
 		assert.Equal(t, 200, resp.StatusCode)
 		var body map[string]interface{}
