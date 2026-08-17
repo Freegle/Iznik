@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
@@ -187,4 +188,49 @@ func TestCreateChatMessage_ReplyDoesNotJoinWhenAlreadySharingAGroup(t *testing.T
 	var stillHome int
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", replierID, homeGroup).Scan(&stillHome)
 	assert.Equal(t, 1, stillHome, "their existing membership is left alone")
+}
+
+// When a join IS needed, it goes to the group NEAREST the replier - not the post's
+// lowest group id. After rippling a post sits on several groups, and the lowest id
+// is a lottery: picking it is how a Leeds member ended up in Bradford.
+func TestCreateChatMessage_ReplyJoinsNearestGroup(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("replynearest")
+
+	// Two groups the post will sit on: one far from the replier, one on their doorstep.
+	farGroup := CreateTestGroup(t, prefix+"_far")
+	nearGroup := CreateTestGroup(t, prefix+"_near")
+	// Make the FAR group sort first, so lowest-id would have picked the wrong one.
+	if nearGroup < farGroup {
+		farGroup, nearGroup = nearGroup, farGroup
+	}
+	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, polyindex = ST_GeomFromText('POINT(-3.1883 55.9533)', ?) WHERE id = ?", utils.SRID, farGroup)
+	db.Exec("UPDATE `groups` SET lat = 51.5, lng = -0.1, polyindex = ST_GeomFromText('POINT(-0.1 51.5)', ?) WHERE id = ?", utils.SRID, nearGroup)
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, farGroup, "Member")
+	msgID := CreateTestMessage(t, posterID, farGroup, "OFFER: nearest-group test item", 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)",
+		msgID, nearGroup)
+
+	// The replier lives beside the NEAR group and is a member of neither.
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings, '{}'), '$.mylocation.lat', 51.5, '$.mylocation.lng', -0.1) WHERE id = ?", replierID)
+
+	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	_, token := CreateTestSession(t, replierID)
+	var payload chat.ChatMessage
+	payload.Message = "I'd like this please"
+	payload.Refmsgid = &msgID
+	s, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, token), bytes.NewBuffer(s))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode, "the reply is accepted")
+
+	var inNear, inFar int
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", replierID, nearGroup).Scan(&inNear)
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", replierID, farGroup).Scan(&inFar)
+	assert.Equal(t, 1, inNear, "the replier is joined to the group nearest them")
+	assert.Equal(t, 0, inFar, "not the lower-numbered group on the other side of the country")
 }

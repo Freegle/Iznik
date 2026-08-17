@@ -908,7 +908,32 @@ func CreateChatMessage(c *fiber.Ctx) error {
 
 		if alreadyIn == 0 {
 			var refGroup uint64
-			db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
+
+			// Nearest to the replier, not lowest id. ST_Distance against a group's
+			// catchment is 0 when they are inside it, so the group whose area they
+			// actually live in wins, and failing that the closest one does — which
+			// is the group they would have joined by hand. Lowest id was a lottery:
+			// it is why a Leeds member replying to a Leeds post landed in Bradford.
+			// COALESCE keeps groups with no usable catchment last rather than first,
+			// where a NULL distance would otherwise sort them.
+			if reach.haveLocation {
+				db.Table("messages_groups AS mg").
+					Select("mg.groupid").
+					Joins("INNER JOIN `groups` g ON g.id = mg.groupid").
+					Where("mg.msgid = ?", *payload.Refmsgid).
+					Order(clause.Expr{
+						SQL:  "COALESCE(ST_Distance(g.polyindex, ST_SRID(POINT(?, ?), ?)), 1e9), mg.groupid",
+						Vars: []interface{}{reach.lng, reach.lat, utils.SRID},
+					}).
+					Limit(1).Scan(&refGroup)
+			}
+
+			// No location, or the distance query found nothing: fall back to the
+			// original choice so a replier still ends up somewhere.
+			if refGroup == 0 {
+				db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
+			}
+
 			if refGroup > 0 {
 				user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
 			}
