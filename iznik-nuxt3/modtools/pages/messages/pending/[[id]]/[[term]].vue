@@ -35,7 +35,9 @@
           <p>
             There are no pending messages in {{ groupname }}, but
             {{
-              work === 1 ? 'there is 1 waiting' : `there are ${work} waiting`
+              outstanding === 1
+                ? 'there is 1 waiting'
+                : `there are ${outstanding} waiting`
             }}
             across your communities. The dropdown above is filtering this page
             to one community.
@@ -101,7 +103,6 @@ const {
   listingIds,
   visibleMessages,
   nextAfterRemoved,
-  work,
   getMessages,
 } = setupModMessages(true)
 
@@ -155,8 +156,23 @@ const groupname = computed(() => {
 // page while the badge nags them, with nothing on screen to say why
 // (Discourse 10037: two moderators reported it as "can't moderate on
 // desktop"; one worked around it by changing community and changing back).
+// Count what this queue actually holds, which is not the same as the composable's
+// `work`: workType here is pending+pendingother, but the listing also includes
+// Spam-collection messages (see message_list.go) and the menu badge counts those
+// too (layouts/default.vue passes count=['pending','spam']). Leaving spam out
+// would make the notice stay silent in exactly the case where the badge is
+// loudest about spam sitting on another community.
+const outstanding = computed(() => {
+  const w = authStore.work
+  if (!w) return 0
+  return ['pending', 'pendingother', 'spam'].reduce(
+    (total, type) => total + (w[type] || 0),
+    0
+  )
+})
+
 const filterHidingWork = computed(() => {
-  return Boolean(groupid.value) && work.value > 0
+  return Boolean(groupid.value) && outstanding.value > 0
 })
 
 const rulesGroup = computed(() => {
@@ -275,7 +291,7 @@ onMounted(async () => {
 // watch(groupid) above). If the work count says there is something to show and
 // we are showing nothing, the loader is wrong: bump it so it tries again.
 // Guarded on an empty list so a healthy page does not refetch on every tick.
-watch(work, (newVal) => {
+watch(outstanding, (newVal) => {
   if (newVal > 0 && !messages.value.length && !busy.value) {
     bump.value++
   }
@@ -395,6 +411,7 @@ defineExpose({
   groups,
   groupsreceived,
   groupname,
+  outstanding,
   filterHidingWork,
   rulesGroup,
   me,
@@ -402,7 +419,6 @@ defineExpose({
   busy,
   messages,
   groupid,
-  work,
   limit,
   showAllCommunities,
   loadAll,

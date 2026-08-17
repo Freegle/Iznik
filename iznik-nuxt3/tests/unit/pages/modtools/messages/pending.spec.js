@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import PendingPage from '~/modtools/pages/messages/pending/[[id]]/[[term]].vue'
 
 // Mock refs that will be shared between tests
@@ -50,14 +50,17 @@ vi.mock('~/composables/useModMessages', () => ({
 }))
 
 // Mock stores
-const mockAuthStore = {
+// Reactive so the page's `outstanding` computed (which reads authStore.work,
+// the same counts the menu badge uses) and the watcher on it actually fire.
+const mockAuthStore = reactive({
   user: {
     settings: {
       lastaimsshow: null,
     },
   },
+  work: {},
   saveAndGet: vi.fn(),
-}
+})
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
@@ -213,6 +216,7 @@ describe('PendingPage', () => {
     mockModGroupStore.list = {}
     mockMiscStore.get.mockReturnValue(null)
     mockAuthStore.user = { settings: { lastaimsshow: null } }
+    mockAuthStore.work = {}
     mockListingIds.value = new Set()
     mockMessageStore.list = {}
     mockMessageStore.context = null
@@ -247,13 +251,35 @@ describe('PendingPage', () => {
         id: 522709,
         namedisplay: 'Skelmersdale Freegle',
       })
-      mockWork.value = 3
+      mockAuthStore.work = { pending: 3 }
 
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
 
       expect(wrapper.text()).toContain('Skelmersdale Freegle')
       expect(wrapper.text()).toContain('3')
+      expect(wrapper.text()).toContain('Show all my communities')
+    })
+
+    it('counts spam towards the outstanding total, as the menu badge does', async () => {
+      // workType on this page is pending+pendingother, but the listing also
+      // includes Spam-collection messages and the badge counts them, so a
+      // spam-only backlog on another community must still be explained.
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockAuthStore.work = { pending: 0, pendingother: 0, spam: 2 }
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('there are 2 waiting')
       expect(wrapper.text()).toContain('Show all my communities')
     })
 
@@ -270,7 +296,7 @@ describe('PendingPage', () => {
         id: 522709,
         namedisplay: 'Skelmersdale Freegle',
       })
-      mockWork.value = 0
+      mockAuthStore.work = { pending: 0 }
 
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
@@ -284,7 +310,7 @@ describe('PendingPage', () => {
       mockBusy.value = false
       mockModGroupStore.received = true
       mockGroupid.value = 0
-      mockWork.value = 3
+      mockAuthStore.work = { pending: 3 }
 
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
@@ -424,7 +450,7 @@ describe('PendingPage', () => {
         id: 522709,
         namedisplay: 'Skelmersdale Freegle',
       })
-      mockWork.value = 3
+      mockAuthStore.work = { pending: 3 }
 
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
@@ -452,7 +478,7 @@ describe('PendingPage', () => {
       await wrapper.vm.$nextTick()
       const before = wrapper.vm.bump
 
-      mockWork.value = 4
+      mockAuthStore.work = { pending: 4 }
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.bump).toBe(before + 1)
@@ -504,7 +530,7 @@ describe('PendingPage', () => {
       await wrapper.vm.$nextTick()
       const before = wrapper.vm.bump
 
-      mockWork.value = 4
+      mockAuthStore.work = { pending: 4 }
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.bump).toBe(before)
