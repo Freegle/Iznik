@@ -921,10 +921,15 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					Select("mg.groupid").
 					Joins("INNER JOIN `groups` g ON g.id = mg.groupid").
 					Where("mg.msgid = ?", *payload.Refmsgid).
-					Order(clause.Expr{
-						SQL:  "COALESCE(ST_Distance(g.polyindex, ST_SRID(POINT(?, ?), ?)), 1e9), mg.groupid",
-						Vars: []interface{}{reach.lng, reach.lat, utils.SRID},
-					}).
+					// Must be wrapped in clause.OrderBy: GORM's Order() switches on
+					// clause.OrderBy, clause.OrderByColumn and string, with no default
+					// branch, so a bare clause.Expr is silently DROPPED and the query
+					// runs unordered — which returns the lowest group id, the very
+					// thing this is here to avoid. town.go and message.go order by
+					// distance the same way.
+					Order(clause.OrderBy{Expression: gorm.Expr(
+						"COALESCE(ST_Distance(g.polyindex, ST_SRID(POINT(?, ?), ?)), 1e9), mg.groupid",
+						reach.lng, reach.lat, utils.SRID)}).
 					Limit(1).Scan(&refGroup)
 			}
 
