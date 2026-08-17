@@ -33,7 +33,6 @@ class HostHealthCheck extends AbstractOutcomeCheck
      */
     public const PROBE = <<<'SH'
 echo "REBOOT:$([ -f /var/run/reboot-required ] && echo yes || echo no)"
-echo "REBOOT_PKGS:$(sort -u /var/run/reboot-required.pkgs 2>/dev/null | head -3 | tr '\n' ' ')"
 echo "SECURITY:$(apt-get upgrade -s 2>/dev/null | grep -c '^Inst.*[Ss]ecurit')"
 if command -v monit >/dev/null 2>&1; then echo "MONIT_BEGIN"; monit summary -B 2>&1; echo "MONIT_END"; else echo "MONIT_ABSENT"; fi
 SH;
@@ -114,19 +113,11 @@ SH;
         $warnings = [];
 
         if (preg_match('/^REBOOT:yes$/m', $output)) {
-            $pkgs = '';
-            if (preg_match('/^REBOOT_PKGS:(.+)$/m', $output, $m) && trim($m[1]) !== '') {
-                // Versioned kernel package names (linux-image-5.15.0-186-generic) say
-                // nothing a mod acts on and change every kernel: strip the version
-                // segments so the modal reads "linux-image-generic", and dedupe in
-                // case two kernel versions are pending at once.
-                $names = array_unique(array_map(
-                    fn (string $pkg): string => preg_replace('/-\d+(?:\.\d+)*(?:-\d+)?/', '', $pkg),
-                    preg_split('/\s+/', trim($m[1]))
-                ));
-                $pkgs = ' (' . implode(' ', $names) . ')';
-            }
-            $warnings[] = "reboot required{$pkgs}";
+            // Just the fact. The package list (even version-stripped) tells a
+            // mod nothing they act on — the action is identical whatever
+            // triggered the flag, and the operator who reboots can read
+            // /var/run/reboot-required.pkgs on the host.
+            $warnings[] = 'reboot required';
         }
 
         if (preg_match('/^SECURITY:(\d+)$/m', $output, $m) && (int) $m[1] > 0) {
