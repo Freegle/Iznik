@@ -407,6 +407,16 @@ retracted, so re-approval restores the copy without re-rippling.
 
 A community switching ripple-out off retracts the same way - see §4a.
 
+When a post genuinely leaves the browsable set - deleted, withdrawn, expired, rejected on its
+origin group, or aged out - `removeStaleAndRetract` drops its reach row and retracts every
+rippled-in copy. Absence from `messages_spatial` alone does not trigger this: a live post can
+be absent while the index job is down or mid-run, so the expander asks the source tables
+whether each absent post still belongs in the index (`stillQualifyForIndex`, which shares its
+conditions with the index's add pass). Ageing out counts only live approved memberships: a
+dead membership (such as a retracted-copy tombstone) can neither age a post out of the index
+nor keep it in, and a repost makes a post fresh. Where a post carries conflicting outcome
+rows, its latest row states its outcome.
+
 ## 7. Consumers of the reach
 
 - **Browse / Nearby feed:** members see rippled-in posts via
