@@ -37,7 +37,7 @@
     "comment4": "@freegle/capacitor-push-notifications-cap8 (cap8 branch of the capacitor-push-notifications-cap7 repo) is a fork of sorts from https://github.com/ionic-team/capacitor-plugins",
     "comment5": "JAVA_HOME must be C:\\Program Files\\Android\\Android Studio\\jbr",
     "comment6": "Comment out node_modules/@capacitor/cli/dist/android/run.js L40",
-    "comment7": "Pinia trio (pinia/@pinia/nuxt/pinia-plugin-persistedstate) must move together; bumped for Nuxt 4",
+    "comment7": "Pinia trio must move together, which @pinia/nuxt's own peerDependencies already enforce loudly at install time - caret ranges are safe",
     "comment8": "One patch is for nuxt@3.14.159 but code needs higher than this",
     "comment9": "Need to copy in android/app/google-services.json and ios/App/App/GoogleService-Info.plist"
   },
@@ -45,8 +45,7 @@
     "vue-mention": {
       "floating-vue": "^5.2.2"
     },
-    "sharp": "^0.33.5",
-    "vite": "^8.1.5",
+    "sharp": "^0.34.3",
     "vue-demi": ">=0.14.6",
     "vue": "3.5.41",
     "@vue/server-renderer": "3.5.41",
@@ -56,9 +55,6 @@
     "@vue/shared": "3.5.41",
     "@vue/compiler-dom": "3.5.41",
     "@vue/compiler-core": "3.5.41",
-    "@bomb.sh/tab": {
-      "cac": "^7.0.0"
-    },
     "@capacitor-community/stripe": {
       "@stripe/stripe-js": "^9.12.1"
     }
@@ -120,7 +116,7 @@
     "@fortawesome/vue-fontawesome": "^3.3.3",
     "@freegle/capacitor-push-notifications-cap8": "https://github.com/Freegle/capacitor-push-notifications-cap7/archive/139062f8a42092ffca9e4cf4620e04c656418f20.tar.gz",
     "@google-pay/button-element": "^4.0.1",
-    "@pinia/nuxt": "1.0.2",
+    "@pinia/nuxt": "^1.0.2",
     "@popperjs/core": "^2.11.4",
     "@sentry/vite-plugin": "^5.4.0",
     "@sentry/vue": "^10.69.0",
@@ -140,7 +136,7 @@
     "@vuelidate/validators": "^2.0.4",
     "add-to-calendar-button": "^2.15.0",
     "autoprefixer": "^10.5.4",
-    "bootstrap": "5.3.8",
+    "bootstrap": "^5.3.8",
     "bootstrap-vue-next": "^0.24.1",
     "cordova-plugin-calendar": "https://github.com/uzurv/Calendar-PhoneGap-Plugin-ios-17-support/archive/56aab6141252dbe7c9186190042a80eaf715514a.tar.gz",
     "core-js": "^3.49.0",
@@ -160,8 +156,8 @@
     "nuxt-vitalizer": "^2.0.0",
     "object.hasown": "^1.1.4",
     "patch-package": "^8.0.1",
-    "pinia": "4.0.3",
-    "pinia-plugin-persistedstate": "4.7.1",
+    "pinia": "^4.0.3",
+    "pinia-plugin-persistedstate": "^4.7.1",
     "pluralize": "^8.0.0",
     "postcss": "^8.5.6",
     "postman-paf": "^1.0.1",
