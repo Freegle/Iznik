@@ -49,7 +49,11 @@ orbs:
   # and downloads anyway; it now also falls back to the gradle-deps cache that
   # build-android-debug/-dev keep warm from master, which already contains the
   # unpacked distribution.
-  freegle: freegle/tests@1.1.375
+  # 1.1.379 wraps every npm ci in a shell-level retry with backoff: codeload
+  # rate-limits (429) the GitHub tarball dependency in the lock file, which
+  # npm's own --fetch-retries does not cover, and it red-lined master twice on
+  # 2026-08-17 for commits that touched no JavaScript.
+  freegle: freegle/tests@1.1.379
 
 jobs:
   mark-ci-passed:
