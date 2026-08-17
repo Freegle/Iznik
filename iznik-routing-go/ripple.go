@@ -163,11 +163,19 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 		results := make([]rippleEvalPoint, len(req.Points))
 		for i, p := range req.Points {
 			lng, lat := p[0], p[1]
-			nid := nearestNodeForMode(g, lat, lng, mode)
-			if nid == noNode {
-				continue
+			// Try the few nearest snap candidates, not just the single
+			// nearest: a point can snap to a one-way node that is leavable
+			// but never arrivable, which would misreport the whole trip as
+			// unreachable (e.g. Plympton -> Plymstock).
+			var t float32
+			ok := false
+			for _, nid := range nearestNodesForMode(g, lat, lng, mode, 4) {
+				if tt, reached := iso.ReachedNodes[nid]; reached {
+					t = tt
+					ok = true
+					break
+				}
 			}
-			t, ok := iso.ReachedNodes[nid]
 			if !ok {
 				continue
 			}

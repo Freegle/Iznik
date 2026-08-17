@@ -1,3 +1,11 @@
+---
+last_reviewed: 2026-08-14
+covers:
+  - iznik-routing-go/graph.go
+  - iznik-routing-go/dijkstra.go
+  - iznik-routing-go/cmd/calibrate/**
+---
+
 # Freegle's spatial servers — a plain-English overview
 
 *This page is for everyone — volunteers, moderators, staff. It explains, in
@@ -60,6 +68,38 @@ It also has a **fairness** setting. Members in more deprived areas are less like
 to have a car, so the mapper can stretch the reachable area for them — a small,
 deliberate thumb on the scale so the service works for people who rely on walking
 and public transport, not just drivers.
+
+### How accurate are the travel times?
+
+The travel-time mapper doesn't just divide distance by a speed limit. Its
+drive-time model was calibrated in August 2026 against roughly 2,500 real
+journeys from the Google Routes API, sampled across the whole UK — cities,
+London, ordinary towns, sparse rural areas, and awkward estuary crossings.
+
+The model prices the two things that actually consume driving time separately:
+
+- **link speed** — how fast traffic really flows on each class of road (a rural
+  A-road really does run near the national limit; a 20 mph zone really doesn't),
+  and
+- **stopping** — a few seconds for every traffic signal, junction, pedestrian
+  crossing and roundabout the route passes through, plus a fixed
+  minute-ish of "setting off" overhead per trip.
+
+On journeys the calibration was never shown, half of all estimates are now
+within about 7% of Google's answer, and the typical error halved compared with
+the previous model. Two honest caveats remain: we deliberately don't route cars
+over toll crossings (nobody pays the Mersey tunnel toll to collect a free
+toaster, so estimates near those crossings assume the long way round), and we
+don't model ferries, so islands are treated as unreachable by road.
+
+The model also knows three British road facts that generic speed tables miss:
+the national speed limit is 60&nbsp;mph on ordinary two-way roads and only
+70&nbsp;mph on dual carriageways; single-track roads with passing places (the
+Highlands, the islands, much of rural Wales) are driven at about 28&nbsp;mph
+whatever the signs say; and unpaved lanes are slower still.
+
+The calibration tooling lives in `iznik-routing-go/cmd/calibrate` and can be
+re-run if road conditions or OpenStreetMap data shift materially.
 
 ## How this adds up: "rippling out"
 

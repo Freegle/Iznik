@@ -6,6 +6,7 @@ package dashboard
 // of an expensive query onto db3.
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -258,4 +259,60 @@ func TestSortedHappiness_EmptyIsEmptySlice(t *testing.T) {
 	got := sortedHappiness(map[string]int{})
 	assert.NotNil(t, got)
 	assert.Empty(t, got)
+}
+
+// A stranger can fill the cache: the date range and group come straight from the query
+// string, and most components answer without a login, so unique keys are free to generate.
+// Emptying the cache when it fills would hand that stranger the power to throw away every
+// moderator's freshly-computed figures and send the lot back to the database at once,
+// which is the pile-up the cache exists to prevent.
+func TestCachedComponent_FullCacheOfLiveEntriesIsNotThrownAway(t *testing.T) {
+	componentMu.Lock()
+	componentCache = map[string]cachedComponentResult{}
+	componentInflight = map[string]*inflightComponent{}
+	for i := 0; i < componentCacheMaxEntries; i++ {
+		componentCache[fmt.Sprintf("live-%d", i)] = cachedComponentResult{
+			val:     []map[string]interface{}{{"n": i}},
+			expires: time.Now().Add(time.Hour),
+		}
+	}
+	componentMu.Unlock()
+
+	got := cachedComponent("flood-key", time.Minute, func() interface{} {
+		return []map[string]interface{}{{"x": 1}}
+	})
+	assert.NotNil(t, got, "the answer is still computed and returned, it just isn't stored")
+
+	componentMu.Lock()
+	remaining := len(componentCache)
+	componentMu.Unlock()
+
+	assert.GreaterOrEqual(t, remaining, componentCacheMaxEntries,
+		"entries that were still live were discarded to make room")
+}
+
+// Expired entries are fair game, so an honestly-busy cache still turns over.
+func TestCachedComponent_ExpiredEntriesAreReclaimedWhenFull(t *testing.T) {
+	componentMu.Lock()
+	componentCache = map[string]cachedComponentResult{}
+	componentInflight = map[string]*inflightComponent{}
+	for i := 0; i < componentCacheMaxEntries; i++ {
+		componentCache[fmt.Sprintf("stale-%d", i)] = cachedComponentResult{
+			val:     []map[string]interface{}{{"n": i}},
+			expires: time.Now().Add(-time.Hour),
+		}
+	}
+	componentMu.Unlock()
+
+	cachedComponent("fresh-key", time.Minute, func() interface{} {
+		return []map[string]interface{}{{"x": 1}}
+	})
+
+	componentMu.Lock()
+	_, cached := componentCache["fresh-key"]
+	remaining := len(componentCache)
+	componentMu.Unlock()
+
+	assert.True(t, cached, "a new answer must be cached once expired entries have been cleared out")
+	assert.Less(t, remaining, componentCacheMaxEntries, "expired entries should have been dropped")
 }

@@ -116,7 +116,15 @@ SH;
         if (preg_match('/^REBOOT:yes$/m', $output)) {
             $pkgs = '';
             if (preg_match('/^REBOOT_PKGS:(.+)$/m', $output, $m) && trim($m[1]) !== '') {
-                $pkgs = ' (' . trim($m[1]) . ')';
+                // Versioned kernel package names (linux-image-5.15.0-186-generic) say
+                // nothing a mod acts on and change every kernel: strip the version
+                // segments so the modal reads "linux-image-generic", and dedupe in
+                // case two kernel versions are pending at once.
+                $names = array_unique(array_map(
+                    fn (string $pkg): string => preg_replace('/-\d+(?:\.\d+)*(?:-\d+)?/', '', $pkg),
+                    preg_split('/\s+/', trim($m[1]))
+                ));
+                $pkgs = ' (' . implode(' ', $names) . ')';
             }
             $warnings[] = "reboot required{$pkgs}";
         }

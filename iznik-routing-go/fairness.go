@@ -73,9 +73,10 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 	maxReachM := modeMaxSpeed(mode) * float64(maxLimit)
 
 	dist := make(map[NodeID]float32, 4096)
-	dist[origin] = 0
+	start := initialCostFor(mode)
+	dist[origin] = start
 	pqueue := &pq{}
-	heap.Push(pqueue, &item{id: origin, cost: 0})
+	heap.Push(pqueue, &item{id: origin, cost: start})
 
 	for pqueue.Len() > 0 {
 		cur := heap.Pop(pqueue).(*item)

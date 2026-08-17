@@ -633,6 +633,188 @@ class ExpandServiceTest extends TestCase
         $this->assertLessThan(0.02, abs((float) $row->lng + 0.1));
     }
 
+    /**
+     * Say that a post has actually gone.
+     *
+     * removeStaleAndRetract does not act on a post just because it is missing from
+     * messages_spatial - a live post can be absent while the index job is down or
+     * mid-run (and historically its age pass deleted thousands of still-qualifying
+     * posts every run off their dead memberships). It asks whether the post still
+     * belongs in the index, so a test about a post that has gone has to make it
+     * genuinely gone rather than only removing the index row.
+     */
+    private function markPostGone(int $msgid): void
+    {
+        DB::table('messages')->where('id', $msgid)->update(['deleted' => now()]);
+        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+    }
+
+    /**
+     * The churn this check exists for: the index job's age pass used to delete
+     * thousands of still-qualifying posts at the end of every run (tripping on their
+     * dead memberships) and re-add them the next run, and the job can still be down or
+     * mid-run, so a live post can be absent from the index. Such a post must keep its
+     * reach row. Dropping it also retracted the post's copies from every group it had
+     * rippled into and forced a full rebuild - routing searches and a large polygon
+     * write per post - and on production that was about 85% of all initialisation work.
+     */
+    public function test_reach_survives_a_post_briefly_missing_from_spatial(): void
+    {
+        Http::fake();
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: blinks', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        // Live and approved, so it belongs in the index. It is simply not in it at this
+        // instant, as when the index job is down or between its delete and add passes.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1),
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['removed'], 'a live post missing from the index must not be treated as gone');
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach')->where('msgid', $message->id)->count(),
+            'the reach row must survive a blink out of the spatial index'
+        );
+    }
+
+    /**
+     * The other half of the same decision: once the post really has gone, it is acted on
+     * straight away rather than after a wait.
+     */
+    public function test_reach_is_dropped_as_soon_as_the_post_has_really_gone(): void
+    {
+        Http::fake();
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: withdrawn', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1),
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+        );
+
+        $this->markPostGone((int) $message->id);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['removed']);
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $message->id)->count());
+    }
+
+    /**
+     * Outcome rows can conflict: a few posts carry both an old positive row and a newer
+     * negative one (write paths that skipped the transition cleanup). The newest row is
+     * the post's current state, so a post whose latest outcome is Withdrawn has really
+     * gone, however many older Taken rows it carries — its reach is dropped now.
+     */
+    public function test_reach_dropped_when_latest_outcome_is_withdrawn_despite_older_taken(): void
+    {
+        Http::fake();
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: conflicted', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1),
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+        );
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => now()->subHours(2),
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id, 'outcome' => Message::OUTCOME_WITHDRAWN, 'timestamp' => now()->subHours(1),
+        ]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['removed']);
+        $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $message->id)->count());
+    }
+
+    /**
+     * The converse conflict: an old Expired row next to a newer Taken one. The newest
+     * row wins — the post is completed, completed posts stay in the index, and its
+     * reach row must be left alone even while it is absent from the index.
+     */
+    public function test_reach_survives_when_latest_outcome_is_taken_despite_older_expired(): void
+    {
+        Http::fake();
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER, 'fromuser' => $user->id,
+            'subject' => 'OFFER: taken late', 'textbody' => 'x', 'source' => 'Platform',
+            'date' => now()->subDays(1), 'arrival' => now()->subDays(1), 'lat' => 51.5, 'lng' => -0.1,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(1),
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+        );
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id, 'outcome' => Message::OUTCOME_EXPIRED, 'timestamp' => now()->subHours(2),
+        ]);
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $message->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => now()->subHours(1),
+        ]);
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertSame(0, $stats['removed'], 'a completed post must not be treated as gone');
+        $this->assertSame(1, DB::table('rippling_reach')->where('msgid', $message->id)->count());
+    }
+
     public function test_removes_reach_for_post_no_longer_in_spatial(): void
     {
         Http::fake();
@@ -650,6 +832,9 @@ class ExpandServiceTest extends TestCase
              VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, self::WKT, self::WKT, now()->subDays(1)]
         );
+
+        // Genuinely gone, not just absent from the index - see markPostGone.
+        $this->markPostGone((int) $message->id);
 
         $stats = $this->service()->process(false, 500);
 
@@ -2186,8 +2371,9 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull($b, 'precondition: post rippled into B');
         $this->assertSame(0, (int) $b->deleted, 'precondition: rippled-in row live');
 
-        // The post leaves the browsable set (withdrawn/taken/deleted -> gone from messages_spatial).
-        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+        // The post genuinely leaves the browsable set (deleted, not merely absent from
+        // the index between runs) - see markPostGone.
+        $this->markPostGone($msgid);
 
         // Origin group removed from the trial: scope no longer covers the origin.
         $nonCoveringScope = 'POLYGON((-3.30 55.90,-3.10 55.90,-3.10 56.00,-3.30 56.00,-3.30 55.90))';
@@ -2500,13 +2686,27 @@ class ExpandServiceTest extends TestCase
         return [$msgid, $posterId, $groupB];
     }
 
-    /** The post is removed from the browsable set (rejected on origin / withdrawn): it leaves messages_spatial. */
+    /**
+     * The post is removed from the browsable set (rejected on origin / withdrawn), so it
+     * leaves messages_spatial.
+     *
+     * removeStaleAndRetract does not act on absence from the index alone, because a
+     * live post can be absent while the index job is down or mid-run. These tests are
+     * about a post that has genuinely gone, so they make it gone - see
+     * test_reach_survives_a_post_briefly_missing_from_spatial for the other case.
+     */
     private function leaveSpatial(int $msgid): void
     {
-        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+        $this->markPostGone($msgid);
     }
 
-    /** A post with a reach row but NOT in messages_spatial, with one rippled-in copy + ripple-membership on a fresh group. Returns [msgid, groupB, posterId]. */
+    /**
+     * A post with a reach row but NOT in messages_spatial, with one rippled-in copy +
+     * ripple-membership on a fresh group. Returns [msgid, groupB, posterId].
+     *
+     * The post is made genuinely gone (markPostGone), because these tests are about
+     * removal, not about a live post sitting out one of the index job's cycles.
+     */
     private function seedStaleReachWithRippledCopy(float $lat = 51.5, float $lng = -0.1): array
     {
         $user = $this->createTestUser();
@@ -2537,6 +2737,8 @@ class ExpandServiceTest extends TestCase
              VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $lat, $lng, self::WKT, self::WKT, now()->subHours(2)]
         );
+
+        $this->markPostGone((int) $message->id);
 
         return [(int) $message->id, (int) $groupB->id, (int) $user->id];
     }

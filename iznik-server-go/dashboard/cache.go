@@ -37,8 +37,9 @@ import (
 
 // componentCacheMaxEntries bounds the cache. Keys are per (component, group scope, date
 // range), so a busy estate with many moderator group-sets and custom ranges is the growth
-// case. Clear-on-overflow keeps the worst case bounded without an LRU's bookkeeping, the
-// same trade-off message.reachUniverseCache makes.
+// case. On reaching the limit, expired entries are dropped and anything that still does
+// not fit simply is not cached - see dropExpiredComponents for why entries that are still
+// live are never thrown out to make room.
 const componentCacheMaxEntries = 2000
 
 // componentNegativeTTL is how long an empty or nil answer is reused. Empty is what a
@@ -134,13 +135,19 @@ func cachedComponent(key string, ttl time.Duration, compute func() interface{}) 
 		delete(componentInflight, key)
 		if completed {
 			if len(componentCache) >= componentCacheMaxEntries {
-				componentCache = map[string]cachedComponentResult{}
+				dropExpiredComponents()
 			}
 			keep := ttl
 			if isEmptyComponentResult(call.val) {
 				keep = componentNegativeTTL
 			}
-			componentCache[key] = cachedComponentResult{val: call.val, expires: time.Now().Add(keep)}
+			// Only store if there is room. If the cache is full of entries that are all
+			// still live, this answer just isn't cached - the request is served normally,
+			// the next one recomputes. That is slower, but it is the safe way round: the
+			// alternative is throwing away entries other people are still using.
+			if len(componentCache) < componentCacheMaxEntries {
+				componentCache[key] = cachedComponentResult{val: call.val, expires: time.Now().Add(keep)}
+			}
 		}
 		componentMu.Unlock()
 		close(call.done)
@@ -150,6 +157,26 @@ func cachedComponent(key string, ttl time.Duration, compute func() interface{}) 
 	call.val = compute()
 	completed = true
 	return call.val
+}
+
+// dropExpiredComponents removes entries whose TTL has run out. Callers must hold
+// componentMu.
+//
+// This used to empty the whole map when it filled up, which is fine when it fills through
+// ordinary use but not when someone fills it on purpose. The date range and group are
+// free-text query parameters, and most of the dashboard's components answer without
+// needing a login, so anyone can walk through made-up values and push the cache past its
+// limit. Emptying it then would throw away every moderator's freshly-computed figures and
+// send the whole lot back to the database at once - which is the pile-up this cache was
+// added to prevent, turned into something a stranger can trigger.
+func dropExpiredComponents() {
+	now := time.Now()
+
+	for k, e := range componentCache {
+		if !now.Before(e.expires) {
+			delete(componentCache, k)
+		}
+	}
 }
 
 // isEmptyComponentResult reports whether a component produced nothing - which for every

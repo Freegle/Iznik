@@ -2,6 +2,7 @@
 
 namespace App\Services\Ripple;
 
+use App\Services\MessageSpatialService;
 use App\Support\GreatCircle;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -438,10 +439,30 @@ class ExpandService
                  WHERE ms.msgid IS NULL AND mr.status <> \'held\'' . $scopeSql,
                 $params
             );
-            if (empty($stale)) {
+
+            $absent = array_map(static fn ($r) => (int) $r->msgid, $stale);
+
+            // Absent from messages_spatial does not mean gone. The index job can be
+            // down, or die between its delete and add passes - and historically its age
+            // pass deleted ~3,000 still-qualifying posts at the end of every run off
+            // their dead memberships' arrivals (retracted-copy tombstones; fixed in
+            // removeOldMessages alongside this check). Treating each absence as "the
+            // post has gone" deleted the reach row, retracted the post's copies from
+            // every group it had rippled into (leaving MORE tombstones, feeding the
+            // loop), and then initialiseNew built the whole thing again from scratch -
+            // routing searches and a large polygon write to the cluster's write node,
+            // per post. On production that was about 85% of all initialisation work:
+            // 11,656 initialisations in one day against 1,635 genuinely new posts, with
+            // 8,802 reach rows dropped.
+            //
+            // So rather than trust the index, ask the tables it is built from whether each
+            // of these posts is supposed to be in it. A post that no longer qualifies has
+            // really gone and is removed now; one that still qualifies is left alone.
+            $msgids = $this->confirmGenuinelyGone($absent);
+
+            if (empty($msgids)) {
                 return;
             }
-            $msgids = array_map(static fn ($r) => (int) $r->msgid, $stale);
 
             if ($dryRun) {
                 $stats['removed'] += count($msgids);
@@ -463,6 +484,43 @@ class ExpandService
             $stats['errors']++;
             Log::warning("ripple: remove-stale-and-retract failed: {$e->getMessage()}");
         }
+    }
+
+    /**
+     * Of the reach rows whose post is missing from the spatial index, which posts have
+     * genuinely gone?
+     *
+     * Asks the tables the index is built from, rather than waiting to see whether the
+     * absence sticks. That is an exact answer instead of a guess, it needs nothing
+     * remembered between runs, and a post that really has been withdrawn stops rippling
+     * straight away instead of a quarter of an hour later.
+     *
+     * @param  int[]  $absent
+     * @return int[]
+     */
+    private function confirmGenuinelyGone(array $absent): array
+    {
+        if (empty($absent)) {
+            return [];
+        }
+
+        $alive = array_flip(MessageSpatialService::stillQualifyForIndex($absent));
+
+        $gone = [];
+        foreach ($absent as $msgid) {
+            if (!isset($alive[$msgid])) {
+                $gone[] = $msgid;
+            }
+        }
+
+        if ($blips = count($absent) - count($gone)) {
+            Log::info('ripple: posts missing from the spatial index but still live, left alone', [
+                'blips' => $blips,
+                'gone' => count($gone),
+            ]);
+        }
+
+        return $gone;
     }
 
     /**
