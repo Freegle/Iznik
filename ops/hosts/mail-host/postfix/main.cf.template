@@ -1,0 +1,75 @@
+# See /usr/share/postfix/main.cf.dist for a commented, more complete version
+
+
+# Debian specific:  Specifying a file name will cause the first
+# line of that file to be used as the name.  The Debian default
+# is /etc/mailname.
+#myorigin = /etc/mailname
+
+smtpd_banner = $myhostname ESMTP $mail_name (Ubuntu)
+biff = no
+
+# appending .domain is the MUA's job.
+append_dot_mydomain = no
+
+# Uncomment the next line to generate "delayed mail" warnings
+#delay_warning_time = 4h
+
+readme_directory = no
+
+# TLS parameters
+smtpd_tls_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+smtpd_tls_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+smtpd_use_tls=yes
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+smtp_tls_security_level = may
+smtp_tls_note_starttls_offer = yes
+smtp_tls_mandatory_protocols=!SSLv2,!SSLv3
+
+# See /usr/share/doc/postfix/TLS_README.gz in the postfix-doc package for
+# information on enabling SSL in the smtp client.
+
+smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+myhostname = bulk2.ilovefreegle.org
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+myorigin = /etc/mailname
+mydestination = 
+relayhost =
+smtp_fallback_relay =
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128, __IP__/24
+mailbox_size_limit = 0
+recipient_delimiter = 
+inet_interfaces = all
+inet_protocols = ipv4
+
+milter_default_action = accept
+milter_protocol = 6
+smtpd_milters = inet:localhost:8891
+non_smtpd_milters = inet:localhost:8891
+
+message_size_limit = 0
+queue_directory = /var/spool/postfix
+smtpd_recipient_limit = 100000
+header_checks = regexp:/etc/postfix/header_checks
+transport_maps = regexp:/etc/postfix/redirect.regexp
+
+# Disable connection caching because on Ubuntu 14.04 it is bugged - see 
+# https://bugs.launchpad.net/ubuntu/+source/postfix/+bug/1549388
+smtp_connection_cache_on_demand = no
+
+in_flow_delay = 1s
+# COVIDin_flow_delay = 10s
+queue_minfree = 1073741824
+queue_minfree = 1073741824
+default_process_limit = 400
+default_destination_concurrency_limit = 100
+qmgr_message_active_limit = 40000
+qmgr_message_recipient_limit = 40000
+
+# Default IP for outgoing connections.  May be overridden in master.cf
+smtp_bind_address = __IP__
+
+# Commented out as throttled
+#sender_dependent_default_transport_maps = regexp:/etc/postfix/sender-transport

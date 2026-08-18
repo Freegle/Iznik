@@ -20,6 +20,9 @@ because monit failing to watch something looks identical to nothing being wrong.
 
 ## What is here
 
+See `SERVICES.md` for the non-monit service config (MySQL/Galera, HAProxy,
+postfix) and, importantly, which files on those hosts are live versus stale.
+
 ```
 monit/
   batch-host/          the host running batch-prod, spatial-knn, routing, photon, nginx
@@ -77,9 +80,11 @@ copying a check from one to the other.
   and `__NODE_FQDN__` are placeholders; fill them in at restore time.
 - **Anything already in git** — container images, `docker-compose*.yml`,
   supervisor config (that is image-baked from `iznik-batch/docker/supervisor.conf`).
-- **Package installation, users, SSH, firewall, TLS, DNS.** This directory is
-  currently monit only. It is a start on capturing host state, not a complete
-  build recipe, and should not be read as one.
+- **TLS certificates and private keys, DNS zones, firewall rules, package sets,
+  users and SSH keys.** What is captured is service *configuration* only - monit
+  (this file) plus MySQL/Galera, HAProxy and postfix (`SERVICES.md`). It is a
+  start on capturing host state, not a complete build recipe, and should not be
+  read as one.
 
 See also `docs/ops/03-monitoring-and-logging.md` for what the monitoring
 actually watches and how alerts reach people.
