@@ -19,7 +19,10 @@ const summarykey = ref(false)
 const busy = ref(false)
 const context = ref(null)
 const groupid = ref(0)
-const group = ref(null)
+// Exported so read-only consumers (useKeywords) can follow the selected
+// community without calling setupModMessages(), which is a setup function and
+// does setup-shaped things.
+export const group = ref(null)
 const limit = ref(10)
 const workType = ref(null)
 const show = ref(0)
