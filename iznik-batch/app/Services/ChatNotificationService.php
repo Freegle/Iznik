@@ -226,6 +226,18 @@ class ChatNotificationService
                     continue;
                 }
 
+                // The member's provider is refusing our mail. Skip without
+                // touching chat_roster.lastmsgemailed, so the watermark stays
+                // where it is and the release catch-up can still see that
+                // they have unread messages. We do NOT replay these
+                // individually on release - a stack of days-old chat
+                // notifications arriving at once is its own harm - they turn
+                // into one "you have unread messages" summary instead.
+                if (app(\App\Services\Mail\MailSuppressionService::class)
+                    ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat')) {
+                    continue;
+                }
+
                 // Check if we should notify this user about this message.
                 if (! $this->shouldNotifyUser($sendingTo, $message, $chatRoom, $chatType, $roster->isModerator ?? false)) {
                     continue;

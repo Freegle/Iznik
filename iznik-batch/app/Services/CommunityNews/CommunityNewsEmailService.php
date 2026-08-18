@@ -131,6 +131,15 @@ class CommunityNewsEmailService
                     continue;
                 }
 
+                // Provider is refusing our mail. Community News is weekly and
+                // dropped rather than caught up on release: next week's issue
+                // is a better email than a stale one. Counted anyway so the
+                // scale of what a member missed is visible in ModTools.
+                if (app(\App\Services\Mail\MailSuppressionService::class)
+                    ->shouldSkip($email, (int) $member->id, 'communitynews')) {
+                    continue;
+                }
+
                 $name = $user->fullname
                     ?? trim(($user->firstname ?? '') . ' ' . ($user->lastname ?? ''))
                     ?: 'Freegle Member';

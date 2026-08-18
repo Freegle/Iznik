@@ -327,6 +327,41 @@ func PostMemberships(c *fiber.Ctx) error {
 	}
 }
 
+// mailDelayedCols surfaces deferral-aware mail suppression on a member row.
+//
+// A provider that stops accepting our mail (Yahoo did, on 2026-08-15, for
+// every address it hosts) leaves the member receiving nothing while their
+// address is perfectly fine. Moderators need to see that, and to see that it
+// reads differently from "bouncing", which they correctly interpret as a bad
+// address.
+//
+// Correlated subqueries rather than joins on purpose: a member can have more
+// than one email row, and a suppression can match both by domain and by
+// address, so a join would multiply member rows. mail_suppressions holds only
+// a handful of active rows and both lookups are covered by indexes.
+//
+// The address-scope row is preferred over the domain-scope one because it
+// carries the more specific reason (one full mailbox, rather than a whole
+// provider deferring us).
+//
+// keep-raw: this is a column-list fragment spliced into the four hand-written
+// SELECTs below, which are the established shape in this file; expressing it
+// as a builder would diverge it from all four.
+const mailDelayedCols = `(SELECT ms.deferred_since FROM mail_suppressions ms
+	  JOIN users_emails ue ON ue.userid = u.id AND ue.preferred = 1
+	 WHERE ms.released_at IS NULL
+	   AND ((ms.scope = 'domain' AND ms.value = SUBSTRING_INDEX(ue.email, '@', -1))
+	     OR (ms.scope = 'address' AND ms.value = ue.email))
+	 ORDER BY ms.scope = 'address' DESC LIMIT 1) AS maildelayedsince,
+	(SELECT ms.provider FROM mail_suppressions ms
+	  JOIN users_emails ue ON ue.userid = u.id AND ue.preferred = 1
+	 WHERE ms.released_at IS NULL
+	   AND ((ms.scope = 'domain' AND ms.value = SUBSTRING_INDEX(ue.email, '@', -1))
+	     OR (ms.scope = 'address' AND ms.value = ue.email))
+	 ORDER BY ms.scope = 'address' DESC LIMIT 1) AS maildelayedprovider,
+	(SELECT SUM(msc.count) FROM mail_suppressed_counts msc
+	 WHERE msc.userid = u.id AND msc.caughtup_at IS NULL) AS maildelayedcount`
+
 // GetMembershipsMember is the response struct for individual members in GetMemberships.
 type GetMembershipsMember struct {
 	ID                  uint64                  `json:"id"`
@@ -354,6 +389,15 @@ type GetMembershipsMember struct {
 	Engagement          *string                 `json:"engagement"`
 	Lastmodmail         *string                 `json:"lastmodmail,omitempty"`
 	Bouncing            bool                    `json:"bouncing" gorm:"column:bouncing"`
+	// Set while the member's email provider is refusing our mail. This is
+	// deliberately NOT the same thing as Bouncing: bouncing means their
+	// address is bad, whereas this is our own sending reputation with their
+	// provider, and moderators must be able to tell the two apart. Pointers
+	// so a query branch that does not select them reads as unknown rather
+	// than as a confident "not delayed".
+	MailDelayedSince    *string `json:"maildelayedsince" gorm:"column:maildelayedsince"`
+	MailDelayedProvider *string `json:"maildelayedprovider" gorm:"column:maildelayedprovider"`
+	MailDelayedCount    *int    `json:"maildelayedcount" gorm:"column:maildelayedcount"`
 }
 
 // GetMemberships handles GET /memberships - list group members (moderator use).
@@ -424,7 +468,7 @@ func GetMemberships(c *fiber.Ctx) error {
 				"u.fullname, u.firstname, u.lastname, u.engagement, "+
 				"b.userid AS id, NULL AS heldby, NULL AS settings, "+
 				"0 AS emailfrequency, 'DEFAULT' AS ourPostingStatus, 0 AS eventsallowed, 0 AS volunteeringallowed, "+
-				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason").
+				"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason, "+mailDelayedCols).
 			Joins("JOIN users u ON u.id = b.userid").
 			Where("b.groupid = ?", groupid)
 		if contextID > 0 {
@@ -457,7 +501,7 @@ func GetMemberships(c *fiber.Ctx) error {
 				"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
 				"b.date AS bandate, b.byuser AS bannedby, "+
 				"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
-				"MAX(l.timestamp) AS lastmodmail").
+				"MAX(l.timestamp) AS lastmodmail, "+mailDelayedCols).
 			Joins("JOIN users u ON u.id = m.userid").
 			Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid").
 			Joins("INNER JOIN logs l ON l.user = m.userid AND l.groupid = m.groupid "+
@@ -482,7 +526,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		"u.fullname, u.firstname, u.lastname, m.settings, " +
 		"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, " +
 		"b.date AS bandate, b.byuser AS bannedby, " +
-		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing"
+		"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, " + mailDelayedCols
 
 	// filterWhereSQL returns the filter-specific WHERE fragment (with
 	// comments/notes, moderation team, bouncing, or none) - one of 4 fixed
@@ -699,7 +743,7 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 			"u.fullname, u.firstname, u.lastname, m.settings, "+
 			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
 			"b.date AS bandate, b.byuser AS bannedby, "+
-			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing").
+			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, u.bouncing, "+mailDelayedCols).
 		Joins("JOIN users u ON u.id = m.userid").
 		Joins("LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid").
 		Where("m.groupid IN ? AND m.reviewrequestedat IS NOT NULL AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat)", modGroupIDs).

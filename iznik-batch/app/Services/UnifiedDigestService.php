@@ -32,6 +32,25 @@ class UnifiedDigestService
 
     public const EMAIL_TYPE = 'UnifiedDigest';
 
+    /** The deferral gate, resolved once per run. */
+    private ?\App\Services\Mail\MailSuppressionService $suppressionService = NULL;
+
+    /**
+     * Whether a provider is currently refusing our mail to this member.
+     *
+     * Consulted before every render. The service is a singleton and caches
+     * the active suppression set in-process, so this stays cheap enough to
+     * call once per recipient across tens of thousands of members.
+     */
+    private function suppressions(): \App\Services\Mail\MailSuppressionService
+    {
+        if ($this->suppressionService === NULL) {
+            $this->suppressionService = app(\App\Services\Mail\MailSuppressionService::class);
+        }
+
+        return $this->suppressionService;
+    }
+
     /** Per-run cache of post reach radius in metres, keyed by msgid. */
     private array $reachRadiusCache = [];
 
@@ -133,6 +152,8 @@ class UnifiedDigestService
                     $stats['emails_sent'] += $result['count'];
                 } elseif ($result['status'] === 'no_posts') {
                     $stats['no_new_posts']++;
+                } elseif ($result['status'] === 'suppressed') {
+                    $stats['suppressed'] = ($stats['suppressed'] ?? 0) + 1;
                 }
             } catch (\Exception $e) {
                 Log::error("UnifiedDigestService: Failed to send digest to user {$user->id}", [
@@ -369,6 +390,16 @@ class UnifiedDigestService
             $sponsorsCache = null;
             foreach ($users as $uid => $user) {
                 if (!$user->email_preferred) {
+                    continue;
+                }
+                // The member's provider is refusing our mail, so rendering
+                // this would only add to a queue that cannot drain. Skipped
+                // here rather than at send time because the MJML render below
+                // is what actually costs us. Nothing to catch up later: the
+                // group cursor advances regardless of individual recipients
+                // (see $lastProcessed below), and a three-day-old OFFER is
+                // taken or gone by the time a provider recovers anyway.
+                if ($this->suppressions()->shouldSkip($user->email_preferred, (int) $uid, 'digest_immediate')) {
                     continue;
                 }
                 // Distance-preference filter (settings.browseMaxDistance) — skip
@@ -1034,6 +1065,13 @@ class UnifiedDigestService
             if (!$user->email_preferred) {
                 continue;
             }
+            // Provider is deferring us. Skipping before spool deliberately
+            // leaves rippling_reach_notified unwritten, so if the provider
+            // recovers while the post is still inside the reach window the
+            // next tick picks this member up again by itself.
+            if ($this->suppressions()->shouldSkip($user->email_preferred, (int) $user->id, 'digest_immediate')) {
+                continue;
+            }
             // Distance-preference filter (settings.browseMaxDistance). Deliberately
             // does NOT write rippling_reach_notified on a filtered-out skip (unlike
             // the "already sent" path below) - see the design doc's "Reach-mail
@@ -1557,7 +1595,7 @@ class UnifiedDigestService
      *
      * @param User $user
      * @param string $mode
-     * @return array{status: 'sent'|'no_posts'|'skipped', count: int}
+     * @return array{status: 'sent'|'no_posts'|'skipped'|'suppressed', count: int}
      */
     protected function sendDigestToUser(User $user, string $mode, bool $dryRun = false): array
     {
@@ -1566,6 +1604,16 @@ class UnifiedDigestService
         if (!$email) {
             Log::debug("UnifiedDigestService: User {$user->id} has no email address");
             return ['status' => 'skipped', 'count' => 0];
+        }
+
+        // The member's provider is refusing our mail. Return BEFORE the
+        // digest tracker is touched: leaving the watermark where it is means
+        // that when the provider recovers, the next daily run spans the whole
+        // gap and sends exactly one catch-up digest covering it, rather than
+        // one stale digest per day missed. That is the entire catch-up
+        // mechanism for digests - no replay queue needed.
+        if ($this->suppressions()->shouldSkip($email, (int) $user->id, 'digest_' . $mode)) {
+            return ['status' => 'suppressed', 'count' => 0];
         }
 
         // Get or create digest tracking record.

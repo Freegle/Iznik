@@ -824,6 +824,28 @@ Schedule::command('queue:background-tasks --max-iterations=60 --spool')
     ->appendOutputTo(cronLog('queue:background-tasks'))
     ->runInBackground();
 
+// Deferral-aware mail suppression.
+//
+// Our relay 250-accepts mail and only afterwards finds out that the receiving
+// provider will not take it, so nothing in the sending path can see a
+// deferral. This reads the relay's own queue, suppresses generation for
+// providers that have stopped accepting us, releases when they recover, and
+// alerts on the way in. Gated on config so it is not even scheduled where the
+// relay is unreachable (dev, CI), matching how ripple/firstreply are gated.
+//
+// Fifteen minutes is chosen against the incident it exists for: the queue was
+// growing by about 1,300 an hour, so this bounds what we can generate into a
+// blocked provider at roughly 300 messages. Deliberately no ->sentryMonitor():
+// it uses withoutOverlapping(), and Sentry derives its expected cadence from
+// the raw cron expression, so a blocked run would page as a missed check-in.
+if (config('freegle.mail.deferrals.enabled')) {
+    Schedule::command('mail:deferrals:scan')
+        ->everyFifteenMinutes()
+        ->withoutOverlapping(30)
+        ->sendOutputTo(cronLog('mail:deferrals:scan'))
+        ->runInBackground();
+}
+
 // Clean up old sent emails - run daily.
 Schedule::command('mail:spool:process --cleanup --cleanup-days=7')
     ->dailyAt('04:00')

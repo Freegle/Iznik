@@ -83,6 +83,21 @@ class EmailSpoolerService
             $mailable->to($to);
         }
 
+        // Last line of defence against generating into a queue that cannot
+        // drain. The per-recipient loops in the sending jobs already gate
+        // before they build a Mailable, which is where the real saving is;
+        // this catches the paths that do not, and any new one somebody adds
+        // later without knowing about deferrals. It sits above
+        // captureBuiltMessage() so the MJML render is still skipped.
+        //
+        // Returns '' rather than throwing, matching the existing
+        // permanent-failure contract below - callers key off the truthiness
+        // of the returned id, so throwing here would change the shape of
+        // every caller's error handling.
+        if ($this->isSuppressedForDeferral($normalizedTo, $emailType)) {
+            return '';
+        }
+
         // Build the complete message using a capturing transport.
         // This runs all withSymfonyMessage callbacks and captures the final message.
         //
@@ -960,5 +975,36 @@ class EmailSpoolerService
         foreach ($data['headers'] as $name => $value) {
             $headers->addTextHeader($name, $value);
         }
+    }
+    /**
+     * Whether every recipient of this message is behind a provider that is
+     * currently refusing our mail.
+     *
+     * All of them, not any: a message addressed to a member and cc'd to a
+     * mod should still go if the mod can receive it. In practice batch mail
+     * is single-recipient, so this is nearly always one address.
+     */
+    private function isSuppressedForDeferral(array $normalizedTo, ?string $emailType): bool
+    {
+        if ($normalizedTo === []) {
+            return FALSE;
+        }
+
+        $suppressions = app(\App\Services\Mail\MailSuppressionService::class);
+
+        foreach ($normalizedTo as $addr) {
+            $address = is_array($addr) ? ($addr['address'] ?? '') : (string) $addr;
+
+            if (!$suppressions->isSuppressed($address)) {
+                return FALSE;
+            }
+        }
+
+        Log::info('EmailSpoolerService: not spooling, recipient provider is deferring our mail', [
+            'email_type' => $emailType,
+            'recipients' => count($normalizedTo),
+        ]);
+
+        return TRUE;
     }
 }
