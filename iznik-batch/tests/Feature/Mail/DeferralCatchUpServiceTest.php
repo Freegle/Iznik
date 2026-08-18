@@ -30,20 +30,21 @@ class DeferralCatchUpServiceTest extends TestCase
         $this->catchUp = new DeferralCatchUpService($this->suppressions);
     }
 
-    private function owe(int $userId, string $type, int $count = 9): void
+    private function owe(int $userId, string $type, int $count = 9, ?int $suppressionId = null): void
     {
         DB::table('mail_suppressed_counts')->insert([
             'userid' => $userId,
             'emailtype' => $type,
+            'suppressionid' => $suppressionId,
             'count' => $count,
             'firstat' => '2026-08-15 16:38:00',
             'lastat' => now(),
         ]);
     }
 
-    private function suppressDomain(string $domain): void
+    private function suppressDomain(string $domain): int
     {
-        DB::table('mail_suppressions')->insert([
+        $id = DB::table('mail_suppressions')->insertGetId([
             'scope' => 'domain',
             'value' => $domain,
             'provider' => 'Yahoo',
@@ -53,6 +54,8 @@ class DeferralCatchUpServiceTest extends TestCase
             'last_seen' => now(),
         ]);
         $this->suppressions->flushCache();
+
+        return $id;
     }
 
     public function test_sends_one_summary_for_unread_chats_not_one_per_message(): void
@@ -244,16 +247,16 @@ class DeferralCatchUpServiceTest extends TestCase
         $member = $this->createTestUser(['email_preferred' => 'held' . uniqid() . '@yahoo.co.uk']);
         $other = $this->createTestUser();
         $this->createTestChatMessage($this->createTestChatRoom($other, $member), $other);
-        $this->owe($member->id, 'chat', 4);
-
-        // Released, so the gate is open, but the history is still there to
-        // name who was refusing us.
-        DB::table('mail_suppressions')->insert([
+        // Released, so the gate is open, but the suppression we recorded at
+        // the time is still there to name who was refusing us.
+        $id = DB::table('mail_suppressions')->insertGetId([
             'scope' => 'domain', 'value' => 'yahoo.co.uk', 'provider' => 'Yahoo',
             'reason' => '421', 'deferred_since' => '2026-08-15 16:38:00',
             'first_seen' => now(), 'last_seen' => now(), 'released_at' => now(),
         ]);
         $this->suppressions->flushCache();
+
+        $this->owe($member->id, 'chat', 4, $id);
 
         $this->catchUp->run();
 

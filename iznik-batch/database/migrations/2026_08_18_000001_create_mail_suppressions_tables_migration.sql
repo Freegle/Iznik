@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS `mail_suppressed_counts` (
   `userid` bigint unsigned NOT NULL,
   -- The emailType already passed to EmailSpoolerService::spool().
   `emailtype` varchar(32) NOT NULL,
+  -- Which suppression was in force when we declined, recorded at the time.
+  `suppressionid` bigint unsigned DEFAULT NULL,
   `count` int unsigned NOT NULL DEFAULT '0',
   `firstat` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `lastat` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -56,5 +58,7 @@ CREATE TABLE IF NOT EXISTS `mail_suppressed_counts` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `userid_emailtype` (`userid`,`emailtype`),
   KEY `caughtup_at` (`caughtup_at`),
+  KEY `suppressionid` (`suppressionid`),
+  CONSTRAINT `mail_suppressed_counts_suppressionid_foreign` FOREIGN KEY (`suppressionid`) REFERENCES `mail_suppressions` (`id`) ON DELETE SET NULL,
   CONSTRAINT `mail_suppressed_counts_userid_foreign` FOREIGN KEY (`userid`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='What we declined to generate per member, so release can send one catch-up';

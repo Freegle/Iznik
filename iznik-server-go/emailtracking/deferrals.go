@@ -64,7 +64,9 @@ func Deferrals(c *fiber.Ctx) error {
 		Select("ms.id, ms.scope, ms.value, ms.provider, ms.reason, ms.deferred_since, " +
 			"ms.first_seen, ms.last_seen, ms.message_count, " +
 			"(SELECT COUNT(DISTINCT msc.userid) FROM mail_suppressed_counts msc " +
-			" WHERE msc.caughtup_at IS NULL) AS membersaffected").
+			" WHERE msc.caughtup_at IS NULL AND msc.suppressionid IN " +
+			"  (SELECT c.id FROM mail_suppressions c WHERE c.id = ms.id OR c.parentid = ms.id)" +
+			") AS membersaffected").
 		Where("ms.released_at IS NULL AND ms.scope IN ('mxgroup','address')").
 		Order("ms.deferred_since ASC").
 		Scan(&suppressions)
@@ -86,10 +88,12 @@ func Deferrals(c *fiber.Ctx) error {
 		Select("msc.userid, u.fullname AS displayname, ue.email, " +
 			"ms.provider, MIN(msc.firstat) AS since, SUM(msc.count) AS heldmessages").
 		Joins("JOIN users u ON u.id = msc.userid").
-		Joins("LEFT JOIN users_emails ue ON ue.userid = msc.userid AND ue.preferred = 1").
-		Joins("LEFT JOIN mail_suppressions ms ON ms.released_at IS NULL AND " +
-			"((ms.scope = 'domain' AND ms.value = SUBSTRING_INDEX(ue.email, '@', -1)) " +
-			" OR (ms.scope = 'address' AND ms.value = ue.email))").
+		Joins("LEFT JOIN mail_suppressions ms ON ms.id = msc.suppressionid").
+		// The address we would have mailed, resolved the same way the mailer
+		// resolves it: highest preferred, then highest validated. Joined on a
+		// single id so a member with several addresses still yields one row.
+		Joins("LEFT JOIN users_emails ue ON ue.id = (SELECT ue2.id FROM users_emails ue2 " +
+			"WHERE ue2.userid = msc.userid ORDER BY ue2.preferred DESC, ue2.validated DESC LIMIT 1)").
 		Where("msc.caughtup_at IS NULL").
 		Group("msc.userid, u.fullname, ue.email, ms.provider").
 		Order("since ASC").

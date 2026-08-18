@@ -154,7 +154,7 @@ class MailSuppressionServiceTest extends TestCase
     public function test_should_skip_both_answers_and_counts(): void
     {
         $user = $this->createTestUser();
-        $this->suppress('domain', 'yahoo.co.uk');
+        $id = $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
         $this->assertTrue($this->service->shouldSkip('someone@yahoo.co.uk', $user->id, 'digest_daily'));
@@ -165,6 +165,24 @@ class MailSuppressionServiceTest extends TestCase
             DB::table('mail_suppressed_counts')->where('userid', $user->id)->count(),
             'only the skipped one should be counted'
         );
+    }
+
+    public function test_records_which_suppression_was_in_force_at_the_time(): void
+    {
+        // Recorded now, not re-derived later: by the time anything reports on
+        // this the suppression will have been released and the member's
+        // address may have changed.
+        $user = $this->createTestUser();
+        $id = $this->suppress('domain', 'yahoo.co.uk');
+        $this->service->flushCache();
+
+        $this->service->shouldSkip('someone@yahoo.co.uk', $user->id, 'chat');
+
+        $this->assertDatabaseHas('mail_suppressed_counts', [
+            'userid' => $user->id,
+            'emailtype' => 'chat',
+            'suppressionid' => $id,
+        ]);
     }
 
     public function test_counting_never_breaks_the_send_loop(): void

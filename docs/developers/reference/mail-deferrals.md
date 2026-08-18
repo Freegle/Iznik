@@ -193,11 +193,32 @@ It is deliberately `info` rather than `danger`, and deliberately worded so it
 cannot be mistaken for bouncing. The only correct action is to wait.
 
 The apiv2 `/memberships` payload carries `maildelayedsince`,
-`maildelayedprovider` and `maildelayedcount`. These are correlated subqueries
-rather than joins, because a member can have more than one email row and a
-suppression can match both by domain and by address, either of which would
-multiply member rows. They are pointers in Go so a query branch that does not
-select them reads as *unknown* rather than as a confident "not delayed".
+`maildelayedprovider` and `maildelayedcount`.
+
+All three read from `mail_suppressed_counts`, which the batch side writes -
+including which suppression was in force - at the moment it declines to
+generate each email. That is deliberate. Working out later which provider is
+refusing a given member would mean resolving their send address the way the
+mailer does (a ranking over `users_emails`, not a flag) and then matching it
+by domain: not something a reporting query should be reimplementing, not
+indexable, and wrong by the time the suppression has been released anyway.
+
+The consequence worth knowing is that a member shows as delayed once we have
+actually held something back for them, rather than from the instant their
+provider is suppressed. In practice that is the next digest or post
+notification they were due. "Delayed since" therefore means "since we started
+holding your mail", which is also the date the count belongs to.
+
+They are correlated subqueries rather than joins, because a member has one row
+per type of mail held and a join would multiply member rows; each is keyed on
+`msc.userid`, the leading column of that table's unique index. They are
+pointers in Go so a query branch that does not select them reads as *unknown*
+rather than as a confident "not delayed".
+
+**Support view**: sysadmin > Mail > Delayed
+(`GET /modtools/email/deferrals`) lists every active suppression and every
+member whose mail is being held, capped at 1,000 rows with the cap stated
+rather than silently applied.
 
 ## Configuration
 
@@ -233,8 +254,8 @@ a provider cascades. Rows are kept after release; the active set is
 `released_at IS NULL`.
 
 `mail_suppressed_counts` - per member and per type, what we declined to
-generate, claimed by `caughtup_at` before the catch-up sends so a crash cannot
-send it twice.
+generate, plus the `suppressionid` that was in force at the time. Claimed by
+`caughtup_at` before the catch-up sends, so a crash cannot send it twice.
 
 ## Tests
 

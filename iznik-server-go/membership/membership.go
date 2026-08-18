@@ -329,38 +329,40 @@ func PostMemberships(c *fiber.Ctx) error {
 
 // mailDelayedCols surfaces deferral-aware mail suppression on a member row.
 //
-// A provider that stops accepting our mail (Yahoo did, on 2026-08-15, for
-// every address it hosts) leaves the member receiving nothing while their
-// address is perfectly fine. Moderators need to see that, and to see that it
-// reads differently from "bouncing", which they correctly interpret as a bad
-// address.
+// A provider that stops accepting our mail - Yahoo did, on 2026-08-15, for
+// every address it hosts - leaves the member receiving nothing while their
+// own address is perfectly fine. Moderators need to see that, and to see that
+// it reads differently from "bouncing", which they correctly interpret as a
+// bad address and act on.
 //
-// Correlated subqueries rather than joins on purpose: a member can have more
-// than one email row, and a suppression can match both by domain and by
-// address, so a join would multiply member rows. mail_suppressions holds only
-// a handful of active rows and both lookups are covered by indexes.
+// All three read from mail_suppressed_counts, which the batch side writes as
+// it declines to generate each email. That is deliberate: working out from
+// scratch which provider is refusing a given member would mean resolving
+// their send address the way the mailer does (a ranking over users_emails,
+// not a flag) and then matching it by domain - which is not something a
+// reporting query should be reimplementing, and would not be indexable
+// either. The batch side already knows the answer at the moment it decides,
+// so it records it.
 //
-// The address-scope row is preferred over the domain-scope one because it
-// carries the more specific reason (one full mailbox, rather than a whole
-// provider deferring us).
+// The consequence worth knowing: a member shows as delayed once we have
+// actually held something back for them, not from the instant the provider
+// is suppressed. In practice that is the next digest or post notification
+// they were due.
 //
-// keep-raw: this is a column-list fragment spliced into the four hand-written
-// SELECTs below, which are the established shape in this file; expressing it
-// as a builder would diverge it from all four.
-const mailDelayedCols = `(SELECT ms.deferred_since FROM mail_suppressions ms
-	  JOIN users_emails ue ON ue.userid = u.id AND ue.preferred = 1
-	 WHERE ms.released_at IS NULL
-	   AND ((ms.scope = 'domain' AND ms.value = SUBSTRING_INDEX(ue.email, '@', -1))
-	     OR (ms.scope = 'address' AND ms.value = ue.email))
-	 ORDER BY ms.scope = 'address' DESC LIMIT 1) AS maildelayedsince,
-	(SELECT ms.provider FROM mail_suppressions ms
-	  JOIN users_emails ue ON ue.userid = u.id AND ue.preferred = 1
-	 WHERE ms.released_at IS NULL
-	   AND ((ms.scope = 'domain' AND ms.value = SUBSTRING_INDEX(ue.email, '@', -1))
-	     OR (ms.scope = 'address' AND ms.value = ue.email))
-	 ORDER BY ms.scope = 'address' DESC LIMIT 1) AS maildelayedprovider,
+// Correlated subqueries rather than joins, because a member has one row per
+// type of mail held and a join would multiply member rows. Each is keyed on
+// msc.userid, the leading column of the table's unique index.
+//
+// keep-raw: column-list fragment spliced into the four hand-written SELECTs
+// below, which are the established shape in this file.
+const mailDelayedCols = `(SELECT MIN(msc.firstat) FROM mail_suppressed_counts msc
+	 WHERE msc.userid = u.id AND msc.caughtup_at IS NULL) AS maildelayedsince,
 	(SELECT SUM(msc.count) FROM mail_suppressed_counts msc
-	 WHERE msc.userid = u.id AND msc.caughtup_at IS NULL) AS maildelayedcount`
+	 WHERE msc.userid = u.id AND msc.caughtup_at IS NULL) AS maildelayedcount,
+	(SELECT ms.provider FROM mail_suppressed_counts msc
+	   JOIN mail_suppressions ms ON ms.id = msc.suppressionid
+	 WHERE msc.userid = u.id AND msc.caughtup_at IS NULL
+	 ORDER BY msc.id DESC LIMIT 1) AS maildelayedprovider`
 
 // GetMembershipsMember is the response struct for individual members in GetMemberships.
 type GetMembershipsMember struct {

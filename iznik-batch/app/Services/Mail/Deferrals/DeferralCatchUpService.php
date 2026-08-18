@@ -123,7 +123,7 @@ class DeferralCatchUpService
                             chatCount: $summary['chats'],
                             messageCount: $summary['messages'],
                             delayedSince: $this->formatSince($row->firstat),
-                            provider: $this->providerFor($email),
+                            provider: $this->providerFor($row->suppressionid ?? null),
                         ),
                         $email,
                         emailType: 'chat_catchup'
@@ -202,25 +202,21 @@ class DeferralCatchUpService
     }
 
     /**
-     * The most recent suppression that covered this address, released or not,
-     * so the email can name the provider that was refusing us.
+     * The provider that was refusing us, from the suppression we recorded at
+     * the time we declined to send.
+     *
+     * Recorded rather than re-derived: by the time the catch-up runs the
+     * suppression has been released, and working backwards from the member's
+     * address would mean reimplementing the mailer's own address-ranking
+     * rules against history that has already moved on.
      */
-    private function providerFor(string $email): ?string
+    private function providerFor(?int $suppressionId): ?string
     {
-        $at = strrpos($email, '@');
-        if ($at === false) {
+        if ($suppressionId === null || $suppressionId <= 0) {
             return null;
         }
 
-        $domain = strtolower(substr($email, $at + 1));
-
-        $row = DB::table('mail_suppressions')
-            ->where('scope', MailSuppressionService::SCOPE_DOMAIN)
-            ->where('value', $domain)
-            ->orderByDesc('id')
-            ->first();
-
-        return $row?->provider;
+        return DB::table('mail_suppressions')->where('id', $suppressionId)->value('provider');
     }
 
     private function formatSince(?string $when): string

@@ -120,6 +120,14 @@ return new class extends Migration
                 // in the same terms as the mail it replaces.
                 $table->string('emailtype', 32);
 
+                // Which suppression was in force when we declined. Recorded
+                // at the time rather than re-derived later, because working
+                // out afterwards which provider was refusing a given member
+                // means resolving their send address the same way the mailer
+                // does - a ranking, not a flag - which is not something a
+                // reporting query should be reimplementing.
+                $table->unsignedBigInteger('suppressionid')->nullable();
+
                 $table->unsignedInteger('count')->default(0);
                 $table->timestamp('firstat')->useCurrent();
                 $table->timestamp('lastat')->useCurrent();
@@ -135,6 +143,7 @@ return new class extends Migration
                 $table->unique(['userid', 'emailtype'], 'userid_emailtype');
                 // The catch-up sweep: everything still owed.
                 $table->index(['caughtup_at'], 'caughtup_at');
+                $table->index(['suppressionid'], 'suppressionid');
             });
         }
 

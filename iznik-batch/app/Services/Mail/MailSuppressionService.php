@@ -100,7 +100,7 @@ class MailSuppressionService
      * the catch-up policy can be written in the same terms as the mail it
      * stands in for.
      */
-    public function recordSuppressed(?int $userId, string $emailType): void
+    public function recordSuppressed(?int $userId, string $emailType, ?int $suppressionId = null): void
     {
         if ($userId === null || $userId <= 0) {
             return;
@@ -108,17 +108,18 @@ class MailSuppressionService
 
         try {
             DB::statement(
-                'INSERT INTO mail_suppressed_counts (userid, emailtype, `count`, firstat, lastat)
-                 VALUES (?, ?, 1, NOW(), NOW())
+                'INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, `count`, firstat, lastat)
+                 VALUES (?, ?, ?, 1, NOW(), NOW())
                  ON DUPLICATE KEY UPDATE
                     `count` = `count` + 1,
                     lastat = NOW(),
+                    suppressionid = VALUES(suppressionid),
                     -- A fresh episode after a catch-up starts counting again
                     -- rather than resuming the old total.
                     firstat = IF(caughtup_at IS NULL, firstat, NOW()),
                     `count` = IF(caughtup_at IS NULL, `count`, 1),
                     caughtup_at = NULL',
-                [$userId, substr($emailType, 0, 32)]
+                [$userId, substr($emailType, 0, 32), $suppressionId]
             );
         } catch (\Throwable $e) {
             // Losing a counter costs us accuracy in one catch-up email. It
