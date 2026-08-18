@@ -105,13 +105,25 @@ class DeferralProbe
             # status=sent lines in the last hour, bucketed by the relay host
             # Postfix recorded for the delivery. Try journald first, then the
             # traditional flat log; emit nothing if neither is readable.
-            if command -v journalctl >/dev/null 2>&1 && journalctl -u postfix --since '1 hour ago' -q >/dev/null 2>&1; then
-                journalctl -u postfix --since '1 hour ago' -q 2>/dev/null | grep 'status=sent' || true
-            elif [ -r /var/log/mail.log ]; then
+            # Try journald, then fall back to the flat log IF JOURNALD GAVE
+            # NOTHING. Testing only that journalctl RUNS is not enough: on a
+            # relay that logs mail via syslog, `journalctl -u postfix` exits 0
+            # and prints nothing, so the old form took this branch and reported
+            # no delivery data at all. Every relay family then looked like
+            # "0 delivered/hr", which is the suppression trigger - on bulk2
+            # 2026-08-18 that would have suppressed google.com (4457 deferred,
+            # 2171 status=sent lines sitting unread in /var/log/mail.log).
+            # Silence must never be mistaken for evidence of no deliveries.
+            DELIVERED=''
+            if command -v journalctl >/dev/null 2>&1; then
+                DELIVERED=\$(journalctl -u postfix --since '1 hour ago' -q 2>/dev/null | grep 'status=sent' || true)
+            fi
+            if [ -z "\$DELIVERED" ] && [ -r /var/log/mail.log ]; then
                 # No time filter available without parsing syslog timestamps,
                 # so take the tail as an approximation of "recent".
-                tail -n 200000 /var/log/mail.log 2>/dev/null | grep 'status=sent' || true
+                DELIVERED=\$(tail -n 200000 /var/log/mail.log 2>/dev/null | grep 'status=sent' || true)
             fi
+            printf '%s\n' "\$DELIVERED"
             echo '{$this->markEnd()}'
             SH;
     }
