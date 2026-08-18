@@ -136,6 +136,19 @@ stats=$(tail -n "$SAMPLE_LINES" "$MAILLOG" 2>/dev/null | awk '
       n = split(addr, p, "@"); dom = tolower(p[n])
     }
     if (dom == "") next
+
+    # PER-MAILBOX failures are not provider throttling and must not be counted
+    # as either. A 452 4.2.2 out-of-storage is one full mailbox; it says nothing
+    # about whether the provider will accept our mail, and it retries for days,
+    # so counting it inflates a healthy domain deferral ratio without limit.
+    # Measured 2026-08-18: gmail 497 x 452-4.2.2 (all mailbox-full) against
+    # yahoo 7701 x 421 4.7.0 (all provider throttle) - the codes separate them
+    # cleanly. Counting both is what repeatedly made gmail, our largest
+    # DELIVERING destination, look throttled and get shaped.
+    # NB: no apostrophes in here - this whole block sits inside awk '...' and a
+    # single quote silently terminates the shell quoting.
+    if ($0 ~ /4\.2\.2|452[- ]|over quota|out of storage|[Mm]ailbox full|quota exceeded/) next
+
     total[dom]++
     if ($0 ~ /status=deferred/) def[dom]++
   }
