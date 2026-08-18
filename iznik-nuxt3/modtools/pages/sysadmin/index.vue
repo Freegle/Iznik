@@ -207,6 +207,8 @@ const topTabMap = {
   mail: 2,
   outgoing: 2,
   incoming: 2,
+  delayed: 2,
+  deferrals: 2,
   behaviour: 3,
   digest: 3,
   scrolling: 3,
