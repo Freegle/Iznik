@@ -145,6 +145,29 @@ otherwise - count "Processing FBL report" in
 `iznik-batch/storage/logs/laravel-<date>.log` (NOT bulk2's mail.log; `fbl@` is
 inbound and bulk2 is outbound-only) against `status=sent` on bulk2.
 
+### Recovery must not re-trigger the throttle
+
+`default_destination_concurrency_limit` is **20** (postfix's own default), not
+the 100 it was previously set to. That number is what a domain returns to the
+moment the shaper releases it, and release happens while the provider's backlog
+is still queued - 106,815 messages on 2026-08-18. Going from the shaped value of
+2 straight to 100 with that much waiting is precisely the burst that earns a
+volume throttle, so the first sign of recovery would have re-earned the
+deferral. At 20 the backlog drains over minutes instead of seconds, and if that
+is still too fast the provider defers again and the next scan re-shapes it
+within 15 minutes.
+
+Release keys on SUCCESSFUL DELIVERIES ALONE, deliberately, not on the backlog
+also being drained. Requiring both was tried and reverted the same evening: it
+cannot tell a throttled provider from a healthy one carrying a tail of dead
+mailboxes. gmail read 93% deferred while genuinely delivering, because ~644
+`452-4.2.2 recipient inbox out of storage` retries inflated its ratio, and the
+backlog condition shaped it within one scan. Deliveries are the only signal
+shaping cannot distort.
+
+To disable the shaper entirely: remove `/etc/cron.d/postfix-adaptive-shaper`,
+empty `/etc/postfix/shaped_destinations`, then `postfix reload`.
+
 ## Not captured
 
 TLS certificates and keys, DNS zones, firewall rules, package sets, users and
