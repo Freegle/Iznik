@@ -34,7 +34,13 @@ CREATE TABLE IF NOT EXISTS `mail_suppressions` (
   `clear_scans` tinyint unsigned NOT NULL DEFAULT '0',
   `created` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `modified` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  -- Holds the value only while the row is active, so the unique key below
+  -- enforces one live suppression per target. MySQL has no partial indexes,
+  -- and repeated NULLs do not collide, so history keeps as many released
+  -- rows for the same target as it likes.
+  `active_value` varchar(255) GENERATED ALWAYS AS (if((`released_at` is null),`value`,NULL)) STORED,
   PRIMARY KEY (`id`),
+  UNIQUE KEY `scope_active_value` (`scope`,`active_value`),
   KEY `scope_value_released` (`scope`,`value`,`released_at`),
   KEY `released_at` (`released_at`),
   KEY `parentid` (`parentid`),

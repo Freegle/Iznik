@@ -72,6 +72,58 @@ class DeferralScanService
     }
 
     /**
+     * Release suppressions the probe has been unable to confirm for too long.
+     *
+     * Called when the relay could not be read at all - which is exactly when
+     * a suppression is most likely to get stuck on for ever, because the
+     * normal release path needs a snapshot it never gets.
+     *
+     * Only the staleness rule applies here. An absent snapshot is not
+     * evidence that a provider has recovered, so it must never count as a
+     * clear scan - otherwise two failed probes in a row would release every
+     * suppression we have.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function releaseStale(bool $dryRun = false): array
+    {
+        $staleHours = (int) config('freegle.mail.deferrals.stale_after_hours', 24);
+        if ($staleHours <= 0) {
+            return [];
+        }
+
+        $released = [];
+
+        foreach ($this->activeByKey() as $key => $row) {
+            [$scope, $value] = explode("\0", $key, 2);
+
+            // Domain rows are children; releasing the parent cascades.
+            if ($scope === MailSuppressionService::SCOPE_DOMAIN) {
+                continue;
+            }
+
+            if ($row->last_seen === null
+                || Carbon::parse($row->last_seen)->gte(now()->subHours($staleHours))) {
+                continue;
+            }
+
+            $released[] = ['id' => $row->id, 'scope' => $scope, 'value' => $value, 'stale' => true];
+
+            if (! $dryRun) {
+                DB::table('mail_suppressions')
+                    ->where('id', $row->id)
+                    ->orWhere('parentid', $row->id)
+                    ->update(['released_at' => now(), 'clear_scans' => 0]);
+            }
+        }
+
+        if (! $dryRun && $released !== []) {
+            $this->suppressions->flushCache();
+        }
+
+        return $released;
+    }
+    /**
      * @param  array<string, object>  $active
      * @return array<int, array<string, mixed>>
      */
@@ -110,6 +162,11 @@ class DeferralScanService
                 // clear-scan counter, because this scan is not clear.
                 if (! $dryRun) {
                     $this->refresh($existing->id, $stats, clearScans: 0);
+                    // An episode lasting days keeps turning up domains we
+                    // had not seen behind this relay when it started -
+                    // sky.com only shows up once somebody at Sky is due an
+                    // email. Without this they keep being generated for.
+                    $this->addDomainRows((int) $existing->id, $stats, $existing->provider, $existing->reason);
                 }
 
                 continue;
@@ -320,36 +377,49 @@ class DeferralScanService
                 'message_count' => $stats['count'],
             ]);
 
-            $rows = [];
-            foreach (array_keys($stats['domains']) as $domain) {
-                $rows[] = [
-                    'scope' => MailSuppressionService::SCOPE_DOMAIN,
-                    'value' => $domain,
-                    'parentid' => $id,
-                    'provider' => $provider,
-                    'reason' => $reason,
-                    'deferred_since' => $since,
-                    'first_seen' => now(),
-                    'last_seen' => now(),
-                    'message_count' => $stats['domains'][$domain],
-                ];
-            }
-
-            foreach (array_chunk($rows, 200) as $chunk) {
-                DB::table('mail_suppressions')->insert($chunk);
-            }
+            $this->addDomainRows($id, $stats, $provider, $reason);
 
             Log::warning('Mail deferrals: suppressing relay family', [
                 'mxgroup' => $group,
                 'provider' => $provider,
                 'deferred' => $stats['count'],
                 'delivered_last_hour' => $delivered,
-                'domains' => count($rows),
+                'domains' => count($stats['domains']),
                 'deferred_since' => $since,
             ]);
 
             return $id;
         });
+    }
+
+    /**
+     * Write a child domain row for each recipient domain seen behind a relay.
+     *
+     * insertOrIgnore because the schema permits only one ACTIVE row per
+     * (scope, value): a domain served by two relay families, or one already
+     * suppressed on its own, is covered either way, and a second row would
+     * buy nothing but a failed transaction.
+     */
+    private function addDomainRows(int $parentId, array $stats, ?string $provider, ?string $reason): void
+    {
+        $rows = [];
+        foreach ($stats['domains'] as $domain => $count) {
+            $rows[] = [
+                'scope' => MailSuppressionService::SCOPE_DOMAIN,
+                'value' => $domain,
+                'parentid' => $parentId,
+                'provider' => $provider,
+                'reason' => $reason,
+                'deferred_since' => $this->toDate($stats['oldest']),
+                'first_seen' => now(),
+                'last_seen' => now(),
+                'message_count' => $count,
+            ];
+        }
+
+        foreach (array_chunk($rows, 200) as $chunk) {
+            DB::table('mail_suppressions')->insertOrIgnore($chunk);
+        }
     }
 
     private function refresh(int $id, array $stats, int $clearScans): void

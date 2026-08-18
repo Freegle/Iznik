@@ -115,7 +115,12 @@ class DeferralCatchUpService
                 }
 
                 try {
-                    app(EmailSpoolerService::class)->spool(
+                    // spool() returns the empty string rather than throwing
+                    // when it declines a message - a permanently bad address,
+                    // or the deferral backstop if a fresh episode started
+                    // since we checked. Counting that as sent is how a member
+                    // ends up permanently owed a catch-up nobody knows about.
+                    $spoolId = app(EmailSpoolerService::class)->spool(
                         new UnreadChatCatchUpMail(
                             recipientUserId: (int) $userId,
                             recipientEmail: $email,
@@ -128,7 +133,15 @@ class DeferralCatchUpService
                         $email,
                         emailType: 'chat_catchup'
                     );
-                    $sent++;
+
+                    if ($spoolId === '') {
+                        Log::warning('Mail deferrals: the spooler declined the catch-up', [
+                            'userid' => $userId,
+                        ]);
+                        $dropped++;
+                    } else {
+                        $sent++;
+                    }
                 } catch (\Throwable $e) {
                     Log::error('Mail deferrals: catch-up send failed', [
                         'userid' => $userId,

@@ -226,20 +226,24 @@ class ChatNotificationService
                     continue;
                 }
 
-                // The member's provider is refusing our mail. Skip without
-                // touching chat_roster.lastmsgemailed, so the watermark stays
-                // where it is and the release catch-up can still see that
-                // they have unread messages. We do NOT replay these
-                // individually on release - a stack of days-old chat
-                // notifications arriving at once is its own harm - they turn
-                // into one "you have unread messages" summary instead.
-                if (app(\App\Services\Mail\MailSuppressionService::class)
-                    ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat')) {
+                // Check if we should notify this user about this message.
+                if (! $this->shouldNotifyUser($sendingTo, $message, $chatRoom, $chatType, $roster->isModerator ?? false)) {
                     continue;
                 }
 
-                // Check if we should notify this user about this message.
-                if (! $this->shouldNotifyUser($sendingTo, $message, $chatRoom, $chatType, $roster->isModerator ?? false)) {
+                // The member's provider is refusing our mail. Deliberately
+                // AFTER the preference check: someone who has chat
+                // notifications turned off was never going to get this email,
+                // so recording it as owed would earn them a "you have unread
+                // messages" catch-up they never asked for.
+                //
+                // Skips without touching chat_roster.lastmsgemailed, so the
+                // watermark stays where it is and the catch-up can still see
+                // there are unread messages. These are never replayed
+                // individually - a stack of days-old notifications arriving
+                // at once is its own harm - they become one summary instead.
+                if (app(\App\Services\Mail\MailSuppressionService::class)
+                    ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat')) {
                     continue;
                 }
 
@@ -565,6 +569,21 @@ class ChatNotificationService
 
         $spooler = $this->spooler ?? app(EmailSpoolerService::class);
         $spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
+    }
+
+    /**
+     * Whether a chase-up should be held back because the recipient's provider
+     * is refusing our mail.
+     *
+     * Asked by the caller rather than swallowed here, because
+     * ChatChaseupExpectedService marks the expectation as chased once this
+     * returns - and a chase-up we never sent must not count as one we did, or
+     * the member is recorded as having been reminded when they were not.
+     */
+    public function chaseupSuppressed(User $sendingTo): bool
+    {
+        return app(\App\Services\Mail\MailSuppressionService::class)
+            ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat');
     }
 
     /**

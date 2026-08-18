@@ -71,6 +71,24 @@ class ScanDeferralsCommand extends Command
                 'target' => $target,
             ]);
 
+            // A broken probe is exactly when a suppression is most likely to
+            // get stuck on for ever, so the staleness fail-open still has to
+            // run. Deliberately only the staleness rule: an empty snapshot is
+            // not evidence that anything has recovered, so it must not count
+            // as a clear scan.
+            foreach ($scan->releaseStale($dryRun) as $r) {
+                $this->warn(sprintf(
+                    '%s RELEASED %s %s as stale - the probe has not confirmed it for too long',
+                    $dryRun ? '[dry-run]' : '',
+                    $r['scope'],
+                    $r['value']
+                ));
+                $this->alertSentry(
+                    sprintf('Mail suppression released as stale while the relay was unreachable: %s %s', $r['scope'], $r['value']),
+                    ['scope' => $r['scope'], 'value' => $r['value']]
+                );
+            }
+
             return self::FAILURE;
         }
 
@@ -130,7 +148,14 @@ class ScanDeferralsCommand extends Command
         }
 
         if ($this->option('purge')) {
-            $this->purge($probe, $snapshot, $target);
+            // --dry-run outranks --force. Someone reaching for --dry-run is
+            // asking what would happen, and answering that by deleting mail
+            // off a production relay would be the worst possible reply.
+            if ($dryRun) {
+                $this->warn('[dry-run] --purge ignored: --dry-run means change nothing.');
+            } else {
+                $this->purge($probe, $snapshot, $target);
+            }
         }
 
         if (! $this->option('no-catchup')) {

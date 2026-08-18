@@ -163,6 +163,40 @@ class DeferralScanServiceTest extends TestCase
         $this->assertSame(1, DB::table('mail_suppressions')->where('scope', 'mxgroup')->count());
     }
 
+    public function test_only_one_active_row_can_exist_per_target(): void
+    {
+        // Enforced in the schema, not just in the scan. A half-finished run
+        // leaving two active rows for one provider would be invisible:
+        // activeByKey() maps on scope+value, so the second would keep
+        // gating mail long after the first was released.
+        $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        DB::table('mail_suppressions')->insert([
+            'scope' => 'mxgroup',
+            'value' => 'yahoodns.net',
+            'first_seen' => now(),
+            'last_seen' => now(),
+        ]);
+    }
+
+    public function test_released_rows_may_repeat_so_history_survives(): void
+    {
+        $this->scan->apply($this->snapshotWithYahooBlocked());
+        $this->scan->apply($this->recovered());
+        $this->scan->apply($this->recovered());
+
+        // Same provider blocks us again a week later.
+        $result = $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        $this->assertCount(1, $result['suppressed']);
+        $this->assertSame(
+            2,
+            DB::table('mail_suppressions')->where('scope', 'mxgroup')->count(),
+            'the first episode should still be on the record'
+        );
+    }
     // ===================================================================
     // Per-address tier
     // ===================================================================

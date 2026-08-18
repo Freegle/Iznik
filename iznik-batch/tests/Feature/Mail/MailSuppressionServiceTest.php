@@ -116,6 +116,20 @@ class MailSuppressionServiceTest extends TestCase
         $this->assertFalse($this->service->isSuppressed('not-an-address'));
     }
 
+    public function test_never_suppresses_our_own_operational_mail(): void
+    {
+        // The alert saying a provider has stopped accepting our mail is
+        // exactly the message we would be dropping. The volume is trivial, so
+        // there is nothing to save and everything to lose.
+        $this->suppress('domain', 'ilovefreegle.org');
+        $this->suppress('domain', 'users.ilovefreegle.org');
+        $this->service->flushCache();
+
+        $this->assertFalse($this->service->isSuppressed('geeks@ilovefreegle.org'));
+        $this->assertFalse($this->service->isSuppressed('geek-alerts@ilovefreegle.org'));
+        $this->assertFalse($this->service->isSuppressed('somegroup-volunteers@groups.ilovefreegle.org'));
+    }
+
     // ===================================================================
     // Counting what we declined to send
     // ===================================================================

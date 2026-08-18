@@ -30,6 +30,27 @@ class DeferralCatchUpServiceTest extends TestCase
         $this->catchUp = new DeferralCatchUpService($this->suppressions);
     }
 
+    /**
+     * Put both people on the chat's roster.
+     *
+     * chat_roster is where the per-(chat, member) email watermark lives, and
+     * ChatNotificationService only ever notifies members who have a row - so
+     * a member with no row would never have been emailed, and would have
+     * nothing to catch up on. Creating them here keeps the fixture honest
+     * about that rather than testing a shape production never produces.
+     */
+    private function roster($room, $user1, $user2): void
+    {
+        foreach ([$user1->id, $user2->id] as $uid) {
+            DB::table('chat_roster')->insertOrIgnore([
+                'chatid' => $room->id,
+                'userid' => $uid,
+                'date' => now(),
+                'status' => 'Online',
+            ]);
+        }
+    }
+
     private function owe(int $userId, string $type, int $count = 9, ?int $suppressionId = null): void
     {
         DB::table('mail_suppressed_counts')->insert([
@@ -66,6 +87,8 @@ class DeferralCatchUpServiceTest extends TestCase
         $other = $this->createTestUser();
         $room = $this->createTestChatRoom($other, $member);
 
+        $this->roster($room, $other, $member);
+
         // Nine messages they were never emailed about - the shape of the real
         // incident, where members held around nine queued messages each.
         for ($i = 0; $i < 9; $i++) {
@@ -91,8 +114,12 @@ class DeferralCatchUpServiceTest extends TestCase
         $a = $this->createTestUser();
         $b = $this->createTestUser();
 
-        $this->createTestChatMessage($this->createTestChatRoom($a, $member), $a);
-        $this->createTestChatMessage($this->createTestChatRoom($b, $member), $b);
+        $room = $this->createTestChatRoom($a, $member);
+        $this->roster($room, $a, $member);
+        $this->createTestChatMessage($room, $a);
+        $room = $this->createTestChatRoom($b, $member);
+        $this->roster($room, $b, $member);
+        $this->createTestChatMessage($room, $b);
 
         $this->owe($member->id, 'chat', 2);
 
@@ -110,6 +137,7 @@ class DeferralCatchUpServiceTest extends TestCase
         $member = $this->createTestUser();
         $other = $this->createTestUser();
         $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
         $this->createTestChatMessage($room, $member);
 
         $this->owe($member->id, 'chat', 1);
@@ -174,7 +202,9 @@ class DeferralCatchUpServiceTest extends TestCase
 
         $member = $this->createTestUser(['email_preferred' => 'held' . uniqid() . '@yahoo.co.uk']);
         $other = $this->createTestUser();
-        $this->createTestChatMessage($this->createTestChatRoom($other, $member), $other);
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+        $this->createTestChatMessage($room, $other);
 
         $this->owe($member->id, 'chat', 4);
         $this->suppressDomain('yahoo.co.uk');
@@ -197,7 +227,9 @@ class DeferralCatchUpServiceTest extends TestCase
 
         $member = $this->createTestUser();
         $other = $this->createTestUser();
-        $this->createTestChatMessage($this->createTestChatRoom($other, $member), $other);
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+        $this->createTestChatMessage($room, $other);
         $this->owe($member->id, 'chat', 4);
 
         $this->assertSame(1, $this->catchUp->run()['sent']);
@@ -212,7 +244,9 @@ class DeferralCatchUpServiceTest extends TestCase
 
         $member = $this->createTestUser();
         $other = $this->createTestUser();
-        $this->createTestChatMessage($this->createTestChatRoom($other, $member), $other);
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+        $this->createTestChatMessage($room, $other);
         $this->owe($member->id, 'chat', 4);
 
         $result = $this->catchUp->run(dryRun: true);
@@ -246,7 +280,9 @@ class DeferralCatchUpServiceTest extends TestCase
 
         $member = $this->createTestUser(['email_preferred' => 'held' . uniqid() . '@yahoo.co.uk']);
         $other = $this->createTestUser();
-        $this->createTestChatMessage($this->createTestChatRoom($other, $member), $other);
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+        $this->createTestChatMessage($room, $other);
         // Released, so the gate is open, but the suppression we recorded at
         // the time is still there to name who was refusing us.
         $id = DB::table('mail_suppressions')->insertGetId([
@@ -274,6 +310,7 @@ class DeferralCatchUpServiceTest extends TestCase
         $member = $this->createTestUser();
         $other = $this->createTestUser();
         $room = $this->createTestChatRoom($other, $member, ['chattype' => ChatRoom::TYPE_USER2MOD]);
+        $this->roster($room, $other, $member);
         $this->createTestChatMessage($room, $other);
         $this->owe($member->id, 'chat', 1);
 

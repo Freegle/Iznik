@@ -147,9 +147,37 @@ return new class extends Migration
             });
         }
 
+        $this->addActiveUniqueIndex();
         $this->addForeignKeys();
     }
 
+    /**
+     * At most one ACTIVE row per (scope, value).
+     *
+     * MySQL has no partial indexes, so a stored generated column holds the
+     * value only while the row is active and NULL once it is released. A
+     * unique index over that column enforces "one live suppression per
+     * target" while letting history keep as many released rows for the same
+     * target as it likes, because repeated NULLs do not collide.
+     *
+     * Without this, a scan that died half way could leave two active rows
+     * for one provider. activeByKey() keys its map on scope+value, so the
+     * second would be invisible to the scan and would keep gating mail long
+     * after the first was released.
+     */
+    private function addActiveUniqueIndex(): void
+    {
+        if (! Schema::hasTable('mail_suppressions') || Schema::hasColumn('mail_suppressions', 'active_value')) {
+            return;
+        }
+
+        DB::statement('ALTER TABLE mail_suppressions
+            ADD COLUMN active_value VARCHAR(255)
+            GENERATED ALWAYS AS (IF(released_at IS NULL, value, NULL)) STORED');
+
+        DB::statement('ALTER TABLE mail_suppressions
+            ADD UNIQUE KEY scope_active_value (scope, active_value)');
+    }
     /**
      * Foreign keys go in afterwards, guarded, so a re-run against a database
      * that already has them is a no-op rather than an error.
@@ -168,6 +196,17 @@ return new class extends Migration
                 $table->foreign('parentid', 'mail_suppressions_parentid_foreign')
                     ->references('id')->on('mail_suppressions')
                     ->onDelete('cascade');
+            });
+        }
+
+        if (Schema::hasTable('mail_suppressed_counts') && ! $exists('mail_suppressed_counts_suppressionid_foreign')) {
+            Schema::table('mail_suppressed_counts', function (Blueprint $table) {
+                // SET NULL rather than CASCADE: once a suppression's history
+                // is gone we still want to know we held mail for this member,
+                // just not which provider it was.
+                $table->foreign('suppressionid', 'mail_suppressed_counts_suppressionid_foreign')
+                    ->references('id')->on('mail_suppressions')
+                    ->onDelete('set null');
             });
         }
 

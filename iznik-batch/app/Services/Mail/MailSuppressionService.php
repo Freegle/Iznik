@@ -72,6 +72,15 @@ class MailSuppressionService
             return null;
         }
 
+        // Never hold back our own operational mail. The volume is trivial -
+        // alerts, reports, mod notifications to team addresses - so there is
+        // nothing to save by suppressing it, and the failure mode is awful:
+        // the alert telling us a provider has stopped accepting our mail is
+        // exactly the message we would be dropping.
+        if ($this->isOurOwnAddress($email)) {
+            return null;
+        }
+
         $active = $this->active();
 
         // Most specific first: an individual mailbox over quota is a
@@ -139,11 +148,17 @@ class MailSuppressionService
      */
     public function shouldSkip(?string $email, ?int $userId, string $emailType): bool
     {
-        if (! $this->isSuppressed($email)) {
+        $suppression = $this->suppressionFor($email);
+
+        if ($suppression === null) {
             return false;
         }
 
-        $this->recordSuppressed($userId, $emailType);
+        // Carry the suppression's id through, so reporting never has to work
+        // out after the fact which provider was refusing this member - that
+        // would mean reimplementing the mailer's own address-ranking rules in
+        // a reporting query, against history that has already moved on.
+        $this->recordSuppressed($userId, $emailType, (int) $suppression->id);
 
         return true;
     }
@@ -199,6 +214,40 @@ class MailSuppressionService
         $this->cacheLoadedAt = $now;
 
         return $map;
+    }
+
+    /**
+     * Whether this is one of Freegle's own addresses rather than a member's.
+     *
+     * Covers the internal domains the mailer already knows about plus the
+     * site's own domain, which is where geeks@, support@, mentors@ and the
+     * per-group team addresses live.
+     */
+    private function isOurOwnAddress(string $email): bool
+    {
+        $at = strrpos($email, '@');
+        if ($at === false) {
+            return false;
+        }
+
+        $domain = substr($email, $at + 1);
+
+        $ours = array_map('strtolower', (array) config('freegle.mail.internal_domains', []));
+
+        foreach ([config('freegle.mail.noreply_addr'), config('freegle.mail.geeks_addr')] as $addr) {
+            $p = strrpos((string) $addr, '@');
+            if ($p !== false) {
+                $ours[] = strtolower(substr((string) $addr, $p + 1));
+            }
+        }
+
+        foreach (array_unique(array_filter($ours)) as $own) {
+            if ($domain === $own || str_ends_with($domain, '.' . $own)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function normalise(?string $email): ?string
