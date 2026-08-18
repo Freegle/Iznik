@@ -125,6 +125,26 @@ new send path somebody adds later without knowing this exists. It returns `''`
 rather than throwing, matching the existing permanent-failure contract, because
 callers key off the truthiness of the returned id.
 
+### Two deliberate asymmetries
+
+The `EmailSpoolerService::spool()` backstop **logs but does not count**. The
+per-recipient gates do the counting, because they are the only ones that know
+whose mail it is; a `Mailable` at spool time may not carry a member id at all.
+Anything the backstop catches is therefore something no gate covered, which is
+a gap to close in the gate rather than a number to record - and it shows up in
+the log so that it can be.
+
+Freegle's own addresses are **never** suppressed, at any scope. The volume is
+trivial - alerts, reports, mod notifications to team addresses - so nothing is
+saved by holding them, and the failure mode is absurd: the alert saying a
+provider has stopped accepting our mail is exactly the message that would be
+dropped.
+
+And the `BounceService` ignore patterns are unconditional rather than scoped
+to a live suppression, on purpose. A queue-expiry DSN turns up as much as five
+days after the deferral that caused it, by which time the suppression has
+usually been released. Scoping the patterns to active suppressions would miss
+exactly the DSNs they exist to catch.
 ### What the gate does not catch
 
 Mail already sitting in the file spool when a suppression starts still goes

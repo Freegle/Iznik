@@ -116,6 +116,19 @@ class MailSuppressionServiceTest extends TestCase
         $this->assertFalse($this->service->isSuppressed('not-an-address'));
     }
 
+    public function test_suppression_for_returns_the_row_so_callers_can_report_it(): void
+    {
+        // shouldSkip() needs the row, not just a boolean, so the count it
+        // writes records WHICH suppression held the mail. Deriving that
+        // later would mean reimplementing the mailer address ranking.
+        $id = $this->suppress('domain', 'yahoo.co.uk');
+        $this->service->flushCache();
+
+        $row = $this->service->suppressionFor('someone@yahoo.co.uk');
+
+        $this->assertNotNull($row);
+        $this->assertSame($id, (int) $row->id);
+    }
     public function test_never_suppresses_our_own_operational_mail(): void
     {
         // The alert saying a provider has stopped accepting our mail is

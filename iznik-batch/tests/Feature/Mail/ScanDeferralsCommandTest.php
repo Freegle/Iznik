@@ -249,6 +249,83 @@ class ScanDeferralsCommandTest extends TestCase
         }
     }
 
+    public function test_dry_run_outranks_force_and_deletes_nothing(): void
+    {
+        // Someone reaching for --dry-run is asking what would happen.
+        // Answering that by deleting mail off a production relay would be
+        // the worst possible reply.
+        $this->relayReturns($this->yahooBlockedQueue(), $this->deliveredLog());
+
+        $this->artisan('mail:deferrals:scan --dry-run --purge --force')->assertSuccessful();
+
+        foreach ($this->scripts as $script) {
+            $this->assertStringNotContainsString('postsuper', $script);
+        }
+        $this->assertDatabaseCount('mail_suppressions', 0);
+    }
+
+    public function test_an_unreachable_relay_still_lets_a_stuck_suppression_time_out(): void
+    {
+        // A broken probe is exactly when a suppression is most likely to
+        // stick on for ever, because the normal release path needs a
+        // snapshot it never gets.
+        $this->relayReturns($this->yahooBlockedQueue(), $this->deliveredLog());
+        $this->artisan('mail:deferrals:scan')->assertSuccessful();
+
+        DB::table('mail_suppressions')->update(['last_seen' => now()->subDays(3)]);
+        $this->canned = null;
+
+        $this->artisan('mail:deferrals:scan')->assertFailed();
+
+        $this->assertSame(
+            0,
+            DB::table('mail_suppressions')->whereNull('released_at')->count(),
+            'a suppression nobody can confirm any more must fail open'
+        );
+    }
+
+    public function test_an_unreachable_relay_does_not_release_a_recent_suppression(): void
+    {
+        // An absent snapshot is not evidence that anything recovered. Two
+        // failed probes in a row must not release everything we have.
+        $this->relayReturns($this->yahooBlockedQueue(), $this->deliveredLog());
+        $this->artisan('mail:deferrals:scan')->assertSuccessful();
+
+        $this->canned = null;
+        $this->artisan('mail:deferrals:scan')->assertFailed();
+        $this->artisan('mail:deferrals:scan')->assertFailed();
+
+        $this->assertDatabaseHas('mail_suppressions', [
+            'scope' => 'mxgroup', 'value' => 'yahoodns.net', 'released_at' => null,
+        ]);
+    }
+
+    public function test_a_domain_first_seen_mid_episode_is_gated_too(): void
+    {
+        // An episode lasting days keeps turning up domains that were not in
+        // the queue when it started, because someone at that provider only
+        // becomes due an email later.
+        $this->relayReturns($this->yahooBlockedQueue(), $this->deliveredLog());
+        $this->artisan('mail:deferrals:scan')->assertSuccessful();
+
+        $extra = json_encode([
+            'queue_name' => 'deferred',
+            'queue_id' => 'LATECOMER1',
+            'arrival_time' => strtotime('2026-08-17 09:00:00'),
+            'recipients' => [[
+                'address' => 'someone@ymail.com',
+                'delay_reason' => 'host mta7.am0.yahoodns.net[67.195.228.94] said: 421 4.7.0 '
+                    . '[TSS04] temporarily deferred',
+            ]],
+        ]);
+        $this->relayReturns($this->yahooBlockedQueue() . "\n" . $extra, $this->deliveredLog());
+
+        $this->artisan('mail:deferrals:scan')->assertSuccessful();
+
+        $suppressions = app(MailSuppressionService::class);
+        $suppressions->flushCache();
+        $this->assertTrue($suppressions->isSuppressed('someone@ymail.com'));
+    }
     public function test_the_probe_reads_the_queue_without_writing_to_it(): void
     {
         $this->relayReturns($this->yahooBlockedQueue(10), $this->deliveredLog());
