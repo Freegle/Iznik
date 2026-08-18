@@ -51,6 +51,41 @@ class EmailSpoolerService
     }
 
     /**
+     * Give this process a PRIVATE claim area, so several spool daemons can run
+     * at once without reclaiming each other's in-flight mail.
+     *
+     * Claims move pending/ -> sending/. With one shared sending/ dir, a worker
+     * restarting would run reclaimOrphanedSending() and move a LIVE peer's
+     * in-flight file back to pending/, where a later pass would send it again -
+     * a duplicate delivery, invisible because Message-ID is regenerated per
+     * send. Scoping sendingDir to sending/w<id> makes that interleaving
+     * unreachable: a worker can only ever reclaim its own predecessor's files.
+     *
+     * Inert when $id is null (the flat sending/ dir is used), so this is a
+     * no-op for one-shot runs and while numprocs is still 1.
+     */
+    public function setWorkerId(?string $id): void
+    {
+        if ($id === null || $id === '') {
+            return;
+        }
+
+        // Constrain to what we generate ourselves - this ends up in a path.
+        $safe = preg_replace('/[^A-Za-z0-9_-]/', '', $id);
+        if ($safe === '') {
+            return;
+        }
+
+        $this->sendingDir = $this->spoolDir . '/sending/w' . $safe;
+
+        // ensureDirectoriesExist() already ran in the constructor, so this dir
+        // has to be created explicitly here.
+        if (!is_dir($this->sendingDir)) {
+            mkdir($this->sendingDir, 0755, true);
+        }
+    }
+
+    /**
      * Spool an email for later sending.
      *
      * Uses a capturing transport to build the complete message through Laravel's
@@ -396,17 +431,37 @@ class EmailSpoolerService
     }
 
     /**
-     * Reclaim files orphaned in sending/ by a previous process that died
-     * mid-send (restart/OOM/crash). Safe to call only when no send is in
-     * flight — i.e. at daemon startup. The spooler runs single-process
-     * (numprocs=1), so at startup nothing is being sent. Files go back to
-     * pending/ for a normal retry; nothing is dead-lettered, so an extended
+     * How stale a SIBLING worker's in-flight file must be before we treat it as
+     * abandoned. A send is a handful of socket operations bounded by PHP's
+     * default_socket_timeout (60s), so minutes - never half an hour. The gate
+     * only has meaning because processSpool() touches the file at claim time:
+     * rename() preserves mtime, so without that a message that queued for hours
+     * would look "abandoned" the instant it was picked up.
+     */
+    private const SIBLING_RECLAIM_AFTER_SECONDS = 1800;
+
+    /**
+     * Reclaim files orphaned in sending/ by a process that died mid-send
+     * (restart/OOM/crash), so nothing is dead-lettered and an extended
      * smarthost outage never loses mail.
+     *
+     * Two passes, because with several workers "everything in sending/" is no
+     * longer safe to take:
+     *
+     *  1. THIS worker's own claim area - taken unconditionally. Only our dead
+     *     predecessor can have left files there, so there is no live owner and
+     *     recovery is immediate.
+     *  2. Sibling areas (sending/w*) and the legacy flat sending/ - taken only
+     *     when untouched for SIBLING_RECLAIM_AFTER_SECONDS. This is the safety
+     *     net for files own-dir reclaim can never reach: a worker that dies and
+     *     never returns, or strands left behind when numprocs is reduced (drop
+     *     4 -> 2 and w02/w03 would otherwise keep their mail forever).
      */
     public function reclaimOrphanedSending(): int
     {
         $reclaimed = 0;
 
+        // Pass 1 - our own area, unconditional.
         foreach (glob($this->sendingDir . '/*.json') as $sendingPath) {
             $filename = basename($sendingPath);
             if (rename($sendingPath, $this->pendingDir . '/' . $filename)) {
@@ -417,9 +472,53 @@ class EmailSpoolerService
         }
 
         if ($reclaimed > 0) {
-            Log::warning('Reclaimed orphaned spool files from sending/ on startup', [
+            Log::warning('Reclaimed orphaned spool files from own sending area on startup', [
                 'count' => $reclaimed,
+                'dir' => $this->sendingDir,
             ]);
+        }
+
+        $reclaimed += $this->reclaimStaleSiblingSending();
+
+        return $reclaimed;
+    }
+
+    /**
+     * Age-gated sweep of OTHER workers' claim areas and the legacy flat
+     * sending/ dir. Deliberately separate from the unconditional own-area pass
+     * so it can also be run periodically, not just at startup - a file stranded
+     * by a worker that never comes back should self-heal without a restart.
+     */
+    public function reclaimStaleSiblingSending(): int
+    {
+        $cutoff = time() - self::SIBLING_RECLAIM_AFTER_SECONDS;
+        $reclaimed = 0;
+
+        $candidates = array_merge(
+            glob($this->spoolDir . '/sending/*.json') ?: [],
+            glob($this->spoolDir . '/sending/w*/*.json') ?: []
+        );
+
+        foreach ($candidates as $sendingPath) {
+            // Never touch our own area here - pass 1 owns it outright.
+            if (dirname($sendingPath) === $this->sendingDir) {
+                continue;
+            }
+
+            $mtime = @filemtime($sendingPath);
+            if ($mtime === false || $mtime > $cutoff) {
+                continue;
+            }
+
+            $filename = basename($sendingPath);
+            if (@rename($sendingPath, $this->pendingDir . '/' . $filename)) {
+                $reclaimed++;
+                Log::warning('Reclaimed stale spool file from another worker area', [
+                    'file' => $filename,
+                    'from' => dirname($sendingPath),
+                    'idle_seconds' => time() - $mtime,
+                ]);
+            }
         }
 
         return $reclaimed;
@@ -488,6 +587,12 @@ class EmailSpoolerService
                 Log::warning('Could not move spool file to sending', ['file' => $filename]);
                 continue;
             }
+
+            // Stamp the claim time. rename() preserves mtime, so without this a
+            // message that sat in pending/ for hours arrives in sending/ already
+            // older than SIBLING_RECLAIM_AFTER_SECONDS and a peer could sweep it
+            // out from under us mid-send.
+            @touch($sendingPath);
 
             $stats['processed']++;
 
@@ -719,7 +824,13 @@ class EmailSpoolerService
     public function getBacklogStats(): array
     {
         $pendingFiles = glob($this->pendingDir . '/*.json');
-        $sendingFiles = glob($this->sendingDir . '/*.json');
+        // Union across every claim area: once workers use sending/w<id>, a glob
+        // of this worker's own dir alone would report 0 in-flight, which is the
+        // only in-flight signal there is when diagnosing a stall.
+        $sendingFiles = array_merge(
+            glob($this->spoolDir . '/sending/*.json') ?: [],
+            glob($this->spoolDir . '/sending/w*/*.json') ?: []
+        );
         $failedFiles = glob($this->failedDir . '/*.json');
 
         $oldestPending = null;

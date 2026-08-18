@@ -87,6 +87,85 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertNotNull($stats['oldest_pending_at']);
     }
 
+    public function test_worker_id_gives_each_daemon_a_private_claim_area(): void
+    {
+        $email = $this->uniqueEmail('worker');
+        $id = $this->spooler->spool(new WelcomeMail($email), $email);
+
+        $this->spooler->setWorkerId('07');
+        $this->spooler->processSpool(limit: 1);
+
+        // The claim must land in the worker's own area, not the shared dir -
+        // that separation is what stops a restarting peer reclaiming live mail.
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
+        $this->assertDirectoryExists($this->testSpoolDir . '/sending/w07');
+    }
+
+    public function test_reclaim_does_not_steal_a_live_peers_in_flight_file(): void
+    {
+        // THE duplicate-send hazard: worker A restarts while worker B is mid-send.
+        // A must not move B's in-flight file back to pending, or it gets sent twice.
+        $peer = $this->testSpoolDir . '/sending/w99';
+        mkdir($peer, 0755, true);
+        $inFlight = $peer . '/mail_p1_peer_inflight.json';
+        file_put_contents($inFlight, json_encode(['id' => 'peer', 'to' => []]));
+        touch($inFlight); // freshly claimed, as processSpool() stamps it
+
+        $this->spooler->setWorkerId('00');
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(0, $reclaimed, 'a live peer\'s fresh claim must never be reclaimed');
+        $this->assertFileExists($inFlight, 'the peer still owns its in-flight file');
+    }
+
+    public function test_reclaim_takes_its_own_area_unconditionally(): void
+    {
+        // Our own predecessor died: no live owner is possible, so recover at once
+        // rather than waiting out the sibling age gate.
+        $mine = $this->testSpoolDir . '/sending/w00';
+        mkdir($mine, 0755, true);
+        $orphan = $mine . '/mail_p1_mine_orphan.json';
+        file_put_contents($orphan, json_encode(['id' => 'mine', 'to' => []]));
+
+        $this->spooler->setWorkerId('00');
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(1, $reclaimed);
+        $this->assertFileExists($this->testSpoolDir . '/pending/mail_p1_mine_orphan.json');
+    }
+
+    public function test_reclaim_rescues_a_stale_file_from_a_dead_peer(): void
+    {
+        // The other half: a worker that died and never came back, or a strand
+        // left when numprocs is reduced, must not hold mail forever.
+        $dead = $this->testSpoolDir . '/sending/w99';
+        mkdir($dead, 0755, true);
+        $stranded = $dead . '/mail_p1_dead_peer.json';
+        file_put_contents($stranded, json_encode(['id' => 'dead', 'to' => []]));
+        touch($stranded, time() - 3600); // idle an hour, past the 30-minute gate
+
+        $this->spooler->setWorkerId('00');
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(1, $reclaimed);
+        $this->assertFileExists($this->testSpoolDir . '/pending/mail_p1_dead_peer.json');
+    }
+
+    public function test_backlog_stats_counts_in_flight_across_all_worker_areas(): void
+    {
+        // getBacklogStats is the only in-flight signal there is; reporting 0
+        // during an SMTP stall is how a stall gets misdiagnosed.
+        mkdir($this->testSpoolDir . '/sending/w00', 0755, true);
+        mkdir($this->testSpoolDir . '/sending/w01', 0755, true);
+        file_put_contents($this->testSpoolDir . '/sending/w00/a.json', '{}');
+        file_put_contents($this->testSpoolDir . '/sending/w01/b.json', '{}');
+        file_put_contents($this->testSpoolDir . '/sending/c.json', '{}');
+
+        $stats = $this->spooler->getBacklogStats();
+
+        $this->assertEquals(3, $stats['sending_count'], 'must union flat and per-worker areas');
+    }
+
     public function test_unmapped_mailables_and_filenames_fall_back_to_the_default_band(): void
     {
         // The maps are an optimisation, not a contract: a mailable added later
