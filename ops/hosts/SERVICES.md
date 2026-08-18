@@ -131,22 +131,19 @@ resolves to `bulk2.ilovefreegle.org`, DKIM signs, DMARC is `p=reject`, and
 RFC 8058 one-click List-Unsubscribe is implemented (`MjmlMailable.php`). So the
 cause is volume and/or complaint rate.
 
-**Enrolling in the CFL is the outstanding action, and nothing technical blocks
-it** (verified 2026-08-18): outbound mail is DKIM-signed `s=z,
-d=ilovefreegle.org`, that selector's key resolves, `d=` aligns with the From
-domain, and DNS is ours to add the verification TXT to. It is domain-based, so
-it survives an IP change. The three steps at
-<https://senders.yahooinc.com/complaint-feedback-loop/> need a Yahoo login, so a
-person has to do them.
+**The complaint rate is NOT the problem - measured, not assumed.**
+`fbl@users.ilovefreegle.org` receives Yahoo feedback-loop mail and we process it:
+`IncomingMailService::handleFbl()` routes on local part `fbl`, turns off all of
+that user's email, and sends them a transactional notice. On 2026-08-18 that was
+**14 reports against 227,016 sent** - roughly 0.013% of Yahoo-family volume,
+against Yahoo's 0.1% target and 0.3% restriction line.
 
-**We cannot currently measure our complaint rate.** Yahoo targets below 0.1%
-and restricts above 0.3%, but their old feedback loop was decommissioned at the
-end of 2024 and the replacement Complaint Feedback Loop must be re-enrolled
-through Sender Hub. It is domain-based and DKIM-verified, so we qualify. Until
-that is done we are shaping blind to the metric Yahoo is actually judging.
-
-To disable: remove `/etc/cron.d/postfix-adaptive-shaper`, empty
-`/etc/postfix/shaped_destinations`, `postfix reload`.
+So the "or user complaints" half of the TSSN message does not apply here: this is
+a **volume** throttle. Rate shaping is the right lever, and list-hygiene work
+would be aimed at a non-problem. Re-check the same way before concluding
+otherwise - count "Processing FBL report" in
+`iznik-batch/storage/logs/laravel-<date>.log` (NOT bulk2's mail.log; `fbl@` is
+inbound and bulk2 is outbound-only) against `status=sent` on bulk2.
 
 ## Not captured
 
