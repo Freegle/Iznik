@@ -69,10 +69,53 @@ bulk2 runs **postfix**, not exim. `/etc/exim4/` exists and its `mainlog` is stal
 from 2023 — ignore it; the live log is `/var/log/mail.log`.
 
 - `mynetworks` contains a private range, redacted to `__IP__/24`.
-- `relayhost` is empty: bulk2 delivers direct to recipient MX, which is why
-  sender reputation on its own IP matters so much. As of 2026-08-18 Yahoo/AOL
-  were deferring ~96% of mail to them with `4.7.0 [TSSN]` against that IP, and
-  they are ~46% of volume.
+- `relayhost` is empty because bulk2 IS the smart host - batch relays to it and
+  it makes the final delivery to recipient MX. That is why sender reputation on
+  its own IP is what matters.
+
+### Adaptive rate shaping (`adaptive-shaper.sh`)
+
+Postfix has adaptive per-destination concurrency, but it keys on
+CONNECTION-level failure. A provider throttling us answers 4xx *after* a
+successful connection and handshake, so postfix reads the destination as healthy
+and keeps ramping toward `default_destination_concurrency_limit` (100 here).
+Measured 2026-08-18: ~53 concurrent connections sustained against a 96% deferral
+rate from the Yahoo family, whose `4.7.0 [TSSN]` response cites volume.
+
+`adaptive-shaper.sh` (cron, every 10 min) closes that loop: it samples the log,
+computes a per-domain deferral rate, and routes throttling domains through the
+`shaped` transport. One transport is enough because
+`smtp_destination_concurrency_limit` applies PER DESTINATION. It is deliberately
+not provider-specific - on first run it caught `sky.com`, `rocketmail.com`,
+`ymail.com` and `aol.co.uk` alongside the obvious yahoo/aol, which a hardcoded
+rule would have missed.
+
+Three safeguards, each added because testing showed it was needed:
+
+- **Active-queue interlock.** Shaping makes mail wait, and waiting mail occupies
+  postfix's active queue. Hitting `qmgr_message_active_limit` loses nothing
+  (qmgr just stops importing from `incoming`), but an active queue full of
+  shaped mail can head-of-line block destinations that were delivering fine. So
+  the shaper reads active depth and relaxes at 35% of the cap, abandons shaping
+  entirely at 60%.
+- **Breadth-based local-problem bail, not volume-based.** If nearly every domain
+  is deferring the fault is ours (IP block, DNS, disk) and shaping is wrong.
+  Measuring that by VOLUME was actively harmful: one provider at 46% of traffic
+  deferring 100% drags the volume figure over any threshold by itself, so the
+  shaper abstained forever and never shaped the domain causing it. It counts
+  domains instead, each equally.
+- **A generous sample window (60k lines).** A throttling provider inflates its
+  own weight, because every retry writes a log line. At 20k lines the Yahoo
+  family crowded healthy domains below the attempt threshold so they dropped out
+  of the sample - which tripped the bail at a bogus 8/9 domains and showed gmail
+  at 51% deferred when the true wider-window figure was 17%. That would have
+  shaped Gmail, which was delivering fine.
+
+Concurrency, not rate delay: postfix forces concurrency to 1 whenever
+`smtp_destination_rate_delay` is set, so combining them is self-defeating.
+
+To disable: remove `/etc/cron.d/postfix-adaptive-shaper`, empty
+`/etc/postfix/shaped_destinations`, `postfix reload`.
 
 ## Not captured
 

@@ -137,3 +137,6 @@ slowdest   unix  -       -       n       -       -       smtp
   -o syslog_name=postfix-slowdest
   -o smtp_destination_concurrency_limit=2
   -o smtp_destination_rate_delay=2s
+
+shaped     unix  -       -       n       -       -       smtp
+  -o syslog_name=postfix-shaped

@@ -53,7 +53,7 @@ message_size_limit = 0
 queue_directory = /var/spool/postfix
 smtpd_recipient_limit = 100000
 header_checks = regexp:/etc/postfix/header_checks
-transport_maps = regexp:/etc/postfix/redirect.regexp
+transport_maps = regexp:/etc/postfix/redirect.regexp, texthash:/etc/postfix/shaped_destinations
 
 # Disable connection caching because on Ubuntu 14.04 it is bugged - see 
 # https://bugs.launchpad.net/ubuntu/+source/postfix/+bug/1549388
@@ -73,3 +73,5 @@ smtp_bind_address = __IP__
 
 # Commented out as throttled
 #sender_dependent_default_transport_maps = regexp:/etc/postfix/sender-transport
+shaped_destination_rate_delay = 0s
+shaped_destination_concurrency_limit = 2
