@@ -296,6 +296,22 @@ class DeferralScanServiceTest extends TestCase
         $this->assertSame([], $result['released']);
     }
 
+    public function test_a_long_gap_does_not_release_a_provider_that_is_still_blocking(): void
+    {
+        // The probe was down for a day. When it comes back and finds the
+        // provider still solidly blocked, that IS confirmation - releasing on
+        // the strength of the stale last_seen it is about to overwrite would
+        // reopen the floodgates onto a queue that still cannot drain.
+        $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        DB::table('mail_suppressions')->update(['last_seen' => now()->subDays(3)]);
+
+        $result = $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        $this->assertSame([], $result['released']);
+        $this->assertDatabaseHas('mail_suppressions', ['scope' => 'mxgroup', 'released_at' => null]);
+    }
+
     public function test_fails_open_when_the_probe_has_not_confirmed_a_suppression_for_too_long(): void
     {
         // Quietly not mailing a whole provider for ever, because our own

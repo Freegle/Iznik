@@ -125,6 +125,16 @@ new send path somebody adds later without knowing this exists. It returns `''`
 rather than throwing, matching the existing permanent-failure contract, because
 callers key off the truthiness of the returned id.
 
+### What the gate does not catch
+
+Mail already sitting in the file spool when a suppression starts still goes
+out, and will be deferred like the rest. That is deliberate. Holding it at
+send time instead would need a per-message backoff that the spool format does
+not have today, and `ProcessSpoolCommand --daemon` retries transient
+failures on its next tick about a second later - so a send-time hold would hot
+loop against a provider that is already unhappy with our volume. The spool
+drains in minutes, so the tail is minutes of mail against days of it.
+
 ### Why not `users.bouncing`
 
 Because it means something else. `bouncing` means *this address is bad*. It is

@@ -238,7 +238,15 @@ class DeferralScanService
             // suppression for this long, we are more likely to be broken than
             // the provider is, and quietly not mailing a whole provider for
             // ever is the worse failure.
-            $stale = $staleHours > 0
+            //
+            // $stats being non-null means THIS scan saw the target still
+            // deferring, so it is confirmed no matter how long the gap before
+            // it was. Without that check, a probe that had been down for a
+            // day would come back, see the provider still solidly blocked,
+            // and release the suppression on the strength of the stale
+            // last_seen it was about to overwrite.
+            $stale = $stats === null
+                && $staleHours > 0
                 && $row->last_seen !== null
                 && Carbon::parse($row->last_seen)->lt(now()->subHours($staleHours));
 
