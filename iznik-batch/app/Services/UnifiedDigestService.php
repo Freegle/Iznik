@@ -115,6 +115,7 @@ class UnifiedDigestService
             'users_processed' => 0,
             'emails_sent' => 0,
             'no_new_posts' => 0,
+            'suppressed' => 0,
             'errors' => 0,
         ];
 
@@ -153,7 +154,7 @@ class UnifiedDigestService
                 } elseif ($result['status'] === 'no_posts') {
                     $stats['no_new_posts']++;
                 } elseif ($result['status'] === 'suppressed') {
-                    $stats['suppressed'] = ($stats['suppressed'] ?? 0) + 1;
+                    $stats['suppressed']++;
                 }
             } catch (\Exception $e) {
                 Log::error("UnifiedDigestService: Failed to send digest to user {$user->id}", [

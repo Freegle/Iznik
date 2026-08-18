@@ -11,7 +11,10 @@ covers:
   - iznik-batch/tests/Feature/Mail/DeferralScanServiceTest.php
   - iznik-batch/tests/Feature/Mail/MailSuppressionServiceTest.php
   - iznik-batch/tests/Feature/Mail/DeferralCatchUpServiceTest.php
+  - iznik-batch/tests/Feature/Mail/ScanDeferralsCommandTest.php
+  - iznik-server-go/emailtracking/deferrals.go
   - iznik-nuxt3/modtools/components/ModMailDelayed.vue
+  - iznik-nuxt3/modtools/components/ModSupportMailDeferrals.vue
 ---
 
 # Mail deferrals and suppression
@@ -270,5 +273,11 @@ generate, plus the `suppressionid` that was in force at the time. Claimed by
 - `tests/Feature/Mail/MailSuppressionServiceTest.php` - the gate itself.
 - `tests/Feature/Mail/DeferralCatchUpServiceTest.php` - one catch-up, not a
   replay.
+- `tests/Feature/Mail/ScanDeferralsCommandTest.php` - the acceptance test:
+  replaying the incident queue, one scan suppresses Yahoo and every domain
+  behind it while Gmail keeps getting mail, and purge refuses to run without
+  `--force`.
 - `tests/Unit/Services/Mail/Incoming/BounceServiceTest.php` - the deferral
   ignore patterns.
+- `iznik-server-go/test/membership_test.go` - the delayed fields on the
+  memberships payload, including that they clear after catch-up.
