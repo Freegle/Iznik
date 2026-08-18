@@ -15,6 +15,7 @@ covers:
   - iznik-server-go/emailtracking/deferrals.go
   - iznik-nuxt3/modtools/components/ModMailDelayed.vue
   - iznik-nuxt3/modtools/components/ModSupportMailDeferrals.vue
+  - iznik-nuxt3/tests/unit/components/modtools/ModMailDelayed.spec.js
 ---
 
 # Mail deferrals and suppression
@@ -311,3 +312,5 @@ generate, plus the `suppressionid` that was in force at the time. Claimed by
   ignore patterns.
 - `iznik-server-go/test/membership_test.go` - the delayed fields on the
   memberships payload, including that they clear after catch-up.
+- `iznik-nuxt3/tests/unit/components/modtools/ModMailDelayed.spec.js` - the
+  moderator wording, and that it reads as information rather than as a fault.
