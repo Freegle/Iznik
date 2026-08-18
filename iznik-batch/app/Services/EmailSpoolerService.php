@@ -59,7 +59,7 @@ class EmailSpoolerService
      */
     public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null, bool $autoRetry = true): string
     {
-        $id = $this->generateId();
+        $id = $this->generateId($this->resolvePriorityBand(get_class($mailable), $emailType));
         $filename = $id . '.json';
 
         // If the caller didn't pass $to explicitly, derive it from the
@@ -445,8 +445,34 @@ class EmailSpoolerService
             'invalid' => 0,
         ];
 
-        $files = glob($this->pendingDir . '/*.json');
-        $files = array_slice($files, 0, $limit);
+        // Strict priority: every URGENT message is taken before any HIGH, and so
+        // on down. Bucketing is done on the FILENAME prefix alone - no file is
+        // opened to decide its order, which matters because this list routinely
+        // runs to tens of thousands of entries during a digest run. glob()
+        // returns names sorted and uniqid() is monotonic, so FIFO still holds
+        // within each band, and anything unbanded (written before banding, or a
+        // band we no longer recognise) is bucketed as BAND_DEFAULT.
+        //
+        // Strict, not weighted, by explicit choice: the lowest band therefore
+        // waits until everything above it is clear, which during a large digest
+        // backlog can be hours.
+        $buckets = [];
+        foreach (glob($this->pendingDir . '/*.json') as $path) {
+            $buckets[self::bandFromFilename($path)][] = $path;
+        }
+
+        $files = [];
+        foreach (self::VALID_BANDS as $band) {
+            if (count($files) >= $limit) {
+                break;
+            }
+            if (!empty($buckets[$band])) {
+                $files = array_merge(
+                    $files,
+                    array_slice($buckets[$band], 0, $limit - count($files))
+                );
+            }
+        }
 
         foreach ($files as $pendingPath) {
             $filename = basename($pendingPath);
@@ -851,9 +877,131 @@ class EmailSpoolerService
         return $normalizedTo[0]['address'] ?? null;
     }
 
-    protected function generateId(): string
+    /**
+     * Priority bands, drained strictly highest-first by processSpool().
+     *
+     * Encoded in the FILENAME (mail_p<band>_...) rather than read from the file,
+     * because processSpool() must order tens of thousands of pending files per
+     * tick and cannot afford to open them. `p` is deliberately not a hex digit,
+     * so a file written before this existed (mail_<hex>...) can never be
+     * mistaken for a banded one - it falls to BAND_DEFAULT instead.
+     */
+    public const BAND_URGENT  = 1;   // chat, welcome, session, donation - a person is waiting
+    public const BAND_HIGH    = 3;   // immediate digests - users expect these promptly
+    public const BAND_DEFAULT = 5;   // daily digests, engage, and ANYTHING UNRECOGNISED
+    public const BAND_LOW     = 9;   // community events, newsletters, chase-ups
+
+    private const VALID_BANDS = [self::BAND_URGENT, self::BAND_HIGH, self::BAND_DEFAULT, self::BAND_LOW];
+
+    /**
+     * email_type is the authoritative signal where callers set it. Types not
+     * listed here fall through to the namespace map, then to BAND_DEFAULT.
+     */
+    private const BAND_BY_EMAIL_TYPE = [
+        'chat'             => self::BAND_URGENT,
+        'welcome'          => self::BAND_URGENT,
+        'digest_immediate' => self::BAND_HIGH,
+        'digest_daily'     => self::BAND_DEFAULT,
+        'engage'           => self::BAND_DEFAULT,
+        'reengage'         => self::BAND_DEFAULT,
+    ];
+
+    /**
+     * Fallback by mailable namespace, for the many callers that pass no
+     * email_type at all. Only namespaces we deliberately want OFF the default
+     * are listed - everything else is intentionally absent so it defaults.
+     */
+    private const BAND_BY_NAMESPACE = [
+        'Chat'          => self::BAND_URGENT,
+        'Welcome'       => self::BAND_URGENT,
+        'Session'       => self::BAND_URGENT,
+        'Donation'      => self::BAND_URGENT,
+        'Alert'         => self::BAND_URGENT,
+        'Event'         => self::BAND_LOW,
+        'CommunityNews' => self::BAND_LOW,
+        'Stories'       => self::BAND_LOW,
+        'Volunteering'  => self::BAND_LOW,
+        'Newsfeed'      => self::BAND_LOW,
+        'Noticeboard'   => self::BAND_LOW,
+        'Birthday'      => self::BAND_LOW,
+    ];
+
+    /** Specific classes that sit off their namespace's band. */
+    private const BAND_BY_CLASS_FRAGMENT = [
+        'ChaseUp'            => self::BAND_LOW,
+        'AutoRepostWarning'  => self::BAND_LOW,
+    ];
+
+    /**
+     * Decide which band a mailable belongs in.
+     *
+     * NEVER throws and ALWAYS returns a valid band: an unrecognised mailable -
+     * including any added in future with no entry here - gets BAND_DEFAULT, so
+     * new mail keeps flowing at normal priority rather than being dropped,
+     * starved at the bottom, or promoted above chat. Adding a class to the maps
+     * above is an optimisation, never a requirement.
+     */
+    public function resolvePriorityBand(?string $mailableClass, ?string $emailType): int
     {
-        return uniqid('mail_', true) . '_' . bin2hex(random_bytes(4));
+        try {
+            if ($emailType !== null && isset(self::BAND_BY_EMAIL_TYPE[$emailType])) {
+                return self::BAND_BY_EMAIL_TYPE[$emailType];
+            }
+
+            if ($mailableClass !== null && $mailableClass !== '') {
+                foreach (self::BAND_BY_CLASS_FRAGMENT as $fragment => $band) {
+                    if (str_contains($mailableClass, $fragment)) {
+                        return $band;
+                    }
+                }
+
+                // App\Mail\<Namespace>\<Class>
+                $parts = explode('\\', $mailableClass);
+                if (count($parts) >= 2) {
+                    $namespace = $parts[count($parts) - 2];
+                    if (isset(self::BAND_BY_NAMESPACE[$namespace])) {
+                        return self::BAND_BY_NAMESPACE[$namespace];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // Classification must never stop a mail being spooled.
+            Log::warning('Could not resolve spool priority band, using default', [
+                'mailable_class' => $mailableClass,
+                'email_type' => $emailType,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return self::BAND_DEFAULT;
+    }
+
+    /**
+     * Read the band back out of a spool filename. Anything that does not carry
+     * a recognised mail_p<band>_ prefix - files written before banding existed,
+     * or a band value we no longer use - is treated as BAND_DEFAULT.
+     */
+    public static function bandFromFilename(string $filename): int
+    {
+        if (preg_match('/^mail_p(\d+)_/', basename($filename), $m)) {
+            $band = (int) $m[1];
+            if (in_array($band, self::VALID_BANDS, true)) {
+                return $band;
+            }
+        }
+
+        return self::BAND_DEFAULT;
+    }
+
+    protected function generateId(int $band = self::BAND_DEFAULT): string
+    {
+        if (!in_array($band, self::VALID_BANDS, true)) {
+            $band = self::BAND_DEFAULT;
+        }
+
+        // uniqid() is microtime-derived and monotonic, so files sort
+        // chronologically WITHIN a band - FIFO is preserved per band.
+        return 'mail_p' . $band . '_' . uniqid('', true) . '_' . bin2hex(random_bytes(4));
     }
 
     protected function ensureDirectoriesExist(): void

@@ -87,6 +87,51 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertNotNull($stats['oldest_pending_at']);
     }
 
+    public function test_unmapped_mailables_and_filenames_fall_back_to_the_default_band(): void
+    {
+        // The maps are an optimisation, not a contract: a mailable added later
+        // with no entry must keep flowing at normal priority rather than being
+        // dropped, starved at the bottom, or promoted above chat.
+        $d = EmailSpoolerService::BAND_DEFAULT;
+
+        $this->assertSame($d, $this->spooler->resolvePriorityBand('App\\Mail\\Brand\\NotMappedYet', null));
+        $this->assertSame($d, $this->spooler->resolvePriorityBand(null, null));
+        $this->assertSame($d, $this->spooler->resolvePriorityBand('', 'a_type_nobody_mapped'));
+        $this->assertSame($d, $this->spooler->resolvePriorityBand('NoNamespace', null));
+
+        // Files written before banding existed, and malformed/unknown bands.
+        $this->assertSame($d, EmailSpoolerService::bandFromFilename('mail_6a843187f00658.52055901_e10de506.json'));
+        $this->assertSame($d, EmailSpoolerService::bandFromFilename('garbage.json'));
+        $this->assertSame($d, EmailSpoolerService::bandFromFilename('mail_p7_x.json'));
+
+        // And the ones we do map land where intended.
+        $this->assertSame(EmailSpoolerService::BAND_URGENT, $this->spooler->resolvePriorityBand('App\\Mail\\Chat\\ChatNotification', null));
+        $this->assertSame(EmailSpoolerService::BAND_HIGH, $this->spooler->resolvePriorityBand('App\\Mail\\Digest\\UnifiedDigest', 'digest_immediate'));
+        $this->assertSame($d, $this->spooler->resolvePriorityBand('App\\Mail\\Digest\\UnifiedDigest', 'digest_daily'));
+        $this->assertSame(EmailSpoolerService::BAND_LOW, $this->spooler->resolvePriorityBand('App\\Mail\\Event\\EventMail', null));
+    }
+
+    public function test_process_spool_drains_a_higher_band_before_a_lower_one(): void
+    {
+        $email = $this->uniqueEmail('bands');
+        $lowId = $this->spooler->spool(new WelcomeMail($email), $email);
+        $highId = $this->spooler->spool(new WelcomeMail($email), $email);
+
+        // Re-band by filename: the processor buckets on the prefix alone.
+        $low = $this->testSpoolDir . '/pending/mail_p9_zzz_low.json';
+        $high = $this->testSpoolDir . '/pending/mail_p1_aaa_high.json';
+        rename($this->testSpoolDir . '/pending/' . $lowId . '.json', $low);
+        rename($this->testSpoolDir . '/pending/' . $highId . '.json', $high);
+
+        // Only one slot: strict priority must spend it on the urgent band, even
+        // though the low-band file was spooled first and sorts later by name.
+        $stats = $this->spooler->processSpool(limit: 1);
+
+        $this->assertEquals(1, $stats['processed']);
+        $this->assertFileDoesNotExist($high, 'urgent band must be taken first');
+        $this->assertFileExists($low, 'low band must wait its turn');
+    }
+
     public function test_process_spool_fails_a_message_with_no_recipient_instead_of_retrying_forever(): void
     {
         // Regression: four MatchedPosts mails spooled 2026-08-06/08 with an
