@@ -131,6 +131,14 @@ resolves to `bulk2.ilovefreegle.org`, DKIM signs, DMARC is `p=reject`, and
 RFC 8058 one-click List-Unsubscribe is implemented (`MjmlMailable.php`). So the
 cause is volume and/or complaint rate.
 
+**Enrolling in the CFL is the outstanding action, and nothing technical blocks
+it** (verified 2026-08-18): outbound mail is DKIM-signed `s=z,
+d=ilovefreegle.org`, that selector's key resolves, `d=` aligns with the From
+domain, and DNS is ours to add the verification TXT to. It is domain-based, so
+it survives an IP change. The three steps at
+<https://senders.yahooinc.com/complaint-feedback-loop/> need a Yahoo login, so a
+person has to do them.
+
 **We cannot currently measure our complaint rate.** Yahoo targets below 0.1%
 and restricts above 0.3%, but their old feedback loop was decommissioned at the
 end of 2024 and the replacement Complaint Feedback Loop must be re-enrolled
