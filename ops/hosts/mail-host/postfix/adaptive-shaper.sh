@@ -50,6 +50,11 @@ MIN_ATTEMPTS=${MIN_ATTEMPTS:-50}      # ignore domains too small to judge
 # Successful deliveries in the window above which a domain is never shaped, and
 # is released if it was. Immune to the retry-inflation feedback above.
 MIN_SENT_RELEASE=${MIN_SENT_RELEASE:-20}
+# Deferred count in the sample below which a delivering domain is fully
+# released. Above it the domain keeps a (widening) concurrency cap so the
+# backlog drains at a rate the provider has shown it will accept, instead of
+# being fired at them all at once the moment they relent.
+MAX_DEFERRED_RELEASE=${MAX_DEFERRED_RELEASE:-100}
 
 # Concurrency/delay applied to shaped destinations, moved between these bounds
 # according to how bad things are. Never 0: that would stop delivery entirely.
@@ -173,7 +178,7 @@ prev=""
 # accepting mail should never stay throttled, whatever its deferral ratio looks
 # like: yahoo.co.uk delivered 0 of 5571 attempts, gmail delivered ~253 of 487.
 # That distinction is the whole decision.
-shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsent="$MIN_SENT_RELEASE" -v prev="$prev" '
+shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsent="$MIN_SENT_RELEASE" -v maxdefrelease="$MAX_DEFERRED_RELEASE" -v prev="$prev" '
   BEGIN { n=split(prev, a, /[ \n]+/); for (i=1;i<=n;i++) if (a[i]!="") was[a[i]]=1 }
   {
     dom=$1; tot=$2; def=$3
