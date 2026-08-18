@@ -131,7 +131,15 @@ func GetChanges(c *fiber.Ctx) error {
 				"INNER JOIN messages_groups ON messages_groups.msgid = messages_edits.msgid AND collection = ? WHERE timestamp > ? "+
 				"UNION SELECT msgid AS id, promisedat AS timestamp, 'Promised' AS `type` FROM messages_promises WHERE promisedat > ? "+
 				"UNION SELECT msgid AS id, timestamp, 'Reneged' AS `type` FROM messages_reneged WHERE timestamp > ? "+
-				"UNION SELECT msgid AS id, arrival AS timestamp, 'ApprovedOrReposted' AS `type` FROM messages_groups "+
+				// FORCE INDEX: left alone the optimiser takes the `collection`
+				// index and filters 4.5M Approved rows by arrival, which is the
+				// whole cost of this endpoint - 70.9s against 8.6s forced, on a
+				// 90-day window, measured on prod 2026-08-18. `arrival` is
+				// (arrival, groupid, msgtype), so the range scan uses its
+				// leading column. If that index is ever renamed or dropped this
+				// becomes MySQL 1176 rather than a silent slowdown; the
+				// integration tests run the same statement and would catch it.
+				"UNION SELECT msgid AS id, arrival AS timestamp, 'ApprovedOrReposted' AS `type` FROM messages_groups FORCE INDEX (arrival) "+
 				"WHERE messages_groups.arrival > ? AND messages_groups.collection = ?",
 			mysqlTime, mysqlTime, utils.COLLECTION_APPROVED, mysqlTime, mysqlTime, mysqlTime, mysqlTime, utils.COLLECTION_APPROVED)
 		tx.Statement.BuildClauses = []string{"SELECT"}
