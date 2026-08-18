@@ -186,7 +186,7 @@ return [
         'deferrals' => [
             // Master switch. Off means the command no-ops and is not even
             // scheduled, matching how ripple/firstreply are gated.
-            'enabled' => (bool) env('FREEGLE_MAIL_DEFERRALS_ENABLED', false),
+            'enabled' => (bool) env('FREEGLE_MAIL_DEFERRALS_ENABLED', true),
 
             // ssh target for the outbound relay, e.g. "deferrals@10.0.0.1".
             // As with FREEGLE_MONITORING_HOSTS the estate's topology lives
@@ -551,7 +551,7 @@ return [
         // server + app code can deploy (and clear the app stores) ahead of go-live; flip
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
-        'enabled' => (bool) env('RIPPLE_ENABLED', false),
+        'enabled' => (bool) env('RIPPLE_ENABLED', true),
         // Arrival cutoff (server local time). Only posts that arrived on or after this
         // instant ever START rippling; older pending posts are left alone. This is the
         // flood guard: when rippling first turns on, every historical pending post would
@@ -696,7 +696,7 @@ return [
         // (Per-RU-class stratification — target_by_ru — is the planned Stage-A
         // refinement and is not yet wired; this first cut is a single global cap.)
         'extent' => [
-            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', false),
+            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', true),
             'target_users' => (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000),
         ],
         // Rural-access overflow. The extent cap above sizes a post's audience by the NEAREST
@@ -710,7 +710,7 @@ return [
         // the mail path stays members-only, so this reaches people who have already joined a
         // group the post is on, never a cold recipient.
         'rural_access' => [
-            'enabled' => filter_var(env('RIPPLE_RURAL_ACCESS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => filter_var(env('RIPPLE_RURAL_ACCESS_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         ],
         // Demographic-fairness overflow. Measured on live: members in the most deprived fifth
         // are reached by ~457 posts per 30 days against ~574 for every other fifth, while
@@ -785,7 +785,7 @@ return [
 
     'firstreply' => [
         // Master switch. Off means none of the below runs, whatever they say.
-        'enabled' => filter_var(env('FIRSTREPLY_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'enabled' => filter_var(env('FIRSTREPLY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
 
         // Share of POSTS in the trial, 0-100. A post is in or out for its whole
         // life and across all three levers at once, so the arms never overlap and
@@ -803,7 +803,7 @@ return [
         // going to be allowed - so the hold only turns a fast reply into a slow
         // one, on exactly the posts that can least afford it.
         'passthrough' => [
-            'enabled' => filter_var(env('FIRSTREPLY_PASSTHROUGH_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => filter_var(env('FIRSTREPLY_PASSTHROUGH_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
             // How many distinct repliers a post may already have and still get the
             // passthrough. 1 = only the very first reply. Raise to soften the cliff
             // for posts where the first replier goes quiet.
