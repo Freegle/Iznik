@@ -3029,9 +3029,34 @@ jobs:
             elif [ -d ~/FreegleDocker/.git ]; then echo "export COV_ROOT=~/FreegleDocker" >> $BASH_ENV
             else echo "export SKIP_COVERAGE=true" >> $BASH_ENV; fi
             echo "export COVERALLS_SERVICE_NAME=circleci" >> $BASH_ENV
-            echo "export COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM}" >> $BASH_ENV
             echo "export COVERALLS_SERVICE_NUMBER=${CIRCLE_BUILD_NUM}" >> $BASH_ENV
             echo "export COVERALLS_PARALLEL=true" >> $BASH_ENV
+            # Deliberately NOT exporting COVERALLS_SERVICE_JOB_ID here. In a
+            # Coveralls parallel build each flag upload is a separate JOB inside
+            # one build: they share service_number and must differ in
+            # service_job_id (node-coveralls getOptions.js reads both from the
+            # environment). Exporting one id for the whole build made all four
+            # uploads claim to be the same job, so the /webhook that finalises
+            # the build answered {"jobs":0} on every run and `carryforward`
+            # never applied.
+            #
+            # The damage lands on PARTIAL uploads. Every suite runs on every
+            # branch (see "Determine changed paths" - path skipping was removed),
+            # so a partial upload means the build FAILED partway: the upload
+            # steps are `when: always`, so they still send whatever completed,
+            # which for an early failure is Go alone. Measured 2026-08-17:
+            #   build 32370 master  failed  -> 1 report  -> aggregate 85.876%
+            #   build 32377 master  failed  -> 1 report  -> aggregate 85.872%
+            #   build 32381 master  success -> 4 reports
+            #   build 32393 branch  success -> 4 reports -> aggregate 75.621%
+            # carryforward exists to fill the missing flags from master so a
+            # partial upload still reports an honest whole-repo figure. With it
+            # dead, the failed build's aggregate was Go's number alone (85.9%
+            # against a true 75.6%), and that wrong number became the baseline -
+            # so the next healthy full build was reported as "coverage decreased
+            # by 10.3%" having changed nothing.
+            #
+            # Each upload below sets its own id from the flag name instead.
             echo "export COV_UPLOADS=0" >> $BASH_ENV
 
             # Retry helper for every Coveralls upload below.
@@ -3074,7 +3099,7 @@ jobs:
             docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 sh -c 'cd /app && go install github.com/jandelgado/gcov2lcov@latest 2>/dev/null && ~/go/bin/gcov2lcov -infile=coverage.out -outfile=coverage.lcov' 2>&1 || { echo "⚠️ Convert failed"; exit 0; }
             docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv2:/app/coverage.lcov "$GO_DIR/coverage.lcov" 2>/dev/null
             sed -i 's|^SF:/app/|SF:iznik-server-go/|' "$GO_DIR/coverage.lcov"
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-go"
             cov_upload "$GO_DIR/coverage.lcov" && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
             cp "$GO_DIR/coverage.lcov" /tmp/patch-go.lcov 2>/dev/null || true
             rm -f "$GO_DIR/coverage.out" "$GO_DIR/coverage.lcov"
@@ -3098,7 +3123,7 @@ jobs:
             " /tmp/lc.xml > /tmp/lc.lcov 2>&1
             [ -s /tmp/lc.lcov ] || { echo "⚠️ Conversion failed"; exit 0; }
             echo "✅ Converted ($(wc -l < /tmp/lc.lcov) lines)"
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-laravel"
             cov_upload /tmp/lc.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
@@ -3114,7 +3139,7 @@ jobs:
             [ -z "$VL" ] && echo "⚠️ Not found" && exit 0
             echo "✅ Found at $VL"
             sed 's|^SF:|SF:iznik-nuxt3/|' "$VL" > /tmp/vl.lcov
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-vitest"
             cov_upload /tmp/vl.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
@@ -3128,7 +3153,7 @@ jobs:
             [ -z "$PL" ] && docker cp ${COMPOSE_PROJECT_NAME:-freegle}-playwright:/app/coverage/lcov.info /tmp/pl.lcov 2>/dev/null && PL="/tmp/pl.lcov" && echo "✅ Found"
             [ -z "$PL" ] && echo "⚠️ Not found" && exit 0
             sed 's|^SF:|SF:iznik-nuxt3/|' "$PL" > /tmp/pl-fixed.lcov
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-playwright"
             cov_upload /tmp/pl-fixed.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
@@ -3138,19 +3163,36 @@ jobs:
             [ "${SKIP_COVERAGE:-}" = "true" ] && exit 0
             if [ "${COV_UPLOADS:-0}" -gt 0 ]; then
               # Carry forward master's last-known coverage for any suite flags not
-              # uploaded in this build. Feature branches skip test suites whose
-              # subtree wasn't touched (SKIP_GO/SKIP_LARAVEL/SKIP_VITEST/SKIP_PLAYWRIGHT),
-              # so their Coveralls flag files are absent — without carryforward,
-              # Coveralls compares partial-branch coverage against master's full
-              # coverage and reports a large false "coverage dropped" regression
-              # (seen as a -7.1% drop on Nuxt-only PRs that skip Go+Laravel).
-              # carryforward only fills flags MISSING from this build; uploaded
-              # flags keep their fresh PR coverage.
+              # uploaded in this build, so a partial upload still reports an
+              # honest whole-repo figure. carryforward only fills flags MISSING
+              # from this build; uploaded flags keep their fresh coverage.
+              #
+              # This used to say feature branches skip untouched subtrees via
+              # SKIP_GO/SKIP_LARAVEL/SKIP_VITEST/SKIP_PLAYWRIGHT. That is no
+              # longer true - "Determine changed paths" hardcodes all four to
+              # false, precisely because skipping broke carryforward. Today a
+              # flag is missing because the build FAILED before that suite
+              # produced its artefact, and these steps are `when: always`.
               echo "📊 Uploaded $COV_UPLOADS reports. Sending webhook (carryforward=go,laravel,vitest,playwright)..."
-              curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
+              WEBHOOK_OUT=$(curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
                 -H "Content-Type: application/json" \
-                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":[\"go\",\"laravel\",\"vitest\",\"playwright\"]}}" \
-                && echo "✅ Webhook sent" || echo "⚠️ Webhook failed"
+                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":[\"go\",\"laravel\",\"vitest\",\"playwright\"]}}") \
+                && echo "✅ Webhook sent: $WEBHOOK_OUT" || echo "⚠️ Webhook failed"
+              # The reply carries the number of parallel jobs Coveralls actually
+              # grouped into this build. It must be >= the number we uploaded.
+              # A zero here means the uploads did not register as parallel jobs,
+              # so `carryforward` silently did nothing and the build's coverage
+              # is whatever subset happened to land - which is how the "-10.3%"
+              # phantom regression on full-stack PRs was produced. Say so
+              # loudly rather than letting it rot unnoticed again.
+              WEBHOOK_JOBS=$(echo "$WEBHOOK_OUT" | sed -n 's/.*"jobs":[[:space:]]*\([0-9]*\).*/\1/p')
+              if [ "${WEBHOOK_JOBS:-0}" -lt "${COV_UPLOADS:-0}" ]; then
+                echo "⚠️ Coveralls grouped ${WEBHOOK_JOBS:-0} parallel job(s) but we uploaded ${COV_UPLOADS} report(s)."
+                echo "⚠️ carryforward will not have applied; the aggregate coverage for this build is unreliable."
+                echo "⚠️ Check that each upload sets a distinct COVERALLS_SERVICE_JOB_ID."
+              else
+                echo "✅ Coveralls grouped ${WEBHOOK_JOBS} parallel job(s)"
+              fi
             else echo "⚠️ No coverage uploaded"; fi
 
       - run:

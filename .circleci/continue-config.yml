@@ -53,7 +53,7 @@ orbs:
   # rate-limits (429) the GitHub tarball dependency in the lock file, which
   # npm's own --fetch-retries does not cover, and it red-lined master twice on
   # 2026-08-17 for commits that touched no JavaScript.
-  freegle: freegle/tests@1.1.379
+  freegle: freegle/tests@1.1.380
 
 jobs:
   mark-ci-passed:
