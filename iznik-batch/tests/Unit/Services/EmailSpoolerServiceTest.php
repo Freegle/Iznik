@@ -87,6 +87,40 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertNotNull($stats['oldest_pending_at']);
     }
 
+    public function test_process_spool_fails_a_message_with_no_recipient_instead_of_retrying_forever(): void
+    {
+        // Regression: four MatchedPosts mails spooled 2026-08-06/08 with an
+        // empty `to` reached 449k-559k attempts each by 2026-08-18. Symfony
+        // throws "An email must have a To, Cc, or Bcc header" before any SMTP
+        // conversation, so SmtpFailureClassifier (which only knows SMTP wording)
+        // never matched it and every pass put the file straight back in pending.
+        // processSpool() takes array_slice(glob(...)), so those files sorted
+        // first and burned a slot in EVERY batch until moved out by hand.
+        $email = $this->uniqueEmail('norecipient');
+        $id = $this->spooler->spool(new WelcomeMail($email), $email);
+
+        // Strip the recipient the way the bad MatchedPosts records had it.
+        $pending = $this->testSpoolDir . '/pending/' . $id . '.json';
+        $data = json_decode(file_get_contents($pending), true);
+        $data['to'] = [];
+        $data['cc'] = [];
+        $data['bcc'] = [];
+        file_put_contents($pending, json_encode($data));
+
+        $stats = $this->spooler->processSpool();
+
+        $this->assertEquals(1, $stats['invalid'], 'a recipient-less message counts as invalid');
+        $this->assertEquals(0, $stats['retried'], 'it must NOT be queued for another attempt');
+        $this->assertEquals(0, $stats['sent']);
+
+        $this->assertFileDoesNotExist($pending, 'must not return to pending - that is the infinite loop');
+        $this->assertFileExists($this->testSpoolDir . '/failed/' . $id . '.json');
+
+        // A second pass must not pick it up again.
+        $again = $this->spooler->processSpool();
+        $this->assertEquals(0, $again['processed'], 'failed/ is not reprocessed');
+    }
+
     public function test_process_spool_sends_email(): void
     {
         // Don't use Mail::fake() - it interferes with processSpool()'s Mail::html() call.

@@ -604,6 +604,33 @@ class EmailSpoolerService
             } catch (\Exception $e) {
                 $data['last_error'] = $e->getMessage();
 
+                // No recipient at all: Symfony throws "An email must have a
+                // To, Cc, or Bcc header" before any SMTP conversation starts,
+                // so this is not an SMTP failure and isPermanentSmtpFailure()
+                // below never matches it - the message goes back to pending and
+                // retries forever. Four MatchedPosts mails spooled 2026-08-06/08
+                // with an empty `to` had accumulated 449k-559k attempts each by
+                // 2026-08-18, and because the batch is array_slice(glob(...))
+                // they sorted first and burned a slot in EVERY pass. Nothing can
+                // add a recipient to an already-spooled message, so fail it here.
+                // Not routed through recordSmtpBounce(): there is no address to
+                // mark as bouncing, and doing so would read $data['to'][0].
+                if (empty($data['to']) && empty($data['cc']) && empty($data['bcc'])) {
+                    file_put_contents($sendingPath, json_encode($data, JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE));
+                    rename($sendingPath, $this->failedDir . '/' . $filename);
+                    $stats['invalid']++;
+
+                    Log::error('Spooled email has no recipient - moved to failed, never retryable', [
+                        'id' => $data['id'],
+                        'mailable_class' => $data['mailable_class'] ?? null,
+                        'subject' => $data['subject'] ?? null,
+                        'attempts' => $data['attempts'],
+                        'error' => $e->getMessage(),
+                    ]);
+
+                    continue;
+                }
+
                 // Check if this is a permanent SMTP failure that will never succeed.
                 if ($this->isPermanentSmtpFailure($e->getMessage())) {
                     // Record as a bounce so the user gets flagged as bouncing.
