@@ -186,6 +186,43 @@ class ChaseUpServiceTest extends TestCase
         $this->assertEquals(0, $stats['chased']);
     }
 
+    public function test_a_post_just_past_the_chaseup_interval_is_still_fetched(): void
+    {
+        // The database is now asked to leave out posts whose last chase-up is too recent,
+        // instead of fetching every one and discarding it. The danger in doing that is
+        // asking for too little: a post left out of the fetch is never considered again,
+        // so its chase-up is lost silently. The window therefore reaches back a day
+        // further than the rule it stands in for.
+        //
+        // Defaults give an offer an interval of five days, so a chase-up sent five days
+        // and an hour ago is due. It must survive the fetch.
+        $data = $this->createChaseCandidate();
+        DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->update(['lastchaseup' => now()->subHours(5 * 24 + 1)]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['chased'], 'a due chase-up must not be filtered out of the fetch');
+    }
+
+    public function test_a_recently_chased_post_is_not_chased_again(): void
+    {
+        // The other side of the same window. This one is fetched - the window is
+        // deliberately a day wider than the rule - and then declined in PHP, which is
+        // the safe way round for the two to disagree.
+        $data = $this->createChaseCandidate();
+        DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->update(['lastchaseup' => now()->subHours(4 * 24)]);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(0, $stats['chased'], 'a post chased up four days ago is not due again yet');
+    }
+
     public function test_skips_message_with_outcome(): void
     {
         $data = $this->createChaseCandidate();
