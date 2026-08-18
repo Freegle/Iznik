@@ -116,11 +116,17 @@ queries behind the endpoint carry a `LIMIT`: every matching row is materialised 
 slice and then into a JSON body, so the cost of one request is set entirely by how far
 back the caller asks. On 2026-08-17 a single call with a `since` of 1947 made the six-way
 `UNION` examine 17.9M rows over 130s and the OOM killer took apiv2 - and monit with it -
-on that node. At 90 days the same request returns roughly 700k message rows for a few
-hundred MB, which the node absorbs without noticing. A partner who asks for more is not
+on that node. At 90 days the same request cost about 1GB of apiv2 RSS when measured on
+2026-08-18, which the node absorbs without noticing. A partner who asks for more is not
 rejected; they are answered from the clamped window, and the response reports which
 window that was in `changes.since`, so "I asked for a year and got 90 days" is
 detectable rather than silent.
+
+Nothing serialises the endpoint, so that is the per-call cost, not a ceiling: concurrent
+catch-ups multiply it, and a dozen at once would be as fatal as the single unclamped call
+was. The clamp bounds one request, not the endpoint. Expect a full catch-up to take tens
+of seconds and return tens of MB - slow is normal here, and not by itself a fault worth
+chasing when a partner reports a timeout.
 
 Each entry in `users` carries a `type`:
 
