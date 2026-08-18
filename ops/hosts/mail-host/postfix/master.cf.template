@@ -140,3 +140,10 @@ slowdest   unix  -       -       n       -       -       smtp
 
 shaped     unix  -       -       n       -       -       smtp
   -o syslog_name=postfix-shaped
+  # Yahoo accepts a limited number of messages per SMTP connection and then
+  # CLOSES IT WITHOUT AN ERROR - which is why the log carries ~2M
+  # "lost connection with mx-eu.mail.am0.yahoodns.net while sending RCPT TO".
+  # Default smtp_connection_reuse_count_limit=0 means unlimited reuse, so we
+  # ride a cached connection past their ceiling every time. Cap it so we open a
+  # fresh connection instead of being cut off mid-transaction.
+  -o smtp_connection_reuse_count_limit=10

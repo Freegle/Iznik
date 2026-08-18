@@ -114,6 +114,29 @@ Three safeguards, each added because testing showed it was needed:
 Concurrency, not rate delay: postfix forces concurrency to 1 whenever
 `smtp_destination_rate_delay` is set, so combining them is self-defeating.
 
+**Connection reuse is capped at 10 on this transport.** Yahoo accepts a limited
+number of messages per SMTP connection and then closes it *without an error*;
+postfix's default `smtp_connection_reuse_count_limit=0` means unlimited reuse,
+so a cached connection rides past their ceiling and gets cut off mid
+transaction. That is what ~2 million `lost connection with
+mx-eu.mail.am0.yahoodns.net while sending RCPT TO` entries in the log are.
+Concurrency shaping alone does not address it.
+
+### What shaping cannot fix
+
+Yahoo's own guidance is that TSS0x means the sending PATTERN is unacceptable,
+and the remedy is to reduce pressure and fix the underlying cause - not retry
+harder. The mechanical checks all pass here: SPF covers the sending IP, rDNS
+resolves to `bulk2.ilovefreegle.org`, DKIM signs, DMARC is `p=reject`, and
+RFC 8058 one-click List-Unsubscribe is implemented (`MjmlMailable.php`). So the
+cause is volume and/or complaint rate.
+
+**We cannot currently measure our complaint rate.** Yahoo targets below 0.1%
+and restricts above 0.3%, but their old feedback loop was decommissioned at the
+end of 2024 and the replacement Complaint Feedback Loop must be re-enrolled
+through Sender Hub. It is domain-based and DKIM-verified, so we qualify. Until
+that is done we are shaping blind to the metric Yahoo is actually judging.
+
 To disable: remove `/etc/cron.d/postfix-adaptive-shaper`, empty
 `/etc/postfix/shaped_destinations`, `postfix reload`.
 
