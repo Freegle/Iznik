@@ -5,12 +5,16 @@
       <span v-if="provider">
         - {{ provider }} is not currently accepting our mail.</span
       >
-      <span v-else> - their email provider is not currently accepting our mail.</span>
+      <span v-else>
+        - their email provider is not currently accepting our mail.</span
+      >
     </p>
     <p class="mb-0">
       This is a problem at our end, not with their address, so there's nothing
       for them or for you to fix. We've paused
-      <span v-if="count">the {{ count }} emails we'd otherwise have sent them</span>
+      <span v-if="count"
+        >the {{ count }} emails we'd otherwise have sent them</span
+      >
       <span v-else>their emails</span>
       rather than pile up mail that can't be delivered, and we'll send a
       catch-up once it clears.

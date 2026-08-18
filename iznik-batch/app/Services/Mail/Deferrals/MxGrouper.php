@@ -69,12 +69,24 @@ class MxGrouper
             return $host;
         }
 
+        // Longest match wins. Both 'protection.outlook.com' and
+        // 'mail.protection.outlook.com' are listed, and taking the first hit
+        // rather than the longest would group every Microsoft 365 tenant
+        // together - exactly the collapse the list exists to prevent.
+        $best = NULL;
         foreach (self::KEEP_EXTRA_LABEL as $suffix) {
-            if (str_ends_with($host, '.' . $suffix)) {
-                $extra = count(explode('.', $suffix)) + 1;
-
-                return implode('.', array_slice($labels, -min($extra, count($labels))));
+            if (str_ends_with($host, '.' . $suffix)
+                && ($best === NULL || strlen($suffix) > strlen($best))) {
+                $best = $suffix;
             }
+        }
+
+        if ($best !== NULL) {
+            // One label beyond the platform suffix: the customer, e.g. the
+            // tenant in acme-com.mail.protection.outlook.com.
+            $extra = count(explode('.', $best)) + 1;
+
+            return implode('.', array_slice($labels, -min($extra, count($labels))));
         }
 
         $candidate = implode('.', array_slice($labels, -2));

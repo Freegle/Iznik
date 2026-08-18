@@ -1474,6 +1474,18 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats", emailtracking.Stats)
 
+		// Deferral suppressions (authenticated, admin only)
+		// @Router /modtools/email/deferrals [get]
+		// @Summary List providers currently refusing our mail, and the members affected
+		// @Description Support view of deferral-aware mail suppression: active suppressions plus members whose mail is being held
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/deferrals", emailtracking.Deferrals)
+
 		// Email Statistics Time Series (authenticated, admin only)
 		// @Router /email/stats/timeseries [get]
 		// @Summary Get daily email statistics for charting

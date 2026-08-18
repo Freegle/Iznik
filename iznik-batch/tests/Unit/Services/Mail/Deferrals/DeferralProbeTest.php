@@ -161,7 +161,7 @@ class DeferralProbeTest extends TestCase
         $snapshot = (new DeferralProbe($this->runner($this->wrap($this->queueLine(), $delivered))))
             ->probe('relay@host', 1024);
 
-        $this->assertSame(2, $snapshot->deliveriesFor('l.google.com'));
+        $this->assertSame(2, $snapshot->deliveriesFor('google.com'));
         // A local delivery is not a provider accepting our mail, so it must
         // not count as evidence that one has recovered.
         $this->assertSame(0, $snapshot->deliveriesFor('local'));
