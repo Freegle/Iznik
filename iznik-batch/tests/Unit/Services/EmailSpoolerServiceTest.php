@@ -87,6 +87,37 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertNotNull($stats['oldest_pending_at']);
     }
 
+    public function test_spool_refuses_to_promote_a_write_that_did_not_land(): void
+    {
+        // A 0-byte file in pending/ decodes to nothing and is dropped to failed/
+        // with the mail gone - seven were lost that way on 2026-06-11. The UTF-8
+        // guard closed the json_encode door; this covers the other one, a short
+        // or failed write (full disk), which an unchecked rename would otherwise
+        // promote into a spool entry that looks real and is empty.
+        $email = $this->uniqueEmail('shortwrite');
+
+        // Make the pending dir unwritable so the temp write cannot land.
+        $pending = $this->testSpoolDir . '/pending';
+        chmod($pending, 0500);
+
+        try {
+            $threw = false;
+            try {
+                $this->spooler->spool(new WelcomeMail($email), $email);
+            } catch (\Throwable $e) {
+                $threw = true;
+            }
+            $this->assertTrue($threw, 'a write that cannot land must throw, not silently spool nothing');
+
+            $stubs = glob($pending . '/*.json') ?: [];
+            $this->assertCount(0, $stubs, 'must leave no empty spool file behind');
+            $tmps = glob($pending . '/*.tmp') ?: [];
+            $this->assertCount(0, $tmps, 'must not leave a temp file behind either');
+        } finally {
+            chmod($pending, 0755);
+        }
+    }
+
     public function test_worker_id_gives_each_daemon_a_private_claim_area(): void
     {
         $email = $this->uniqueEmail('worker');

@@ -232,8 +232,31 @@ class EmailSpoolerService
             ]);
             throw new \RuntimeException('Failed to encode spool payload: ' . json_last_error_msg());
         }
-        file_put_contents($tmp, $json);
-        rename($tmp, $path);
+        // Verify the write LANDED before promoting it. The UTF-8 guard above
+        // closes the json_encode-returned-false door onto a 0-byte spool file
+        // (the 2026-06-11 loss), but not the other one: if the filesystem is
+        // full or errors, file_put_contents writes short or fails, and an
+        // unchecked rename() promotes that stub into pending/ where it decodes
+        // to nothing and is dropped to failed/ with the mail gone. This host
+        // has hit 99% disk before, so that door is reachable. Fail loudly and
+        // leave nothing behind instead - the caller can retry a throw, but
+        // nothing can recover an empty file that looks spooled.
+        $written = file_put_contents($tmp, $json);
+        if ($written === false || $written !== strlen($json)) {
+            @unlink($tmp);
+            Log::error('EmailSpoolerService: short/failed spool write, email not spooled', [
+                'id' => $id,
+                'to' => array_column($data['to'] ?? [], 'address'),
+                'expected_bytes' => strlen($json),
+                'written_bytes' => $written === false ? 'false' : $written,
+            ]);
+            throw new \RuntimeException('Failed to write spool payload for ' . $id);
+        }
+        if (!rename($tmp, $path)) {
+            @unlink($tmp);
+            Log::error('EmailSpoolerService: could not move spool file into pending', ['id' => $id]);
+            throw new \RuntimeException('Failed to place spool file for ' . $id);
+        }
 
         Log::info('Email spooled', [
             'id' => $id,
