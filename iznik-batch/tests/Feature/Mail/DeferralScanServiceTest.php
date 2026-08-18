@@ -257,6 +257,59 @@ class DeferralScanServiceTest extends TestCase
         $this->assertSame([], $result['suppressed']);
     }
 
+    public function test_a_still_full_mailbox_is_not_released_after_two_scans(): void
+    {
+        // The relay-sized release threshold (100) is meaningless for one
+        // mailbox, which holds single figures. Left as it was, a member
+        // whose mailbox was still bouncing us would be released on the
+        // second scan - about half an hour - defeating the whole tier.
+        $this->scan->apply($this->snapshotWithFullMailbox());
+        $this->scan->apply($this->snapshotWithFullMailbox());
+        $result = $this->scan->apply($this->snapshotWithFullMailbox());
+
+        $this->assertSame([], $result['released']);
+        $this->assertDatabaseHas('mail_suppressions', [
+            'scope' => 'address', 'value' => 'full@example.com', 'released_at' => null,
+        ]);
+    }
+
+    public function test_a_mailbox_is_released_once_it_stops_deferring(): void
+    {
+        $this->scan->apply($this->snapshotWithFullMailbox());
+
+        $empty = new RelayQueueSnapshot;
+        $empty->delivered['example.com'] = 500;
+
+        $this->assertSame([], $this->scan->apply($empty)['released'], 'one clear scan is not enough');
+
+        $result = $this->scan->apply($empty);
+        $this->assertCount(1, $result['released']);
+        $this->assertSame('full@example.com', $result['released'][0]['value']);
+    }
+
+    public function test_a_relapse_between_two_quiet_scans_breaks_the_streak(): void
+    {
+        // The band between release_max_deferred (100) and
+        // mxgroup_min_deferred (500) is the gap: a relapse into it trips
+        // neither the suppression refresh nor the release accumulation, so
+        // the counter used to sit frozen and the next quiet scan released a
+        // provider that had never been quiet twice running.
+        $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        $this->scan->apply($this->recovered());
+
+        $relapse = new RelayQueueSnapshot;
+        $relapse->groups['yahoodns.net'] = [
+            'count' => 300, 'oldest' => strtotime('-2 hours'),
+            'reason' => self::YAHOO_REASON, 'domains' => ['yahoo.co.uk' => 300],
+        ];
+        $relapse->delivered['yahoodns.net'] = 2;
+        $this->scan->apply($relapse);
+
+        $result = $this->scan->apply($this->recovered());
+
+        $this->assertSame([], $result['released'], 'the two clear scans have to be consecutive');
+    }
     // ===================================================================
     // Release
     // ===================================================================

@@ -190,6 +190,23 @@ point - so the backlog policy is per type:
 generate. That is what lets the catch-up say something true about the size of
 the gap, and it is what ModTools shows moderators.
 
+Release is evaluated per tier, because the two tiers are different scales. A
+relay family always has a tail of stragglers, so it clears when the backlog is
+back to a normal level and the provider is visibly taking our mail again. One
+mailbox holds single figures, so applying the relay-sized threshold to it would
+call a still-full mailbox clear on the very next scan; an address clears only
+when the queue holds nothing for it at all.
+
+Any scan that is not clear resets the counter, so the two clear scans have to
+be consecutive. Targets the same scan has just re-confirmed as deferring are
+kept out of the release pass entirely, since it reads a snapshot taken before
+those confirmations were written.
+
+One known gap: a domain served by two suppressed relay families gets a single
+child row, under whichever family claimed it first. Releasing that family
+releases the row even though the other is still blocking. The next scan
+re-creates it under the remaining family, so the exposure is one scan interval.
+
 ## Queue hygiene
 
 `mail:deferrals:scan --purge` deletes the queued backlog for a suppressed

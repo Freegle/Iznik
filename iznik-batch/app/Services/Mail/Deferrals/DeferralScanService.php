@@ -48,17 +48,24 @@ class DeferralScanService
 
         $active = $this->activeByKey();
 
+        // Ids this scan re-confirmed as still deferring. They are kept out
+        // of the release pass below, which reads $active - a snapshot taken
+        // before those confirmations were written. Without this the release
+        // pass evaluates state the same run has already superseded, and
+        // writes its own clear-scan count straight over the reset.
+        $reconfirmed = [];
+
         $suppressed = array_merge(
             $suppressed,
-            $this->applyMxGroups($snapshot, $active, $cfg, $dryRun)
+            $this->applyMxGroups($snapshot, $active, $cfg, $dryRun, $reconfirmed)
         );
 
         $suppressed = array_merge(
             $suppressed,
-            $this->applyAddresses($snapshot, $active, $cfg, $dryRun)
+            $this->applyAddresses($snapshot, $active, $cfg, $dryRun, $reconfirmed)
         );
 
-        $released = $this->applyReleases($snapshot, $active, $cfg, $dryRun);
+        $released = $this->applyReleases($snapshot, $active, $cfg, $dryRun, $reconfirmed);
 
         if (! $dryRun && ($suppressed !== [] || $released !== [])) {
             $this->suppressions->flushCache();
@@ -127,7 +134,7 @@ class DeferralScanService
      * @param  array<string, object>  $active
      * @return array<int, array<string, mixed>>
      */
-    private function applyMxGroups(RelayQueueSnapshot $snapshot, array $active, array $cfg, bool $dryRun): array
+    private function applyMxGroups(RelayQueueSnapshot $snapshot, array $active, array $cfg, bool $dryRun, array &$reconfirmed): array
     {
         $minDeferred = (int) ($cfg['mxgroup_min_deferred'] ?? 500);
         $maxDelivered = (int) ($cfg['mxgroup_max_delivered_per_hour'] ?? 10);
@@ -160,6 +167,8 @@ class DeferralScanService
             if ($existing !== null) {
                 // Already suppressed. Refresh the evidence and reset the
                 // clear-scan counter, because this scan is not clear.
+                $reconfirmed[(int) $existing->id] = true;
+
                 if (! $dryRun) {
                     $this->refresh($existing->id, $stats, clearScans: 0);
                     // An episode lasting days keeps turning up domains we
@@ -198,7 +207,7 @@ class DeferralScanService
      * @param  array<string, object>  $active
      * @return array<int, array<string, mixed>>
      */
-    private function applyAddresses(RelayQueueSnapshot $snapshot, array $active, array $cfg, bool $dryRun): array
+    private function applyAddresses(RelayQueueSnapshot $snapshot, array $active, array $cfg, bool $dryRun, array &$reconfirmed): array
     {
         $minDeferred = (int) ($cfg['address_min_deferred'] ?? 5);
         $minHours = (int) ($cfg['address_min_hours'] ?? 24);
@@ -225,6 +234,8 @@ class DeferralScanService
 
             $key = MailSuppressionService::SCOPE_ADDRESS."\0".$address;
             if (isset($active[$key])) {
+                $reconfirmed[(int) $active[$key]->id] = true;
+
                 if (! $dryRun) {
                     $this->refresh($active[$key]->id, $stats, clearScans: 0);
                 }
@@ -262,7 +273,7 @@ class DeferralScanService
      * @param  array<string, object>  $active
      * @return array<int, array<string, mixed>>
      */
-    private function applyReleases(RelayQueueSnapshot $snapshot, array $active, array $cfg, bool $dryRun): array
+    private function applyReleases(RelayQueueSnapshot $snapshot, array $active, array $cfg, bool $dryRun, array $reconfirmed = []): array
     {
         $releaseMax = (int) ($cfg['release_max_deferred'] ?? 100);
         $needClear = max(1, (int) ($cfg['release_clear_scans'] ?? 2));
@@ -279,17 +290,37 @@ class DeferralScanService
                 continue;
             }
 
+            // This scan already re-confirmed the target is still deferring
+            // and reset its clear-scan counter. $row is from before that,
+            // so anything decided from it here would be decided on state we
+            // have already superseded.
+            if (isset($reconfirmed[(int) $row->id])) {
+                continue;
+            }
+
             $stats = $scope === MailSuppressionService::SCOPE_MXGROUP
                 ? ($snapshot->groups[$value] ?? null)
                 : ($snapshot->addresses[$value] ?? null);
 
             $stillDeferred = $stats['count'] ?? 0;
 
-            $deliveriesResumed = $scope !== MailSuppressionService::SCOPE_MXGROUP
-                || ! $snapshot->hasDeliveryData()
-                || $snapshot->deliveriesFor($value) > 0;
+            if ($scope === MailSuppressionService::SCOPE_MXGROUP) {
+                // A relay family always has a tail of stragglers, so
+                // "clear" means the backlog has drained to a normal level
+                // AND the provider is visibly taking our mail again.
+                $deliveriesResumed = ! $snapshot->hasDeliveryData()
+                    || $snapshot->deliveriesFor($value) > 0;
 
-            $clear = $stillDeferred <= $releaseMax && $deliveriesResumed;
+                $clear = $stillDeferred <= $releaseMax && $deliveriesResumed;
+            } else {
+                // One mailbox is a different scale entirely. A member holds
+                // single figures of queued mail, so the relay-sized
+                // threshold would call a still-full mailbox clear on the
+                // very next scan and release it while it was still
+                // bouncing us. Here clear means exactly what it says: the
+                // queue holds nothing for this address any more.
+                $clear = $stillDeferred === 0;
+            }
 
             // Fail open. If the probe has been unable to confirm a
             // suppression for this long, we are more likely to be broken than
@@ -308,6 +339,19 @@ class DeferralScanService
                 && Carbon::parse($row->last_seen)->lt(now()->subHours($staleHours));
 
             if (! $clear && ! $stale) {
+                // Any scan that is not clear breaks the streak. Without
+                // this a suppression could accumulate its clear scans
+                // across a relapse - clear, blocked, clear - and release on
+                // a provider that never actually recovered for two scans in
+                // a row. The refresh in applyMxGroups only resets the
+                // counter when the group is still over its suppression
+                // threshold, which leaves the whole band in between.
+                if (! $dryRun && (int) $row->clear_scans !== 0) {
+                    DB::table('mail_suppressions')
+                        ->where('id', $row->id)
+                        ->update(['clear_scans' => 0]);
+                }
+
                 continue;
             }
 
