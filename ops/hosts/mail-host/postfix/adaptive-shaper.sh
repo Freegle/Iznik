@@ -23,6 +23,10 @@ set -eu
 
 MAILLOG=${MAILLOG:-/var/log/mail.log}
 MAP=${MAP:-/etc/postfix/shaped_destinations}
+# State lines are "domain shapedflag votes". If the format ever changes again,
+# seed it from the live map rather than letting a stale format read as
+# "everything unshaped" - that would drop every active suppression for a scan:
+#   cut -d' ' -f1 /etc/postfix/shaped_destinations | awk 'NF {print $1, 1, 0}' > STATE
 STATE=${STATE:-/var/lib/postfix-shaper/state}
 # Recent log tail to judge on. Must be GENEROUS, because a throttling provider
 # inflates its own weight: every retry writes a log line, so a domain deferring
@@ -55,6 +59,15 @@ MIN_SENT_RELEASE=${MIN_SENT_RELEASE:-20}
 # backlog drains at a rate the provider has shown it will accept, instead of
 # being fired at them all at once the moment they relent.
 MAX_DEFERRED_RELEASE=${MAX_DEFERRED_RELEASE:-100}
+
+# Consecutive scans a domain must agree before its state changes. Single-scan
+# decisions flap: gmail measured sent=34, then 20, then 5 across three
+# consecutive minutes on 2026-08-18 as full-mailbox retries batched up, and any
+# fixed threshold sitting in that spread toggles with whichever minute the
+# sample happens to cover. Shaping and releasing our largest healthy destination
+# every few minutes is worse than either state. The deferral scanner damps the
+# same way with release_clear_scans.
+AGREE_SCANS=${AGREE_SCANS:-2}
 
 # Concurrency/delay applied to shaped destinations, moved between these bounds
 # according to how bad things are. Never 0: that would stop delivery entirely.
@@ -178,16 +191,30 @@ prev=""
 # accepting mail should never stay throttled, whatever its deferral ratio looks
 # like: yahoo.co.uk delivered 0 of 5571 attempts, gmail delivered ~253 of 487.
 # That distinction is the whole decision.
-shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsent="$MIN_SENT_RELEASE" -v maxdefrelease="$MAX_DEFERRED_RELEASE" -v prev="$prev" '
-  BEGIN { n=split(prev, a, /[ \n]+/); for (i=1;i<=n;i++) if (a[i]!="") was[a[i]]=1 }
+shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsent="$MIN_SENT_RELEASE" -v agree="$AGREE_SCANS" -v prev="$prev" '
+  BEGIN {
+    # state lines are "domain shapedflag votes"
+    n=split(prev, L, /\n/)
+    for (i=1;i<=n;i++) { if (L[i]=="") continue; split(L[i], f, " "); was[f[1]]=f[2]+0; votes[f[1]]=f[3]+0 }
+  }
   {
     dom=$1; tot=$2; def=$3
     if (tot < minn) next
     sent = tot - def
     pct  = def * 100 / tot
-    if (sent >= minsent) next                      # delivering => never shape/keep shaped
-    if (was[dom]) { if (pct >= hi - 20) print dom } # stay shaped while still near-total
-    else          { if (pct >= hi) print dom }     # only shape when clearly bad
+    # What THIS scan thinks, before any damping. Delivering means healthy,
+    # whatever the ratio says - deliveries are the one signal shaping cannot
+    # inflate.
+    want = (sent >= minsent) ? 0 : ((was[dom] ? (pct >= hi - 20) : (pct >= hi)) ? 1 : 0)
+
+    # Only change state once `agree` consecutive scans want the same thing.
+    if (want == was[dom]) { v = 0 }
+    else                  { v = votes[dom] + 1 }
+
+    state = was[dom]
+    if (v >= agree) { state = want; v = 0 }
+
+    print dom, state, v
   }' | sort -u)
 
 # --- how hard to shape: worst offender drives the setting --------------------
@@ -218,19 +245,20 @@ fi
 [ "$conc" -gt "$CONC_MAX" ] && conc=$CONC_MAX
 [ "$conc" -lt "$CONC_MIN" ] && conc=$CONC_MIN
 
-n_shaped=$(echo "$shaped" | grep -c . || true)
+n_shaped=$(echo "$shaped" | awk '$2 == 1' | grep -c . || true)
 echo "shaper: sample=${all_total} attempts, ${sent_total} delivered, ${all_pct}% deferred, ${doms_total} domains, worst ${worst}%"
 echo "shaper: shaping ${n_shaped} domain(s) at concurrency=${conc} rate_delay=${delay}s"
 echo "$stats" | awk -v minn="$MIN_ATTEMPTS" '$2>=minn {printf "  %-28s %5d attempts %3d%% deferred\n", $1, $2, $3*100/$2}' | sort -k4 -rn | head -8
 
 if [ "$MODE" = "dry-run" ]; then
   echo "shaper: DRY RUN - no changes made. Would write:"
-  echo "$shaped" | sed 's/^/    /' | head -12
+  echo "$shaped" | awk '$2 == 1 {print "    " $1}' | head -12
+  echo "$shaped" | awk '$3 > 0 {printf "    (%s pending change, %s/%s scans agree)\n", $1, $3, "'"$AGREE_SCANS"'"}' | head -6
   exit 0
 fi
 
 # --- apply -------------------------------------------------------------------
-new=$(echo "$shaped" | awk 'NF {printf "%s shaped:\n", $1}')
+new=$(echo "$shaped" | awk '$2 == 1 {printf "%s shaped:\n", $1}')
 old=$(cat "$MAP" 2>/dev/null || true)
 changed=0
 [ "$new" != "$old" ] && changed=1
