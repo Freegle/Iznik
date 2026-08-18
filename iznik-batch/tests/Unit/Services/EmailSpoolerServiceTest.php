@@ -91,14 +91,22 @@ class EmailSpoolerServiceTest extends TestCase
     {
         // A 0-byte file in pending/ decodes to nothing and is dropped to failed/
         // with the mail gone - seven were lost that way on 2026-06-11. The UTF-8
-        // guard closed the json_encode door; this covers the other one, a short
-        // or failed write (full disk), which an unchecked rename would otherwise
-        // promote into a spool entry that looks real and is empty.
+        // guard closed the json_encode door; this covers the other one, a write
+        // that fails or falls short, which an unchecked rename would promote
+        // into a spool entry that looks real and is empty.
+        //
+        // Points pendingDir at a path that cannot exist rather than chmod'ing a
+        // real one: THE SUITE RUNS AS ROOT, and root ignores permission bits, so
+        // a chmod 0500 write simply succeeds and the test asserts nothing. (It
+        // did exactly that on CI 2026-08-18 - the code was right and the test
+        // was wrong.) A missing parent directory fails the write for every user.
         $email = $this->uniqueEmail('shortwrite');
 
-        // Make the pending dir unwritable so the temp write cannot land.
-        $pending = $this->testSpoolDir . '/pending';
-        chmod($pending, 0500);
+        $ref = new \ReflectionClass($this->spooler);
+        $prop = $ref->getProperty('pendingDir');
+        $prop->setAccessible(true);
+        $original = $prop->getValue($this->spooler);
+        $prop->setValue($this->spooler, $this->testSpoolDir . '/no/such/parent/pending');
 
         try {
             $threw = false;
@@ -109,12 +117,10 @@ class EmailSpoolerServiceTest extends TestCase
             }
             $this->assertTrue($threw, 'a write that cannot land must throw, not silently spool nothing');
 
-            $stubs = glob($pending . '/*.json') ?: [];
-            $this->assertCount(0, $stubs, 'must leave no empty spool file behind');
-            $tmps = glob($pending . '/*.tmp') ?: [];
-            $this->assertCount(0, $tmps, 'must not leave a temp file behind either');
+            $this->assertCount(0, glob($original . '/*.json') ?: [], 'must leave no empty spool file behind');
+            $this->assertCount(0, glob($original . '/*.tmp') ?: [], 'must not leave a temp file behind either');
         } finally {
-            chmod($pending, 0755);
+            $prop->setValue($this->spooler, $original);
         }
     }
 
