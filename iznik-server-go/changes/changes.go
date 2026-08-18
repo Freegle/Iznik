@@ -23,6 +23,16 @@ type UserChange struct {
 	Type        string  `json:"type"`
 }
 
+// MaxSinceLookback bounds how far back a partner may ask for changes.
+//
+// The queries below have no LIMIT: every matching row is materialised into a
+// Go slice and then into a JSON body. On 2026-08-17 a single call with a
+// `since` of 1947 made the UNION examine 17,870,331 rows over 130s, and the
+// OOM killer took both apiv2 and monit with it on that node. 90 days holds the
+// worst case to roughly 700k message rows - a few hundred MB, which the box
+// absorbs without noticing.
+const MaxSinceLookback = 90 * 24 * time.Hour
+
 const (
 	// UserChangeModified - the user's profile has changed; re-read it.
 	UserChangeModified = "Modified"
@@ -44,8 +54,11 @@ type Rating struct {
 	Reason     *string `json:"reason" gorm:"column:reason"`
 }
 
-// ChangesData contains the three collections of changes.
+// ChangesData contains the three collections of changes, plus the window they
+// were actually taken from - which is not necessarily the one that was asked
+// for, since `since` is clamped to MaxSinceLookback.
 type ChangesData struct {
+	Since    string          `json:"since"`
 	Messages []MessageChange `json:"messages"`
 	Users    []UserChange    `json:"users"`
 	Ratings  []Rating        `json:"ratings"`
@@ -61,10 +74,10 @@ type ChangesResponse struct {
 // GetChanges returns message changes, user changes, and optionally ratings since a given time.
 // Requires partner key authentication via the partner query parameter.
 // @Summary Get changes since a timestamp
-// @Description Returns message changes (deleted, edited, promised, reneged, outcomes, approved/reposted), user changes (type Modified for a profile to re-read, type Deleted for a user who has been forgotten or purged and should be removed), and ratings since a given time. Requires partner key authentication.
+// @Description Returns message changes (deleted, edited, promised, reneged, outcomes, approved/reposted), user changes (type Modified for a profile to re-read, type Deleted for a user who has been forgotten or purged and should be removed), and ratings since a given time. Requires partner key authentication. A since more than 90 days old is clamped to 90 days; changes.since reports the window actually used.
 // @Tags changes
 // @Produce json
-// @Param since query string false "ISO8601 or MySQL datetime timestamp (defaults to 1 hour ago)" example("2026-03-04T12:00:00Z")
+// @Param since query string false "ISO8601 or MySQL datetime timestamp (defaults to 1 hour ago, clamped to at most 90 days ago)" example("2026-03-04T12:00:00Z")
 // @Param partner query string true "Partner API key"
 // @Success 200 {object} ChangesResponse
 // @Failure 400 {object} fiber.Error "Invalid since parameter"
@@ -86,22 +99,9 @@ func GetChanges(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
 	}
 
-	// Parse since parameter - default to 1 hour ago.
-	sinceStr := c.Query("since", "")
-	var since time.Time
-
-	if sinceStr != "" {
-		parsed, err := time.Parse(time.RFC3339, sinceStr)
-		if err != nil {
-			// Try MySQL-style datetime format.
-			parsed, err = time.Parse("2006-01-02 15:04:05", sinceStr)
-			if err != nil {
-				return fiber.NewError(fiber.StatusBadRequest, "Invalid since parameter")
-			}
-		}
-		since = parsed
-	} else {
-		since = time.Now().Add(-1 * time.Hour)
+	since, err := resolveSince(c.Query("since", ""), time.Now())
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid since parameter")
 	}
 
 	mysqlTime := since.Format("2006-01-02 15:04:05")
@@ -197,11 +197,39 @@ func GetChanges(c *fiber.Ctx) error {
 		"ret":    0,
 		"status": "Success",
 		"changes": fiber.Map{
+			"since":    since.Format(time.RFC3339),
 			"messages": messages,
 			"users":    users,
 			"ratings":  ratings,
 		},
 	})
+}
+
+// resolveSince turns the partner-supplied since parameter into the timestamp we
+// actually query from: an hour ago when it is absent, and never further back
+// than MaxSinceLookback however far back they ask. A partner who asks for more
+// silently gets less than they wanted, which risks them treating the result as
+// complete - so the window we settle on is echoed back in the response.
+func resolveSince(sinceStr string, now time.Time) (time.Time, error) {
+	since := now.Add(-1 * time.Hour)
+
+	if sinceStr != "" {
+		parsed, err := time.Parse(time.RFC3339, sinceStr)
+		if err != nil {
+			// Try MySQL-style datetime format.
+			parsed, err = time.Parse("2006-01-02 15:04:05", sinceStr)
+			if err != nil {
+				return time.Time{}, err
+			}
+		}
+		since = parsed
+	}
+
+	if earliest := now.Add(-MaxSinceLookback); since.Before(earliest) {
+		since = earliest
+	}
+
+	return since, nil
 }
 
 // formatISO converts a MySQL datetime string to ISO8601 format.
