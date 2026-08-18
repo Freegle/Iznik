@@ -156,19 +156,18 @@ const groupname = computed(() => {
 // page while the badge nags them, with nothing on screen to say why
 // (Discourse 10037: two moderators reported it as "can't moderate on
 // desktop"; one worked around it by changing community and changing back).
-// Count what this queue actually holds, which is not the same as the composable's
-// `work`: workType here is pending+pendingother, but the listing also includes
-// Spam-collection messages (see message_list.go) and the menu badge counts those
-// too (layouts/default.vue passes count=['pending','spam']). Leaving spam out
-// would make the notice stay silent in exactly the case where the badge is
-// loudest about spam sitting on another community.
+// Count exactly what the red Pending badge counts (layouts/default.vue passes
+// count=['pending','spam']), which is also exactly what "All my communities"
+// will show. Deliberately NOT the composable's `work` (pending+pendingother):
+// pendingother covers posts on BACKUP communities, and the all-communities
+// listing only fans out over active ones by design
+// (user.GetActiveModGroupIDs). Counting those would promise work that the
+// button cannot surface. It also drops spam-only backlogs from `work`, which
+// the badge does count, so neither number on its own is the right one.
 const outstanding = computed(() => {
   const w = authStore.work
   if (!w) return 0
-  return ['pending', 'pendingother', 'spam'].reduce(
-    (total, type) => total + (w[type] || 0),
-    0
-  )
+  return ['pending', 'spam'].reduce((total, type) => total + (w[type] || 0), 0)
 })
 
 const filterHidingWork = computed(() => {
@@ -282,19 +281,6 @@ onMounted(async () => {
 
   // Note: Don't restore remembered group here - ModGroupSelect handles it
   // via its remember prop. Doing it here would override URL params.
-})
-
-// loadMore() calls $state.complete() when a fetch comes back empty, and
-// InfiniteLoading stops its retry loop for good once complete - only a change
-// to :identifier revives it. So one empty or failed fetch leaves the list dead
-// until the moderator touches the group dropdown (which bumps it via
-// watch(groupid) above). If the work count says there is something to show and
-// we are showing nothing, the loader is wrong: bump it so it tries again.
-// Guarded on an empty list so a healthy page does not refetch on every tick.
-watch(outstanding, (newVal) => {
-  if (newVal > 0 && !messages.value.length && !busy.value) {
-    bump.value++
-  }
 })
 
 // Methods

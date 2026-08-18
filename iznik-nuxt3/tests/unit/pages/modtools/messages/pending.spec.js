@@ -274,13 +274,36 @@ describe('PendingPage', () => {
         id: 522709,
         namedisplay: 'Skelmersdale Freegle',
       })
-      mockAuthStore.work = { pending: 0, pendingother: 0, spam: 2 }
+      mockAuthStore.work = { pending: 0, spam: 2 }
 
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
 
       expect(wrapper.text()).toContain('there are 2 waiting')
       expect(wrapper.text()).toContain('Show all my communities')
+    })
+
+    it('ignores backup-community work, which all-communities does not show', async () => {
+      // pendingother covers posts on backup communities, and the
+      // all-communities listing only fans out over active ones by design
+      // (user.GetActiveModGroupIDs). Offering "Show all my communities" for
+      // work it will not show would send the moderator nowhere.
+      mockMessages.value = []
+      mockBusy.value = false
+      mockModGroupStore.received = true
+      mockGroupid.value = 522709
+      mockGroup.value = { id: 522709, namedisplay: 'Skelmersdale Freegle' }
+      mockModGroupStore.get.mockReturnValue({
+        id: 522709,
+        namedisplay: 'Skelmersdale Freegle',
+      })
+      mockAuthStore.work = { pending: 0, spam: 0, pendingother: 4 }
+
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.text()).toContain('no messages at the moment')
+      expect(wrapper.text()).not.toContain('Show all my communities')
     })
 
     it('keeps the plain empty notice when nothing is pending anywhere', async () => {
@@ -467,64 +490,12 @@ describe('PendingPage', () => {
       })
     })
 
-    it('revives the infinite loader when work is outstanding but nothing is showing (Discourse 10037)', async () => {
-      // loadMore() calls $state.complete() on an empty response, and
-      // InfiniteLoading stops its retry loop for good once complete - only
-      // an :identifier change revives it. Without this, one empty or failed
-      // fetch leaves the list dead until the moderator touches the dropdown.
+    it('does not fire its own fetch on a work count change (Discourse 10037)', async () => {
+      // The work-count watcher inside useModMessages already refetches, with a
+      // limit covering the whole outstanding total, and reveals everything it
+      // gets. A second trigger here would just double every refresh - which is
+      // the duplicate-request problem this page is being fixed for.
       mockMessages.value = []
-      mockBusy.value = false
-      const wrapper = mountComponent()
-      await wrapper.vm.$nextTick()
-      const before = wrapper.vm.bump
-
-      mockAuthStore.work = { pending: 4 }
-      await wrapper.vm.$nextTick()
-
-      expect(wrapper.vm.bump).toBe(before + 1)
-    })
-
-    it('surfaces a failed fetch as a retryable error rather than a dead spinner', async () => {
-      // The server no longer answers a failed listing query with an empty
-      // 200 (message_list.go), so the frontend has to cope with the error.
-      // Left unhandled, the exception escapes loadMore(), InfiniteLoading
-      // stays in 'loading' for ever and busy stays true, which suppresses
-      // every notice - the moderator gets a permanent spinner.
-      mockMessages.value = []
-      mockShow.value = 0
-      mockMessageStore.fetchMessagesMT.mockRejectedValue(new Error('boom'))
-      const wrapper = mountComponent()
-      const mockState = { loaded: vi.fn(), complete: vi.fn() }
-
-      await wrapper.vm.loadMore(mockState)
-      await wrapper.vm.$nextTick()
-
-      expect(mockBusy.value).toBe(false)
-      expect(wrapper.text()).toContain('Try again')
-
-      const before = wrapper.vm.bump
-      await wrapper.vm.retryLoad()
-      expect(wrapper.vm.bump).toBe(before + 1)
-    })
-
-    it('does not treat an expired session as a load failure', async () => {
-      mockMessages.value = []
-      mockShow.value = 0
-      const err = new Error('Unauthorised')
-      err.response = { status: 401 }
-      mockMessageStore.fetchMessagesMT.mockRejectedValue(err)
-      const wrapper = mountComponent()
-      const mockState = { loaded: vi.fn(), complete: vi.fn() }
-
-      await wrapper.vm.loadMore(mockState)
-      await wrapper.vm.$nextTick()
-
-      expect(mockBusy.value).toBe(false)
-      expect(wrapper.text()).not.toContain('Try again')
-    })
-
-    it('does not refetch on a work count change while messages are showing', async () => {
-      mockMessages.value = [{ id: 1 }]
       mockBusy.value = false
       const wrapper = mountComponent()
       await wrapper.vm.$nextTick()
@@ -534,6 +505,7 @@ describe('PendingPage', () => {
       await wrapper.vm.$nextTick()
 
       expect(wrapper.vm.bump).toBe(before)
+      expect(mockMessageStore.fetchMessagesMT).not.toHaveBeenCalled()
     })
   })
 })
