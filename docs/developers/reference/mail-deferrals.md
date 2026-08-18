@@ -4,6 +4,8 @@ owner: Freegle dev team
 covers:
   - iznik-batch/app/Services/Mail/Deferrals/*.php
   - iznik-batch/app/Services/Mail/MailSuppressionService.php
+  - iznik-batch/app/Services/Mail/DeliveryHealthService.php
+  - iznik-batch/tests/Unit/Services/Mail/DeliveryHealthServiceTest.php
   - iznik-batch/app/Console/Commands/Mail/ScanDeferralsCommand.php
   - iznik-batch/app/Mail/Deferrals/UnreadChatCatchUpMail.php
   - iznik-batch/database/migrations/2026_08_18_000001_create_mail_suppressions_tables.php
@@ -102,6 +104,30 @@ what actually happened to our mail rather than what DNS says should have.
 Any new MX-group suppression raises a Sentry alert, as does a relay we cannot
 reach at all. The entire reason this ran for three days is that nothing
 shouted.
+
+### The other half: mail that is accepted and then binned
+
+Everything above catches a provider that *refuses* us. The refusal leaves the message in the
+relay's queue, where it can be counted.
+
+A provider can fail us the opposite way: accept every message and then quietly do nothing with
+it. That leaves no queue entry at all, so the scan cannot see it, and from our side everything
+looks perfect. On 2026-08-16 every Yahoo-run domain - `yahoo.co.uk`, `yahoo.com`, `aol.com`,
+`sky.com`, `ymail.com`, `rocketmail.com` - went from a steady 16-36% open rate to zero and
+stayed there, following a send five times the normal daily volume two days earlier. That is
+about 35,000 emails a day going nowhere, and nothing alerted.
+
+`DeliveryHealthService` watches for that shape by comparing each domain's open rate against its
+own recent history, once a day. It compares a domain against itself rather than against a fixed
+figure or against other domains, because open rates differ hugely and legitimately between
+providers - `icloud.com` opens at 56% where `gmail.com` opens at 23% on the same mail - so any
+absolute threshold would either miss real outages at the top or cry wolf at the bottom.
+Domains that never report opens drop out by themselves, because their baseline is already zero.
+
+The two are reported as separate alerts on purpose. "A provider has stopped taking our mail"
+and "we are short of capacity" are different problems for different people. When the scan
+suppresses a provider, expect the open-rate check to name the same domains a day or so later:
+that is the two agreeing, not a duplicate.
 
 ## How suppression works
 

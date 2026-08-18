@@ -14,6 +14,11 @@ use Illuminate\Support\Facades\Log;
  * is on the relay itself, in its queue and its maillog. This class is the
  * one-way window onto that.
  *
+ * This only sees a provider that REFUSES us - a 4xx in the SMTP conversation, which leaves the
+ * message sitting in the queue where we can count it. A provider that accepts everything and
+ * then bins it silently leaves no queue entry at all, and is invisible here;
+ * App\Services\Mail\DeliveryHealthService watches open rates for that shape instead.
+ *
  * It reuses App\Monitoring\HostCommandRunner - the same ssh-and-parse-stdout
  * shape the host health probes already use - rather than inventing a second
  * way to reach a production host. The runner is injected, so tests feed it

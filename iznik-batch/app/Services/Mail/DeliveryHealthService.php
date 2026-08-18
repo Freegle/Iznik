@@ -28,6 +28,13 @@ use Illuminate\Support\Facades\DB;
  * The recent window stops short of now. An email sent ten minutes ago has not had a fair chance
  * to be opened, and including it would make every run look like the start of an outage.
  *
+ * THE OTHER HALF. App\Services\Mail\Deferrals reads the relay's own queue and catches a
+ * provider that is REFUSING us outright, with a 4xx at the SMTP conversation. This catches the
+ * opposite shape: a provider that accepts everything and then quietly does nothing with it,
+ * which leaves no trace in any queue. Neither can see the other's failure, so both are needed.
+ * When the deferral scanner suppresses a provider, expect this to report the same domains a day
+ * or so later - that is the two agreeing, not a duplicate alert.
+ *
  * COST. One pass over email_tracking's sent_at range, which at the default windows is about 4.5
  * million rows on production, grouped down to a few thousand domains. That is fine once a day
  * and would not be fine any more often than that.

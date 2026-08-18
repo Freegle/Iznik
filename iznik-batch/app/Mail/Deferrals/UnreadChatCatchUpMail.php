@@ -5,6 +5,7 @@ namespace App\Mail\Deferrals;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -52,7 +53,7 @@ class UnreadChatCatchUpMail extends MjmlMailable
      */
     protected function unsubscribeType(): ?string
     {
-        return 'chat';
+        return UnsubscribeService::TYPE_CHAT;
     }
 
     protected function getRecipientUserId(): ?int
