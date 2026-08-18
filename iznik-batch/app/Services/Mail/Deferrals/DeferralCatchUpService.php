@@ -188,7 +188,7 @@ class DeferralCatchUpService
             ->where('chat_roster.userid', $userId)
             // Their own messages are not something to catch up on.
             ->where('chat_messages.userid', '!=', $userId)
-            ->whereNull('chat_messages.reviewrejected')
+            ->where('chat_messages.reviewrejected', 0)
             ->where(function ($q) {
                 $q->whereNull('chat_roster.lastmsgemailed')
                     ->orWhereColumn('chat_messages.id', '>', 'chat_roster.lastmsgemailed');
