@@ -205,13 +205,18 @@ shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsen
     # What THIS scan thinks, before any damping. Delivering means healthy,
     # whatever the ratio says - deliveries are the one signal shaping cannot
     # inflate.
-    want = (sent >= minsent) ? 0 : ((was[dom] ? (pct >= hi - 20) : (pct >= hi)) ? 1 : 0)
+    # +0 forces numeric: a domain absent from the state file yields an unset
+    # value, and comparing "" against a number in awk is ambiguous - it also
+    # printed a blank flag column, which only re-parsed correctly by luck of
+    # whitespace splitting.
+    prevstate = was[dom] + 0
+    want = (sent >= minsent) ? 0 : ((prevstate ? (pct >= hi - 20) : (pct >= hi)) ? 1 : 0)
 
     # Only change state once `agree` consecutive scans want the same thing.
-    if (want == was[dom]) { v = 0 }
-    else                  { v = votes[dom] + 1 }
+    if (want == prevstate) { v = 0 }
+    else                   { v = votes[dom] + 0 + 1 }
 
-    state = was[dom]
+    state = prevstate
     if (v >= agree) { state = want; v = 0 }
 
     print dom, state, v
