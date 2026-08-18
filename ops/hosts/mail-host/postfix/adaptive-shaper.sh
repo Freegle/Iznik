@@ -37,9 +37,19 @@ SAMPLE_LINES=${SAMPLE_LINES:-60000}
 # A domain is shaped above HIGH and released below LOW. The gap is hysteresis:
 # without it a domain sitting near the threshold flaps in and out of the map and
 # postfix gets reloaded every run.
-HIGH_PCT=${HIGH_PCT:-40}
-LOW_PCT=${LOW_PCT:-10}
+# 70, not 40. A throttling provider is unmistakable - the Yahoo family sits at
+# 99-100% deferred. A busy-but-healthy one is not: gmail measured ~39% deferred
+# on 2026-08-18 while simultaneously accounting for 133 of the last 300
+# SUCCESSFUL deliveries, more than any other domain. A 40% threshold shaped it,
+# throttling the largest healthy destination we have. Partial deferral is normal
+# for a big provider under load; near-total deferral is a throttle. 70 separates
+# them with margin.
+HIGH_PCT=${HIGH_PCT:-70}
+LOW_PCT=${LOW_PCT:-30}
 MIN_ATTEMPTS=${MIN_ATTEMPTS:-50}      # ignore domains too small to judge
+# Successful deliveries in the window above which a domain is never shaped, and
+# is released if it was. Immune to the retry-inflation feedback above.
+MIN_SENT_RELEASE=${MIN_SENT_RELEASE:-20}
 
 # Concurrency/delay applied to shaped destinations, moved between these bounds
 # according to how bad things are. Never 0: that would stop delivery entirely.
@@ -62,8 +72,16 @@ GLOBAL_BAIL_PCT=${GLOBAL_BAIL_PCT:-80}
 #   above RELAX  : loosen concurrency, keep the map
 #   above ABANDON: drop all shaping this run and say why - protecting everyone
 #                  else matters more than being polite to one provider
-ACTIVE_RELAX_PCT=${ACTIVE_RELAX_PCT:-35}
-ACTIVE_ABANDON_PCT=${ACTIVE_ABANDON_PCT:-60}
+# Loosened from 35/60 after watching it on 2026-08-18. Active-queue depth is
+# driven mostly by qmgr retrying the DEFERRED BACKLOG (93k messages, backoff
+# capped at maximal_backoff_time=4000s), not by our shaping - so 35% of cap is
+# ordinary postfix behaviour with a large backlog, and the interlock was firing
+# on it every run. Verified no harm at that depth: unshaped destinations
+# (hotmail, outlook, trashnothing) kept delivering throughout. The interlock is
+# a genuine safety net - when it did fire it drained active from 15887 to 778 -
+# so it stays, just at levels that mean something.
+ACTIVE_RELAX_PCT=${ACTIVE_RELAX_PCT:-50}
+ACTIVE_ABANDON_PCT=${ACTIVE_ABANDON_PCT:-75}
 
 MODE=dry-run
 [ "${1:-}" = "--apply" ] && MODE=apply
@@ -119,13 +137,24 @@ all_pct=$(( all_total > 0 ? all_def * 100 / all_total : 0 ))
 # and never shape the very domain causing it. Count domains instead, each one
 # equally, and only conclude "local" when nearly ALL of them are unhappy -
 # including the ones that would otherwise be delivering fine.
+# "Is the fault OURS?" reduces to one question: is ANYTHING getting through?
+#
+# Counting how many domains look bad does not survive contact with reality. The
+# ratio moves when the threshold moves and when healthy low-volume domains drop
+# below MIN_ATTEMPTS, so it reported 8/9 at one setting and tripped again at
+# another - twice making the shaper abstain at exactly the moment it was needed.
+# Volume was worse still: one provider at 46% of traffic dominated it outright.
+#
+# Deliveries are unambiguous. If mail is landing anywhere, our IP, DNS and disk
+# are fine and the problem belongs to specific providers - which is precisely
+# what this script exists to handle. Only when NOTHING is being accepted
+# anywhere is the fault plausibly ours, and then shaping is the wrong tool.
 doms_total=$(echo "$stats" | awk -v minn="$MIN_ATTEMPTS" '$2>=minn' | wc -l)
-doms_bad=$(echo "$stats" | awk -v minn="$MIN_ATTEMPTS" -v hi="$HIGH_PCT" '$2>=minn && ($3*100/$2)>=hi' | wc -l)
-doms_pct=$(( doms_total > 0 ? doms_bad * 100 / doms_total : 0 ))
+sent_total=$(( all_total - all_def ))
 
-if [ "$doms_total" -ge 3 ] && [ "$doms_pct" -ge "$GLOBAL_BAIL_PCT" ]; then
-  echo "shaper: ABSTAINING - ${doms_bad}/${doms_total} domains deferring (${doms_pct}% >= ${GLOBAL_BAIL_PCT}%)."
-  echo "shaper: nearly every destination unhappy means a LOCAL problem (IP block, DNS, disk),"
+if [ "$sent_total" -lt "$MIN_SENT_RELEASE" ]; then
+  echo "shaper: ABSTAINING - only ${sent_total} successful deliveries in the whole sample."
+  echo "shaper: nothing landing ANYWHERE means a LOCAL problem (IP block, DNS, disk),"
   echo "shaper: not per-provider throttling - shaping would slow mail that was never the issue."
   exit 0
 fi
@@ -134,13 +163,25 @@ fi
 prev=""
 [ -f "$STATE" ] && prev=$(cat "$STATE" 2>/dev/null || true)
 
-shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v lo="$LOW_PCT" -v minn="$MIN_ATTEMPTS" -v prev="$prev" '
+# RELEASE ON DELIVERIES, NOT ON THE DEFERRAL RATE. Shaping inflates a domain's
+# own deferral rate: shaped mail queues, gets retried, and every retry logs
+# another "deferred" line. Observed 2026-08-18 - gmail read 39% when it was
+# shaped and 48% once shaped, so a release rule comparing that rate to a
+# threshold can never fire. Once shaped, always shaped.
+#
+# Successful deliveries cannot be inflated that way. A domain that is actually
+# accepting mail should never stay throttled, whatever its deferral ratio looks
+# like: yahoo.co.uk delivered 0 of 5571 attempts, gmail delivered ~253 of 487.
+# That distinction is the whole decision.
+shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsent="$MIN_SENT_RELEASE" -v prev="$prev" '
   BEGIN { n=split(prev, a, /[ \n]+/); for (i=1;i<=n;i++) if (a[i]!="") was[a[i]]=1 }
   {
     dom=$1; tot=$2; def=$3
     if (tot < minn) next
-    pct = def * 100 / tot
-    if (was[dom]) { if (pct > lo) print dom }      # stay shaped until clearly better
+    sent = tot - def
+    pct  = def * 100 / tot
+    if (sent >= minsent) next                      # delivering => never shape/keep shaped
+    if (was[dom]) { if (pct >= hi - 20) print dom } # stay shaped while still near-total
     else          { if (pct >= hi) print dom }     # only shape when clearly bad
   }' | sort -u)
 
@@ -173,7 +214,7 @@ fi
 [ "$conc" -lt "$CONC_MIN" ] && conc=$CONC_MIN
 
 n_shaped=$(echo "$shaped" | grep -c . || true)
-echo "shaper: sample=${all_total} deliveries, ${all_pct}% deferred by volume, ${doms_bad}/${doms_total} domains bad, worst ${worst}%"
+echo "shaper: sample=${all_total} attempts, ${sent_total} delivered, ${all_pct}% deferred, ${doms_total} domains, worst ${worst}%"
 echo "shaper: shaping ${n_shaped} domain(s) at concurrency=${conc} rate_delay=${delay}s"
 echo "$stats" | awk -v minn="$MIN_ATTEMPTS" '$2>=minn {printf "  %-28s %5d attempts %3d%% deferred\n", $1, $2, $3*100/$2}' | sort -k4 -rn | head -8
 
