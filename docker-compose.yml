@@ -1699,6 +1699,10 @@ services:
       # /etc/monitoring-ssh-key. Defaults to /dev/null (dev/CI: checks are
       # disabled anyway when FREEGLE_MONITORING_HOSTS is empty).
       - ${MONITORING_SSH_KEY_HOST_PATH:-/dev/null}:/etc/monitoring-ssh-key:ro
+      # Read-only probe key for mail:deferrals:scan. Separate from the
+      # monitoring key above on purpose: that one is a root shell across the
+      # estate, this one only reads the outbound relay's mail queue.
+      - ${MAIL_DEFERRALS_SSH_KEY_HOST_PATH:-/dev/null}:/etc/mail-deferrals-ssh-key:ro
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
       # Read replica for the DB read/write split. Falls back to the write host

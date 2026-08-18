@@ -381,10 +381,11 @@ func TestDeleteMembershipsModRemovesMember(t *testing.T) {
 // the row is written at all.
 //
 // AssertFlip protocol (fix already in master via 0d342ced6):
-//   Step 1 — Assert CORRECT behaviour (passes on fixed master):
-//     Group/Left log exists AND byuser is non-nil AND byuser equals the acting user.
-//   Step 2 — Invert (would fail on fixed master, proves assertion is meaningful):
-//     assert byuser IS nil — fails because fix sets it.
+//
+//	Step 1 — Assert CORRECT behaviour (passes on fixed master):
+//	  Group/Left log exists AND byuser is non-nil AND byuser equals the acting user.
+//	Step 2 — Invert (would fail on fixed master, proves assertion is meaningful):
+//	  assert byuser IS nil — fails because fix sets it.
 //
 // Self-leave: byuser must equal the leaving user's own ID.
 // Mod-removes: byuser must equal the moderator's ID (not the removed member's).
@@ -4347,4 +4348,124 @@ func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
 	var systemrole string
 	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
 	assert.Equal(t, "User", systemrole, "leaving the only mod group must demote systemrole to User")
+}
+
+// TestGetMembershipsMailDelayed covers the deferral-aware suppression fields.
+//
+// These exist because "email delayed" and "bouncing" mean different things and
+// moderators act on them differently: bouncing means the member's address is
+// bad, whereas delayed means a provider has stopped accepting mail from OUR
+// servers and there is nothing anyone can do but wait.
+func TestGetMembershipsMailDelayed(t *testing.T) {
+	prefix := uniquePrefix("mf_delay")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	delayedID := CreateTestUser(t, prefix+"_delayed", "User")
+	CreateTestMembership(t, delayedID, groupID, "Member")
+
+	normalID := CreateTestUser(t, prefix+"_normal", "User")
+	CreateTestMembership(t, normalID, groupID, "Member")
+
+	var suppressionID uint64
+	db.Exec("INSERT INTO mail_suppressions (scope, value, provider, reason, deferred_since, first_seen, last_seen) "+
+		"VALUES ('domain', ?, 'Yahoo', '421 4.7.0 [TSS04] temporarily deferred', ?, NOW(), NOW())",
+		prefix+".example", "2026-08-15 16:38:00")
+	db.Raw("SELECT id FROM mail_suppressions WHERE value = ?", prefix+".example").Scan(&suppressionID)
+
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, count, firstat, lastat) "+
+		"VALUES (?, 'digest_immediate', ?, 7, ?, NOW())",
+		delayedID, suppressionID, "2026-08-15 16:38:00")
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, count, firstat, lastat) "+
+		"VALUES (?, 'chat', ?, 2, ?, NOW())",
+		delayedID, suppressionID, "2026-08-16 09:00:00")
+
+	defer func() {
+		db.Exec("DELETE FROM mail_suppressed_counts WHERE userid IN (?, ?)", delayedID, normalID)
+		db.Exec("DELETE FROM mail_suppressions WHERE value = ?", prefix+".example")
+	}()
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	membersRaw, ok := result["members"]
+	assert.True(t, ok, "response should include members")
+	members := membersRaw.([]interface{})
+
+	var sawDelayed, sawNormal bool
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
+		uid := uint64(m["userid"].(float64))
+
+		if uid == delayedID {
+			sawDelayed = true
+			assert.NotNil(t, m["maildelayedsince"], "delayed member should carry a since date")
+			assert.Contains(t, m["maildelayedsince"], "2026-08-15",
+				"since must be when we first held mail, not when we noticed")
+			assert.Equal(t, "Yahoo", m["maildelayedprovider"],
+				"moderators should read the provider's name, not a piece of DNS")
+			// 7 digests plus 2 chat notifications, summed across types.
+			assert.Equal(t, float64(9), m["maildelayedcount"])
+			// Delayed is NOT bouncing - their address is fine.
+			assert.Equal(t, false, m["bouncing"])
+		}
+
+		if uid == normalID {
+			sawNormal = true
+			assert.Nil(t, m["maildelayedsince"], "an unaffected member must not look delayed")
+			assert.Nil(t, m["maildelayedcount"])
+		}
+	}
+
+	assert.True(t, sawDelayed, "the delayed member should be in the list")
+	assert.True(t, sawNormal, "the unaffected member should be in the list")
+}
+
+// TestGetMembershipsMailDelayedClearedOnCatchUp proves the notice goes away
+// once the catch-up has been sent, rather than sticking around for ever the
+// way the legacy bouncing flag did.
+func TestGetMembershipsMailDelayedClearedOnCatchUp(t *testing.T) {
+	prefix := uniquePrefix("mf_dlyclr")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_m", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, count, firstat, lastat, caughtup_at) "+
+		"VALUES (?, 'chat', 3, NOW(), NOW(), NOW())", memberID)
+
+	defer db.Exec("DELETE FROM mail_suppressed_counts WHERE userid = ?", memberID)
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	for _, raw := range result["members"].([]interface{}) {
+		m := raw.(map[string]interface{})
+		if uint64(m["userid"].(float64)) == memberID {
+			assert.Nil(t, m["maildelayedsince"], "a caught-up member is no longer delayed")
+			return
+		}
+	}
+
+	t.Fatal("member not found in list")
 }

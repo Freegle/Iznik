@@ -86,6 +86,12 @@
           {{ user.locationchanges }} times in the last 90 days.
         </NoticeMessage>
         <ModBouncing v-if="user.bouncing" :userid="member.userid" />
+        <ModMailDelayed
+          v-if="member.maildelayedsince"
+          :since="member.maildelayedsince"
+          :provider="member.maildelayedprovider"
+          :count="member.maildelayedcount || 0"
+        />
         <NoticeMessage v-if="member.bandate">
           Banned
           <span :title="datetime(member.bandate)">{{

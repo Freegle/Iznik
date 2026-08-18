@@ -60,6 +60,19 @@ class BounceService
         'found on industry URI blacklists',
         'This message has been blocked',
         'is listed',
+        // A provider deferring us is a statement about our sending
+        // reputation, not about the member's address, so it must never count
+        // toward suspension. Postfix keeps deferring for maximal_queue_lifetime
+        // and only then mails one DSN per message carrying the original 4xx
+        // text - so a single episode can hand one member a week's worth of
+        // "bounces" for a mailbox that is perfectly fine.
+        // 2026-08-15: Yahoo 421-ed everything from the relay's IP with
+        // "[TSS04] ... temporarily deferred due to unexpected volume or user
+        // complaints"; members held about 9 queued messages each, well past
+        // SOFT_BOUNCE_THRESHOLD.
+        'temporarily deferred',
+        '[TSS04]',
+        'delivery time expired',
     ];
 
     /**

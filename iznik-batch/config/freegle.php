@@ -176,6 +176,68 @@ return [
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
         'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
+
+        // Deferral-aware suppression (mail:deferrals:scan).
+        //
+        // Our relay 250-accepts a message and only later finds the receiving
+        // provider will not take it, so nothing in the sending path can see a
+        // deferral. This block configures the probe that reads the relay's
+        // own queue and the thresholds that decide when to stop generating.
+        'deferrals' => [
+            // Master switch. Off means the command no-ops and is not even
+            // scheduled, matching how ripple/firstreply are gated.
+            'enabled' => (bool) env('FREEGLE_MAIL_DEFERRALS_ENABLED', false),
+
+            // ssh target for the outbound relay, e.g. "deferrals@10.0.0.1".
+            // As with FREEGLE_MONITORING_HOSTS the estate's topology lives
+            // ONLY in the environment (.env.background on the batch host),
+            // never in committed code. Empty = disabled (dev/CI).
+            'host' => env('FREEGLE_MAIL_DEFERRALS_HOST', ''),
+
+            // Private key path INSIDE the container, bind-mounted from
+            // MAIL_DEFERRALS_SSH_KEY_HOST_PATH. Deliberately its own key
+            // rather than the monitoring one: that key is a root shell across
+            // the whole estate, whereas this only ever needs to read a queue.
+            // Ops restricts it with a forced command in authorized_keys.
+            'ssh_key' => env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key'),
+
+            // Longer than the monitoring probe's 30s: during an incident the
+            // queue listing is the bulk of the payload, and a timeout here
+            // means flying blind for another cycle.
+            'ssh_timeout_seconds' => (int) env('FREEGLE_MAIL_DEFERRALS_SSH_TIMEOUT', 120),
+
+            // Cap on the queue listing we will pull back, so a runaway queue
+            // cannot exhaust PHP's memory. Truncation is reported and only
+            // ever understates the counts, which is safe against thresholds
+            // that are themselves lower bounds.
+            'max_queue_bytes' => (int) env('FREEGLE_MAIL_DEFERRALS_MAX_QUEUE_BYTES', 64 * 1024 * 1024),
+
+            // MX-group tier. Suppress a relay family once this many of its
+            // messages are deferred AND deliveries to it have all but
+            // stopped. During the 2026-08-15 Yahoo incident the ratio was
+            // about one delivery an hour against tens of thousands of
+            // deferral events, so this is not a close call in practice.
+            'mxgroup_min_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MIN', 500),
+            'mxgroup_max_delivered_per_hour' => (int) env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MAX_DELIVERED', 10),
+
+            // Per-address tier. Catches "452 4.2.2 ... over quota", which is
+            // one person's mailbox rather than our reputation, so it wants a
+            // slower and more forgiving trigger.
+            'address_min_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_ADDRESS_MIN', 5),
+            'address_min_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_ADDRESS_HOURS', 24),
+
+            // Release. Deliveries must have resumed and the deferred count
+            // must have fallen below this for two consecutive scans, so a
+            // single quiet scan inside a backoff window cannot reopen the
+            // floodgates.
+            'release_max_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_RELEASE_MAX', 100),
+            'release_clear_scans' => (int) env('FREEGLE_MAIL_DEFERRALS_RELEASE_SCANS', 2),
+
+            // How long a suppression may stand without the scan confirming it
+            // still applies. If the probe breaks we must fail open rather
+            // than silently stop mailing a provider for ever.
+            'stale_after_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
+        ],
     ],
 
     'mod_welfare' => [

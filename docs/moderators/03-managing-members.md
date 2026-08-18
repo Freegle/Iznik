@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-09
+last_reviewed: 2026-08-18
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/members/**
@@ -32,6 +32,28 @@ From here you can:
   survives).
 - **Export** the members list.
 - Change a member's **role** (Member, Moderator, Owner).
+
+## "Email delayed" is not the same as "bouncing"
+
+You may see a blue notice on a member saying **Email delayed since <date> - <provider> is
+not currently accepting our mail**.
+
+This is not a problem with that member's email address, and it is nothing they or you can
+fix. It means the company that runs their email - Yahoo, Microsoft, whoever - has
+temporarily stopped accepting mail from Freegle's sending servers. It affects everyone at
+that provider at once, so if you see it on one member you will usually see it on many.
+
+While that is going on we deliberately stop generating their emails rather than pile up
+mail that cannot be delivered, and the notice tells you roughly how many we have held
+back. When the provider starts accepting us again, they get a catch-up digest and a
+summary of any unread chats. Stale post notifications are not resent, because by then the
+item has usually gone.
+
+So: nothing to do. Do not chase the member, and do not remove them.
+
+Contrast this with the red **bouncing** notice, which really does mean their address is
+rejecting mail - a closed account, a typo, a full mailbox - and where reactivating after
+they have fixed it is the right move.
 
 ## Member review
 

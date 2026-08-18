@@ -85,6 +85,15 @@
                 :key="'incomingemail-' + incomingEmailBump"
               />
             </b-tab>
+            <b-tab @click="onDeferralsTab">
+              <template #title>
+                <span class="subtab-label">Delayed</span>
+              </template>
+              <ModSupportMailDeferrals
+                v-if="showDeferrals"
+                :key="'deferrals-' + deferralsBump"
+              />
+            </b-tab>
           </b-tabs>
         </b-tab>
 
@@ -180,6 +189,8 @@ const showDigestClicks = ref(false)
 const digestClicksBump = ref(0)
 const showIncomingEmail = ref(false)
 const incomingEmailBump = ref(0)
+const showDeferrals = ref(false)
+const deferralsBump = ref(0)
 const showRippling = ref(false)
 const ripplingBump = ref(0)
 const showRecommendations = ref(false)
@@ -196,6 +207,8 @@ const topTabMap = {
   mail: 2,
   outgoing: 2,
   incoming: 2,
+  delayed: 2,
+  deferrals: 2,
   behaviour: 3,
   digest: 3,
   scrolling: 3,
@@ -224,10 +237,16 @@ function onIncomingEmailTab() {
   incomingEmailBump.value = Date.now()
 }
 
+function onDeferralsTab() {
+  showDeferrals.value = true
+  deferralsBump.value = Date.now()
+}
+
 // Opening the Mail tab shows whichever email sub-tab is active (Outgoing by
 // default), so the first render isn't blank before a sub-tab is clicked.
 function onMailTab() {
   if (mailSubTab.value === 1) onIncomingEmailTab()
+  else if (mailSubTab.value === 2) onDeferralsTab()
   else onEmailStatsTab()
 }
 
@@ -272,6 +291,9 @@ onMounted(() => {
     } else if (tab === 'incoming') {
       mailSubTab.value = 1
       onIncomingEmailTab()
+    } else if (tab === 'delayed' || tab === 'deferrals') {
+      mailSubTab.value = 2
+      onDeferralsTab()
     } else if (tab === 'behaviour' || tab === 'digest' || tab === 'scrolling') {
       behaviourSubTab.value = 0
       onDigestClicksTab()

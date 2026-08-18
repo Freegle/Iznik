@@ -635,33 +635,83 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 }
 
 // "Still lagging" alert — one hour after the 07:00-12:00 daily window closes, check whether the
-// morning run kept up. Counts recently-active daily recipients (sent within the last 7 days, so
-// this excludes the permanently-inactive who never get a digest and the never-sent) who did NOT
-// get today's digest. In steady state the morning window clears them and this is ~0; a large
-// count means we're under capacity and the lag is rotating (see streamDailyOverdueFirst) — the
+// morning run kept up. Counts daily recipients who did NOT get today's digest. In steady state
+// the morning window clears them and this is ~0; a large count means we're under capacity — the
 // signal to add throughput/hardware. Logged at error level so it reaches Sentry; fires daily
 // until capacity catches up, which is the intended KPI, not noise.
+//
+// This used to count only people whose last digest was within seven days, to leave out the
+// permanently-inactive and the never-sent. That also left out anyone who had fallen more than a
+// week behind, which is the group the alert most needs to report: measured on production
+// 2026-08-17, 2,003 members who are still using the site, are not bouncing, and still have a
+// community set to a daily digest had not had one for over a week, and 384 of them had not had
+// one for over a month. None of them appeared in this number. The claim that the lag rotates
+// fairly and nobody is permanently starved was not true, and this was the reason nobody could
+// see that.
+//
+// So the seven-day window is gone, and dormancy is excluded by asking whether the member has
+// used the site rather than by how long ago we last managed to mail them. Never-sent recipients
+// still have no row here, so they are still out of scope.
+//
+// The same slot also asks whether the mail we sent actually arrived, per receiving domain. That
+// is not the same question and the lag figures cannot answer it. On 2026-08-16 every Yahoo-run
+// domain - yahoo.co.uk, yahoo.com, aol.com, sky.com, ymail.com, rocketmail.com - went from a
+// steady 16-36% open rate to zero and stayed there, following a send five times the normal daily
+// volume on 14 August. That is roughly 35,000 emails a day going nowhere. Nothing alerted,
+// because from our side every one of them was handed to the smarthost and accepted. Run against
+// production on 18 August the check below flags those six domains and nothing else. See
+// DeliveryHealthService.
 Schedule::call(function () {
     $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC')->toDateTimeString();
-    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(7)->setTimezone('UTC')->toDateTimeString();
+    $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(30)->setTimezone('UTC')->toDateTimeString();
 
-    $lagging = \Illuminate\Support\Facades\DB::table('users_digests')
-        ->where('mode', 'daily')
-        ->where('lastsent', '>=', $activeSinceUtc)
-        ->where('lastsent', '<', $londonDayStartUtc)
+    $laggingQuery = \Illuminate\Support\Facades\DB::table('users_digests')
+        ->join('users', 'users.id', '=', 'users_digests.userid')
+        ->where('users_digests.mode', 'daily')
+        ->where('users_digests.lastsent', '<', $londonDayStartUtc)
+        ->whereNull('users.deleted')
+        ->where('users.lastaccess', '>=', $activeSinceUtc);
+
+    $lagging = (clone $laggingQuery)->count();
+
+    // How much of that is more than a week old. The old measure could not see any of this, so
+    // report it separately: a rising figure here means the backlog is not rotating but settling
+    // on the same people.
+    $overAWeek = (clone $laggingQuery)
+        ->where('users_digests.lastsent', '<', \Carbon\Carbon::parse($londonDayStartUtc)->subDays(7)->toDateTimeString())
         ->count();
 
     $threshold = (int) env('FREEGLE_DIGEST_DAILY_LAG_ALERT_THRESHOLD', 5000);
     if ($lagging > $threshold) {
         \Illuminate\Support\Facades\Log::error('Daily digest still lagging after the 07:00-12:00 window', [
             'lagging_active_recipients' => $lagging,
+            'of_which_over_a_week_behind' => $overAWeek,
             'threshold' => $threshold,
             'checked_at' => 'London 13:00',
         ]);
     } else {
         \Illuminate\Support\Facades\Log::info('Daily digest kept up with the morning window', [
             'lagging_active_recipients' => $lagging,
+            'of_which_over_a_week_behind' => $overAWeek,
         ]);
+    }
+
+    // Whether the mail we did send actually arrived is a separate question, and the figures
+    // above cannot answer it: they say we sent, not that anybody received. A provider that
+    // starts binning our mail leaves the lag looking perfectly healthy. Reported as its own
+    // log line rather than folded into the one above, so the two problems stay two Sentry
+    // issues - "we are short of capacity" and "a provider has stopped taking our mail" have
+    // nothing to do with each other and want different people.
+    $collapsed = app(\App\Services\Mail\DeliveryHealthService::class)->collapsedDomains();
+
+    if ($collapsed) {
+        \Illuminate\Support\Facades\Log::error('Email delivery has collapsed at one or more domains', [
+            'domains' => $collapsed,
+            'affected_recipients' => array_sum(array_column($collapsed, 'recent_sent')),
+            'checked_at' => 'London 13:00',
+        ]);
+    } else {
+        \Illuminate\Support\Facades\Log::info('Email delivery looks normal across domains');
     }
 })
     ->name('mail:digest:daily-lag-check')
@@ -823,6 +873,28 @@ Schedule::command('queue:background-tasks --max-iterations=60 --spool')
     ->everyMinute()
     ->appendOutputTo(cronLog('queue:background-tasks'))
     ->runInBackground();
+
+// Deferral-aware mail suppression.
+//
+// Our relay 250-accepts mail and only afterwards finds out that the receiving
+// provider will not take it, so nothing in the sending path can see a
+// deferral. This reads the relay's own queue, suppresses generation for
+// providers that have stopped accepting us, releases when they recover, and
+// alerts on the way in. Gated on config so it is not even scheduled where the
+// relay is unreachable (dev, CI), matching how ripple/firstreply are gated.
+//
+// Fifteen minutes is chosen against the incident it exists for: the queue was
+// growing by about 1,300 an hour, so this bounds what we can generate into a
+// blocked provider at roughly 300 messages. Deliberately no ->sentryMonitor():
+// it uses withoutOverlapping(), and Sentry derives its expected cadence from
+// the raw cron expression, so a blocked run would page as a missed check-in.
+if (config('freegle.mail.deferrals.enabled')) {
+    Schedule::command('mail:deferrals:scan')
+        ->everyFifteenMinutes()
+        ->withoutOverlapping(30)
+        ->sendOutputTo(cronLog('mail:deferrals:scan'))
+        ->runInBackground();
+}
 
 // Clean up old sent emails - run daily.
 Schedule::command('mail:spool:process --cleanup --cleanup-days=7')
