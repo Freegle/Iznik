@@ -3057,6 +3057,17 @@ jobs:
             # by 10.3%" having changed nothing.
             #
             # Each upload below sets its own id from the flag name instead.
+            #
+            # It must also set COVERALLS_SERVICE_JOB_NUMBER. node-coveralls takes
+            # service_job_number from CIRCLE_BUILD_NUM (getOptions.js:58) unless
+            # that env var overrides it (line 153), so with only the job_id made
+            # distinct all four uploads still posted an identical
+            # service_job_number. Dumping a real payload with `coveralls
+            # --stdout` under this exact environment showed parallel:true,
+            # service_number and flag_name all correct and only that field
+            # colliding, which is the remaining way four uploads could still be
+            # read as one job. Distinct job ids alone did NOT restore
+            # carryforward (1.1.380, build 32411, still "jobs":0).
             echo "export COV_UPLOADS=0" >> $BASH_ENV
 
             # Retry helper for every Coveralls upload below.
@@ -3099,7 +3110,7 @@ jobs:
             docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 sh -c 'cd /app && go install github.com/jandelgado/gcov2lcov@latest 2>/dev/null && ~/go/bin/gcov2lcov -infile=coverage.out -outfile=coverage.lcov' 2>&1 || { echo "⚠️ Convert failed"; exit 0; }
             docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv2:/app/coverage.lcov "$GO_DIR/coverage.lcov" 2>/dev/null
             sed -i 's|^SF:/app/|SF:iznik-server-go/|' "$GO_DIR/coverage.lcov"
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-go"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-go" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-go"
             cov_upload "$GO_DIR/coverage.lcov" && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
             cp "$GO_DIR/coverage.lcov" /tmp/patch-go.lcov 2>/dev/null || true
             rm -f "$GO_DIR/coverage.out" "$GO_DIR/coverage.lcov"
@@ -3123,7 +3134,7 @@ jobs:
             " /tmp/lc.xml > /tmp/lc.lcov 2>&1
             [ -s /tmp/lc.lcov ] || { echo "⚠️ Conversion failed"; exit 0; }
             echo "✅ Converted ($(wc -l < /tmp/lc.lcov) lines)"
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-laravel"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-laravel" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-laravel"
             cov_upload /tmp/lc.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
@@ -3139,7 +3150,7 @@ jobs:
             [ -z "$VL" ] && echo "⚠️ Not found" && exit 0
             echo "✅ Found at $VL"
             sed 's|^SF:|SF:iznik-nuxt3/|' "$VL" > /tmp/vl.lcov
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-vitest"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-vitest" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-vitest"
             cov_upload /tmp/vl.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
@@ -3153,7 +3164,7 @@ jobs:
             [ -z "$PL" ] && docker cp ${COMPOSE_PROJECT_NAME:-freegle}-playwright:/app/coverage/lcov.info /tmp/pl.lcov 2>/dev/null && PL="/tmp/pl.lcov" && echo "✅ Found"
             [ -z "$PL" ] && echo "⚠️ Not found" && exit 0
             sed 's|^SF:|SF:iznik-nuxt3/|' "$PL" > /tmp/pl-fixed.lcov
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-playwright"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-playwright" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-playwright"
             cov_upload /tmp/pl-fixed.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
