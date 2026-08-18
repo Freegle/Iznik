@@ -652,6 +652,15 @@ foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
 // So the seven-day window is gone, and dormancy is excluded by asking whether the member has
 // used the site rather than by how long ago we last managed to mail them. Never-sent recipients
 // still have no row here, so they are still out of scope.
+//
+// The same slot also asks whether the mail we sent actually arrived, per receiving domain. That
+// is not the same question and the lag figures cannot answer it. On 2026-08-16 every Yahoo-run
+// domain - yahoo.co.uk, yahoo.com, aol.com, sky.com, ymail.com, rocketmail.com - went from a
+// steady 16-36% open rate to zero and stayed there, following a send five times the normal daily
+// volume on 14 August. That is roughly 35,000 emails a day going nowhere. Nothing alerted,
+// because from our side every one of them was handed to the smarthost and accepted. Run against
+// production on 18 August the check below flags those six domains and nothing else. See
+// DeliveryHealthService.
 Schedule::call(function () {
     $londonDayStartUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->setTimezone('UTC')->toDateTimeString();
     $activeSinceUtc = \Carbon\Carbon::now('Europe/London')->startOfDay()->subDays(30)->setTimezone('UTC')->toDateTimeString();
@@ -685,6 +694,24 @@ Schedule::call(function () {
             'lagging_active_recipients' => $lagging,
             'of_which_over_a_week_behind' => $overAWeek,
         ]);
+    }
+
+    // Whether the mail we did send actually arrived is a separate question, and the figures
+    // above cannot answer it: they say we sent, not that anybody received. A provider that
+    // starts binning our mail leaves the lag looking perfectly healthy. Reported as its own
+    // log line rather than folded into the one above, so the two problems stay two Sentry
+    // issues - "we are short of capacity" and "a provider has stopped taking our mail" have
+    // nothing to do with each other and want different people.
+    $collapsed = app(\App\Services\Mail\DeliveryHealthService::class)->collapsedDomains();
+
+    if ($collapsed) {
+        \Illuminate\Support\Facades\Log::error('Email delivery has collapsed at one or more domains', [
+            'domains' => $collapsed,
+            'affected_recipients' => array_sum(array_column($collapsed, 'recent_sent')),
+            'checked_at' => 'London 13:00',
+        ]);
+    } else {
+        \Illuminate\Support\Facades\Log::info('Email delivery looks normal across domains');
     }
 })
     ->name('mail:digest:daily-lag-check')
