@@ -1586,7 +1586,14 @@ func GetSession(c *fiber.Ctx) error {
 				emailin, emailout = FetchEmailHealth(db, time.Now().Hour())
 			}()
 
-			// --- Providers currently refusing our mail (admin/support) ---
+			// --- Providers currently refusing our mail (ADMIN only) ---
+			// ADMIN only, like every other badge on that page - the whole
+			// block is SYSTEMROLE_ADMIN, so a support user gets no
+			// maildeferrals key and therefore no badge, exactly as they get
+			// none for housekeeping or cronjobs. Deliberate, not an oversight:
+			// support can open the Delayed tab (the endpoint is
+			// IsAdminOrSupport) but is not badged towards it. The neighbouring
+			// comments saying "admin/support" are wrong about the gate.
 			// Counted by DOMAIN, and per-mailbox reasons excluded, so the badge
 			// matches what the Delayed table shows. A full inbox is not an
 			// outage and must not light this up.
