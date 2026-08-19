@@ -217,9 +217,12 @@ class DeferralProbeTest extends TestCase
         // The ids come from the relay's own listing, but they end up in a
         // shell command on a production host.
         $sent = [];
-        $probe = new DeferralProbe($this->runner('ok', function ($target, $script) use (&$sent) {
-            $sent[] = $script;
-        }));
+        $probe = new DeferralProbe($this->runner(
+            'postsuper: Deleted: 1 message',
+            function ($target, $script) use (&$sent) {
+                $sent[] = $script;
+            }
+        ));
 
         $deleted = $probe->purge('relay@host', ['GOODID1234', 'rm -rf /', '; postsuper -d ALL']);
 
@@ -227,6 +230,49 @@ class DeferralProbeTest extends TestCase
         $this->assertStringContainsString('GOODID1234', $sent[0]);
         $this->assertStringNotContainsString('rm -rf', $sent[0]);
         $this->assertStringNotContainsString('ALL', $sent[0]);
+    }
+
+    // ===================================================================
+    // A purge that cannot purge must say so
+    //
+    // 2026-08-19: postsuper is root-only and we connect as an unprivileged
+    // user, so every chunk came back "fatal: use of this command is reserved
+    // for the superuser". The old code counted the ids it SENT, so the command
+    // reported purging 100,153 messages while deleting none, and the queue was
+    // left to expire into a DSN per message.
+    // ===================================================================
+
+    public function test_purge_raises_when_the_relay_refuses_postsuper(): void
+    {
+        $probe = new DeferralProbe($this->runner(
+            'postsuper: fatal: use of this command is reserved for the superuser'
+        ));
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/reserved for the superuser/');
+
+        $probe->purge('relay@host', ['GOODID1234']);
+    }
+
+    public function test_purge_raises_when_nothing_was_confirmed_deleted(): void
+    {
+        // Silence is not success: no "Deleted: N" line means the ids were not
+        // recognised, and counting them would report a purge that never was.
+        $probe = new DeferralProbe($this->runner(''));
+
+        $this->expectException(\RuntimeException::class);
+
+        $probe->purge('relay@host', ['GOODID1234']);
+    }
+
+    public function test_purge_counts_what_the_relay_confirmed_not_what_it_was_sent(): void
+    {
+        // Ids can go stale between listing and deletion - the message may have
+        // been delivered or expired in between - so the confirmed count is
+        // lower than the count sent, and that is the honest number.
+        $probe = new DeferralProbe($this->runner('postsuper: Deleted: 2 messages'));
+
+        $this->assertSame(2, $probe->purge('relay@host', ['AAAAAA1111', 'BBBBBB2222', 'CCCCCC3333']));
     }
 
     public function test_purge_does_nothing_when_given_nothing_usable(): void

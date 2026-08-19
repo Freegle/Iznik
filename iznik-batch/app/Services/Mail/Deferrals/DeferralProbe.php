@@ -142,7 +142,7 @@ class DeferralProbe
      * this method only does what it is told.
      *
      * @param  string[]  $queueIds
-     * @return int number of ids we asked the relay to delete
+     * @return int number of messages the relay CONFIRMED it deleted
      */
     public function purge(string $target, array $queueIds): int
     {
@@ -174,7 +174,35 @@ class DeferralProbe
                 break;
             }
 
-            $deleted += count($chunk);
+            // Believe postsuper, not the fact that ssh returned. This counted
+            // every id it SENT as deleted, so on 2026-08-19 it reported purging
+            // 100,153 messages while deleting none: postsuper is root-only and
+            // we connect as an unprivileged user, so every chunk came back
+            // "fatal: use of this command is reserved for the superuser" and
+            // was counted as a success. A purge that cannot purge must say so.
+            if (stripos($out, 'fatal:') !== false) {
+                Log::error('Mail deferral purge: the relay refused postsuper', [
+                    'target' => $target,
+                    'error' => trim($out),
+                    'deleted_before_failure' => $deleted,
+                ]);
+
+                throw new \RuntimeException('Relay refused postsuper: '.trim($out));
+            }
+
+            // postsuper reports "postsuper: Deleted: N messages" (singular for
+            // one). Absent that line nothing was removed, whatever ssh said.
+            if (preg_match('/Deleted:\s+(\d+)\s+message/i', $out, $m) === 1) {
+                $deleted += (int) $m[1];
+            } else {
+                Log::error('Mail deferral purge: no deletion confirmed for chunk', [
+                    'target' => $target,
+                    'chunk' => count($chunk),
+                    'output' => trim($out),
+                ]);
+
+                throw new \RuntimeException('Relay confirmed no deletions: '.trim($out));
+            }
         }
 
         Log::warning('Mail deferral purge: asked relay to delete queued messages', [
