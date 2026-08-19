@@ -1,7 +1,21 @@
 <template>
+  <!-- Catchment tab before a group is picked: there is nothing on the map, so a key
+       is worse than no key. It used to render its heading and a blue "Group area"
+       swatch over an empty map, which read as "the group area is the blue thing" and
+       sent a moderator looking for a blue outline that was never drawn
+       (Discourse 9808/728). Say what to do instead. -->
+  <div v-if="mode === 'catchment' && !bands.length" class="rpl-legend">
+    <h4>No group selected</h4>
+    <div
+      style="font-size: 11px; color: #555; max-width: 190px; line-height: 1.4"
+    >
+      Pick a group in the panel to see its area and the catchment around it.
+    </div>
+  </div>
+
   <!-- Catchment tab: heatmap key. Colours + minute labels come from the actual bands
        drawn on the map (passed in via `bands`), so the key always matches. -->
-  <div v-if="mode === 'catchment'" class="rpl-legend">
+  <div v-else-if="mode === 'catchment'" class="rpl-legend">
     <h4>Ripples in within</h4>
     <div v-for="b in bands" :key="b.label" class="rpl-leg-item">
       <div

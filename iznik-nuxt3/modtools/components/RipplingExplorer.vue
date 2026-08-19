@@ -484,6 +484,11 @@ const props = defineProps({
   // outline on the same map. The standalone explorer - which has no actual reach to show -
   // leaves this false and keeps the projection.
   hideProjection: { type: Boolean, default: false },
+  // The viewer's own group names. The catchment tab is useless until a group is
+  // picked, and a moderator almost always wants one of theirs, so when they have
+  // exactly one we open on it rather than on an empty map. More than one is
+  // ambiguous, so those get the focused picker instead of an arbitrary choice.
+  myGroupNames: { type: Array, default: () => [] },
 })
 
 let cleanup = null

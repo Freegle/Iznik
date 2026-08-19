@@ -29,6 +29,7 @@ import {
 import { updateActualReachLayer } from './actualreach.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
+import { pickViewerGroup } from './viewergroup.js'
 import {
   REACH_CEILING_MINUTES,
   reachModelSentence,
@@ -323,6 +324,7 @@ export async function setupRipplingExplorer({
       if (ripplePlaying || rippleFrames.length > 0) stopRipple()
       loadCatchmentGroups()
       drawCatchment() // redraw if a group is already chosen
+      seedCatchmentGroupForViewer() // ...or open on the viewer's own, if they have one
     } else {
       clearInboundLayers()
       clearCatchmentLayers()
@@ -417,6 +419,26 @@ export async function setupRipplingExplorer({
       return true
     }
     return false
+  }
+
+  // No ?group= in the URL. The catchment tab does nothing until a group is chosen, and
+  // it used to land on an empty map with only a placeholder to suggest why — a
+  // moderator read that emptiness as the feature being broken (Discourse 9808/728).
+  // Open on the viewer's own group when there is exactly one, since that is the one
+  // they came to look at. With several, picking one for them would be a guess, so put
+  // the cursor in the box instead and let the key say what to do.
+  async function seedCatchmentGroupForViewer() {
+    const input = document.getElementById('rippling-catchment-group')
+    if (!input || input.value.trim()) return
+    await loadCatchmentGroups()
+    const g = pickViewerGroup(props.myGroupNames, catchmentGroupsByName)
+    if (g) {
+      input.value = g.name
+      syncUrl()
+      drawCatchment()
+      return
+    }
+    if (viewMode === 'catchment') input.focus()
   }
 
   // Show the group's own road "width" (widest drive-time between two of its points), PROMINENTLY:
@@ -1176,6 +1198,10 @@ export async function setupRipplingExplorer({
     const pendingGroup = urlParams.get('group')
     if (isCatchment && pendingGroup) {
       return await applyCatchmentGroupFromUrl(pendingGroup)
+    }
+    if (isCatchment) {
+      await seedCatchmentGroupForViewer()
+      return true
     }
     if (!isNaN(pendingLat) && !isNaN(pendingLng)) {
       setLocation(pendingLat, pendingLng, true)
