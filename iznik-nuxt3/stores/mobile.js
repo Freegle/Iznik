@@ -13,10 +13,12 @@
 // - Handle push notifications
 
 import { defineStore } from 'pinia'
+import { watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '~/stores/chat'
 import { useNotificationStore } from '~/stores/notification'
+import { useMiscStore } from '~/stores/misc'
 import { useDebugStore } from '~/stores/debug'
 import { setAppVersion, useClientLog } from '~/composables/useClientLog'
 import api from '~/api'
@@ -120,6 +122,7 @@ export const useMobileStore = defineStore({
       // can cost us a version check, but never the back button.
       this.initBackButton(App)
       this.initWakeUpActions(App)
+      this.startBadgeSync()
 
       // Log app and plugin versions for debugging
       const runtimeConfig = useRuntimeConfig()
@@ -690,6 +693,46 @@ export const useMobileStore = defineStore({
         await Badge.set({ count: badgeCount })
         this.lastBadgeCount = badgeCount
       }
+    },
+
+    // Keep the native app-icon badge in sync with the member's own live
+    // unread state (chats + notifications), independent of which component
+    // happens to be on screen. useNavbar()'s chatCount computed also nudges
+    // the badge, but only as a side effect of NavbarMobile's bottom-nav badge
+    // being rendered - and that badge is hidden in favour of ChatMobileNavbar
+    // while viewing a specific chat on a phone (NavbarMobile.vue
+    // isSpecificChatPage), which is exactly when a chat gets marked read.
+    // ChatMobileNavbar calls useNavbar() too but never reads its chatCount,
+    // so that recompute (and its setBadgeCount call) never fires there. If
+    // the member reads the chat and backgrounds the app before visiting a
+    // screen where the bottom-nav badge re-renders, the icon badge is left
+    // showing a stale non-zero count forever (Discourse 9953). This watch
+    // lives in the store instead, so it fires on every count change
+    // regardless of what's mounted. Mirrors chatCount's own
+    // Math.min(99, chats + notifications) clamp so both writers can never
+    // disagree.
+    //
+    // ModTools reuses this same store, but its badge is a different concept
+    // entirely (pending/spam/volunteering work, computed by
+    // modtools/composables/useModMe.js's checkWork() and already pushed to
+    // setBadgeCount() there) - chats+notifications would be meaningless for
+    // it and would race with the real work-count writer. Skip there, the
+    // same way chatStore.unreadCount itself switches to currentCountMT.
+    startBadgeSync() {
+      if (!this.isApp || useMiscStore().modtools) return
+      const chatStore = useChatStore()
+      const notificationStore = useNotificationStore()
+      return watch(
+        () =>
+          Math.min(
+            99,
+            (chatStore.unreadCount || 0) + (notificationStore.count || 0)
+          ),
+        (total) => {
+          this.setBadgeCount(total)
+        },
+        { immediate: true }
+      )
     },
 
     async handleNotification(notification, PushNotifications, Badge) {
