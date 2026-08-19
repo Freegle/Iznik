@@ -80,12 +80,12 @@
       />
     </div>
 
-    <div v-if="showGiveFind" class="mobile-give-find">
+    <div v-if="showGiveAsk" class="mobile-give-ask">
       <NuxtLink to="/give" class="mobile-btn mobile-btn--give">
         <v-icon icon="gift" class="me-2" />Give stuff
       </NuxtLink>
-      <NuxtLink to="/find" class="mobile-btn mobile-btn--find">
-        <v-icon icon="search" class="me-2" />Find stuff
+      <NuxtLink to="/ask" class="mobile-btn mobile-btn--ask">
+        <v-icon icon="shopping-cart" class="me-2" />Ask for stuff
       </NuxtLink>
     </div>
 
@@ -262,11 +262,11 @@
       <!-- eslint-disable-next-line -->
       <span v-else="description" v-html="description"/>
     </div>
-    <div v-if="showGiveFind" class="d-flex justify-content-between flex-wrap">
+    <div v-if="showGiveAsk" class="d-flex justify-content-between flex-wrap">
       <b-button to="/give" class="mt-1" size="lg" block variant="primary">
         <v-icon icon="gift" />&nbsp;Give stuff
       </b-button>
-      <b-button to="/find" class="mt-1" size="lg" block variant="secondary">
+      <b-button to="/ask" class="mt-1" size="lg" block variant="secondary">
         <v-icon icon="shopping-cart" />&nbsp;Ask for stuff
       </b-button>
     </div>
@@ -295,7 +295,11 @@
       <div v-else>
         <ChatButton
           :groupid="group.id"
-          :title="'Contact ' + contactLabel.charAt(0).toUpperCase() + contactLabel.slice(1)"
+          :title="
+            'Contact ' +
+            contactLabel.charAt(0).toUpperCase() +
+            contactLabel.slice(1)
+          "
           chattype="User2Mod"
           variant="white"
         />
@@ -365,7 +369,7 @@ const props = defineProps({
     type: Boolean,
     required: true,
   },
-  showGiveFind: {
+  showGiveAsk: {
     type: Boolean,
     required: false,
     default: false,
@@ -669,7 +673,7 @@ async function join(callback) {
   }
 }
 
-.mobile-give-find {
+.mobile-give-ask {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
@@ -700,7 +704,7 @@ async function join(callback) {
     }
   }
 
-  &--find {
+  &--ask {
     background: $color-secondary;
     color: $color-white;
 

@@ -23,7 +23,7 @@
           <b-button to="/give" variant="primary" class="m-1"
             >Give something</b-button
           >
-          <b-button to="/find" variant="secondary" class="m-1"
+          <b-button to="/ask" variant="secondary" class="m-1"
             >Ask for something</b-button
           >
         </div>

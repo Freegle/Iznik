@@ -1210,7 +1210,7 @@ class TestMailCommand extends Command
             headerImageUrl: $headerImageUrl,
             tellUrl: "{$userSite}/stories?src=storynewsletter",
             giveUrl: "{$userSite}/give?src=storynewsletter",
-            findUrl: "{$userSite}/find?src=storynewsletter",
+            askUrl: "{$userSite}/ask?src=storynewsletter",
             previewText: $preview,
             unsubscribeUrl: "{$userSite}/unsubscribe",
             settingsUrl: "{$userSite}/settings",

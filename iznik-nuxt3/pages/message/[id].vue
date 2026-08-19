@@ -67,8 +67,8 @@
                 <b-button to="/give" variant="primary">
                   <v-icon icon="gift" class="me-1" />Give stuff
                 </b-button>
-                <b-button to="/find" variant="secondary">
-                  <v-icon icon="search" class="me-1" />Find stuff
+                <b-button to="/ask" variant="secondary">
+                  <v-icon icon="shopping-cart" class="me-1" />Ask for stuff
                 </b-button>
               </div>
             </div>

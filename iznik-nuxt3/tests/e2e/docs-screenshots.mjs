@@ -36,9 +36,11 @@ const DOCS_ROOT = process.env.DOCS_OUT
   : resolve(__dirname, '../../../docs')
 
 const cfg = {
-  memberBase: process.env.TEST_BASE_URL || 'http://freegle-prod-local.localhost',
+  memberBase:
+    process.env.TEST_BASE_URL || 'http://freegle-prod-local.localhost',
   modBase:
-    process.env.TEST_MODTOOLS_BASE_URL || 'http://modtools-prod-local.localhost',
+    process.env.TEST_MODTOOLS_BASE_URL ||
+    'http://modtools-prod-local.localhost',
   memberEmail: process.env.DOCS_MEMBER_EMAIL || 'test@test.com',
   memberPassword: process.env.DOCS_MEMBER_PASSWORD || 'freegle',
   modEmail: process.env.DOCS_MOD_EMAIL || 'testmod@test.com',
@@ -55,19 +57,91 @@ const cfg = {
  */
 const SHOTS = [
   // Members
-  { audience: 'members', name: 'homepage', auth: 'none', app: 'member', path: '/' },
-  { audience: 'members', name: 'explore', auth: 'none', app: 'member', path: '/explore' },
-  { audience: 'members', name: 'browse', auth: 'member', app: 'member', path: '/browse' },
-  { audience: 'members', name: 'give-start', auth: 'none', app: 'member', path: '/give/mobile/details' },
-  { audience: 'members', name: 'find-start', auth: 'none', app: 'member', path: '/find/mobile/details' },
-  { audience: 'members', name: 'myposts', auth: 'member', app: 'member', path: '/myposts' },
-  { audience: 'members', name: 'chats', auth: 'member', app: 'member', path: '/chats' },
-  { audience: 'members', name: 'settings', auth: 'member', app: 'member', path: '/settings' },
+  {
+    audience: 'members',
+    name: 'homepage',
+    auth: 'none',
+    app: 'member',
+    path: '/',
+  },
+  {
+    audience: 'members',
+    name: 'explore',
+    auth: 'none',
+    app: 'member',
+    path: '/explore',
+  },
+  {
+    audience: 'members',
+    name: 'browse',
+    auth: 'member',
+    app: 'member',
+    path: '/browse',
+  },
+  {
+    audience: 'members',
+    name: 'give-start',
+    auth: 'none',
+    app: 'member',
+    path: '/give/mobile/details',
+  },
+  {
+    audience: 'members',
+    name: 'ask-start',
+    auth: 'none',
+    app: 'member',
+    path: '/ask/mobile/details',
+  },
+  {
+    audience: 'members',
+    name: 'myposts',
+    auth: 'member',
+    app: 'member',
+    path: '/myposts',
+  },
+  {
+    audience: 'members',
+    name: 'chats',
+    auth: 'member',
+    app: 'member',
+    path: '/chats',
+  },
+  {
+    audience: 'members',
+    name: 'settings',
+    auth: 'member',
+    app: 'member',
+    path: '/settings',
+  },
   // Moderators
-  { audience: 'moderators', name: 'dashboard', auth: 'mod', app: 'mod', path: '/' },
-  { audience: 'moderators', name: 'pending', auth: 'mod', app: 'mod', path: '/messages/pending' },
-  { audience: 'moderators', name: 'members', auth: 'mod', app: 'mod', path: '/members/approved' },
-  { audience: 'moderators', name: 'settings', auth: 'mod', app: 'mod', path: '/settings' },
+  {
+    audience: 'moderators',
+    name: 'dashboard',
+    auth: 'mod',
+    app: 'mod',
+    path: '/',
+  },
+  {
+    audience: 'moderators',
+    name: 'pending',
+    auth: 'mod',
+    app: 'mod',
+    path: '/messages/pending',
+  },
+  {
+    audience: 'moderators',
+    name: 'members',
+    auth: 'mod',
+    app: 'mod',
+    path: '/members/approved',
+  },
+  {
+    audience: 'moderators',
+    name: 'settings',
+    auth: 'mod',
+    app: 'mod',
+    path: '/settings',
+  },
 ]
 
 /**
@@ -84,14 +158,27 @@ async function fillLogin(page, email, password) {
   const switchToLogin = page.locator(
     '#loginModal .test-already-a-freegler, #loginModal :text("Log in")'
   )
-  if (await switchToLogin.first().isVisible().catch(() => false)) {
-    await switchToLogin.first().click().catch(() => {})
+  if (
+    await switchToLogin
+      .first()
+      .isVisible()
+      .catch(() => false)
+  ) {
+    await switchToLogin
+      .first()
+      .click()
+      .catch(() => {})
   }
 
   await page.locator('#loginModal input[type="email"]').first().fill(email)
-  await page.locator('#loginModal input[type="password"]').first().fill(password)
   await page
-    .locator('#loginform button[type="submit"], #loginModal button:has-text("Log in")')
+    .locator('#loginModal input[type="password"]')
+    .first()
+    .fill(password)
+  await page
+    .locator(
+      '#loginform button[type="submit"], #loginModal button:has-text("Log in")'
+    )
     .first()
     .click()
 

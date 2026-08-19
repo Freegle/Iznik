@@ -200,10 +200,12 @@ describe('ModPostingHistory', () => {
       expect(offerBadge.find('[data-icon="gift"]').exists()).toBe(true)
     })
 
-    it('displays search icon for wanteds badge', () => {
+    it('displays cart icon for wanteds badge', () => {
       const wrapper = mountComponent()
       const wantedBadge = wrapper.findAll('.badge')[1]
-      expect(wantedBadge.find('[data-icon="search"]').exists()).toBe(true)
+      expect(wantedBadge.find('[data-icon="shopping-cart"]').exists()).toBe(
+        true
+      )
     })
 
     it('displays exclamation-triangle icon for modmails badge', () => {

@@ -366,7 +366,7 @@ test.describe('Homepage tests', () => {
     // Go back to homepage
     await page.gotoAndVerify('/')
 
-    // Test 2: Clicking "Find" button should navigate to /find
+    // Test 2: Clicking "Find" button should navigate to /ask
     const findButton = page.locator('.action-btn:has-text("Find")')
     await findButton.waitFor({
       state: 'visible',
@@ -374,14 +374,14 @@ test.describe('Homepage tests', () => {
     })
 
     // Create a navigation promise before clicking
-    const findNavigation = page.waitForURL('/find', {
+    const findNavigation = page.waitForURL('/ask', {
       timeout: timeouts.navigation.default,
     })
     await findButton.filter({ visible: true }).first().click()
 
     // Wait for navigation to complete
     await findNavigation
-    expect(page.url()).toContain('/find')
+    expect(page.url()).toContain('/ask')
 
     // Go back to homepage again for testing PlaceAutocomplete
     await page.gotoAndVerify('/')

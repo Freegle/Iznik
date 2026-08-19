@@ -63,7 +63,7 @@
             <b-button
               variant="primary"
               size="lg"
-              to="/find/whoami"
+              to="/ask/whoami"
               class="next-btn"
             >
               Next: Who are you? <v-icon icon="angle-double-right" />

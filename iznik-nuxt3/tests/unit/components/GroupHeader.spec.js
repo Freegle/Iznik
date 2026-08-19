@@ -80,7 +80,7 @@ describe('GroupHeader', () => {
       props: {
         group: { ...mockGroup },
         showJoin: true,
-        showGiveFind: false,
+        showGiveAsk: false,
         ...props,
       },
       global: {
@@ -321,15 +321,15 @@ describe('GroupHeader', () => {
     })
   })
 
-  describe('give/find buttons', () => {
-    it('shows Give and Find buttons when showGiveFind is true', () => {
-      const wrapper = createWrapper({ showGiveFind: true })
+  describe('give/ask buttons', () => {
+    it('shows Give and Ask buttons when showGiveAsk is true', () => {
+      const wrapper = createWrapper({ showGiveAsk: true })
       expect(wrapper.text()).toContain('Give stuff')
-      expect(wrapper.text()).toContain('Find stuff')
+      expect(wrapper.text()).toContain('Ask for stuff')
     })
 
-    it('hides Give and Find buttons when showGiveFind is false', () => {
-      const wrapper = createWrapper({ showGiveFind: false })
+    it('hides Give and Ask buttons when showGiveAsk is false', () => {
+      const wrapper = createWrapper({ showGiveAsk: false })
       expect(wrapper.find('.mobile-give-find').exists()).toBe(false)
     })
   })

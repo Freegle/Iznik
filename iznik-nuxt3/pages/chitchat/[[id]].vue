@@ -39,8 +39,8 @@
                   class="composer-textarea"
                 />
                 <NoticeMessage
-                  v-if="showGiveFind"
-                  ref="giveFind"
+                  v-if="showGiveAsk"
+                  ref="giveAsk"
                   variant="warning"
                   class="mt-2"
                 >
@@ -55,7 +55,7 @@
                       </b-button>
                     </div>
                     <div class="post__button d-flex justify-content-around">
-                      <b-button to="/find" variant="secondary">
+                      <b-button to="/ask" variant="secondary">
                         Ask for stuff
                       </b-button>
                     </div>
@@ -317,13 +317,13 @@ const infiniteDistance = ref(1000)
 const runChecks = ref(true)
 const infiniteState = ref(null)
 const currentAtts = ref([])
-const showGiveFind = ref(false)
-const shownGiveFind = ref(false)
+const showGiveAsk = ref(false)
+const shownGiveAsk = ref(false)
 const error = ref(false)
 const threadhead = ref(null)
 const loadingThread = ref(false)
 const infiniteId = ref(new Date().getTime())
-const giveFind = ref(null)
+const giveAsk = ref(null)
 
 // Area/location filter options
 const areaOptions = [
@@ -580,23 +580,23 @@ function photoAdd() {
   uploading.value = true
 }
 
-function scrollToGiveFind(give) {
+function scrollToGiveAsk(give) {
   nextTick(() => {
-    if (giveFind.value) {
-      giveFind.value.$el.scrollIntoView()
+    if (giveAsk.value) {
+      giveAsk.value.$el.scrollIntoView()
 
       setTimeout(() => {
-        if (give && giveFind.value?.$refs.givebutton?.$el) {
-          giveFind.value.$refs.givebutton.$el.scrollIntoView()
-        } else if (!give && giveFind.value?.$refs.findbutton?.$el) {
-          giveFind.value.$refs.findbutton.$el.scrollIntoView()
+        if (give && giveAsk.value?.$refs.givebutton?.$el) {
+          giveAsk.value.$refs.givebutton.$el.scrollIntoView()
+        } else if (!give && giveAsk.value?.$refs.findbutton?.$el) {
+          giveAsk.value.$refs.findbutton.$el.scrollIntoView()
         }
       }, 500)
     }
 
     window.scrollBy(0, 100)
     setTimeout(() => {
-      showGiveFind.value = false
+      showGiveAsk.value = false
     }, 30000)
   })
 }
@@ -609,7 +609,7 @@ function runCheck() {
     if (msg) {
       msg = msg.toLowerCase()
 
-      if (!shownGiveFind.value) {
+      if (!shownGiveAsk.value) {
         for (const word of [
           'offer',
           'giving away',
@@ -618,14 +618,14 @@ function runCheck() {
           'collection only',
         ]) {
           if (msg.length && msg.includes(word)) {
-            showGiveFind.value = true
-            shownGiveFind.value = true
-            scrollToGiveFind(true)
+            showGiveAsk.value = true
+            shownGiveAsk.value = true
+            scrollToGiveAsk(true)
           }
         }
       }
 
-      if (!shownGiveFind.value) {
+      if (!shownGiveAsk.value) {
         for (const word of [
           'wanted',
           'wanting',
@@ -638,9 +638,9 @@ function runCheck() {
           'if anyone has',
         ]) {
           if (msg.length && msg.includes(word)) {
-            showGiveFind.value = true
-            shownGiveFind.value = true
-            scrollToGiveFind(false)
+            showGiveAsk.value = true
+            shownGiveAsk.value = true
+            scrollToGiveAsk(false)
           }
         }
       }

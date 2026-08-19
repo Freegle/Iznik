@@ -251,7 +251,7 @@ describe('MyPostsPostsList', () => {
         posts: [],
         type: 'Wanted',
       })
-      expect(wrapper.text()).toContain('Find stuff')
+      expect(wrapper.text()).toContain('Ask for stuff')
     })
 
     it('shows both links for mixed type', () => {
@@ -260,7 +260,7 @@ describe('MyPostsPostsList', () => {
         posts: [],
       })
       expect(wrapper.text()).toContain('Give stuff')
-      expect(wrapper.text()).toContain('Find stuff')
+      expect(wrapper.text()).toContain('Ask for stuff')
     })
   })
 

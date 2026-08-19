@@ -471,7 +471,7 @@ describe('ChatMessageModMail', () => {
       expect(mockRouterPush).toHaveBeenCalledWith('/give')
     })
 
-    it('repost navigates to /find for Wanted', async () => {
+    it('repost navigates to /ask for Wanted', async () => {
       mockRefmsg.value = {
         type: 'Wanted',
         item: { name: 'Chair' },
@@ -482,7 +482,7 @@ describe('ChatMessageModMail', () => {
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(ChatMessageModMail)
       await comp.vm.repost()
-      expect(mockRouterPush).toHaveBeenCalledWith('/find')
+      expect(mockRouterPush).toHaveBeenCalledWith('/ask')
     })
 
     it('repost sets message with correct data', async () => {

@@ -95,7 +95,7 @@ class WelcomeMailTest extends TestCase
             'password'          => null,
             'giveUrl'           => 'https://www.ilovefreegle.org/give',
             'browseUrl'         => 'https://www.ilovefreegle.org/browse',
-            'findUrl'           => 'https://www.ilovefreegle.org/find',
+            'askUrl'           => 'https://www.ilovefreegle.org/ask',
             'termsUrl'          => 'https://www.ilovefreegle.org/terms',
             'helpUrl'           => 'https://www.ilovefreegle.org/help',
             'safetyUrl'         => 'https://www.ilovefreegle.org/safety',

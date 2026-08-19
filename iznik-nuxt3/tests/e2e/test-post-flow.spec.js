@@ -230,7 +230,7 @@ test.describe('Post flow tests', () => {
     postMessage,
     withdrawPost,
   }) => {
-    // Regression test: the mobile find flow (/find/mobile/photos → details → whereami)
+    // Regression test: the mobile find flow (/ask/mobile/photos → details → whereami)
     // created a sparse messages array [empty, {id:1}] in the compose store.
     // After Pinia JSON round-trip, prune() compacted it to [{id:1}] at index 0,
     // but the internal .id field stayed 1. The submit loop then accessed
@@ -458,14 +458,21 @@ test.describe('Mobile post flow tests', () => {
       timeout: timeouts.ui.appearance,
     })
     const skipLink = page.locator('button').filter({ hasText: /skip/i })
-    await skipLink.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await skipLink.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
     await skipLink.click()
     console.log('Skipped photo upload')
 
     // Step 2: Details page — fill item name and description
-    await page.waitForSelector('#item-name', { timeout: timeouts.ui.appearance })
+    await page.waitForSelector('#item-name', {
+      timeout: timeouts.ui.appearance,
+    })
     await page.locator('#item-name').fill(uniqueItem)
-    await page.locator('#description').fill('Test description for mobile OFFER post')
+    await page
+      .locator('#description')
+      .fill('Test description for mobile OFFER post')
     console.log(`Filled item name: ${uniqueItem}`)
 
     const nextButton = page.locator('button.w-100').filter({ hasText: 'Next' })
@@ -477,7 +484,10 @@ test.describe('Mobile post flow tests', () => {
       timeout: timeouts.navigation.default,
     })
     const optionsNext = page.locator('button.w-100').filter({ hasText: 'Next' })
-    await optionsNext.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await optionsNext.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
     await optionsNext.click()
     console.log('Clicked Next on options page')
 
@@ -485,8 +495,13 @@ test.describe('Mobile post flow tests', () => {
     await page.waitForURL('**/give/mobile/whereami', {
       timeout: timeouts.navigation.default,
     })
-    const postcodeInput = page.locator('.pcinp, input[placeholder="Type postcode"]')
-    await postcodeInput.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    const postcodeInput = page.locator(
+      '.pcinp, input[placeholder="Type postcode"]'
+    )
+    await postcodeInput.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
     await postcodeInput.fill(postcode)
     console.log(`Filled postcode: ${postcode}`)
 
@@ -494,12 +509,20 @@ test.describe('Mobile post flow tests', () => {
     const validationTick = page.locator(
       '.validation-tick, .fa-check-circle, .v-icon[icon="check-circle"]'
     )
-    await validationTick.waitFor({ state: 'visible', timeout: timeouts.api.default })
+    await validationTick.waitFor({
+      state: 'visible',
+      timeout: timeouts.api.default,
+    })
     console.log('Postcode validated')
 
     // Wait for the Freegle it! button to become active (groups loaded)
-    const freegleButton = page.locator('button.w-100').filter({ hasText: /Freegle it!/i })
-    await freegleButton.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    const freegleButton = page
+      .locator('button.w-100')
+      .filter({ hasText: /Freegle it!/i })
+    await freegleButton.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
     await expect(freegleButton).toBeEnabled()
     await freegleButton.click()
     console.log('Clicked Freegle it!')
@@ -512,7 +535,10 @@ test.describe('Mobile post flow tests', () => {
     const itemLocator = page
       .locator('.message-card, .card-body')
       .filter({ hasText: uniqueItem })
-    await itemLocator.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await itemLocator.waitFor({
+      state: 'visible',
+      timeout: timeouts.ui.appearance,
+    })
     console.log(`Found mobile OFFER item "${uniqueItem}" on myposts page`)
 
     // Clean up
