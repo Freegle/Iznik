@@ -278,9 +278,13 @@ class ScanDeferralsCommandTest extends TestCase
 
         $this->artisan('mail:deferrals:scan --purge --force')->assertSuccessful();
 
+        // Match the DELETE specifically. The capability check runs first and
+        // mentions postsuper too (`sudo -n -l postsuper`), so a bare
+        // "postsuper" filter picks that up and asserts against the wrong
+        // script.
         $purges = array_values(array_filter(
             $this->scripts,
-            fn ($s) => str_contains($s, 'postsuper')
+            fn ($s) => str_contains($s, 'postsuper -d')
         ));
 
         $this->assertNotEmpty($purges, 'purge --force should have asked the relay to delete');
