@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -304,6 +305,27 @@ func TestAIImageRegen_Accept_RequiresAdminOrSupport(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// Accepting with nothing pending is the case a moderator actually hits: they clicked
+// Accept on an image whose regeneration failed, so no pending_externaluid was ever
+// stored. The 400's message is the whole value here — ModTools shows it verbatim now,
+// and "please try again" was the advice that kept people retrying Accept when the fix
+// was to regenerate.
+func TestAIImageRegen_Accept_NoPendingSaysRegenerateFirst(t *testing.T) {
+	prefix := uniquePrefix("airegen_accnopend")
+	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	_, tok := CreateTestSession(t, supportID)
+
+	imgID := createTestAIImageWithStatus(t, "accept-nopend-"+prefix, "freegletusd-old-"+prefix, "rejected")
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/admin/ai-images/%d/accept?jwt="+tok, imgID), strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 400, resp.StatusCode)
+
+	body, _ := io.ReadAll(resp.Body)
+	assert.Contains(t, string(body), "regenerate first")
 }
 
 func TestAIImageRegen_Accept_UpdatesExternaluidAndResetStatus(t *testing.T) {
