@@ -96,6 +96,24 @@ workflows:
           use-executor:
             name: freegle/machine-executor-local
           post-steps:
+            # Keep the Go coverage profile. Coveralls reports a percentage delta and never
+            # says which statements moved, and the orb deletes coverage.out once it has
+            # uploaded it - so a one-statement red is unanswerable after the fact. The Go
+            # runner copies the profile to iznik-server-go/coverage-history/ (outside the
+            # path the orb removes); this lifts it into the build's artefacts so two
+            # builds can be diffed.
+            - run:
+                name: Collect the Go coverage profile
+                when: always
+                command: |
+                  mkdir -p ~/coverage-artifacts
+                  for d in "$HOME/project" "$HOME/FreegleDocker"; do
+                    f="$d/iznik-server-go/coverage-history/go-coverage.out"
+                    if [ -f "$f" ]; then cp "$f" ~/coverage-artifacts/; fi
+                  done
+                  ls -l ~/coverage-artifacts || true
+            - store_artifacts:
+                path: ~/coverage-artifacts
             - run:
                 name: Mark PR as CI failed
                 when: on_fail
@@ -161,6 +179,24 @@ workflows:
     jobs:
       - freegle/build-and-test:
           post-steps:
+            # Keep the Go coverage profile. Coveralls reports a percentage delta and never
+            # says which statements moved, and the orb deletes coverage.out once it has
+            # uploaded it - so a one-statement red is unanswerable after the fact. The Go
+            # runner copies the profile to iznik-server-go/coverage-history/ (outside the
+            # path the orb removes); this lifts it into the build's artefacts so two
+            # builds can be diffed.
+            - run:
+                name: Collect the Go coverage profile
+                when: always
+                command: |
+                  mkdir -p ~/coverage-artifacts
+                  for d in "$HOME/project" "$HOME/FreegleDocker"; do
+                    f="$d/iznik-server-go/coverage-history/go-coverage.out"
+                    if [ -f "$f" ]; then cp "$f" ~/coverage-artifacts/; fi
+                  done
+                  ls -l ~/coverage-artifacts || true
+            - store_artifacts:
+                path: ~/coverage-artifacts
             - run:
                 name: Mark PR as CI failed
                 when: on_fail
