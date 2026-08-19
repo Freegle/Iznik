@@ -21,6 +21,8 @@ class ScanDeferralsCommandTest extends TestCase
 
     private ?string $canned = null;
 
+    private bool $relayCanPurge = true;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -68,6 +70,11 @@ class ScanDeferralsCommandTest extends TestCase
         // removed, so echoing the canned queue back here would model a relay
         // that deleted nothing - which is exactly what production looked like
         // on 2026-08-19 when postsuper refused as non-root.
+        if (str_contains($script, DeferralProbe::MARK_CANPURGE)) {
+            return DeferralProbe::MARK_CANPURGE."\n"
+                .($this->relayCanPurge ? 'CANPURGE sudo' : 'NOPURGE deferrals');
+        }
+
         if (str_contains($script, 'postsuper')) {
             return 'postsuper: Deleted: '.$this->queueIdsIn($script).' messages';
         }
@@ -228,6 +235,26 @@ class ScanDeferralsCommandTest extends TestCase
         $this->artisan('mail:deferrals:scan --dry-run')->assertSuccessful();
 
         $this->assertDatabaseCount('mail_suppressions', 0);
+    }
+
+    public function test_a_relay_that_cannot_purge_fails_the_run_rather_than_going_quiet(): void
+    {
+        // Production shipped this the other way on 2026-08-19: postsuper
+        // refused every chunk as non-root, purge() counted the ids it had sent,
+        // and the command reported deleting 100,153 messages having deleted
+        // none - leaving the queue to expire into a bounce per message.
+        $this->relayCanPurge = false;
+        $this->relayReturns($this->yahooBlockedQueue(), $this->deliveredLog());
+
+        $this->artisan('mail:deferrals:scan --purge --force')->assertFailed();
+
+        foreach ($this->scripts as $script) {
+            $this->assertStringNotContainsString(
+                'postsuper -d',
+                $script,
+                'must not attempt a deletion it has already been told it cannot do'
+            );
+        }
     }
 
     public function test_purge_is_dry_run_without_force(): void

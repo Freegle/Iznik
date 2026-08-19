@@ -271,6 +271,27 @@ The domain list is verified by **MX lookup, not by brand name** - `sky.com`,
 `netscape.net` and `aim.com` are Yahoo-hosted, while `btinternet.com` is not
 (it is Openwave) and must not be routed there.
 
+### Purging a provider backlog needs a sudoers grant
+
+`mail:deferrals:scan --purge --force` deletes queued mail for a suppressed
+relay, so a backlog that cannot be delivered does not expire into one DSN per
+message. `postsuper` is root-only and the scanner connects as an unprivileged
+user, so it needs `sudoers.d/deferrals-postsuper` (in this directory) installed
+at `/etc/sudoers.d/deferrals-postsuper`, mode 0440. Validate with
+`visudo -cf` before installing - a malformed file breaks sudo for everyone.
+
+This was missing until 2026-08-19 and the failure was invisible: postsuper
+refused each chunk with `fatal: use of this command is reserved for the
+superuser`, and `purge()` counted the ids it had SENT, so the command reported
+deleting 100,153 messages having deleted none. The queue was left to expire.
+
+Two things changed so a relay without the grant cannot fail quietly again:
+`canPurge()` asks first (via `sudo -l`, which checks permission and runs
+nothing - do NOT probe with `postsuper -s`, that is a real queue repair), and
+the count now comes from postsuper's own `Deleted: N messages` line. A relay
+that cannot purge fails the run with a Sentry alert naming the host and the
+right it needs.
+
 ## Not captured
 
 TLS certificates and keys, DNS zones, firewall rules, package sets, users and

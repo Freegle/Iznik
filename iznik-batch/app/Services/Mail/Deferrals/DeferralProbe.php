@@ -38,6 +38,8 @@ class DeferralProbe
 
     public const MARK_ACCEPTING = '===FREEGLE-DEFERRALS-ACCEPTING===';
 
+    public const MARK_CANPURGE = '===FREEGLE-DEFERRALS-CANPURGE===';
+
     public function __construct(
         private readonly HostCommandRunner $runner,
     ) {}
@@ -164,7 +166,12 @@ class DeferralProbe
 
         foreach (array_chunk($safe, 500) as $chunk) {
             // postsuper reads ids from stdin when given "-".
-            $script = 'printf "%s\n" '.implode(' ', $chunk).' | postsuper -d - 2>&1';
+            // postsuper is root-only. We connect to the relay as an
+            // unprivileged user, so it needs sudo - see canPurge(), which says
+            // so in as many words rather than leaving a bare "fatal" to be
+            // decoded. Kept conditional so a root relay still works untouched.
+            $script = 'SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo -n"; '
+                .'printf "%s\n" '.implode(' ', $chunk).' | $SUDO postsuper -d - 2>&1';
 
             $out = $this->runner->run($target, $script);
 
@@ -214,6 +221,37 @@ class DeferralProbe
         ]);
 
         return $deleted;
+    }
+
+    /**
+     * Can this relay actually delete queued mail for us?
+     *
+     * postsuper is root-only, and we connect as an unprivileged user. Without a
+     * sudoers grant --purge cannot work at all, and the failure is easy to miss:
+     * it surfaces as one "fatal: use of this command is reserved for the
+     * superuser" per chunk, which the caller used to count as a success. Asked
+     * up front, a relay that has not been granted the right says so plainly
+     * instead of being diagnosed from a queue that never shrinks.
+     *
+     * @return bool|null null if we could not reach the relay to find out
+     */
+    public function canPurge(string $target): ?bool
+    {
+        // `sudo -l` ASKS whether the command is permitted and runs nothing. Do
+        // not probe with `postsuper -s`: that is a real queue structure repair,
+        // not a no-op.
+        $script = "echo '".self::MARK_CANPURGE."'\n"
+            .'if [ "$(id -u)" -eq 0 ]; then echo "CANPURGE root"; '
+            .'elif sudo -n -l postsuper >/dev/null 2>&1; then echo "CANPURGE sudo"; '
+            .'else echo "NOPURGE $(id -un)"; fi';
+
+        $out = $this->runner->run($target, $script);
+
+        if ($out === null || ! str_contains($out, self::MARK_CANPURGE)) {
+            return null;
+        }
+
+        return str_contains($out, 'CANPURGE ');
     }
 
     /**

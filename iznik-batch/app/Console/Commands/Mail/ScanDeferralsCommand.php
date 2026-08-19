@@ -36,6 +36,9 @@ class ScanDeferralsCommand extends Command
 
     protected $description = 'Read the outbound relay queue, suppress mail to providers deferring us, and release when they recover';
 
+    /** Set when a requested purge could not be carried out. */
+    private bool $purgeFailed = false;
+
     public function handle(
         DeferralProbe $probe,
         DeferralScanService $scan,
@@ -181,7 +184,10 @@ class ScanDeferralsCommand extends Command
             ));
         }
 
-        return self::SUCCESS;
+        // A purge that was asked for and could not happen must fail the run.
+        // Reporting success would leave an undeliverable queue to expire into a
+        // bounce per message, which is the cascade --purge exists to prevent.
+        return $this->purgeFailed ? self::FAILURE : self::SUCCESS;
     }
 
     private function reportSnapshot(RelayQueueSnapshot $snapshot): void
@@ -262,8 +268,52 @@ class ScanDeferralsCommand extends Command
             return;
         }
 
-        $deleted = $probe->purge($target, $ids);
-        $this->info(sprintf('Purge: asked the relay to delete %d message(s).', $deleted));
+        // Ask before deleting. Without a sudoers grant postsuper refuses every
+        // chunk, and the only symptom is a queue that never shrinks - so say
+        // which host lacks which right, rather than leaving a bare "fatal" to
+        // be decoded later.
+        $can = $probe->canPurge($target);
+
+        if ($can === false) {
+            $this->purgeFailed = true;
+            $this->error(sprintf(
+                'Purge: %s cannot run postsuper, so %d message(s) CANNOT be deleted. '
+                .'Grant the relay user sudo for /usr/sbin/postsuper.',
+                $target,
+                count($ids)
+            ));
+            $this->alertSentry('Mail deferral purge is not permitted on the relay', [
+                'target' => $target,
+                'queued' => count($ids),
+                'fix' => 'grant the relay user NOPASSWD sudo for /usr/sbin/postsuper',
+            ]);
+
+            return;
+        }
+
+        try {
+            $deleted = $probe->purge($target, $ids);
+        } catch (\Throwable $e) {
+            // purge() raises rather than counting ids it merely sent. Anything
+            // reaching here means the relay did not confirm the deletions.
+            $this->purgeFailed = true;
+            $this->error('Purge: '.$e->getMessage());
+            $this->alertSentry('Mail deferral purge failed on the relay', [
+                'target' => $target,
+                'queued' => count($ids),
+                'error' => $e->getMessage(),
+            ]);
+
+            return;
+        }
+
+        $this->info(sprintf('Purge: the relay confirmed %d message(s) deleted.', $deleted));
+
+        if ($deleted < count($ids)) {
+            // Ids go stale between listing and deletion, so a shortfall is
+            // normal - but a large one means something else is wrong.
+            $this->warn(sprintf('Purge: %d of %d ids were no longer in the queue.', count($ids) - $deleted, count($ids)));
+        }
     }
 
     /**

@@ -276,6 +276,39 @@ class DeferralProbeTest extends TestCase
     }
 
     // ===================================================================
+    // Can we purge at all?
+    //
+    // postsuper is root-only and we connect unprivileged. Without a sudoers
+    // grant every chunk comes back "fatal: use of this command is reserved for
+    // the superuser" and the only other symptom is a queue that never shrinks.
+    // ===================================================================
+
+    public function test_knows_when_the_relay_can_purge(): void
+    {
+        $probe = new DeferralProbe($this->runner(
+            DeferralProbe::MARK_CANPURGE . "\nCANPURGE sudo\n"
+        ));
+
+        $this->assertTrue($probe->canPurge('relay@host'));
+    }
+
+    public function test_knows_when_the_relay_has_not_been_granted_the_right(): void
+    {
+        $probe = new DeferralProbe($this->runner(
+            DeferralProbe::MARK_CANPURGE . "\nNOPURGE deferrals\n"
+        ));
+
+        $this->assertFalse($probe->canPurge('relay@host'));
+    }
+
+    public function test_an_unreachable_relay_cannot_answer_whether_it_can_purge(): void
+    {
+        // Not false: "we could not ask" and "you may not" are different, and
+        // treating the first as the second would cry wolf on every blip.
+        $this->assertNull((new DeferralProbe($this->runner(null)))->canPurge('relay@host'));
+    }
+
+    // ===================================================================
     // Asking the provider directly
     //
     // The section marker must be ECHOED. A bare marker line is run as a
