@@ -70,7 +70,16 @@ orbs:
   # 1.1.382 is this branch's two changes republished on top of everything
   # master has published since (1.1.379 and 1.1.381 above). Publishing from
   # either side alone drops the other side's steps.
-  freegle: freegle/tests@1.1.382
+  #
+  # 1.1.383 adds master's retention of the Go coverage profile as a build
+  # artefact, which arrived here in the merge of a18ba0996. That change was
+  # authored expecting to be published as 1.1.382, but this branch had already
+  # taken that number earlier the same day, so it went out unpublished and
+  # master is still pinned to 1.1.381 without it. Republishing the merged
+  # source is what carries it, and master picks it up when this branch lands -
+  # master must not pin 1.1.383 before then, because it also carries the cap8
+  # push-fork rename that only exists on this branch.
+  freegle: freegle/tests@1.1.383
 
 jobs:
   mark-ci-passed:
