@@ -183,10 +183,24 @@ all_pct=$(( all_total > 0 ? all_def * 100 / all_total : 0 ))
 doms_total=$(echo "$stats" | awk -v minn="$MIN_ATTEMPTS" '$2>=minn' | wc -l)
 sent_total=$(( all_total - all_def ))
 
+# IDLE is not BROKEN. Overnight the site generates no mail, so "few deliveries"
+# means there was nothing to deliver - not that we cannot. Judging that as a
+# local fault stopped the shaper evaluating at all overnight, which also stopped
+# it RELEASING a domain that recovered while we slept. A verdict needs a
+# denominator: how much did we actually attempt?
+attempts_excl_shaped=$(echo "$stats" | awk -v minn="$MIN_ATTEMPTS" '{t+=$2} END{print t+0}')
+
+if [ "$attempts_excl_shaped" -lt 200 ]; then
+  echo "shaper: idle - only ${attempts_excl_shaped} delivery attempts in the sample; nothing to judge."
+  echo "shaper: leaving the current shaping unchanged."
+  exit 0
+fi
+
 if [ "$sent_total" -lt "$MIN_SENT_RELEASE" ]; then
-  echo "shaper: ABSTAINING - only ${sent_total} successful deliveries in the whole sample."
-  echo "shaper: nothing landing ANYWHERE means a LOCAL problem (IP block, DNS, disk),"
-  echo "shaper: not per-provider throttling - shaping would slow mail that was never the issue."
+  echo "shaper: ABSTAINING - ${attempts_excl_shaped} attempts but only ${sent_total} deliveries."
+  echo "shaper: trying hard and landing nothing ANYWHERE means a LOCAL problem (IP block, DNS,"
+  echo "shaper: disk) - not per-provider throttling, and shaping would slow mail that was never"
+  echo "shaper: the issue."
   exit 0
 fi
 
