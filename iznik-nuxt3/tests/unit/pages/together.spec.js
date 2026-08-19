@@ -26,7 +26,7 @@ describe('pages/together.vue', () => {
 
     const links = wrapper.findAll('a')
     expect(links.some((a) => a.attributes('href') === '/charity')).toBe(true)
-    expect(links.some((a) => a.attributes('href') === '/find')).toBe(true)
+    expect(links.some((a) => a.attributes('href') === '/ask')).toBe(true)
     expect(links.some((a) => a.attributes('href') === '/give')).toBe(true)
   })
 })

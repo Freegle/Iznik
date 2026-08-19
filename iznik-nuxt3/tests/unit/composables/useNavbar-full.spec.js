@@ -357,8 +357,8 @@ describe('useNavbar() — computed properties and actions', () => {
       expect(mockRouterPush).toHaveBeenCalledWith('/')
     })
 
-    it('goes home from the find mobile photos page to avoid a redirect loop', async () => {
-      mockCurrentRoutePath = '/find/mobile/photos'
+    it('goes home from the ask mobile photos page to avoid a redirect loop', async () => {
+      mockCurrentRoutePath = '/ask/mobile/photos'
       const nav = await getNavbar()
       nav.backButton()
       expect(mockRouterPush).toHaveBeenCalledWith('/')
