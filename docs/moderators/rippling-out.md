@@ -258,10 +258,15 @@ copy, and the repost by itself neither adds new ones nor takes any away.
 So to answer the obvious question: a reposted item effectively **starts rippled**. It
 does not crawl outwards again from scratch each time.
 
-What the repost does do is lift the item back to the top of the browse list on **every**
-community it is on, its own and the rippled-in ones alike. A widely rippled item
-therefore becomes prominent again everywhere at once. It also counts as making the item
-fresh, which is what stops it ageing out while it is still being reposted.
+What the repost does do is lift the item back to the top of **that community's** browse
+list. Reposting runs per community, on each community's own repost interval, so a rippled
+item is kept fresh in each place independently. It does not bounce to the top everywhere
+at once: two communities with different repost settings will repost the same item at
+different times, and each one's copy is refreshed only when that community's own interval
+comes round.
+
+The poster's mail is the exception to that. They still get one "Will Repost" reminder and
+one chase-up per cycle for the item as a whole, not one per community, as above.
 
 An item that has not rippled yet is not shut out by having been reposted: rippling picks
 up items that have not yet started, and reposting does not disqualify one. Equally, a
