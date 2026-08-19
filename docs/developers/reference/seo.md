@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-30
+last_reviewed: 2026-08-19
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/server/utils/sitemap.ts
@@ -74,6 +74,24 @@ every time the sitemap regenerates.
 
 Excluded from the sitemap: `successful` posts (they answer 410, see below), and
 anything that isn't an `Offer` or a `Wanted`.
+
+## Renamed routes answer 301
+
+The WANTED flow moved from `/find` to `/ask` in Aug 2026. `/find` had been in the
+sitemap and the prerender list for years, so it has inbound links and accumulated
+ranking; it answers a permanent redirect rather than a 404 so that carries over.
+`/ask` replaces it in `staticLinks()` and in the prerender list - the old path is
+not listed in either, because a sitemap should only advertise URLs that answer 200.
+
+The redirect is deliberately in three places, and all three are load bearing:
+`public/_redirects` (forced, so Netlify's edge answers before it looks for a
+static file), `routeRules` in `nuxt.config.ts` (any non-Netlify host, including
+`prod-local`), and `middleware/ask.global.js` (navigation inside the running app,
+which never reaches a server at all - the Capacitor build is a static export).
+`tests/unit/middleware/ask.global.spec.js` and
+`tests/e2e/test-ask-redirect.spec.js` hold all three in place. They are the first
+redirect tests in the repo: `server/middleware/councils.js` quietly became dead
+code because a `routeRules` entry shadowed it, and nothing noticed.
 
 ## Finished posts answer 410
 

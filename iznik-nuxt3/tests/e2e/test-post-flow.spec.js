@@ -224,13 +224,13 @@ test.describe('Post flow tests', () => {
     await withdrawPost({ item: result.item })
   })
 
-  test('Logged out, new user, WANTED post via mobile find flow', async ({
+  test('Logged out, new user, WANTED post via mobile ask flow', async ({
     page,
     testEmail,
     postMessage,
     withdrawPost,
   }) => {
-    // Regression test: the mobile find flow (/find/mobile/photos → details → whereami)
+    // Regression test: the mobile ask flow (/ask/mobile/photos → details → whereami)
     // created a sparse messages array [empty, {id:1}] in the compose store.
     // After Pinia JSON round-trip, prune() compacted it to [{id:1}] at index 0,
     // but the internal .id field stayed 1. The submit loop then accessed

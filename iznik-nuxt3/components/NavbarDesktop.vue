@@ -70,11 +70,11 @@
         </li>
         <li>
           <nuxt-link
-            id="menu-option-find"
+            id="menu-option-ask"
             no-prefetch
             class="nav-link text-center small p-0"
-            to="/find"
-            @mousedown="maybeReload('/find')"
+            to="/ask"
+            @mousedown="maybeReload('/ask')"
           >
             <v-icon icon="shopping-cart" class="fa-2x" />
             <br />

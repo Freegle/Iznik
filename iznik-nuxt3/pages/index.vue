@@ -24,12 +24,12 @@
                 <span>Give</span>
               </NuxtLink>
               <NuxtLink
-                to="/find"
-                class="action-btn action-btn--find"
+                to="/ask"
+                class="action-btn action-btn--ask"
                 @click="clicked('ask')"
               >
-                <v-icon icon="search" class="action-btn__icon" />
-                <span>Find</span>
+                <v-icon icon="shopping-cart" class="action-btn__icon" />
+                <span>Ask</span>
               </NuxtLink>
             </div>
             <p class="browse-label">
@@ -396,7 +396,7 @@ onBeforeUnmount(() => {
   }
 }
 
-.action-btn--find {
+.action-btn--ask {
   background: $color-secondary;
   color: white;
   box-shadow: 0 2px 8px rgba($color-secondary, 0.3);

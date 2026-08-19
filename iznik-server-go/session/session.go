@@ -1130,6 +1130,7 @@ func GetSession(c *fiber.Ctx) error {
 		var chatreview, chatreviewother, newsletterstories, giftaid, happiness, relatedmembers int64
 		var housekeeping, cronjobs int64
 		var emailin, emailout int64
+		var maildeferrals int64
 		var helperEscalated int64
 
 		var wg2 sync.WaitGroup
@@ -1584,6 +1585,26 @@ func GetSession(c *fiber.Ctx) error {
 				defer wg2.Done()
 				emailin, emailout = FetchEmailHealth(db, time.Now().Hour())
 			}()
+
+			// --- Providers currently refusing our mail (ADMIN only) ---
+			// ADMIN only, like every other badge on that page - the whole
+			// block is SYSTEMROLE_ADMIN, so a support user gets no
+			// maildeferrals key and therefore no badge, exactly as they get
+			// none for housekeeping or cronjobs. Deliberate, not an oversight:
+			// support can open the Delayed tab (the endpoint is
+			// IsAdminOrSupport) but is not badged towards it. The neighbouring
+			// comments saying "admin/support" are wrong about the gate.
+			// Counted by DOMAIN, and per-mailbox reasons excluded, so the badge
+			// matches what the Delayed table shows. A full inbox is not an
+			// outage and must not light this up.
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				db.Table("mail_suppressions").
+					Where("released_at IS NULL AND scope = ?", "domain").
+					Where("reason IS NULL OR reason NOT REGEXP ?", maildeferral.PerMailboxReason).
+					Count(&maildeferrals)
+			}()
 		}
 
 		wg2.Wait()
@@ -1594,7 +1615,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout + helperEscalated
+			emailin + emailout + helperEscalated + maildeferrals
 
 		work = fiber.Map{
 			"pending":              pending,
@@ -1621,6 +1642,7 @@ func GetSession(c *fiber.Ctx) error {
 			"cronjobs":             cronjobs,
 			"emailin":              emailin,
 			"emailout":             emailout,
+			"maildeferrals":        maildeferrals,
 			"total":                total,
 		}
 	}

@@ -271,6 +271,40 @@ The domain list is verified by **MX lookup, not by brand name** - `sky.com`,
 `netscape.net` and `aim.com` are Yahoo-hosted, while `btinternet.com` is not
 (it is Openwave) and must not be routed there.
 
+#### The allowance shrinks every time you spend it
+
+Measured across three enablements on 2026-08-19:
+
+| time | rate | delivered before it closed |
+|---|---|---|
+| 05:23 | ~80 effective concurrency | 995, in one minute |
+| 05:44 | `maxproc=4`, ~150/min | ~1,500-2,000 over ~15 min |
+| 12:45 | `maxproc=1` + `rate_delay=10s`, ~25/min | **10** |
+
+The third run moved the queue 360 -> 350 against 128 `TSS` refusals, after which a
+direct probe from that address returned `421 4.7.0 [TSS04]`. Two orders of
+magnitude in a day. **Lowering the rate did not preserve it**: reputation is the
+variable, not throughput.
+
+A rested address probes `250 ok` and still closes after ten messages, because the
+probe measures permission to open a transaction, not capacity to carry volume.
+Treat "the second address is working again" as a prompt to check the delivery
+counts, never as a result on its own.
+
+Two things that will otherwise mislead you when testing:
+
+- Changing the transport does **not** move already-deferred mail. Postfix holds
+  it on its own backoff, up to ~67 minutes, so the first enablement recorded zero
+  attempts and read as a broken config. `postqueue -f` forces one attempt each
+  without rewriting queue files; `postsuper -r` would also reset arrival time and
+  buy every message another `maximal_queue_lifetime`.
+- The guard's drain rule must count the **Yahoo** backlog, not the whole queue.
+  After the purge the queue settled at ~4,900, of which 3,921 were `452 4.2.2`
+  (recipient mailbox full, 3,776 to gmail.com) which retry until they expire. A
+  total-based threshold evaluated true on that floor alone and switched the
+  failover off 2.5 minutes after a human enabled it, which reads exactly like the
+  provider refusing us.
+
 ### Purging a provider backlog needs a sudoers grant
 
 `mail:deferrals:scan --purge --force` deletes queued mail for a suppressed

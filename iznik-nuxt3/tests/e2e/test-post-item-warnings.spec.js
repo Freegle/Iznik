@@ -15,7 +15,7 @@ const { timeouts } = require('./config')
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 }
 
 // Locates the item-name input within the compose form, regardless of
-// whether we're on /give (Offer) or /find (Wanted).
+// whether we're on /give (Offer) or /ask (Wanted).
 function itemInputLocator(page) {
   return page
     .locator('.post-item-container')
@@ -90,7 +90,7 @@ test.describe('PostItem compose warnings (desktop)', () => {
   test('Shows the sealed-and-in-date warning on the WANTED flow too, and not for unrelated items', async ({
     page,
   }) => {
-    await page.gotoAndVerify('/find', {
+    await page.gotoAndVerify('/ask', {
       timeout: timeouts.navigation.default,
     })
 
@@ -273,7 +273,7 @@ test.describe('PostItem compose warnings (desktop)', () => {
     withdrawPost,
   }) => {
     // MessageEditModal renders PostItem with edit/edititem props instead of
-    // the compose store the /give and /find flows use above - a separate
+    // the compose store the /give and /ask flows use above - a separate
     // code path through the same component (see the `item` computed's
     // props.edit branch in PostItem.vue) that had no e2e coverage at all.
     const uniqueItem = `plain bookshelf ${Date.now()}${Math.floor(

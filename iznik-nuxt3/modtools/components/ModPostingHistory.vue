@@ -14,7 +14,7 @@
       title="Recent WANTEDs"
       @click="showHistory('Wanted')"
     >
-      <v-icon icon="search" class="fa-fw" /> {{ wanteds }}
+      <v-icon icon="shopping-cart" class="fa-fw" /> {{ wanteds }}
     </b-badge>
     <b-badge
       :variant="user.modmails > 0 ? 'danger' : 'light'"
@@ -41,7 +41,7 @@
       class="clickme me-2"
       @click="showReplies('Wanted')"
     >
-      <v-icon icon="search" class="fa-fw" /><v-icon
+      <v-icon icon="shopping-cart" class="fa-fw" /><v-icon
         icon="reply"
         class="fa-fw"
       />

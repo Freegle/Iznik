@@ -43,7 +43,14 @@
             <h2 class="ms-2 me-2">
               Mail
               <b-badge
-                v-if="supportOrAdmin && (work?.emailout || work?.emailin)"
+                v-if="supportOrAdmin && work?.maildeferrals"
+                variant="danger"
+                :title="work.maildeferrals + ' domain(s) we cannot deliver to'"
+              >
+                {{ work.maildeferrals }}
+              </b-badge>
+              <b-badge
+                v-else-if="supportOrAdmin && (work?.emailout || work?.emailin)"
                 variant="danger"
               >
                 !
@@ -87,7 +94,15 @@
             </b-tab>
             <b-tab @click="onDeferralsTab">
               <template #title>
-                <span class="subtab-label">Delayed</span>
+                <span class="subtab-label">
+                  Delayed
+                  <b-badge
+                    v-if="supportOrAdmin && work?.maildeferrals"
+                    variant="danger"
+                  >
+                    {{ work.maildeferrals }}
+                  </b-badge>
+                </span>
               </template>
               <ModSupportMailDeferrals
                 v-if="showDeferrals"

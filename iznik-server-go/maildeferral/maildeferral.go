@@ -17,6 +17,17 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 )
 
+// PerMailboxReason matches a delay reason that describes ONE recipient's
+// mailbox rather than the provider's treatment of us - almost always a full
+// inbox. Those must never be presented as a provider problem: counting them as
+// one suppressed gmail.com for two and a half hours on 2026-08-19 while Gmail
+// was delivering normally (see iznik-batch RelayQueueSnapshot::isPerMailbox,
+// which this mirrors - keep the two in step).
+//
+// 4.3.1 "insufficient system storage" is deliberately absent: that is the
+// receiving SERVER running out, which IS about the provider.
+const PerMailboxReason = `4[.]2[.]2|over[- ]?quota|quota exceeded|mailbox (is )?full|out of storage|not enough storage space`
+
 // Deferral is one receiving domain we currently cannot deliver to.
 type Deferral struct {
 	Domain string     `json:"domain"`

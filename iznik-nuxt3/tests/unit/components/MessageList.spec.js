@@ -99,8 +99,8 @@ describe('MessageList', () => {
       expect(true).toBe(true)
     })
 
-    it('passes showGiveFind prop to GroupHeader', () => {
-      // :show-give-find="showGiveFind"
+    it('passes showGiveAsk prop to GroupHeader', () => {
+      // :show-give-ask="showGiveAsk"
       expect(true).toBe(true)
     })
 

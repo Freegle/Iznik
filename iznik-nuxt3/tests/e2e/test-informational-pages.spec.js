@@ -22,13 +22,13 @@ test.describe('Together (charity/community landing) page', () => {
       { timeout: timeouts.ui.appearance }
     )
 
-    // Hero action links — the mobile nav also has /find and /give links,
+    // Hero action links — the mobile nav also has /ask and /give links,
     // hidden at this desktop viewport, so filter to the visible match.
     await expect(
       page.locator('a[href="/charity"]').filter({ visible: true }).first()
     ).toBeVisible()
     await expect(
-      page.locator('a[href="/find"]').filter({ visible: true }).first()
+      page.locator('a[href="/ask"]').filter({ visible: true }).first()
     ).toBeVisible()
     await expect(
       page.locator('a[href="/give"]').filter({ visible: true }).first()

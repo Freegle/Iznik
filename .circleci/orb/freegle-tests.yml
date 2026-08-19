@@ -3137,7 +3137,23 @@ jobs:
             cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-go" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-go"
             cov_upload "$GO_DIR/coverage.lcov" && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
             cp "$GO_DIR/coverage.lcov" /tmp/patch-go.lcov 2>/dev/null || true
+            # Retain the profile as a build artefact before clearing it out of the
+            # checkout. Coveralls reports a percentage delta but never says which
+            # statements moved, and this suite's coverage is not reproducible: it
+            # shares iznik_go_test with the concurrently-running Laravel suite, so
+            # load-dependent error and timeout branches are covered on one run and
+            # not the next. That is how a "Coverage decreased (-0.004%)" red lands
+            # on a commit containing no Go changes at all - 0.004% is one statement.
+            # Deleting the profile here left nothing to diff, so the question was
+            # unanswerable after the fact. Keep both: coverage.out carries per-block
+            # statement counts, which is what a build-to-build diff actually needs.
+            mkdir -p ~/coverage-artifacts
+            cp "$GO_DIR/coverage.out" ~/coverage-artifacts/go-coverage.out 2>/dev/null || true
+            cp "$GO_DIR/coverage.lcov" ~/coverage-artifacts/go-coverage.lcov 2>/dev/null || true
             rm -f "$GO_DIR/coverage.out" "$GO_DIR/coverage.lcov"
+
+      - store_artifacts:
+          path: ~/coverage-artifacts
 
       - run:
           name: Upload Laravel coverage

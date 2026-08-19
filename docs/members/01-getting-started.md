@@ -27,7 +27,7 @@ reply to posts and to keep track of what you have given and received.
 To sign up:
 
 1. Go to [ilovefreegle.org](https://www.ilovefreegle.org) or open the app.
-2. Click **Give** or **Find**, or the **Join** button in the login box.
+2. Click **Give** or **Ask**, or the **Join** button in the login box.
 3. Sign up with your name, email and a password, or use **Continue with Facebook**,
    **Google**, or **Apple** (Apple is offered in the iOS app).
 4. If you signed up with email, check your inbox and confirm your address so we can email

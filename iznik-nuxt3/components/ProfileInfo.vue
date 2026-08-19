@@ -125,7 +125,7 @@
       <!-- Active WANTEDs -->
       <div class="posts-section">
         <div class="section-header">
-          <v-icon icon="search" class="section-icon wanted" />
+          <v-icon icon="shopping-cart" class="section-icon wanted" />
           <span>{{ activeWANTEDCount }}</span>
         </div>
         <div v-if="activeWanteds.length" class="posts-grid">

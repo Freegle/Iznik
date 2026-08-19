@@ -11,6 +11,6 @@ import { useRouter } from '#imports'
 const router = useRouter()
 
 onMounted(() => {
-  router.replace('/find/mobile/photos')
+  router.replace('/ask/mobile/photos')
 })
 </script>

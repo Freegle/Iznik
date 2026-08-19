@@ -87,10 +87,10 @@ const SHOTS = [
   },
   {
     audience: 'members',
-    name: 'find-start',
+    name: 'ask-start',
     auth: 'none',
     app: 'member',
-    path: '/find/mobile/details',
+    path: '/ask/mobile/details',
   },
   {
     audience: 'members',
@@ -244,7 +244,15 @@ async function run() {
   let modCtx = null
   let failures = 0
 
+  // DOCS_SHOT=<name>[,<name>] regenerates just those entries. Without it every
+  // image is rewritten, which buries the one that actually changed in a diff of
+  // twenty binaries and needs the whole stack up rather than one page's.
+  const only = process.env.DOCS_SHOT
+    ? new Set(process.env.DOCS_SHOT.split(',').map((s) => s.trim()))
+    : null
+
   for (const shot of SHOTS) {
+    if (only && !only.has(shot.name)) continue
     try {
       let ctx
       if (shot.auth === 'member') {

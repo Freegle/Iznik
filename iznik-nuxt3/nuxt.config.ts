@@ -145,8 +145,8 @@ export default defineNuxtConfig({
         process.env.CONTEXT === 'production'
           ? process.env.URL
           : process.env.DEPLOY_URL
-            ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
-            : '',
+          ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
+          : '',
     },
   },
 
@@ -167,12 +167,12 @@ export default defineNuxtConfig({
     ...(prerenderRoutes
       ? {
           '/': { prerender: true },
+          '/ask': { prerender: true },
           '/explore': { prerender: true },
           '/unsubscribe**': { prerender: true },
           '/about': { prerender: true },
           '/disclaimer': { prerender: true },
           '/donate': { prerender: true },
-          '/find': { prerender: true },
           '/forgot': { prerender: true },
           '/give': { prerender: true },
           '/help': { prerender: true },
@@ -186,6 +186,13 @@ export default defineNuxtConfig({
 
     // Redirects.
     '/councils': { redirect: '/partnerships' },
+
+    // The WANTED flow was called "find" until Aug 2026. Old emails, app shortcuts
+    // and bookmarks still point at /find, so this is permanent, not a migration
+    // shim. Nitro serves the 301 for direct hits; middleware/ask.global.js covers
+    // in-app navigation, which never reaches the server.
+    '/find': { redirect: { to: '/ask', statusCode: 301 } },
+    '/find/**': { redirect: { to: '/ask/**', statusCode: 301 } },
 
     // These pages are for logged-in users, or aren't performance-critical enough to render on the server.
     '/birthday/**': { ssr: false },

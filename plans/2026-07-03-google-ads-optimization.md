@@ -96,7 +96,7 @@ Weight spend toward **givers** (supply creators): Olio's own strategy confirms s
 3. **Give — core mission** (giver intents, themed ad groups: furniture / appliances / house-move / general declutter)
 4. **Get** (taker intents: free stuff / free furniture / item-specific)
 5. **Recycle-intercept** (optional, small: "throw away X for free", "X disposal" where the pitch is "don't tip it — freegle it"; strict negatives for council/commercial intent)
-- Each ad group: ≥2 RSAs, 8-10 headlines, pinned brand line, sitelinks (Find/Give/App/How it works), callouts, structured snippets. Ad rotation: Optimise. Location: Presence-only. Grant compliance: ≥2 ad groups/campaign, ≥2 sitelinks, no single-word/generic keywords, pause QS≤2.
+- Each ad group: ≥2 RSAs, 8-10 headlines, pinned brand line, sitelinks (Ask/Give/App/How it works), callouts, structured snippets. Ad rotation: Optimise. Location: Presence-only. Grant compliance: ≥2 ad groups/campaign, ≥2 sitelinks, no single-word/generic keywords, pause QS≤2.
 - **Do NOT delete Basic 2020 history wholesale** — migrate its few working themes, then wind it down. (It also holds the account's QS history.)
 
 ### 3.5 Bidding ladder
@@ -108,7 +108,7 @@ Weight spend toward **givers** (supply creators): Olio's own strategy confirms s
 Sequence: hygiene (§4 P0) → measurement (P1) → restructure + new giver inventory (P2) → Smart Bidding uncapping (P3) → **PMax-for-Grants test** (Search+Maps; verify in-account eligibility) as the final utilization filler. AI Max stays OFF until brand exclusions + landing pages are solid.
 
 ### 3.7 Landing pages (site work, not ads work)
-- `/give` and `/find` already exist as sitelink targets; build/dedicate intent pages: "Give away furniture" (per-category), "Free stuff near you" and let ads land there instead of the homepage. Match H1 to query theme; LCP <2.5s, INP <200ms.
+- `/give` and `/ask` already exist as sitelink targets; build/dedicate intent pages: "Give away furniture" (per-category), "Free stuff near you" and let ads land there instead of the homepage. Match H1 to query theme; LCP <2.5s, INP <200ms.
 - Add UTM conventions per campaign/ad group so GA4 attribution is legible.
 
 ### 3.8 Optional: tiny paid account (real money)
@@ -214,7 +214,7 @@ Then:
 ### P2 — Restructure (after P1 baselines, ~2-4 weeks)
 1. Build the 5-campaign structure (§3.4) with fresh giver-intent ad groups and 2 RSAs each.
 2. Write RSAs against the differentiator: *100% free both sides, no fees, no resale-quality bar, local collection, charity, planet* ("Save Time, Money & The Planet" already tests well at 50%+ brand CTR).
-3. Sitelinks: Give Stuff / Find Stuff / Get the App / How Freegle Works; refresh callouts; image assets per theme.
+3. Sitelinks: Give Stuff / Ask for Stuff / Get the App / How Freegle Works; refresh callouts; image assets per theme.
 4. Landing pages per giver theme (site work in parallel).
 5. Wind Basic 2020 down as new campaigns take traffic.
 
@@ -266,7 +266,7 @@ Then:
 |---|---|---|
 | Register with Website | `components/LoginModal.vue:397-404` (label `EcEMCPvav7kZELy618UD`), called at `:430` | Fires on submit-click **before** signup resolves; **never fires for Facebook/Apple/Google signups** |
 | Give an Item | `pages/give/index.vue:122-129` | Fires on **page mount of wizard step 1**, not on completed post |
-| Want/Ask for Item ("Find an Item") | `pages/find/index.vue:124-131` | Same premature page-mount pattern |
+| Want/Ask for Item ("Find an Item") | `pages/ask/index.vue:124-131` | Same premature page-mount pattern |
 | Donate | `components/DonationButton.vue:137-146` | Fires on PayPal click, before payment completes |
 | (Reply to post) | — | **No event exists anywhere** in the reply/chat flow |
 

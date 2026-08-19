@@ -30,7 +30,7 @@ function addGotoAndVerify(page) {
  * Helper to navigate to the details page in the mobile flow.
  * Always goes via the mobile photos page so that a compose message is created
  * by getOrCreateMessageId() before we reach details. Going via the desktop
- * /give or /find page was unreliable: with a 1280px viewport the page shows
+ * /give or /ask page was unreliable: with a 1280px viewport the page shows
  * the desktop layout (no mobile redirect), no "Next" button appears (message
  * isn't valid yet), and the fallback direct-navigation to /mobile/details
  * produces a null messageId — Vue then resets the item input to '' immediately
@@ -38,9 +38,9 @@ function addGotoAndVerify(page) {
  */
 async function navigateToMobileDetails(page, flowType) {
   const mobilePhotosPath =
-    flowType === 'give' ? '/give/mobile/photos' : '/find/mobile/photos'
+    flowType === 'give' ? '/give/mobile/photos' : '/ask/mobile/photos'
   const mobileDetailsPath =
-    flowType === 'give' ? '/give/mobile/details' : '/find/mobile/details'
+    flowType === 'give' ? '/give/mobile/details' : '/ask/mobile/details'
 
   // Go straight to the mobile photos page — this runs getOrCreateMessageId()
   // which ensures a compose message exists in the store before we reach details.
@@ -539,8 +539,8 @@ test.describe('AI Illustration Tests - Find Desktop Flow', () => {
       expect(signupResult).toBeTruthy()
       console.log('User signed up successfully')
 
-      // Navigate to the find page - desktop layout shows PostMessageTablet
-      await page.gotoAndVerify('/find', {
+      // Navigate to the ask page - desktop layout shows PostMessageTablet
+      await page.gotoAndVerify('/ask', {
         timeout: timeouts.navigation.default,
       })
 
@@ -630,8 +630,8 @@ test.describe('AI Illustration Tests - Find Desktop Flow', () => {
       )
       expect(signupResult).toBeTruthy()
 
-      // Navigate to the find page
-      await page.gotoAndVerify('/find', {
+      // Navigate to the ask page
+      await page.gotoAndVerify('/ask', {
         timeout: timeouts.navigation.default,
       })
 
@@ -735,8 +735,8 @@ test.describe('AI Illustration Tests - Page Load Verification', () => {
     )
     expect(signupResult).toBeTruthy()
 
-    // Navigate to the find page
-    await page.gotoAndVerify('/find', {
+    // Navigate to the ask page
+    await page.gotoAndVerify('/ask', {
       timeout: timeouts.navigation.default,
     })
 

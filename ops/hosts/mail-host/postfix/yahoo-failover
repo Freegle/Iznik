@@ -51,8 +51,20 @@ on)
     done > "$MAP"
     postfix reload 2>&1 | grep -v 'bogus file' || true
     n=$(wc -l < "$MAP")
-    log "ON  by ${SUDO_USER:-$(id -un)} - $n domains -> yahoo: (77.72.7.253)"
-    echo "yahoo-failover ON: $n domains routed via 77.72.7.253, concurrency 4."
+    # Read the rate off master.cf rather than restating it. A hardcoded
+    # "concurrency 4" outlived the config it described and told the operator
+    # the opposite of the truth while the rate was being deliberately reduced.
+    # Read ONLY inside the yahoo block. Scanning the whole file takes the last
+    # rate_delay in master.cf, which belongs to `slowdest` - it reported 2s
+    # while the yahoo transport was set to 10s, i.e. the same lie in a new
+    # place. A transport block ends at the next line starting in column 1.
+    rate=$(awk '/^yahoo[ \t]+unix/ {inblk=1; mp=$7; next}
+                inblk && /^[^ \t]/ {inblk=0}
+                inblk && /smtp_destination_rate_delay/ {split($0, a, "="); rd=a[2]}
+                END {printf "maxproc=%s rate_delay=%s", (mp ? mp : "?"), (rd ? rd : "none")}' \
+        /etc/postfix/master.cf)
+    log "ON  by ${SUDO_USER:-$(id -un)} - $n domains -> yahoo: (77.72.7.253, $rate)"
+    echo "yahoo-failover ON: $n domains routed via 77.72.7.253 ($rate)."
     echo
     echo "  This burns reputation on the secondary IP. Turn it OFF once the"
     echo "  backlog has drained:  yahoo-failover off"

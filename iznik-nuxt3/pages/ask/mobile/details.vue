@@ -1,5 +1,5 @@
 <template>
-  <div class="app-find-details" :class="{ 'has-sticky-ad': stickyAdRendered }">
+  <div class="app-ask-details" :class="{ 'has-sticky-ad': stickyAdRendered }">
     <!-- Main content -->
     <div class="app-content">
       <!-- Photo thumbnails (summary of what they added) -->
@@ -46,7 +46,7 @@
       <!-- Item name -->
       <div class="form-section">
         <label for="item-name" class="form-label">
-          What are you looking for?
+          Tell other freeglers what you'd like
         </label>
         <b-form-input
           id="item-name"
@@ -65,7 +65,7 @@
       <!-- Description -->
       <div class="form-section">
         <label for="description" class="form-label">
-          Tell us more about what you need:
+          Tell us more about what you'd like:
         </label>
         <b-form-textarea
           id="description"
@@ -148,7 +148,7 @@ const showDescriptionError = ref(false)
 // Redirect if no message found
 onMounted(() => {
   if (messageId.value === null) {
-    router.replace('/find/mobile/photos')
+    router.replace('/ask/mobile/photos')
   }
 })
 
@@ -185,7 +185,7 @@ const descriptionState = computed(() => {
 const descriptionError = computed(() =>
   isNumericOnlyBody(description.value)
     ? INVALID_BODY_MESSAGE_WANTED
-    : 'Please add a description to help people understand what you need.'
+    : "Please add a description to help people understand what you'd like."
 )
 
 // Get attachments
@@ -242,7 +242,7 @@ const description = computed({
 })
 
 function editPhotos() {
-  router.push('/find/mobile/photos')
+  router.push('/ask/mobile/photos')
 }
 
 // AI Illustration support
@@ -365,7 +365,7 @@ function validateAndNext() {
   }
 
   // Continue to app whereami flow for location.
-  router.push('/find/mobile/whereami')
+  router.push('/ask/mobile/whereami')
 }
 </script>
 
@@ -373,7 +373,7 @@ function validateAndNext() {
 @import 'assets/css/_color-vars.scss';
 @import 'assets/css/sticky-banner.scss';
 
-.app-find-details {
+.app-ask-details {
   display: flex;
   flex-direction: column;
   min-height: 100vh;

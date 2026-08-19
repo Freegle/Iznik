@@ -7,7 +7,7 @@
       v-if="group && showGroupHeader"
       :group="group"
       show-join
-      :show-give-find="showGiveFind"
+      :show-give-ask="showGiveAsk"
     />
     <h2 class="visually-hidden">List of wanteds and offers</h2>
     <div id="visobserver" v-observe-visibility="visibilityChanged" />
@@ -285,7 +285,7 @@ const props = defineProps({
     required: false,
     default: true,
   },
-  showGiveFind: {
+  showGiveAsk: {
     type: Boolean,
     required: false,
     default: false,

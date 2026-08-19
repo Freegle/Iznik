@@ -152,7 +152,7 @@ class CommunityNewsEmailService
                         areaName: $area->name,
                         intro: $intro,
                         items: $itemData,
-                        findUrl: "{$userSite}/find?src=communitynews",
+                        askUrl: "{$userSite}/ask?src=communitynews",
                         settingsUrl: "{$userSite}/settings",
                         story: $story,
                     ));

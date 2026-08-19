@@ -12,7 +12,7 @@ export function staticLinks() {
   const links = [
     { url: '/', changefreq: 'daily', priority: 1.0 },
     { url: '/give', changefreq: 'monthly', priority: 1.0 },
-    { url: '/find', changefreq: 'monthly', priority: 1.0 },
+    { url: '/ask', changefreq: 'monthly', priority: 1.0 },
     { url: '/explore', changefreq: 'daily', priority: 0.8 },
     { url: '/unsubscribe', changefreq: 'monthly', priority: 0.7 },
     { url: '/donate', changefreq: 'monthly', priority: 0.7 },

@@ -123,7 +123,7 @@ async function searchMessages(page, { query, type, location }) {
       maxRetries: 1,
     })
   } else if (type === 'WANTED') {
-    await page.gotoAndVerify('/find', {
+    await page.gotoAndVerify('/ask', {
       timeout: timeouts.navigation.default,
       maxRetries: 1,
     })

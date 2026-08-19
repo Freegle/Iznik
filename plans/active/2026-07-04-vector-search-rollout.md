@@ -345,7 +345,7 @@ Outcome: someone posting a WANTED sees existing matching OFFERs near them — du
 - [ ] **Step 4: docker cp + go build + Go tests green → Step 5: commit** `feat(api): /message/matches — reach-aware offer matching for wanted composers`.
 
 **UX spec:**
-- In-flow: on the location step (`pages/find/whereami.vue`, and mobile `pages/find/mobile/whereami.vue`), once a postcode is chosen (`postcodeSelect` in `useCompose.js:265-307` already yields lat/lng + groups), fetch matches for the draft item title(s); if ≥1 match, render a `WantedMatches.vue` panel under the postcode chooser: heading "Good news — people are offering these near you right now", up to 6 `MessageMatchCard`s (srcTag `wanted_match`), each opening in a **new tab** (`target="_blank"`) so the draft survives. A dismiss ("Not what I'm looking for — keep posting") collapses it. It must never disable or delay the Next button.
+- In-flow: on the location step (`pages/ask/whereami.vue`, and mobile `pages/ask/mobile/whereami.vue`), once a postcode is chosen (`postcodeSelect` in `useCompose.js:265-307` already yields lat/lng + groups), fetch matches for the draft item title(s); if ≥1 match, render a `WantedMatches.vue` panel under the postcode chooser: heading "Good news — people are offering these near you right now", up to 6 `MessageMatchCard`s (srcTag `wanted_match`), each opening in a **new tab** (`target="_blank"`) so the draft survives. A dismiss ("Not what I'm looking for — keep posting") collapses it. It must never disable or delay the Next button.
 - Post-submit: on `pages/myposts.vue`, when arriving with freshly-submitted WANTED ids (router state `ids` + the messages are type Wanted — see `useCompose.js:309-425` freegleIt), show the same panel per submitted wanted (max 1 panel, first wanted) using the item text, heading "While you wait — these offers might match".
 - Query: the draft item name (compose store message item text). bbox: ±0.15° around the chosen location (~15km) via the search endpoint's `swlat/swlng/nelat/nelng` params.
 
@@ -357,15 +357,15 @@ Outcome: someone posting a WANTED sees existing matching OFFERs near them — du
 
 - [ ] **Steps: failing specs → implement → vitest+eslint green → commit** `feat(compose): WantedMatches panel component`.
 
-### Task 3.2: Wire into the find flow (desktop + mobile) + My Posts
+### Task 3.2: Wire into the ask flow (desktop + mobile) + My Posts
 
 **Files:**
-- Modify: `iznik-nuxt3/pages/find/whereami.vue`, `iznik-nuxt3/pages/find/mobile/whereami.vue` (render `<WantedMatches v-if="postcodeChosen" :query="itemTitle" ...>`; item title from compose store draft messages of type Wanted — grep how the page accesses composeStore for existing draft fields)
+- Modify: `iznik-nuxt3/pages/ask/whereami.vue`, `iznik-nuxt3/pages/ask/mobile/whereami.vue` (render `<WantedMatches v-if="postcodeChosen" :query="itemTitle" ...>`; item title from compose store draft messages of type Wanted — grep how the page accesses composeStore for existing draft fields)
 - Modify: `iznik-nuxt3/pages/myposts.vue` (if router-state ids resolve to a Wanted just submitted, render the panel once with that item text + the user's location)
 - Test: extend the pages' existing specs (grep `whereami.spec` / `myposts.spec`); assert panel presence given a chosen postcode + draft item, and absence in the give (Offer) flow.
 
 - [ ] **Steps: failing specs → implement → vitest+eslint green.**
-- [ ] **Manual validation** (Chrome MCP, worktree URL): walk the /find flow with dev data (post a WANTED for "sofa" with several sofa OFFERs seeded): panel appears on whereami within ~1s, Next never blocked, links open new tab, dismiss works, mobile variant at 375px, myposts shows the post-submit panel. Screenshot both.
+- [ ] **Manual validation** (Chrome MCP, worktree URL): walk the /ask flow with dev data (post a WANTED for "sofa" with several sofa OFFERs seeded): panel appears on whereami within ~1s, Next never blocked, links open new tab, dismiss works, mobile variant at 375px, myposts shows the post-submit panel. Screenshot both.
 - [ ] **Commit** `feat(compose): show matching offers during and after wanted posting`.
 
 ### Task 3.3: Measurement joins in the panel

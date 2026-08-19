@@ -1,5 +1,5 @@
 <template>
-  <div class="app-find-whereami" :class="{ 'has-sticky-ad': stickyAdRendered }">
+  <div class="app-ask-whereami" :class="{ 'has-sticky-ad': stickyAdRendered }">
     <!-- Main content -->
     <div class="app-content">
       <h1 class="page-title">Now, tell us where you are</h1>
@@ -218,7 +218,7 @@ async function submitWanted() {
 @import 'assets/css/sticky-banner.scss';
 @import 'assets/css/_color-vars.scss';
 
-.app-find-whereami {
+.app-ask-whereami {
   display: flex;
   flex-direction: column;
   min-height: 100vh;

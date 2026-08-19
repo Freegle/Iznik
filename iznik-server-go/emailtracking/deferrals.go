@@ -3,6 +3,7 @@ package emailtracking
 import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/maildeferral"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 )
@@ -56,19 +57,30 @@ func Deferrals(c *fiber.Ctx) error {
 
 	suppressions := []MailSuppression{}
 
-	// Only the mxgroup and address rows: the domain rows are derived children
-	// of an mxgroup row and listing them would just repeat it once per domain.
+	// By DOMAIN. That is the unit support actually needs - "is mail to
+	// yahoo.co.uk held?" - and it is what a member would recognise. The
+	// mxgroup row names a relay pattern (am0.yahoodns.net) that means nothing
+	// to anyone outside this code, and the address rows are individual
+	// mailboxes: thousands of them in a bad episode, which buried the handful
+	// of domains that were the actual story.
+	//
+	// Per-mailbox reasons are excluded for the same reason they no longer
+	// suppress a provider: a full inbox is that member's problem, not a
+	// provider refusing us, and listing them here reads as an outage.
+	//
 	// keep-raw: a correlated count over a child table, which GORM's struct
 	// conditions cannot express as a selected column.
 	res := db.Table("mail_suppressions ms").
-		Select("ms.id, ms.scope, ms.value, ms.provider, ms.reason, ms.deferred_since, " +
-			"ms.first_seen, ms.last_seen, ms.message_count, " +
-			"(SELECT COUNT(DISTINCT msc.userid) FROM mail_suppressed_counts msc " +
-			" WHERE msc.caughtup_at IS NULL AND msc.suppressionid IN " +
-			"  (SELECT c.id FROM mail_suppressions c WHERE c.id = ms.id OR c.parentid = ms.id)" +
+		Select("ms.id, ms.scope, ms.value, ms.provider, ms.reason, ms.deferred_since, "+
+			"ms.first_seen, ms.last_seen, ms.message_count, "+
+			"(SELECT COUNT(DISTINCT msc.userid) FROM mail_suppressed_counts msc "+
+			" WHERE msc.caughtup_at IS NULL AND msc.suppressionid IN "+
+			"  (SELECT c.id FROM mail_suppressions c WHERE c.id = ms.id OR c.parentid = ms.id)"+
 			") AS membersaffected").
-		Where("ms.released_at IS NULL AND ms.scope IN ('mxgroup','address')").
-		Order("ms.deferred_since ASC").
+		Where("ms.released_at IS NULL AND ms.scope = 'domain'").
+		Where("ms.reason IS NULL OR ms.reason NOT REGEXP ?", maildeferral.PerMailboxReason).
+		// Biggest backlog first: the question is always "what is worst".
+		Order("ms.message_count DESC").
 		Scan(&suppressions)
 
 	if res.Error != nil {

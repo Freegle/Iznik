@@ -16,16 +16,16 @@
         android:data="https://www.ilovefreegle.org/give" />
   </shortcut>
   <shortcut
-      android:shortcutId="find"
+      android:shortcutId="ask"
       android:enabled="true"
       android:icon="@mipmap/ic_launcher"
-      android:shortcutShortLabel="@string/shortcut_find_short"
-      android:shortcutLongLabel="@string/shortcut_find_long">
+      android:shortcutShortLabel="@string/shortcut_ask_short"
+      android:shortcutLongLabel="@string/shortcut_ask_long">
     <intent
         android:action="android.intent.action.VIEW"
         android:targetPackage="org.ilovefreegle.direct"
         android:targetClass="org.ilovefreegle.direct.MainActivity"
-        android:data="https://www.ilovefreegle.org/find" />
+        android:data="https://www.ilovefreegle.org/ask" />
   </shortcut>
   <shortcut
       android:shortcutId="chats"

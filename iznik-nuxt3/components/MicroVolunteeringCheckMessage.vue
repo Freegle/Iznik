@@ -280,7 +280,7 @@ const messageTypeClass = computed(() => {
 const categoryIcon = computed(() => {
   // Return appropriate icon based on message type
   const type = message.value?.type?.toLowerCase()
-  if (type === 'wanted') return 'search'
+  if (type === 'wanted') return 'shopping-cart'
   return 'gift'
 })
 
