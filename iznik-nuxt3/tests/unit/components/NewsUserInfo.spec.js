@@ -109,7 +109,9 @@ describe('NewsUserInfo', () => {
         userinfo: { openoffers: 0, openwanteds: 5 },
       })
       const wrapper = createWrapper()
-      expect(wrapper.find('.v-icon[data-icon="search"]').exists()).toBe(true)
+      expect(wrapper.find('.v-icon[data-icon="shopping-cart"]').exists()).toBe(
+        true
+      )
     })
 
     it('hides stats when no offers or wanteds', () => {
@@ -128,7 +130,9 @@ describe('NewsUserInfo', () => {
       })
       const wrapper = createWrapper()
       expect(wrapper.find('.v-icon[data-icon="gift"]').exists()).toBe(true)
-      expect(wrapper.find('.v-icon[data-icon="search"]').exists()).toBe(true)
+      expect(wrapper.find('.v-icon[data-icon="shopping-cart"]').exists()).toBe(
+        true
+      )
     })
   })
 

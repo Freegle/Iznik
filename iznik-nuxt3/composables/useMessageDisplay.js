@@ -259,7 +259,7 @@ export function useMessageDisplay(messageId) {
     // Map item categories to icons - simplified for now
     const type = message.value?.type
     if (type === 'Offer') return 'gift'
-    if (type === 'Wanted') return 'search'
+    if (type === 'Wanted') return 'shopping-cart'
     return 'gift'
   })
 

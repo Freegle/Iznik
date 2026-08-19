@@ -119,7 +119,7 @@ community statistics and so you always have a record of what you gave or receive
 
 - **ChitChat** (`/chitchat`): a community discussion feed, separate from OFFER and WANTED
   posts. Chat about local goings-on, ask for recommendations, and so on. If a ChitChat
-  post looks like an item request, Freegle nudges you to use Give or Find instead.
+  post looks like an item request, Freegle nudges you to use Give or Ask instead.
 - **Stories** (`/stories`): share why you freegle. Good stories may feature in a
   community newsletter.
 - **Community events** (`/communityevents`) and **volunteering** (`/volunteerings`):

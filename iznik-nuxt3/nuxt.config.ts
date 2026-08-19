@@ -138,8 +138,8 @@ export default defineNuxtConfig({
         process.env.CONTEXT === 'production'
           ? process.env.URL
           : process.env.DEPLOY_URL
-            ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
-            : '',
+          ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
+          : '',
     },
   },
 
@@ -160,12 +160,12 @@ export default defineNuxtConfig({
     ...(prerenderRoutes
       ? {
           '/': { prerender: true },
+          '/ask': { prerender: true },
           '/explore': { prerender: true },
           '/unsubscribe**': { prerender: true },
           '/about': { prerender: true },
           '/disclaimer': { prerender: true },
           '/donate': { prerender: true },
-          '/find': { prerender: true },
           '/forgot': { prerender: true },
           '/give': { prerender: true },
           '/help': { prerender: true },
@@ -179,6 +179,13 @@ export default defineNuxtConfig({
 
     // Redirects.
     '/councils': { redirect: '/partnerships' },
+
+    // The WANTED flow was called "find" until Aug 2026. Old emails, app shortcuts
+    // and bookmarks still point at /find, so this is permanent, not a migration
+    // shim. Nitro serves the 301 for direct hits; middleware/ask.global.js covers
+    // in-app navigation, which never reaches the server.
+    '/find': { redirect: { to: '/ask', statusCode: 301 } },
+    '/find/**': { redirect: { to: '/ask/**', statusCode: 301 } },
 
     // These pages are for logged-in users, or aren't performance-critical enough to render on the server.
     '/birthday/**': { ssr: false },
@@ -697,11 +704,11 @@ export default defineNuxtConfig({
         ...(config.ADS_SCRIPT_ENABLED
           ? [
               {
-          type: 'text/javascript',
-          body: true,
-          async: true,
-          innerHTML:
-            `try {
+                type: 'text/javascript',
+                body: true,
+                async: true,
+                innerHTML:
+                  `try {
               window.dataLayer = window.dataLayer || [];
               function ce_gtag() {
                   window.dataLayer.push(arguments);
@@ -726,10 +733,10 @@ export default defineNuxtConfig({
               window.googletag.cmd.push(function() {
                 // On the dev server, where COOKIEYES is not set, we want ads to load immediately.
               ` +
-            (config.COOKIEYES
-              ? `window.googletag.pubads().disableInitialLoad()`
-              : '') +
-            `
+                  (config.COOKIEYES
+                    ? `window.googletag.pubads().disableInitialLoad()`
+                    : '') +
+                  `
                 window.googletag.pubads().enableSingleRequest()
                 window.googletag.enableServices()
               });
@@ -821,11 +828,11 @@ export default defineNuxtConfig({
                  
               window.pbjs.que.push(function() {
                  console.log('Add PBJS ad units', ` +
-            JSON.stringify(config.AD_PREBID_CONFIG) +
-            `);
+                  JSON.stringify(config.AD_PREBID_CONFIG) +
+                  `);
                  window.pbjs.addAdUnits(` +
-            JSON.stringify(config.AD_PREBID_CONFIG) +
-            `)
+                  JSON.stringify(config.AD_PREBID_CONFIG) +
+                  `)
               });
 
             function loadScript(url, block) {
@@ -853,8 +860,8 @@ export default defineNuxtConfig({
                 window.cookieYesComplete = true;
                 console.log('Consider load of GPT and prebid');
   ` +
-            (config.PLAYWIRE_PUB_ID
-              ? `
+                  (config.PLAYWIRE_PUB_ID
+                    ? `
                 console.log('Load playwire code')
                 window.ramp = window.ramp || {}
                 window.ramp.que = window.ramp.que || []
@@ -862,11 +869,11 @@ export default defineNuxtConfig({
       
                 // Load the Ramp configuration script
                 const pubId = '` +
-                config.PLAYWIRE_PUB_ID +
-                `' 
+                      config.PLAYWIRE_PUB_ID +
+                      `' 
                 const websiteId = '` +
-                config.PLAYWIRE_WEBSITE_ID +
-                `'
+                      config.PLAYWIRE_WEBSITE_ID +
+                      `'
       
                 const configScript = document.createElement('script')
                 configScript.src =
@@ -885,10 +892,10 @@ export default defineNuxtConfig({
                 console.log('Appended Playwire script to DOM')
                 
                 // Currently using Playwire so don't need to load GPT and prebid.`
-              : `
+                    : `
                 console.log('Playwire not configured, skipping script load')
                 // Using AdSense or other ad solution instead of Playwire`) +
-            `
+                  `
                               
                 // if (!window.weHaveLoadedGPT) {
                 //   window.weHaveLoadedGPT = true;
@@ -919,14 +926,14 @@ export default defineNuxtConfig({
             // Previously CookieYes was loaded inside postGSI(), creating an unnecessary
             // sequential bottleneck (GSI download must finish before CookieYes even starts).
             ` +
-            (!config.ISAPP || config.USE_COOKIES
-              ? config.COOKIEYES
-                ? `
+                  (!config.ISAPP || config.USE_COOKIES
+                    ? config.COOKIEYES
+                      ? `
             // Load CookieYes immediately (no longer waits for GSI)
             console.log('Load CookieYes');
             loadScript('` +
-                  config.COOKIEYES +
-                  `', false)
+                        config.COOKIEYES +
+                        `', false)
 
             // Wait until CookieYes has set its cookie and TCF consent is available.
             var retries = 10
@@ -963,8 +970,8 @@ export default defineNuxtConfig({
                   // an exception then it's likely to be because it's blocked.
                   console.log('Try fetching script')
                   fetch('` +
-                  config.COOKIEYES +
-                  `').then((response) => {
+                        config.COOKIEYES +
+                        `').then((response) => {
                     console.log('Fetch returned', response)
 
                     if (response.ok) {
@@ -987,7 +994,7 @@ export default defineNuxtConfig({
 
             checkCookieYes();
             `
-                : `
+                      : `
             // No CookieYes configured (dev environment) - defer ad loading to
             // simulate the natural delay that CookieYes consent introduces on
             // production (user must read banner + click Accept, typically 5-15s).
@@ -995,11 +1002,11 @@ export default defineNuxtConfig({
             console.log('No CookieYes to load, deferring ads to simulate consent delay')
             setTimeout(window.postCookieYes, 8000);
             `
-              : `
+                    : `
             // App build without cookies - no consent or ads needed
             `) +
-            (!config.ISAPP
-              ? `
+                  (!config.ISAPP
+                    ? `
             // Web builds: Load GSI for Google One Tap sign-in.
             // Defer for new visitors (no reason to expect auto-login), load immediately
             // for returning users where One Tap may auto-sign-in.
@@ -1023,10 +1030,10 @@ export default defineNuxtConfig({
               }
             }
             `
-              : `
+                    : `
             // App builds: GSI not needed (apps use Capacitor plugin for Google login)
             `) +
-            `
+                  `
           } catch (e) {
             console.error('Error initialising ads and consent:', e.message);
           }`,
@@ -1067,7 +1074,11 @@ export default defineNuxtConfig({
           property: 'og:title',
           content: fullTitle,
         },
-        { hid: 'og:site_name', property: 'og:site_name', content: branding.siteName },
+        {
+          hid: 'og:site_name',
+          property: 'og:site_name',
+          content: branding.siteName,
+        },
         {
           hid: 'og:url',
           property: 'og:url',
@@ -1108,7 +1119,11 @@ export default defineNuxtConfig({
           name: 'twitter:card',
           content: 'summary_large_image',
         },
-        { hid: 'twitter:site', name: 'twitter:site', content: branding.twitterHandle },
+        {
+          hid: 'twitter:site',
+          name: 'twitter:site',
+          content: branding.twitterHandle,
+        },
         {
           hid: 'OMG-Verify-V1',
           name: 'OMG-Verify-V1',

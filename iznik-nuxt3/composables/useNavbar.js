@@ -247,10 +247,10 @@ export function useNavbar() {
       router.push('/')
     } else if (
       currentPath === '/give/mobile/photos' ||
-      currentPath === '/find/mobile/photos'
+      currentPath === '/ask/mobile/photos'
     ) {
       // From mobile photos page, go to home to avoid redirect loop.
-      // The /give and /find pages redirect to mobile/photos on mobile, so router.back() would loop.
+      // The /give and /ask pages redirect to mobile/photos on mobile, so router.back() would loop.
       router.push('/')
     } else {
       try {

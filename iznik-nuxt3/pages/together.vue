@@ -21,8 +21,8 @@
           <v-icon icon="star" />
           Become a charity partner
         </nuxt-link>
-        <nuxt-link to="/find" class="together__btn together__btn--outline">
-          <v-icon icon="search" />
+        <nuxt-link to="/ask" class="together__btn together__btn--outline">
+          <v-icon icon="shopping-cart" />
           Ask for something
         </nuxt-link>
         <nuxt-link to="/give" class="together__btn together__btn--outline">
@@ -219,10 +219,10 @@ const cards = [
   {
     key: 'wanted',
     tag: 'WANTED',
-    icon: 'search',
+    icon: 'shopping-cart',
     title: 'Ask for stuff',
     text: "Post a WANTED on behalf of your organisation or the people you support — whether it's furniture, clothing, household items, equipment, supplies, or anything else you need.",
-    to: '/find',
+    to: '/ask',
     cta: 'Post a WANTED',
   },
   {

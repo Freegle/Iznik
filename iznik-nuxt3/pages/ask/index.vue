@@ -1,13 +1,13 @@
 <template>
   <client-only>
-    <div v-if="showDesktopLayout" class="find-page">
+    <div v-if="showDesktopLayout" class="ask-page">
       <!-- Compact progress stepper -->
       <div class="stepper-container">
         <WizardProgressCompact :active-stage="1" :show-options="false" />
       </div>
 
       <!-- Main content -->
-      <div class="find-content">
+      <div class="ask-content">
         <NoticeMessage v-if="me?.deleted" variant="danger">
           You can't post until you've decided whether to restore your account.
         </NoticeMessage>
@@ -35,7 +35,7 @@
                 variant="primary"
                 size="lg"
                 :disabled="uploadingPhoto"
-                to="/find/whereami"
+                to="/ask/whereami"
                 class="next-btn"
               >
                 Next: Where are you? <v-icon icon="angle-double-right" />
@@ -87,7 +87,7 @@ const showDesktopLayout = computed(
 // Helper function to perform the mobile redirect.
 async function redirectToMobileIfNeeded() {
   if (breakpointReady.value && isMobile.value && process.client) {
-    await navigateTo('/find/mobile/photos', { replace: true })
+    await navigateTo('/ask/mobile/photos', { replace: true })
   }
 }
 
@@ -103,7 +103,7 @@ watch(
   () => ({ ready: breakpointReady.value, mobile: isMobile.value }),
   async ({ ready, mobile }) => {
     if (ready && mobile && process.client) {
-      await navigateTo('/find/mobile/photos', { replace: true })
+      await navigateTo('/ask/mobile/photos', { replace: true })
     }
   }
 )
@@ -136,7 +136,7 @@ function clearAndStartOver() {
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
 
-.find-page {
+.ask-page {
   min-height: 100vh;
   background: $color-gray--lighter;
 }
@@ -151,7 +151,7 @@ function clearAndStartOver() {
   }
 }
 
-.find-content {
+.ask-content {
   max-width: 1100px;
   margin: 0 auto;
   padding: 1rem;

@@ -121,34 +121,50 @@ async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
   // the fixtures encode and lands the newest post a day old; it is self-limiting,
   // since the delta is 0 once the newest post is already a day old. `deadline` is
   // deliberately not shifted - some fixtures carry a deliberately expired one.
+  //
+  // messages_spatial has to move too, and it is the one that actually matters:
+  // browse and explore read the feed from THAT table, not from messages_groups.
+  // Rolling only the other two left the spatial rows at their fixture date, so
+  // the feed went empty and the batch container's spatial prune then deleted
+  // them outright - browse photo sizing and all four reply-flow specs failed on
+  // an empty feed while the assertion below, which only looked at
+  // messages_groups, reported everything was fine.
   execSync(
     `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -e \\"` +
       `SET @delta := (SELECT GREATEST(DATEDIFF(NOW(), MAX(arrival)) - 1, 0) FROM messages_groups WHERE arrival <= NOW()); ` +
       `UPDATE messages_groups SET arrival = arrival + INTERVAL @delta DAY, approvedat = approvedat + INTERVAL @delta DAY, rejectedat = rejectedat + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW(); ` +
-      `UPDATE messages SET arrival = arrival + INTERVAL @delta DAY, date = date + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW();\\""`,
+      `UPDATE messages SET arrival = arrival + INTERVAL @delta DAY, date = date + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW(); ` +
+      `UPDATE messages_spatial SET arrival = arrival + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW();\\""`,
     { encoding: 'utf8', timeout: 120000 }
   )
 
   // Assert it worked, here rather than 20 minutes later in a spec: an empty feed
   // is invisible in the test output and reads as a bug in whatever branch is
   // running.
+  // Assert per table, because messages_groups being fine says nothing about the
+  // one the feed reads.
   const FEED_WINDOW_DAYS = 31
-  const newestAge = parseInt(
-    execSync(
-      `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -N -B -e 'SELECT DATEDIFF(NOW(), MAX(arrival)) FROM messages_groups WHERE arrival <= NOW()'"`,
-      { encoding: 'utf8', timeout: 30000 }
-    ).trim(),
-    10
-  )
-  if (Number.isFinite(newestAge) && newestAge >= FEED_WINDOW_DAYS) {
-    throw new Error(
-      `Newest seeded post is ${newestAge} days old, outside the ${FEED_WINDOW_DAYS}-day feed window ` +
-        `(group/groupMessages.go). Browse and explore would return nothing.`
+  const ages: Record<string, number> = {}
+  for (const table of ['messages_groups', 'messages_spatial']) {
+    const age = parseInt(
+      execSync(
+        `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -N -B -e 'SELECT DATEDIFF(NOW(), MAX(arrival)) FROM ${table} WHERE arrival <= NOW()'"`,
+        { encoding: 'utf8', timeout: 30000 }
+      ).trim(),
+      10
     )
+    if (Number.isFinite(age) && age >= FEED_WINDOW_DAYS) {
+      throw new Error(
+        `Newest seeded ${table} row is ${age} days old, outside the ${FEED_WINDOW_DAYS}-day feed window ` +
+          `(group/groupMessages.go). Browse and explore would return nothing.`
+      )
+    }
+    ages[table] = age
   }
   appendTestLogs(
     'playwright',
-    `${label}Fixture dates rolled forward (newest post ${newestAge} day(s) old)\n`
+    `${label}Fixture dates rolled forward (newest post ${ages.messages_groups} day(s) old, ` +
+      `spatial ${ages.messages_spatial} day(s) old)\n`
   )
 
   // The Go V2 API maintains a MySQL connection pool. Dropping and recreating the

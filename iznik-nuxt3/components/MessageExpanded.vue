@@ -177,7 +177,7 @@
                     >•</span
                   >
                   <span v-if="poster.info?.wanteds" class="poster-overlay-stat">
-                    <v-icon icon="search" />{{ poster.info.wanteds }}
+                    <v-icon icon="shopping-cart" />{{ poster.info.wanteds }}
                   </span>
                 </div>
               </div>
@@ -382,7 +382,7 @@
                       >•</span
                     >
                     <span v-if="poster.info?.wanteds" class="poster-stat">
-                      <v-icon icon="search" />{{ poster.info.wanteds
+                      <v-icon icon="shopping-cart" />{{ poster.info.wanteds
                       }}<span class="poster-stat-label">WANTEDs</span>
                     </span>
                   </div>

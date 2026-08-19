@@ -1,5 +1,5 @@
 <template>
-  <div class="app-find-photos" :class="{ 'has-sticky-ad': stickyAdRendered }">
+  <div class="app-ask-photos" :class="{ 'has-sticky-ad': stickyAdRendered }">
     <!-- Main content -->
     <div class="app-content">
       <PhotoUploader
@@ -90,7 +90,7 @@ function onPhotoProcessed() {
 }
 
 function goNext() {
-  router.push('/find/mobile/details')
+  router.push('/ask/mobile/details')
 }
 </script>
 
@@ -98,7 +98,7 @@ function goNext() {
 @import 'assets/css/sticky-banner.scss';
 @import 'assets/css/_color-vars.scss';
 
-.app-find-photos {
+.app-ask-photos {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
