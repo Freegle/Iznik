@@ -120,6 +120,70 @@ func TestNearbyReachFeed(t *testing.T) {
 	assert.GreaterOrEqual(t, cbody["count"].(float64), float64(2), "nearby count includes both reach-covered unseen posts")
 }
 
+// TestNearbyReachFeed_TnCrosspostDedup: a TN crosspost to two Freegle groups creates two
+// independent `messages` rows sharing one tnpostid, not one message with two messages_groups
+// rows. TN emails each per-group copy separately, and IncomingMailService::createGroupPostMessage
+// (iznik-batch) creates a brand-new message for every inbound email with no check for an
+// existing message carrying the same tnpostid. Confirmed at scale on production (2026-08-19):
+// many tnpostids map to 2-6 separate message ids arriving seconds apart, e.g. tnpostid 47158849
+// -> messages 121542133/121542136/121542139/121542142 across four groups, two of them Approved
+// and spatially indexed simultaneously. When a viewer's reach covers more than one of the
+// crossposted groups, both copies appeared on the nearby feed as separate cards for what is, to
+// the member, the same donation (Discourse 9808/689).
+func TestNearbyReachFeed_TnCrosspostDedup(t *testing.T) {
+	db := database.DBConn
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	prefix := uniquePrefix("tncrosspostdedup")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	// Two independent messages rows for what is, on TrashNothing, ONE physical item
+	// crossposted to two Freegle groups - exactly what today's email ingestion path
+	// produces (one messages row per inbound per-group copy, both stamped with the same
+	// tnpostid).
+	copyA := CreateTestMessage(t, posterID, groupA, "OFFER: crossposted table (tncrosspostdedup)", 51.5, -0.1)
+	copyB := CreateTestMessage(t, posterID, groupB, "OFFER: crossposted table (tncrosspostdedup)", 51.5, -0.1)
+	db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid IN (?, ?)", copyA, copyB)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", "tncrosspostdedup-12345", copyA, copyB)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", copyA, copyB)
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	// Both copies' reach polygons cover the viewer - e.g. the viewer lives where the reach
+	// of both crossposted groups overlaps.
+	for _, id := range []uint64{copyA, copyB} {
+		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+			"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+			"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", id)
+	}
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/isochrone/message?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	seen := 0
+	for _, m := range msgs {
+		if m.ID == copyA || m.ID == copyB {
+			seen++
+		}
+	}
+	assert.Equal(t, 1, seen,
+		"a TN crosspost to two groups must appear once on the nearby feed, not once per group copy")
+}
+
 // TestNearbyCountDistanceLimit: GET /message/count (nearby view) narrows the badge to posts
 // within a maxDistance (miles) of the viewer, using the SAME blurred-coordinate Haversine
 // distance the feed exposes as `distance` — so the badge matches a client-side list filtered

@@ -81,6 +81,12 @@ type reachCandidateRow struct {
 	ReachLat float64 `gorm:"column:reach_lat"`
 	ReachLng float64 `gorm:"column:reach_lng"`
 	ReachWKT string  `gorm:"column:reach_wkt"`
+	// Tnpostid is messages.tnpostid, NULL for everything but TN-sourced posts. TN sends a
+	// crosspost to N Freegle groups as N separate inbound emails (one per group), and
+	// IncomingMailService::createGroupPostMessage creates a separate `messages` row per
+	// email with no dedup — so N copies of the same physical item share this one id. Used
+	// by dedupeCrosspostedTn to collapse them back to one card on the feed.
+	Tnpostid *string `gorm:"column:tnpostid"`
 }
 
 // blurredDistanceMiles blurs this post's real coordinates (utils.Blur, deterministic — the
@@ -165,11 +171,42 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt",
+			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt, m.tnpostid AS tnpostid",
 			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 		Scan(&candidates)
 
-	return candidates
+	return dedupeCrosspostedTn(candidates)
+}
+
+// dedupeCrosspostedTn collapses candidate rows that share the same non-empty TN post id down to
+// one. TN sends a crosspost to N Freegle groups as N separate inbound emails (one per group), and
+// IncomingMailService::createGroupPostMessage creates a brand-new `messages` row per email with
+// no check for an existing message carrying the same tnpostid — so N independent Freegle
+// messages, each with their own id, all share one tnpostid. Freegle's own crosspost model (one
+// message, many messages_groups rows) never applies to these; each copy gets its own spatial and
+// reach rows too, so a viewer whose reach/membership covers more than one of the crossposted
+// groups sees the same physical item once per copy (Discourse 9808/689). Keeps the lowest-id
+// copy — the first group the item reached — and drops the rest; rows with no tnpostid (everything
+// but TN-sourced posts) are untouched.
+func dedupeCrosspostedTn(candidates []reachCandidateRow) []reachCandidateRow {
+	kept := make([]reachCandidateRow, 0, len(candidates))
+	keptIdxByPost := make(map[string]int, len(candidates))
+	for _, cand := range candidates {
+		if cand.Tnpostid == nil || *cand.Tnpostid == "" {
+			kept = append(kept, cand)
+			continue
+		}
+		key := *cand.Tnpostid
+		if idx, ok := keptIdxByPost[key]; ok {
+			if cand.ID < kept[idx].ID {
+				kept[idx] = cand
+			}
+			continue
+		}
+		keptIdxByPost[key] = len(kept)
+		kept = append(kept, cand)
+	}
+	return kept
 }
 
 // reachCandidatePoints is the count-shaped slice of the reach arm: the SAME membership
@@ -567,7 +604,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 				"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '') AS reach_wkt",
+				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '') AS reach_wkt, m.tnpostid AS tnpostid",
 				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 			// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across
 			// rippling — see the reach arm above.
@@ -576,6 +613,11 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid").
 			Where("ms.msgid IN ?", msgIDs).
 			Scan(&candidates)
+
+		// Member-group posts hit the same TN crosspost duplication as the nearby reach arm
+		// (see dedupeCrosspostedTn): a member of two groups a TN crosspost landed on would
+		// otherwise see the same item once per group copy.
+		candidates = dedupeCrosspostedTn(candidates)
 
 		latlng := user.GetLatLng(myid)
 		if latlng.Lat != 0 || latlng.Lng != 0 {
