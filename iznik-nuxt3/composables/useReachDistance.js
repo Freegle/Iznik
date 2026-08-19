@@ -117,6 +117,17 @@ export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
       return
     }
 
+    // The handle was placed before we knew the cap, so positionFor() measured it against
+    // the flat fallback and clamped anything above that down onto it: a sparse-band member
+    // who chose 45 was shown 30 - just past the middle of the range, about 19 miles - for
+    // the whole visit, on every page carrying the slider. The watch on savedMinutes cannot
+    // fix it, because for that member savedMinutes never changes value; only maxMinutes
+    // does. Now the real cap is in, re-derive the position. Deliberately here rather than
+    // in a watcher on maxMinutes: onSliderChange() also calls fetchNear(), so a watcher
+    // would fire mid-interaction and could pull the handle back to the saved position
+    // while the member was still moving it.
+    sliderValue.value = positionFor(savedMinutes.value)
+
     // A member who has never touched the slider sits at the top stop, and before the server
     // answers we do not know where that is - so the first call had to ask for the flat
     // fallback. Now that we know their real cap, the shape we drew is for the wrong travel

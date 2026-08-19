@@ -267,6 +267,35 @@ describe('useReachDistance density-aware maximum', () => {
     expect(mockSaveAndGet).not.toHaveBeenCalled()
   })
 
+  it('restores a saved position above the flat fallback once the real cap arrives', async () => {
+    // Reported by a sparse-band member (SR-XRSHA) who dragged to the 45-minute top
+    // stop and found it back "just past midway" every time she returned - on the
+    // app, and on the website, from both Browse and Settings.
+    //
+    // sliderValue is first derived while maxMinutes is still the flat 30 fallback,
+    // so positionFor(45) clamps the handle to 30: just past the middle of the 5-45
+    // range, and about 19 miles once converted. loadCap() then learns the real 45
+    // cap, but savedMinutes stays 45 throughout, so the watcher on it never fires
+    // and nothing moves the handle back. Only members whose saved position is above
+    // the fallback see it - an unset member's savedMinutes tracks maxMinutes and so
+    // does change. Her stored setting was never wrong; only the handle was.
+    mockMe.value.settings = {
+      browseMaxMinutes: 45,
+      browseMaxDistance: BROWSE_DISTANCE_UNLIMITED,
+    }
+    mockFetchNear.mockResolvedValue({ cap_minutes: 45, density_band: 'sparse' })
+    const { sliderValue, loadCap } = useReachDistance()
+
+    // Before the server answers, the flat fallback is all we can honour.
+    expect(sliderValue.value).toBe(BROWSE_MINUTES_FALLBACK_MAX)
+
+    await loadCap()
+
+    expect(sliderValue.value).toBe(45)
+    // Nothing to correct - the saved position is exactly her cap.
+    expect(mockSaveAndGet).not.toHaveBeenCalled()
+  })
+
   it('does not ask for a cap when the member has no known location', async () => {
     mockMe.value.lat = null
     mockMe.value.lng = null
