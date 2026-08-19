@@ -60,10 +60,12 @@
           class="rpl-intro"
           style="display: none"
         >
-          Pick a group. The map shows the group's own area (blue outline) and —
-          outside it — the catchment: the area from which posts could in theory
-          ripple IN to that group, heat-shaded by how quickly a post there would
-          arrive by road (see the key, bottom-left).
+          Pick a group above. The map will then outline that group's own area in
+          blue and, outside it, heat-shade the catchment: the area from which
+          posts could in theory ripple IN to it, by how quickly a post there
+          would arrive by road (see the key, bottom-left). Until you pick one,
+          the green outlines are Freegle group boundaries and there is no
+          catchment to shade.
         </div>
         <div
           id="rippling-catchment-panel"
@@ -86,26 +88,6 @@
             />
             <datalist id="rippling-catchment-grouplist"></datalist>
           </label>
-          <div id="rippling-catchment-reach" class="rpl-reach-toggle">
-            <span class="rpl-reach-toggle-label">Reach model</span>
-            <label
-              ><input
-                type="radio"
-                name="rippling-catchment-reach"
-                value="current"
-                checked
-              />
-              Current (grows to 45-min)</label
-            >
-            <label
-              ><input
-                type="radio"
-                name="rippling-catchment-reach"
-                value="audience"
-              />
-              Possible alternative (audience-based)</label
-            >
-          </div>
           <div
             id="rippling-catchment-extent"
             class="rpl-extent-card"
@@ -128,11 +110,6 @@
               >Open directions in Google Maps →</a
             >
           </div>
-          <div
-            id="rippling-catchment-audience"
-            class="rpl-audience-caption"
-            style="display: none"
-          ></div>
         </div>
 
         <!-- Inbound: "What's in the digest" group — controls which posts -->
@@ -151,13 +128,16 @@
           <div class="rpl-slider-label">
             <span>Maximum reach</span>
           </div>
-          <!-- value is set from REACH_CEILING_MINUTES on init (setupRipplingExplorer);
-               this attribute is the pre-hydration default and must match it. -->
+          <!-- value AND max are set from REACH_CEILING_MINUTES on init
+               (setupRipplingExplorer); these attributes are the pre-hydration
+               defaults and must match it. The max used to run to 60 so the slider
+               could be dragged past the ceiling, which drew a reach no post ever
+               gets - the explorer shows what we do, not what we might do. -->
           <input
             id="rippling-time-slider"
             type="range"
             min="1"
-            max="60"
+            max="45"
             step="1"
             value="45"
           />
@@ -400,16 +380,7 @@
               ><input id="rippling-tog-groups" type="checkbox" checked />
               Groups</label
             >
-            <label class="rpl-layer-toggle"
-              ><input id="rippling-tog-audience" type="checkbox" /> Proposed:
-              audience-based reach</label
-            >
           </div>
-          <div
-            id="rippling-audience-caption"
-            class="rpl-audience-caption"
-            style="display: none; width: 100%"
-          ></div>
         </div>
 
         <div
