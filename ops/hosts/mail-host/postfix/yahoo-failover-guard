@@ -13,7 +13,21 @@ set -eu
 
 MAP=/etc/postfix/yahoo_failover
 LOG=/var/log/yahoo-failover.log
-DRAINED_BELOW=5000        # queue entries; Yahoo family dominates the backlog
+# Yahoo-family entries left to deliver.
+#
+# Counting the WHOLE queue was wrong. Once the 103k backlog was purged the
+# queue settled at ~4,900, of which 3,921 are 452 4.2.2 (recipient mailbox
+# full), 3,776 of those to gmail.com. Those retry until maximal_queue_lifetime
+# expires them, so total depth sits permanently near that floor whatever Yahoo
+# is doing. A total-based threshold of 5,000 therefore evaluated true on the
+# floor alone and switched the failover off 2.5 minutes after a human enabled
+# it, which reads identically to Yahoo refusing us. Measure the quantity this
+# failover exists to clear: the Yahoo backlog (368 x 421 4.7.0 at the time).
+DRAINED_BELOW=50
+# The domain scan costs a full postqueue listing, which took minutes against
+# 100k. Only pay for it when the queue is small enough for it to be cheap;
+# a large queue is not drained by definition, which is the safe answer anyway.
+SCAN_QUEUE_UNDER=20000
 MIN_ATTEMPTS=50           # don't judge the ip on a handful of samples
 WINDOW_MINS=10            # judge recent behaviour, not the whole log tail
 
@@ -25,10 +39,16 @@ a=$(find /var/spool/postfix/active   -type f 2>/dev/null | wc -l)
 d=$(find /var/spool/postfix/deferred -type f 2>/dev/null | wc -l)
 total=$((a + d))
 
-if [ "$total" -lt "$DRAINED_BELOW" ]; then
-    /usr/local/sbin/yahoo-failover off >/dev/null 2>&1
-    log "GUARD off: queue drained (total=$total < $DRAINED_BELOW)"
-    exit 0
+if [ "$total" -lt "$SCAN_QUEUE_UNDER" ]; then
+    yahoo=$(postqueue -j 2>/dev/null \
+        | grep -cE '@(yahoo|ymail|rocketmail|aol|sky\.com|aim\.com|netscape|myyahoo)' || true)
+    [ -n "$yahoo" ] || yahoo=0
+
+    if [ "$yahoo" -lt "$DRAINED_BELOW" ]; then
+        /usr/local/sbin/yahoo-failover off >/dev/null 2>&1
+        log "GUARD off: yahoo backlog drained (yahoo=$yahoo < $DRAINED_BELOW, total queue=$total)"
+        exit 0
+    fi
 fi
 
 # Judge only the RECENT minutes. Yahoo admits a burst then closes: on
