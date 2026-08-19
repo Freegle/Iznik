@@ -245,7 +245,11 @@ class DeferralProbe
             return null;
         }
 
-        $script = self::MARK_ACCEPTING."\n".
+        // echo the marker - a bare marker line would be run as a command, so
+        // the section never appears in stdout and every probe reads as
+        // "could not tell". That is exactly what production did at 08:01 on
+        // 2026-08-19: it failed safe, and therefore silently.
+        $script = "echo '".self::MARK_ACCEPTING."'\n".
             'python3 - '.escapeshellarg($domain).' '.escapeshellarg($sender).' <<\'PYEOF\'
 import smtplib, socket, sys
 

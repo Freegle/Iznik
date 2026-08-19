@@ -275,6 +275,61 @@ class DeferralProbeTest extends TestCase
         $this->assertSame(2, $probe->purge('relay@host', ['AAAAAA1111', 'BBBBBB2222', 'CCCCCC3333']));
     }
 
+    // ===================================================================
+    // Asking the provider directly
+    //
+    // The section marker must be ECHOED. A bare marker line is run as a
+    // command, so the section never reaches stdout and every probe reads as
+    // "could not tell" - which fails safe, and therefore silently. Production
+    // did exactly that at 08:01 on 2026-08-19 and the only trace was a warning.
+    // ===================================================================
+
+    public function test_reads_a_provider_that_is_accepting_again(): void
+    {
+        $probe = new DeferralProbe($this->runner(
+            DeferralProbe::MARK_ACCEPTING . "\nACCEPTING gmail-smtp-in.l.google.com 250\n"
+        ));
+
+        $this->assertTrue($probe->providerAccepting('relay@host', 'gmail.com', 'noreply@example.com'));
+    }
+
+    public function test_reads_a_provider_that_is_still_refusing(): void
+    {
+        $probe = new DeferralProbe($this->runner(
+            DeferralProbe::MARK_ACCEPTING . "\nREFUSING mx-eu.mail.am0.yahoodns.net 421 "
+            . "4.7.0 [TSS04] Messages from 185.53.57.161 temporarily deferred\n"
+        ));
+
+        $this->assertFalse($probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com'));
+    }
+
+    public function test_a_probe_that_could_not_run_is_unknown_not_a_verdict(): void
+    {
+        // No marker: the script did not run. Reading that as either answer
+        // would let a broken probe strand a provider or reopen a blocked one.
+        $probe = new DeferralProbe($this->runner('bash: line 1: command not found'));
+
+        $this->assertNull($probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com'));
+    }
+
+    public function test_an_unreachable_relay_is_unknown(): void
+    {
+        $probe = new DeferralProbe($this->runner(null));
+
+        $this->assertNull($probe->providerAccepting('relay@host', 'yahoo.co.uk', 'noreply@example.com'));
+    }
+
+    public function test_refuses_to_put_a_bogus_domain_in_a_shell(): void
+    {
+        $called = false;
+        $probe = new DeferralProbe($this->runner('x', function () use (&$called) {
+            $called = true;
+        }));
+
+        $this->assertNull($probe->providerAccepting('relay@host', 'yahoo.co.uk; rm -rf /', 'noreply@example.com'));
+        $this->assertFalse($called, 'must not open a shell on the relay with a domain it rejected');
+    }
+
     public function test_purge_does_nothing_when_given_nothing_usable(): void
     {
         $called = false;
