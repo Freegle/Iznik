@@ -497,6 +497,28 @@ describe('mobile store', () => {
       expect(initAppBody[1]).toMatch(/this\.startBadgeSync\(\)/)
     })
 
+    // Review of this fix: startBadgeSync()'s watch and useNavbar()'s
+    // chatCount computed both computed Math.min(99, chats + notifications)
+    // independently, with no shared helper - two implementations of the same
+    // formula that could silently drift apart. Assert on the source (rather
+    // than the numeric outcome, which is identical either way) so a later
+    // edit that reintroduces an inline duplicate here fails this test.
+    it('computes its watched total via the shared combinedBadgeCount() helper, not an inline duplicate', () => {
+      const storeSource = readFileSync(
+        resolve(__dirname, '../../../stores/mobile.js'),
+        'utf-8'
+      )
+      expect(storeSource).toMatch(
+        /import\s*\{\s*combinedBadgeCount\s*\}\s*from\s*'~\/composables\/useBadgeCount'/
+      )
+
+      const startBadgeSyncBody = storeSource.match(
+        /startBadgeSync\(\) \{([\s\S]*?)\n {4}\},/
+      )
+      expect(startBadgeSyncBody).not.toBeNull()
+      expect(startBadgeSyncBody[1]).toMatch(/combinedBadgeCount\(/)
+    })
+
     // Closes the other gap the previous attempt was auto-closed for: no test
     // touched the reported trigger path itself. Assert directly on the
     // component that replaces NavbarMobile while viewing a specific chat,

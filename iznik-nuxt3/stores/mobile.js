@@ -21,6 +21,7 @@ import { useNotificationStore } from '~/stores/notification'
 import { useMiscStore } from '~/stores/misc'
 import { useDebugStore } from '~/stores/debug'
 import { setAppVersion, useClientLog } from '~/composables/useClientLog'
+import { combinedBadgeCount } from '~/composables/useBadgeCount'
 import api from '~/api'
 
 // Ceiling for the OS-preferred text zoom we'll apply to the WebView - the
@@ -708,9 +709,8 @@ export const useMobileStore = defineStore({
     // screen where the bottom-nav badge re-renders, the icon badge is left
     // showing a stale non-zero count forever (Discourse 9953). This watch
     // lives in the store instead, so it fires on every count change
-    // regardless of what's mounted. Mirrors chatCount's own
-    // Math.min(99, chats + notifications) clamp so both writers can never
-    // disagree.
+    // regardless of what's mounted. Uses the same combinedBadgeCount() helper
+    // as chatCount's own write, so the two writers can never drift apart.
     //
     // ModTools reuses this same store, but its badge is a different concept
     // entirely (pending/spam/volunteering work, computed by
@@ -724,10 +724,7 @@ export const useMobileStore = defineStore({
       const notificationStore = useNotificationStore()
       return watch(
         () =>
-          Math.min(
-            99,
-            (chatStore.unreadCount || 0) + (notificationStore.count || 0)
-          ),
+          combinedBadgeCount(chatStore.unreadCount, notificationStore.count),
         (total) => {
           this.setBadgeCount(total)
         },
