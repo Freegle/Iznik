@@ -24,12 +24,20 @@
       </NoticeMessage>
 
       <template v-else>
-        <h3 class="mb-2">Currently suppressed</h3>
+        <h3 class="mb-2">
+          Currently suppressed
+          <b-badge variant="danger">{{ suppressions.length }}</b-badge>
+        </h3>
+        <p class="text-muted small mb-2">
+          One row per recipient domain, worst backlog first. Individual full
+          mailboxes are not listed - those are that member's inbox, not a
+          provider refusing us.
+        </p>
         <b-table-simple responsive striped class="mb-4">
           <b-thead>
             <b-tr>
               <b-th>Provider</b-th>
-              <b-th>Relay or address</b-th>
+              <b-th>Domain</b-th>
               <b-th>Delayed since</b-th>
               <b-th class="text-end">Queued</b-th>
               <b-th>Why</b-th>
@@ -40,13 +48,6 @@
               <b-td>{{ s.provider || 'Unknown' }}</b-td>
               <b-td>
                 <code>{{ s.value }}</code>
-                <b-badge
-                  v-if="s.scope === 'address'"
-                  variant="secondary"
-                  class="ms-1"
-                >
-                  single mailbox
-                </b-badge>
               </b-td>
               <b-td>
                 <span :title="s.deferredsince">{{

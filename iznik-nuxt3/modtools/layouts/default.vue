@@ -247,7 +247,15 @@
           link="/sysadmin"
           name="SysAdmin"
           :count="
-            admin ? ['housekeeping', 'cronjobs', 'emailin', 'emailout'] : []
+            admin
+              ? [
+                  'housekeeping',
+                  'cronjobs',
+                  'emailin',
+                  'emailout',
+                  'maildeferrals',
+                ]
+              : []
           "
           @mobilehidemenu="mobilehidemenu"
         />
