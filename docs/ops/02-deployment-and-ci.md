@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-01
+last_reviewed: 2026-08-19
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -42,10 +42,11 @@ promotion from internal to beta to production. Detail is in
 
 ## CI runner
 
-CircleCI runs through a shared reusable **orb** (`freegle/tests`). On branches other than
-master, path-based rules skip suites that a change cannot affect; master always runs the
-full suite. An optional **self-hosted runner** speeds up builds, with automatic fallback
-to cloud runners if it is unavailable.
+CircleCI runs through a shared reusable **orb** (`freegle/tests`). Every branch runs the
+full suite: the orb used to skip suites a change could not affect, but path-based skipping
+was removed because a partial upload made Coveralls report a false large decrease against
+master. An optional **self-hosted runner** speeds up builds, with automatic fallback to
+cloud runners if it is unavailable.
 
 Operational notes worth knowing:
 
@@ -54,6 +55,20 @@ Operational notes worth knowing:
 - When you change tests, **publish the orb** so CI picks the change up.
 - SSH debugging of CI machines is available to the team, gated by their CircleCI
   credentials. The mechanics are internal and not reproduced here.
+
+### When Coveralls goes red
+
+Coveralls reports a percentage delta, never which statements moved, so a small decrease on
+a commit that changes none of that language is not self-explaining. The Go suite in
+particular is not reproducible run to run: it shares `iznik_go_test` with the Laravel suite
+running at the same time, so load-dependent error and timeout branches are covered on one
+run and not the next. One statement is roughly 0.004% of the Go total, which is enough to
+turn the delta gate red on its own.
+
+The build therefore keeps the Go profile as an artefact (`coverage-artifacts/`):
+`go-coverage.out` carries per-block statement counts and is the one to diff between two
+builds to find the moved line; `go-coverage.lcov` is the uploaded form. Diff the two builds
+before treating a small delta as a regression - and equally, before dismissing it as noise.
 
 ## Rollback
 
