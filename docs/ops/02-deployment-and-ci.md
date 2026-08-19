@@ -70,6 +70,19 @@ The build therefore keeps the Go profile as an artefact (`coverage-artifacts/`):
 builds to find the moved line; `go-coverage.lcov` is the uploaded form. Diff the two builds
 before treating a small delta as a regression - and equally, before dismissing it as noise.
 
+The Go coverage run is serialised (`-p 1`, in `status-nuxt/server/api/tests/go.post.ts`) to
+narrow that variance. The suite's ~10 packages otherwise hit the single `iznik_go_test`
+database concurrently, on a runner that is already running iznik-batch, Playwright and
+Vitest alongside them. It costs no wall clock: Go finishes about two minutes into a step
+whose critical path is Playwright at around nineteen, well inside the 30m/35m/48m timeouts
+stacked above it. It narrows the variance rather than removing it - the other suites still
+compete for the same machine - so the profile diff above remains the way to answer a red.
+
+The same delta gate can go red on the other suites for the same reason. The cheapest check
+is whether the failing suite's language appears in the diff at all: a Go-only commit that
+turns `Coveralls - vitest` red has not changed any JavaScript, so the number moved without
+the code moving.
+
 ## Rollback
 
 Because `production` is a branch that deploys on update, and Netlify keeps previous
