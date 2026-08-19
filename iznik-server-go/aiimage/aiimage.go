@@ -365,6 +365,14 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	}
 
 	if resp.StatusCode != 200 {
+		// Cloudflare's content filter refuses some item names outright (code 8007,
+		// "Input prompt contains NSFW content" — seen twice on prod 2026-08-19). That is
+		// a moderator-actionable outcome, not an outage: the description has to change
+		// before any retry can work. ModTools shows this message, so say that rather
+		// than dumping the API envelope at them.
+		if bytes.Contains(bytes.ToLower(body), []byte("nsfw")) {
+			return nil, fmt.Errorf("Cloudflare refused this prompt as unsafe content — edit the item description and regenerate")
+		}
 		return nil, fmt.Errorf("Cloudflare AI returned status %d: %s", resp.StatusCode, string(body))
 	}
 

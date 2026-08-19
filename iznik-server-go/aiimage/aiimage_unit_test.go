@@ -74,6 +74,26 @@ func TestGenerateImageWithCloudflare_Success(t *testing.T) {
 	}
 }
 
+func TestGenerateImageWithCloudflare_NSFWRefusal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"errors":[{"message":"AiError: Input prompt contains NSFW content.","code":8007}],"success":false}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "test-acct")
+	t.Setenv("CLOUDFLARE_AI_TOKEN", "test-ai-token")
+	old := CloudflareAPIBase
+	CloudflareAPIBase = srv.URL
+	defer func() { CloudflareAPIBase = old }()
+
+	_, err := generateImageWithCloudflare("bicycle")
+	require.Error(t, err)
+	// The moderator needs to know retrying cannot help until the description changes.
+	assert.Contains(t, err.Error(), "edit the item description")
+	assert.NotContains(t, err.Error(), "8007")
+}
+
 func TestGenerateImageWithCloudflare_ObjectErrors(t *testing.T) {
 	// Cloudflare reports input-schema violations as error objects in a 200 envelope with
 	// success=false. Those must surface as the API's message, not be mistaken for image bytes.
