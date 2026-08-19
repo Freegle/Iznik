@@ -1371,16 +1371,27 @@ class ExpandService
                 return;
             }
 
-            // TN posts must not be rippled into new groups while TN still cross-posts the same
-            // item to multiple Freegle groups by tnpostid. Once TN is restricted to a single
-            // origin group (design.md #10), this guard can be removed.
-            $isTn = DB::table('messages')
-                ->where('id', $msgid)
-                ->whereNotNull('tnpostid')
-                ->where('tnpostid', '!=', '')
-                ->exists();
-            if ($isTn) {
-                return;
+            // TN posts must not be rippled into new groups while they still arrive by the
+            // email path, because TN cross-posts the same item to several Freegle groups
+            // itself (one email, and so one message, per group) and rippling on top of that
+            // would spread it wider still.
+            //
+            // FREEGLE_TN_INGEST_POSTS_VIA_API removes that overlap: the API path ingests
+            // only TN's source post and discards its per-group copies
+            // (GroupPostIngestionService::REASON_CROSSPOST), so a TN post lives on ONE
+            // group and cross-posting becomes Freegle's job — i.e. rippling. Hence the
+            // guard is gated on the flag rather than deleted: posts ingested by email
+            // before the cutover are still multi-group, but they are also long past the
+            // ripple window by the time the flag has been on for a day.
+            if (! config('freegle.trashnothing.ingest_posts_via_api', false)) {
+                $isTn = DB::table('messages')
+                    ->where('id', $msgid)
+                    ->whereNotNull('tnpostid')
+                    ->where('tnpostid', '!=', '')
+                    ->exists();
+                if ($isTn) {
+                    return;
+                }
             }
 
             // rippled_in_pending_hours = 0 (default) approves the rippled-in row AT ripple-in

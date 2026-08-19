@@ -54,10 +54,16 @@ class TnEmailRoutingGate
 
     /**
      * True when this email is a TN group post AND the cutover flag is set.
+     *
+     * The flag is the same one that turns the API path on
+     * (FREEGLE_TN_INGEST_POSTS_VIA_API): switching the email path off is one half
+     * of a single cutover, and either half alone is wrong — email-off with the API
+     * off drops TN posts entirely, API-on with email still routing double-writes
+     * them.
      */
     public function shouldSkipRouting(ParsedEmail $email): bool
     {
-        if (! config('freegle.trashnothing.verify_coverage.skip_email_routing', false)) {
+        if (! config('freegle.trashnothing.ingest_posts_via_api', false)) {
             return false;
         }
 

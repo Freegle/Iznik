@@ -396,6 +396,33 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertStringContainsString('OFFER: Bicycle', $message->message);
     }
 
+    /**
+     * The 'TN-' prefix on messages.sourceheader is load-bearing: the monthly
+     * LoveJunk invoice splits revenue on `sourceheader LIKE 'TN-%'`
+     * (LoveJunkInvoiceService), LoveJunkService attributes the post's source by it,
+     * and ProcessBackgroundTasksCommand uses it to skip creating freebie alerts for
+     * TN posts (TN syndicates those itself). A post ingested by the API must
+     * therefore be recognisable as TN, exactly as the email-path one is.
+     */
+    public function test_live_stamps_a_tn_sourceheader(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $postId = 'tn-src-' . uniqid();
+        $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
+
+        $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+        $this->assertSame(GroupPostIngestionService::SOURCEHEADER, $message->sourceheader);
+        $this->assertStringStartsWith('TN-', (string) $message->sourceheader);
+        $this->assertStringContainsString('X-Trash-Nothing-Source: API', $message->message);
+    }
+
     // -------------------------------------------------------------------------
     // Reposts vs crossposts. TN keeps a SOURCE post (no group_id) plus one COPY
     // per group it was sent to (group_id set), so each group's mods can moderate

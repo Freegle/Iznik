@@ -60,6 +60,24 @@ class GroupPostIngestionService
     public const REASON_MESSAGE_CREATE_FAILED = 'message-create-failed';
 
     /**
+     * messages.sourceheader for a post ingested from the TN API.
+     *
+     * The email path derives this from the X-trash-nothing-Source header, giving
+     * TN-Web / TN-Facebook / TN-Mobile / TN-native-app
+     * (IncomingMailService::determineSourceHeader). The API returns no equivalent
+     * — its own `source` field says which TN feed the post came from, not which
+     * client posted it — so the API path records the path instead.
+     *
+     * The 'TN-' PREFIX is the part that has to be right: three consumers key off
+     * it and would silently misbehave on a post stamped plain 'Email' —
+     * LoveJunkInvoiceService (the monthly TN invoice splits revenue on
+     * `sourceheader LIKE 'TN-%'`), LoveJunkService (partner source attribution),
+     * and ProcessBackgroundTasksCommand (skips freebie-alert creation for TN
+     * posts, because TN syndicates those itself).
+     */
+    public const SOURCEHEADER = 'TN-API';
+
+    /**
      * Context from the last ingest() call, for the caller to attach to its Loki
      * entry — mirroring IncomingMailService::$lastRoutingContext exactly, right
      * down to which branches populate which keys.
@@ -414,7 +432,7 @@ class GroupPostIngestionService
             $msgData = [
                 'date'            => $date instanceof \DateTime ? $date->format('Y-m-d H:i:s') : now(),
                 'source'          => Message::SOURCE_EMAIL,
-                'sourceheader'    => Message::SOURCE_EMAIL,
+                'sourceheader'    => self::SOURCEHEADER,
                 'message'         => $rfc822,
                 'fromuser'        => $user->id,
                 'envelopefrom'    => null,
@@ -869,6 +887,9 @@ class GroupPostIngestionService
             "Date: {$date}",
             "Message-ID: <{$messageId}>",
             "X-Trashnothing-Post-Id: {$tnPostId}",
+            // Keeps a re-parse of this blob agreeing with messages.sourceheader:
+            // IncomingMailService::determineSourceHeader() returns 'TN-' . this value.
+            'X-Trash-Nothing-Source: API',
             $coords ? "X-Trashnothing-Coordinates: {$coords}" : '',
             'Content-Type: text/plain; charset=utf-8',
             '',

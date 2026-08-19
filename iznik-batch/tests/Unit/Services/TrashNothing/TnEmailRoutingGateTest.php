@@ -95,7 +95,7 @@ class TnEmailRoutingGateTest extends TestCase
 
     public function test_flag_off_means_nothing_is_skipped(): void
     {
-        config(['freegle.trashnothing.verify_coverage.skip_email_routing' => false]);
+        config(['freegle.trashnothing.ingest_posts_via_api' => false]);
 
         $email = $this->parse($this->groupAddress('camdengroup'), [
             'X-Trash-Nothing-Post-Id' => '47102958',
@@ -107,7 +107,7 @@ class TnEmailRoutingGateTest extends TestCase
 
     public function test_flag_on_skips_only_tn_group_posts(): void
     {
-        config(['freegle.trashnothing.verify_coverage.skip_email_routing' => true]);
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
 
         $tnPost = $this->parse($this->groupAddress('camdengroup'), [
             'X-Trash-Nothing-Post-Id' => '47102958',

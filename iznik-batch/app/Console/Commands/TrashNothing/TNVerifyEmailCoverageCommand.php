@@ -117,10 +117,14 @@ class TNVerifyEmailCoverageCommand extends Command
      * routing, a "covered" post proves nothing about the API path — the email
      * path may have created that row. Running anyway would report a clean bill
      * of health that means nothing, which is worse than not running.
+     *
+     * FREEGLE_TN_INGEST_POSTS_VIA_API is the single cutover switch: on, the API
+     * path ingests and TnEmailRoutingGate stops the email path routing TN posts,
+     * which is exactly the condition this check needs.
      */
     private function guardEmailPathIsOff(): bool
     {
-        if (config('freegle.trashnothing.verify_coverage.skip_email_routing', false)) {
+        if (config('freegle.trashnothing.ingest_posts_via_api', false)) {
             return true;
         }
 
@@ -130,7 +134,7 @@ class TNVerifyEmailCoverageCommand extends Command
             return true;
         }
 
-        $this->error('Refusing to run: FREEGLE_TN_SKIP_EMAIL_ROUTING is off, so the email path is still creating messages with tnpostid set and coverage cannot be attributed to the API path. Use --force to run anyway.');
+        $this->error('Refusing to run: FREEGLE_TN_INGEST_POSTS_VIA_API is off, so the email path is still routing TN posts and creating messages with tnpostid set, and coverage cannot be attributed to the API path. Use --force to run anyway.');
 
         return false;
     }

@@ -181,20 +181,34 @@ return [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
-        // Enable the API-based post ingestion path. Default false (disabled) so the email
-        // path stays authoritative until parity is confirmed. Flip to true to activate.
+        // MASTER CUTOVER SWITCH for TN group posts. Default false (disabled) so the
+        // email path stays authoritative until parity is confirmed. Flipping it to
+        // true moves the whole post pipeline over in one step:
+        //
+        //   - tn:sync runs PostSyncer, so posts are ingested from the TN API
+        //     (TNSyncCommand).
+        //   - The email path STOPS routing TN group posts — they are still archived,
+        //     which is what makes the archive an independent witness
+        //     (TnEmailRoutingGate; callers IncomingMailController/IncomingMailCommand).
+        //   - tn:verify-email-coverage starts running hourly, checking the archive
+        //     against what the API path ingested (routes/console.php).
+        //   - TN posts become eligible for rippling, because the API path ingests only
+        //     the source post and discards TN's per-group copies, so the post now lives
+        //     on ONE group and Freegle's own rippling does the cross-posting
+        //     (Ripple\ExpandService::rippleIntoNewGroups).
+        //   - The tn:sync (posts) scheduled-outcome check becomes live
+        //     (ScheduledOutcomeRegistry).
+        //
+        // Deliberately ONE flag rather than the staged pair the plan first envisaged:
+        // API-on-with-email-still-routing double-writes the same post, and
+        // email-off-with-API-off drops TN posts entirely. Neither half is safe alone,
+        // and pre-cutover comparison is done with `tn:sync --dry-run` / tn:parity-check
+        // instead, neither of which needs the email path switched off.
         'ingest_posts_via_api' => env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
 
         // Post-cutover coverage verification — tn:verify-email-coverage.
         // See plans/tn-api-post-ingestion.md section S.
         'verify_coverage' => [
-            // Stop routing TN group posts through the (frozen) email path while
-            // still archiving them, so the verifier keeps an independent
-            // inventory to check the API path against. Turn on together with
-            // ingest_posts_via_api — on its own it would silently stop
-            // ingesting TN posts altogether.
-            'skip_email_routing' => env('FREEGLE_TN_SKIP_EMAIL_ROUTING', false),
-
             // How far behind real time the verification window runs. Bounded
             // above by the incoming-archive retention (mail:cleanup-archive,
             // 48h): lag + window + headroom for a missed run must stay well

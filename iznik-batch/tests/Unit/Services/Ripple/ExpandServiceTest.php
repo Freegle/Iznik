@@ -1564,11 +1564,13 @@ class ExpandServiceTest extends TestCase
 
     /**
      * A TN post (tnpostid IS NOT NULL AND tnpostid != '') must never be rippled into
-     * new groups. TN still cross-posts the same item to multiple Freegle groups itself,
-     * so rippling in would duplicate the post across even more groups.
+     * new groups while TN posts still arrive by email. TN cross-posts the same item to
+     * multiple Freegle groups itself, so rippling in would duplicate the post across
+     * even more groups.
      */
     public function test_tn_post_is_not_rippled_into_new_groups(): void
     {
+        config(['freegle.trashnothing.ingest_posts_via_api' => false]);
         $this->fakeRouting(3);
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
 
@@ -1588,6 +1590,36 @@ class ExpandServiceTest extends TestCase
         $this->assertNull(
             DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
             'TN post is not inserted into a new group via rippling'
+        );
+    }
+
+    /**
+     * Once posts are ingested from the TN API, a TN post lives on ONE group: the API
+     * path takes only TN's source post and discards its per-group copies
+     * (GroupPostIngestionService::REASON_CROSSPOST). Cross-posting is then Freegle's
+     * job, so the guard above must lift and TN posts must ripple like any other.
+     */
+    public function test_tn_post_is_rippled_into_new_groups_once_api_ingestion_is_on(): void
+    {
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        DB::table('messages')->where('id', $msgid)->update(['tnpostid' => 'TN12345']);
+
+        // Group whose area intersects the fake reach.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'TN post ripples once API ingestion is on');
+        $this->assertNotNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'TN post is inserted into the intersecting group via rippling'
         );
     }
 

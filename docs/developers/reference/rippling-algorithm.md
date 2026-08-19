@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-12
+last_reviewed: 2026-08-19
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -324,6 +324,22 @@ as belt-and-braces for a playground community created before anyone gives it the
 only ever covered ripple-in, and only communities named that way - `FreeglePlayground` places
 its practice posts at a real Edinburgh postcode, so before this change a practice post there
 crossposted into the live Lothians communities.
+
+### 4b. TrashNothing posts: excluded until TN posts arrive by API
+
+A TN post (`messages.tnpostid` set and non-empty) is not rippled into new groups while TN
+posts still arrive by **email**. TN cross-posts an item itself, emailing a separate copy per
+group, so each copy is already its own Freegle message on its own group; rippling on top of
+that would spread one item across a much wider area than either system intended.
+
+`FREEGLE_TN_INGEST_POSTS_VIA_API` removes the overlap. The API path takes only TN's *source*
+post and discards the per-group copies
+([`GroupPostIngestionService::REASON_CROSSPOST`](../../../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php)),
+so a TN post lives on one group and cross-posting becomes Freegle's job — i.e. rippling. The
+exclusion in `rippleIntoNewGroups` is therefore gated on that flag rather than deleted:
+posts ingested by email before the cutover are still multi-group, though they are also well
+past the ripple window a day after the flag is flipped. See
+[trashnothing.md](trashnothing.md#post-ingestion-via-api-and-the-email-cutover).
 
 ### Rejected targeting approaches
 

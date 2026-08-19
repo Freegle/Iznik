@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-14
+last_reviewed: 2026-08-19
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -78,11 +78,24 @@ The `sourceheader` field stores the message origin:
 ### Post Ingestion via API, and the email cutover
 
 Posts are moving from the email path above to the TN public API. `tn:sync`
-(`TNSyncCommand`) drives `PostSyncer` → `GroupPostIngestionService`, gated on
-`FREEGLE_TN_INGEST_POSTS_VIA_API`. The email path (`IncomingMailService`) is
-deliberately frozen and untouched while both run.
+(`TNSyncCommand`) drives `PostSyncer` → `GroupPostIngestionService`. The email
+path (`IncomingMailService`) is deliberately frozen and untouched.
 
-Two differences from the email path are intentional, not bugs, and both matter
+**`FREEGLE_TN_INGEST_POSTS_VIA_API` is the single switch for the whole cutover.**
+It is one flag rather than a staged pair because neither half is safe alone: the
+API on with email still routing double-writes every post, and email off with the
+API off drops TN posts entirely. Pre-cutover comparison uses `tn:sync --dry-run`
+and `tn:parity-check`, neither of which needs the email path switched off. On, it:
+
+| Effect | Where |
+|---|---|
+| `tn:sync` ingests posts from the TN API | `TNSyncCommand` |
+| The email path stops **routing** TN group posts (it still **archives** them) | `TnEmailRoutingGate`, called by `IncomingMailController` / `IncomingMailCommand` |
+| `tn:verify-email-coverage` starts running hourly | `routes/console.php`, and the command's own guard |
+| TN posts become eligible for rippling | `Ripple\ExpandService::rippleIntoNewGroups` — see [rippling-algorithm.md §4b](rippling-algorithm.md) |
+| The `tn:sync (posts)` scheduled-outcome check goes live | `ScheduledOutcomeRegistry` |
+
+Three differences from the email path are intentional, not bugs, and all matter
 when reading any coverage report:
 
 - **Group placement is by coordinates**, via `Location::groupsNear()` on the
@@ -92,7 +105,14 @@ when reading any coverage report:
   id and emails each one, so the email path creates N messages for an item
   crossposted to N groups. The API path ingests only the source post (empty
   `group_id`) and discards the copies, letting Freegle's own rippling do the
-  cross-posting — see `GroupPostIngestionService::REASON_CROSSPOST`.
+  cross-posting — see `GroupPostIngestionService::REASON_CROSSPOST`. That is also
+  why the ripple exclusion on TN posts lifts with the same flag.
+- **`sourceheader` is `TN-API`**, not the email path's `TN-Web` / `TN-Facebook` /
+  `TN-Mobile` (the API returns no posting-client field). Only the `TN-` prefix is
+  load-bearing, and it has to be there: `LoveJunkInvoiceService` splits the monthly
+  TN invoice on `sourceheader LIKE 'TN-%'`, `LoveJunkService` attributes the post's
+  source by it, and `ProcessBackgroundTasksCommand` uses it to skip creating
+  freebie alerts for TN posts, which TN syndicates itself.
 
 ### Verifying nothing is dropped after the cutover
 
