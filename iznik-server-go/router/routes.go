@@ -205,14 +205,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Put("/modtools/alert", alert.CreateAlert)
-
-		// @Router /alert [post]
-		// @Summary Record alert click
-		// @Description Records a click on an alert tracking entry (public access)
-		// @Tags alert
-		// @Accept json
-		// @Produce json
-		// @Success 200 {object} map[string]interface{}
 		rg.Post("/modtools/alert", alert.RecordAlert)
 
 		// Admin
@@ -1003,6 +995,13 @@ func SetupRoutes(app *fiber.App) {
 		// Members whose SAVED SEARCH matches this post, at the same
 		// MinMatchedPostScore the matched-posts email uses - both compare stored
 		// document embeddings, so the number means the same thing on both.
+		// @Router /message/{id}/searchmatches [get]
+		// @Summary Members whose saved search matches a given post (matched-posts email)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 10, max 100)"
+		// @Success 200 {array} message.SearchMatch
 		rg.Get("/message/:id/searchmatches", message.SearchMatchesForPost)
 
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)

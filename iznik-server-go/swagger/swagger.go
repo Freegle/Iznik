@@ -36,8 +36,8 @@ package swagger
 import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
-	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/admin"
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
@@ -129,7 +129,12 @@ type postABTestParams struct {
 // ============================================================================
 
 // swagger:route GET /activity message getActivity
-// Get recent activity
+// Get recent activity (DEPRECATED)
+//
+// DEPRECATED - Crawler traffic only in production. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Returns the most recent activity in groups
 //
@@ -195,10 +200,12 @@ type addressResponse struct {
 	Body address.Address
 }
 
-// swagger:route POST /address address createAddress
+// swagger:route PUT /address address createAddress
 // Create a new address
 //
-// Creates a new address for the authenticated user
+// Creates a new address for the authenticated user. Registered as PUT (the
+// method-aware drift guard caught this documented as POST, which the server
+// never accepted).
 //
 // security:
 // - BearerAuth: []
@@ -270,7 +277,12 @@ type adminsResponse struct {
 }
 
 // swagger:route GET /modtools/admin/{id} modtools getAdmin
-// Get admin by ID
+// Get admin by ID (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Returns a single admin record by ID
 //
@@ -365,7 +377,12 @@ type alertsResponse struct {
 }
 
 // swagger:route GET /modtools/alert/{id} modtools getAlert
-// Get alert by ID
+// Get alert by ID (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Returns a single alert by ID (public access)
 //
@@ -407,7 +424,9 @@ type alertResponse struct {
 // swagger:route POST /modtools/alert modtools recordAlert
 // Record alert click
 //
-// Records a click on an alert tracking entry (public access)
+// Records a click on an alert tracking entry. Public access (no auth required).
+// Body: { action: "clicked", trackid: <integer> }
+// When action=="clicked" and trackid>0, sets alerts_tracking.response="Clicked".
 //
 // Responses:
 //
@@ -798,6 +817,33 @@ type patchChatMessageParams struct {
 // security:
 // - BearerAuth: []
 //
+// Parameters:
+//   + name: count
+//     in: query
+//     description: Return only the unseen count
+//     required: false
+//     type: boolean
+//   + name: id
+//     in: query
+//     description: Return a single chat room by id
+//     required: false
+//     type: integer
+//   + name: chattypes
+//     in: query
+//     description: Comma-separated chat types to include
+//     required: false
+//     type: string
+//   + name: search
+//     in: query
+//     description: Filter chats by search term
+//     required: false
+//     type: string
+//   + name: since
+//     in: query
+//     description: Only chats with activity since this time
+//     required: false
+//     type: string
+//
 // Responses:
 //
 //	200: chatRoomsMTResponse
@@ -1159,7 +1205,12 @@ type configResponse struct {
 }
 
 // swagger:route PATCH /config/admin config patchAdminConfig
-// Update admin config keys
+// Update admin config keys (DEPRECATED)
+//
+// DEPRECATED - The ModTools client no longer calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Updates admin configuration values (Support/Admin only)
 //
@@ -1535,6 +1586,23 @@ type giftAidResponse struct {
 //
 // Returns all groups
 //
+// Parameters:
+//   + name: polygon
+//     in: query
+//     description: Include each group polygon in the response
+//     required: false
+//     type: boolean
+//   + name: modtools
+//     in: query
+//     description: ModTools view: include moderation-only fields
+//     required: false
+//     type: boolean
+//   + name: support
+//     in: query
+//     description: Support view: include support-only fields
+//     required: false
+//     type: boolean
+//
 // Responses:
 //
 //	200: groupsResponse
@@ -1580,6 +1648,32 @@ type groupWorkResponse struct {
 //     required: true
 //     type: integer
 //     format: int64
+//
+//   + name: showmods
+//     in: query
+//     description: Include the group moderator list
+//     required: false
+//     type: boolean
+//   + name: sponsors
+//     in: query
+//     description: Include group sponsors
+//     required: false
+//     type: boolean
+//   + name: polygon
+//     in: query
+//     description: Include the group polygon
+//     required: false
+//     type: boolean
+//   + name: tnkey
+//     in: query
+//     description: TrashNothing partner-key view
+//     required: false
+//     type: boolean
+//   + name: modtools
+//     in: query
+//     description: ModTools view: include moderation-only fields
+//     required: false
+//     type: boolean
 //
 // Responses:
 //
@@ -1666,6 +1760,35 @@ type postImageParams struct {
 	Body image.PostRequest `json:"body"`
 }
 
+// swagger:route GET /image image getImage
+// Redirect to an image delivery URL
+//
+// Serves legacy V1 image URLs (img_N.jpg and friends) still embedded in old
+// emails and external pages. No auth: these are public image links. Redirects
+// to the delivery URL, or to a default image when the ID is unknown.
+//
+// Parameters:
+//   + name: id
+//     in: query
+//     description: Image ID
+//     required: false
+//     type: integer
+//     format: int64
+//   + name: w
+//     in: query
+//     description: Requested width in pixels
+//     required: false
+//     type: integer
+//   + name: h
+//     in: query
+//     description: Requested height in pixels
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	302: description:Redirect to the image delivery URL
+
 // ============================================================================
 // Isochrone
 // ============================================================================
@@ -1673,9 +1796,10 @@ type postImageParams struct {
 // swagger:route GET /isochrone isochrone listIsochrones
 // List isochrones (DEPRECATED)
 //
-// DEPRECATED - no current client calls this. The per-user isochrone editor was removed in the
-// rippling-out reach flip (PR #921); only /isochrone/message and /message/count remain in use.
-// Retained for backward compatibility with older cached clients.
+// DEPRECATED - the per-user isochrone editor was removed in the rippling-out reach flip
+// (PR #921), but stale native-app bundles that predate it still call this (observed in
+// production). Retained until that cohort drains; only /isochrone/message and
+// /message/count remain in current use.
 //
 // Deprecated: true
 //
@@ -1698,7 +1822,8 @@ type isochronesResponse struct {
 // swagger:route PUT /isochrone isochrone createIsochrone
 // Create an isochrone (DEPRECATED)
 //
-// DEPRECATED - no current client calls this (isochrone editor removed in PR #921). Retained
+// DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles
+// that predate it still contain the calling code (GET/PATCH observed in production). Retained
 // for backward compatibility only.
 //
 // Deprecated: true
@@ -1715,7 +1840,8 @@ type isochronesResponse struct {
 // swagger:route PATCH /isochrone isochrone editIsochrone
 // Edit an isochrone (DEPRECATED)
 //
-// DEPRECATED - no current client calls this (isochrone editor removed in PR #921). Retained
+// DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles
+// that predate it still contain the calling code (GET/PATCH observed in production). Retained
 // for backward compatibility only.
 //
 // Deprecated: true
@@ -1732,7 +1858,8 @@ type isochronesResponse struct {
 // swagger:route DELETE /isochrone isochrone deleteIsochrone
 // Delete an isochrone (DEPRECATED)
 //
-// DEPRECATED - no current client calls this (isochrone editor removed in PR #921). Retained
+// DEPRECATED - the isochrone editor was removed in PR #921, but stale native-app bundles
+// that predate it still contain the calling code (GET/PATCH observed in production). Retained
 // for backward compatibility only.
 //
 // Deprecated: true
@@ -1765,6 +1892,23 @@ type isochronesResponse struct {
 // List jobs
 //
 // Returns all jobs
+//
+// Parameters:
+//   + name: lat
+//     in: query
+//     description: Latitude (required - without lat+lng an empty array is returned)
+//     required: false
+//     type: number
+//   + name: lng
+//     in: query
+//     description: Longitude (required)
+//     required: false
+//     type: number
+//   + name: category
+//     in: query
+//     description: Job category filter
+//     required: false
+//     type: string
 //
 // Responses:
 //
@@ -1816,6 +1960,27 @@ type jobResponse struct {
 //     required: true
 //     type: integer
 //
+//   + name: link
+//     in: query
+//     description: Clicked job link
+//     required: false
+//     type: string
+//   + name: placement
+//     in: query
+//     description: Ad placement identifier
+//     required: false
+//     type: string
+//   + name: source
+//     in: query
+//     description: Click source
+//     required: false
+//     type: string
+//   + name: page
+//     in: query
+//     description: Page the click came from
+//     required: false
+//     type: string
+//
 // Responses:
 //
 //	200: successResponse
@@ -1860,7 +2025,7 @@ type locationResponse struct {
 // Returns location suggestions for typeahead
 //
 // Parameters:
-//   + name: term
+//   + name: q
 //     in: query
 //     description: Search term
 //     required: true
@@ -1908,6 +2073,12 @@ type locationsResponse struct {
 //     type: integer
 //     format: int64
 //
+//   + name: groupsnear
+//     in: query
+//     description: Include nearby groups for the location
+//     required: false
+//     type: boolean
+//
 // Responses:
 //
 //	200: locationResponse
@@ -1917,6 +2088,68 @@ type locationsResponse struct {
 // Search locations
 //
 // Searches locations by lat/lng, typeahead, or bounding box
+//
+// Parameters:
+//   + name: lat
+//     in: query
+//     description: Latitude for point lookup
+//     required: false
+//     type: number
+//   + name: lng
+//     in: query
+//     description: Longitude for point lookup
+//     required: false
+//     type: number
+//   + name: swlat
+//     in: query
+//     description: Bounding box south-west latitude
+//     required: false
+//     type: number
+//   + name: swlng
+//     in: query
+//     description: Bounding box south-west longitude
+//     required: false
+//     type: number
+//   + name: nelat
+//     in: query
+//     description: Bounding box north-east latitude
+//     required: false
+//     type: number
+//   + name: nelng
+//     in: query
+//     description: Bounding box north-east longitude
+//     required: false
+//     type: number
+//   + name: typeahead
+//     in: query
+//     description: Partial name for typeahead matching
+//     required: false
+//     type: string
+//   + name: dodgy
+//     in: query
+//     description: Include locations flagged as dodgy
+//     required: false
+//     type: boolean
+//   + name: areas
+//     in: query
+//     description: Include areas as well as postcodes
+//     required: false
+//     type: boolean
+//   + name: limit
+//     in: query
+//     description: Maximum results to return
+//     required: false
+//     type: integer
+//   + name: groupsnear
+//     in: query
+//     description: Include nearby groups for each location
+//     required: false
+//     type: boolean
+//   + name: pconly
+//     in: query
+//     description: Postcodes only
+//     required: false
+//     type: boolean
 //
 // Responses:
 //
@@ -2186,8 +2419,20 @@ type membershipsResponse struct {
 // Message
 // ============================================================================
 
+// listMessagesResponse is the response for the message list endpoint
+// swagger:response listMessagesResponse
+type listMessagesResponse struct {
+	// in:body
+	Body message.ListMessagesResponse
+}
+
 // swagger:route GET /messages message listPublicMessages
-// List messages
+// List messages (DEPRECATED)
+//
+// DEPRECATED - No Freegle client calls this (ModTools uses /modtools/messages); remaining traffic is external scrapers. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Returns messages for a group with pagination. Response includes tnpostid (Trash Nothing post ID)
 // and expiresat (computed expiry date based on group settings) for each message.
@@ -2218,21 +2463,31 @@ type membershipsResponse struct {
 //
 //	200: listMessagesResponse
 
-// listMessagesResponse is the response for the message list endpoint
-// swagger:response listMessagesResponse
-type listMessagesResponse struct {
-	// in:body
-	Body message.ListMessagesResponse
-}
-
 // swagger:route GET /modtools/messages modtools listMessages
 // List messages
 //
 // Returns messages with moderation queue support
 //
+// Parameters:
+//   + name: subaction
+//     in: query
+//     description: Sub-action filter (e.g. searchall)
+//     required: false
+//     type: string
+//   + name: search
+//     in: query
+//     description: Search term filter
+//     required: false
+//     type: string
+//   + name: fromuser
+//     in: query
+//     description: Filter to messages from this user id
+//     required: false
+//     type: integer
+//
 // Responses:
 //
-//	200: messagesResponse
+//	200: listMessagesResponse
 
 // swagger:route GET /message/count message getMessageCount
 // Get message count
@@ -2269,6 +2524,12 @@ type listMessagesResponse struct {
 //     description: Northeast longitude
 //     required: true
 //     type: number
+//
+//   + name: limit
+//     in: query
+//     description: Maximum results to return
+//     required: false
+//     type: string
 //
 // Responses:
 //
@@ -2329,6 +2590,12 @@ type listMessagesResponse struct {
 //     in: path
 //     description: Message IDs (comma separated)
 //     required: true
+//     type: string
+//
+//   + name: partner
+//     in: query
+//     description: Partner API key allowing partner access
+//     required: false
 //     type: string
 //
 // Responses:
@@ -2457,7 +2724,12 @@ type messagesResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /message/{id} message deleteMessage
-// Delete message
+// Delete message (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Deletes a message by ID
 //
@@ -2518,7 +2790,12 @@ type microvolunteeringResponse struct {
 //	401: errorResponse
 
 // swagger:route PATCH /microvolunteering microvolunteering patchMicrovolunteeringFeedback
-// Provide moderator feedback on microaction
+// Provide moderator feedback on microaction (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Allows a moderator to set feedback, score_positive, and score_negative on a microaction
 //
@@ -2822,6 +3099,33 @@ type noticeboardsResponse struct {
 	Body []noticeboard.NoticeboardListItem
 }
 
+// swagger:route GET /noticeboard/{id} noticeboard getNoticeboardSingle
+// Get noticeboard by ID
+//
+// Returns a single noticeboard with its checks and photo
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Noticeboard ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: noticeboardItemResponse
+//	400: errorResponse
+//	404: errorResponse
+//
+// noticeboardItemResponse is the response for a single noticeboard
+// swagger:response noticeboardItemResponse
+type noticeboardItemResponse struct {
+	// Noticeboard with checks and photo
+	// in:body
+	Body noticeboard.NoticeboardItem
+}
+
 // swagger:route POST /noticeboard noticeboard postNoticeboard
 // Create noticeboard or perform action
 //
@@ -2851,7 +3155,12 @@ type noticeboardsResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /noticeboard/{id} noticeboard deleteNoticeboard
-// Delete noticeboard
+// Delete noticeboard (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Deletes a noticeboard by ID. Requires mod/admin role.
 //
@@ -3041,7 +3350,12 @@ type shortlinksResponse struct {
 // ============================================================================
 
 // swagger:route GET /simulation simulation getSimulation
-// Get simulation data
+// Get simulation data (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Returns simulation run data for analysis
 //
@@ -3290,7 +3604,12 @@ type storyResponse struct {
 //	401: errorResponse
 
 // swagger:route POST /story story postStory
-// Story actions (Like/Unlike)
+// Story actions (Like/Unlike) (DEPRECATED)
+//
+// DEPRECATED - Action-based route; live clients use /story/like and /story/unlike. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Handles story actions
 //
@@ -3328,7 +3647,12 @@ type storyResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /story/{id} story deleteStory
-// Delete a story
+// Delete a story (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Deletes a story by ID
 //
@@ -3352,7 +3676,7 @@ type storyResponse struct {
 // System Logs
 // ============================================================================
 
-// swagger:route GET /systemlogs systemlogs getSystemLogs
+// swagger:route GET /modtools/systemlogs systemlogs getSystemLogs
 // Get system logs
 //
 // Returns system logs (moderator only)
@@ -3374,7 +3698,7 @@ type systemLogsResponse struct {
 	Body systemlogs.LogsResponse
 }
 
-// swagger:route GET /systemlogs/counts systemlogs getSystemLogCounts
+// swagger:route GET /modtools/systemlogs/counts systemlogs getSystemLogCounts
 // Get log counts by subtype
 //
 // Returns counts of logs grouped by subtype using Loki metric queries (moderator only)
@@ -3422,7 +3746,12 @@ type teamResponse struct {
 }
 
 // swagger:route POST /team team createTeam
-// Create team member
+// Create team member (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Adds a member to a team
 //
@@ -3450,7 +3779,12 @@ type teamResponse struct {
 //	401: errorResponse
 
 // swagger:route DELETE /team team deleteTeam
-// Delete team member
+// Delete team member (DEPRECATED)
+//
+// DEPRECATED - No client calls this. Wrapped in deprecation.Marker (sunset 2026-08-01);
+// retirement is gated on observed-zero usage in the nightly report, not the date.
+//
+// Deprecated: true
 //
 // Removes a member from a team
 //
@@ -4176,3 +4510,1446 @@ type housekeeperTasksResponse struct {
 //
 //	200: successResponse
 //	400: errorResponse
+
+// ============================================================================
+// Previously undocumented endpoints — added by api-surface-audit (JOB 2)
+// ============================================================================
+
+// swagger:route POST /scrolldepth browse recordScrollDepth
+// Record browse-feed scroll depth
+//
+// Records how far down the browse feed a session scrolled.
+// One row per browse session (furthest feed position reached); no login required.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /admin/ai-images/{id}/suppress aiimage suppressAIImage
+// Suppress AI image
+//
+// Suppresses a specific AI-generated image from the review queue.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: AI image ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /amp/digest/reply amp ampDigestReplyShared
+// Reply to digest (shared AMP endpoint)
+//
+// Handles AMP email digest reply with all parameters (mid, rt, uid, exp, tid, message) from form body.
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route POST /amp/digest/{id}/reply amp ampDigestReply
+// Reply to digest by ID (AMP)
+//
+// Handles AMP email digest reply. Reads rt, uid, exp, tid query params and message body.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Digest ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route GET /avatar/{name} user getAvatar
+// Get user avatar
+//
+// Returns the avatar image for the given name.
+//
+// Parameters:
+//   + name: name
+//     in: path
+//     description: Avatar name
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	404: errorResponse
+
+// swagger:route GET /bulkoffer/update/{token} bulkoffer getBulkOfferUpdate
+// Get bulk offer update page (external)
+//
+// External/unauthenticated endpoint for owners to view and update bulk item availability.
+//
+// Parameters:
+//   + name: token
+//     in: path
+//     description: Edit token
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /bulkoffer/update/{token} bulkoffer postBulkOfferUpdate
+// Update bulk offer items (external)
+//
+// External/unauthenticated endpoint for owners to toggle item availability.
+//
+// Parameters:
+//   + name: token
+//     in: path
+//     description: Edit token
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /charities charities createCharity
+// Create or update a charity
+//
+// Creates or updates a charity record.
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
+// swagger:route GET /chat/{id}/commongroups chat getChatCommonGroups
+// Get groups common to both chat participants
+//
+// Returns groups that both chat participants are members of.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Chat ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /config/admin/concern_keywords config listConcernKeywords
+// List concern keywords
+//
+// Returns all concern keywords (moderation keyword list, successor to worry_words and spam_keywords).
+//
+// Parameters:
+//   + name: scope
+//     in: query
+//     description: Filter by scope (global or group)
+//     required: false
+//     type: string
+//   + name: group_id
+//     in: query
+//     description: Filter by group ID
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /config/admin/concern_keywords config createConcernKeyword
+// Create concern keyword
+//
+// Creates a new concern keyword.
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route DELETE /config/admin/concern_keywords/{id} config deleteConcernKeyword
+// Delete concern keyword
+//
+// Deletes a concern keyword by ID.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Concern keyword ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	404: errorResponse
+
+// swagger:route GET /discourse_sso sso discourseSSO
+// Discourse SSO login
+//
+// Handles Discourse single sign-on. Reads sso and sig query params.
+//
+// Parameters:
+//   + name: sso
+//     in: query
+//     description: SSO payload (base64-encoded)
+//     required: true
+//     type: string
+//   + name: sig
+//     in: query
+//     description: HMAC-SHA256 signature
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	302: successResponse
+
+// swagger:route GET /e/d/i/{ref}/{type}/{idenc}/{preset}/{pos} delivery deliveryImageCompact
+// Delivery image (compact)
+//
+// Returns redirect to original image for email scroll depth tracking (compact form).
+//
+// Parameters:
+//   + name: ref
+//     in: path
+//     required: true
+//     type: string
+//   + name: type
+//     in: path
+//     required: true
+//     type: string
+//   + name: idenc
+//     in: path
+//     required: true
+//     type: string
+//   + name: preset
+//     in: path
+//     required: true
+//     type: string
+//   + name: pos
+//     in: path
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	302: successResponse
+
+// swagger:route GET /e/d/r/{ref}/{type}/{idenc}/{pos} delivery deliveryRedirectCompact
+// Delivery redirect (compact)
+//
+// Handles link clicks and button actions in emails (compact form).
+//
+// Parameters:
+//   + name: ref
+//     in: path
+//     required: true
+//     type: string
+//   + name: type
+//     in: path
+//     required: true
+//     type: string
+//   + name: idenc
+//     in: path
+//     required: true
+//     type: string
+//   + name: pos
+//     in: path
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	302: successResponse
+
+// swagger:route POST /helper helper createHelper
+// Create a helper request
+//
+// Creates a new helper record or initiates helper workflow.
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+
+// swagger:route GET /helper/escalated helper getEscalatedHelpers
+// Get escalated helper requests
+//
+// Returns helper requests that have been escalated.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /helper/{msgid} helper getHelper
+// Get helper by message ID
+//
+// Returns the helper record for a given message.
+//
+// Parameters:
+//   + name: msgid
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /location/resolve location resolveLocation
+// Resolve location by name
+//
+// Resolves a location by name string. Reads name (string, required) query param.
+//
+// Parameters:
+//   + name: name
+//     in: query
+//     description: Location name to resolve
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /town/near location getTownNear
+// Get nearby towns reachable by drive-time
+//
+// Returns up to 5 town names reachable within the browse/feed distance slider's
+// travel time (minutes) from (lat,lng), by real drive-time (not crow-flies), plus
+// reach_radius_miles for the client to store as the feed's fast distance-filter
+// cap. Best-effort: any routing/DB failure returns an empty town list.
+//
+// Parameters:
+//   + name: lat
+//     in: query
+//     description: Latitude
+//     required: true
+//     type: number
+//   + name: lng
+//     in: query
+//     description: Longitude
+//     required: true
+//     type: number
+//   + name: minutes
+//     in: query
+//     description: Travel time budget in minutes
+//     required: true
+//     type: number
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/{id}/reach message getMessageReach
+// Get rippling reach for a message
+//
+// Returns the rippling reach polygon/area for a specific message.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/{id}/similar message getMessageSimilar
+// Get posts similar to a given post
+//
+// Returns open posts of the same type that are semantically similar to the
+// given post, for a "more like this nearby" recommendation strip.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: Max results (default 8, max 20)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/matches message getMessageMatches
+// Get offers matching a wanted being composed
+//
+// Returns existing OFFERs near a location that semantically match the given
+// free-text query, for the "people are offering these near you" panel shown
+// while someone composes a WANTED.
+//
+// Parameters:
+//   + name: query
+//     in: query
+//     description: Item text of the wanted being posted
+//     required: true
+//     type: string
+//   + name: lat
+//     in: query
+//     description: Poster's chosen latitude
+//     required: true
+//     type: number
+//   + name: lng
+//     in: query
+//     description: Poster's chosen longitude
+//     required: true
+//     type: number
+//   + name: limit
+//     in: query
+//     description: Max results (default 6, max 12)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /messages/markseen message markMessagesSeen
+// Mark messages as seen
+//
+// Marks a set of messages as seen for the current user.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /modtools/email/stats/digestpositions modtools getDigestPositions
+// Get digest email position stats
+//
+// Returns statistics on where digest emails were opened/clicked relative to the digest position.
+// Reads start, end, type query params.
+//
+// Parameters:
+//   + name: start
+//     in: query
+//     description: Start date (ISO 8601)
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date (ISO 8601)
+//     required: false
+//     type: string
+//   + name: type
+//     in: query
+//     description: Digest type filter
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /modtools/recommendations/stats modtools getRecommendationsStats
+// Get recommendation funnel stats
+//
+// Returns the recommendation funnel (impressions -> clicks -> attributed
+// replies) per source, plus a holdout comparison, for the ModTools sysadmin
+// "Recommendations" tab. Reads a days query param (default 30, max 365).
+// Support/Admin only.
+//
+// Parameters:
+//   + name: days
+//     in: query
+//     description: Window size in days (default 30, max 365)
+//     required: false
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /modtools/scroll/depth modtools getScrollDepth
+// Get scroll depth stats
+//
+// Returns browse-feed scroll depth analytics. Reads start and end query params.
+//
+// Parameters:
+//   + name: start
+//     in: query
+//     description: Start date (ISO 8601)
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date (ISO 8601)
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /modtools/user/{id}/dump modtools getUserDump
+// Get user data dump
+//
+// Streams a per-user SQLite database of every user-linked table plus Loki logs and Sentry issues.
+// Support/Admin role required.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route GET /rippling/metrics rippling getRipplingMetrics
+// Get rippling metrics
+//
+// Returns rippling reach metrics for a group. Reads groupid (int), trialOnly (bool),
+// start (string), end (string) query params.
+//
+// Parameters:
+//   + name: groupid
+//     in: query
+//     description: Group ID
+//     required: false
+//     type: integer
+//   + name: trialOnly
+//     in: query
+//     description: Filter to trial-only ripples
+//     required: false
+//     type: boolean
+//   + name: start
+//     in: query
+//     description: Start date
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /rippling/analytics rippling getRipplingAnalytics
+// Get rippling analytics
+//
+// On-the-fly sysadmin rippling analytics KPIs: reply/take rates, trends and
+// rippled-out-vs-home comparisons. Reads stratum, start and end query params
+// (defaults to the last 30 days). Support/Admin only.
+//
+// Parameters:
+//   + name: stratum
+//     in: query
+//     description: Stratum filter (default "all")
+//     required: false
+//     type: string
+//   + name: start
+//     in: query
+//     description: Start date
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date
+//     required: false
+//     type: string
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route GET /rippling/analytics/drivetime rippling getRipplingAnalyticsDriveTimes
+// Get the sampled drive-time analytics sample
+//
+// Returns a random sample of posts for the client to score serially against the
+// routing graph (step 1 of the 3-step drive-time analytics flow: sample, score,
+// aggregate - see /rippling/analytics/drivetime/score and
+// /rippling/analytics/drivetime/aggregate). Support/Admin only.
+//
+// Parameters:
+//   + name: stratum
+//     in: query
+//     description: Stratum filter (default "all")
+//     required: false
+//     type: string
+//   + name: start
+//     in: query
+//     description: Start date
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date
+//     required: false
+//     type: string
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route POST /rippling/analytics/drivetime/score rippling postRipplingAnalyticsDriveScore
+// Score a chunk of the drive-time sample
+//
+// Scores a chunk of the sample serially (one routing call per post) and returns
+// the observations. Called repeatedly by the client, one chunk after another, so
+// no single request runs long enough to hit the gateway timeout. Support/Admin
+// only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route POST /rippling/analytics/drivetime/aggregate rippling postRipplingAnalyticsDriveAggregate
+// Aggregate scored drive-time observations
+//
+// Turns the client's accumulated observations into the drive-time stats
+// (overall mean, rippled-only mean, per-day trend, reply->take bullseye). Pure
+// computation - no routing calls. Support/Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	403: errorResponse
+
+// swagger:route GET /user/{id}/applied user getUserApplied
+// Get user applied jobs/events
+//
+// Returns items the user has applied to.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/bans user getUserBans
+// Get user bans
+//
+// Returns ban records for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/chatrooms user getUserChatrooms
+// Get user chatrooms
+//
+// Returns chat rooms the user is participating in.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/emailhistory user getUserEmailHistory
+// Get user email history
+//
+// Returns sent email history for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/logins user getUserLogins
+// Get user login history
+//
+// Returns login history for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/membershiphistory user getUserMembershipHistory
+// Get user membership history
+//
+// Returns group membership history for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/newsfeed user getUserNewsfeed
+// Get user newsfeed entries
+//
+// Returns newsfeed entries for the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/{id}/replies user getUserReplies
+// Get user message replies
+//
+// Returns reply messages sent by the given user.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: User ID
+//     required: true
+//     type: integer
+//   + name: type
+//     in: query
+//     description: Filter by type (Offer/Wanted)
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /version misc getVersion
+// Get API version
+//
+// Returns the current API version string.
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /item/impact item getItemImpact
+// Estimate reuse impact for an item name
+//
+// Estimates weight, CO2e saved and financial benefit of reuse for qty units of
+// a free-text item name. Public, read-only - never writes to the items catalog.
+// Lookup order: (1) exact case-insensitive match against the items catalog with
+// a known weight, (2) fuzzy word-overlap match (>10%) against the standard
+// weights reference table, (3) popularity-weighted average item weight.
+//
+// Parameters:
+//   + name: name
+//     in: query
+//     description: Free-text item name
+//     required: true
+//     type: string
+//   + name: qty
+//     in: query
+//     description: Quantity (default 1)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route GET /message/{id}/matches message getMessagePostMatches
+// Opposite-type posts matching a given post (matched-posts email)
+//
+// Candidate set for the matched-posts email (batch job). Reach-filtered against
+// the post owner.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: Max results (default 10, max 30)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/relevantoff user getUserRelevantOff
+// Opt out of matched-posts suggestion emails
+//
+// Targeted opt-out from matched-posts suggestion emails (sets
+// relevantallowed=0), key-authenticated so it works as a one-click
+// List-Unsubscribe.
+//
+// Parameters:
+//   + name: key
+//     in: query
+//     description: Per-user unsubscribe key
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /user/relevantoff user postUserRelevantOff
+// Opt out of matched-posts suggestion emails
+//
+// POST form of the one-click List-Unsubscribe opt-out; RFC 8058 clients POST
+// rather than GET.
+//
+// Parameters:
+//   + name: key
+//     in: query
+//     description: Per-user unsubscribe key
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /user/unsubscribe user getUserUnsubscribe
+// Turn off one category of Freegle email
+//
+// Turns off one category of Freegle email for a user - the HTTPS arm of the
+// List-Unsubscribe header on every bulk mailable. GET only asks; it does not
+// apply the change (POST applies it).
+//
+// Parameters:
+//   + name: u
+//     in: query
+//     description: User ID
+//     required: true
+//     type: integer
+//   + name: k
+//     in: query
+//     description: Auto-login Link key
+//     required: true
+//     type: string
+//   + name: t
+//     in: query
+//     description: Category: digest, events, volunteering, newsletter, relevant, chat, notifications, engagement or all
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /user/unsubscribe user postUserUnsubscribe
+// Turn off one category of Freegle email
+//
+// Turns off one category of Freegle email for a user - the HTTPS arm of the
+// List-Unsubscribe header on every bulk mailable. POST applies it; this is the
+// RFC 8058 one-click List-Unsubscribe form used by Gmail/Yahoo.
+//
+// Parameters:
+//   + name: u
+//     in: query
+//     description: User ID
+//     required: true
+//     type: integer
+//   + name: k
+//     in: query
+//     description: Auto-login Link key
+//     required: true
+//     type: string
+//   + name: t
+//     in: query
+//     description: Category: digest, events, volunteering, newsletter, relevant, chat, notifications, engagement or all
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /group/{id}/message/summary group getGroupMessageSummaries
+// Get id + subject for a group's live posts
+//
+// Backs the server-rendered, crawlable post list on the community page
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Group ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /message/sitemap message getMessageSitemap
+// Live posts for the search-engine sitemap
+//
+// Returns id + lastmod for every currently-live Offer/Wanted post, for building sitemap.xml
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route GET /modtools/email/stats/reengage modtools getEmailStatsReengage
+// Get re-engagement email effectiveness
+//
+// Returns funnel (sent/opened/clicked/reengaged) counts overall and broken down by stage, experiment arm and journey segment
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: start
+//     in: query
+//     description: Start date (YYYY-MM-DD)
+//     required: false
+//     type: string
+//   + name: end
+//     in: query
+//     description: End date (YYYY-MM-DD)
+//     required: false
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /newsfeed/{id}/duplicate newsfeed getNewsfeedDuplicate
+// Whether a ChitChat post duplicates the poster's own live OFFER/WANTED
+//
+// Moderator-only. Names one of the poster's own live posts when the ChitChat
+// entry says the same thing, so it can be hidden.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Newsfeed ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /newsfeed/{id}/convertinfo newsfeed getNewsfeedConvertInfo
+// Where a convert-to-post would land
+//
+// Moderator-only. The postcode and community a post made for the member
+// would use, so the modal can show it before committing.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Newsfeed ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /message/{id}/searchmatches message getMessageSearchMatches
+// Members whose saved search matches a given post
+//
+// Candidate set for the matched-posts email: members whose saved search matches
+// this post, scored at the same MinMatchedPostScore threshold the matched-posts
+// email itself uses (both compare stored document embeddings, so the number
+// means the same thing on both).
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Message ID
+//     required: true
+//     type: integer
+//   + name: limit
+//     in: query
+//     description: Max results (default 10, max 100)
+//     required: false
+//     type: integer
+//
+// Responses:
+//
+//	200: successResponse
+
+// swagger:route POST /chat/{id}/message/{mid}/prompt chat postChatPromptAnswer
+// Answer a Freegle chat prompt
+//
+// Records the member's answer to a type='Prompt' chat message and applies it to
+// the posts the prompt covers. Only the member the prompt was sent to may
+// answer, and only once.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Chat ID
+//     required: true
+//     type: integer
+//   + name: mid
+//     in: path
+//     description: Chat message ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+
+// swagger:route GET /rippling/density rippling getRipplingDensity
+// Reach outcomes by local freegler density
+//
+// Posts, reach budget asked for vs reached, audience, reply and taken counts,
+// and held replies, per density band. Support/Admin only.
+//
+// Parameters:
+//   + name: days
+//     in: query
+//     description: Window length in days (default 30, max 365)
+//     required: false
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// ============================================================================
+// Partnership (ModTools sponsorship deals with local authorities)
+// ============================================================================
+
+// swagger:route GET /partnership partnerships listPartnerships
+// List partnerships
+//
+// Returns every partnership (sponsorship deal with a local authority), the
+// deal running out soonest last. Partnerships team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /partnership partnerships createPartnership
+// Create a partnership
+//
+// Creates a sponsorship deal with a local authority, and derives the groups it
+// covers from the authority's boundary. Partnerships team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/{id} partnerships getPartnership
+// Get a partnership
+//
+// Returns one partnership with the groups it covers, its financial-year split
+// and its payments. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route PATCH /partnership/{id} partnerships patchPartnership
+// Update a partnership
+//
+// Changes a partnership and re-syncs its sponsorship rows, so editing the
+// tagline, the link or the dates immediately changes what members see.
+// Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route DELETE /partnership/{id} partnerships deletePartnership
+// Delete a partnership
+//
+// Removes a partnership. Its sponsorship rows go too, so the council stops
+// appearing on the member site straight away; years, payments and group links
+// cascade in the schema. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/{id}/group partnerships getPartnershipGroups
+// List the groups a partnership covers
+//
+// Returns the groups a partnership covers, alongside the groups the authority's
+// boundary suggests, so a mistake in the overlap can be corrected by hand.
+// Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route PATCH /partnership/{id}/group partnerships patchPartnershipGroups
+// Change the groups a partnership covers
+//
+// Adds or removes a group from a partnership, or re-derives the whole list from
+// the authority boundary. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route PUT /partnership/{id}/year partnerships putPartnershipYears
+// Set the financial-year split of a partnership
+//
+// Replaces the explicit financial-year split for a multi-year deal. Sending an
+// empty list drops back to pro-rating the deal across its term. Partnerships
+// team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route POST /partnership/{id}/payment partnerships createPartnershipPayment
+// Add a payment to a partnership
+//
+// Records an invoice against a partnership. Partnerships team, Support or Admin
+// only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route PATCH /partnership/{id}/payment/{paymentid} partnerships updatePartnershipPayment
+// Update a payment
+//
+// Edits an invoice - most often to mark it paid. Partnerships team, Support or
+// Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//   + name: paymentid
+//     in: path
+//     description: Payment ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route DELETE /partnership/{id}/payment/{paymentid} partnerships deletePartnershipPayment
+// Delete a payment
+//
+// Removes an invoice. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Partnership ID
+//     required: true
+//     type: integer
+//   + name: paymentid
+//     in: path
+//     description: Payment ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/summary partnerships getPartnershipSummary
+// Partnership income totals and financial-year split
+//
+// Totals the partnership income and splits it by financial year, which is what
+// the page's headline figures and its income graph are drawn from. Partnerships
+// team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/statsjob partnerships listPartnershipStatsJobs
+// List authority statistics generation jobs
+//
+// Returns the recent quarterly-statistics generation runs with the files each
+// produced, which is what the page polls while a run is in progress.
+// Partnerships team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /partnership/statsjob partnerships createPartnershipStatsJob
+// Queue authority statistics generation
+//
+// Queues a quarterly statistics spreadsheet generation run for one or more
+// authorities; the Laravel scheduler renders the spreadsheets asynchronously.
+// Partnerships team, Support or Admin only.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route DELETE /partnership/statsjob/{id} partnerships deletePartnershipStatsJob
+// Delete a statistics generation job
+//
+// Discards a generation run and the spreadsheets it produced. Partnerships
+// team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: Job ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /partnership/statsfile/{id} partnerships getPartnershipStatsFile
+// Download a generated statistics spreadsheet
+//
+// Streams one rendered spreadsheet (xlsx) belonging to a completed statistics
+// generation job. Partnerships team, Support or Admin only.
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: File ID
+//     required: true
+//     type: integer
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse

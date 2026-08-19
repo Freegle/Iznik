@@ -1692,6 +1692,11 @@ func TestLimboUserSelf(t *testing.T) {
 	var deleted *string
 	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deleted)
 	assert.NotNil(t, deleted)
+
+	// Verify session was destroyed — mirroring handleForget (session/session.go).
+	var sessionCount int64
+	db.Raw("SELECT COUNT(*) FROM sessions WHERE userid = ?", userID).Scan(&sessionCount)
+	assert.Equal(t, int64(0), sessionCount, "Self-delete must destroy the user's session")
 }
 
 func TestLimboUserAdmin(t *testing.T) {
@@ -1753,6 +1758,11 @@ func TestLimboUserSelfDelete(t *testing.T) {
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", userID).Scan(&taskCount)
 	assert.Equal(t, int64(0), taskCount, "Self-delete must not queue a forget task — user has 14-day grace period")
+
+	// Verify session was destroyed — mirroring handleForget (session/session.go).
+	var sessionCount int64
+	db.Raw("SELECT COUNT(*) FROM sessions WHERE userid = ?", userID).Scan(&sessionCount)
+	assert.Equal(t, int64(0), sessionCount, "Self-delete must destroy the user's session")
 }
 
 func TestLimboUserNotAdmin(t *testing.T) {

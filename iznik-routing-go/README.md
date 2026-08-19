@@ -33,7 +33,6 @@ All endpoints are available on both ports. On the external port (8196) every `/v
 | `GET /v1/groups/nearby?lat=&lng=` | Freegle group boundaries near a point (GeoJSON FeatureCollection) |
 | `GET /v1/ripple-schedule?lat=&lng=&mode=&ticks=&max_minutes=` | The "rippling out" schedule: the expanding sequence of reachable areas over time used to introduce a post gradually. Steps are smaller in dense regions and larger across empty voids. Powers the Rippling Explorer |
 | `POST /v1/ripple-eval` | Evaluate a rippling scenario for a post (JSON body) — who would be reached at each tick |
-| `GET /v1/posts-for-member?lat=&lng=&date=&max_minutes=` | The posts a member at this location would be shown (`date` defaults to today, `max_minutes` to 30) |
 | `GET /v1/digest-simulator?lat=&lng=&max_minutes=&w_closeness=&w_freshness=&w_budget=&w_anchor=&cap=&group_by_poster=` | Simulate a member's ranked digest with tunable scoring weights and a result cap |
 | `GET /swagger` | Browsable OpenAPI reference (Redoc). Raw spec at `/swagger/swagger.json` |
 

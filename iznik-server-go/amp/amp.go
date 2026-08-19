@@ -461,13 +461,18 @@ func PostChatReply(c *fiber.Ctx) error {
 	// Insert the message.
 	// Plain, isolated, literal single-row
 	// INSERT; id read back via GORM's map-Create "@id" writeback.
+	// Set processingrequired=1/processingsuccessful=0 so ChatProcessService picks
+	// up this message and queues push/mobile notifications — matching
+	// processDigestReply's pattern in this same file. The previous
+	// processingsuccessful=1 insertion bypassed that pipeline entirely.
 	row := map[string]interface{}{
 		"chatid":               chatID,
 		"userid":               userID,
 		"message":              message,
 		"type":                 utils.CHAT_MESSAGE_DEFAULT,
 		"date":                 gorm.Expr("NOW()"),
-		"processingsuccessful": gorm.Expr("1"),
+		"processingrequired":   gorm.Expr("1"),
+		"processingsuccessful": gorm.Expr("0"),
 	}
 	if err := db.Table("chat_messages").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(ReplyResponse{
@@ -481,6 +486,17 @@ func PostChatReply(c *fiber.Ctx) error {
 
 	// Update chat room latest message time
 	db.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()"))
+
+	// If anyone has closed this chat, reopen it so it reappears in their list.
+	// Blocked chats are left as-is.  Only applies to User2User and User2Mod chats.
+	// Mirrors CreateChatMessage's roster reopen in chat/chatmessage.go.
+	rosterResult := db.Exec("UPDATE chat_roster SET status = ? WHERE chatid = ? AND status = ? "+
+		"AND EXISTS (SELECT 1 FROM chat_rooms WHERE id = ? AND chattype IN (?, ?))",
+		utils.CHAT_STATUS_OFFLINE, chatID, utils.CHAT_STATUS_CLOSED,
+		chatID, utils.CHAT_TYPE_USER2USER, utils.CHAT_TYPE_USER2MOD)
+	if rosterResult.Error != nil {
+		log.Printf("Failed to reopen closed chat roster for chat %d: %v", chatID, rosterResult.Error)
+	}
 
 	recordAmpReplyTracking(db, emailTrackingID, "amp://reply", "amp_reply_form")
 

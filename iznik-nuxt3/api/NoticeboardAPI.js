@@ -21,8 +21,4 @@ export default class NoticeboardAPI extends BaseAPI {
   action(data) {
     return this.$postv2('/noticeboard', data)
   }
-
-  del(id) {
-    return this.$delv2('/noticeboard', { id })
-  }
 }

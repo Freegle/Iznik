@@ -173,3 +173,55 @@ func TestBulkDonations_AdminRoleAllowed(t *testing.T) {
 	assert.Equal(t, 200, status)
 	assert.Equal(t, float64(1), result["inserted"])
 }
+
+// TestBulkDonations_GmailDotVariant proves that BulkUploadDonations now uses
+// MatchUserByEmailOrPriorDonation so a donor registered as "fredbloggs@gmail.com"
+// is correctly linked when the bulk upload supplies "fred.bloggs@gmail.com".
+// The previous exact-match-only lookup failed silently, leaving the donation
+// unlinked (userid NULL) and blocking any gift-aid claim lookup.
+func TestBulkDonations_GmailDotVariant(t *testing.T) {
+	prefix := uniquePrefix("bulk_gmailcanon")
+	db := database.DBConn
+
+	// Admin user to authorise the upload.
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, token := CreateTestSession(t, adminID)
+
+	// Donor whose registered email has no dots in the local part.
+	donorID := CreateTestUser(t, prefix+"_donor", "User")
+	// Remove the default email added by CreateTestUser and insert one with the
+	// correct canon so MatchUserByEmailOrPriorDonation can find it.
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", donorID)
+	storedEmail := fmt.Sprintf("fredbloggs%d@gmail.com", donorID)
+	// storedEmail has no dots — canon is identical to the stored email.
+	db.Exec("INSERT INTO users_emails (userid, email, canon) VALUES (?, ?, ?)",
+		donorID, storedEmail, storedEmail)
+
+	// Upload email: same local part but with a dot inserted ("fred.bloggs<id>@gmail.com").
+	// CanonicalizeEmail strips dots, producing "fredbloggs<id>@gmail.com" which matches canon.
+	uploadEmail := fmt.Sprintf("fred.bloggs%d@gmail.com", donorID)
+
+	tx1 := uniqueTxID("TX_GMAIL_DOT")
+	defer cleanupDonations(t, tx1)
+
+	donations := []bulkDonation{
+		{Date: "2026-06-01", DonorName: "Fred Bloggs", Email: uploadEmail,
+			Program: "PayPalGivingFund", Amount: 15.00, TransactionID: tx1},
+	}
+	status, result := testBulkPost(token, donations)
+	assert.Equal(t, 200, status)
+	assert.Equal(t, float64(1), result["inserted"])
+
+	// The donation must be linked to the donor via canonical email matching,
+	// not left with userid = NULL as the old exact-match-only path would produce.
+	var linkedUserID *uint64
+	db.Raw("SELECT userid FROM users_donations WHERE TransactionID = ?", tx1).Scan(&linkedUserID)
+	assert.NotNil(t, linkedUserID, "donation must be linked to a user, not left NULL")
+	if linkedUserID != nil {
+		assert.Equal(t, donorID, *linkedUserID,
+			"donation must be linked to the correct donor via canonical email matching")
+	}
+
+	// Clean up the extra email row.
+	db.Exec("DELETE FROM users_emails WHERE userid = ? AND email = ?", donorID, storedEmail)
+}

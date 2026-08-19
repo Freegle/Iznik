@@ -2680,8 +2680,16 @@ func LimboUser(c *fiber.Ctx) error {
 		})
 	}
 
+	// Signal the auth middleware to skip the post-handler session check —
+	// matching handleForget (session/session.go) which does the same.
+	c.Locals("skipPostAuthCheck", true)
+
 	// Soft, recoverable limbo (shared with the Unsubscribe action).
 	softLimboUser(db, targetID, myid)
+
+	// Destroy the session so the user is logged out immediately — matching
+	// handleForget which does the same DELETE FROM sessions after soft-delete.
+	db.Exec("DELETE FROM sessions WHERE userid = ?", targetID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

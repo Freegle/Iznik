@@ -1352,7 +1352,7 @@ export async function setupRipplingExplorer({
     if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13))
     if (inbound) {
       // Inbound mode: don't recompute outbound isochrones; just refresh
-      // the posts-for-member dots.  Also wipe any freegler dots that may
+      // the digest-simulator post dots.  Also wipe any freegler dots that may
       // still be on the map from the outbound view.
       clearOutboundLayers()
       fetchInbox()

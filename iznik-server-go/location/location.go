@@ -363,6 +363,49 @@ type DodgyLocation struct {
 	Newname       string  `json:"newname"`
 }
 
+// typeaheadQuery runs the shared query and AreaInfo loop used by both the
+// /location/typeahead and /locations?typeahead=... endpoints.  It returns
+// locations whose name starts with prefix (LIKE prefix%), filtered to
+// Postcode type when pconly is true, limited to limit rows.  Callers are
+// responsible for populating GroupsNear on the returned slice.
+//
+// pconly is only appended when set, so this statement has exactly 2 possible
+// rendered forms, both proven by the retired ormharness (shapes.json /
+// TestTier3Shapes_b262bf75df3c, removed in d22ba1d6c).
+func typeaheadQuery(prefix string, limit uint64, pconly bool) []Location {
+	type locationWithArea struct {
+		Location
+		AreaLat float32 `json:"-" gorm:"column:arealat"`
+		AreaLng float32 `json:"-" gorm:"column:arealng"`
+	}
+
+	db := database.DBConn
+	var locs []locationWithArea
+	tx := db.Table("locations l1").
+		Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
+		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+		Where("l1.name LIKE ?", prefix+"%")
+	if pconly {
+		tx = tx.Where("l1.type = '" + TYPE_POSTCODE + "'")
+	}
+	tx.Where("l1.name LIKE '% %'").Limit(int(limit)).Scan(&locs)
+
+	locations := make([]Location, 0, len(locs))
+	for i, l := range locs {
+		locations = append(locations, l.Location)
+		if l.Areaid > 0 {
+			locations[i].Area = &AreaInfo{
+				ID:   l.Areaid,
+				Name: l.Areaname,
+				Lat:  l.AreaLat,
+				Lng:  l.AreaLng,
+			}
+		}
+	}
+
+	return locations
+}
+
 // SearchLocations handles GET /locations - search for locations by lat/lng, typeahead, or bounding box.
 func SearchLocations(c *fiber.Ctx) error {
 	latStr := c.Query("lat")
@@ -400,40 +443,7 @@ func SearchLocations(c *fiber.Ctx) error {
 			limit = 100
 		}
 
-		locations := []Location{}
-		db := database.DBConn
-
-		type locationWithArea struct {
-			Location
-			AreaLat float32 `json:"-" gorm:"column:arealat"`
-			AreaLng float32 `json:"-" gorm:"column:arealng"`
-		}
-
-		// pcq is only
-		// appended when pconly is set, so this statement has exactly 2
-		// possible rendered forms, both proven by the retired ormharness
-		// (shapes.json / TestTier3Shapes_b262bf75df3c, removed in d22ba1d6c).
-		var locs []locationWithArea
-		txb262bf75df3c := db.Table("locations l1").
-			Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
-			Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
-			Where("l1.name LIKE ?", typeaheadStr+"%")
-		if pconly {
-			txb262bf75df3c = txb262bf75df3c.Where("l1.type = '" + TYPE_POSTCODE + "'")
-		}
-		txb262bf75df3c.Where("l1.name LIKE '% %'").Limit(int(limit)).Scan(&locs)
-
-		for i, l := range locs {
-			locations = append(locations, l.Location)
-			if l.Areaid > 0 {
-				locations[i].Area = &AreaInfo{
-					ID:   l.Areaid,
-					Name: l.Areaname,
-					Lat:  l.AreaLat,
-					Lng:  l.AreaLng,
-				}
-			}
-		}
+		locations := typeaheadQuery(typeaheadStr, limit, pconly)
 
 		if groupsnear {
 			var wg sync.WaitGroup
@@ -546,64 +556,32 @@ func Typeahead(c *fiber.Ctx) error {
 	typeahead := c.Query("q")
 	pconly := c.QueryBool("pconly", true)
 
-	// We want to select full postcodes (with a space in them).
-	typeahead = strings.ReplaceAll(typeahead, `\s`, "")
+	// Collapse/trim whitespace so "EH3  6" and "  EH3 6  " both hit the same
+	// prefix.  The previous strings.ReplaceAll(q, `\s`, "") only stripped the
+	// two-character literal backslash-s sequence, which never appears in a real
+	// postcode query — making it a silent no-op.
+	typeahead = strings.Join(strings.Fields(typeahead), " ")
 
-	locations := []Location{}
-
-	if typeahead != "" {
-		db := database.DBConn
-
-		type locationWithArea struct {
-			Location
-			AreaLat float32 `json:"-" gorm:"column:arealat"`
-			AreaLng float32 `json:"-" gorm:"column:arealng"`
-		}
-
-		// Shares
-		// SearchLocations's pattern: pcq is only appended when pconly is set,
-		// so this statement has exactly 2 possible rendered forms, both
-		// proven by the retired ormharness (shapes.json /
-		// TestTier3Shapes_71f1772f4a99, removed in d22ba1d6c).
-		var locs []locationWithArea
-		tx71f1772f4a99 := db.Table("locations l1").
-			Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
-			Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
-			Where("l1.name LIKE ?", typeahead+"%")
-		if pconly {
-			tx71f1772f4a99 = tx71f1772f4a99.Where("l1.type = '" + TYPE_POSTCODE + "'")
-		}
-		tx71f1772f4a99.Where("l1.name LIKE '% %'").Limit(int(limit64)).Scan(&locs)
-
-		for i, l := range locs {
-			locations = append(locations, l.Location)
-			if l.Areaid > 0 {
-				locations[i].Area = &AreaInfo{
-					ID:   l.Areaid,
-					Name: l.Areaname,
-					Lat:  l.AreaLat,
-					Lng:  l.AreaLng,
-				}
-			}
-		}
-
-		// Fetch the groups near each postcode, in parallel
-		var wg sync.WaitGroup
-		wg.Add(len(locations))
-
-		for i := range locations {
-			go func(i int) {
-				locations[i].GroupsNear = ClosestGroups(float64(locations[i].Lat), float64(locations[i].Lng), NEARBY, 10)
-				wg.Done()
-			}(i)
-		}
-
-		wg.Wait()
-
-		return c.JSON(locations)
+	if typeahead == "" {
+		return fiber.NewError(fiber.StatusNotFound, "q parameter not found")
 	}
 
-	return fiber.NewError(fiber.StatusNotFound, "q parameter not found")
+	locations := typeaheadQuery(typeahead, limit64, pconly)
+
+	// Fetch the groups near each postcode, in parallel.
+	var wg sync.WaitGroup
+	wg.Add(len(locations))
+
+	for i := range locations {
+		go func(i int) {
+			locations[i].GroupsNear = ClosestGroups(float64(locations[i].Lat), float64(locations[i].Lng), NEARBY, 10)
+			wg.Done()
+		}(i)
+	}
+
+	wg.Wait()
+
+	return c.JSON(locations)
 }
 
 type Address struct {
