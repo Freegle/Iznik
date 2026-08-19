@@ -148,6 +148,7 @@ class ParityComparer
         $overlap            = array_values(array_intersect($emailPostIds, $apiResultPostIds));
         $layer3Mismatches   = [];
         $layer4Divergences  = [];
+        $layer3SubjectOnly  = [];
 
         foreach ($overlap as $postId) {
             $this->classifyOverlapPost(
@@ -160,11 +161,12 @@ class ParityComparer
                 $apiStubUserIds,
                 $layer3Mismatches,
                 $layer4Divergences,
+                $layer3SubjectOnly,
             );
         }
 
         // Layer 5: Loki entry parity (hard fail) — see compareLokiEntries().
-        [$layer5Mismatches, $layer5Compared, $layer5StructureOnly] = $this->compareLokiEntries(
+        [$layer5Mismatches, $layer5Compared, $layer5StructureOnly, $layer5SubjectOnly] = $this->compareLokiEntries(
             $overlap,
             $emailLokiEntries,
             $apiLokiEntries,
@@ -196,6 +198,11 @@ class ParityComparer
             // created a messages row), so only the outcome-independent
             // structural checks applied — the same pairs Layer 4 reports.
             'layer5StructureOnly' => $layer5StructureOnly,
+            // post_ids whose ONLY parity problem, on every layer that flagged
+            // them, is the subject text. TNParityCheckCommand looks each of
+            // these up against TN to see whether TN itself edited the post
+            // after emailing it — see reclassifySubjectMismatches().
+            'subjectOnlyMismatchPostIds' => $this->subjectOnlyMismatchPostIds($layer3SubjectOnly, $layer5SubjectOnly),
             // Distinguishes "compared and clean" from "nothing to compare"
             // (Loki disabled for the run) — a silent zero would otherwise read
             // as a pass.
@@ -305,6 +312,7 @@ class ParityComparer
         array $apiStubUserIds,
         array &$layer3Mismatches,
         array &$layer4Divergences,
+        array &$layer3SubjectOnly,
     ): void {
         if ($emailMsg === null || $apiMsg === null) {
             // At least one side never created a messages row (dropped/skipped
@@ -355,7 +363,45 @@ class ParityComparer
 
         if (!empty($fieldDiffs)) {
             $layer3Mismatches[] = 'post_id=' . $postId . ' groupid=' . $emailMsg['groupid'] . ': ' . implode('; ', $fieldDiffs);
+            // Whether the subject was the ONLY thing that differed — a post
+            // where the coordinates or the type also disagree is not a title
+            // edit, so it must never be reclassified as one.
+            $layer3SubjectOnly[$postId] = $this->allSubjectDiffs($fieldDiffs);
         }
+    }
+
+    /**
+     * @param  string[]  $fieldDiffs  as produced by diffMessageFields()
+     */
+    private function allSubjectDiffs(array $fieldDiffs): bool
+    {
+        foreach ($fieldDiffs as $diff) {
+            if (!str_starts_with($diff, 'subject:')) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * The post_ids whose only parity problem is the subject text, across every
+     * layer that flagged them. A post_id flagged for the subject on one layer
+     * and for something else on another is deliberately excluded — the "TN
+     * edited the title" explanation only accounts for the subject.
+     *
+     * @param  array<string, bool>  $layer3SubjectOnly
+     * @param  array<string, bool>  $layer5SubjectOnly
+     * @return string[]
+     */
+    private function subjectOnlyMismatchPostIds(array $layer3SubjectOnly, array $layer5SubjectOnly): array
+    {
+        $postIds = array_unique(array_merge(array_keys($layer3SubjectOnly), array_keys($layer5SubjectOnly)));
+
+        return array_values(array_filter(
+            $postIds,
+            static fn (string $postId) => ($layer3SubjectOnly[$postId] ?? true) && ($layer5SubjectOnly[$postId] ?? true),
+        ));
     }
 
     /**
@@ -622,7 +668,8 @@ class ParityComparer
      * @param  array<string, array<string, mixed>>  $apiMessages
      * @param  int[]  $emailStubUserIds
      * @param  int[]  $apiStubUserIds
-     * @return array{0: string[], 1: int, 2: int}  [mismatches, fullyComparedCount, structureOnlyCount]
+     * @return array{0: string[], 1: int, 2: int, 3: array<string, bool>}
+     *   [mismatches, fullyComparedCount, structureOnlyCount, subjectOnlyByPostId]
      */
     private function compareLokiEntries(
         array $overlap,
@@ -636,8 +683,10 @@ class ParityComparer
         $mismatches    = [];
         $fullyCompared = 0;
         $structureOnly = 0;
+        $subjectOnly   = [];
 
         foreach ($overlap as $postId) {
+            $mismatchesBefore = count($mismatches);
             $email = $emailEntries[$postId] ?? null;
             $api   = $apiEntries[$postId] ?? null;
 
@@ -667,6 +716,7 @@ class ParityComparer
 
             if (!$sameGroup) {
                 $structureOnly++;
+                $this->recordSubjectOnly($subjectOnly, $postId, $mismatches, $mismatchesBefore);
                 continue;
             }
 
@@ -675,9 +725,36 @@ class ParityComparer
                 $mismatches,
                 $this->diffLokiOutcome($postId, $email, $api, $emailMsg, $apiMsg, $emailStubUserIds, $apiStubUserIds),
             );
+            $this->recordSubjectOnly($subjectOnly, $postId, $mismatches, $mismatchesBefore);
         }
 
-        return [$mismatches, $fullyCompared, $structureOnly];
+        return [$mismatches, $fullyCompared, $structureOnly, $subjectOnly];
+    }
+
+    /**
+     * Records whether every mismatch this post just contributed was the
+     * subject one — the Layer 5 counterpart of allSubjectDiffs().
+     *
+     * @param  array<string, bool>  $subjectOnly
+     * @param  string[]  $mismatches
+     */
+    private function recordSubjectOnly(array &$subjectOnly, string $postId, array $mismatches, int $countBefore): void
+    {
+        $added = array_slice($mismatches, $countBefore);
+
+        if ($added === []) {
+            return;
+        }
+
+        foreach ($added as $mismatch) {
+            if (!str_contains($mismatch, ': subject differs:')) {
+                $subjectOnly[$postId] = false;
+
+                return;
+            }
+        }
+
+        $subjectOnly[$postId] = true;
     }
 
     /**

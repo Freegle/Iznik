@@ -176,6 +176,10 @@ class TNParityCheckCommand extends Command
             $layers = $this->reclassifyLayer1Misses($layers, $apiSyncer, $from, $to);
         }
 
+        if (!$localTesting && !empty($layers['subjectOnlyMismatchPostIds'])) {
+            $layers = $this->reclassifySubjectMismatches($layers, $apiSyncer);
+        }
+
         $this->printReport($layers);
 
         if (empty($layers['layer1Missing']) && empty($layers['layer3Mismatches']) && empty($layers['layer5Mismatches'])) {
@@ -239,6 +243,128 @@ class TNParityCheckCommand extends Command
         return $layers;
     }
 
+    /**
+     * TN posts carry a fixed 90-day life: `expiration` is pinned at ORIGINAL
+     * publication + 90 days, while `date` moves whenever the post is reposted
+     * or edited. So a post whose `expiration - date` is anything other than 90
+     * days has been mutated by TN since it was first published — the same
+     * signal reclassifyLayer1Misses() relies on for out-of-window dates.
+     */
+    private const TN_POST_LIFETIME_DAYS = 90;
+
+    /**
+     * Slack allowed on the 90-day arithmetic before calling a post "mutated",
+     * so clock skew or a rounded timestamp cannot masquerade as an edit.
+     */
+    private const TN_LIFETIME_TOLERANCE_SECONDS = 60;
+
+    /**
+     * Moves subject-only Layer 3/5 failures that TN itself caused out of the
+     * failure lists and into an informational bucket.
+     *
+     * The email path records the subject TN put in the email at send time; the
+     * API path records TN's title as it stands now. When TN edits a post's
+     * title afterwards the two legitimately disagree, and no amount of care on
+     * our side can make them agree — the same class of TN-side mutation as the
+     * `date` bump handled in reclassifyLayer1Misses(). Confirmed live on
+     * post_ids 47116974 and 47116976: TN's live title matched what the API
+     * path had recorded exactly, and both posts' expiration arithmetic showed
+     * they had been bumped since publication.
+     *
+     * Deliberately narrow, because a subject difference is also what a real
+     * title-mangling bug (truncation, encoding) would look like:
+     *   - only post_ids whose sole disagreement, on every layer that flagged
+     *     them, is the subject (ParityComparer::subjectOnlyMismatchPostIds());
+     *   - only when TN confirms the post was mutated after publication.
+     * Anything else keeps failing, including a post whose `expiration` is null
+     * (non-expiring types), where the check cannot conclude anything.
+     */
+    private function reclassifySubjectMismatches(array $layers, PostSyncer $apiSyncer): array
+    {
+        $editedOnTn = [];
+
+        foreach ($layers['subjectOnlyMismatchPostIds'] as $postId) {
+            $result = $apiSyncer->lookupPostById($postId);
+
+            if ($result['status'] !== 'found' || !$this->wasEditedSincePublication($result)) {
+                continue;
+            }
+
+            $editedOnTn[] = sprintf(
+                'post_id=%s %s',
+                $postId,
+                $this->describeSubjectDiff($layers, $postId),
+            );
+
+            $layers['layer3Mismatches'] = $this->dropMismatchesFor($layers['layer3Mismatches'], $postId);
+            $layers['layer5Mismatches'] = $this->dropMismatchesFor($layers['layer5Mismatches'], $postId);
+        }
+
+        $layers['subjectEditedOnTn'] = $editedOnTn;
+
+        return $layers;
+    }
+
+    /**
+     * @param  array{date: ?string, post: mixed}  $lookup  a lookupPostById() result
+     */
+    private function wasEditedSincePublication(array $lookup): bool
+    {
+        $expiration = $lookup['post']?->getExpiration();
+
+        if ($expiration === null || empty($lookup['date'])) {
+            return false;
+        }
+
+        $lifetime = $expiration->getTimestamp() - strtotime($lookup['date']);
+
+        return abs($lifetime - (self::TN_POST_LIFETIME_DAYS * 86400)) > self::TN_LIFETIME_TOLERANCE_SECONDS;
+    }
+
+    /**
+     * Pulls the email-vs-api subject text out of the Layer 5 line for this
+     * post so the informational entry says what actually changed, rather than
+     * just naming a post_id the reader then has to go and look up.
+     */
+    private function describeSubjectDiff(array $layers, string $postId): string
+    {
+        foreach ($layers['layer5Mismatches'] as $line) {
+            if ($this->mismatchIsFor($line, $postId) && str_contains($line, 'subject differs:')) {
+                return substr($line, strpos($line, 'subject differs:'));
+            }
+        }
+
+        foreach ($layers['layer3Mismatches'] as $line) {
+            if ($this->mismatchIsFor($line, $postId)) {
+                return substr($line, strpos($line, 'subject:'));
+            }
+        }
+
+        return 'subject differs (TN edited the title after emailing it)';
+    }
+
+    /**
+     * @param  string[]  $mismatches
+     * @return string[]
+     */
+    private function dropMismatchesFor(array $mismatches, string $postId): array
+    {
+        return array_values(array_filter(
+            $mismatches,
+            fn (string $line) => !$this->mismatchIsFor($line, $postId),
+        ));
+    }
+
+    /**
+     * Both layers' mismatch lines open with `post_id=<id>` followed by a space
+     * or a colon; anchoring on that delimiter stops post_id=471169 matching
+     * post_id=4711690.
+     */
+    private function mismatchIsFor(string $line, string $postId): bool
+    {
+        return (bool) preg_match('/^post_id=' . preg_quote($postId, '/') . '[\s:]/', $line);
+    }
+
     private function printReport(array $layers): void
     {
         $this->line('');
@@ -255,6 +381,9 @@ class TNParityCheckCommand extends Command
         );
         if (isset($layers['layer1Deleted']) || isset($layers['layer1BumpedOutOfWindow']) || isset($layers['layer1ResolvedOutcome'])) {
             $this->line('Layer 1 (filtered out):    deleted=' . count($layers['layer1Deleted'] ?? []) . ' bumped_out_of_window=' . count($layers['layer1BumpedOutOfWindow'] ?? []) . ' resolved_outcome=' . count($layers['layer1ResolvedOutcome'] ?? []));
+        }
+        if (isset($layers['subjectEditedOnTn'])) {
+            $this->line('Layer 3/5 (filtered out):  title_edited_on_tn=' . count($layers['subjectEditedOnTn']));
         }
         $this->line('API crossposts discarded:  ' . count($layers['apiCrosspostsDiscarded'] ?? []) . ' (TN per-group copies, identified by group_id; excluded from every count above — Freegle cross-posts via rippling)');
         $this->line($this->formatIngestionGainLine($layers));
@@ -274,6 +403,7 @@ class TNParityCheckCommand extends Command
         $this->printSection('Layer 1 (informational) — reached a resolved outcome (satisfied/withdrawn), never going to be posted to FD:', $layers['layer1ResolvedOutcome'] ?? []);
         $this->printSection('(informational) — API crossposts discarded (TN per-group copies, never ingested):', $apiCrosspostLines);
         $this->printSection('Layer 2 (informational) — posts the API path covered that the email path never saw:', $layer2ExtraLines);
+        $this->printSection('Layer 3/5 (informational) — TN edited the post\'s title after emailing it, so the two subjects cannot agree:', $layers['subjectEditedOnTn'] ?? []);
         $this->printSection('Layer 3 FAILURES — same group on both paths, but content/outcome differs:', $layers['layer3Mismatches'], isFailure: true);
         $this->printSection('Layer 4 (informational) — overlapping posts with no meaningful same-group comparison:', $layers['layer4Divergences']);
         $this->printSection('Layer 5 FAILURES — the two paths reported different Loki entries for the same post:', $layers['layer5Mismatches'], isFailure: true);

@@ -510,6 +510,46 @@ class EmailApiParityTest extends TestCase
         $this->assertEmpty($layers['layer3Mismatches'], 'Layer 3: ' . implode(' | ', $layers['layer3Mismatches']));
     }
 
+    public function test_a_subject_only_mismatch_is_offered_for_tn_edit_reclassification(): void
+    {
+        // A subject-only disagreement is the shape of a TN-side title edit, so
+        // it is handed to TNParityCheckCommand::reclassifySubjectMismatches()
+        // to confirm against TN. It still fails both layers here — the comparer
+        // only nominates the candidate, it never excuses it on its own.
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', ['subject' => 'OFFER: Table frame']),
+            $this->syntheticLines('api', 'tn_api', ['subject' => 'OFFER: Table frame & glass top']),
+        );
+
+        $this->assertSame(['tn-l5-1'], $layers['subjectOnlyMismatchPostIds']);
+        $this->assertCount(1, $layers['layer3Mismatches'], 'the comparer must still report it');
+        $this->assertCount(1, $layers['layer5Mismatches'], 'the comparer must still report it');
+    }
+
+    public function test_a_mismatch_beyond_the_subject_is_not_offered_for_reclassification(): void
+    {
+        // "TN edited the title" explains a subject difference and nothing else,
+        // so a post that also disagrees on its routing outcome must never be
+        // reclassified — that would swallow a genuine regression.
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', ['subject' => 'OFFER: A'], subtype: 'Pending'),
+            $this->syntheticLines('api', 'tn_api', ['subject' => 'OFFER: B'], subtype: 'Approved'),
+        );
+
+        $this->assertEmpty($layers['subjectOnlyMismatchPostIds']);
+        $this->assertNotEmpty($layers['layer5Mismatches']);
+    }
+
+    public function test_a_clean_run_nominates_nothing_for_reclassification(): void
+    {
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', []),
+            $this->syntheticLines('api', 'tn_api', []),
+        );
+
+        $this->assertEmpty($layers['subjectOnlyMismatchPostIds']);
+    }
+
     public function test_a_genuinely_different_subject_is_still_a_mismatch(): void
     {
         // Normalizing the prefix must not swallow a real content difference —

@@ -128,6 +128,17 @@ out of the post body. TN documents that array as ordered *smallest to largest*
 takes the **last** entry — taking the first ingested a thumbnail where the email
 path got the full-size image.
 
+`tn:parity-check` reclassifies two families of TN-side mutation rather than
+failing on them, because nothing on the Freegle side can prevent either: a post
+whose `date` was bumped out of the query window, and a post whose **title** TN
+edited after the partner email was sent (the email path records the subject at
+send time, the API path records the title as it stands now). Both are detected
+the same way — `expiration` is pinned at original-publish + 90 days while `date`
+moves on a repost or edit, so `expiration - date != 90 days` means TN mutated the
+post. The title check is deliberately narrow: it applies only where the subject
+is the *sole* disagreement on every layer, since a subject difference is also
+what a genuine truncation or encoding bug would look like.
+
 ### Verifying nothing is dropped after the cutover
 
 Once the email path stops routing, `tn:parity-check` no longer works: it compares
