@@ -1990,6 +1990,48 @@ describe('ModMessage', () => {
       }
     })
 
+    // Discourse #10024 post 2: a mod covering several communities browsing Approved
+    // Messages (no explicit contextGroupid - the all-communities view) was shown "This
+    // member's posts were moderated..." on a post that had already gone out. The
+    // pending-first fallback anchored to a DIFFERENT group the mod also moderates,
+    // where the same post was still waiting, and rendered THAT group's live
+    // setting-based hold instead of the Approved copy actually being browsed.
+    it('anchors to the Approved copy, not a still-pending copy on another moderated group, when browsing Approved Messages', async () => {
+      mockMyModGroups.push({ id: 555 })
+      try {
+        const wrapper = mountComponent(
+          { collection: 'Approved' },
+          {
+            groups: [
+              {
+                groupid: 789,
+                namedisplay: 'Approved Group',
+                collection: 'Approved',
+              },
+              {
+                groupid: 555,
+                namedisplay: 'Pending Group',
+                collection: 'Pending',
+                contentcheck_reasons: [
+                  {
+                    check: 'GroupModerated',
+                    detail:
+                      "This group moderates all posts, whatever the member's setting",
+                  },
+                ],
+              },
+            ],
+          },
+          { ModMessageWorry }
+        )
+        await flushPromises()
+        expect(wrapper.vm.currentGroupid).toBe(789)
+        expect(wrapper.text()).not.toContain('Group setting')
+      } finally {
+        mockMyModGroups.pop()
+      }
+    })
+
     it('computes contextGroup from the correct group', () => {
       const wrapper = mountComponent(
         { contextGroupid: 999 },
