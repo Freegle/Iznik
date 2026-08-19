@@ -88,6 +88,9 @@ const globalStubs = {
   DaDisableCTA: { template: '<div class="da-disable-cta" />' },
   DeletedRestore: { template: '<div class="deleted-restore" />' },
   BouncingEmail: { template: '<div class="bouncing-email" />' },
+  // Its own spec covers what it says; here it only has to not drag
+  // bootstrap-vue-next's grid into an unstubbed mount.
+  MailDelayed: { template: '<div class="mail-delayed" />' },
   BreakpointFettler: { template: '<div class="breakpoint-fettler" />' },
   OrientationFettler: { template: '<div class="orientation-fettler" />' },
   SomethingWentWrong: { template: '<div class="something-went-wrong" />' },
