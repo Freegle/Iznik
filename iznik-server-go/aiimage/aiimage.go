@@ -330,11 +330,13 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 
 	prompt := buildImagePrompt(name)
 
+	// Flux Schnell's input schema is closed (additionalProperties: false) and accepts only
+	// prompt, steps (max 8) and seed. Sending width/height/num_steps — which older Workers AI
+	// image models took — gets the whole request rejected with a 400 "Additional or unevaluated
+	// properties not allowed". The model always returns 1024x1024; there is no size parameter.
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"prompt":    prompt,
-		"num_steps": 8,
-		"width":     640,
-		"height":    480,
+		"prompt": prompt,
+		"steps":  8,
 	})
 
 	apiURL := fmt.Sprintf(
@@ -367,12 +369,15 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	}
 
 	// Cloudflare Workers AI returns a JSON envelope with a base64-encoded image.
+	// Errors come back as objects ({"message":...,"code":...}), so keep them raw: decoding
+	// them into []string fails, which would send a JSON error body down the "not JSON, assume
+	// raw binary" path below and surface as an unrelated image-decode failure.
 	var envelope struct {
 		Result struct {
 			Image string `json:"image"`
 		} `json:"result"`
-		Success bool     `json:"success"`
-		Errors  []string `json:"errors"`
+		Success bool              `json:"success"`
+		Errors  []json.RawMessage `json:"errors"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		// If not JSON, assume raw binary image data.
@@ -380,7 +385,11 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	}
 
 	if !envelope.Success || envelope.Result.Image == "" {
-		return nil, fmt.Errorf("Cloudflare AI returned no image: %v", envelope.Errors)
+		msgs := make([]string, 0, len(envelope.Errors))
+		for _, e := range envelope.Errors {
+			msgs = append(msgs, string(e))
+		}
+		return nil, fmt.Errorf("Cloudflare AI returned no image: %s", strings.Join(msgs, "; "))
 	}
 
 	imageBytes, err := base64.StdEncoding.DecodeString(envelope.Result.Image)

@@ -37,10 +37,12 @@ func TestGenerateImageWithCloudflare_Success(t *testing.T) {
 	b64Image := base64.StdEncoding.EncodeToString(pngBytes)
 
 	var capturedPath string
+	var capturedBody map[string]interface{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		capturedPath = r.URL.Path
 		assert.Equal(t, "POST", r.Method)
 		assert.Equal(t, "Bearer test-ai-token", r.Header.Get("Authorization"))
+		json.NewDecoder(r.Body).Decode(&capturedBody)
 		resp := map[string]interface{}{
 			"result":  map[string]string{"image": b64Image},
 			"success": true,
@@ -62,6 +64,34 @@ func TestGenerateImageWithCloudflare_Success(t *testing.T) {
 	assert.Equal(t, pngBytes, result)
 	assert.Contains(t, capturedPath, "flux-1-schnell")
 	assert.Contains(t, capturedPath, "test-acct")
+
+	// Flux Schnell rejects the whole request with a 400 if we send anything outside its
+	// closed schema, so assert we send only what it accepts.
+	assert.Contains(t, capturedBody, "prompt")
+	assert.Equal(t, float64(8), capturedBody["steps"])
+	for _, banned := range []string{"num_steps", "width", "height"} {
+		assert.NotContains(t, capturedBody, banned)
+	}
+}
+
+func TestGenerateImageWithCloudflare_ObjectErrors(t *testing.T) {
+	// Cloudflare reports input-schema violations as error objects in a 200 envelope with
+	// success=false. Those must surface as the API's message, not be mistaken for image bytes.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"errors":[{"message":"AiError: Bad input","code":5006}],"success":false,"result":{},"messages":[]}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "test-acct")
+	t.Setenv("CLOUDFLARE_AI_TOKEN", "test-ai-token")
+	old := CloudflareAPIBase
+	CloudflareAPIBase = srv.URL
+	defer func() { CloudflareAPIBase = old }()
+
+	_, err := generateImageWithCloudflare("bicycle")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "AiError: Bad input")
 }
 
 func TestGenerateImageWithCloudflare_MissingEnvVars(t *testing.T) {
