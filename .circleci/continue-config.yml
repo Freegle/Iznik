@@ -23,21 +23,53 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
+  # 1.1.373 drops the ORM migration inventory ratchet (Gate 1) and the Go/PHP
+  # toolchain provisioning it needed. The Go migration is done - raw is at 0 -
+  # so the gate was regenerating a 5,974-entry inventory on every build to
+  # answer one question, "did someone add raw SQL back", which
+  # .claude/check-raw-sql.sh now answers at the point it happens.
+  #
+  # Publishing the orb is what makes a step take effect - CircleCI resolves
+  # freegle/tests from the registry, not from the copy in this repo - but the
+  # PIN here decides which published version runs. Leaving master on 1.1.370
+  # would not have broken anything (that step self-guarded on ci-ratchet.sh
+  # existing, so it would exit 0 once this merges) - it would just have kept
+  # provisioning a toolchain for a gate that no longer runs.
+  #
+  # 1.1.374 caches the Gradle distribution in build-android. Every Android build
+  # was fetching gradle-8.11.1-all.zip (~200MB) from services.gradle.org, so a
+  # release only shipped if that host held the connection for the whole
+  # download. Pipeline #10729 on production 4140acbb3 lost it to
+  # "java.net.SocketException: Connection reset", which failed bundleRelease and
+  # left that commit with an iOS build but no Play beta artifact.
+  #
+  # 1.1.375 makes that cache warm on the FIRST release rather than the second.
+  # build-android runs only on production and is the only writer of the
+  # gradle-dist key, so a restore keyed on it alone misses on the next release
+  # and downloads anyway; it now also falls back to the gradle-deps cache that
+  # build-android-debug/-dev keep warm from master, which already contains the
+  # unpacked distribution.
+  # 1.1.379 wraps every npm ci in a shell-level retry with backoff: codeload
+  # rate-limits (429) the GitHub tarball dependency in the lock file, which
+  # npm's own --fetch-retries does not cover, and it red-lined master twice on
+  # 2026-08-17 for commits that touched no JavaScript.
+  #
   # 1.1.371 = master's 1.1.369 plus this branch's rename of the push-fork
   # package in the app-build jobs, @freegle/capacitor-push-notifications-cap7
-  # -> -cap8. The rename shipped in 1.1.363, but a later merge of master
-  # raised this pin to a version published from master, which does not carry
-  # it - so the app builds here were running `npm update` against a package
-  # this branch no longer depends on, which is a silent no-op rather than an
-  # error. CircleCI resolves freegle/tests from the registry, not from the
-  # copy in this repo, so the pin is what decides.
+  # -> -cap8. CircleCI resolves freegle/tests from the registry, not from the
+  # copy in this repo, so the pin is what decides: a pin published from master
+  # does not carry the rename, and the app builds here then run `npm update`
+  # against a package this branch no longer depends on - a silent no-op rather
+  # than an error.
   #
-  # 1.1.382 publishes the orb from a source that merges both branches: this
-  # branch's cap8 push-notifications rename and its parallel-build heartbeat
-  # (was 1.1.378), plus everything master published since - the shell-level
-  # retry around every npm ci for codeload 429s (1.1.379), and the per-flag
-  # Coveralls job id/number that restores carryforward, so a partial upload
-  # from a failed build stops rewriting the aggregate baseline (1.1.381).
+  # 1.1.378 adds a heartbeat to the parallel container build. Every build group
+  # redirects to a log file, so between "building in parallel" and the first
+  # "build complete" the console says nothing, and a group that legitimately
+  # ran longer than no_output_timeout was killed as if it had hung.
+  #
+  # 1.1.382 is this branch's two changes republished on top of everything
+  # master has published since (1.1.379 and 1.1.381 above). Publishing from
+  # either side alone drops the other side's steps.
   freegle: freegle/tests@1.1.382
 
 jobs:
