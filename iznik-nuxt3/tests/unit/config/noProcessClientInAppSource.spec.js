@@ -32,6 +32,8 @@ const APP_DIRS = [
   'modtools/pages',
   'modtools/plugins',
   'modtools/layouts',
+  'modtools/utils',
+  'mixins',
 ]
 
 const SOURCE_EXT = /\.(vue|js|mjs|ts)$/
