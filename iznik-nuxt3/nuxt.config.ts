@@ -145,8 +145,8 @@ export default defineNuxtConfig({
         process.env.CONTEXT === 'production'
           ? process.env.URL
           : process.env.DEPLOY_URL
-          ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
-          : '',
+            ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
+            : '',
     },
   },
 

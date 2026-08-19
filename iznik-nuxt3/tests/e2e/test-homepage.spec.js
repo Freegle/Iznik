@@ -159,9 +159,7 @@ test.describe('Homepage tests', () => {
       .filter({ visible: true })
       .first()
       .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
-    console.log(
-      `[DEBUG] "Ask" button found in ${Date.now() - askStuffStart}ms`
-    )
+    console.log(`[DEBUG] "Ask" button found in ${Date.now() - askStuffStart}ms`)
 
     // 2. PlaceAutocomplete/location input should always be visible
     console.log(
