@@ -588,8 +588,8 @@ function scrollToGiveAsk(give) {
       setTimeout(() => {
         if (give && giveAsk.value?.$refs.givebutton?.$el) {
           giveAsk.value.$refs.givebutton.$el.scrollIntoView()
-        } else if (!give && giveAsk.value?.$refs.findbutton?.$el) {
-          giveAsk.value.$refs.findbutton.$el.scrollIntoView()
+        } else if (!give && giveAsk.value?.$refs.askbutton?.$el) {
+          giveAsk.value.$refs.askbutton.$el.scrollIntoView()
         }
       }, 500)
     }
