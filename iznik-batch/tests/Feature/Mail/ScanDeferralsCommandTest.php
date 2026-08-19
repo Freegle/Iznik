@@ -63,7 +63,35 @@ class ScanDeferralsCommandTest extends TestCase
     {
         $this->scripts[] = $script;
 
+        // A real relay answers postsuper with its own tally, not with the queue
+        // listing. purge() reads that tally to decide what was actually
+        // removed, so echoing the canned queue back here would model a relay
+        // that deleted nothing - which is exactly what production looked like
+        // on 2026-08-19 when postsuper refused as non-root.
+        if (str_contains($script, 'postsuper')) {
+            return 'postsuper: Deleted: '.$this->queueIdsIn($script).' messages';
+        }
+
         return $this->canned;
+    }
+
+    /**
+     * How many ids the purge script hands to postsuper.
+     *
+     * The script is `printf "%s\n" ID ID ... | postsuper -d - 2>&1`, so split
+     * on the quotes rather than pattern-matching a format string whose
+     * backslash survives three levels of escaping.
+     */
+    private function queueIdsIn(string $script): int
+    {
+        $parts = explode('"', $script);
+        $ids = $parts[2] ?? '';
+
+        if (($pipe = strstr($ids, '|', true)) !== false) {
+            $ids = $pipe;
+        }
+
+        return count(preg_split('/\s+/', trim($ids), -1, PREG_SPLIT_NO_EMPTY));
     }
 
     private function relayReturns(string $queue, string $delivered = ''): void
