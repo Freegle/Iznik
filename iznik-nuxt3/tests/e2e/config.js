@@ -59,6 +59,19 @@ if (isParallel) {
   console.log('CI environment detected - using extended timeouts')
 }
 
+// Drop a redundant default port from a base URL.
+//
+// docker-compose passes these as `http://host:${PORT_TRAEFIK_HTTP:-80}`, so the
+// main checkout gets a literal `:80` while a worktree gets its real offset port.
+// A browser normalises `http://host:80/x` to `http://host/x`, so any spec that
+// builds an absolute URL from this and hands it to page.waitForURL() or
+// toHaveURL() compares against a string that can never match - it waits out the
+// full timeout while sitting on exactly the right page. Seventeen specs build
+// URLs this way; test-modtools-chat-review was the one that noticed.
+const stripDefaultPort = (url) =>
+  url.replace(/^(http:\/\/[^/:]+):80(?=\/|$)/, '$1')
+    .replace(/^(https:\/\/[^/:]+):443(?=\/|$)/, '$1')
+
 // Environment-specific settings
 const environment = {
   isDev: !process.env.CI,
@@ -68,9 +81,9 @@ const environment = {
   postcode: process.env.TEST_POSTCODE || 'EH3 6SS',
   place: process.env.TEST_PLACE || 'Edinburgh',
   testgroup: process.env.TEST_GROUP || 'FreeglePlayground',
-  modtoolsBaseUrl:
-    process.env.TEST_MODTOOLS_BASE_URL ||
-    'http://modtools-prod-local.localhost',
+  modtoolsBaseUrl: stripDefaultPort(
+    process.env.TEST_MODTOOLS_BASE_URL || 'http://modtools-prod-local.localhost'
+  ),
   apiV2BaseUrl:
     process.env.TEST_API_V2_BASE_URL || 'http://apiv2.localhost/api',
 
