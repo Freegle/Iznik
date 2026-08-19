@@ -65,22 +65,31 @@ running at the same time, so load-dependent error and timeout branches are cover
 run and not the next. One statement is roughly 0.004% of the Go total, which is enough to
 turn the delta gate red on its own.
 
-The build therefore keeps the Go profile as an artefact. `go-coverage.out` carries
-per-block statement counts and is the one to diff between two builds to find the moved
-line. The Go runner copies it to `iznik-server-go/coverage-history/` - the apiv2
-container's `/app` is that bind-mounted directory - because the orb deletes `coverage.out`
-as soon as it has uploaded it; `build-and-test`'s `post-steps` in
-`.circleci/continue-config.yml` then lift it into `~/coverage-artifacts` and store it.
-Diff two builds before treating a small delta as a regression - and equally, before
-dismissing it as noise.
+**The profile is already kept, and diffing it is the whole answer.** Every
+`build-and-test` stores `~/artifacts/go/coverage.out` — per-block statement counts, which
+is exactly what a build-to-build diff needs. Fetch it from two builds and compare, rather
+than reasoning about what a percentage might mean:
+
+```
+curl -sS "https://circleci.com/api/v2/project/gh/Freegle/Iznik/<job>/artifacts"   # find the url
+```
+
+Both the job API and the artifact download work without a CircleCI token.
+
+That diff has already paid for itself. Builds 32736 and 32751 differed by exactly one
+block — `recommendations/stats.go`'s `sortDaily` swap. Nothing tested `sortDaily`
+directly; it was reached only through a DB-backed test whose rows carry no `ORDER BY`, so
+the swap ran only when MySQL happened to return the days out of order, which under CI's
+concurrent load varied build to build. One statement is 0.004–0.005% of this suite, which
+is the whole of a typical red. It now has its own unit tests.
 
 The Go coverage run is also serialised (`-p 1`, in
 `status-nuxt/server/api/tests/go.post.ts`): the suite's ~10 packages otherwise hit the
 single `iznik_go_test` database concurrently, on a runner already running iznik-batch,
-Playwright and Vitest alongside them. It costs no wall clock - Go finishes well inside a
-step whose critical path is Playwright - but be clear about what it did not do: the first
+Playwright and Vitest alongside them. It costs no wall clock — Go finishes well inside a
+step whose critical path is Playwright — but be clear about what it did not do: the first
 build carrying it still went red at -0.005%, so serialising did not make the number
-reproducible. Only the profile diff answers a red.
+reproducible on its own.
 
 The same delta gate can go red on the other suites for the same reason. The cheapest check
 is whether the failing suite's language appears in the diff at all: a Go-only commit that

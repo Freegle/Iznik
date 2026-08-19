@@ -171,3 +171,44 @@ func TestMergeReplyRows_Empty(t *testing.T) {
 	assert.Empty(t, mergeReplyRows(nil))
 	assert.Empty(t, mergeReplyRows([]replyRow{}))
 }
+
+// sortDaily's swap was the Coveralls flap. Nothing tested it directly: it was
+// reached only incidentally through a DB-backed test, whose rows carry no ORDER BY,
+// so the swap ran only when MySQL happened to return the days out of order. Under
+// CI's concurrent load that varied build to build, and a single statement moving in
+// and out of cover is 0.004-0.005% of the Go suite - enough to turn the delta gate
+// red on commits containing no Go at all (traced by diffing the retained profiles of
+// builds 32736 and 32751, which differ by exactly this block).
+func TestSortDaily_ReversedInput(t *testing.T) {
+	points := []DailyPoint{
+		{Date: "2026-08-03"},
+		{Date: "2026-08-02"},
+		{Date: "2026-08-01"},
+	}
+
+	sortDaily(points)
+
+	assert.Equal(t, "2026-08-01", points[0].Date)
+	assert.Equal(t, "2026-08-02", points[1].Date)
+	assert.Equal(t, "2026-08-03", points[2].Date)
+}
+
+func TestSortDaily_AlreadyOrderedIsUnchanged(t *testing.T) {
+	points := []DailyPoint{
+		{Date: "2026-08-01"},
+		{Date: "2026-08-02"},
+	}
+
+	sortDaily(points)
+
+	assert.Equal(t, "2026-08-01", points[0].Date)
+	assert.Equal(t, "2026-08-02", points[1].Date)
+}
+
+func TestSortDaily_EmptyAndSingle(t *testing.T) {
+	sortDaily(nil)
+
+	single := []DailyPoint{{Date: "2026-08-01"}}
+	sortDaily(single)
+	assert.Equal(t, "2026-08-01", single[0].Date)
+}

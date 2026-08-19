@@ -166,25 +166,6 @@ export default defineEventHandler(async (event) => {
       stdoutBuffer = ''
     }
 
-    // Keep the coverage profile where CI can still collect it. The orb uploads
-    // coverage.out to Coveralls and then deletes it, and Coveralls only ever reports a
-    // percentage - never which statements moved. So when the delta gate goes red by one
-    // statement there is nothing left to diff, and the question cannot be answered after
-    // the fact. /app inside apiv2 is the bind-mounted iznik-server-go directory, so this
-    // copy lands on the CI host outside the path the orb removes, and the build's
-    // post-steps store it as an artefact.
-    if (withCoverage) {
-      try {
-        execSync(
-          `docker exec -w /app ${prefix}-apiv2 sh -c 'mkdir -p coverage-history && cp -f coverage.out coverage-history/go-coverage.out'`,
-          { encoding: 'utf8' }
-        )
-      } catch (e) {
-        // Losing the copy must not fail a passing run - it only costs diagnosability.
-        console.log(`Could not retain Go coverage profile: ${e.message}`)
-      }
-    }
-
     const state = getTestState('go')
     const p = state.progress
     setTestState('go', {
