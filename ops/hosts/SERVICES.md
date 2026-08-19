@@ -217,6 +217,60 @@ shaping cannot distort.
 To disable the shaper entirely: remove `/etc/cron.d/postfix-adaptive-shaper`,
 empty `/etc/postfix/shaped_destinations`, then `postfix reload`.
 
+### The second IP is not a way round the throttle (`yahoo-failover`)
+
+bulk2 has a second address, and Yahoo's throttle is per-IP, so routing the
+family via the second one looks like an obvious escape. It is not, and the
+measurement is worth keeping so nobody re-derives it the expensive way.
+
+Probed by hand on 2026-08-19, three attempts each against `mta5`, `mta6` and
+`mx-eu`:
+
+| source | result |
+|---|---|
+| primary (`smtp_bind_address` in main.cf) | `421 4.7.0 [TSS04]` deferred |
+| secondary | `250 ... ok` |
+
+That looks conclusive and is misleading: it is a single low-volume probe. Put
+real traffic on it and the picture inverts within two minutes. With the family
+routed there, the secondary delivered **995 messages in the first minute and
+zero in each of the next three**, having earned its own `421 4.7.0 [TSS05]`.
+Yahoo admits a burst per IP and then closes; a hand probe only ever samples the
+admitted part.
+
+Two things this cost, both worth avoiding again:
+
+- **`smtp_destination_concurrency_limit` is per destination DOMAIN.** The Yahoo
+  family is 20 domains behind one set of MXs, so a limit of 4 bought up to ~80
+  concurrent connections to a single provider. The lever that caps a transport
+  as a whole is the **`maxproc` column** in master.cf. Any per-destination
+  number is multiplied by however many domains a provider fronts.
+- **Judge a burst on a recent window, never on an aggregate.** A guard counting
+  deliveries over a whole log tail reads that 995 as "delivering fine" for as
+  long as the burst stays in the tail, and so never fires. `recent_counts()` in
+  `yahoo-failover-lib.sh` generates the minute keys it wants and matches them,
+  which is correct across hour, day and year boundaries in a log format that
+  carries no year.
+
+The lever is therefore kept, deliberately **manual and off by default**:
+
+```
+yahoo-failover status    # state, queue depth, deliveries in the last 10 min
+yahoo-failover on        # populate /etc/postfix/yahoo_failover from .domains
+yahoo-failover off       # revert the family to the default transport
+```
+
+`/etc/postfix/yahoo_failover` is empty unless a human fills it, and it is
+consulted FIRST in `transport_maps` so it wins over the shaper's map.
+`yahoo-failover-guard` (cron, every 5 min) only ever turns it **off** - when the
+backlog has drained, or when the secondary starts deferring too. Nothing turns
+it on automatically: that trades the reputation of the only working IP for
+throughput, which is a human's call.
+
+The domain list is verified by **MX lookup, not by brand name** - `sky.com`,
+`netscape.net` and `aim.com` are Yahoo-hosted, while `btinternet.com` is not
+(it is Openwave) and must not be routed there.
+
 ## Not captured
 
 TLS certificates and keys, DNS zones, firewall rules, package sets, users and

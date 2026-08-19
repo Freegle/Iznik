@@ -53,7 +53,7 @@ message_size_limit = 0
 queue_directory = /var/spool/postfix
 smtpd_recipient_limit = 100000
 header_checks = regexp:/etc/postfix/header_checks
-transport_maps = regexp:/etc/postfix/redirect.regexp, texthash:/etc/postfix/shaped_destinations
+transport_maps = texthash:/etc/postfix/yahoo_failover, regexp:/etc/postfix/redirect.regexp, texthash:/etc/postfix/shaped_destinations
 
 # Disable connection caching because on Ubuntu 14.04 it is bugged - see 
 # https://bugs.launchpad.net/ubuntu/+source/postfix/+bug/1549388

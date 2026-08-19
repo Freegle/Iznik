@@ -1,0 +1,25 @@
+# Domains whose MX is Yahoo-hosted (*.am0.yahoodns.net) and which therefore
+# share the TSS04 throttle against our primary IP. Verified by MX lookup, not
+# assumed from the brand name - see ops/hosts/SERVICES.md.
+#
+# Editing this file does NOT change routing. Run `yahoo-failover on` to apply.
+yahoo.co.uk
+yahoo.com
+aol.com
+sky.com
+ymail.com
+rocketmail.com
+aol.co.uk
+myyahoo.com
+aim.com
+netscape.net
+yahoo.it
+yahoo.fr
+yahoo.es
+yahoo.gr
+yahoo.ca
+yahoo.in
+yahoo.co.in
+yahoo.co.nz
+yahoo.com.hk
+yahoo.com.mx

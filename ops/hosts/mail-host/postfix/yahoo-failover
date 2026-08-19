@@ -1,0 +1,85 @@
+#!/bin/sh
+# yahoo-failover - MANUAL failover of Yahoo-family mail onto the secondary IP.
+#
+# Yahoo throttles our PRIMARY sending IP (185.53.57.161) with
+# "421 4.7.0 [TSS04] ... temporarily deferred", while accepting MAIL FROM on
+# the secondary (77.72.7.253). Verified 2026-08-19, 3/3 attempts each way
+# against mta5, mta6 and mx-eu.
+#
+# THIS IS A MANUAL EMERGENCY LEVER, NOT A POLICY.
+#
+# Routing a ~100k backlog onto a clean IP is precisely how a clean IP stops
+# being clean: Yahoo rates reputation per-IP, so sustained bulk volume on the
+# secondary will earn it the same TSS04 the primary already has, and then we
+# have no working path at all. Turn it on to clear a backlog that would
+# otherwise expire into bounces; turn it OFF as soon as it has drained.
+#
+# Nothing may turn this ON automatically. yahoo-failover-guard turns it OFF
+# only - that direction is safe, the other is not.
+#
+#   yahoo-failover on      route the family via the secondary IP
+#   yahoo-failover off     revert to the default (primary IP) transport
+#   yahoo-failover status  show the current state and the evidence for it
+
+set -eu
+
+MAP=/etc/postfix/yahoo_failover
+DOMAINS=/etc/postfix/yahoo_failover.domains
+LOG=/var/log/yahoo-failover.log
+
+log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$LOG"; }
+
+. /usr/local/sbin/yahoo-failover-lib.sh
+
+queue_depth() {
+    a=$(find /var/spool/postfix/active   -type f 2>/dev/null | wc -l)
+    d=$(find /var/spool/postfix/deferred -type f 2>/dev/null | wc -l)
+    printf 'active=%d deferred=%d total=%d\n' "$a" "$d" "$((a + d))"
+}
+
+is_on() { [ -s "$MAP" ]; }
+
+case "${1:-status}" in
+on)
+    if [ ! -r "$DOMAINS" ]; then
+        echo "ERROR: $DOMAINS missing - nothing to route." >&2
+        exit 1
+    fi
+    # texthash is read at process start, so the reload below is what applies it.
+    grep -vE '^[[:space:]]*(#|$)' "$DOMAINS" | while read -r d _rest; do
+        printf '%s yahoo:\n' "$d"
+    done > "$MAP"
+    postfix reload 2>&1 | grep -v 'bogus file' || true
+    n=$(wc -l < "$MAP")
+    log "ON  by ${SUDO_USER:-$(id -un)} - $n domains -> yahoo: (77.72.7.253)"
+    echo "yahoo-failover ON: $n domains routed via 77.72.7.253, concurrency 4."
+    echo
+    echo "  This burns reputation on the secondary IP. Turn it OFF once the"
+    echo "  backlog has drained:  yahoo-failover off"
+    ;;
+off)
+    : > "$MAP"
+    postfix reload 2>&1 | grep -v 'bogus file' || true
+    log "OFF by ${SUDO_USER:-$(id -un)}"
+    echo "yahoo-failover OFF: family reverts to the default transport (185.53.57.161)."
+    ;;
+status)
+    if is_on; then
+        echo "state=on domains=$(wc -l < "$MAP")"
+    else
+        echo "state=off"
+    fi
+    echo "$(queue_depth)"
+    echo "last 10 min: $(recent_counts 10)"
+    echo "routing check:"
+    for d in someone@yahoo.co.uk a@aol.com b@gmail.com; do
+        r=$(postmap -q "$d" texthash:"$MAP" 2>/dev/null || true)
+        [ -n "$r" ] || r=$(postmap -q "${d#*@}" texthash:"$MAP" 2>/dev/null || true)
+        printf '  %-20s -> %s\n' "$d" "${r:-(default)}"
+    done
+    ;;
+*)
+    echo "usage: yahoo-failover on|off|status" >&2
+    exit 64
+    ;;
+esac

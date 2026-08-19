@@ -130,8 +130,29 @@ mailman   unix  -       n       n       -       -       pipe
   ${nexthop} ${user}
 bouncehandler unix - n n - 5 pipe
   user=mailhandler argv=php /var/www/iznik/scripts/incoming/bouncepf.php $sender $recipient
-yahoo     unix  -       -       n       -       -       smtp
+yahoo     unix  -       -       n       -       2       smtp
         -o syslog_name=postfix-yahoo
+        # Yahoo throttles our PRIMARY ip with 421 4.7.0 [TSS04]. The secondary
+        # is not a way around that - on 2026-08-19 at ~80 effective concurrency
+        # it delivered 995 messages in ONE minute and then earned its own
+        # [TSS05], zero delivered thereafter. Nothing routes here unless a
+        # human populates /etc/postfix/yahoo_failover; see `yahoo-failover`.
+        -o smtp_bind_address=77.72.7.253
+        #
+        # THE RATE LIMIT IS THE MAXPROC COLUMN ABOVE (2), NOT THE LINE BELOW.
+        # smtp_destination_concurrency_limit is per DESTINATION DOMAIN, and the
+        # Yahoo family is 20 domains sharing one set of inbound MXs, so a limit
+        # of 4 there bought up to 80 concurrent connections to the same
+        # provider. maxproc caps the whole transport, which is the thing Yahoo
+        # actually meters.
+        -o smtp_destination_concurrency_limit=1
+        # Per-domain drip. With ~4 domains carrying the bulk this is roughly
+        # 50-60 messages/min aggregate, about 1/17th of the burst that got us
+        # blocked.
+        -o smtp_destination_rate_delay=5s
+        # Yahoo closes a reused connection past its ceiling WITHOUT an error,
+        # which reads in the log as "lost connection while sending RCPT TO".
+        -o smtp_connection_reuse_count_limit=10
 postlog   unix-dgram n  -       n       -       1       postlogd
 slowdest   unix  -       -       n       -       -       smtp
   -o syslog_name=postfix-slowdest
