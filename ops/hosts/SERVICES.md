@@ -73,6 +73,42 @@ from 2023 — ignore it; the live log is `/var/log/mail.log`.
   it makes the final delivery to recipient MX. That is why sender reputation on
   its own IP is what matters.
 
+### `/etc/postfix/rampup` OWNS main.cf - never use `postconf -e` here
+
+**Read this before changing any postfix setting on bulk2.** A pre-existing
+script `/etc/postfix/rampup` (dated 2024-09, started from root's crontab with
+`@reboot`, runs forever) loops:
+
+```sh
+cp main.cf.split main.cf     ; service postfix restart   # sender-dependent transports ON
+tail -f mail.log | grep -q "emporarily deferr"           # wait for a provider to defer us
+cp main.cf.no_split main.cf  ; service postfix restart   # that line commented OUT
+sleep 1h
+```
+
+It **overwrites main.cf wholesale from templates, roughly hourly**, so anything
+written with `postconf -e` survives only until the next cycle and then vanishes
+silently. That is not hypothetical: the adaptive shaper's `transport_maps` entry
+and concurrency settings were wiped this way on 2026-08-18, leaving the shaper
+INERT - the map file and the `shaped` transport still existed, so it looked
+configured, but nothing routed to it.
+
+**Edit `/etc/postfix/main.cf.split` AND `/etc/postfix/main.cf.no_split`**, then
+`cp` the current phase over main.cf. `master.cf` is NOT touched by rampup, so
+transport definitions there are safe. Verify routing with the lookup rather than
+the config line:
+
+```sh
+postmap -q yahoo.co.uk texthash:/etc/postfix/shaped_destinations   # -> shaped:
+```
+
+The two templates differ by exactly one line: `sender_dependent_default_transport_maps`.
+So "splitting" means routing by sender, which is the existing answer to
+"can we use a different IP when deferred" - it already exists, predates this
+work, and backs off for an hour as soon as a deferral appears. Given Yahoo
+defers immediately, the log shows it flipping to split and straight back
+("Splitting... Pause splitting...") within seconds, every hour.
+
 ### Adaptive rate shaping (`adaptive-shaper.sh`)
 
 Postfix has adaptive per-destination concurrency, but it keys on
