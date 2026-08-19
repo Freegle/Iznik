@@ -334,6 +334,20 @@ DSN;
         $this->assertTrue($this->service->shouldIgnoreBounce($code));
     }
 
+    public function test_classifies_yahoo_tss05_deferral_as_ignorable(): void
+    {
+        // TSS05 is the same throttle against our SECOND sending ip. It only
+        // appeared once we routed the Yahoo family there on 2026-08-19 to get
+        // round the block on the first, and it arrived within two minutes of
+        // real volume. Matched on its own name rather than relying on the
+        // "temporarily deferred" wording that happens to accompany it.
+        $code = 'smtp; 421 4.7.0 [TSS05] Messages from 77.72.7.253 temporarily deferred due to '
+            . 'unexpected volume or user complaints - 4.16.55.1; see '
+            . 'https://postmaster.yahooinc.com/error-codes';
+
+        $this->assertTrue($this->service->shouldIgnoreBounce($code));
+    }
+
     public function test_classifies_postfix_relay_deferral_as_ignorable(): void
     {
         // Postfix's wording when the remote said 421 during the SMTP

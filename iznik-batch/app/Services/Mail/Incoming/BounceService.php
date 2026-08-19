@@ -72,6 +72,12 @@ class BounceService
         // SOFT_BOUNCE_THRESHOLD.
         'temporarily deferred',
         '[TSS04]',
+        // TSS05 is the same throttle against our SECOND sending ip, seen once
+        // we routed the Yahoo family there on 2026-08-19. It is caught by
+        // 'temporarily deferred' above, but only incidentally - name it, so
+        // that a future rewording of their message cannot quietly turn a
+        // provider throttle into thousands of members marked as bouncing.
+        '[TSS05]',
         'delivery time expired',
     ];
 
