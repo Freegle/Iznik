@@ -73,11 +73,23 @@ from 2023 — ignore it; the live log is `/var/log/mail.log`.
   it makes the final delivery to recipient MX. That is why sender reputation on
   its own IP is what matters.
 
-### `/etc/postfix/rampup` OWNS main.cf - never use `postconf -e` here
+### `/etc/postfix/rampup` - RETIRED 2026-08-19
 
-**Read this before changing any postfix setting on bulk2.** A pre-existing
-script `/etc/postfix/rampup` (dated 2024-09, started from root's crontab with
-`@reboot`, runs forever) loops:
+**Retired**, after it was found to have silently wiped the adaptive shaper's
+config. The `@reboot` line in root's crontab is commented out (not deleted -
+uncomment to restore; the crontab was backed up to `/root/crontab.bak-rampup-*`)
+and the running loop was killed. **main.cf is now unmanaged**, so ordinary
+`postconf -e` edits persist again - but note `main.cf.split` and
+`main.cf.no_split` still exist and both now carry the shaping settings, so
+restoring rampup would not break shaping.
+
+Retired because its split phase lasted only seconds - Yahoo defers immediately,
+which is its exit condition - so in practice it restarted postfix twice an hour
+to spend 59 of every 60 minutes in the non-split state, interrupting deliveries
+and destroying any config change made between cycles. The adaptive shaper covers
+the same ground per-domain and releases itself.
+
+What it did, for anyone considering bringing it back:
 
 ```sh
 cp main.cf.split main.cf     ; service postfix restart   # sender-dependent transports ON
@@ -86,12 +98,13 @@ cp main.cf.no_split main.cf  ; service postfix restart   # that line commented O
 sleep 1h
 ```
 
-It **overwrites main.cf wholesale from templates, roughly hourly**, so anything
-written with `postconf -e` survives only until the next cycle and then vanishes
+It **overwrote main.cf wholesale from templates, roughly hourly**, so anything
+written with `postconf -e` survived only until the next cycle and then vanished
 silently. That is not hypothetical: the adaptive shaper's `transport_maps` entry
 and concurrency settings were wiped this way on 2026-08-18, leaving the shaper
 INERT - the map file and the `shaped` transport still existed, so it looked
-configured, but nothing routed to it.
+configured, but nothing routed to it. **If it is ever restored, edit the
+templates, never `postconf -e`.**
 
 **Edit `/etc/postfix/main.cf.split` AND `/etc/postfix/main.cf.no_split`**, then
 `cp` the current phase over main.cf. `master.cf` is NOT touched by rampup, so
