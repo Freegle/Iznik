@@ -299,6 +299,13 @@ const test = base.test.extend({
       /Failed to load resource: net::ERR_ABORTED/, // Can happen during page navigation when requests are cancelled
       /Failed to load resource: net::ERR_CONNECTION_REFUSED/, // Can happen when server is starting up
       /Failed to load resource: net::ERR_NAME_NOT_RESOLVED/, // External CDNs (Facebook, Google, etc.) not DNS-resolvable in isolated Docker test environment
+      // EmailValidator asks dns.google whether a typed domain resolves, and
+      // ignores the answer if the lookup fails - see the empty catch in
+      // checkValidDomain(). So a failure to reach it can never be a fault in
+      // our code, but it is not always ERR_NAME_NOT_RESOLVED above: a run on
+      // 2026-08-19 failed a ModTools test on ERR_SOCKET_NOT_CONNECTED to that
+      // same host. Allow the host rather than chase error codes.
+      /Failed to load resource.*dns\.google/,
       /ERR_NETWORK_CHANGED/, // Docker bridge interface churn mid-request in the test environment
       /has been blocked by CORS policy/, // CORS errors can happen in test environments due to ads
       // Can happen in test environments. Newer headless Chromium (Playwright
