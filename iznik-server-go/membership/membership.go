@@ -583,8 +583,16 @@ func GetMemberships(c *fiber.Ctx) error {
 			// TestTier3Shapes_836dc8807739, removed in d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() + " AND m.userid = ?"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection, searchID)
+			// Cursor-based pagination, same as the no-search branch below: without this,
+			// scrolling a search result list just re-ran this exact query and got the same
+			// top-`limit` rows back every time, which is what made the client's list reshuffle
+			// and drop already-shown members on scroll (Discourse 10001 post 10).
+			if contextID > 0 {
+				whereSQL += " AND m.id < ?"
+				whereArgs = append(whereArgs, contextID)
+			}
 			baseTx().Where(whereSQL, whereArgs...).
-				Order("m.added DESC").Limit(limit).Scan(&members)
+				Order("m.id DESC").Limit(limit).Scan(&members)
 		} else {
 			searchPattern := "%" + search + "%"
 			// Match firstname/lastname as well as fullname: some members (e.g. LoveJunk
@@ -601,9 +609,14 @@ func GetMemberships(c *fiber.Ctx) error {
 				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?)"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
 				searchPattern, searchPattern, searchPattern, searchPattern)
+			// Same cursor-based pagination as above - see comment there.
+			if contextID > 0 {
+				whereSQL += " AND m.id < ?"
+				whereArgs = append(whereArgs, contextID)
+			}
 			baseTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
 				Where(whereSQL, whereArgs...).
-				Group("m.id").Order("m.added DESC").Limit(limit).Scan(&members)
+				Group("m.id").Order("m.id DESC").Limit(limit).Scan(&members)
 		}
 	} else {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
