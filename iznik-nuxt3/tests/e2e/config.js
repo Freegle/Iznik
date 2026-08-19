@@ -69,7 +69,8 @@ if (isParallel) {
 // full timeout while sitting on exactly the right page. Seventeen specs build
 // URLs this way; test-modtools-chat-review was the one that noticed.
 const stripDefaultPort = (url) =>
-  url.replace(/^(http:\/\/[^/:]+):80(?=\/|$)/, '$1')
+  url
+    .replace(/^(http:\/\/[^/:]+):80(?=\/|$)/, '$1')
     .replace(/^(https:\/\/[^/:]+):443(?=\/|$)/, '$1')
 
 // Environment-specific settings

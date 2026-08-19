@@ -1158,7 +1158,7 @@ const testWithFixtures = test.extend({
       }
 
       if (mobile && type.toLowerCase() === 'wanted') {
-        // Mobile find flow: /ask/mobile/photos → skip → /ask/mobile/details → /ask/mobile/whereami
+        // Mobile ask flow: /ask/mobile/photos → skip → /ask/mobile/details → /ask/mobile/whereami
         await page.gotoAndVerify('/ask/mobile/photos', {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',

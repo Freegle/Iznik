@@ -541,7 +541,7 @@ test.describe('AI Illustration Tests - Find Desktop Flow', () => {
       expect(signupResult).toBeTruthy()
       console.log('User signed up successfully')
 
-      // Navigate to the find page - desktop layout shows PostMessageTablet
+      // Navigate to the ask page - desktop layout shows PostMessageTablet
       await page.gotoAndVerify('/ask', {
         timeout: timeouts.navigation.default,
       })
@@ -632,7 +632,7 @@ test.describe('AI Illustration Tests - Find Desktop Flow', () => {
       )
       expect(signupResult).toBeTruthy()
 
-      // Navigate to the find page
+      // Navigate to the ask page
       await page.gotoAndVerify('/ask', {
         timeout: timeouts.navigation.default,
       })
@@ -737,7 +737,7 @@ test.describe('AI Illustration Tests - Page Load Verification', () => {
     )
     expect(signupResult).toBeTruthy()
 
-    // Navigate to the find page
+    // Navigate to the ask page
     await page.gotoAndVerify('/ask', {
       timeout: timeouts.navigation.default,
     })
