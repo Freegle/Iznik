@@ -184,6 +184,74 @@ func TestNearbyReachFeed_TnCrosspostDedup(t *testing.T) {
 		"a TN crosspost to two groups must appear once on the nearby feed, not once per group copy")
 }
 
+// TestNearbyCountTnCrosspostDedup: the nav badge (GET /message/count, nearby view) must collapse
+// TN crosspost copies exactly like the feed does (TestNearbyReachFeed_TnCrosspostDedup) — both the
+// unlimited fast-path COUNT and the distance-limited per-post loop select msgid straight off
+// messages_spatial, so without a tnpostid-aware collapse each extra crossposted copy that reaches
+// the viewer inflates the badge by one even though the feed shows the item only once (Discourse
+// 9808/689). Uses a before/after diff rather than an absolute count so it is immune to any
+// in-reach posts other tests using the same viewer location left behind: adding the FIRST TN copy
+// must move the count by exactly 1, and adding a SECOND copy sharing that copy's tnpostid must not
+// move it at all.
+func TestNearbyCountTnCrosspostDedup(t *testing.T) {
+	db := database.DBConn
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	prefix := uniquePrefix("nearbycounttncrosspost")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.mylocation', "+
+		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	coveringPoly := "ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)"
+	addReach := func(msgid uint64) {
+		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
+			coveringPoly+", ST_Envelope("+coveringPoly+"), 'expanding') "+
+			"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", msgid)
+	}
+
+	countAt := func(qs string) float64 {
+		browsecount.Invalidate(viewerID)
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token+qs, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var body map[string]interface{}
+		json2.Unmarshal(rsp(resp), &body)
+		c, _ := body["count"].(float64)
+		return c
+	}
+
+	for _, qs := range []string{"", "&maxDistance=10"} {
+		baseline := countAt(qs)
+
+		copyA := CreateTestMessage(t, posterID, groupA, "OFFER: crossposted table nearbycount "+qs+" (tncrosspostdedup)", 51.5, -0.1)
+		db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", copyA)
+		addReach(copyA)
+		afterFirst := countAt(qs)
+		assert.Equal(t, baseline+1, afterFirst,
+			"the first crosspost copy (qs=%q) is counted like any other unseen in-reach post", qs)
+
+		copyB := CreateTestMessage(t, posterID, groupB, "OFFER: crossposted table nearbycount "+qs+" (tncrosspostdedup)", 51.5, -0.1)
+		db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", copyB)
+		addReach(copyB)
+		db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", fmt.Sprintf("%s-tn-%s", prefix, qs), copyA, copyB)
+		afterSecond := countAt(qs)
+		assert.Equal(t, afterFirst, afterSecond,
+			"a second copy sharing the first's tnpostid (qs=%q) must not increase the badge", qs)
+
+		db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?)", copyA, copyB)
+	}
+}
+
 // TestNearbyCountDistanceLimit: GET /message/count (nearby view) narrows the badge to posts
 // within a maxDistance (miles) of the viewer, using the SAME blurred-coordinate Haversine
 // distance the feed exposes as `distance` — so the badge matches a client-side list filtered

@@ -219,7 +219,7 @@ func dedupeCrosspostedTn(candidates []reachCandidateRow) []reachCandidateRow {
 func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reachCandidateRow {
 	var candidates []reachCandidateRow
 	reachCandidateQuery(db, myid, latlng, true).
-		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
+		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, m.tnpostid AS tnpostid").
 		Scan(&candidates)
 	return candidates
 }
@@ -709,7 +709,12 @@ func Count(c *fiber.Ctx) error {
 func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 	var count uint64 = 0
 	db.Table("messages_spatial ms").
-		Select("COUNT(DISTINCT ms.msgid)").
+		// COALESCE to msgid when tnpostid is absent (everything but TN-sourced posts) so a
+		// non-TN post is still counted per row; TN crosspost copies collapse to one — see
+		// dedupeCrosspostedTn, whose feed-side dedup this COUNT must match or the badge and
+		// the mygroups feed disagree by one per extra crosspost copy.
+		Select("COUNT(DISTINCT COALESCE(NULLIF(m.tnpostid, ''), CAST(ms.msgid AS CHAR)))").
+		Joins("INNER JOIN messages m ON m.id = ms.msgid").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("ms.successful = 0 AND ml.msgid IS NULL "+
 			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
@@ -743,7 +748,8 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	var candidates []reachCandidateRow
 	db.Table("messages_spatial ms").
-		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
+		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, m.tnpostid AS tnpostid").
+		Joins("INNER JOIN messages m ON m.id = ms.msgid").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 		Where("ms.successful = 0 AND ml.msgid IS NULL "+
 			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
@@ -751,6 +757,10 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
 			"AND mg.collection = 'Approved' AND mg.deleted = 0)", myid).
 		Scan(&candidates)
+
+	// Same TN crosspost collapse as the feed (dedupeCrosspostedTn): count each physical
+	// item once even though a crosspost to N member groups left N distinct msgids.
+	candidates = dedupeCrosspostedTn(candidates)
 
 	var count uint64 = 0
 	for _, cand := range candidates {
@@ -859,6 +869,11 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		// which also carries the OUTBOUND author cap and the held-for-moderation filter
 		// - so this fast path can never disagree with the feed about which posts exist
 		// to be counted.
+		// COALESCE to msgid when tnpostid is absent (everything but TN-sourced posts) so a
+		// non-TN post is still counted per row; TN crosspost copies collapse to one — the
+		// same collapse dedupeCrosspostedTn applies to the feed, which this COUNT must
+		// match or the badge overcounts by one per extra crosspost copy in reach.
+		const tnDedupCount = "COUNT(DISTINCT COALESCE(NULLIF(m.tnpostid, ''), CAST(ms.msgid AS CHAR)))"
 		if useSpatial {
 			// Zero raster ids does not mean zero for a ring viewer: their ring
 			// can admit posts the committed reach does not cover.
@@ -866,12 +881,12 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 				return 0
 			}
 			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringPath).
-				Select("COUNT(DISTINCT ms.msgid)").
+				Select(tnDedupCount).
 				Scan(&count)
 			return count
 		}
 		reachCandidateQuery(db, myid, latlng, true).
-			Select("COUNT(DISTINCT ms.msgid)").
+			Select(tnDedupCount).
 			Scan(&count)
 		return count
 	}
@@ -888,11 +903,15 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 			return 0
 		}
 		reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringPath).
-			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
+			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, m.tnpostid AS tnpostid").
 			Scan(&cands)
 	} else {
 		cands = reachCandidatePoints(db, myid, latlng)
 	}
+
+	// Same TN crosspost collapse as the feed and the fast-path COUNT above: a post in
+	// reach via more than one crossposted copy is counted once.
+	cands = dedupeCrosspostedTn(cands)
 
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	for _, cand := range cands {

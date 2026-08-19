@@ -2,9 +2,11 @@ package test
 
 import (
 	json2 "encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
@@ -146,4 +148,59 @@ func TestMyGroupsCountDistanceLimit(t *testing.T) {
 	json2.Unmarshal(rsp(chosenResp), &chosenBody)
 	assert.Equal(t, unlimitedCount, chosenBody["count"].(float64),
 		"an explicit unlimited choice overrides a narrower band default")
+}
+
+// TestMyGroupsCountTnCrosspostDedup: the mygroups nav badge (GET /message/count,
+// browseView=mygroups) must collapse TN crosspost copies exactly like the mygroups feed does
+// (dedupeCrosspostedTn, applied in myGroupsMessages) — both myGroupsCountUnfiltered's fast-path
+// COUNT(DISTINCT ms.msgid) and myGroupsCount's distance-limited per-post loop counted msgid
+// straight off messages_spatial with no tnpostid awareness, so a member of two groups a TN
+// crosspost landed on saw the badge count the same donation twice even though the feed (already
+// deduped) showed it once (Discourse 9808/689). Uses a before/after diff, like
+// TestNearbyCountTnCrosspostDedup, so it is immune to any member-group posts other tests left
+// behind: adding the first crosspost copy must move the count by exactly 1, adding a second copy
+// sharing its tnpostid must not move it at all.
+func TestMyGroupsCountTnCrosspostDedup(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("myggcounttncrosspost")
+	posterID := CreateTestUser(t, prefix+"_poster", "Poster")
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	db.Exec("INSERT INTO memberships (userid, groupid) VALUES (?, ?), (?, ?)", viewerID, groupA, viewerID, groupB)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid IN (?, ?)", viewerID, groupA, groupB)
+	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), "+
+		"'$.browseView', 'mygroups', '$.mylocation', JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
+
+	countAt := func(qs string) float64 {
+		browsecount.Invalidate(viewerID)
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token+qs, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var body map[string]interface{}
+		json2.Unmarshal(rsp(resp), &body)
+		c, _ := body["count"].(float64)
+		return c
+	}
+
+	for _, qs := range []string{"", "&maxDistance=10"} {
+		baseline := countAt(qs)
+
+		copyA := CreateTestMessage(t, posterID, groupA, "OFFER: crossposted table mygroups "+qs+" (tncrosspostdedup)", 51.5, -0.1)
+		db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", copyA)
+		afterFirst := countAt(qs)
+		assert.Equal(t, baseline+1, afterFirst,
+			"the first crosspost copy (qs=%q) is counted like any other unseen member-group post", qs)
+
+		copyB := CreateTestMessage(t, posterID, groupB, "OFFER: crossposted table mygroups "+qs+" (tncrosspostdedup)", 51.5, -0.1)
+		db.Exec("UPDATE messages_spatial SET successful = 0 WHERE msgid = ?", copyB)
+		db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", fmt.Sprintf("%s-tn-%s", prefix, qs), copyA, copyB)
+		afterSecond := countAt(qs)
+		assert.Equal(t, afterFirst, afterSecond,
+			"a second copy sharing the first's tnpostid (qs=%q) must not increase the mygroups badge", qs)
+
+		db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", copyA, copyB)
+		db.Exec("DELETE FROM messages WHERE id IN (?, ?)", copyA, copyB)
+	}
 }
