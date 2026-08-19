@@ -278,6 +278,9 @@ class User extends Model implements Auditable
             'groups.ilovefreegle.org',
             'direct.ilovefreegle.org',
             'republisher.freegle.in',
+            // Keep in step with config/freegle.php - see the note there on why
+            // modtools.org belongs in this list.
+            'modtools.org',
         ]);
 
         foreach ($internalDomains as $domain) {

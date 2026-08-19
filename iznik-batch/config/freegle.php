@@ -123,6 +123,14 @@ return [
             'groups.ilovefreegle.org',
             'direct.ilovefreegle.org',
             'republisher.freegle.in',
+            // Our own ModTools site. It has no MX and its A record is a static
+            // web host, so postfix falls back to that per RFC, tries port 25
+            // against a web server and times out - a transient failure by SMTP
+            // rules, so it retried for the full queue lifetime and expired
+            // without ever marking anyone bouncing. The 112 accounts here are
+            // synthetic (modbot, confirmmod-*, modconfirm-*) and not one has
+            // another address, so nobody loses mail they could have received.
+            'modtools.org',
         ],
         'excluded_domain_patterns' => [
             '@yahoogroups.',
