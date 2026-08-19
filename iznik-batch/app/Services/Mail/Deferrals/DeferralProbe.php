@@ -36,6 +36,8 @@ class DeferralProbe
 
     public const MARK_TRUNCATED = '===FREEGLE-DEFERRALS-TRUNCATED===';
 
+    public const MARK_ACCEPTING = '===FREEGLE-DEFERRALS-ACCEPTING===';
+
     public function __construct(
         private readonly HostCommandRunner $runner,
     ) {}
@@ -212,6 +214,104 @@ class DeferralProbe
         ]);
 
         return $deleted;
+    }
+
+    /**
+     * Ask a provider directly whether it is accepting our mail again.
+     *
+     * Release used to be inferred from organic traffic - "are messages to them
+     * succeeding?" - which the system can destroy the evidence for. Suppression
+     * exists to stop generating that mail, and a purge deletes what is already
+     * queued, so a fully suppressed and purged provider produces neither
+     * deliveries nor deferrals and can never look recovered. On 2026-08-19 only
+     * 360 stragglers that arrived after the purge snapshot kept Yahoo
+     * observable at all; a cleanly timed purge would have left the 24-hour
+     * fail-open as the sole exit.
+     *
+     * So ask. EHLO + MAIL FROM + QUIT is an aborted transaction, which every
+     * receiver sees constantly; it delivers nothing and costs one connection
+     * per scan. It MUST run on the relay, because the throttle is against the
+     * relay's sending ip - probing from anywhere else answers a question we did
+     * not ask.
+     *
+     * @return bool|null true = accepting, false = still refusing, null = we
+     *                   could not tell, so the caller should fall back to
+     *                   organic evidence rather than assume either way
+     */
+    public function providerAccepting(string $target, string $domain, string $sender): ?bool
+    {
+        // Guarded: $domain reaches a shell on a production host.
+        if (preg_match('/^[A-Za-z0-9.-]{3,253}$/', $domain) !== 1) {
+            return null;
+        }
+
+        $script = self::MARK_ACCEPTING."\n".
+            'python3 - '.escapeshellarg($domain).' '.escapeshellarg($sender).' <<\'PYEOF\'
+import smtplib, socket, sys
+
+domain, sender = sys.argv[1], sys.argv[2]
+
+try:
+    import subprocess
+    mx = subprocess.run(["dig", "+short", "MX", domain], capture_output=True,
+                        text=True, timeout=10).stdout.split()
+    hosts = sorted((int(mx[i]), mx[i + 1].rstrip(".")) for i in range(0, len(mx) - 1, 2))
+    if not hosts:
+        print("UNKNOWN no-mx")
+        sys.exit(0)
+    host = hosts[0][1]
+except Exception as e:
+    print("UNKNOWN mx-lookup %s" % e)
+    sys.exit(0)
+
+try:
+    s = smtplib.SMTP(timeout=20)
+    s.connect(host, 25)
+    s.ehlo("bulk2")
+    code, msg = s.mail(sender)
+    try:
+        s.quit()
+    except Exception:
+        pass
+    # 2xx to MAIL FROM means they are taking mail from this ip right now.
+    # 4xx here is the throttle itself (421 4.7.0 [TSSnn]).
+    if 200 <= code < 300:
+        print("ACCEPTING %s %d" % (host, code))
+    elif 400 <= code < 500:
+        print("REFUSING %s %d %s" % (host, code, msg.decode("utf8", "replace")[:120]))
+    else:
+        print("UNKNOWN %s %d" % (host, code))
+except (socket.timeout, OSError, smtplib.SMTPException) as e:
+    # Could not reach them at all: that is our network or theirs being down,
+    # not a verdict on our reputation.
+    print("UNKNOWN %s %s" % (host, e))
+PYEOF';
+
+        $out = $this->runner->run($target, $script);
+
+        if ($out === null || ! str_contains($out, self::MARK_ACCEPTING)) {
+            Log::warning('Mail deferral probe: could not ask provider directly', [
+                'target' => $target,
+                'domain' => $domain,
+            ]);
+
+            return null;
+        }
+
+        if (str_contains($out, 'ACCEPTING ')) {
+            Log::info('Mail deferral probe: provider is accepting again', [
+                'domain' => $domain,
+                'detail' => trim(str_replace(self::MARK_ACCEPTING, '', $out)),
+            ]);
+
+            return true;
+        }
+
+        if (str_contains($out, 'REFUSING ')) {
+            return false;
+        }
+
+        return null;
     }
 
     private function markQueue(): string

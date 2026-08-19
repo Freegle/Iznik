@@ -94,7 +94,20 @@ class ScanDeferralsCommand extends Command
 
         $this->reportSnapshot($snapshot);
 
-        $result = $scan->apply($snapshot, $dryRun);
+        // Ask each suppressed provider directly whether it is taking our mail
+        // again, rather than waiting to infer it from traffic we have
+        // deliberately stopped generating.
+        $accepting = $this->askProviders($probe, $target);
+
+        foreach ($accepting as $group => $verdict) {
+            $this->line(sprintf(
+                '  %s: %s',
+                $group,
+                $verdict === true ? 'accepting again' : ($verdict === false ? 'still refusing us' : 'could not tell')
+            ));
+        }
+
+        $result = $scan->apply($snapshot, $dryRun, $accepting);
 
         foreach ($result['suppressed'] as $s) {
             $line = sprintf(
@@ -271,4 +284,52 @@ class ScanDeferralsCommand extends Command
             });
         }
     }
+
+    /**
+     * Ask every currently suppressed relay family whether it is accepting again.
+     *
+     * Read-only and safe in a dry run: EHLO + MAIL FROM + QUIT is an aborted
+     * transaction that delivers nothing.
+     *
+     * Probed per DOMAIN rather than per relay family, because a family is a
+     * pattern like am0.yahoodns.net which has no MX of its own - we need one of
+     * the recipient domains sitting behind it.
+     *
+     * @return array<string, bool|null> family => accepting
+     */
+    private function askProviders(DeferralProbe $probe, string $target): array
+    {
+        $sender = (string) config('freegle.mail.noreply_addr');
+
+        if ($sender === '') {
+            return [];
+        }
+
+        $groups = DB::table('mail_suppressions')
+            ->where('scope', MailSuppressionService::SCOPE_MXGROUP)
+            ->whereNull('released_at')
+            ->get(['id', 'value']);
+
+        $accepting = [];
+
+        foreach ($groups as $group) {
+            $domain = DB::table('mail_suppressions')
+                ->where('scope', MailSuppressionService::SCOPE_DOMAIN)
+                ->where('parentid', $group->id)
+                ->whereNull('released_at')
+                ->orderBy('message_count', 'desc')
+                ->value('value');
+
+            if ($domain === null) {
+                // No child domain recorded yet: nothing to resolve an MX from,
+                // so leave it to the organic evidence rather than guess.
+                continue;
+            }
+
+            $accepting[$group->value] = $probe->providerAccepting($target, (string) $domain, $sender);
+        }
+
+        return $accepting;
+    }
+
 }

@@ -383,6 +383,99 @@ class DeferralScanServiceTest extends TestCase
         $this->assertSame([], $result['released']);
     }
 
+    // ===================================================================
+    // Asking the provider directly
+    //
+    // Inferring recovery from traffic has a hole we can dig ourselves into:
+    // suppression stops generating the mail, and a purge deletes what is
+    // queued, so a fully suppressed provider emits neither deliveries nor
+    // deferrals and can never look recovered. On 2026-08-19 only 360
+    // stragglers that arrived after the purge snapshot kept Yahoo observable
+    // at all - a cleanly timed purge would have left the 24-hour fail-open as
+    // the sole way out, stranding the provider for a day.
+    // ===================================================================
+
+    public function test_releases_on_a_direct_yes_even_with_no_traffic_to_infer_from(): void
+    {
+        $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        // Purged and suppressed: nothing queued, nothing delivered, nothing to
+        // infer from. Organic evidence alone can never clear this.
+        $empty = new RelayQueueSnapshot;
+        $empty->groups['yahoodns.net'] = [
+            'count' => 0, 'oldest' => null, 'reason' => self::YAHOO_REASON, 'domains' => [],
+        ];
+        $empty->delivered['l.google.com'] = 5000;
+
+        $accepting = ['yahoodns.net' => true];
+
+        $this->scan->apply($empty, false, $accepting);
+        $result = $this->scan->apply($empty, false, $accepting);
+
+        $this->assertCount(1, $result['released']);
+        $this->assertSame('yahoodns.net', $result['released'][0]['value']);
+    }
+
+    public function test_a_direct_no_keeps_a_provider_suppressed_though_the_queue_is_empty(): void
+    {
+        $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        $empty = new RelayQueueSnapshot;
+        $empty->groups['yahoodns.net'] = [
+            'count' => 0, 'oldest' => null, 'reason' => self::YAHOO_REASON, 'domains' => [],
+        ];
+        // Deliveries elsewhere are healthy, which is exactly the shape that
+        // would otherwise start the clear-scan streak.
+        $empty->delivered['l.google.com'] = 5000;
+        $empty->delivered['yahoodns.net'] = 3;
+
+        $accepting = ['yahoodns.net' => false];
+
+        $this->scan->apply($empty, false, $accepting);
+        $result = $this->scan->apply($empty, false, $accepting);
+
+        $this->assertSame([], $result['released']);
+        $this->assertDatabaseHas('mail_suppressions', ['scope' => 'mxgroup', 'released_at' => null]);
+    }
+
+    public function test_a_direct_no_outranks_the_stale_fail_open(): void
+    {
+        // Fail-open stops a blind probe muting a provider for ever. It is not a
+        // licence to release one we have just heard say 421.
+        $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        DB::table('mail_suppressions')->update(['last_seen' => now()->subDays(3)]);
+
+        $silent = new RelayQueueSnapshot;
+        $silent->delivered['l.google.com'] = 5000;
+
+        $result = $this->scan->apply($silent, false, ['yahoodns.net' => false]);
+
+        $this->assertSame([], $result['released']);
+        $this->assertDatabaseHas('mail_suppressions', ['scope' => 'mxgroup', 'released_at' => null]);
+    }
+
+    public function test_an_unanswered_probe_leaves_the_old_behaviour_alone(): void
+    {
+        // A probe that cannot reach the provider must not be read as either
+        // verdict, or a network blip becomes a release.
+        $this->scan->apply($this->snapshotWithYahooBlocked());
+
+        $empty = new RelayQueueSnapshot;
+        $empty->groups['yahoodns.net'] = [
+            'count' => 0, 'oldest' => null, 'reason' => self::YAHOO_REASON, 'domains' => [],
+        ];
+        $empty->delivered['l.google.com'] = 5000;
+
+        $accepting = ['yahoodns.net' => null];
+
+        $this->scan->apply($empty, false, $accepting);
+        $result = $this->scan->apply($empty, false, $accepting);
+
+        // Same as the organic-only case: no deliveries to Yahoo, so no release.
+        $this->assertSame([], $result['released']);
+    }
+
     public function test_a_long_gap_does_not_release_a_provider_that_is_still_blocking(): void
     {
         // The probe was down for a day. When it comes back and finds the

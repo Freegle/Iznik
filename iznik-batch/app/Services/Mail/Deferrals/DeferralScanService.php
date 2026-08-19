@@ -39,7 +39,12 @@ class DeferralScanService
      *
      * @return array{suppressed: array<int, array<string, mixed>>, released: array<int, array<string, mixed>>, checked: int}
      */
-    public function apply(RelayQueueSnapshot $snapshot, bool $dryRun = false): array
+    /**
+     * @param  array<string, bool|null>  $accepting  relay family => is the provider
+     *        taking our mail right now, asked directly. null/absent means we could
+     *        not tell and organic evidence decides, as it always did.
+     */
+    public function apply(RelayQueueSnapshot $snapshot, bool $dryRun = false, array $accepting = []): array
     {
         $cfg = (array) config('freegle.mail.deferrals', []);
 
@@ -65,7 +70,7 @@ class DeferralScanService
             $this->applyAddresses($snapshot, $active, $cfg, $dryRun, $reconfirmed)
         );
 
-        $released = $this->applyReleases($snapshot, $active, $cfg, $dryRun, $reconfirmed);
+        $released = $this->applyReleases($snapshot, $active, $cfg, $dryRun, $reconfirmed, $accepting);
 
         if (! $dryRun && ($suppressed !== [] || $released !== [])) {
             $this->suppressions->flushCache();
@@ -273,7 +278,7 @@ class DeferralScanService
      * @param  array<string, object>  $active
      * @return array<int, array<string, mixed>>
      */
-    private function applyReleases(RelayQueueSnapshot $snapshot, array $active, array $cfg, bool $dryRun, array $reconfirmed = []): array
+    private function applyReleases(RelayQueueSnapshot $snapshot, array $active, array $cfg, bool $dryRun, array $reconfirmed = [], array $accepting = []): array
     {
         $releaseMax = (int) ($cfg['release_max_deferred'] ?? 100);
         $needClear = max(1, (int) ($cfg['release_clear_scans'] ?? 2));
@@ -308,8 +313,18 @@ class DeferralScanService
                 // A relay family always has a tail of stragglers, so
                 // "clear" means the backlog has drained to a normal level
                 // AND the provider is visibly taking our mail again.
-                $deliveriesResumed = ! $snapshot->hasDeliveryData()
-                    || $snapshot->deliveriesFor($value) > 0;
+                //
+                // Prefer ASKING the provider over inferring it from traffic.
+                // Inference has a hole we can dig ourselves into: suppression
+                // stops generating the mail, and a purge deletes what is
+                // queued, so a fully suppressed provider emits neither
+                // deliveries nor deferrals and can never look recovered. The
+                // direct probe needs no traffic at all.
+                $askedDirectly = $accepting[$value] ?? null;
+
+                $deliveriesResumed = $askedDirectly ?? (
+                    ! $snapshot->hasDeliveryData() || $snapshot->deliveriesFor($value) > 0
+                );
 
                 $clear = $stillDeferred <= $releaseMax && $deliveriesResumed;
             } else {
@@ -337,6 +352,14 @@ class DeferralScanService
                 && $staleHours > 0
                 && $row->last_seen !== null
                 && Carbon::parse($row->last_seen)->lt(now()->subHours($staleHours));
+
+            // Fail-open exists because a probe that has gone blind should not
+            // mute a provider for ever. It is NOT a licence to release one we
+            // have just heard refuse us: with the direct probe we can tell
+            // those apart, and a 421 outranks a quiet queue.
+            if ($stale && ($accepting[$value] ?? null) === false) {
+                $stale = false;
+            }
 
             if (! $clear && ! $stale) {
                 // Any scan that is not clear breaks the streak. Without
