@@ -380,6 +380,34 @@ Outcome: someone posting a WANTED sees existing matching OFFERs near them — du
 
 # PHASE 4 — Digest relevance ranking + retire the Relevant email (branch `feature/digest-relevance`, base `origin/master`)
 
+> ## ABANDONED 2026-08-19. PR #956 CLOSED, not merged.
+>
+> The signal does not work. Rather than run the four-week live A/B this phase specifies, the
+> branch's own `interests()` + `maxCosine()` were replayed offline against 21 days of real digest
+> clicks (2,126 digests, 2,884 click events, 1,291 members, 1,823 usable).
+>
+> - Clicked post median cosine to its interest set **0.6757**; not-clicked posts in the **same**
+>   digest **0.6759**. Within-digest AUC **0.5268** against a shuffle floor of **0.5129**.
+> - The **views** arm scored AUC **0.5228**, on the shuffle floor, independently reproducing on
+>   clicks the null already recorded on replies in `docs/developers/reference/first-reply.md`
+>   ("Post views are NOT a signal", commit `e0160a37c`).
+> - The **own-posts** arm, untested until now, scored AUC **0.5377** (n=799): the best number
+>   found, still near a coin flip, and in the 0.60-0.75 cosine band where top-1 precision is 11%.
+> - 35% of click events had no qualifying interest set at all, so `rank()` would have left those
+>   digests unchanged regardless.
+>
+> The experiment as designed would also not have settled it: the `ranked` arm was conditioned on an
+> interest signal firing while the holdout was not, and on **unranked** live digests those two
+> populations already click at 4.06% vs 0.74%. "Ranked CTR >= holdout CTR" passes on composition
+> alone. See `finding_digest_relevance_signal_measured_null`.
+>
+> If revived: own open **Wanted** matched cross-type against **Offers**, floored at 0.85, routed
+> through the existing matched-posts/scout path, not as a digest-wide reranker. Validate with the
+> same offline replay before any live cohort split.
+>
+> **Effect on Phase 5: none.** Phase 4's only Phase-5 dependency was retiring the V1 Relevant mail,
+> and the whole of V1 was removed on 2026-07-09, so that consumer is already gone.
+
 Outcome (per Edward 2026-07-04): similarity-to-previous-items becomes part of the existing **what's-new Unified Digest via sort ranking — NOT a separate mail**. The standalone V1 "Any of these take your fancy?" mail (`iznik-server/include/mail/Relevant.php` + `scripts/cron/relevant.php` — besides search itself, the last hard consumer of `messages_index`) is retired outright. Ranking ships behind `FEATURE_DIGEST_RELEVANCE` (default OFF) with a 10% holdout, and is measured by the EXISTING digest click-by-position dashboard — the digest already records `metadata.post_msgids` order and per-position clicks, so a ranking change is directly observable with zero new tracking.
 
 ### Task 4.1: Investigate current digest assembly (no code)
@@ -439,6 +467,34 @@ Outcome (per Edward 2026-07-04): similarity-to-previous-items becomes part of th
 # PHASE 5 — Retire the keyword machine (branch `feature/retire-keyword-search`, base = Phase 1 branch; PR notes "Merge after Phases 1 & 4 PRs")
 
 Outcome: pure-vector search with an in-memory lexical guarantee; all keyword-index code and tables gone; microvolunteering SearchTerm challenge retired; nothing left reads `words`/`messages_index`/`items_index`/`words_cache`/`search_terms`.
+
+> ## FEASIBILITY RE-CHECKED 2026-08-19: unblocked, and smaller than written below.
+>
+> **Unblocked.** Phase 1 is live: `defaultSearchMode()` (`iznik-server-go/message/message.go:459-467`)
+> returns `vector` unless `VECTOR_SEARCH_DEFAULT=keyword`. Phase 4 is abandoned but was never a real
+> dependency: its only Phase-5 role was retiring the V1 Relevant mail, and **all of V1 was removed
+> on 2026-07-09**, so `iznik-server/` no longer exists.
+>
+> **Stale below.** Every `iznik-server/...` path in Tasks 5.2 and 5.3 is gone. Drop them:
+> no `Message.php`/`Item.php` no-oping, no `typeahead()`, no v1 script sweep, no
+> `MicroVolunteering.php`/`microvolunteering.php` edits, no `php -l` via the apiv1 container.
+> The SearchTerm challenge now lives in `iznik-server-go/microvolunteering/microvolunteering.go`
+> plus `iznik-nuxt3/components/MicroVolunteering.vue`, and `search_terms`' v1 populator script is
+> already gone with V1.
+>
+> **What actually remains:**
+> 1. **The only real work, Task 5.1.** The keyword index is still read on EVERY default search: the
+>    vector path calls `GetWordsExact`/`GetWordsStarts` at `message/message.go:1899-1901`, not just
+>    the fallback path at `:1935-1953`. That hybrid leg is what currently guarantees literal
+>    matches, so the in-memory lexical tier has to be built and proven BEFORE anything is dropped.
+>    This is the whole behavioural risk of the phase; treat it as its own PR.
+> 2. Laravel maintenance removal: `MessageSearchService.php`, `DeindexCommand` (`messages:deindex`),
+>    `IndexUnindexedCommand` (`messages:update-index`), and both schedule blocks. All still live.
+> 3. Go/Vue SearchTerm challenge retirement.
+> 4. The drop-tables migration, last, once nothing reads them.
+>
+> Recommend splitting: PR A = lexical tier + keyword cascade removal (behavioural, needs care);
+> PR B = index maintenance + SearchTerm retirement; PR C = drop tables. Do not fold A into C.
 
 ### Task 5.1: Pure vector + in-memory exact-match tier (Go)
 
