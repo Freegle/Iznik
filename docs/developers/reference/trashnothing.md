@@ -95,7 +95,7 @@ and `tn:parity-check`, neither of which needs the email path switched off. On, i
 | TN posts become eligible for rippling | `Ripple\ExpandService::rippleIntoNewGroups` — see [rippling-algorithm.md §4b](rippling-algorithm.md) |
 | The `tn:sync (posts)` scheduled-outcome check goes live | `ScheduledOutcomeRegistry` |
 
-Three differences from the email path are intentional, not bugs, and all matter
+Four differences from the email path are intentional, not bugs, and all matter
 when reading any coverage report:
 
 - **Group placement is by coordinates**, via `Location::groupsNear()` on the
@@ -107,12 +107,26 @@ when reading any coverage report:
   `group_id`) and discards the copies, letting Freegle's own rippling do the
   cross-posting — see `GroupPostIngestionService::REASON_CROSSPOST`. That is also
   why the ripple exclusion on TN posts lifts with the same flag.
+- **The subject's type prefix is normalized.** The email path keeps whatever
+  prefix TN put in the email subject, which is what the member typed — `OFFERED:`
+  is common. The API path always synthesizes `strtoupper(type) . ': '` from TN's
+  own `type` field, so the same post reads `OFFER:`. Both resolve to the same
+  `Message::determineType()`, so this is a naming convention rather than a
+  content difference, and `ParityComparer` canonicalizes it before comparing
+  subjects — otherwise every such post fails parity twice (same-group content
+  and Loki entry) and buries the real mismatches.
 - **`sourceheader` is `TN-API`**, not the email path's `TN-Web` / `TN-Facebook` /
   `TN-Mobile` (the API returns no posting-client field). Only the `TN-` prefix is
   load-bearing, and it has to be there: `LoveJunkInvoiceService` splits the monthly
   TN invoice on `sourceheader LIKE 'TN-%'`, `LoveJunkService` attributes the post's
   source by it, and `ProcessBackgroundTasksCommand` uses it to skip creating
   freebie alerts for TN posts, which TN syndicates itself.
+
+Photos come from the API's own `photos[].images` array rather than being scraped
+out of the post body. TN documents that array as ordered *smallest to largest*
+(`PublicApi/docs/Model/Photo.md`), so `GroupPostIngestionService::bestPhotoUrl()`
+takes the **last** entry — taking the first ingested a thumbnail where the email
+path got the full-size image.
 
 ### Verifying nothing is dropped after the cutover
 

@@ -445,6 +445,85 @@ class EmailApiParityTest extends TestCase
         );
     }
 
+    public function test_layer5_does_not_flag_an_outcome_difference_on_a_stub_created_poster(): void
+    {
+        // Regression for a false positive found on live data (2026-08-08
+        // window): four posts reported `email=Pending api=Approved` as Layer 5
+        // failures while Layer 3 reported zero mismatches for the same posts.
+        //
+        // The cause is the identity divergence classifyOverlapPost() already
+        // gates `result` on: the API path resolved TN's fd_user_id to a real,
+        // already-mapped Freegle account (so normal routing applied, Approved)
+        // while the email path — which has only an address to go on — had to
+        // stub-create a fresh, unmapped user, which forces Pending. Layer 3
+        // excuses that; Layer 5 must excuse it too, on both copies of the
+        // outcome (the `subtype` label and the `routing_outcome` field), or a
+        // wide sweep drowns in failures Layer 3 has already dismissed.
+        $emailLines = array_merge(
+            ['TN-SYNC-TRACE [WRITE] table=users op=insert set=id=42,fullname=stub,added=now() (email-replay stub)'],
+            $this->syntheticLines('email', 'incoming_mail', [], subtype: 'Pending'),
+        );
+        $apiLines = $this->syntheticLines('api', 'tn_api', [], subtype: 'Approved');
+
+        $layers = (new ParityComparer())->computeLayers($emailLines, $apiLines);
+
+        $this->assertEmpty(
+            $layers['layer3Mismatches'],
+            'Layer 3 already excuses a stub-created poster: ' . implode(' | ', $layers['layer3Mismatches']),
+        );
+        $this->assertEmpty(
+            $layers['layer5Mismatches'],
+            'Layer 5 must apply the same gate as Layer 3: ' . implode(' | ', $layers['layer5Mismatches']),
+        );
+    }
+
+    public function test_layer5_still_flags_an_outcome_difference_on_a_resolved_poster(): void
+    {
+        // The gate above is narrow: with no stub-creation on either side, both
+        // paths resolved the same pre-existing user, so a routing difference is
+        // genuine signal and must still fail.
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', [], subtype: 'Pending'),
+            $this->syntheticLines('api', 'tn_api', [], subtype: 'Approved'),
+        );
+
+        $this->assertStringContainsString(
+            'routing_outcome differs',
+            implode(' | ', $layers['layer5Mismatches']),
+        );
+    }
+
+    public function test_synonymous_subject_type_prefixes_are_not_a_mismatch(): void
+    {
+        // The email path keeps the prefix TN put in the email subject (what the
+        // member typed), the API path always synthesizes it from TN's `type`
+        // field — so the same post is "OFFERED: X" on one side and "OFFER: X"
+        // on the other. Both parse to the same Message type, `type` is compared
+        // separately, and left unnormalized this fails Layers 3 AND 5 on every
+        // such post (2 of 31 overlapping posts in one live hour).
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', ['subject' => 'OFFERED: Mens XL work trousers']),
+            $this->syntheticLines('api', 'tn_api', ['subject' => 'OFFER: Mens XL work trousers']),
+        );
+
+        $this->assertEmpty($layers['layer5Mismatches'], 'Layer 5: ' . implode(' | ', $layers['layer5Mismatches']));
+        $this->assertEmpty($layers['layer3Mismatches'], 'Layer 3: ' . implode(' | ', $layers['layer3Mismatches']));
+    }
+
+    public function test_a_genuinely_different_subject_is_still_a_mismatch(): void
+    {
+        // Normalizing the prefix must not swallow a real content difference —
+        // e.g. a post whose title was edited on TN after its email went out
+        // (observed live: "Table frame" vs "Table frame & glass top").
+        $layers = (new ParityComparer())->computeLayers(
+            $this->syntheticLines('email', 'incoming_mail', ['subject' => 'OFFER: Table frame']),
+            $this->syntheticLines('api', 'tn_api', ['subject' => 'OFFER: Table frame & glass top']),
+        );
+
+        $this->assertStringContainsString('subject differs', implode(' | ', $layers['layer5Mismatches']));
+        $this->assertStringContainsString('subject:', implode(' | ', $layers['layer3Mismatches']));
+    }
+
     /**
      * Minimal trace lines for one post: an outcome, a messages-row write (so
      * the pair counts as same-group and therefore value-comparable), and the
@@ -481,11 +560,14 @@ class EmailApiParityTest extends TestCase
 
         return [
             "TN-SYNC-TRACE [{$resultTag}] post_id={$postId} result={$subtype}",
+            // The messages row carries the same subject as the Loki entry, as
+            // it does on both real paths — so a subject override exercises the
+            // Layer 3 comparison as well as the Layer 5 one.
             'TN-SYNC-TRACE [WRITE] table=messages op=insert set=' . json_encode([
                 'tnpostid' => $postId,
                 'groupid' => 7,
                 'fromuser' => 42,
-                'subject' => 'OFFER: Sofa',
+                'subject' => $entry['message']['subject'],
             ]),
             "TN-SYNC-TRACE [LOKI] post_id={$postId} entry=" . json_encode($entry),
         ];

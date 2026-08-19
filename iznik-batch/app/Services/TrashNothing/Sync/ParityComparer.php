@@ -396,6 +396,13 @@ class ParityComparer
             $emailVal = $emailMsg[$field] ?? null;
             $apiVal   = $apiMsg[$field] ?? null;
 
+            if ($field === 'subject') {
+                if (self::normalizeSubject((string) $emailVal) !== self::normalizeSubject((string) $apiVal)) {
+                    $fieldDiffs[] = "{$field}: email=\"{$emailVal}\" api=\"{$apiVal}\"";
+                }
+                continue;
+            }
+
             if (in_array($field, self::COORDINATE_FIELDS, true) && is_numeric($emailVal) && is_numeric($apiVal)) {
                 $matches = round((float) $emailVal, self::COORDINATE_PRECISION) === round((float) $apiVal, self::COORDINATE_PRECISION);
             } else {
@@ -751,8 +758,26 @@ class ParityComparer
     ): array {
         $mismatches = [];
 
-        $emailLabels = array_diff_key($email['labels'] ?? [], array_flip(self::LOKI_IGNORED_LABELS));
-        $apiLabels   = array_diff_key($api['labels'] ?? [], array_flip(self::LOKI_IGNORED_LABELS));
+        // Whether the ROUTING OUTCOME itself is comparable for this post, on
+        // exactly the gate classifyOverlapPost() applies to Layer 3's `result`:
+        // if either side freshly stub-created the poster this run, the two rows
+        // are independently created with no shared identity, so a Pending-vs-
+        // Approved difference reflects that divergence rather than a logging
+        // bug. Without this gate Layer 5 hard-fails on posts Layer 3
+        // deliberately excused — observed live as four `email=Pending
+        // api=Approved` Layer 5 failures against zero Layer 3 mismatches.
+        // The outcome reaches the entry twice (the `subtype` label and the
+        // `routing_outcome` field), so both are gated together.
+        $outcomeComparable = !in_array((int) ($emailMsg['fromuser'] ?? -1), $emailStubUserIds, true)
+            && !in_array((int) ($apiMsg['fromuser'] ?? -1), $apiStubUserIds, true);
+
+        $ignoredLabels = self::LOKI_IGNORED_LABELS;
+        if (!$outcomeComparable) {
+            $ignoredLabels[] = 'subtype';
+        }
+
+        $emailLabels = array_diff_key($email['labels'] ?? [], array_flip($ignoredLabels));
+        $apiLabels   = array_diff_key($api['labels'] ?? [], array_flip($ignoredLabels));
         if ($emailLabels !== $apiLabels) {
             $mismatches[] = sprintf(
                 'post_id=%s: labels differ: email=%s api=%s',
@@ -776,9 +801,17 @@ class ParityComparer
         }
 
         foreach (self::LOKI_COMPARED_FIELDS as $field) {
+            if ($field === 'routing_outcome' && !$outcomeComparable) {
+                continue;
+            }
+
             $emailValue = $email['message'][$field] ?? null;
             $apiValue   = $api['message'][$field] ?? null;
-            if ((string) $emailValue !== (string) $apiValue) {
+
+            $emailCompare = $field === 'subject' ? self::normalizeSubject((string) $emailValue) : (string) $emailValue;
+            $apiCompare   = $field === 'subject' ? self::normalizeSubject((string) $apiValue) : (string) $apiValue;
+
+            if ($emailCompare !== $apiCompare) {
                 $mismatches[] = sprintf(
                     'post_id=%s: %s differs: email=%s api=%s',
                     $postId,
@@ -789,11 +822,9 @@ class ParityComparer
             }
         }
 
-        // user_id only when neither side stub-created this poster during the
-        // run — same gate classifyOverlapPost() applies to `result`.
-        $emailStubbed = in_array((int) ($emailMsg['fromuser'] ?? 0), $emailStubUserIds, true);
-        $apiStubbed   = in_array((int) ($apiMsg['fromuser'] ?? 0), $apiStubUserIds, true);
-        if (!$emailStubbed && !$apiStubbed
+        // user_id rides the same gate: a freshly stub-created poster has no
+        // shared identity across the paths, so its id is not comparable either.
+        if ($outcomeComparable
             && (string) ($email['message']['user_id'] ?? '') !== (string) ($api['message']['user_id'] ?? '')) {
             $mismatches[] = sprintf(
                 'post_id=%s: user_id differs: email=%s api=%s',
@@ -807,11 +838,51 @@ class ParityComparer
     }
 
     /**
+     * Synonymous type prefixes Freegle accepts on a subject line. The email
+     * path keeps whatever prefix TN put in the email subject (which is what
+     * the member typed — "OFFERED:" is common), while the API path always
+     * synthesizes `strtoupper(type) . ': '` from TN's own `type` field, so it
+     * says "OFFER:" for the same post. Both parse to the same
+     * Message::determineType() result, and `type` is compared separately, so
+     * the prefix difference is a naming convention, not a content difference —
+     * but left unnormalized it fails Layer 3 AND Layer 5 on every such post
+     * (2 of 31 overlapping posts in one live hour), burying real mismatches.
+     */
+    private const SUBJECT_PREFIX_CANONICAL = [
+        'OFFERED' => 'OFFER',
+        'WANT'    => 'WANTED',
+    ];
+
+    /**
+     * Canonicalizes a subject's type prefix so only the TEXT of the subject is
+     * compared. Anything without a recognized `PREFIX:` opener is returned
+     * unchanged, so a genuinely different title (e.g. a post edited on TN
+     * after its email was sent) still shows up as a mismatch.
+     */
+    private static function normalizeSubject(string $subject): string
+    {
+        if (!preg_match('/^([A-Za-z]+):\s*(.*)$/s', $subject, $m)) {
+            return $subject;
+        }
+
+        $prefix = strtoupper($m[1]);
+
+        return (self::SUBJECT_PREFIX_CANONICAL[$prefix] ?? $prefix) . ': ' . $m[2];
+    }
+
+    /**
      * Parses `TN-SYNC-TRACE [POST] post_id=X type=Y group_id=Z date=D title=T`
      * lines into a post_id => details map. Applied to one side's lines at a
      * time by the caller (email or API) — both paths emit this tag, so
      * calling it on the combined set would silently merge two different
      * posts' details under one key.
+     *
+     * In practice only the EMAIL side parses, and deliberately: `group_id=`
+     * there is the resolved Freegle group id, whereas the API side emits
+     * `tn_group_id=` (TN's own id, empty on a source post) precisely because
+     * the two are not the same thing. Layer 1 details describe the email
+     * path's view of a post the API path never covered, so the email shape is
+     * the one that matters here.
      *
      * @param  string[]  $lines
      * @return array<string, array{type: string, group_id: string, date: string, title: string}>

@@ -35,8 +35,15 @@ use Illuminate\Support\Facades\Log;
  *     mode, so notifyGroupMods() fires for any post routed to Pending for a mod reason.
  *     Mods receive a push notification for a post that never appears — a minor nuisance.
  *   - Loki log-file writes (both paths): harmless but permanent.
- * The API path uses dryRun=true, so TUS photo uploads and API-path push notifications are
- * suppressed. SpamAssassin is skipped when FREEGLE_TRASHNOTHING_SECRET is configured.
+ *   - TUS photo uploads (BOTH paths): every post's photos are downloaded from TN and
+ *     uploaded to whatever `freegle.tus_uploader` points at. The API path runs with
+ *     dryRun=false (see the constructor comment on $apiSyncer), so it does NOT suppress
+ *     them, and neither does the email path. The uploaded blobs are orphaned once the
+ *     transaction rolls back — the message_attachments rows referencing them are gone.
+ *     Check TUS_UPLOADER before a long run: the dev `batch` container sets it to the
+ *     local tusd, but the config DEFAULT is production (uploads.ilovefreegle.org), and
+ *     each WAN round trip is also the dominant cost of a wide date window.
+ * SpamAssassin is skipped when FREEGLE_TRASHNOTHING_SECRET is configured.
  */
 class TNParityCheckCommand extends Command
 {

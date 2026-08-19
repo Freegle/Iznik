@@ -759,10 +759,15 @@ class GroupPostIngestionService
      */
     private function createImageAttachments(int $messageId, array $photos): int
     {
+        // Emitted unconditionally, with the INTENDED count, exactly as the
+        // email path's createTnImageAttachments() does — otherwise a live
+        // parity run shows the email path writing attachments and the API path
+        // apparently writing none, which reads as a regression rather than as
+        // a hole in the trace.
+        Log::info('TN-SYNC-TRACE [WRITE] table=message_attachments op=insert set=msgid=' . $messageId . ' count=' . count($photos) . ($this->dryRun ? ' (dry-run, not fetching)' : ''));
+
         if ($this->dryRun) {
-            $count = count($photos);
-            Log::info('TN-SYNC-TRACE [WRITE] table=message_attachments op=insert set=msgid=' . $messageId . ' count=' . $count . ' (dry-run, not fetching)');
-            return $count;
+            return count($photos);
         }
 
         $tusService = app(TusService::class);
@@ -818,14 +823,21 @@ class GroupPostIngestionService
 
     /**
      * Return the best available URL from a TN Photo object or array.
-     * Prefers the highest-resolution image in the images array, falls back to photo url.
+     *
+     * TN documents `images` as "all the versions of this photo ordered from
+     * SMALLEST to largest" (see PublicApi/docs/Model/Photo.md), so the LAST
+     * entry is the highest resolution — taking the first ingested a thumbnail
+     * (220x294 observed live) where the email path, which scrapes the post
+     * body, gets the full-size image (1200x900 for the same post). Falls back
+     * to `url` ("a large version of this photo"), which TN also guarantees is
+     * present somewhere in `images`.
      */
     private function bestPhotoUrl(mixed $photo): ?string
     {
         if (is_array($photo)) {
             $images = $photo['images'] ?? [];
             if (!empty($images)) {
-                return $images[0]['url'] ?? null;
+                return end($images)['url'] ?? $photo['url'] ?? null;
             }
             return $photo['url'] ?? null;
         }
@@ -833,7 +845,7 @@ class GroupPostIngestionService
         // OpenAPI Photo object
         $images = $photo->getImages() ?? [];
         if (!empty($images)) {
-            return $images[0]->getUrl();
+            return end($images)->getUrl() ?? $photo->getUrl();
         }
         return $photo->getUrl();
     }

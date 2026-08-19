@@ -201,7 +201,14 @@ class PostSyncer
             $maxDate = $date;
         }
 
-        Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $type . ' group_id=' . $groupId . ' date=' . $date . ' title=' . substr((string) $title, 0, 60));
+        // tn_group_id, not group_id: this is TN's OWN group id (empty on a
+        // source post, set on a per-group copy), which is never used to place
+        // the post — see findGroupByLocation() below. The email path's [POST]
+        // line carries a `group_id=` that is the resolved FREEGLE group id, so
+        // reusing that name here would put two different things under one
+        // label in a stream the two paths are meant to be read side by side.
+        // Matches the name [POST-SKIP] reason=crosspost already uses.
+        Log::info('TN-SYNC-TRACE [POST] post_id=' . $postId . ' type=' . $type . ' tn_group_id=' . $groupId . ' date=' . $date . ' title=' . substr((string) $title, 0, 60));
 
         // The subject the ingestion service would have synthesized, so a skip
         // entry carries the same subject text as a successful one.
@@ -214,7 +221,7 @@ class PostSyncer
         // logic used for member group boundaries (see Location::groupsNear() and the Go port
         // in iznik-server-go/location/location.go).
         if ($lat === null || $lng === null) {
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=no-coordinates group_id=' . $groupId . ' post_id=' . $postId);
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=no-coordinates tn_group_id=' . $groupId . ' post_id=' . $postId);
             // No group resolved, so no group context — which matches the shape
             // of the email path's own unknown-group drop (case 1: routing_reason
             // and nothing else).

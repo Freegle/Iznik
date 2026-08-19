@@ -787,4 +787,63 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame(Message::where('tnpostid', $postId)->first()->id, $context['message_id']);
         $this->assertNotSame($original->id, $context['message_id']);
     }
+
+    // -------------------------------------------------------------------------
+    // Photo selection
+    // -------------------------------------------------------------------------
+
+    /**
+     * @return string|null the URL bestPhotoUrl() would download for $photo
+     */
+    private function bestPhotoUrl(mixed $photo): ?string
+    {
+        $method = new \ReflectionMethod(GroupPostIngestionService::class, 'bestPhotoUrl');
+
+        return $method->invoke($this->makeService(), $photo);
+    }
+
+    public function test_best_photo_url_takes_the_largest_image_not_the_smallest(): void
+    {
+        // TN documents photos[].images as ordered SMALLEST to largest (see
+        // PublicApi/docs/Model/Photo.md), so images[0] is a thumbnail. Taking
+        // it ingested a 220x294 image live where the email path, which scrapes
+        // the post body, got the 1200x900 original for the same post.
+        $photo = [
+            'url' => 'https://trashnothing.com/img/large.jpg',
+            'images' => [
+                ['url' => 'https://trashnothing.com/img/photo.220x294.jpg', 'width' => 220, 'height' => 294],
+                ['url' => 'https://trashnothing.com/img/photo.600x450.jpg', 'width' => 600, 'height' => 450],
+                ['url' => 'https://trashnothing.com/img/photo.1200x900.jpg', 'width' => 1200, 'height' => 900],
+            ],
+        ];
+
+        $this->assertSame('https://trashnothing.com/img/photo.1200x900.jpg', $this->bestPhotoUrl($photo));
+    }
+
+    public function test_best_photo_url_falls_back_to_the_url_field_when_there_are_no_images(): void
+    {
+        $photo = ['url' => 'https://trashnothing.com/img/large.jpg', 'images' => []];
+
+        $this->assertSame('https://trashnothing.com/img/large.jpg', $this->bestPhotoUrl($photo));
+    }
+
+    public function test_best_photo_url_falls_back_when_the_largest_image_carries_no_url(): void
+    {
+        // Every field on TN's Photo/PhotoImagesInner models is optional, so a
+        // malformed last entry must not lose the photo entirely.
+        $photo = [
+            'url' => 'https://trashnothing.com/img/large.jpg',
+            'images' => [
+                ['url' => 'https://trashnothing.com/img/photo.220x294.jpg', 'width' => 220],
+                ['width' => 1200],
+            ],
+        ];
+
+        $this->assertSame('https://trashnothing.com/img/large.jpg', $this->bestPhotoUrl($photo));
+    }
+
+    public function test_best_photo_url_returns_null_when_the_photo_has_nothing_usable(): void
+    {
+        $this->assertNull($this->bestPhotoUrl(['images' => []]));
+    }
 }
