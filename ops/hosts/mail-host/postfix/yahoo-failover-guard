@@ -1,0 +1,67 @@
+#!/bin/sh
+# yahoo-failover-guard - turns the manual Yahoo failover OFF. Never on.
+#
+# Two reasons to revert automatically, both protective:
+#   1. The backlog has drained, so the reason to risk the secondary IP is gone.
+#   2. The secondary IP has started deferring too - continuing would burn it
+#      for nothing.
+#
+# Turning the failover ON is a human decision (see yahoo-failover), because it
+# trades the reputation of our only working IP for throughput.
+
+set -eu
+
+MAP=/etc/postfix/yahoo_failover
+LOG=/var/log/yahoo-failover.log
+DRAINED_BELOW=5000        # queue entries; Yahoo family dominates the backlog
+MIN_ATTEMPTS=50           # don't judge the ip on a handful of samples
+WINDOW_MINS=10            # judge recent behaviour, not the whole log tail
+
+[ -s "$MAP" ] || exit 0   # already off, nothing to do
+
+log() { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >> "$LOG"; }
+
+a=$(find /var/spool/postfix/active   -type f 2>/dev/null | wc -l)
+d=$(find /var/spool/postfix/deferred -type f 2>/dev/null | wc -l)
+total=$((a + d))
+
+if [ "$total" -lt "$DRAINED_BELOW" ]; then
+    /usr/local/sbin/yahoo-failover off >/dev/null 2>&1
+    log "GUARD off: queue drained (total=$total < $DRAINED_BELOW)"
+    exit 0
+fi
+
+# Judge only the RECENT minutes. Yahoo admits a burst then closes: on
+# 2026-08-19 the secondary delivered 995 messages in one minute and zero in the
+# next three. Counted over the whole tail that still reads as "delivering", so
+# this guard would have sat there while the ip was being burned for nothing.
+. /usr/local/sbin/yahoo-failover-lib.sh
+eval "$(recent_counts $WINDOW_MINS)"
+
+# Judge on DELIVERIES: retries inflate deferral counts, but nothing inflates a
+# successful delivery. Real volume attempted, none of it landing, means the
+# secondary has been throttled exactly like the primary.
+attempts=$((secondary_sent + secondary_deferred))
+if [ "$attempts" -ge "$MIN_ATTEMPTS" ] && [ "$secondary_sent" -eq 0 ]; then
+    /usr/local/sbin/yahoo-failover off >/dev/null 2>&1
+    log "GUARD off: secondary throttled too (${WINDOW_MINS}m: sent=$secondary_sent deferred=$secondary_deferred)"
+    exit 0
+fi
+
+# Read one bounded tail and parse key=value, so a missing key is absent rather
+# than shifting the fields either side of it.
+eval "$(tail -c 20000000 /var/log/mail.log 2>/dev/null | awk '
+    /postfix-yahoo\/smtp/ && /status=sent/     { s++ }
+    /postfix-yahoo\/smtp/ && /status=deferred/ { f++ }
+    END { printf "sent=%d deferred=%d\n", s+0, f+0 }')"
+
+# Judge on DELIVERIES: shaping and retries both inflate deferral counts, but
+# nothing inflates a successful delivery. If the secondary is carrying real
+# volume and none of it lands, it has been throttled like the primary.
+if [ "$((sent + deferred))" -ge "$MIN_ATTEMPTS" ] && [ "$sent" -eq 0 ]; then
+    /usr/local/sbin/yahoo-failover off >/dev/null 2>&1
+    log "GUARD off: secondary IP throttled too (sent=$sent deferred=$deferred)"
+    exit 0
+fi
+
+exit 0

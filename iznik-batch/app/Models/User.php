@@ -1797,6 +1797,17 @@ class User extends Model implements Auditable
                 $group = Group::find($groupId);
                 $preferredEmail = $this->email_preferred;
 
+                // The one send path left that reaches a member's own mailbox
+                // without going through EmailSpoolerService, so it needs the
+                // deferral gate applied by hand. Not counted for catch-up:
+                // there is nothing to catch up on, since by the time a
+                // provider recovers they have already left the group.
+                if ($group && $preferredEmail
+                    && app(\App\Services\Mail\MailSuppressionService::class)->isSuppressed($preferredEmail)) {
+                    Logger::info("Skipping farewell email for user {$this->id} on group {$groupId}: their provider is deferring our mail");
+                    $group = NULL;
+                }
+
                 if ($group && $preferredEmail) {
                     try {
                         \Illuminate\Support\Facades\Mail::raw('Parting is such sweet sorrow.', function ($message) use ($group, $preferredEmail) {

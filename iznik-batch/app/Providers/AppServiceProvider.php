@@ -55,6 +55,26 @@ class AppServiceProvider extends ServiceProvider
             );
         });
 
+        // How mail:deferrals:scan reaches the outbound relay. Deliberately a
+        // separate key and a longer timeout from the monitoring probe above:
+        // that key is a root shell across the whole estate, whereas this one
+        // only ever needs to read a mail queue, and ops restricts it with a
+        // forced command. Contextual so the DeferralProbe gets this runner
+        // while HostHealthCheck keeps the monitoring one.
+        $this->app->when(\App\Services\Mail\Deferrals\DeferralProbe::class)
+            ->needs(\App\Monitoring\HostCommandRunner::class)
+            ->give(function () {
+                return new \App\Monitoring\SshHostCommandRunner(
+                    (string) config('freegle.mail.deferrals.ssh_key', '/etc/mail-deferrals-ssh-key'),
+                    (int) config('freegle.mail.deferrals.ssh_timeout_seconds', 120),
+                );
+            });
+
+        // The suppression gate is consulted inside every per-recipient sending
+        // loop, and it caches the active set in-process. A singleton means one
+        // cache per batch job rather than one per call site.
+        $this->app->singleton(\App\Services\Mail\MailSuppressionService::class);
+
         // Scheduler overlap mutex backend. Default (LOCK_STORE=flock) binds
         // FlockEventMutex — OS-level flock that auto-releases on process death.
         // Setting LOCK_STORE=redis (or another cache store) binds a TTL-based cache

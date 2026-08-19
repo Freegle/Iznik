@@ -476,6 +476,16 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		contentcheckFilter += " AND mg.rippled_in = 0"
 	}
 
+	// A listing query that fails must never be reported as an empty queue. The
+	// all-communities form fans out over every group the moderator covers and
+	// is capped at MAX_EXECUTION_TIME(20000) (see buildMTUnionAllMsgIDQuery),
+	// so a slow replica aborts it. Swallowing that returned a perfectly normal
+	// "messages": [] to ModTools, which cannot tell it apart from a genuinely
+	// empty queue: the moderator gets an empty page while the work count in
+	// the menu insists there is work, and the infinite loader stops for good
+	// (Discourse 10037).
+	var listErr error
+
 	if collection == "Edit" {
 		// Edit review uses messages_edits table, not messages_groups collection.
 		// Restrict to ORIGIN messages_groups rows (rippled_in = 0). A post rippled INTO a
@@ -483,14 +493,14 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// rippled-in post surfaces in every receiving group's Edit queue (and to active mods
 		// there via the all-groups path), but an edit belongs to the post's origin group(s)
 		// only. Same bug class as the IP-abuse fix (WHERE rippled_in=0).
-		db.Table("messages_edits me").
+		listErr = db.Table("messages_edits me").
 			Select("DISTINCT me.msgid").
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0").
 			Where("mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
 				groupIDs).
 			Order("me.timestamp DESC").
 			Limit(limit).
-			Pluck("msgid", &msgIDs)
+			Pluck("msgid", &msgIDs).Error
 	} else if subaction == "searchall" && search != "" {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
@@ -503,7 +513,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchID}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
@@ -515,7 +525,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 	} else if subaction == "searchmemb" && search != "" {
 		// If search is a numeric user ID, do a fast direct lookup first.
@@ -532,7 +542,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchUID}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 		if len(msgIDs) == 0 {
 			// Fall back to name/email LIKE search.  The LEFT JOIN to
@@ -550,7 +560,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm, searchTerm}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 	} else {
 		// When listing the Pending review queue, also include Spam-collection messages.
@@ -587,7 +597,11 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		branchSQL += "ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 
 		sql, args := buildMTUnionAllMsgIDQuery(branchSQL, branchArgs, groupIDs, limit)
-		db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+		listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
+	}
+
+	if listErr != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to list messages")
 	}
 
 	if len(msgIDs) == 0 {

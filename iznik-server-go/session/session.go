@@ -17,6 +17,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	log2 "github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/maildeferral"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -1797,6 +1798,22 @@ func GetSession(c *fiber.Ctx) error {
 		if utils.OurDomain(email.Email) == 0 {
 			me["email"] = email.Email
 			break
+		}
+	}
+
+	// Tell the member when their provider is currently refusing our mail, so
+	// they can check back on the site instead of waiting for email that cannot
+	// arrive. Preferred address only: emails is ordered preferred DESC, so the
+	// address chosen above is the one we would actually send to, and warning
+	// about a secondary address they never read would just be noise.
+	//
+	// This is the deferral sibling of "bouncing" above. They are different
+	// failures and read differently to a member: bouncing means their address
+	// is rejecting us and they must fix it, whereas this means their provider
+	// is throttling us and there is nothing for them to do but wait.
+	if primary, ok := me["email"].(string); ok {
+		if deferral := maildeferral.ForEmail(primary); deferral != nil {
+			me["emaildeferred"] = deferral
 		}
 	}
 

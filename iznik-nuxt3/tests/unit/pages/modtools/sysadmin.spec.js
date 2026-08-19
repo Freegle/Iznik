@@ -38,6 +38,7 @@ function mountComponent() {
         ModSysAdminCronJobs: stub('c-cronjobs'),
         ModSupportEmailStats: stub('c-emailstats'),
         ModSupportIncomingEmail: stub('c-incomingemail'),
+        ModSupportMailDeferrals: stub('c-maildeferrals'),
         ModSysAdminDigestClicks: stub('c-digestclicks'),
         ModSysAdminBrowseScroll: stub('c-browsescroll'),
         ModSysAdminRecommendations: stub('c-recommendations'),
@@ -109,6 +110,16 @@ describe('sysadmin page tab grouping', () => {
     const wrapper = mountComponent()
     await flushPromises()
     expect(wrapper.find('.c-emailstats').exists()).toBe(true)
+  })
+
+  it('opens the Delayed sub-tab from ?tab=delayed', async () => {
+    // Added after Outgoing and Incoming rather than before them, so the
+    // existing sub-tab indices - and the deep-links that use them - keep
+    // working.
+    mockRouteQuery.value = { tab: 'delayed' }
+    const wrapper = mountComponent()
+    await flushPromises()
+    expect(wrapper.find('.c-maildeferrals').exists()).toBe(true)
   })
 
   it('keeps the old ?tab=incoming deep-link working (now under Mail)', async () => {

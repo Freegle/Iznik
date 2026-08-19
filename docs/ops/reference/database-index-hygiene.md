@@ -101,6 +101,28 @@ rows for tables that were dropped long ago. Take `index_length` per table from
 `information_schema.tables` and apportion it across the table's indexes by
 estimated key width instead.
 
+## Widening beats adding
+
+Before adding an index, check whether an existing one is a prefix of what you want.
+Appending a column to it is usually better than adding a fourth index to the same
+table: the index count stays flat, so writes cost the same, and if the widened
+index is a strict superset then every query already using it keeps the plan it
+has.
+
+This only holds if the new column goes on the **end**. `(groupid, collection)`
+widened to `(groupid, collection, emailfrequency)` still serves
+`WHERE groupid = ? AND collection = ?`; widened to
+`(groupid, emailfrequency, collection)` it does not, and every existing user of
+that index loses a column from its seek.
+
+A low-cardinality column in the middle is not the objection it looks like.
+`memberships.collection` is 4,989,400 Approved against 15 Pending, so it filters
+nothing - but it costs one byte in the key and keeps the index a superset, which
+is worth more than the byte.
+
+Put the add and the drop in one `ALTER` (see below), so the swap is atomic and no
+node is ever left holding neither index.
+
 ## Applying index changes on the cluster
 
 DDL runs TOI by default, which blocks writes cluster-wide for the whole

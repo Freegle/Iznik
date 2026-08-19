@@ -157,6 +157,10 @@ describe('ModMember', () => {
             template: '<div class="mod-bouncing" />',
             props: ['user'],
           },
+          ModMailDelayed: {
+            template: '<div class="mod-mail-delayed" />',
+            props: ['since', 'provider', 'count'],
+          },
           ModDeletedOrForgotten: {
             template: '<div class="mod-deleted-or-forgotten" />',
             props: ['user'],

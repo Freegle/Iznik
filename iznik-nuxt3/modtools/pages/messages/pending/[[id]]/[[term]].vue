@@ -17,17 +17,38 @@
           all
           modonly
           :work="['pending', 'pendingother']"
-          remember="pending"
+          :remember="REMEMBER_KEY"
           :url-override="urlOverride"
         />
         <ModtoolsViewControl misckey="modtoolsMessagesPendingSummary" />
         <b-button variant="link" @click="loadAll"> Load all </b-button>
       </div>
+      <NoticeMessage v-if="loadError" variant="warning" class="mt-2">
+        <p>We couldn't fetch the pending messages just now.</p>
+        <b-button variant="primary" @click="retryLoad"> Try again </b-button>
+      </NoticeMessage>
       <NoticeMessage
-        v-if="!messages.length && !busy && groupsreceived"
+        v-else-if="!messages.length && !busy && groupsreceived"
         class="mt-2"
       >
-        There are no messages at the moment. This will refresh automatically.
+        <template v-if="filterHidingWork">
+          <p>
+            There are no pending messages in {{ groupname }}, but
+            {{
+              outstanding === 1
+                ? 'there is 1 waiting'
+                : `there are ${outstanding} waiting`
+            }}
+            across your communities. The dropdown above is filtering this page
+            to one community.
+          </p>
+          <b-button variant="primary" @click="showAllCommunities">
+            Show all my communities
+          </b-button>
+        </template>
+        <template v-else>
+          There are no messages at the moment. This will refresh automatically.
+        </template>
       </NoticeMessage>
       <div v-if="groupsreceived">
         <ModMessages />
@@ -57,11 +78,13 @@ import { useRoute, useRouter } from '#imports'
 import { setupModMessages } from '~/composables/useModMessages'
 import { useAuthStore } from '@/stores/auth'
 import { useMessageStore } from '@/stores/message'
+import { useMiscStore } from '@/stores/misc'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
 
 const authStore = useAuthStore()
 const messageStore = useMessageStore()
+const miscStore = useMiscStore()
 const modGroupStore = useModGroupStore()
 const route = useRoute()
 
@@ -83,6 +106,10 @@ const {
   getMessages,
 } = setupModMessages(true)
 
+// ModGroupSelect stores the chosen community under 'groupselect-' + remember.
+// We need the same key to forget it again - see showAllCommunities().
+const REMEMBER_KEY = 'pending'
+
 summarykey.value = 'modtoolsMessagesPendingSummary'
 collection.value = 'Pending' // Pending also gets PendingOther
 workType.value = ['pending', 'pendingother']
@@ -103,6 +130,7 @@ const shownRulePopup = ref(false)
 const bump = ref(0)
 const highlightMsgId = ref(null)
 const urlOverride = ref(false)
+const loadError = ref(false)
 
 // Template refs
 const end = ref(null)
@@ -115,6 +143,35 @@ const groups = computed(() => {
 
 const groupsreceived = computed(() => {
   return modGroupStore.received
+})
+
+const groupname = computed(() => {
+  return group.value?.namedisplay || 'this community'
+})
+
+// The Pending badge in the menu counts work across every community we
+// moderate, but this page shows only the community picked in the dropdown -
+// and that choice is remembered in local storage and re-applied on every
+// visit. When the two disagree the moderator is left staring at an empty
+// page while the badge nags them, with nothing on screen to say why
+// (Discourse 10037: two moderators reported it as "can't moderate on
+// desktop"; one worked around it by changing community and changing back).
+// Count exactly what the red Pending badge counts (layouts/default.vue passes
+// count=['pending','spam']), which is also exactly what "All my communities"
+// will show. Deliberately NOT the composable's `work` (pending+pendingother):
+// pendingother covers posts on BACKUP communities, and the all-communities
+// listing only fans out over active ones by design
+// (user.GetActiveModGroupIDs). Counting those would promise work that the
+// button cannot surface. It also drops spam-only backlogs from `work`, which
+// the badge does count, so neither number on its own is the right one.
+const outstanding = computed(() => {
+  const w = authStore.work
+  if (!w) return 0
+  return ['pending', 'spam'].reduce((total, type) => total + (w[type] || 0), 0)
+})
+
+const filterHidingWork = computed(() => {
+  return Boolean(groupid.value) && outstanding.value > 0
 })
 
 const rulesGroup = computed(() => {
@@ -231,6 +288,19 @@ onMounted(async () => {
 })
 
 // Methods
+function retryLoad() {
+  loadError.value = false
+  bump.value++
+}
+
+function showAllCommunities() {
+  // Clear the remembered community as well as the current filter. Only a
+  // choice made through the dropdown goes through ModGroupSelect's setter,
+  // so without this the filter would come straight back on the next visit.
+  miscStore.set({ key: 'groupselect-' + REMEMBER_KEY, value: 0 })
+  groupid.value = 0
+}
+
 async function loadAll() {
   // This is a bit of a hack - we clear the store and fetch 1000 messages, which is likely to be all of them.
   limit.value = 1000
@@ -268,7 +338,28 @@ async function loadMore($state) {
       limit: messages.value.length + distance.value,
     }
 
-    const fetchedIds = await messageStore.fetchMessagesMT(params)
+    let fetchedIds
+    try {
+      fetchedIds = await messageStore.fetchMessagesMT(params)
+      loadError.value = false
+    } catch (e) {
+      busy.value = false
+
+      if (e?.response?.status === 401) {
+        // Session expired. BaseAPI has already cleared auth state and the
+        // layout will put up the login modal, so say nothing here.
+        $state.complete()
+        return
+      }
+
+      // Say so rather than leaving a spinner. The exception used to escape
+      // this function, which left InfiniteLoading stuck in 'loading' and busy
+      // stuck true - and busy true suppresses every notice below, so the page
+      // looked like it was still working when it had given up.
+      loadError.value = true
+      $state.complete()
+      return
+    }
     if (fetchedIds) {
       fetchedIds.forEach((id) => listingIds.value.add(id))
     }
@@ -304,9 +395,14 @@ defineExpose({
   bump,
   highlightMsgId,
   urlOverride,
+  loadError,
+  retryLoad,
   id,
   groups,
   groupsreceived,
+  groupname,
+  outstanding,
+  filterHidingWork,
   rulesGroup,
   me,
   myGroups,
@@ -314,6 +410,7 @@ defineExpose({
   messages,
   groupid,
   limit,
+  showAllCommunities,
   loadAll,
   destroy,
   loadMore,

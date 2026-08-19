@@ -19,7 +19,10 @@ const summarykey = ref(false)
 const busy = ref(false)
 const context = ref(null)
 const groupid = ref(0)
-const group = ref(null)
+// Exported so read-only consumers (useKeywords) can follow the selected
+// community without calling setupModMessages(), which is a setup function and
+// does setup-shaped things.
+export const group = ref(null)
 const limit = ref(10)
 const workType = ref(null)
 const show = ref(0)
@@ -152,7 +155,16 @@ const visibleMessages = computed(() => {
 })
 
 export function setupModMessages(reset) {
-  // Do not include any watch in here as a separate watch is called for each time setupModMessages() is called
+  // The refresh machinery below is registered ONLY for reset=true, i.e. for the
+  // page that owns this queue. Everything here is shared module-level state, so
+  // a watcher registered by a second caller is a duplicate that does the same
+  // clear-then-refetch again. setupModMessages() is called by the page, by
+  // ModMessages.vue, and by useKeywords.js from a MODULE-LEVEL computed that
+  // re-evaluates on every group change - so the duplicates accumulated as a
+  // moderator worked. Measured in production over one day: a single work-count
+  // tick fired 2 identical listing requests for a moderator who used one group
+  // filter, and up to 13 for one who used seven. Registering per call also
+  // leaks when there is no active effect scope to dispose them.
 
   /* watch(group, async (newValue, oldValue) => {
     console.log("===useModMessages watch group", newValue?.id, oldValue?.id, groupid.value)
@@ -289,90 +301,92 @@ export function setupModMessages(reset) {
     }
   })
 
-  watch(workdetail, (newVal, oldVal) => {
-    if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return // Not actually changed
+  if (reset) {
+    watch(workdetail, (newVal, oldVal) => {
+      if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return // Not actually changed
 
-    const miscStore = useMiscStore()
+      const miscStore = useMiscStore()
 
-    // When the work total INCREASES, genuinely new work has arrived (e.g. a new
-    // pending message). The list must refresh to show it - otherwise the count /
-    // red alert updates but the message stays invisible until a manual reload
-    // (Discourse #9737).
-    const newTotal = Number(newVal?.total ?? 0)
-    const oldTotal = Number(oldVal?.total ?? 0)
-    if (newTotal > oldTotal) {
-      // ...but NOT while a modal is open, or a message is being edited in
-      // place. Refreshing re-renders the message list, which unmounts an
-      // open modal (e.g. a moderator part-way through typing a rejection
-      // reason) - or the ModMessage a moderator is editing - and loses their
-      // draft. Park the refresh and apply it when the modal closes / editing
-      // finishes (see the observers below), so the new message still appears
-      // without a manual reload.
+      // When the work total INCREASES, genuinely new work has arrived (e.g. a new
+      // pending message). The list must refresh to show it - otherwise the count /
+      // red alert updates but the message stays invisible until a manual reload
+      // (Discourse #9737).
+      const newTotal = Number(newVal?.total ?? 0)
+      const oldTotal = Number(oldVal?.total ?? 0)
+      if (newTotal > oldTotal) {
+        // ...but NOT while a modal is open, or a message is being edited in
+        // place. Refreshing re-renders the message list, which unmounts an
+        // open modal (e.g. a moderator part-way through typing a rejection
+        // reason) - or the ModMessage a moderator is editing - and loses their
+        // draft. Park the refresh and apply it when the modal closes / editing
+        // finishes (see the observers below), so the new message still appears
+        // without a manual reload.
+        if (refreshMustWait()) {
+          pendingWorkRefresh.value = newVal
+          return
+        }
+        getMessages(newVal)
+        return
+      }
+
+      // No new work (count unchanged or decreased by a mod action the component
+      // already handled): keep the existing suppression so the list does not
+      // reload under the user's feet.
+      if (miscStore.deferGetMessages) return
       if (refreshMustWait()) {
+        // Park it, exactly as the total-increased branch above does. Do NOT drop
+        // it: another moderator holding a message moves it from `pending` to
+        // `pendingother` (see groupWork.go), so the total never changes and this
+        // branch is the ONLY one that can surface a hold. Dropping it lost the
+        // hold permanently — the watcher's oldVal advances, so every later tick
+        // compares equal and early-returns — leaving the other moderator looking
+        // at a card with no "Held" banner until they manually reloaded. They
+        // moderated the post out from under the holding mod (Discourse #9946).
         pendingWorkRefresh.value = newVal
         return
       }
       getMessages(newVal)
-      return
-    }
+    })
 
-    // No new work (count unchanged or decreased by a mod action the component
-    // already handled): keep the existing suppression so the list does not
-    // reload under the user's feet.
-    if (miscStore.deferGetMessages) return
-    if (refreshMustWait()) {
-      // Park it, exactly as the total-increased branch above does. Do NOT drop
-      // it: another moderator holding a message moves it from `pending` to
-      // `pendingother` (see groupWork.go), so the total never changes and this
-      // branch is the ONLY one that can surface a hold. Dropping it lost the
-      // hold permanently — the watcher's oldVal advances, so every later tick
-      // compares equal and early-returns — leaving the other moderator looking
-      // at a card with no "Held" banner until they manually reloaded. They
-      // moderated the post out from under the holding mod (Discourse #9946).
-      pendingWorkRefresh.value = newVal
-      return
-    }
-    getMessages(newVal)
-  })
-
-  // Apply a refresh that was deferred because a modal was open, as soon as the
-  // modal closes. Bootstrap toggles <body> overflow:hidden around modals, so we
-  // observe that attribute; when it clears and a refresh is pending, run it.
-  // This keeps an open rejection modal (and its draft) intact during editing
-  // while still surfacing the new pending message the moment it is dismissed.
-  if (
-    typeof document !== 'undefined' &&
-    typeof MutationObserver !== 'undefined'
-  ) {
-    const bodyOverflowObserver = new MutationObserver(() => {
-      if (pendingWorkRefresh.value && !refreshMustWait()) {
-        const deferred = pendingWorkRefresh.value
-        pendingWorkRefresh.value = null
-        getMessages(deferred)
+    // Apply a refresh that was deferred because a modal was open, as soon as the
+    // modal closes. Bootstrap toggles <body> overflow:hidden around modals, so we
+    // observe that attribute; when it clears and a refresh is pending, run it.
+    // This keeps an open rejection modal (and its draft) intact during editing
+    // while still surfacing the new pending message the moment it is dismissed.
+    if (
+      typeof document !== 'undefined' &&
+      typeof MutationObserver !== 'undefined'
+    ) {
+      const bodyOverflowObserver = new MutationObserver(() => {
+        if (pendingWorkRefresh.value && !refreshMustWait()) {
+          const deferred = pendingWorkRefresh.value
+          pendingWorkRefresh.value = null
+          getMessages(deferred)
+        }
+      })
+      bodyOverflowObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['style'],
+      })
+      if (getCurrentScope()) {
+        onScopeDispose(() => bodyOverflowObserver.disconnect())
       }
-    })
-    bodyOverflowObserver.observe(document.body, {
-      attributes: true,
-      attributeFilter: ['style'],
-    })
-    if (getCurrentScope()) {
-      onScopeDispose(() => bodyOverflowObserver.disconnect())
     }
+
+    // Apply a refresh that was deferred because a message was being edited in
+    // place, as soon as editing finishes (mirrors the modal-close observer
+    // above). ModMessage.vue's save()/cancelEdit() clear modtoolsediting.
+    watch(
+      () => useMiscStore().modtoolsediting,
+      (editing) => {
+        if (!editing && pendingWorkRefresh.value && !refreshMustWait()) {
+          const deferred = pendingWorkRefresh.value
+          pendingWorkRefresh.value = null
+          getMessages(deferred)
+        }
+      }
+    )
   }
-
-  // Apply a refresh that was deferred because a message was being edited in
-  // place, as soon as editing finishes (mirrors the modal-close observer
-  // above). ModMessage.vue's save()/cancelEdit() clear modtoolsediting.
-  watch(
-    () => useMiscStore().modtoolsediting,
-    (editing) => {
-      if (!editing && pendingWorkRefresh.value && !refreshMustWait()) {
-        const deferred = pendingWorkRefresh.value
-        pendingWorkRefresh.value = null
-        getMessages(deferred)
-      }
-    }
-  )
 
   return {
     busy,

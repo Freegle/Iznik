@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/user"
@@ -633,12 +634,24 @@ func Count(c *fiber.Ctx) error {
 	var count uint64 = 0
 
 	browseView := effectiveBrowseView(c, db, myid)
+	maxDistance := resolveMaxDistance(c, db, myid)
+
+	// Reuse a recent answer where there is one. Marking posts seen clears it, so the badge
+	// still drops to zero the moment the viewer does that - see the browsecount package for
+	// why this is cached at all and what it deliberately does not delay.
+	if cached, ok := browsecount.Get(myid, browseView, maxDistance); ok {
+		return c.JSON(fiber.Map{
+			"count": cached,
+		})
+	}
 
 	if browseView == "mygroups" {
-		count = myGroupsCount(db, myid, resolveMaxDistance(c, db, myid))
+		count = myGroupsCount(db, myid, maxDistance)
 	} else {
-		count = nearbyCount(myid, resolveMaxDistance(c, db, myid))
+		count = nearbyCount(myid, maxDistance)
 	}
+
+	browsecount.Put(myid, browseView, maxDistance, count)
 
 	return c.JSON(fiber.Map{
 		"count": count,

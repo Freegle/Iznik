@@ -1,58 +1,75 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { ref } from 'vue'
+/**
+ * The Offer/Wanted labels a community has renamed (settings.keywords) must show
+ * in the type dropdowns on ModMessage and ModStdMessageModal, and must follow
+ * the community currently selected in the queue.
+ *
+ * The options used to come from a module-level computed whose getter called
+ * setupModMessages() - a setup function invoked from inside a computed, which
+ * re-ran on every group change. These tests pin the behaviour so the wiring can
+ * be simplified without changing what a moderator sees.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { nextTick } from 'vue'
 
-const mockGroup = ref(null)
-
-vi.mock('~/composables/useModMessages', () => ({
-  setupModMessages: () => ({ group: mockGroup }),
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => ({ work: null }) }))
+vi.mock('~/stores/message', () => ({
+  useMessageStore: () => ({
+    clearContext: vi.fn(),
+    clear: vi.fn(),
+    fetchMessagesMT: vi.fn().mockResolvedValue([]),
+    get all() {
+      return []
+    },
+    getByGroup: vi.fn(() => []),
+    get context() {
+      return null
+    },
+    list: {},
+  }),
+}))
+vi.mock('@/stores/misc', () => ({
+  useMiscStore: () => ({
+    deferGetMessages: false,
+    get: vi.fn(() => undefined),
+  }),
 }))
 
-describe('setupKeywords', () => {
+describe('useKeywords typeOptions', () => {
   beforeEach(() => {
-    mockGroup.value = null
+    vi.resetModules()
   })
 
-  it('falls back to OFFER/WANTED when there is no group', async () => {
-    const { setupKeywords } = await import('~/modtools/composables/useKeywords')
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  it('falls back to OFFER and WANTED when no community is selected', async () => {
+    const { setupKeywords } = await import('~/composables/useKeywords')
     const { typeOptions } = setupKeywords()
 
-    expect(typeOptions.value).toEqual([
-      { value: 'Offer', text: 'OFFER' },
-      { value: 'Wanted', text: 'WANTED' },
-    ])
+    expect(typeOptions.value.map((o) => o.value)).toEqual(['Offer', 'Wanted'])
+    expect(typeOptions.value.map((o) => o.text)).toEqual(['OFFER', 'WANTED'])
   })
 
-  it('falls back to OFFER/WANTED when the group has no keyword settings', async () => {
-    const { setupKeywords } = await import('~/modtools/composables/useKeywords')
-    mockGroup.value = { settings: {} }
+  it("uses the selected community's renamed keywords, and follows a change of community", async () => {
+    const { setupKeywords } = await import('~/composables/useKeywords')
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { typeOptions } = setupKeywords()
+    const { group } = setupModMessages()
 
-    expect(typeOptions.value).toEqual([
-      { value: 'Offer', text: 'OFFER' },
-      { value: 'Wanted', text: 'WANTED' },
-    ])
-  })
-
-  it('uses the group-specific keyword overrides when present', async () => {
-    const { setupKeywords } = await import('~/modtools/composables/useKeywords')
-    mockGroup.value = {
-      settings: { keywords: { offer: 'GIVEAWAY', wanted: 'REQUEST' } },
+    group.value = {
+      id: 1,
+      settings: { keywords: { offer: 'GIVING AWAY', wanted: 'LOOKING FOR' } },
     }
-    const { typeOptions } = setupKeywords()
-
-    expect(typeOptions.value).toEqual([
-      { value: 'Offer', text: 'GIVEAWAY' },
-      { value: 'Wanted', text: 'REQUEST' },
+    await nextTick()
+    expect(typeOptions.value.map((o) => o.text)).toEqual([
+      'GIVING AWAY',
+      'LOOKING FOR',
     ])
-  })
 
-  it('reacts to the group ref changing after the first read', async () => {
-    const { setupKeywords } = await import('~/modtools/composables/useKeywords')
-    mockGroup.value = { settings: { keywords: { offer: 'GIVE' } } }
-    const { typeOptions } = setupKeywords()
-    expect(typeOptions.value[0]).toEqual({ value: 'Offer', text: 'GIVE' })
-
-    mockGroup.value = { settings: { keywords: { offer: 'DONATE' } } }
-    expect(typeOptions.value[0]).toEqual({ value: 'Offer', text: 'DONATE' })
+    group.value = { id: 2, settings: { keywords: { offer: 'FREE' } } }
+    await nextTick()
+    expect(typeOptions.value.map((o) => o.text)).toEqual(['FREE', 'WANTED'])
   })
 })

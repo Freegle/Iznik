@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
@@ -180,6 +181,13 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 	// settings.browseMaxDistance is honoured server-side too (no query param needed), so the
 	// app-wide navbar badge respects the slider without every call site passing it explicitly.
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), '$.browseMaxDistance', 10) WHERE id = ?", viewerID)
+
+	// This asks the same question as the explicit maxDistance=10 call above - same viewer,
+	// same resolved distance - so it would be answered from the remembered count and pass
+	// whatever the server did with the setting. Forget it first, so the assertion below
+	// still proves the setting was read.
+	browsecount.Invalidate(viewerID)
+
 	settingResp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
 	assert.Equal(t, 200, settingResp.StatusCode)
 	var settingBody map[string]interface{}
@@ -411,6 +419,11 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 	// The viewer has no distance limit of their own, so the unread count takes the fast (no per-post
 	// distance) path - which must ALSO honour the author cap so the badge matches the feed.
 	countOf := func() float64 {
+		// The badge may lag a post arriving or changing by a few seconds (see the
+		// browsecount package, whose own tests cover that). These tests are about which
+		// posts the counting SQL includes, so ask afresh rather than measure the reuse.
+		browsecount.Invalidate(viewerID)
+
 		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
 		assert.Equal(t, 200, resp.StatusCode)
 		var body map[string]interface{}
@@ -466,6 +479,11 @@ func TestNearbyCountExcludesHeld(t *testing.T) {
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", held)
 
 	countOf := func(url string) float64 {
+		// The badge may lag a post arriving or changing by a few seconds (see the
+		// browsecount package, whose own tests cover that). These tests are about which
+		// posts the counting SQL includes, so ask afresh rather than measure the reuse.
+		browsecount.Invalidate(viewerID)
+
 		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil))
 		assert.Equal(t, 200, resp.StatusCode)
 		var body map[string]interface{}
@@ -542,6 +560,11 @@ func TestNearbyCountSpatialReach(t *testing.T) {
 	t.Setenv("SPATIAL_KNN_URL", stub.URL)
 
 	countOf := func() float64 {
+		// The badge may lag a post arriving or changing by a few seconds (see the
+		// browsecount package, whose own tests cover that). These tests are about which
+		// posts the counting SQL includes, so ask afresh rather than measure the reuse.
+		browsecount.Invalidate(viewerID)
+
 		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/count?jwt="+token, nil))
 		assert.Equal(t, 200, resp.StatusCode)
 		var body map[string]interface{}
