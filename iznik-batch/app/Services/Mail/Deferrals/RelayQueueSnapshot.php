@@ -37,6 +37,12 @@ class RelayQueueSnapshot
     /** Deferred recipients we could not attribute to any relay. */
     public int $unattributed = 0;
 
+    /**
+     * Deferrals that describe ONE full mailbox rather than anything about our
+     * standing with the provider. Counted for visibility only.
+     */
+    public int $perMailbox = 0;
+
     /** Queue lines that were not valid JSON (expect 1 when truncated). */
     public int $unparseableLines = 0;
 
@@ -55,6 +61,22 @@ class RelayQueueSnapshot
         }
         $this->addresses[$address]['count']++;
         $this->addresses[$address]['oldest'] = $this->earliest($this->addresses[$address]['oldest'], $arrivalTime);
+
+        if (self::isPerMailbox($reason)) {
+            // One person's mailbox is full. That says nothing about whether
+            // the provider is accepting our mail, so it must not count toward
+            // the relay family - the address bucket above is the whole of its
+            // meaning.
+            //
+            // This is not hypothetical. On 2026-08-19 Gmail's family carried
+            // 2,996 "4.2.2" and 2,252 "452" deferrals against 8 real "421"s;
+            // counted together they cleared the 500 threshold and gmail.com
+            // was suppressed, declining 76,684 messages to 482 members in
+            // two and a half hours while Gmail was delivering normally.
+            $this->perMailbox++;
+
+            return;
+        }
 
         $group = MxGrouper::fromDelayReason($reason);
         if ($group === null || $group === '') {
@@ -81,6 +103,34 @@ class RelayQueueSnapshot
             // same family, and purging wants each id once.
             $this->queueIds[$group][$queueId] = true;
         }
+    }
+
+    /**
+     * Whether a delay reason describes one recipient's mailbox rather than the
+     * provider's treatment of us.
+     *
+     * 4.2.2 is RFC 3463's "mailbox full" and is unambiguous. The wording
+     * variants are matched too because providers phrase it freely and some
+     * send only the 452 with prose. Note what is deliberately NOT here:
+     * 4.3.1 "insufficient system storage" is the receiving SERVER running out,
+     * which is provider-level and should count.
+     */
+    public static function isPerMailbox(string $reason): bool
+    {
+        foreach ([
+            '/\b4\.2\.2\b/',
+            '/over[- ]?quota/i',
+            '/quota exceeded/i',
+            '/mailbox (is )?full/i',
+            '/out of storage/i',
+            '/not enough storage space/i',
+        ] as $pattern) {
+            if (preg_match($pattern, $reason)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function addDelivery(string $group): void
