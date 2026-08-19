@@ -26,8 +26,16 @@ describe('RipplingLegend', () => {
       const swatches = wrapper.findAll('.rpl-leg-swatch')
       const styles = swatches.map((s) => s.attributes('style') || '')
 
-      expect(styles.some((s) => s.includes('rgb(255, 0, 0)') || s.includes('#ff0000'))).toBe(true)
-      expect(styles.some((s) => s.includes('rgb(0, 255, 0)') || s.includes('#00ff00'))).toBe(true)
+      expect(
+        styles.some(
+          (s) => s.includes('rgb(255, 0, 0)') || s.includes('#ff0000')
+        )
+      ).toBe(true)
+      expect(
+        styles.some(
+          (s) => s.includes('rgb(0, 255, 0)') || s.includes('#00ff00')
+        )
+      ).toBe(true)
     })
 
     it('renders one entry per band, plus the group-area key', () => {
@@ -54,12 +62,20 @@ describe('RipplingLegend', () => {
       expect(wrapper.text().match(/after posting/g)).toHaveLength(1)
     })
 
-    it('renders no band entries when the map drew no bands', () => {
+    it('asks for a group instead of keying an empty map', () => {
       const wrapper = mountLegend({ mode: 'catchment', bands: [] })
 
-      // Only the group-area key remains.
-      expect(wrapper.findAll('.rpl-leg-item')).toHaveLength(1)
-      expect(wrapper.text()).toContain('Group area')
+      // No bands means no group is picked, so nothing is drawn. This used to keep
+      // the heading and a blue "Group area" swatch, which read as "the group area
+      // is that blue thing" and sent a moderator hunting for an outline that was
+      // never drawn (Discourse 9808/728).
+      expect(wrapper.findAll('.rpl-leg-item')).toHaveLength(0)
+      expect(wrapper.text()).not.toContain('Group area')
+      expect(wrapper.text()).not.toContain('Ripples in within')
+      expect(wrapper.text()).toContain('No group selected')
+      // Says HOW, not just that one is missing: the picker is a text box with a
+      // suggestion list, which is not obvious from an empty field.
+      expect(wrapper.text()).toContain('Type a group name')
     })
   })
 
