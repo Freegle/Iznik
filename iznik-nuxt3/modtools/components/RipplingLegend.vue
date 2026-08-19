@@ -9,7 +9,8 @@
     <div
       style="font-size: 11px; color: #555; max-width: 190px; line-height: 1.4"
     >
-      Pick a group in the panel to see its area and the catchment around it.
+      Type a group name in the Group box to see its area and the catchment
+      around it.
     </div>
   </div>
 

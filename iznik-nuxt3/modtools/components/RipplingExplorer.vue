@@ -60,12 +60,12 @@
           class="rpl-intro"
           style="display: none"
         >
-          Pick a group above. The map will then outline that group's own area in
-          blue and, outside it, heat-shade the catchment: the area from which
+          Start typing a group name in the Group box below — it will suggest
+          matches as you type. The map will then outline that group's own area
+          in blue and, outside it, heat-shade the catchment: the area from which
           posts could in theory ripple IN to it, by how quickly a post there
-          would arrive by road (see the key, bottom-left). Until you pick one,
-          the green outlines are Freegle group boundaries and there is no
-          catchment to shade.
+          would arrive by road (see the key, bottom-left). Until you choose one
+          there is nothing to draw, so the map stays empty.
         </div>
         <div
           id="rippling-catchment-panel"

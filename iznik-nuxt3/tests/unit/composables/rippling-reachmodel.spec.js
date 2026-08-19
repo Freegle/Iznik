@@ -76,11 +76,18 @@ describe('reachModelSentence', () => {
 })
 
 describe('reachSliderHelp', () => {
-  it('names the production ceiling and marks anything above it as hypothetical', () => {
+  it('names the production ceiling', () => {
     const help = reachSliderHelp()
 
     expect(help).toContain('ripple out to 45 minutes')
-    expect(help).toContain('Above 45 is hypothetical')
+  })
+
+  it('claims no hypothetical stretch, because the slider stops at the ceiling', () => {
+    // The slider used to run to 60 so a wider reach could be explored, and this
+    // caption marked where that became hypothetical. The explorer describes what
+    // we run now, so the slider stops at 45 and the caveat would be describing a
+    // range the control cannot reach.
+    expect(reachSliderHelp()).not.toMatch(/hypothetical/i)
   })
 
   it('lists the bands in ascending order of travel time', () => {

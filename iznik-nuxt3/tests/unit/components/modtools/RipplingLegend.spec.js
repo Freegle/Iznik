@@ -73,7 +73,9 @@ describe('RipplingLegend', () => {
       expect(wrapper.text()).not.toContain('Group area')
       expect(wrapper.text()).not.toContain('Ripples in within')
       expect(wrapper.text()).toContain('No group selected')
-      expect(wrapper.text()).toContain('Pick a group')
+      // Says HOW, not just that one is missing: the picker is a text box with a
+      // suggestion list, which is not obvious from an empty field.
+      expect(wrapper.text()).toContain('Type a group name')
     })
   })
 
