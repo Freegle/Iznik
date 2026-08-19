@@ -324,13 +324,14 @@ describe('GroupHeader', () => {
   describe('give/ask buttons', () => {
     it('shows Give and Ask buttons when showGiveAsk is true', () => {
       const wrapper = createWrapper({ showGiveAsk: true })
+      expect(wrapper.find('.mobile-give-ask').exists()).toBe(true)
       expect(wrapper.text()).toContain('Give stuff')
       expect(wrapper.text()).toContain('Ask for stuff')
     })
 
     it('hides Give and Ask buttons when showGiveAsk is false', () => {
       const wrapper = createWrapper({ showGiveAsk: false })
-      expect(wrapper.find('.mobile-give-find').exists()).toBe(false)
+      expect(wrapper.find('.mobile-give-ask').exists()).toBe(false)
     })
   })
 
