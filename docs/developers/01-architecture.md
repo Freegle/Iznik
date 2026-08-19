@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-11
+last_reviewed: 2026-08-16
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -65,6 +65,11 @@ and per-group membership and roles are the ones you will meet first.
   post. Every ripple grows to the same ceiling, and each member is then admitted on the
   budget their own local freegler density justifies - so a rural member can reach the town
   they already drive to, while a city member is not mailed things nobody would travel for.
+  That admission is NOT computed per request: it reads a value written onto each member by a
+  scheduled batch pass (`browse:backfill-max-distance`). So the design has a moving part
+  outside the request path, and if that pass stops working every member silently reverts to
+  no limit at all - which is what happened between 11 Aug and 15 Aug 2026. See section 7 of
+  the algorithm reference.
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
   that get no reply at all: a passthrough for a silent post's first reply, individual mail to
   the members who have asked for that specific item (an open post of the opposite type, or a

@@ -32,11 +32,22 @@ class ChatExpectedService
     private const CURSOR_KEY = 'chat.expected_cursor';
 
     /**
-     * How far back before the last run's start time to look for released replies. The job
-     * runs every five minutes, so this is generous room for a long run or a clock that has
-     * been nudged, at the cost of re-checking a few chats.
+     * How far back before the last run's start time to look for released replies.
+     *
+     * The other half of this job works from a message id, and an id is safe however late a
+     * row shows up: it is still higher than the last one we handled, so it is still picked
+     * up. A release has no such id - it is a time stamped on an existing row when it is
+     * updated - so it can only be found by looking back over a period. Anything that does
+     * not appear within that period is not late, it is missed, because the window has moved
+     * on by the next run.
+     *
+     * Hence hours rather than minutes. The job runs every five minutes, so this re-checks
+     * the same handful of chats many times over, which is cheap and settles on the same
+     * answer each time. What it buys is that a row would have to be delayed by three hours
+     * before anyone noticed the poster still being told nobody had replied, and the
+     * overnight pass rechecks everything outstanding regardless.
      */
-    private const RELEASE_OVERLAP_MINUTES = 15;
+    private const RELEASE_OVERLAP_MINUTES = 180;
 
     /**
      * Orchestrates the full expected-reply update cycle.

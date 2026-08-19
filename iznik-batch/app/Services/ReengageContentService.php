@@ -47,10 +47,10 @@ class ReengageContentService
             'name'            => $this->firstName($user),
             'email'           => $user->email_preferred,
             'userSite'        => $userSite,
-            // /give = offer something, /find = post a wanted, /browse = search
+            // /give = offer something, /ask = post a wanted, /browse = search
             // and see what's already been offered nearby.
             'giveUrl'         => $user->loginLink('/give', $src),
-            'findUrl'         => $user->loginLink('/find', $src),
+            'askUrl'         => $user->loginLink('/ask', $src),
             'browseUrl'       => $user->loginLink('/browse', $src),
             'settingsUrl'     => $user->loginLink('/settings', $src),
             'unsubscribeUrl'  => $user->listUnsubscribeUrl(),
@@ -83,7 +83,7 @@ class ReengageContentService
             'email'          => $email,
             'userSite'       => $userSite,
             'giveUrl'        => $userSite . '/give',
-            'findUrl'        => $userSite . '/find',
+            'askUrl'        => $userSite . '/ask',
             'browseUrl'      => $userSite . '/browse',
             'settingsUrl'    => $userSite . '/settings',
             'unsubscribeUrl' => $userSite . '/unsubscribe',
@@ -163,7 +163,7 @@ class ReengageContentService
                     ],
                 ],
                 'ctaLabel' => 'Post a wanted',
-                'ctaUrl'   => $base['findUrl'],
+                'ctaUrl'   => $base['askUrl'],
             ],
             4 => [
                 'preheader' => 'You can search for things that are already being offered nearby.',

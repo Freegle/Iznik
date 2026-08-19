@@ -16,7 +16,7 @@
         class="clickme me-2"
         @click="showHistory('Wanted')"
       >
-        <v-icon icon="search" class="fa-fw" />
+        <v-icon icon="shopping-cart" class="fa-fw" />
         {{ pluralise(['WANTED', 'WANTEDs'], wanteds, true) }}
       </b-badge>
       <b-badge
@@ -53,7 +53,7 @@
         @click="showReplies('Wanted')"
       >
         <div class="d-flex me-1">
-          <v-icon icon="search" class="fa-fw" />
+          <v-icon icon="shopping-cart" class="fa-fw" />
           <v-icon icon="reply" class="fa-fw" />
         </div>
         {{ userinfo.replieswanted }}

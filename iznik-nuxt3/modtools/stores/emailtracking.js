@@ -34,6 +34,13 @@ export const useEmailTrackingStore = defineStore({
     userEmailsLoading: false,
     userEmailsError: null,
 
+    // Deferral suppressions: providers refusing our mail right now.
+    deferralSuppressions: [],
+    deferralMembers: [],
+    deferralMemberLimit: 0,
+    deferralsLoading: false,
+    deferralsError: null,
+
     // Email types for filtering.
     emailTypes: [],
 
@@ -127,6 +134,22 @@ export const useEmailTrackingStore = defineStore({
 
     setFilters(filters) {
       this.filters = { ...this.filters, ...filters }
+    },
+
+    async fetchDeferrals() {
+      this.deferralsLoading = true
+      this.deferralsError = null
+
+      try {
+        const response = await api(this.config).emailtracking.fetchDeferrals()
+        this.deferralSuppressions = response?.suppressions || []
+        this.deferralMembers = response?.members || []
+        this.deferralMemberLimit = response?.memberlimit || 0
+      } catch (e) {
+        this.deferralsError = e.message
+      } finally {
+        this.deferralsLoading = false
+      }
     },
 
     async fetchStats() {

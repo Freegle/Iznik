@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-01
+last_reviewed: 2026-08-19
 owner: Freegle dev team
 covers:
   - docs/ops/reference/circleci.md
@@ -42,10 +42,11 @@ promotion from internal to beta to production. Detail is in
 
 ## CI runner
 
-CircleCI runs through a shared reusable **orb** (`freegle/tests`). On branches other than
-master, path-based rules skip suites that a change cannot affect; master always runs the
-full suite. An optional **self-hosted runner** speeds up builds, with automatic fallback
-to cloud runners if it is unavailable.
+CircleCI runs through a shared reusable **orb** (`freegle/tests`). Every branch runs the
+full suite: the orb used to skip suites a change could not affect, but path-based skipping
+was removed because a partial upload made Coveralls report a false large decrease against
+master. An optional **self-hosted runner** speeds up builds, with automatic fallback to
+cloud runners if it is unavailable.
 
 Operational notes worth knowing:
 
@@ -54,6 +55,46 @@ Operational notes worth knowing:
 - When you change tests, **publish the orb** so CI picks the change up.
 - SSH debugging of CI machines is available to the team, gated by their CircleCI
   credentials. The mechanics are internal and not reproduced here.
+
+### When Coveralls goes red
+
+Coveralls reports a percentage delta, never which statements moved, so a small decrease on
+a commit that changes none of that language is not self-explaining. The Go suite in
+particular is not reproducible run to run: it shares `iznik_go_test` with the Laravel suite
+running at the same time, so load-dependent error and timeout branches are covered on one
+run and not the next. One statement is roughly 0.004% of the Go total, which is enough to
+turn the delta gate red on its own.
+
+**The profile is already kept, and diffing it is the whole answer.** Every
+`build-and-test` stores `~/artifacts/go/coverage.out` — per-block statement counts, which
+is exactly what a build-to-build diff needs. Fetch it from two builds and compare, rather
+than reasoning about what a percentage might mean:
+
+```
+curl -sS "https://circleci.com/api/v2/project/gh/Freegle/Iznik/<job>/artifacts"   # find the url
+```
+
+Both the job API and the artifact download work without a CircleCI token.
+
+That diff has already paid for itself. Builds 32736 and 32751 differed by exactly one
+block — `recommendations/stats.go`'s `sortDaily` swap. Nothing tested `sortDaily`
+directly; it was reached only through a DB-backed test whose rows carry no `ORDER BY`, so
+the swap ran only when MySQL happened to return the days out of order, which under CI's
+concurrent load varied build to build. One statement is 0.004–0.005% of this suite, which
+is the whole of a typical red. It now has its own unit tests.
+
+The Go coverage run is also serialised (`-p 1`, in
+`status-nuxt/server/api/tests/go.post.ts`): the suite's ~10 packages otherwise hit the
+single `iznik_go_test` database concurrently, on a runner already running iznik-batch,
+Playwright and Vitest alongside them. It costs no wall clock — Go finishes well inside a
+step whose critical path is Playwright — but be clear about what it did not do: the first
+build carrying it still went red at -0.005%, so serialising did not make the number
+reproducible on its own.
+
+The same delta gate can go red on the other suites for the same reason. The cheapest check
+is whether the failing suite's language appears in the diff at all: a Go-only commit that
+turns `Coveralls - vitest` red has not changed any JavaScript, so the number moved without
+the code moving.
 
 ## Rollback
 

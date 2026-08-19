@@ -1,0 +1,16 @@
+# Non-default settings in /etc/monit/monitrc on the batch/spatial host.
+# The rest of that file is the stock Debian monitrc (all comments) - only these
+# lines are live, so restore by editing the packaged file rather than replacing it.
+
+set daemon  120             # CYCLE LENGTH. Every "for N cycles" in conf.d/ is N*120s here.
+set log /var/log/monit.log
+set idfile /var/lib/monit/id
+set statefile /var/lib/monit/state
+set eventqueue
+    basedir /var/lib/monit/events
+    slots 100
+set httpd port 2812 and
+    use address localhost
+    allow localhost
+include /etc/monit/conf.d/*
+include /etc/monit/conf-enabled/*

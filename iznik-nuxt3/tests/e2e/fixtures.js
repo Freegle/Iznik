@@ -1158,8 +1158,8 @@ const testWithFixtures = test.extend({
       }
 
       if (mobile && type.toLowerCase() === 'wanted') {
-        // Mobile find flow: /find/mobile/photos → skip → /find/mobile/details → /find/mobile/whereami
-        await page.gotoAndVerify('/find/mobile/photos', {
+        // Mobile ask flow: /ask/mobile/photos → skip → /ask/mobile/details → /ask/mobile/whereami
+        await page.gotoAndVerify('/ask/mobile/photos', {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',
           maxRetries: 1,
@@ -1174,7 +1174,7 @@ const testWithFixtures = test.extend({
         await skipLink.click()
 
         // Fill item and description on the details page
-        await page.waitForURL(/\/find\/mobile\/details/, {
+        await page.waitForURL(/\/ask\/mobile\/details/, {
           timeout: timeouts.navigation.default,
         })
 
@@ -1196,7 +1196,7 @@ const testWithFixtures = test.extend({
         })
         await mobileNextBtn.click()
 
-        await page.waitForURL(/\/find\/mobile\/whereami/, {
+        await page.waitForURL(/\/ask\/mobile\/whereami/, {
           timeout: timeouts.navigation.default,
         })
 
@@ -1205,7 +1205,7 @@ const testWithFixtures = test.extend({
         // desktop-only second "Next" and whoami navigation.
       } else {
         // Navigate to the correct page based on type
-        const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
+        const startPath = type.toLowerCase() === 'wanted' ? '/ask' : '/give'
         await page.gotoAndVerify(startPath, {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',

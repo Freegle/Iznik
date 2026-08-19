@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-11
+last_reviewed: 2026-08-17
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -24,6 +24,13 @@ queues, the actions, why posts get held, and how reports work.
 
 **Messages > Pending** (`/messages/pending`) is where posts waiting for a decision
 appear, for the community (or all your communities) you have selected.
+
+The dropdown at the top of the page remembers what you picked, on that browser, and
+applies it again next time. The **Pending** count in the menu, on the other hand, counts
+posts across every community you moderate. So the two can disagree: if the community you
+picked is quiet, the page is empty while the menu still shows a count. When that happens
+the page says so, names the community it is filtered to, and offers a button to go back
+to all your communities, which also clears the remembered choice.
 
 For each post you can:
 

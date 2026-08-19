@@ -1,8 +1,8 @@
 ---
-last_reviewed: 2026-08-12
+last_reviewed: 2026-08-19
 owner: Freegle dev team
 covers:
-  - iznik-nuxt3/pages/find/**
+  - iznik-nuxt3/pages/ask/**
   - iznik-nuxt3/pages/chats/**
   - iznik-nuxt3/pages/message/**
   # cross-stack behaviour tests (change when the behaviour changes)
@@ -18,7 +18,7 @@ posted, or post a **WANTED** describing what you are looking for. Often you will
 
 ## Replying to an OFFER
 
-![Starting a WANTED](assets/find-start.png)
+![Starting a WANTED](assets/ask-start.png)
 
 1. On **Browse**, find an OFFER you want. Set the filter to "Just OFFERs" if that helps.
 2. Open the post and write a short, friendly reply saying why you would like the item and
@@ -41,7 +41,7 @@ spread quite that far, when it stops spreading and your reply goes anyway. It sh
 
 If nobody is offering what you need, post a WANTED and let it find you.
 
-1. Click **Find** (`/find`), or the **+** button in the app.
+1. Click **Ask** (`/ask`), or the **+** button in the app.
 2. Describe what you are looking for, and add a photo if it helps.
 3. Enter your postcode. As with an OFFER, Freegle works out your local community for you.
 4. Confirm your email if you are not logged in, then click **Freegle it!**

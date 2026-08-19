@@ -487,7 +487,7 @@ describe('useMessageDisplay', () => {
   describe('isOffer / isWanted / successfulText / placeholderClass / categoryIcon', () => {
     it.each([
       ['Offer', true, false, 'Taken', 'offer-gradient', 'gift'],
-      ['Wanted', false, true, 'Received', 'wanted-gradient', 'search'],
+      ['Wanted', false, true, 'Received', 'wanted-gradient', 'shopping-cart'],
       ['Other', false, false, 'Received', 'wanted-gradient', 'gift'],
     ])(
       'type=%s → isOffer=%s isWanted=%s successfulText=%s placeholder=%s icon=%s',

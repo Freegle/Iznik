@@ -95,7 +95,7 @@
                 :geojson="c.json"
                 :options="cgaOptions"
                 :z-index-offset="2"
-                @click="selectCGA($event, c.group, i)"
+                @click="selectCGA($event, c.group)"
               />
             </div>
             <div v-if="dpa" id="dpahere">
@@ -106,7 +106,7 @@
                 :geojson="d.json"
                 :options="dpaOptions"
                 :z-index-offset="1"
-                @click="selectDPA($event, d.group, i)"
+                @click="selectDPA($event, d.group)"
               />
             </div>
             <div v-if="overlaps && showDodgy && !groupid" id="overlaphere">
@@ -367,9 +367,7 @@ const bump = ref(0)
 const searchplace = ref('')
 
 const cgasjson = ref(null)
-const editingcga = ref(null)
 const dpasjson = ref(null)
-const editingdpa = ref(null)
 
 watch(shade, (newVal, oldVal) => {
   const allcgas = cgasjson.value
@@ -387,15 +385,6 @@ watch(shade, (newVal, oldVal) => {
     }
   }
 })
-
-/* const supportOrAdmin = computed(() => {
-  const authStore = useAuthStore()
-  const me = authStore.user
-  return (
-    me &&
-    (me.systemrole === 'Support' || me.systemrole === 'Admin')
-  )
-}) */
 
 const mapHeight = computed(() => {
   let height = 0
@@ -584,14 +573,6 @@ function clearSelection(callback) {
   selectedWKT.value = null
   dragging.value = true
   bump.value++
-  if (editingcga.value) {
-    editingcga.value.leafletObject.pm.disable()
-    editingcga.value = null
-  }
-  if (editingdpa.value) {
-    editingdpa.value.leafletObject.pm.disable()
-    editingdpa.value = null
-  }
 
   boundsChanged() // re-get areas
 
@@ -603,61 +584,16 @@ function clearSelection(callback) {
   if (callback) callback()
 }
 
-function selectCGA(e, g, i) {
+function selectCGA(e, g) {
   selectedName.value = g.nameshort + ' CGA'
   selectedWKT.value = null
   selectedObj.value = null
-  /* Disable CGA editing here
-  console.log('selectCGA', supportOrAdmin.value, i)
-  selectedWKT.value = g.polyofficial
-  selectedObj.value = g
-  bump.value++
-
-  if (supportOrAdmin.value) {
-    const allcgas = cgasjson.value
-    editingcga.value = allcgas[i]
-    console.log('selectCGA EDITING B', editingcga.value)
-    editingcga.value.leafletObject.pm.enable({
-      allowSelfIntersection: false,
-      snappable: false, // Has big effect on performance when there are many layers on the map.
-    })
-    editingcga.value.leafletObject.on('pm:edit', (f) => {
-      const wkt = new Wkt.Wkt()
-      wkt.fromObject(f.layer)
-      const json = wkt.write()
-      console.log('CGA pm:edit', json)
-      //emit('edit', json)
-    })
-  } */
 }
 
-function selectDPA(e, g, i) {
+function selectDPA(e, g) {
   selectedName.value = g.nameshort + ' DPA'
   selectedWKT.value = null
   selectedObj.value = null
-  /* Disable DPA editing here
-  console.log('selectDPA', supportOrAdmin.value, i)
-  selectedWKT.value = g.poly
-  selectedObj.value = g
-  bump.value++
-
-  if (supportOrAdmin.value) {
-    const alldpas = dpasjson.value
-    editingdpa.value = alldpas[i]
-    console.log('selectDPA EDITING B', editingdpa.value)
-    editingdpa.value.leafletObject.pm.enable({
-      allowSelfIntersection: false,
-      snappable: false, // Has big effect on performance when there are many layers on the map.
-    })
-    editingdpa.value.leafletObject.on('pm:edit', (f) => {
-      const wkt = new Wkt.Wkt()
-      wkt.fromObject(f.layer)
-      const json = wkt.write()
-      console.log('DPA pm:edit', json)
-      //emit('edit', json)
-    })
-  }
-    */
 }
 
 function selectLocation(l) {

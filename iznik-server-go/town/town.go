@@ -107,14 +107,34 @@ type rippleEvalReq struct {
 	// setting reaches by road.
 	PointsOnly bool `json:"points_only"`
 	Frontier   bool `json:"frontier"`
+	// PolygonSimplifyM asks the routing server for the reach's SHAPE too, simplified to that
+	// many metres. Requested only when the caller passes ?polygon=1, so the Feed settings
+	// slider - which wants the radius and the towns, not a map - keeps paying nothing for it.
+	PolygonSimplifyM float64 `json:"polygon_simplify_m,omitempty"`
 }
 type rippleEvalResp struct {
 	Results []struct {
 		DriveMin *float64 `json:"drive_min"`
 	} `json:"results"`
-	FrontierMedianMiles *float64 `json:"frontier_median_miles"`
-	FrontierMaxMiles    *float64 `json:"frontier_max_miles"`
+	FrontierMedianMiles *float64        `json:"frontier_median_miles"`
+	FrontierMaxMiles    *float64        `json:"frontier_max_miles"`
+	Polygon             json.RawMessage `json:"polygon"`
 }
+
+// reachPolygonSimplifyM is the display tolerance for the browse map's reach overlay, in
+// metres. It turns a 45-minute reach from ~27,000 vertices and ~1.2MB of GeoJSON into
+// ~2,000 vertices and ~40KB, which gzip takes to under 10KB.
+//
+// 100m rather than something coarser because the boundary error is what is being bought.
+// Measured against the exact polygon for a 45-minute drive reach around Edinburgh, the
+// simplified shape disagrees with it over 0.96% of its area at 50m, 1.66% at 100m, 2.84%
+// at 200m and 4.85% at 400m - and past 200m it starts systematically inflating (area ratio
+// 1.012 at 400m) rather than just wobbling. 100m keeps the shape honest at a size worth
+// having, which matters because an approximated boundary can cut across a narrow barrier;
+// see docs/developers/reference/rippling-algorithm.md 2a for why the reach polygon proper
+// is never simplified. This shape illustrates how far the member can travel and is never
+// a containment test.
+const reachPolygonSimplifyM = 100
 
 // Near returns up to 5 town names reachable within the slider's TRAVEL TIME (minutes) from (lat,lng),
 // by travel, furthest-selected and population-ordered - for the "Near: ..." hint under the distance
@@ -133,6 +153,10 @@ type rippleEvalResp struct {
 // @Router /town/near [get]
 // @Summary Up to 5 towns the browse/feed distance slider reaches (by drive-time), names only
 // @Tags location
+// @Param lat query number true "Latitude to measure the travel time from"
+// @Param lng query number true "Longitude to measure the travel time from"
+// @Param minutes query number true "Travel-time budget in minutes (the slider position)"
+// @Param polygon query string false "Pass 1 to also return reach_polygon, the outline of that travel time as GeoJSON, for a map overlay. An illustration only - never a containment test."
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 func Near(c *fiber.Ctx) error {
@@ -183,9 +207,17 @@ func Near(c *fiber.Ctx) error {
 	for i, r := range rows {
 		points[i] = [2]float64{r.Lng, r.Lat} // [lng, lat] GeoJSON order
 	}
+	// ?polygon=1 also asks for the reach outline, for the browse map's coverage overlay. It
+	// rides on this call rather than having its own endpoint because the Dijkstra it needs is
+	// the one this call already runs; a separate endpoint would route the same reach twice.
+	var simplifyM float64
+	if c.Query("polygon") == "1" {
+		simplifyM = reachPolygonSimplifyM
+	}
+
 	body, _ := json.Marshal(rippleEvalReq{
 		Lat: lat, Lng: lng, Mode: "drive", MaxMinutes: maxMin, Points: points,
-		PointsOnly: true, Frontier: true,
+		PointsOnly: true, Frontier: true, PolygonSimplifyM: simplifyM,
 	})
 	resp, err := routingClient.Post(routingEvalURL()+"/v1/ripple-eval", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -219,6 +251,20 @@ func Near(c *fiber.Ctx) error {
 	// treats the derivation as failed rather than storing a made-up cap.
 	if r.FrontierMedianMiles != nil {
 		out["reach_radius_miles"] = reachRadiusMiles(*r.FrontierMedianMiles)
+	}
+
+	// reach_polygon: the outline of that same travel time, as a GeoJSON Feature, for the
+	// browse map to shade. Passed straight through rather than re-encoded - we have nothing
+	// to add to it, and decoding thousands of coordinates only to re-encode them would be
+	// pure cost. Absent whenever the routing server had no drawable shape, so the client
+	// falls back rather than drawing a degenerate one.
+	//
+	// This is an ILLUSTRATION of the member's own travel time, not the set of posts they can
+	// see: each post ripples out from its OWN origin with its own budget, so a post can reach
+	// a member who could not have reached it in the same time. The list stays filtered by
+	// settings.browseMaxDistance (the crow-flies radius derived above); this only shades.
+	if len(r.Polygon) > 0 && string(r.Polygon) != "null" {
+		out["reach_polygon"] = r.Polygon
 	}
 
 	towns := SelectNear(cands, maxMin, 5)

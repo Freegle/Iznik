@@ -29,7 +29,7 @@ import {
 import { updateActualReachLayer } from './actualreach.js'
 import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
-import { driveMinForAudience, clampAudienceMinutes } from './audience.js'
+import { pickViewerGroup } from './viewergroup.js'
 import {
   REACH_CEILING_MINUTES,
   reachModelSentence,
@@ -111,9 +111,8 @@ export async function setupRipplingExplorer({
   let catchmentRenderer = null // dedicated L.svg renderer for the heat, so we can clip it
   let catchmentClipSeq = 0 // unique clipPath ids across redraws
   let catchmentDrawToken = 0 // guards async extent/catchment results against group switches
-  let catchmentReachBasis = 'current' // 'current' (grows to the ceiling) | 'audience' (proposed N* reach)
-  // Per-group cache of catchment responses + group ring, keyed by group id, so flipping the
-  // reach toggle re-renders from memory instead of re-hitting the routing server (the slow bit).
+  // Per-group cache of catchment responses + group ring, keyed by group id, so a
+  // redraw comes from memory instead of re-hitting the routing server (the slow bit).
   let catchmentCache = { key: null, ring: undefined, byMinutes: {} }
   let catchmentGroupsByName = null // lower-cased group name -> {id,name,lat,lng}, loaded once
   let marker = null
@@ -122,11 +121,6 @@ export async function setupRipplingExplorer({
   // this layer draws the home-group polygon in the reach (red) style so the
   // display matches the engine's union behaviour.
   let homeGroupReachLayer = null
-  // Task #26: "Proposed: audience-based reach" — an amber dashed boundary at the
-  // drive-time the ripple-schedule curve first reaches the containing group's nstar
-  // audience target, shown only when the toggle is checked (outbound view only).
-  let audienceLayer = null
-  let showAudienceReach = false
   let debounceTimer = null
   let isochroneGeneration = 0
   // Bumped on every location change. Any async fetch tied to a location captures
@@ -150,6 +144,9 @@ export async function setupRipplingExplorer({
   // constants, so the page cannot claim a number the engine stopped using. The markup
   // carries a matching literal for the pre-hydration render; this is the source of truth.
   timeSlider.value = String(REACH_CEILING_MINUTES)
+  // The top stop is the ceiling too. It used to run past it, so the slider could
+  // draw a reach no post ever gets.
+  timeSlider.max = String(REACH_CEILING_MINUTES)
   const timeHelpEl = document.getElementById('rippling-time-help')
   if (timeHelpEl) timeHelpEl.textContent = reachSliderHelp()
 
@@ -327,6 +324,7 @@ export async function setupRipplingExplorer({
       if (ripplePlaying || rippleFrames.length > 0) stopRipple()
       loadCatchmentGroups()
       drawCatchment() // redraw if a group is already chosen
+      seedCatchmentGroupForViewer() // ...or open on the viewer's own, if they have one
     } else {
       clearInboundLayers()
       clearCatchmentLayers()
@@ -341,17 +339,6 @@ export async function setupRipplingExplorer({
     // so we can't reference it by name from here.  Instead, fire a custom
     // event that the freeglers-clearing block listens for.
     document.dispatchEvent(new CustomEvent('rippling-clear-freeglers'))
-    clearAudienceBoundary()
-  }
-
-  // Task #26: tear down the amber "audience-based reach" boundary + caption.
-  function clearAudienceBoundary() {
-    if (audienceLayer) {
-      map.removeLayer(audienceLayer)
-      audienceLayer = null
-    }
-    const cap = document.getElementById('rippling-audience-caption')
-    if (cap) cap.style.display = 'none'
   }
 
   function clearInboundLayers() {
@@ -385,8 +372,6 @@ export async function setupRipplingExplorer({
     }
     const extentEl = document.getElementById('rippling-catchment-extent')
     if (extentEl) extentEl.style.display = 'none'
-    const audEl = document.getElementById('rippling-catchment-audience')
-    if (audEl) audEl.style.display = 'none'
     if (catchmentLegend) catchmentLegend.value = []
   }
 
@@ -434,6 +419,26 @@ export async function setupRipplingExplorer({
       return true
     }
     return false
+  }
+
+  // No ?group= in the URL. The catchment tab does nothing until a group is chosen, and
+  // it used to land on an empty map with only a placeholder to suggest why — a
+  // moderator read that emptiness as the feature being broken (Discourse 9808/728).
+  // Open on the viewer's own group when there is exactly one, since that is the one
+  // they came to look at. With several, picking one for them would be a guess, so put
+  // the cursor in the box instead and let the key say what to do.
+  async function seedCatchmentGroupForViewer() {
+    const input = document.getElementById('rippling-catchment-group')
+    if (!input || input.value.trim()) return
+    await loadCatchmentGroups()
+    const g = pickViewerGroup(props.myGroupNames, catchmentGroupsByName)
+    if (g) {
+      input.value = g.name
+      syncUrl()
+      drawCatchment()
+      return
+    }
+    if (viewMode === 'catchment') input.focus()
   }
 
   // Show the group's own road "width" (widest drive-time between two of its points), PROMINENTLY:
@@ -546,51 +551,29 @@ export async function setupRipplingExplorer({
     )
   }
 
-  // Resolve the drive-time the catchment should use under the "Possible alternative" (audience-
-  // based) reach: the drive-time at which the group's own outward reach first hits ~N* nearby
-  // freeglers (clamped [10,30]). Also sets the caption. Cached per group so flipping is instant.
-  // Returns the minutes, or null on failure (caller falls back to the slider value).
-  function catchmentAudienceMinutes(g, token) {
-    const el = document.getElementById('rippling-catchment-audience')
-    const apply = (a) => {
-      if (el && token === catchmentDrawToken && viewMode === 'catchment') {
-        if (a && a.caption) {
-          el.textContent = a.caption
-          el.style.display = ''
-        } else {
-          el.style.display = 'none'
-        }
-      }
-      return a ? a.mins : null
+  // Resolve the ripple's hazard schedule for this group: the elapsed hours after
+  // posting at which the ripple has expanded to each drive-time. Used only to
+  // annotate the catchment key ("reached ~1 hour after posting"). Cached per group.
+  //
+  // This used to also compute an "audience-based" alternative reach and caption it,
+  // so the tab could be flipped between the reach we run and one we might run. The
+  // explorer describes production only, so that half is gone; the schedule fetch
+  // stays because the key's timings come from it.
+  function catchmentHazardTiming(g, token) {
+    if (catchmentCache.key === g.id && catchmentCache.hazard) {
+      return Promise.resolve(catchmentCache.hazard)
     }
-    if (catchmentCache.key === g.id && catchmentCache.audience) {
-      return Promise.resolve(apply(catchmentCache.audience))
-    }
-    return Promise.all([
-      fetch(apiUrl(`/v1/group-actives?groupid=${g.id}`)).then((r) =>
-        r.ok ? r.json() : null
-      ),
-      fetch(
-        apiUrl(
-          `/v1/ripple-schedule?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(
-            6
-          )}` +
-            `&mode=drive&ticks=9&max_minutes=${REACH_CEILING_MINUTES}&curve=step-70`
-        )
-      ).then((r) => (r.ok ? r.json() : null)),
-    ])
-      .then(([actives, sched]) => {
-        if (!actives || actives.nstar == null || !sched || !sched.schedule)
-          return apply(null)
-        const ticks = sched.schedule.map((e) => ({
-          drive_min: e.drive_min,
-          cumulative_users: e.cumulative_users,
-        }))
-        const mins = clampAudienceMinutes(
-          driveMinForAudience(ticks, actives.nstar)
-        )
-        // Hazard timing: elapsed hours after posting at which the ripple reaches each drive-time
-        // (the 9 ticks map to HAZARD_HOURS) — used to annotate the catchment key with the delay.
+    return fetch(
+      apiUrl(
+        `/v1/ripple-schedule?lat=${g.lat.toFixed(6)}&lng=${g.lng.toFixed(6)}` +
+          `&mode=drive&ticks=9&max_minutes=${REACH_CEILING_MINUTES}&curve=step-70`
+      )
+    )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((sched) => {
+        if (token !== catchmentDrawToken || !sched || !sched.schedule)
+          return null
+        // The 9 ticks map onto HAZARD_HOURS.
         const hazard = sched.schedule.map((e, i) => ({
           drive: e.drive_min,
           hours:
@@ -598,25 +581,10 @@ export async function setupRipplingExplorer({
               ? HAZARD_HOURS[i]
               : HAZARD_HOURS[HAZARD_HOURS.length - 1],
         }))
-        const total = sched.total_freeglers || 0
-        // Sparse groups never reach N* inside the ceiling, so the alternative reach stays at the
-        // ceiling = the current reach (identical by design) — say so, or it looks like a no-op.
-        const caption =
-          total >= actives.nstar
-            ? `Possible alternative reach (audience-based): ~${Math.round(
-                mins
-              )} min` +
-              ` — stops once ~${actives.nstar.toLocaleString()} nearby freeglers are reached` +
-              ` (group has ${actives.actives.toLocaleString()} active members).`
-            : `Possible alternative: unchanged (~${REACH_CEILING_MINUTES} min). This group only reaches about ` +
-              `${total.toLocaleString()} freeglers within ${REACH_CEILING_MINUTES} min — below its ` +
-              `${actives.nstar.toLocaleString()} target — so it stays at the ceiling, same as now. ` +
-              `Sparse groups aren't tightened; try a dense city group to see the difference.`
-        const a = { mins, caption, hazard }
-        if (catchmentCache.key === g.id) catchmentCache.audience = a
-        return apply(a)
+        if (catchmentCache.key === g.id) catchmentCache.hazard = hazard
+        return hazard
       })
-      .catch(() => apply(null))
+      .catch(() => null)
   }
 
   // Draw the currently-selected group's area + catchment. No-op if no valid group chosen.
@@ -638,9 +606,9 @@ export async function setupRipplingExplorer({
     const sliderMinutes = parseInt(timeSlider.value)
     showStatus('Computing catchment for ' + g.name + '…', true)
     drawGroupExtent(g, token)
-    // Per-group catchment cache: reset on group change, kept across reach-toggle flips so
-    // switching Current <-> Possible alternative re-renders from memory (the /v1/catchment routing
-    // call is the slow bit). The group ring is punched out of the heatmap as a hole; the catchment
+    // Per-group catchment cache: reset on group change, so a redraw at the same
+    // reach comes from memory (the /v1/catchment routing call is the slow bit).
+    // The group ring is punched out of the heatmap as a hole; the catchment
     // is seeded from the whole GROUP AREA so corridor reach into the group's edges shows.
     if (catchmentCache.key !== g.id) {
       catchmentCache = {
@@ -667,19 +635,9 @@ export async function setupRipplingExplorer({
       })
     }
 
-    // Resolve the alternative reach (sets the caption; cached), then render the active basis from
-    // cache-or-fetch and warm the OTHER basis in the background so the next flip is instant.
-    catchmentAudienceMinutes(g, token)
-      .then((alt) => {
-        const altMinutes = alt != null ? alt : sliderMinutes
-        const activeMinutes =
-          catchmentReachBasis === 'audience' ? altMinutes : sliderMinutes
-        const otherMinutes =
-          catchmentReachBasis === 'audience' ? sliderMinutes : altMinutes
-        if (Math.abs(otherMinutes - activeMinutes) > 0.05)
-          getCatchment(otherMinutes)
-        return Promise.all([ringP, getCatchment(activeMinutes)])
-      })
+    // Warm the key's timings, then render the catchment at the reach we actually run.
+    catchmentHazardTiming(g, token)
+      .then(() => Promise.all([ringP, getCatchment(sliderMinutes)]))
       .then(([groupRing, d]) => {
         // Ignore a render that a newer group selection / toggle has superseded.
         if (token !== catchmentDrawToken || viewMode !== 'catchment') return
@@ -711,8 +669,7 @@ export async function setupRipplingExplorer({
         if (usable.length) {
           const n = usable.length
           const hueFor = (i) => (120 * i) / Math.max(1, n - 1) // fastest→red(0°), slowest→green(120°)
-          const hazard =
-            (catchmentCache.audience && catchmentCache.audience.hazard) || null
+          const hazard = catchmentCache.hazard || null
           const delayFor = (mins) =>
             fmtRippleDelay(rippleDelayForDrive(hazard, mins))
           usable
@@ -1120,19 +1077,6 @@ export async function setupRipplingExplorer({
   if (catchmentGroupInput)
     catchmentGroupInput.addEventListener('change', drawCatchment)
 
-  // Catchment reach-model toggle: flip between the current ceiling-grown reach and the proposed
-  // audience-based reach, redrawing the catchment at each so the two areas can be compared.
-  document
-    .querySelectorAll('input[name="rippling-catchment-reach"]')
-    .forEach((radio) => {
-      radio.addEventListener('change', function () {
-        if (this.checked) {
-          catchmentReachBasis = this.value
-          drawCatchment()
-        }
-      })
-    })
-
   document
     .getElementById('rippling-tog-freeglers')
     .addEventListener('change', function () {
@@ -1155,14 +1099,6 @@ export async function setupRipplingExplorer({
         document.getElementById('rippling-groups-section').style.display =
           'none'
       }
-    })
-
-  document
-    .getElementById('rippling-tog-audience')
-    .addEventListener('change', function () {
-      showAudienceReach = this.checked
-      if (showAudienceReach) updateAudienceBoundary()
-      else clearAudienceBoundary()
     })
 
   const searchBox = document.getElementById('rippling-search-box')
@@ -1262,6 +1198,10 @@ export async function setupRipplingExplorer({
     const pendingGroup = urlParams.get('group')
     if (isCatchment && pendingGroup) {
       return await applyCatchmentGroupFromUrl(pendingGroup)
+    }
+    if (isCatchment) {
+      await seedCatchmentGroupForViewer()
+      return true
     }
     if (!isNaN(pendingLat) && !isNaN(pendingLng)) {
       setLocation(pendingLat, pendingLng, true)
@@ -1418,6 +1358,18 @@ export async function setupRipplingExplorer({
       fetchInbox()
       return
     }
+    if (viewMode === 'catchment') {
+      // Catchment draws its own group ring and heat bands, keyed off the group
+      // picker rather than a point. Falling through here painted the outbound
+      // set - green group outlines, the red travel-time boundary and the
+      // blue-stroked deprivation quintiles - on top of it, so the map showed
+      // outbound layers while the intro and key described catchment. Reported
+      // as "the group's own area is not outlined in blue, and there is no
+      // heat-shading": both true, because none of what was on screen was the
+      // catchment view.
+      clearOutboundLayers()
+      return
+    }
     fitViewOnNextIsochrone = true
     fetchLocalBaseline(lat, lng)
     fetchAndDrawGroups(lat, lng)
@@ -1433,7 +1385,7 @@ export async function setupRipplingExplorer({
   // should sit dead-centre when the slider is cranked to the top.
   async function fetchLocalBaseline(lat, lng) {
     const gen = locationGeneration
-    const maxReach = Number(timeSlider.max) || 60
+    const maxReach = Number(timeSlider.max) || REACH_CEILING_MINUTES
     // New location: the previous area's baseline no longer applies.
     localBaselineReady = false
     try {
@@ -1484,6 +1436,11 @@ export async function setupRipplingExplorer({
 
   function updateIsochrone() {
     if (currentLat === null) return
+    // Outbound-only. Several callers (the fairness slider, the Proportionate
+    // button, ensureDriveMode) reach here without checking the tab, and this
+    // draws the red boundary and the blue-stroked quintiles, so an unguarded
+    // late call repaints the outbound view over catchment.
+    if (viewMode === 'catchment') return
     const gen = ++isochroneGeneration
     const minutes = parseInt(timeSlider.value)
     const fairness = parseInt(fairnessSlider.value) / 100
@@ -2110,118 +2067,8 @@ export async function setupRipplingExplorer({
         if (f.properties.contains) homeGroupIds.add(f.properties.id)
       })
       drawGroupsOverlay()
-      // groupFeatures/contains is now known for the new location — refresh the
-      // audience-based-reach boundary if the toggle is on (task #26).
-      if (showAudienceReach) updateAudienceBoundary()
     } catch (e) {
       /* no group data — silently skip */
-    }
-  }
-
-  // Task #26: resolve the pin's containing group from groupFeatures (populated by
-  // fetchAndDrawGroups), fetch its actives/nstar + the ripple-schedule tick curve, find the
-  // nstar crossing, clamp to [10,30] min, and draw an amber dashed boundary at that reach —
-  // reusing the same /v1/fairness isochrone fetch/draw pattern updateIsochrone() uses for the
-  // standard (red) outbound reach boundary. Guarded by locationGeneration the same way every
-  // other async-then-repaint path in this file is, so a slow response after the pin has moved
-  // can't paint over the new location.
-  async function updateAudienceBoundary() {
-    const cap = document.getElementById('rippling-audience-caption')
-    if (!showAudienceReach || viewMode !== 'outbound' || currentLat === null) {
-      clearAudienceBoundary()
-      return
-    }
-    const gen = locationGeneration
-    const containing = groupFeatures.find(
-      (f) => f.properties && f.properties.contains
-    )
-    if (!containing) {
-      clearAudienceBoundary()
-      if (cap) {
-        cap.textContent =
-          'No Freegle group contains this point — audience-based reach needs a home group.'
-        cap.style.display = ''
-      }
-      return
-    }
-    try {
-      const [actives, scheduleResp] = await Promise.all([
-        fetch(
-          apiUrl(`/v1/group-actives?groupid=${containing.properties.id}`)
-        ).then((r) => (r.ok ? r.json() : null)),
-        // Deliberately NO target_users cap here (unlike fetchRippleSchedule) — capping would
-        // flatten/truncate the curve before it reaches nstar for a well-populated group; we
-        // want the natural curve.
-        fetch(
-          apiUrl(
-            `/v1/ripple-schedule?lat=${currentLat.toFixed(
-              6
-            )}&lng=${currentLng.toFixed(6)}` +
-              `&mode=${currentMode}&ticks=${RIPPLE_FRAMES}&max_minutes=${
-                RIPPLE_FRAMES * RIPPLE_STEP_MINS
-              }&curve=step-70`
-          )
-        ).then((r) => (r.ok ? r.json() : null)),
-      ])
-      if (gen !== locationGeneration) return
-      if (
-        !actives ||
-        actives.nstar == null ||
-        !scheduleResp ||
-        !scheduleResp.schedule
-      ) {
-        clearAudienceBoundary()
-        return
-      }
-      const ticks = scheduleResp.schedule.map((e) => ({
-        drive_min: e.drive_min,
-        cumulative_users: e.cumulative_users,
-      }))
-      const rawMinutes = driveMinForAudience(ticks, actives.nstar)
-      const minutes = clampAudienceMinutes(rawMinutes)
-      if (minutes === null) {
-        clearAudienceBoundary()
-        return
-      }
-
-      // Reuse the existing outbound isochrone fetch/draw pattern (see updateIsochrone) to get
-      // the boundary polygon for the clamped minutes.
-      const isoResp = await fetch(
-        apiUrl(
-          `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
-            6
-          )}` + `&minutes=${minutes}&mode=${currentMode}&fairness=0`
-        )
-      ).then((r) => (r.ok ? r.json() : null))
-      if (gen !== locationGeneration || !showAudienceReach) return
-      if (!isoResp || !hasRing(isoResp.standard)) {
-        clearAudienceBoundary()
-        return
-      }
-
-      if (audienceLayer) map.removeLayer(audienceLayer)
-      audienceLayer = L.polygon(
-        geoToLeaflet(isoResp.standard.geometry.coordinates[0]),
-        {
-          color: '#e6a817',
-          weight: 2.5,
-          dashArray: '6 4',
-          fill: false,
-        }
-      )
-        .bindTooltip(`Audience-based reach: ~${minutes.toFixed(0)} min`)
-        .addTo(map)
-
-      if (cap) {
-        cap.textContent =
-          `Stops after reaching ~${actives.nstar.toLocaleString()} nearby freeglers ` +
-          `(~${Math.round(
-            minutes
-          )} min) - group has ${actives.actives.toLocaleString()} active members`
-        cap.style.display = ''
-      }
-    } catch (e) {
-      if (gen === locationGeneration) clearAudienceBoundary()
     }
   }
 

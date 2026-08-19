@@ -592,6 +592,94 @@ class TNSyncCommandTest extends TestCase
         );
     }
 
+    /**
+     * The per-tick duplicate check now reads only addresses added since last time,
+     * instead of streaming all ~400,000 Trash Nothing addresses every minute. A pair
+     * created after the last run must still be caught.
+     */
+    public function test_incremental_scan_catches_a_newly_created_duplicate(): void
+    {
+        // Establish a position first, so the next run is genuinely incremental.
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertNotNull(
+            DB::table('config')->where('key', 'tn.dupscan_cursor')->value('value'),
+            'the first run should record how far it read'
+        );
+
+        $user1 = $this->createTestUser(['fullname' => 'Bob']);
+        $user2 = $this->createTestUser(['fullname' => 'Bob']);
+        $tnBase = 'bob_' . uniqid('', true);
+
+        foreach ([[$user1->id, 'g101'], [$user2->id, 'g202']] as [$uid, $suffix]) {
+            $email = "{$tnBase}-{$suffix}@user.trashnothing.com";
+            DB::table('users_emails')->insert([
+                'userid' => $uid,
+                'email' => $email,
+                'backwards' => strrev($email),
+                'preferred' => 0,
+                'added' => now(),
+            ]);
+        }
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertTrue(
+            (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
+            'a duplicate created since the last run must still be merged'
+        );
+    }
+
+    /**
+     * The hole the incremental check cannot see: a duplicate made by re-pointing an
+     * existing row, which adds no new id. One tick a day re-scans everything to catch
+     * those, which is the only reason narrowing the per-tick check is safe.
+     */
+    public function test_a_full_rescan_catches_a_duplicate_the_cursor_missed(): void
+    {
+        $user1 = $this->createTestUser(['fullname' => 'Carol']);
+        $user2 = $this->createTestUser(['fullname' => 'Carol']);
+        $tnBase = 'carol_' . uniqid('', true);
+
+        foreach ([[$user1->id, 'g101'], [$user2->id, 'g202']] as [$uid, $suffix]) {
+            $email = "{$tnBase}-{$suffix}@user.trashnothing.com";
+            DB::table('users_emails')->insert([
+                'userid' => $uid,
+                'email' => $email,
+                'backwards' => strrev($email),
+                'preferred' => 0,
+                'added' => now(),
+            ]);
+        }
+
+        // Pretend the per-tick check has already read past them, and that a whole-table
+        // re-scan happened recently - so only --full-duplicate-scan can find this pair.
+        DB::table('config')->upsert([
+            ['key' => 'tn.dupscan_cursor', 'value' => (string) ((int) DB::table('users_emails')->max('id') + 1)],
+            ['key' => 'tn.dupscan_full_at', 'value' => now()->toDateTimeString()],
+        ], ['key'], ['value']);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        // An ordinary tick sees nothing new and leaves them alone.
+        $this->artisan('tn:sync')->assertExitCode(0);
+        $this->assertNotNull(User::find($user1->id));
+        $this->assertNotNull(User::find($user2->id));
+
+        // The whole-table pass finds them.
+        $this->artisan('tn:sync --full-duplicate-scan')->assertExitCode(0);
+        $this->assertTrue(
+            (User::find($user1->id) !== null) xor (User::find($user2->id) !== null),
+            'the full re-scan must catch what the cursor stepped over'
+        );
+    }
+
     public function test_no_merge_when_no_duplicates(): void
     {
         $user1 = $this->createTestUser();

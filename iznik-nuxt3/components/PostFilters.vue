@@ -400,11 +400,15 @@ const maxDistance = computed(
 // saved it re-emits the derived mile cap (so parent feeds re-filter) and refreshes the unseen count.
 // maxMinutes is the member's own density-sized reach cap, so the slider's top stop is the furthest
 // travel the reach engine will actually honour for them - not a fixed 30 minutes.
+// withPolygon: these are the only /town/near calls the browse page makes, and the routing pass
+// behind them also produces the reach OUTLINE the map shades. Asking here means the map does not
+// route the same reach again.
 const { sliderValue, maxMinutes, onSliderChange } = useReachDistance(
   (miles) => {
     emit('update:selectedMaxDistance', miles)
     refetchCount()
-  }
+  },
+  { withPolygon: true }
 )
 
 // "Filters active" badge (#G): lights for ANY control that differs from its default -

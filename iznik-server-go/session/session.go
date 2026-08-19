@@ -17,6 +17,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	log2 "github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/maildeferral"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -1129,6 +1130,7 @@ func GetSession(c *fiber.Ctx) error {
 		var chatreview, chatreviewother, newsletterstories, giftaid, happiness, relatedmembers int64
 		var housekeeping, cronjobs int64
 		var emailin, emailout int64
+		var maildeferrals int64
 		var helperEscalated int64
 
 		var wg2 sync.WaitGroup
@@ -1583,6 +1585,26 @@ func GetSession(c *fiber.Ctx) error {
 				defer wg2.Done()
 				emailin, emailout = FetchEmailHealth(db, time.Now().Hour())
 			}()
+
+			// --- Providers currently refusing our mail (ADMIN only) ---
+			// ADMIN only, like every other badge on that page - the whole
+			// block is SYSTEMROLE_ADMIN, so a support user gets no
+			// maildeferrals key and therefore no badge, exactly as they get
+			// none for housekeeping or cronjobs. Deliberate, not an oversight:
+			// support can open the Delayed tab (the endpoint is
+			// IsAdminOrSupport) but is not badged towards it. The neighbouring
+			// comments saying "admin/support" are wrong about the gate.
+			// Counted by DOMAIN, and per-mailbox reasons excluded, so the badge
+			// matches what the Delayed table shows. A full inbox is not an
+			// outage and must not light this up.
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				db.Table("mail_suppressions").
+					Where("released_at IS NULL AND scope = ?", "domain").
+					Where("reason IS NULL OR reason NOT REGEXP ?", maildeferral.PerMailboxReason).
+					Count(&maildeferrals)
+			}()
 		}
 
 		wg2.Wait()
@@ -1593,7 +1615,7 @@ func GetSession(c *fiber.Ctx) error {
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
-			emailin + emailout + helperEscalated
+			emailin + emailout + helperEscalated + maildeferrals
 
 		work = fiber.Map{
 			"pending":              pending,
@@ -1620,6 +1642,7 @@ func GetSession(c *fiber.Ctx) error {
 			"cronjobs":             cronjobs,
 			"emailin":              emailin,
 			"emailout":             emailout,
+			"maildeferrals":        maildeferrals,
 			"total":                total,
 		}
 	}
@@ -1797,6 +1820,22 @@ func GetSession(c *fiber.Ctx) error {
 		if utils.OurDomain(email.Email) == 0 {
 			me["email"] = email.Email
 			break
+		}
+	}
+
+	// Tell the member when their provider is currently refusing our mail, so
+	// they can check back on the site instead of waiting for email that cannot
+	// arrive. Preferred address only: emails is ordered preferred DESC, so the
+	// address chosen above is the one we would actually send to, and warning
+	// about a secondary address they never read would just be noise.
+	//
+	// This is the deferral sibling of "bouncing" above. They are different
+	// failures and read differently to a member: bouncing means their address
+	// is rejecting us and they must fix it, whereas this means their provider
+	// is throttling us and there is nothing for them to do but wait.
+	if primary, ok := me["email"].(string); ok {
+		if deferral := maildeferral.ForEmail(primary); deferral != nil {
+			me["emaildeferred"] = deferral
 		}
 	}
 

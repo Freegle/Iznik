@@ -247,6 +247,35 @@ them no extra email.
 
 ---
 
+## An auto-repost does not start the ripple again
+
+A repost does **not** send the item rippling out afresh from its home community. The
+ripple runs on its own clock, fixed when the item first entered rippling, and a repost
+neither resets that clock nor puts the item back through the process. An item that has
+already rippled keeps the reach it earned: the communities it reached still have their
+copy, and the repost by itself neither adds new ones nor takes any away.
+
+So to answer the obvious question: a reposted item effectively **starts rippled**. It
+does not crawl outwards again from scratch each time.
+
+What the repost does do is lift the item back to the top of **that community's** browse
+list. Reposting runs per community, on each community's own repost interval, so a rippled
+item is kept fresh in each place independently. It does not bounce to the top everywhere
+at once: two communities with different repost settings will repost the same item at
+different times, and each one's copy is refreshed only when that community's own interval
+comes round.
+
+The poster's mail is the exception to that. They still get one "Will Repost" reminder and
+one chase-up per cycle for the item as a whole, not one per community, as above.
+
+An item that has not rippled yet is not shut out by having been reposted: rippling picks
+up items that have not yet started, and reposting does not disqualify one. Equally, a
+repost cannot force an item to ripple. If the community has rippling turned off, or the
+item already has enough separate people replying to it, it stays where it is. An item
+with plenty of interest already does not need spreading further, so it is left alone.
+
+---
+
 ## The spam-flag and "seen on many groups"
 
 Rippling joins a poster to multiple communities. This does **not** trigger the "seen on

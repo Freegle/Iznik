@@ -25,7 +25,7 @@
             offset-md="3"
             offset-lg="3"
           >
-            <ExploreGroup :id="group.id" :msgid="msgid" :show-give-find="!me" />
+            <ExploreGroup :id="group.id" :msgid="msgid" :show-give-ask="!me" />
           </b-col>
         </b-row>
       </div>

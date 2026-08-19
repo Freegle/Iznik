@@ -80,8 +80,9 @@ export function reachModelSentence(band, capMinutes) {
 /**
  * The caption under the reach slider.
  *
- * The slider goes past the ceiling on purpose — exploring a hypothetical wider reach is
- * the point of the page — so the caption has to mark where production actually stops.
+ * The slider used to run past the ceiling, and this caption marked the point beyond
+ * which it was hypothetical. It stops at the ceiling now - the page describes what we
+ * run, not what we might - so there is no hypothetical stretch left to caption.
  */
 export function reachSliderHelp() {
   const bands = Object.entries(REACH_BAND_MINUTES)
@@ -91,7 +92,6 @@ export function reachSliderHelp() {
 
   return (
     `Posts ripple out to ${REACH_CEILING_MINUTES} minutes, the default here. ` +
-    `Who then sees one depends on where THEY are (${bands} minutes), not on the post. ` +
-    `Above ${REACH_CEILING_MINUTES} is hypothetical.`
+    `Who then sees one depends on where THEY are (${bands} minutes), not on the post.`
   )
 }

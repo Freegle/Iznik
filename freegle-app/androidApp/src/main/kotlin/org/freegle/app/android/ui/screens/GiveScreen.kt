@@ -259,7 +259,7 @@ private fun TypeStep(
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Icon(
-                        Icons.Outlined.Search,
+                        Icons.Outlined.ShoppingCart,
                         contentDescription = null,
                         modifier = Modifier
                             .size(100.dp)
@@ -273,7 +273,7 @@ private fun TypeStep(
                             .padding(start = 24.dp),
                     ) {
                         Icon(
-                            Icons.Filled.Search,
+                            Icons.Filled.ShoppingCart,
                             contentDescription = null,
                             modifier = Modifier.size(36.dp),
                             tint = MaterialTheme.colorScheme.tertiary,

@@ -116,6 +116,14 @@ return [
             'groups.ilovefreegle.org',
             'direct.ilovefreegle.org',
             'republisher.freegle.in',
+            // Our own ModTools site. It has no MX and its A record is a static
+            // web host, so postfix falls back to that per RFC, tries port 25
+            // against a web server and times out - a transient failure by SMTP
+            // rules, so it retried for the full queue lifetime and expired
+            // without ever marking anyone bouncing. The 112 accounts here are
+            // synthetic (modbot, confirmmod-*, modconfirm-*) and not one has
+            // another address, so nobody loses mail they could have received.
+            'modtools.org',
         ],
         'excluded_domain_patterns' => [
             '@yahoogroups.',
@@ -169,6 +177,68 @@ return [
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
         'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
+
+        // Deferral-aware suppression (mail:deferrals:scan).
+        //
+        // Our relay 250-accepts a message and only later finds the receiving
+        // provider will not take it, so nothing in the sending path can see a
+        // deferral. This block configures the probe that reads the relay's
+        // own queue and the thresholds that decide when to stop generating.
+        'deferrals' => [
+            // Master switch. Off means the command no-ops and is not even
+            // scheduled, matching how ripple/firstreply are gated.
+            'enabled' => (bool) env('FREEGLE_MAIL_DEFERRALS_ENABLED', true),
+
+            // ssh target for the outbound relay, e.g. "deferrals@10.0.0.1".
+            // As with FREEGLE_MONITORING_HOSTS the estate's topology lives
+            // ONLY in the environment (.env.background on the batch host),
+            // never in committed code. Empty = disabled (dev/CI).
+            'host' => env('FREEGLE_MAIL_DEFERRALS_HOST', ''),
+
+            // Private key path INSIDE the container, bind-mounted from
+            // MAIL_DEFERRALS_SSH_KEY_HOST_PATH. Deliberately its own key
+            // rather than the monitoring one: that key is a root shell across
+            // the whole estate, whereas this only ever needs to read a queue.
+            // Ops restricts it with a forced command in authorized_keys.
+            'ssh_key' => env('FREEGLE_MAIL_DEFERRALS_SSH_KEY', '/etc/mail-deferrals-ssh-key'),
+
+            // Longer than the monitoring probe's 30s: during an incident the
+            // queue listing is the bulk of the payload, and a timeout here
+            // means flying blind for another cycle.
+            'ssh_timeout_seconds' => (int) env('FREEGLE_MAIL_DEFERRALS_SSH_TIMEOUT', 120),
+
+            // Cap on the queue listing we will pull back, so a runaway queue
+            // cannot exhaust PHP's memory. Truncation is reported and only
+            // ever understates the counts, which is safe against thresholds
+            // that are themselves lower bounds.
+            'max_queue_bytes' => (int) env('FREEGLE_MAIL_DEFERRALS_MAX_QUEUE_BYTES', 64 * 1024 * 1024),
+
+            // MX-group tier. Suppress a relay family once this many of its
+            // messages are deferred AND deliveries to it have all but
+            // stopped. During the 2026-08-15 Yahoo incident the ratio was
+            // about one delivery an hour against tens of thousands of
+            // deferral events, so this is not a close call in practice.
+            'mxgroup_min_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MIN', 500),
+            'mxgroup_max_delivered_per_hour' => (int) env('FREEGLE_MAIL_DEFERRALS_MXGROUP_MAX_DELIVERED', 10),
+
+            // Per-address tier. Catches "452 4.2.2 ... over quota", which is
+            // one person's mailbox rather than our reputation, so it wants a
+            // slower and more forgiving trigger.
+            'address_min_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_ADDRESS_MIN', 5),
+            'address_min_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_ADDRESS_HOURS', 24),
+
+            // Release. Deliveries must have resumed and the deferred count
+            // must have fallen below this for two consecutive scans, so a
+            // single quiet scan inside a backoff window cannot reopen the
+            // floodgates.
+            'release_max_deferred' => (int) env('FREEGLE_MAIL_DEFERRALS_RELEASE_MAX', 100),
+            'release_clear_scans' => (int) env('FREEGLE_MAIL_DEFERRALS_RELEASE_SCANS', 2),
+
+            // How long a suppression may stand without the scan confirming it
+            // still applies. If the probe breaks we must fail open rather
+            // than silently stop mailing a provider for ever.
+            'stale_after_hours' => (int) env('FREEGLE_MAIL_DEFERRALS_STALE_HOURS', 24),
+        ],
     ],
 
     'mod_welfare' => [
@@ -554,7 +624,7 @@ return [
         // server + app code can deploy (and clear the app stores) ahead of go-live; flip
         // RIPPLE_ENABLED=true to turn rippling on with no code change. When false the ripple:expand
         // cron is not scheduled, so no reach is ever computed and every reach consumer stays inert.
-        'enabled' => (bool) env('RIPPLE_ENABLED', false),
+        'enabled' => (bool) env('RIPPLE_ENABLED', true),
         // Arrival cutoff (server local time). Only posts that arrived on or after this
         // instant ever START rippling; older pending posts are left alone. This is the
         // flood guard: when rippling first turns on, every historical pending post would
@@ -699,8 +769,36 @@ return [
         // (Per-RU-class stratification — target_by_ru — is the planned Stage-A
         // refinement and is not yet wired; this first cut is a single global cap.)
         'extent' => [
-            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', false),
+            'enabled' => (bool) env('RIPPLE_EXTENT_ENABLED', true),
             'target_users' => (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000),
+        ],
+        // Rural-access overflow. The extent cap above sizes a post's audience by the NEAREST
+        // N members, which in a dense area binds long before the travel-time ceiling: measured
+        // on live, a post outside Birmingham stopped at 28.0 minutes on exactly 4,000 members
+        // while a sparse-band moderator 31.4 minutes away, whose own slider was already at the
+        // 45-minute maximum, was shut out. This asks the routing server for one ring per band
+        // ceiling alongside the capped reach, so that member can find the post - on browse and
+        // in the newly-reached mail, since a member who cannot be told about the post is barely
+        // less shut out than one who cannot see it. It does NOT add the post to a group's copy:
+        // the mail path stays members-only, so this reaches people who have already joined a
+        // group the post is on, never a cold recipient.
+        'rural_access' => [
+            'enabled' => filter_var(env('RIPPLE_RURAL_ACCESS_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
+        ],
+        // Demographic-fairness overflow. Measured on live: members in the most deprived fifth
+        // are reached by ~457 posts per 30 days against ~574 for every other fifth, while
+        // membership is flat across fifths. That shortfall is NOT caused by the extent cap
+        // (capped reaches are at parity); it sits in the reaches that run to the ceiling, which
+        // are mostly rural-origin, because rural areas are rarely classed as most-deprived.
+        // So this stretches the budget for deprived RECIPIENTS on exactly those reaches.
+        //
+        // max_quintile defaults to 1 because the shortfall is a knee at the most deprived
+        // fifth rather than a gradient, and because one fifth needs one traced ring rather
+        // than four. Raising it buys the full linear gradient at proportionate cost.
+        'fairness' => [
+            'enabled' => filter_var(env('RIPPLE_FAIRNESS_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'weight' => (float) env('RIPPLE_FAIRNESS_WEIGHT', 0.0),
+            'max_quintile' => (int) env('RIPPLE_FAIRNESS_MAX_QUINTILE', 1),
         ],
         // Unified-digest score-ordering (see App\Services\Ripple\DigestPostScorer).
         // Mirrors the /rippling "Digest preview" weights. Tunable via env without a deploy.
@@ -760,7 +858,7 @@ return [
 
     'firstreply' => [
         // Master switch. Off means none of the below runs, whatever they say.
-        'enabled' => filter_var(env('FIRSTREPLY_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+        'enabled' => filter_var(env('FIRSTREPLY_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
 
         // Share of POSTS in the trial, 0-100. A post is in or out for its whole
         // life and across all three levers at once, so the arms never overlap and
@@ -778,7 +876,7 @@ return [
         // going to be allowed - so the hold only turns a fast reply into a slow
         // one, on exactly the posts that can least afford it.
         'passthrough' => [
-            'enabled' => filter_var(env('FIRSTREPLY_PASSTHROUGH_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+            'enabled' => filter_var(env('FIRSTREPLY_PASSTHROUGH_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
             // How many distinct repliers a post may already have and still get the
             // passthrough. 1 = only the very first reply. Raise to soften the cliff
             // for posts where the first replier goes quiet.

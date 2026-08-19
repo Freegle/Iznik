@@ -80,7 +80,15 @@ class CommunityNewsEmailService
                 })
                 ->orderBy('id')
                 ->limit($maxItems)
-                ->get();
+                ->get()
+                // Backstop for the event_date filter above: the research model
+                // omits event_date on most items — including ones whose own
+                // blurb names a day ("On Saturday 8 August ...", mailed six
+                // days late on 2026-08-14) — so also drop anything whose TEXT
+                // says it is already over. May leave the email under
+                // $maxItems; fewer items beats stale ones.
+                ->reject(fn ($i) => MentionedDates::visiblyOver($i, now()))
+                ->values();
 
             if ($items->isEmpty()) {
                 continue;
@@ -103,7 +111,12 @@ class CommunityNewsEmailService
                 ];
             })->all();
 
-            $intro = $area->intro ?: "Here's a little round-up of what's going on around {$area->name}.";
+            // Intros are stored and reused for up to a week, so strip token
+            // Welsh/Gaelic greetings at send time too - an intro written before
+            // the parse-time backstop existed would otherwise keep going out
+            // until the area is next researched.
+            $intro = IntroLanguage::stripForeignGreeting((string) ($area->intro ?? ''))
+                ?: "Here's a little round-up of what's going on around {$area->name}.";
             $story = $this->pickStory($groupIds, $area);
 
             $sentForArea = 0;
@@ -115,6 +128,15 @@ class CommunityNewsEmailService
 
                 $email = User::find($member->id)?->email_preferred;
                 if (!$email) {
+                    continue;
+                }
+
+                // Provider is refusing our mail. Community News is weekly and
+                // dropped rather than caught up on release: next week's issue
+                // is a better email than a stale one. Counted anyway so the
+                // scale of what a member missed is visible in ModTools.
+                if (app(\App\Services\Mail\MailSuppressionService::class)
+                    ->shouldSkip($email, (int) $member->id, 'communitynews')) {
                     continue;
                 }
 
@@ -130,7 +152,7 @@ class CommunityNewsEmailService
                         areaName: $area->name,
                         intro: $intro,
                         items: $itemData,
-                        findUrl: "{$userSite}/find?src=communitynews",
+                        askUrl: "{$userSite}/ask?src=communitynews",
                         settingsUrl: "{$userSite}/settings",
                         story: $story,
                     ));
@@ -265,6 +287,17 @@ class CommunityNewsEmailService
             ->where('memberships.collection', 'Approved')
             ->where('users.newslettersallowed', 1)
             ->whereNull('users.deleted')
+            // Recently-active only, matching the digest convention
+            // (UnifiedDigestService: Engage::USER_INACTIVE = 365*12*3600s =
+            // 182.5 days; NULL lastaccess = new member who has never logged
+            // in, still included). Without this gate the 2026-08-15 send
+            // spooled 643,931 mails — every member of every enabled group
+            // however dormant — and the dead mailboxes among them caused a
+            // mass deferral storm at the relay.
+            ->where(function ($q) {
+                $q->whereNull('users.lastaccess')
+                  ->orWhere('users.lastaccess', '>', now()->subSeconds(365 * 12 * 3600));
+            })
             // The ModTools "Send newsletters to members?" group toggle
             // (settings.newsletter). For Community News this defaults OFF —
             // stricter than StoriesNewsletterService's default-on — so a group

@@ -5,6 +5,7 @@ namespace Tests\Unit\Services\Ripple;
 use App\Models\Message;
 use App\Services\Ripple\ReachQueryService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class ReachQueryServiceTest extends TestCase
@@ -137,5 +138,180 @@ class ReachQueryServiceTest extends TestCase
             $svc->isWithinReach($degraded, 51.5, -0.15),
             'degraded bounds fall back to the exact polygon (covered → within reach)'
         );
+    }
+
+    /**
+     * The rural-access ring as a third way to be reply-eligible.
+     *
+     * This is the place where missing the ring would be most obviously wrong: a member who can
+     * SEE a post on browse but is told they are too far away to reply to it has been shown
+     * something they cannot use.
+     */
+    private function seedRing(int $msgid, string $band = 'sparse'): void
+    {
+        // Well outside the reach polygon the seed above uses.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'overflow_bounds' => json_encode([
+                'rural' => [$band => 'POLYGON((0.5 51.9,1.5 51.9,1.5 52.5,0.5 52.5,0.5 51.9))'],
+                'bbox' => [0.5, 51.9, 1.5, 52.5],
+            ]),
+        ]);
+    }
+
+    public function test_ring_does_not_admit_when_the_lane_is_off(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => false]);
+        $msgid = $this->seedReach();
+        $this->seedRing($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
+    }
+
+    public function test_ring_admits_a_member_of_that_band(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedRing($msgid);
+
+        $svc = new ReachQueryService();
+        // Same point, same ring, same post as the test above - only the flag differs.
+        $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
+    }
+
+    public function test_ring_admissions_are_counted_by_day_and_lane(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedRing($msgid);
+        DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->delete();
+
+        $svc = new ReachQueryService();
+        $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
+        $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0, 'sparse'));
+
+        // Two admissions, one row, today's date: the answer to "how many did
+        // the lane let in today". Admissions via the committed reach must not
+        // count - only the ring path does.
+        $row = DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->first();
+        $this->assertNotNull($row);
+        $this->assertSame(2, (int) $row->count);
+        $this->assertSame(now()->toDateString(), (string) $row->day);
+
+        $inside = DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->value('count');
+        $this->assertTrue($svc->isWithinReach($msgid, 51.5, -0.1, 'sparse')); // inside the committed reach
+        $this->assertSame((int) $inside, (int) DB::table('rippling_event_metrics')->where('event', 'rural_admitted')->value('count'));
+    }
+
+    public function test_ring_does_not_admit_a_member_of_another_band(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedRing($msgid, 'sparse');
+
+        $svc = new ReachQueryService();
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0, 'dense'));
+    }
+
+    public function test_ring_does_not_admit_a_member_with_no_band(): void
+    {
+        // Absent must mean "not eligible", not "matches anything", or switching the lane on
+        // would widen replies for the whole membership at once.
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedRing($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0, null));
+    }
+
+    public function test_ring_admits_through_the_multi_location_wrapper(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedRing($msgid);
+
+        $svc = new ReachQueryService();
+        // The band has to survive the loop, which is exactly the kind of argument that gets
+        // dropped when a parameter is threaded through a wrapper.
+        $this->assertTrue($svc->isWithinReachAny($msgid, [[52.0, 1.0]], 'sparse'));
+        $this->assertFalse($svc->isWithinReachAny($msgid, [[52.0, 1.0]], null));
+    }
+
+    /**
+     * The deprivation lane, on reply eligibility. Same rules as the mail and the browse feed:
+     * a person let in by one and not the others is shown a post they cannot reply to.
+     */
+    private function seedFairnessRing(int $msgid, string $q = '1'): void
+    {
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'overflow_bounds' => json_encode([
+                'fairness' => [$q => 'POLYGON((0.5 51.9,1.5 51.9,1.5 52.5,0.5 52.5,0.5 51.9))'],
+                'bbox' => [0.5, 51.9, 1.5, 52.5],
+            ]),
+        ]);
+    }
+
+    public function test_fairness_ring_admits_someone_in_the_target_fifth(): void
+    {
+        config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
+        Http::fake(['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]);
+        $msgid = $this->seedReach();
+        $this->seedFairnessRing($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0));
+    }
+
+    public function test_fairness_ring_does_not_admit_someone_outside_the_target_fifth(): void
+    {
+        // Same point, same ring. Containment gets them considered; the fifth decides. Without
+        // this the lane is just a wider reach for everybody.
+        config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
+        Http::fake(['*/v1/quintile*' => Http::response(['quintile' => 4, 'available' => true])]);
+        $msgid = $this->seedReach();
+        $this->seedFairnessRing($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
+    }
+
+    public function test_fairness_ring_admits_nobody_when_deprivation_is_unavailable(): void
+    {
+        // Fails closed: admitting everyone inside a stretched ring is the very thing the fifth
+        // exists to prevent.
+        config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
+        Http::fake(['*/v1/quintile*' => Http::response(null, 500)]);
+        $msgid = $this->seedReach();
+        $this->seedFairnessRing($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
+    }
+
+    public function test_fairness_ring_is_not_consulted_when_the_lane_is_off(): void
+    {
+        config(['freegle.ripple.fairness.enabled' => false]);
+        Http::fake(['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]);
+        $msgid = $this->seedReach();
+        $this->seedFairnessRing($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
+        Http::assertNothingSent();
+    }
+
+    public function test_a_covered_person_never_costs_a_deprivation_lookup(): void
+    {
+        // The ring is only consulted once the reach proper has said no, so a post that already
+        // covers someone must not pay for a network call on every check.
+        config(['freegle.ripple.fairness.enabled' => true]);
+        Http::fake(['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]);
+        $msgid = $this->seedReach();
+        $this->seedFairnessRing($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertTrue($svc->isWithinReach($msgid, 51.5, -0.1));
+        Http::assertNothingSent();
     }
 }

@@ -30,6 +30,10 @@
 
 # Old endpoints.
 /mygroups* /browse:splat 200!
+# The WANTED flow was called "find" until Aug 2026.  Old emails, app shortcuts and
+# bookmarks still point here, so this redirect is permanent, not a migration shim.
+/find /ask 301!
+/find/* /ask/:splat 301!
 /how-it-works /help 301!
 /handbook /help 301!
 /contact /help 301!

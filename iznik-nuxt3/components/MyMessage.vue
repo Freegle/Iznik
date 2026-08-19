@@ -950,7 +950,7 @@ const repost = async (e) => {
   }
 
   await composeStore.setAttachmentsForMessage(0, msg.attachments)
-  router.push(msg.type === 'Offer' ? '/give' : '/find')
+  router.push(msg.type === 'Offer' ? '/give' : '/ask')
 }
 
 const hidden = () => {

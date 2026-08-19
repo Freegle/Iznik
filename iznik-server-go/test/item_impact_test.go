@@ -212,11 +212,21 @@ func roundForTest(v float64) float64 {
 func TestLoadCPIDataFallsBackWhenNoConfigRow(t *testing.T) {
 	db := database.DBConn
 
-	var exists int64
-	db.Raw("SELECT COUNT(*) FROM config WHERE `key` = ?", item.CPIConfigKey).Scan(&exists)
-	if exists > 0 {
-		t.Skip("a 'cpi_annual_data' config row already exists - not the default-state scenario this test covers")
-	}
+	// Establish the no-row state rather than skipping when it does not hold.
+	// This test is the only cover for LoadCPIData's `return FallbackCPIData` on
+	// the empty-read path, so a skip here silently drops exactly one statement
+	// from the Go total - indistinguishable from a real regression, and about
+	// the size of the -0.004% Coveralls reds this suite produces. Restore
+	// whatever was there so the sibling override test is unaffected by order.
+	var saved []string
+	db.Raw("SELECT value FROM config WHERE `key` = ?", item.CPIConfigKey).Scan(&saved)
+	db.Exec("DELETE FROM config WHERE `key` = ?", item.CPIConfigKey)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM config WHERE `key` = ?", item.CPIConfigKey)
+		for _, v := range saved {
+			db.Exec("INSERT INTO config (`key`, value) VALUES (?, ?)", item.CPIConfigKey, v)
+		}
+	})
 
 	cpiData := item.LoadCPIData(db)
 	assert.Equal(t, item.GetBenefitPerTonne(2011, nil), item.GetBenefitPerTonne(2011, cpiData))

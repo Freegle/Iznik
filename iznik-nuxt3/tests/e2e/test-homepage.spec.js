@@ -151,16 +151,16 @@ test.describe('Homepage tests', () => {
     )
 
     console.log(
-      `[DEBUG] Waiting for "Find" button with timeout ${timeouts.ui.appearance}ms`
+      `[DEBUG] Waiting for "Ask" button with timeout ${timeouts.ui.appearance}ms`
     )
     const askStuffStart = Date.now()
     await page
-      .locator('.action-btn:has-text("Find")')
+      .locator('.action-btn:has-text("Ask")')
       .filter({ visible: true })
       .first()
       .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
     console.log(
-      `[DEBUG] "Find" button found in ${Date.now() - askStuffStart}ms`
+      `[DEBUG] "Ask" button found in ${Date.now() - askStuffStart}ms`
     )
 
     // 2. PlaceAutocomplete/location input should always be visible
@@ -366,22 +366,22 @@ test.describe('Homepage tests', () => {
     // Go back to homepage
     await page.gotoAndVerify('/')
 
-    // Test 2: Clicking "Find" button should navigate to /find
-    const findButton = page.locator('.action-btn:has-text("Find")')
-    await findButton.waitFor({
+    // Test 2: Clicking "Ask" button should navigate to /ask
+    const askButton = page.locator('.action-btn:has-text("Ask")')
+    await askButton.waitFor({
       state: 'visible',
       timeout: timeouts.ui.appearance,
     })
 
     // Create a navigation promise before clicking
-    const findNavigation = page.waitForURL('/find', {
+    const findNavigation = page.waitForURL('/ask', {
       timeout: timeouts.navigation.default,
     })
-    await findButton.filter({ visible: true }).first().click()
+    await askButton.filter({ visible: true }).first().click()
 
     // Wait for navigation to complete
     await findNavigation
-    expect(page.url()).toContain('/find')
+    expect(page.url()).toContain('/ask')
 
     // Go back to homepage again for testing PlaceAutocomplete
     await page.gotoAndVerify('/')

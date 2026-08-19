@@ -1,0 +1,60 @@
+# Spatial services (PR #459) on the batch-prod host.
+# The containers are restart:"no" and publish no host port, so health is probed
+# via `docker exec ... curl` and recovery is `docker restart` (which also starts
+# a container that has exited, e.g. after an OOM-kill). Failures/restarts e-mail
+# geek-alerts@ via conf.d/alerts.conf.
+
+check program spatial-knn with path "/etc/monit/scripts/spatial-knn-health.sh"
+   group spatial
+   if status != 0 for 3 cycles then exec "/usr/bin/docker restart freegledocker-spatial-knn"
+
+check program spatial-routing with path "/etc/monit/scripts/spatial-routing-health.sh"
+   group spatial
+   # Routing rebuilds the whole UK road graph from the PBF at every startup (no
+   # cache). That build has grown with the data (56.8M nodes / 117M edges) and now
+   # takes ~16 min on this host, not the ~5 min assumed when this was first set to
+   # 5 cycles. At 120s/cycle, 5 cycles = 10 min < the build time, so monit was
+   # killing the container mid-build, every time, in an endless rebuild loop
+   # (the health probe fails until the graph finishes loading and :8196 binds).
+   #
+   # 2026-08-18: raised 15 -> 30 cycles (30 -> 60 min). 15 was still too tight for
+   # two reasons found together. (1) The probe does not distinguish "slow" from
+   # "dead": during the daily digest window this host runs 8 daily + 8 immediate
+   # digest shards plus mailers and MJML renderers, load ~78 with 46+ runnable, and
+   # a CPU-starved routing server answers in 14s+ - slow, but working. Restarting
+   # it then converts ~15s latency into a ~25 min hard outage of group-proximity,
+   # ripple-schedule AND catchment. (2) The rebuild itself competes for that same
+   # exhausted CPU, so it overruns the ~16 min the estimate above assumes - on
+   # 2026-08-18 a restart at 12:03 was still building edges past 12:30, i.e. beyond
+   # the old 30 min grace, which would have fired a SECOND restart and started the
+   # very loop this setting exists to prevent. 60 min stays above the worst
+   # observed build while still recovering a genuinely-dead server within the hour.
+   # If the graph grows again, or host load rises, raise this again.
+   if status != 0 for 30 cycles then exec "/usr/bin/docker restart freegledocker-spatial"
+
+# Routing loads the road graph only at startup (no live reload endpoint), so
+# restart it whenever a data refresh replaces the PBF. Also nudge the sysadmin
+# when the road-graph data goes stale (refresh cadence is every few months).
+#
+# MTIME, NOT TIMESTAMP (2026-08-18): "if changed timestamp" also tests ctime, and
+# ctime bumps on any metadata change - including gaining a hard link. The PBF is
+# 2.5GB, so `./freegle worktree create` hard-links it into the new worktree rather
+# than copying; that bumped ctime at 12:56:32 with mtime still Jun 14, monit read
+# it as a map-data refresh, and restarted routing 53 min into a graph build -
+# a ~25 min outage of proximity/ripple-schedule/catchment for a file whose
+# contents had not changed. Creating a worktree is a routine documented operation,
+# so this fired on ordinary use. mtime alone still catches a real PBF refresh
+# (a replaced file has a new mtime) without reacting to linking.
+check file spatial-pbf with path "/var/www/FreegleDocker/iznik-routing-go/data/uk-latest.osm.pbf"
+   group spatial
+   if changed mtime then exec "/usr/bin/docker restart freegledocker-spatial"
+   if timestamp > 180 days then alert
+
+# Deprivation (fairness) data staleness alert. ENABLE once the CSV is staged at
+# the path below (until then the file is absent and monit would alert "does not
+# exist" every cycle). Uncomment after staging uk_lsoa_quintile.csv:
+#
+# check file spatial-deprivation with path "/var/www/FreegleDocker/iznik-routing-go/data/uk_lsoa_quintile.csv"
+#    group spatial
+#    if changed mtime then exec "/usr/bin/docker restart freegledocker-spatial"   # mtime, not timestamp - see above
+#    if timestamp > 365 days then alert

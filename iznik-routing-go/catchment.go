@@ -35,13 +35,14 @@ func catchmentBands(g *Graph, iso IsochroneResult, maxSecs float32, mode Mode, n
 func multiSourceIsochrone(g *Graph, origins []NodeID, limitSeconds float32, mode Mode) IsochroneResult {
 	dist := make(map[NodeID]float32, 4096)
 	q := &pq{}
+	start := initialCostFor(mode)
 	for _, o := range origins {
 		if o == noNode {
 			continue
 		}
 		if _, seen := dist[o]; !seen {
-			dist[o] = 0
-			heap.Push(q, &item{id: o, cost: 0})
+			dist[o] = start
+			heap.Push(q, &item{id: o, cost: start})
 		}
 	}
 

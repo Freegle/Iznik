@@ -892,10 +892,56 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// 24=daily, events + volunteering allowed), NOT the LoveJunk FREQUENCY_NEVER. Best-effort: a join
 	// hiccup must never fail the reply.
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2USER && !holdReply {
-		var refGroup uint64
-		db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
-		if refGroup > 0 {
-			user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
+		// Already in one of the post's groups? Then nothing needs joining: they can
+		// see it and reply to it where they are. Without this check the join below
+		// picks the post's LOWEST GROUP ID, which is arbitrary — and once a post
+		// ripples, most of its groups are copies the replier has no connection to.
+		// A Leeds member replied to a Leeds post that had rippled to Bradford four
+		// minutes earlier; Bradford's id sorts first, so she was signed up to
+		// Bradford, unsubscribed, and said so on ChitChat (2026-08-17). Her Leeds
+		// membership was never consulted.
+		var alreadyIn int64
+		db.Table("messages_groups AS mg").
+			Joins("INNER JOIN memberships m ON m.groupid = mg.groupid AND m.userid = ?", myid).
+			Where("mg.msgid = ?", *payload.Refmsgid).
+			Count(&alreadyIn)
+
+		if alreadyIn == 0 {
+			var refGroup uint64
+
+			// Nearest to the replier, not lowest id. ST_Distance against a group's
+			// catchment is 0 when they are inside it, so the group whose area they
+			// actually live in wins, and failing that the closest one does — which
+			// is the group they would have joined by hand. Lowest id was a lottery:
+			// it is why a Leeds member replying to a Leeds post landed in Bradford.
+			// COALESCE keeps groups with no usable catchment last rather than first,
+			// where a NULL distance would otherwise sort them.
+			if reach.haveLocation {
+				db.Table("messages_groups AS mg").
+					Select("mg.groupid").
+					Joins("INNER JOIN `groups` g ON g.id = mg.groupid").
+					Where("mg.msgid = ?", *payload.Refmsgid).
+					// Must be wrapped in clause.OrderBy: GORM's Order() switches on
+					// clause.OrderBy, clause.OrderByColumn and string, with no default
+					// branch, so a bare clause.Expr is silently DROPPED and the query
+					// runs unordered — which returns the lowest group id, the very
+					// thing this is here to avoid. town.go and message.go order by
+					// distance the same way.
+					Order(clause.OrderBy{Expression: gorm.Expr(
+						"COALESCE(ST_Distance(g.polyindex, ST_SRID(POINT(?, ?), ?)), 1e9), mg.groupid",
+						reach.lng, reach.lat, utils.SRID)}).
+					Limit(1).Scan(&refGroup)
+			}
+
+			// No location, or the distance query found nothing: fall back to the
+			// original choice so a replier still ends up somewhere.
+			if refGroup == 0 {
+				db.Table("messages_groups").Select("groupid").Where("msgid = ?", *payload.Refmsgid).Order("groupid").Limit(1).Scan(&refGroup)
+			}
+
+			if refGroup > 0 {
+				user.AddMembership(myid, refGroup, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED, utils.FREQUENCY_DAILY, 1, 1, "Joined to reply to a post")
+			}
 		}
 	}
 
