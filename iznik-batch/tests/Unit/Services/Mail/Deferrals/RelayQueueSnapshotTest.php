@@ -63,7 +63,17 @@ class RelayQueueSnapshotTest extends TestCase
         for ($i = 0; $i < 100; $i++) {
             $snapshot->addDeferral("full$i@gmail.com", self::GMAIL_MAILBOX_FULL, null, "Q$i");
         }
-        $snapshot->addDeferral('real@gmail.com', 'host gmail-smtp-in.l.google.com said: 421 4.7.0 try again later', null, 'QX');
+        // MxGrouper keys on "host <name>[" - the ip bracket is what it looks
+        // for - so a reason without it is unattributable and never reaches a
+        // relay family at all.
+        $snapshot->addDeferral(
+            'real@gmail.com',
+            'host alt1.gmail-smtp-in.l.google.com[142.250.102.27] said: 421 4.7.0 try again later',
+            null,
+            'QX'
+        );
+
+        $this->assertCount(1, $snapshot->groups, 'the genuine 421 should reach exactly one relay family');
 
         $group = array_key_first($snapshot->groups);
         $this->assertSame(
