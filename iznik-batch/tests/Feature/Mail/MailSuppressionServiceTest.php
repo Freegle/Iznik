@@ -102,42 +102,45 @@ class MailSuppressionServiceTest extends TestCase
         // every run. Counting each pass is what put one member at 10,777 held
         // "mails" in 106 minutes on prod. The message id is the identity: seeing
         // it again is the same mail, not another one.
+        $user = $this->createTestUser();
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
-        $this->service->shouldSkip('held@yahoo.co.uk', 987654, 'chat', 1000);
-        $this->service->shouldSkip('held@yahoo.co.uk', 987654, 'chat', 1000);
-        $this->service->shouldSkip('held@yahoo.co.uk', 987654, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
 
         $this->assertSame(1, (int) DB::table('mail_suppressed_counts')
-            ->where('userid', 987654)->where('emailtype', 'chat')->value('count'));
+            ->where('userid', $user->id)->where('emailtype', 'chat')->value('count'));
     }
 
     public function test_a_new_mail_still_counts(): void
     {
+        $user = $this->createTestUser();
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
-        $this->service->shouldSkip('held@yahoo.co.uk', 987655, 'chat', 1000);
-        $this->service->shouldSkip('held@yahoo.co.uk', 987655, 'chat', 1000);
-        $this->service->shouldSkip('held@yahoo.co.uk', 987655, 'chat', 1001);
+        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1001);
 
         $this->assertSame(2, (int) DB::table('mail_suppressed_counts')
-            ->where('userid', 987655)->where('emailtype', 'chat')->value('count'));
+            ->where('userid', $user->id)->where('emailtype', 'chat')->value('count'));
     }
 
     public function test_a_caller_without_an_identity_counts_every_call(): void
     {
         // Once-per-run mailers have no per-mail id and do not need one: each call
         // really is a separate mail withheld.
+        $user = $this->createTestUser();
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
-        $this->service->shouldSkip('held@yahoo.co.uk', 987656, 'engage');
-        $this->service->shouldSkip('held@yahoo.co.uk', 987656, 'engage');
+        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'engage');
+        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'engage');
 
         $this->assertSame(2, (int) DB::table('mail_suppressed_counts')
-            ->where('userid', 987656)->where('emailtype', 'engage')->value('count'));
+            ->where('userid', $user->id)->where('emailtype', 'engage')->value('count'));
     }
 
     public function test_exposes_the_delayed_since_date_and_provider(): void
