@@ -2125,6 +2125,69 @@ func TestGetMembershipsPagination(t *testing.T) {
 	}
 }
 
+// GetMemberships hands the caller a context cursor whenever it returns a full page,
+// including for searches. The search branches must therefore honour that cursor the same
+// way the non-search branch does (TestGetMembershipsPagination above) - otherwise a client
+// paging through search results sends the cursor back and is served the same top-N rows
+// forever, so the list never advances past page one.
+func TestGetMembershipsSearchPagination(t *testing.T) {
+	prefix := uniquePrefix("mod_srchpage")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create 5 members that all match the same search term, so we can paginate with limit=3.
+	memberIDs := make([]uint64, 5)
+	for i := 0; i < 5; i++ {
+		memberIDs[i] = CreateTestUser(t, fmt.Sprintf("%s_findme_%d", prefix, i), "User")
+		CreateTestMembership(t, memberIDs[i], groupID, "Member")
+	}
+
+	// Fetch first page (limit=3).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%s_findme&limit=3&jwt=%s", groupID, prefix, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&page1)
+	page1Members, _ := page1["members"].([]interface{})
+	assert.Equal(t, 3, len(page1Members), "first page should return exactly limit members")
+
+	cursor, hasCursor := page1["context"]
+	assert.True(t, hasCursor, "response should include context cursor")
+	assert.NotNil(t, cursor, "context should not be nil when a full page is returned")
+
+	// Fetch second page using the cursor, same search term.
+	cursorID := uint64(cursor.(float64))
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&search=%s_findme&limit=3&context=%d&jwt=%s", groupID, prefix, cursorID, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+	page2Members, _ := page2["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(page2Members), 1, "second page should return at least one member")
+
+	// No member may appear on both pages - if this fails, the search branch is ignoring
+	// the context cursor and just re-returning the first page.
+	page1IDs := map[uint64]bool{}
+	for _, raw := range page1Members {
+		m := raw.(map[string]interface{})
+		page1IDs[uint64(m["id"].(float64))] = true
+	}
+	for _, raw := range page2Members {
+		m := raw.(map[string]interface{})
+		id := uint64(m["id"].(float64))
+		assert.False(t, page1IDs[id], "member id %d should not appear on both search pages", id)
+	}
+}
+
 // --- GET /memberships?collection=Happiness ---
 
 // parseHappinessResponse decodes the happiness response wrapper and returns the members and ratings arrays.
