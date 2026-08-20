@@ -7,6 +7,7 @@ covers:
   - iznik-batch/app/Models/UserDeletion.php
   - iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php
   - iznik-batch/app/Console/Commands/Dedup/**
+  - iznik-batch/app/Services/UnifiedDigestService.php
 ---
 
 # TrashNothing Integration Documentation
@@ -329,6 +330,15 @@ messages to merge, against ~656k sets across all time. `--limit` runs it in batc
 dev and CI only - production does not run them - so this is run by hand on the batch host.
 Nothing depends on it having been run: until a set is collapsed, its messages are simply
 excluded from rippling (below).
+
+### Copies and mail
+
+A member gets one immediate email per post, however many of their groups it is on.
+`UnifiedDigestService::processGroupImmediate()` runs once per group, so without a check
+across groups a cross-posted item would be mailed to the same member once per group they
+share with it. It records each send in `rippling_reach_notified` and reads that back on a
+later group's pass, which is the same ledger that stops the reach mailer re-mailing
+someone this path has already reached.
 
 ### Copies and rippling
 
