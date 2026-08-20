@@ -285,6 +285,20 @@ watch(
 onMounted(async () => {
   if (props.listall) {
     await groupStore.fetch()
+  } else {
+    // A membership only carries the group id; the NAME lives in the group store. On a
+    // page opened directly - Add event, or the unsubscribe page - that store is empty,
+    // so every one of the member's own communities renders as an option with no text.
+    // The list looks like it has nothing selectable in it, and submitting says "Please
+    // select a community" (Discourse 10046). It comes right only after visiting a page
+    // that happens to populate the store, such as Browse.
+    const missing = (myGroups.value || [])
+      .filter((g) => g.id && !g.namedisplay)
+      .map((g) => g.id)
+
+    if (missing.length) {
+      await groupStore.fetchBatch(missing)
+    }
   }
 
   if (props.remember) {
