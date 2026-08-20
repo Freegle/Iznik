@@ -854,6 +854,42 @@ describe('PostMap', () => {
       expect(mockNearbyFetchMessages).toHaveBeenCalled()
     })
 
+    it('does not re-ask the same search when the feed reloads', async () => {
+      // The navbar polls the unseen count every 60s and MessageList reloads the feed
+      // whenever it rises, which replaces the nearby bounds and re-runs getMessages.
+      // Nothing about the search has changed, so asking again only tears down the list
+      // the member is reading - messageStore.search() empties the store before the new
+      // answer lands (Discourse 10001/10).
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+      await createWrapper({
+        showIsochrones: true,
+        search: 'wardrobe',
+        browseSearch: true,
+      })
+
+      // First feed load: the search runs.
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockMessageStore.search).toHaveBeenCalledTimes(1)
+
+      // A later feed reload hands back an equal-but-new bounds array, exactly as the
+      // store getter does. The question has not changed, so it must not be re-asked.
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockMessageStore.search).toHaveBeenCalledTimes(1)
+    })
+
     it('falls back to group bounds when showing nearby posts but the member has no location', async () => {
       mockAuthStore.user = {
         id: 1,

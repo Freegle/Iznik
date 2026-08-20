@@ -881,6 +881,14 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  /* The messages_groups.collection this listing is browsing (Approved, Pending, ...).
+     Used only to pick which group copy currentGroupid falls back to when there is no
+     explicit contextGroupid - see currentGroupid below. */
+  collection: {
+    type: String,
+    required: false,
+    default: null,
+  },
 })
 
 const emit = defineEmits(['destroy'])
@@ -997,7 +1005,26 @@ const currentGroupid = computed(() => {
     const pending = mine.filter((g) =>
       ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
     )
-    const pool = pending.length ? pending : mine
+    // The Approved Messages list (and any other single-collection listing) can still
+    // show a post that is Pending on a DIFFERENT group I also moderate - a mod covering
+    // several communities sees every post that is Approved on any one of them. Without
+    // this, the pending-first fallback below anchored to that other, still-pending copy
+    // even while browsing Approved Messages, so the notice above read the pending copy's
+    // live setting-based hold (e.g. "this group moderates all posts") on a post that had
+    // already gone out on the group actually being viewed (Discourse #10024).
+    const matchingListedCollection = props.collection
+      ? mine.filter((g) =>
+          (props.collection === 'Pending'
+            ? ['Pending', 'PendingOther', 'Spam']
+            : [props.collection]
+          ).includes(g.collection)
+        )
+      : []
+    const pool = matchingListedCollection.length
+      ? matchingListedCollection
+      : pending.length
+      ? pending
+      : mine
     // Anchor to the group the post ORIGINATED on (home), not a copy that rippled in
     // later. A mod active on both the origin and a group the post rippled into should
     // act on / reply from the origin, so a Blank reply appends to the member's existing

@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import {
   describe,
   it,
@@ -465,5 +467,28 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
     expect(chatCount.value).toBeDefined()
 
     expect(mockSetBadgeCount).toHaveBeenCalledWith(99)
+  })
+
+  // Review of fix/notification-badge-9953-6: chatCount's badge write and
+  // mobileStore's startBadgeSync() watch (stores/mobile.js) both computed
+  // Math.min(99, chats + notifications) independently, with no shared
+  // helper - two implementations of the same formula that could silently
+  // drift apart. Assert on the source (rather than the numeric outcome,
+  // which is identical either way) so a later edit that reintroduces an
+  // inline duplicate here fails this test.
+  it('computes the badge total via the shared combinedBadgeCount() helper, not an inline duplicate', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../../composables/useNavbar.js'),
+      'utf-8'
+    )
+    expect(source).toMatch(
+      /import\s*\{\s*combinedBadgeCount\s*\}\s*from\s*'~\/composables\/useBadgeCount'/
+    )
+
+    const chatCountBody = source.match(
+      /const chatCount = computed\(\(\) => \{([\s\S]*?)\n {2}\}\)/
+    )
+    expect(chatCountBody).not.toBeNull()
+    expect(chatCountBody[1]).toMatch(/combinedBadgeCount\(/)
   })
 })

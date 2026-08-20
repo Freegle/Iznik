@@ -314,6 +314,18 @@ so the animation you watch is the targeting decision at each step, not a geometr
 approximation of it. On by default; `RIPPLE_REACHABLE_GATE=false` is the killswitch, reverting
 targeting and retraction to the polygon-overlap test.
 
+### 4b. Posts that sit out: an item still held as several messages
+
+A post whose TrashNothing post id is also held by another live message does not ripple into
+new groups. Such a set is one physical item existing as more than one Freegle message, and
+each would otherwise ripple on its own account, so the item would reach people once per
+copy. Enforced in `rippleIntoNewGroups`.
+
+This is self-limiting rather than a standing exclusion: once
+`php artisan tn:merge-crossposts` has collapsed the set onto one message there is no other
+live message to match, and the post ripples like any other. Ingestion no longer creates such
+sets - see [TrashNothing](trashnothing.md#cross-posts-and-reposts).
+
 ### 4a. Communities that never ripple: phantom and training
 
 Some communities exist to hold moderator practice posts rather than real items, and their

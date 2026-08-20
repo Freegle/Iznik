@@ -31,8 +31,10 @@
    "What's in the digest" visual group when inbound mode is active —
    give it a subtle left rail so it's clearly grouped with the heading
    above and the pie chart below. */
-#rippling-panel-body:has(#rippling-sim-contents:not([style*='display: none'])) #rippling-time-row,
-#rippling-panel-body:has(#rippling-sim-contents:not([style*='display: none'])) #rippling-sim-pie-wrap {
+#rippling-panel-body:has(#rippling-sim-contents:not([style*='display: none']))
+  #rippling-time-row,
+#rippling-panel-body:has(#rippling-sim-contents:not([style*='display: none']))
+  #rippling-sim-pie-wrap {
   border-left: 2px solid #d9eccb;
   padding-left: 8px;
   margin-left: -2px;
@@ -124,11 +126,21 @@
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.25);
   width: 290px;
   z-index: 1000;
+  /* overflow:hidden is what clips the green header into the rounded corners, so
+     it has to stay - but on its own it also silently clipped everything below
+     the fold. The panel is absolutely positioned inside a height:100% root, so
+     the document never overflows and there is nothing for the window to
+     scroll: on a short viewport the bottom of the panel was simply
+     unreachable. Bound the height to the map and let the body scroll instead. */
+  max-height: calc(100% - 20px);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 #rippling-panel-header {
   background: #61ae24;
   color: #fff;
+  flex-shrink: 0;
   padding: 12px 16px;
   font-weight: 700;
   font-size: 15px;
@@ -141,6 +153,10 @@
 #rippling-panel-body {
   padding: 14px 16px 16px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* The scrolling part, so the header stays put. min-height:0 is required for a
+     flex child to be allowed to shrink below its content height. */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 #rippling-search-wrap {

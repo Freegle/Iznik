@@ -240,6 +240,17 @@ function previewFor(img) {
   return localPreviews.value[img.id] || img.pending_image_url || null
 }
 
+// The Go API answers errors as {"error": <status>, "message": "..."}, and its messages
+// are written for whoever is looking at this page: "No pending image to accept —
+// regenerate first", or Cloudflare refusing a prompt as unsafe. Collapsing all of them
+// into "Please try again" told a moderator to repeat the one thing that could not work —
+// which is what happened on 2026-08-19, when Accept was timing out against a 35M-row scan
+// and the only advice on screen was to try again.
+function apiMessage(e, fallback) {
+  const msg = e?.response?.data?.message
+  return typeof msg === 'string' && msg.trim() ? msg : fallback
+}
+
 async function handleRegenerate(img) {
   regenerating.value[img.id] = true
   errors.value[img.id] = null
@@ -252,7 +263,7 @@ async function handleRegenerate(img) {
       errors.value[img.id] = 'Generation returned no image. Please try again.'
     }
   } catch (e) {
-    errors.value[img.id] = 'Generation failed. Please try again.'
+    errors.value[img.id] = apiMessage(e, 'Generation failed. Please try again.')
   } finally {
     regenerating.value[img.id] = false
   }
@@ -268,7 +279,7 @@ async function handleAccept(img) {
     await accept(img.id, img.pending_externaluid || '')
     localImages.value = localImages.value.filter((i) => i.id !== img.id)
   } catch (e) {
-    errors.value[img.id] = 'Failed to accept image. Please try again.'
+    errors.value[img.id] = apiMessage(e, 'Failed to accept image. Please try again.')
   } finally {
     accepting.value[img.id] = false
   }
@@ -282,7 +293,7 @@ async function handleKeep(img) {
     await keep(img.id)
     localImages.value = localImages.value.filter((i) => i.id !== img.id)
   } catch (e) {
-    errors.value[img.id] = 'Failed to keep current image. Please try again.'
+    errors.value[img.id] = apiMessage(e, 'Failed to keep current image. Please try again.')
   } finally {
     keeping.value[img.id] = false
   }
@@ -299,7 +310,7 @@ async function handleSuppress(img) {
     await suppress(img.id)
     localImages.value = localImages.value.filter((i) => i.id !== img.id)
   } catch (e) {
-    errors.value[img.id] = 'Failed to suppress this item. Please try again.'
+    errors.value[img.id] = apiMessage(e, 'Failed to suppress this item. Please try again.')
   } finally {
     suppressing.value[img.id] = false
   }

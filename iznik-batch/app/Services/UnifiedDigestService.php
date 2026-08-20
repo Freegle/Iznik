@@ -285,11 +285,12 @@ class UnifiedDigestService
     /**
      * Process one group's immediate-mode notifications.
      *
-     * Known limitation: unlike the daily digest (which calls deduplicatePosts() across all of a
-     * member's groups), this path sends one email per message per group. A cross-posted item (TN
-     * cross-post or rippled copy) that lands in N of a member's groups generates N separate
-     * immediate emails. Fixing it would need a per-user cross-group dedup pass before spooling,
-     * which V1 never had and is not yet implemented.
+     * A member gets at most one immediate email per post, however many of their groups it
+     * is on. This runs once per group, so a post on several of a member's groups would
+     * otherwise be mailed to them once per group - it reaches them as one item and should
+     * arrive once. The rippling_reach_notified ledger, which this path already writes to
+     * keep the reach mailer from re-mailing, is read here for the same purpose: a later
+     * group's pass sees the earlier one's row and skips the recipient.
      *
      * @return array{emails: int, users: int[]}
      */
@@ -369,6 +370,22 @@ class UnifiedDigestService
             $recipientLatLng[$uid] = $this->resolveUserLatLng($recipientUser);
         }
 
+        // Who has already had an immediate email about each of these posts, from an earlier
+        // group's pass in this run or a previous one. One query for the whole batch rather
+        // than a lookup per (message, recipient).
+        $alreadyMailed = [];
+        $batchMsgids = $messages->pluck('mg_msgid')->map(fn ($v) => (int) $v)->all();
+        if (!empty($batchMsgids)) {
+            foreach (
+                DB::table('rippling_reach_notified')
+                    ->whereIn('msgid', $batchMsgids)
+                    ->whereIn('userid', $memberIds)
+                    ->get(['msgid', 'userid']) as $row
+            ) {
+                $alreadyMailed[(int) $row->msgid][(int) $row->userid] = true;
+            }
+        }
+
         $emailsSent = 0;
         $touched = [];
         $lastProcessed = null;
@@ -401,6 +418,11 @@ class UnifiedDigestService
                 // (see $lastProcessed below), and a three-day-old OFFER is
                 // taken or gone by the time a provider recovers anyway.
                 if ($this->suppressions()->shouldSkip($user->email_preferred, (int) $uid, 'digest_immediate')) {
+                    continue;
+                }
+                // Already mailed about this post from another of their groups. The item does
+                // not become two items by being posted to two groups the member is in.
+                if (isset($alreadyMailed[(int) $message->mg_msgid][(int) $uid])) {
                     continue;
                 }
                 // Distance-preference filter (settings.browseMaxDistance) — skip
@@ -464,18 +486,18 @@ class UnifiedDigestService
                             'error' => $e->getMessage(),
                         ]);
                     }
-                    // Record this send in the reach-coordination ledger whenever rippling is active
-                    // in EITHER mode — the global master switch OR the scoped within-group experiment.
-                    // The reach mailer (mailNewlyReachedForPost) excludes anyone already in this ledger;
-                    // if the immediate (cursor) path doesn't record here, a rippled post gets mailed
-                    // twice — immediate-on-arrival AND again by the reach mailer. Gating on
-                    // ripple.enabled alone missed the scoped experiment (within_groups), which ran with
-                    // the global flag off and double-mailed members (~8k dup emails/day; Edinburgh
-                    // "Bird cherry sapling", 2026-06-27). When rippling is fully dark (no global flag
-                    // and no within_groups) the reach mailer self-idles, so we skip the write then.
-                    $ripplingActive = config('freegle.ripple.enabled')
-                        || !empty(config('freegle.ripple.within_groups'));
-                    if ($spooled && $ripplingActive) {
+                    // Record this send. Two readers depend on it:
+                    //
+                    //  - the reach mailer (mailNewlyReachedForPost), which excludes anyone already
+                    //    here, so a rippled post is not mailed twice - once on arrival by this path
+                    //    and again by the reach engine minutes later once its reach row appears;
+                    //  - this path itself, on a later group's pass, so a post on several of the
+                    //    member's groups reaches them once.
+                    //
+                    // Written for every send, not only while rippling is switched on: the second
+                    // reader needs it either way, and a row for a post that never ripples is simply
+                    // never read by the first.
+                    if ($spooled) {
                         // Coordinate with the expander-driven reach mailer: record this send so
                         // mailNewlyReachedForPost never re-mails the same member once the post's
                         // reach row appears (the post is cursor-mailed on arrival, before the reach
@@ -489,12 +511,14 @@ class UnifiedDigestService
                                 'notified_at' => now(),
                             ]);
                         } catch (\Throwable $e) {
-                            Log::warning('Immediate digest: reach-ledger write failed (expander may re-notify)', [
+                            Log::warning('Immediate digest: notified-ledger write failed (member may be re-mailed)', [
                                 'user_id' => $uid,
                                 'msgid' => (int) $message->mg_msgid,
                                 'error' => $e->getMessage(),
                             ]);
                         }
+
+                        $alreadyMailed[(int) $message->mg_msgid][(int) $uid] = true;
                     }
                 }
                 $emailsSent++;
