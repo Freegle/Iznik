@@ -949,6 +949,51 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(0, DB::table('rippling_reach')->where('msgid', $msgid)->count()); // but not written
     }
 
+    /**
+     * A TrashNothing item cross-posted to several groups is a single message, so it ripples
+     * normally. Copies of one item that predate that are still in the database, and each
+     * would ripple on its own account - the same item reaching people once per copy. A
+     * message sharing its post id with another live message therefore sits out until
+     * tn:merge-crossposts has collapsed the set.
+     */
+    public function test_a_tn_message_with_a_live_duplicate_does_not_ripple_into_new_groups(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $tnPostId = 'tn-dup-'.uniqid();
+        DB::table('messages')->where('id', $msgid)->update(['tnpostid' => $tnPostId]);
+
+        // A second live message carrying the same post id: an unmerged copy of the item.
+        $copy = DB::table('messages')->insertGetId([
+            'date' => now(),
+            'arrival' => now(),
+            'source' => 'Email',
+            'subject' => 'OFFER: Singular Ripple Fixture (London)',
+            'tnpostid' => $tnPostId,
+            'type' => 'Offer',
+        ]);
+
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'a message sharing its TN post id with a live copy must not ripple into new groups'
+        );
+
+        // The converse - that a TN post with no live copy DOES ripple into exactly this
+        // group, from an identical fixture - is asserted by
+        // test_a_tn_post_with_no_live_duplicate_ripples_like_any_other. The pair is what
+        // shows the check fires only while a copy exists, and stops mattering once the set
+        // has been collapsed.
+    }
+
     public function test_ripples_post_into_groups_whose_area_the_reach_covers(): void
     {
         // #6: as reach crosses into a group's area (DPA poly if present, else CGA
@@ -1753,16 +1798,21 @@ class ExpandServiceTest extends TestCase
      * multiple Freegle groups itself, so rippling in would duplicate the post across
      * even more groups.
      */
-    public function test_tn_post_is_not_rippled_into_new_groups(): void
+    /**
+     * A TrashNothing item is one message like any other, so it ripples like any other. Only a
+     * message sharing its post id with another live one sits out - see
+     * test_a_tn_message_with_a_live_duplicate_does_not_ripple_into_new_groups.
+     */
+    public function test_a_tn_post_with_no_live_duplicate_ripples_like_any_other(): void
     {
         config(['freegle.trashnothing.ingest_posts_via_api' => false]);
         $this->fakeRouting(3);
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
 
-        // Mark the message as a TN post.
+        // Mark the message as a TN post. Nothing else carries this post id.
         DB::table('messages')->where('id', $msgid)->update(['tnpostid' => 'TN12345']);
 
-        // Group whose area intersects the fake reach — would normally get the post.
+        // Group whose area intersects the fake reach.
         $groupB = $this->createTestGroup();
         DB::statement(
             "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
@@ -1771,10 +1821,10 @@ class ExpandServiceTest extends TestCase
 
         $stats = $this->service()->process(false, 500);
 
-        $this->assertSame(0, $stats['rippled_in'], 'TN post must not be rippled into any new group');
-        $this->assertNull(
+        $this->assertGreaterThanOrEqual(1, $stats['rippled_in'], 'a TN post with no live duplicate ripples');
+        $this->assertNotNull(
             DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
-            'TN post is not inserted into a new group via rippling'
+            'a TN post with no live duplicate is rippled into a group its reach covers'
         );
     }
 

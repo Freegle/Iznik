@@ -469,7 +469,8 @@ function filterNonsense(val) {
   background: $white;
   border: 1px solid $gray-200;
   overflow: hidden;
-  transition: box-shadow var(--transition-fast),
+  transition:
+    box-shadow var(--transition-fast),
     border-color var(--transition-fast);
   display: flex;
   flex-direction: row;

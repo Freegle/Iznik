@@ -8,7 +8,6 @@ const config = {
   appId: 'org.ilovefreegle.modtools',
   appName: 'Freegle ModTools',
   webDir: 'modtools/.output/public',
-  bundledWebRuntime: false,
   zoomEnabled: true,
 
   server: {
@@ -24,7 +23,7 @@ const config = {
 
   android: {
     includePlugins: [
-      '@freegle/capacitor-push-notifications-cap7',
+      '@freegle/capacitor-push-notifications-cap8',
       '@capawesome/capacitor-badge',
       '@capgo/capacitor-social-login',
       '@capacitor/app',
@@ -45,7 +44,7 @@ const config = {
     scheme: 'App',
     contentInset: 'automatic',
     includePlugins: [
-      '@freegle/capacitor-push-notifications-cap7',
+      '@freegle/capacitor-push-notifications-cap8',
       '@capawesome/capacitor-badge',
       '@capgo/capacitor-social-login',
       '@capacitor-community/apple-sign-in',

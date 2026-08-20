@@ -132,7 +132,9 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       const sendButtonAgain = page
         .locator('.composer-send-btn')
         .filter({ visible: true })
-      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
+      if (
+        await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)
+      ) {
         await sendButtonAgain.click()
         await page.waitForURL(/\/chats\//, {
           timeout: timeouts.navigation.default,
@@ -262,7 +264,9 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       timeout: timeouts.navigation.default,
     })
     expect(page.url()).not.toContain('/chats/')
-    console.log('[Test] Existing user reply from browse page stayed on the list')
+    console.log(
+      '[Test] Existing user reply from browse page stayed on the list'
+    )
 
     // Cleanup
     await logoutIfLoggedIn(page)

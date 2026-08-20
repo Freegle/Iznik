@@ -11,7 +11,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { ref } from 'vue'
+
+// ============================================================
+// MODULE UNDER TEST
+// ============================================================
+// Import AFTER mocks so vi.mock() factories are wired up.
+
+import { useMe, fetchMe } from '~/composables/useMe'
 
 // ============================================================
 // STORE MOCKS — must be declared before any imports that
@@ -54,13 +60,6 @@ vi.mock('wicket', () => ({
     },
   },
 }))
-
-// ============================================================
-// MODULE UNDER TEST
-// ============================================================
-// Import AFTER mocks so vi.mock() factories are wired up.
-
-import { useMe, fetchMe } from '~/composables/useMe'
 
 // ============================================================
 // HELPERS
@@ -359,7 +358,13 @@ describe('useMe — role flags', () => {
 
   it.each(roleTable)(
     'systemrole=%s → mod=%s support=%s admin=%s supportOrAdmin=%s',
-    (systemrole, expectedMod, expectedSupport, expectedAdmin, expectedSupportOrAdmin) => {
+    (
+      systemrole,
+      expectedMod,
+      expectedSupport,
+      expectedAdmin,
+      expectedSupportOrAdmin
+    ) => {
       mockAuthState.user = makeUser({ systemrole })
       const { mod, support, admin, supportOrAdmin } = useMe()
       expect(mod.value).toBe(expectedMod)
@@ -414,9 +419,7 @@ describe('useMe — chitChatMod', () => {
 
   it('is false for regular user not in the ChitChat Moderation team', () => {
     mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
-    mockTeamState.getTeam = vi
-      .fn()
-      .mockReturnValue({ members: [{ id: 99 }] })
+    mockTeamState.getTeam = vi.fn().mockReturnValue({ members: [{ id: 99 }] })
     const { chitChatMod } = useMe()
     expect(chitChatMod.value).toBe(false)
   })
@@ -432,7 +435,7 @@ describe('useMe — chitChatMod', () => {
     mockAuthState.user = makeUser({ id: 5, systemrole: 'User' })
     mockTeamState.getTeam = vi.fn().mockReturnValue(null)
     const { chitChatMod } = useMe()
-    chitChatMod.value // trigger evaluation
+    expect(chitChatMod.value).toBe(false) // trigger evaluation
     expect(mockTeamState.getTeam).toHaveBeenCalledWith('ChitChat Moderation')
   })
 })
@@ -706,7 +709,10 @@ describe('useMe — myGroupsBoundingBox', () => {
     // group has no bbox field
 
     const { myGroupsBoundingBox } = useMe()
-    expect(myGroupsBoundingBox.value).toEqual([[null, null], [null, null]])
+    expect(myGroupsBoundingBox.value).toEqual([
+      [null, null],
+      [null, null],
+    ])
   })
 
   it('returns [[null,null],[null,null]] when user has no groups', () => {
@@ -714,7 +720,10 @@ describe('useMe — myGroupsBoundingBox', () => {
     mockAuthState.groups = []
 
     const { myGroupsBoundingBox } = useMe()
-    expect(myGroupsBoundingBox.value).toEqual([[null, null], [null, null]])
+    expect(myGroupsBoundingBox.value).toEqual([
+      [null, null],
+      [null, null],
+    ])
   })
 
   it('logs WKT error and continues when WKT parse fails (invalid bbox)', async () => {
@@ -741,7 +750,10 @@ describe('useMe — myGroupsBoundingBox', () => {
     const bbox = myGroupsBoundingBox.value
 
     // Error is swallowed; returns null bounds
-    expect(bbox).toEqual([[null, null], [null, null]])
+    expect(bbox).toEqual([
+      [null, null],
+      [null, null],
+    ])
     expect(consoleSpy).toHaveBeenCalledWith(
       'WKT error',
       expect.anything(),

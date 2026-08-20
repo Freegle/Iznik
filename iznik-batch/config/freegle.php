@@ -1275,14 +1275,6 @@ return [
         'cpi_max_age_days' => (int) env('FREEGLE_MONITORING_CPI_MAX_AGE_DAYS', 40),
     ],
 
-    'dedup' => [
-        // Guard for the dedup:tn artisan command. Defaults to false — the
-        // command refuses to run unless this is true, so it's safe to deploy
-        // the code without changing existing Trash Nothing behaviour.
-        // --dry-run still works regardless (it only reads).
-        'tn_enabled' => env('TN_DEDUP_ENABLED', false),
-    ],
-
     'lovejunk' => [
         'api' => env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
         'secret' => env('LOVE_JUNK_SECRET', ''),

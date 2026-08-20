@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { vi } from 'vitest'
+
+import ClearanceManageItem from '~/components/ClearanceManageItem.vue'
 
 // Stub the candidate so we can inspect the props the item passes down without
 // pulling in its store dependencies.
@@ -11,8 +12,6 @@ vi.mock('~/components/ClearanceCandidate', () => ({
     props: ['messageId', 'bulkitemid', 'interest', 'otherAllocations'],
   },
 }))
-
-import ClearanceManageItem from '~/components/ClearanceManageItem.vue'
 
 const message = {
   id: 1,

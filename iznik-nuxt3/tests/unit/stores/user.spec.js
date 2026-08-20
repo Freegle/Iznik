@@ -159,8 +159,8 @@ describe('user store', () => {
 
     it('deduplicates concurrent fetches for same id', async () => {
       let resolveFirst
-      const firstPromise = new Promise((r) => {
-        resolveFirst = r
+      const firstPromise = new Promise((resolve) => {
+        resolveFirst = resolve
       })
       mockFetchMT.mockReturnValueOnce(firstPromise)
 
@@ -227,9 +227,7 @@ describe('user store', () => {
 
     it('skips IDs that are currently being fetched', async () => {
       store.fetching[2] = Promise.resolve()
-      mockFetchMultiple.mockResolvedValue([
-        { id: 1, displayname: 'A' },
-      ])
+      mockFetchMultiple.mockResolvedValue([{ id: 1, displayname: 'A' }])
 
       await store.fetchMultiple([1, 2])
       expect(mockFetchMultiple).toHaveBeenCalledWith([1], false)
@@ -294,9 +292,7 @@ describe('user store', () => {
 
     it('rate calls API and refetches user', async () => {
       mockRate.mockResolvedValue({})
-      mockFetchMultiple.mockResolvedValue([
-        { id: 1, displayname: 'Rated' },
-      ])
+      mockFetchMultiple.mockResolvedValue([{ id: 1, displayname: 'Rated' }])
 
       await store.rate(1, 'Up', 'helpful', 'Great trader')
       expect(mockRate).toHaveBeenCalledWith(1, 'Up', 'helpful', 'Great trader')
@@ -335,9 +331,7 @@ describe('user store', () => {
 
     it('edit calls API and refetches user', async () => {
       mockUserSave.mockResolvedValue({})
-      mockFetchMultiple.mockResolvedValue([
-        { id: 1, displayname: 'Edited' },
-      ])
+      mockFetchMultiple.mockResolvedValue([{ id: 1, displayname: 'Edited' }])
 
       await store.edit({ id: 1, displayname: 'Edited' })
       expect(mockUserSave).toHaveBeenCalledWith({
@@ -348,9 +342,7 @@ describe('user store', () => {
 
     it('addEmail calls API and refetches user', async () => {
       mockAddEmail.mockResolvedValue({})
-      mockFetchMultiple.mockResolvedValue([
-        { id: 1, displayname: 'Test' },
-      ])
+      mockFetchMultiple.mockResolvedValue([{ id: 1, displayname: 'Test' }])
 
       await store.addEmail({ id: 1, email: 'new@test.com', primary: true })
       expect(mockAddEmail).toHaveBeenCalledWith(1, 'new@test.com', true)

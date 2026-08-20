@@ -63,6 +63,12 @@ const engagedLogged = ref(false)
 let engagedTimer = null
 
 const { modal, hide: rawHide } = useOurModal()
+// defineExpose must run before the first await (vue/no-expose-after-await);
+// the holder is filled in at the end of setup. No production consumer takes a
+// template ref on this modal — the exposed members serve the unit tests.
+const exposed = {}
+defineExpose(exposed)
+
 const { variant, groupId, show } = await useDonationAskModal()
 
 function logOpen() {
@@ -146,7 +152,14 @@ const donated = computed(() => {
 })
 show()
 
-defineExpose({ suggestedDonationDefault, score, groupName, targetMet, donated, hide })
+Object.assign(exposed, {
+  suggestedDonationDefault,
+  score,
+  groupName,
+  targetMet,
+  donated,
+  hide,
+})
 </script>
 
 <style scoped lang="scss">

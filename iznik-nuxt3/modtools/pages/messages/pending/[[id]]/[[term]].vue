@@ -265,11 +265,15 @@ onMounted(async () => {
     highlightMsgId.value = parseInt(route.params.term)
   }
 
-  // AIMS
+  // AIMS. The user can be null at mount (auth still loading, or logged out) —
+  // Nuxt 4 mounts the page earlier than Nuxt 3 did, which exposed this.
   const user = authStore.user
   const lastaimsshow = user?.settings?.lastaimsshow
 
-  if (!lastaimsshow || dayjs().diff(dayjs(lastaimsshow), 'days') > 365) {
+  if (
+    user &&
+    (!lastaimsshow || dayjs().diff(dayjs(lastaimsshow), 'days') > 365)
+  ) {
     showAimsModal.value = true
 
     const settings = user.settings

@@ -150,13 +150,20 @@ describe('createHeicPreProcessor', () => {
       quality: 0.92,
     })
     expect(uppy.setFileState).toHaveBeenCalledWith('file-1', {
-      data: converted,
+      data: expect.any(File),
       type: 'image/jpeg',
       extension: 'jpg',
       size: 900000,
       name: 'IMG_0001.jpg',
       meta: { name: 'IMG_0001.jpg', type: 'image/jpeg' },
     })
+    // The data handed on must be a NAMED File, not a bare Blob: Compressor
+    // rebuilds the upload filename from its input's name after compressing,
+    // and a nameless blob compresses to a nameless blob, so the rebuilt name
+    // ends ".undefined" and the upload is stored as "item1.undefined".
+    const handedOn = uppy.setFileState.mock.calls[0][1].data
+    expect(handedOn.name).toBe('IMG_0001.jpg')
+    expect(handedOn.type).toBe('image/jpeg')
   })
 
   it('tells the user conversion is happening', async () => {

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-11
+last_reviewed: 2026-08-17
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/pages/settings/**

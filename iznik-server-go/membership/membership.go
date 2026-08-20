@@ -583,8 +583,19 @@ func GetMemberships(c *fiber.Ctx) error {
 			// TestTier3Shapes_836dc8807739, removed in d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() + " AND m.userid = ?"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection, searchID)
+			// Honour the cursor, exactly as the no-search branch below does. This
+			// function always hands the caller a context cursor when it returns a full
+			// page (see nextContext at the end), including for searches - so a client
+			// that pages through search results sends it back and, before this, got the
+			// same top-`limit` rows again every time. Ordering switches from m.added to
+			// m.id to match the cursor; both are set at row creation so the practical
+			// order is unchanged.
+			if contextID > 0 {
+				whereSQL += " AND m.id < ?"
+				whereArgs = append(whereArgs, contextID)
+			}
 			baseTx().Where(whereSQL, whereArgs...).
-				Order("m.added DESC").Limit(limit).Scan(&members)
+				Order("m.id DESC").Limit(limit).Scan(&members)
 		} else {
 			searchPattern := "%" + search + "%"
 			// Match firstname/lastname as well as fullname: some members (e.g. LoveJunk
@@ -601,9 +612,14 @@ func GetMemberships(c *fiber.Ctx) error {
 				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?)"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
 				searchPattern, searchPattern, searchPattern, searchPattern)
+			// Same cursor handling as the numeric branch above - see comment there.
+			if contextID > 0 {
+				whereSQL += " AND m.id < ?"
+				whereArgs = append(whereArgs, contextID)
+			}
 			baseTx().Joins("LEFT JOIN users_emails ue ON ue.userid = m.userid").
 				Where(whereSQL, whereArgs...).
-				Group("m.id").Order("m.added DESC").Limit(limit).Scan(&members)
+				Group("m.id").Order("m.id DESC").Limit(limit).Scan(&members)
 		}
 	} else {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).

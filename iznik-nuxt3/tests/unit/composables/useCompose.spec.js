@@ -67,17 +67,17 @@ describe('postcodeSelect', () => {
     expect(mockGroup).toBe(100)
   })
 
-  it('replaces stale group when stored group is not in new postcode\'s groupsnear', () => {
+  it("replaces stale group when stored group is not in new postcode's groupsnear", () => {
     mockGroup = 55
     // New postcode id (different from current) triggers the outer condition
-    const pc = makePC(99, [69615, 200])  // Group 55 not in list
+    const pc = makePC(99, [69615, 200]) // Group 55 not in list
     postcodeSelect(pc)
-    expect(mockGroup).toBe(69615)  // Stale group replaced with closest
+    expect(mockGroup).toBe(69615) // Stale group replaced with closest
   })
 
   it('preserves explicitly-set group when it is in groupsnear', () => {
     mockGroup = 55
-    const pc = makePC(99, [55, 200])  // Group 55 IS in list
+    const pc = makePC(99, [55, 200]) // Group 55 IS in list
     postcodeSelect(pc)
     expect(mockGroup).toBe(55)
   })

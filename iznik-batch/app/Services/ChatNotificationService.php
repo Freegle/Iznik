@@ -242,8 +242,14 @@ class ChatNotificationService
                 // there are unread messages. These are never replayed
                 // individually - a stack of days-old notifications arriving
                 // at once is its own harm - they become one summary instead.
+                //
+                // The message id is passed as the per-mail identity. Because this
+                // path deliberately does not advance the watermark, the same unread
+                // messages come round again on every run; without an identity the
+                // counter recorded each pass as another held mail and reached 10,777
+                // for one member in 106 minutes on 2026-08-20.
                 if (app(\App\Services\Mail\MailSuppressionService::class)
-                    ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat')) {
+                    ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat', (int) $message->id)) {
                     continue;
                 }
 

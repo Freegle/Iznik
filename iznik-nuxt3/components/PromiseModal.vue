@@ -157,8 +157,8 @@ import { useOurModal } from '~/composables/useOurModal'
 import { useAuthStore } from '~/stores/auth'
 import Api from '~/api'
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 
 const props = defineProps({
@@ -223,7 +223,7 @@ const buttonDisabled = computed(() => {
     props.messages.length === 0 ||
     !message.value ||
     // This is fun.  Because && returns one of the values, it doesn't return true or false.  Try hard.
-    // eslint-disable-next-line
+
     (formattedDate.value && !time.value ? true : false)
   )
 })

@@ -7,10 +7,25 @@ import {
   watch,
   onMounted,
   onBeforeUnmount,
-  defineComponent,
   defineAsyncComponent,
-  h,
 } from 'vue'
+
+// ============================================
+// BROWSER API STUBS
+// ============================================
+// happy-dom lacks IntersectionObserver; components run their client-only
+// observer setup now that import.meta.client substitutes to true. Specs that
+// need to assert observer behaviour install their own richer mocks over this.
+if (!(globalThis as Record<string, unknown>).IntersectionObserver) {
+  ;(globalThis as Record<string, unknown>).IntersectionObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return []
+    }
+  }
+}
 
 // ============================================
 // VUE COMPOSITION API GLOBALS (for Nuxt auto-imports)
@@ -22,8 +37,8 @@ import {
 ;(globalThis as Record<string, unknown>).watch = watch
 ;(globalThis as Record<string, unknown>).onMounted = onMounted
 ;(globalThis as Record<string, unknown>).onBeforeUnmount = onBeforeUnmount
-;(globalThis as Record<string, unknown>).defineAsyncComponent = defineAsyncComponent
-
+;(globalThis as Record<string, unknown>).defineAsyncComponent =
+  defineAsyncComponent
 
 // ============================================
 // GLOBAL VARIABLE MOCKS (for pinia-plugin-persistedstate)
@@ -62,9 +77,15 @@ console.warn = (...args: unknown[]) => {
 // Mock useNuxtApp to provide $api and other injected services
 const mockApi = {
   dashboard: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
-  message: { fetch: vi.fn().mockResolvedValue({ data: {} }), fetchMultiple: vi.fn().mockResolvedValue([]) },
+  message: {
+    fetch: vi.fn().mockResolvedValue({ data: {} }),
+    fetchMultiple: vi.fn().mockResolvedValue([]),
+  },
   user: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
-  chat: { fetch: vi.fn().mockResolvedValue({ data: {} }), listChats: vi.fn().mockResolvedValue([]) },
+  chat: {
+    fetch: vi.fn().mockResolvedValue({ data: {} }),
+    listChats: vi.fn().mockResolvedValue([]),
+  },
   group: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
   news: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
   notification: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
@@ -130,7 +151,8 @@ const mockNuxtApp = {
 ;(globalThis as Record<string, unknown>).navigateTo = vi.fn()
 
 // Mock defineNuxtPlugin (auto-imported by Nuxt, returns the plugin function as-is)
-;(globalThis as Record<string, unknown>).defineNuxtPlugin = (plugin: unknown) => plugin
+;(globalThis as Record<string, unknown>).defineNuxtPlugin = (plugin: unknown) =>
+  plugin
 
 // Mock definePageMeta (Nuxt compiler macro, no-op in tests)
 ;(globalThis as Record<string, unknown>).definePageMeta = () => {}
@@ -147,19 +169,27 @@ const mockNuxtApp = {
 // Real Nuxt scopes these per SSR request. Here the module is the scope, so a spec that
 // shares a key across cases must reset between them: call clearNuxtState() in beforeEach.
 const nuxtStateStore = new Map<string, unknown>()
-;(globalThis as Record<string, unknown>).useState = (key: string, init?: () => unknown) => {
+;(globalThis as Record<string, unknown>).useState = (
+  key: string,
+  init?: () => unknown
+) => {
   if (!nuxtStateStore.has(key)) {
     nuxtStateStore.set(key, ref(typeof init === 'function' ? init() : null))
   }
   return nuxtStateStore.get(key)
 }
-;(globalThis as Record<string, unknown>).clearNuxtState = () => nuxtStateStore.clear()
+;(globalThis as Record<string, unknown>).clearNuxtState = () =>
+  nuxtStateStore.clear()
 
 // Mock useFetch
-;(globalThis as Record<string, unknown>).useFetch = vi.fn().mockResolvedValue({ data: ref(null), pending: ref(false), error: ref(null) })
+;(globalThis as Record<string, unknown>).useFetch = vi
+  .fn()
+  .mockResolvedValue({ data: ref(null), pending: ref(false), error: ref(null) })
 
 // Mock useAsyncData
-;(globalThis as Record<string, unknown>).useAsyncData = vi.fn().mockResolvedValue({ data: ref(null), pending: ref(false), error: ref(null) })
+;(globalThis as Record<string, unknown>).useAsyncData = vi
+  .fn()
+  .mockResolvedValue({ data: ref(null), pending: ref(false), error: ref(null) })
 
 // ============================================
 // GLOBAL MOCKS (provided to template context)
@@ -180,8 +210,7 @@ config.global.mocks = {
 config.global.stubs = {
   // Stub bootstrap-vue-next components
   'b-button': {
-    template:
-      '<button :disabled="disabled" :class="variant"><slot /></button>',
+    template: '<button :disabled="disabled" :class="variant"><slot /></button>',
     props: ['variant', 'disabled', 'size'],
   },
   'b-card': {
@@ -285,7 +314,8 @@ config.global.stubs = {
 
   // Stub Spinner (auto-imported by Nuxt)
   Spinner: {
-    template: '<div class="spinner-border" role="status" :style="spinnerStyle" />',
+    template:
+      '<div class="spinner-border" role="status" :style="spinnerStyle" />',
     props: ['size'],
     setup(props) {
       const spinnerStyle = computed(() => ({

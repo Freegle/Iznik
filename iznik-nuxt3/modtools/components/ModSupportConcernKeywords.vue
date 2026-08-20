@@ -38,7 +38,9 @@
             <b-button
               type="submit"
               variant="primary"
-              :disabled="!newKeyword || !newKeyword.trim() || systemConfigStore.isLoading"
+              :disabled="
+                !newKeyword || !newKeyword.trim() || systemConfigStore.isLoading
+              "
             >
               Add
             </b-button>
@@ -54,8 +56,7 @@
 
       <div class="d-flex align-items-center gap-3 mb-3">
         <span class="fw-bold">
-          {{ filteredKeywords.length }} of
-          {{ globalKeywords.length }} keywords
+          {{ filteredKeywords.length }} of {{ globalKeywords.length }} keywords
         </span>
         <b-form-select
           v-model="filterCategory"
@@ -86,7 +87,11 @@
           {{ matchModeLabel(item.match_mode) }}
         </template>
         <template #cell(action)="{ item }">
-          <span :class="item.action === 'block' ? 'text-danger fw-bold' : 'text-warning'">
+          <span
+            :class="
+              item.action === 'block' ? 'text-danger fw-bold' : 'text-warning'
+            "
+          >
             {{ item.action === 'block' ? 'Block' : 'Flag' }}
           </span>
         </template>

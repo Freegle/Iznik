@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import { runHoldAware } from '~/api/heldConflict'
 import api from '~/api'
 
-export const useAdminsStore = defineStore({
-  id: 'admins',
+export const useAdminsStore = defineStore('admins', {
   state: () => ({
     list: {},
   }),

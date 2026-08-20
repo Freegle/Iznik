@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-16
+last_reviewed: 2026-08-20
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -19,7 +19,7 @@ Freegle (internally "Iznik") is a monorepo. The main pieces:
 
 | Directory | What it is | README |
 |-----------|-----------|--------|
-| `iznik-nuxt3/` | Nuxt 3 frontend. Serves **both** the member site (ilovefreegle.org) and, from the `modtools/` subfolder, the moderator app (modtools.org). | `iznik-nuxt3/README.md` |
+| `iznik-nuxt3/` | Nuxt 4 frontend (the directory name predates the upgrade). Serves **both** the member site (ilovefreegle.org) and, from the `modtools/` subfolder, the moderator app (modtools.org). | `iznik-nuxt3/README.md` |
 | `iznik-server-go/` | Go API, **version 2** - the primary API. | `iznik-server-go/README.md` |
 | `iznik-batch/` | Laravel batch processing: digests, notifications, scheduled jobs. Owns the database schema (migrations). | `iznik-batch/README.md` |
 | `iznik-routing-go/` | Go service for drive-time routing, used by rippling and browse. | `iznik-routing-go/README.md` |

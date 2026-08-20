@@ -253,6 +253,23 @@ const manyToShow = ref(20)
 const shownMany = ref(false)
 const lastBounds = ref(null)
 const lastBoundsFetch = ref(null)
+
+// The last search we actually asked the server for, and what it gave back.
+//
+// getMessages() is driven by several watchers, and one of them fires on a timer the
+// member never sees: the navbar polls the unseen count every 60s, MessageList reloads
+// the feed whenever that count rises, and nearbyBounds returns a fresh array each time,
+// so the bounds watcher runs on every reload whether or not the bounds moved. While a
+// search is showing, that re-asked the same question about once a minute - measured on a
+// live search, 36 identical queries over 35 minutes, every one returning the same 14
+// results (Discourse 10001/10). messageStore.search() empties the store before the new
+// answer arrives, so each repeat tore down the list the member was reading.
+//
+// A search still runs whenever anything about it changes - the term, the filters, the
+// area, the sort - because all of that is in the key. What it will not do is ask the
+// same question twice in a row.
+const lastSearchKey = ref(null)
+const lastSearchResult = ref(null)
 const zoom = ref(5)
 const destroyed = ref(false)
 const mapIdle = ref(0)
@@ -272,7 +289,7 @@ const mapHeight = computed(() => {
 const mapOptions = computed(() => {
   return {
     zoomControl: true,
-    dragging: process.client && window?.L?.Browser?.mobile,
+    dragging: import.meta.client && window?.L?.Browser?.mobile,
     touchZoom: true,
     scrollWheelZoom: false,
     bounceAtZoomLimits: true,
@@ -321,7 +338,7 @@ const groupsInBounds = computed(() => {
     const groups = mapIdle.value ? allGroups.value : []
     const boundsObj = mapObject.value ? mapObject.value.getBounds() : null
 
-    if (!process.client && boundsObj) {
+    if (!import.meta.client && boundsObj) {
       // SSR - return all for SEO.
       for (const ix in groups) {
         const group = groups[ix]
@@ -577,6 +594,7 @@ watch(
   () => props.type,
   () => {
     lastBounds.value = null
+    lastSearchKey.value = null
 
     if (zoom.value >= props.postZoom || props.search) {
       getMessages()
@@ -588,6 +606,7 @@ watch(
   () => props.search,
   () => {
     lastBounds.value = null
+    lastSearchKey.value = null
     getMessages()
   }
 )
@@ -596,6 +615,7 @@ watch(
   () => props.groupid,
   (groupid) => {
     lastBounds.value = null
+    lastSearchKey.value = null
 
     if (groupid) {
       // Use the bounding box for the group.
@@ -710,7 +730,7 @@ async function ready() {
   emit('update:ready', true)
   mapObject.value = map.value.leafletObject
 
-  if (process.client && mapObject.value) {
+  if (import.meta.client && mapObject.value) {
     try {
       mapObject.value.fitBounds(props.initialBounds)
 
@@ -719,15 +739,12 @@ async function ready() {
 
       const runtimeConfig = useRuntimeConfig()
 
-      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
-      const { Photon } = await import(
-        'leaflet-control-geocoder/src/geocoders/photon'
-      )
+      const { Geocoder, geocoders } = await import('leaflet-control-geocoder')
 
       new Geocoder({
         placeholder: 'Search for a place...',
         defaultMarkGeocode: false,
-        geocoder: new Photon({
+        geocoder: new geocoders.Photon({
           geocodingQueryParams: {
             bbox: '-7.57216793459, 49.959999905, 1.68153079591, 58.6350001085',
           },
@@ -805,6 +822,22 @@ function idle() {
   }
 }
 
+// Ask the server for a search, unless it is the same question we just asked. See
+// lastSearchKey above for why this is worth guarding.
+async function searchOnce(params) {
+  const key = JSON.stringify(params)
+
+  if (key === lastSearchKey.value && lastSearchResult.value) {
+    return lastSearchResult.value
+  }
+
+  const results = await messageStore.search(params)
+  lastSearchKey.value = key
+  lastSearchResult.value = results
+
+  return results
+}
+
 async function getMessages() {
   let messages = []
   secondaryMessageList.value = []
@@ -853,7 +886,7 @@ async function getMessages() {
     if (props.search) {
       // Search within the bounds of the map.
       console.log('GetMessages - moved, search within map bounds')
-      ret = await messageStore.search({
+      ret = await searchOnce({
         messagetype: props.type,
         search: props.search,
         swlat,
@@ -872,7 +905,7 @@ async function getMessages() {
       // So search within that group. On the Browse page, browse=1 additionally applies
       // the member's distance slider and sort so results match their filtered feed.
       console.log('GetMessages - search on specific group')
-      ret = await messageStore.search({
+      ret = await searchOnce({
         messagetype: props.type,
         search: props.search,
         groupids: [props.groupid],
@@ -914,7 +947,7 @@ async function getMessages() {
         // whenever the capped viewport search filled up with out-of-feed posts
         // (Discourse 9933).
         console.log('GetMessages - search in nearby feed')
-        ret = await messageStore.search({
+        ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
           browse: 1,
@@ -928,7 +961,7 @@ async function getMessages() {
 
       if (props.search) {
         console.log('GetMessages - search within group bounds')
-        ret = await messageStore.search({
+        ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
           swlat: groupbounds[0][0],
@@ -964,7 +997,7 @@ async function getMessages() {
       console.log(
         'GetMessages - no location, no groups, search within map bounds'
       )
-      ret = await messageStore.search({
+      ret = await searchOnce({
         messagetype: props.type,
         search: props.search,
         swlat,
@@ -989,7 +1022,7 @@ async function getMessages() {
           'GetMessages - browse search across my communities',
           myGroupIds
         )
-        ret = await messageStore.search({
+        ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
           groupids: myGroupIds,
@@ -1003,7 +1036,7 @@ async function getMessages() {
           groupbounds,
           myGroupIds
         )
-        ret = await messageStore.search({
+        ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
           swlat: groupbounds[0][0],

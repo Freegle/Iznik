@@ -24,13 +24,13 @@ EXT_NAME      = 'NotificationServiceExtension'
 APP_TARGET    = 'Freegle'
 APP_BUNDLE_ID = 'org.ilovefreegle.iphone'
 NSE_BUNDLE_ID = "#{APP_BUNDLE_ID}.#{EXT_NAME}"
-DEPLOY_TARGET = '14.0'
+DEPLOY_TARGET = '15.0'
 
 root      = File.expand_path('..', __dir__)              # fastlane/ -> project root
 proj_path = File.join(root, 'ios/App/App.xcodeproj')
 # NSE files live next to App.xcodeproj, i.e. ios/App/NotificationServiceExtension/.
 nse_dir   = File.join(root, 'ios/App', EXT_NAME)
-plugin_nse = File.join(root, 'node_modules/@freegle/capacitor-push-notifications-cap7/ios/NotificationServiceExtension')
+plugin_nse = File.join(root, 'node_modules/@freegle/capacitor-push-notifications-cap8/ios/NotificationServiceExtension')
 
 unless File.directory?(File.dirname(proj_path))
   warn "add_nse_target: #{proj_path} not found — has `npx cap add ios` / `cap sync` run? Skipping."

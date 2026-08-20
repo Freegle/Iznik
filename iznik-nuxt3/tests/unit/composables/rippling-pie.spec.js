@@ -12,7 +12,10 @@ describe('rippling/pie', () => {
   })
 
   it('renders an empty grey circle when all slices are zero', () => {
-    renderPie(svg, [{ count: 0, color: '#000' }, { count: 0, color: '#fff' }])
+    renderPie(svg, [
+      { count: 0, color: '#000' },
+      { count: 0, color: '#fff' },
+    ])
     expect(svg.innerHTML).toContain('<circle')
     expect(svg.innerHTML).toContain('#eee')
   })

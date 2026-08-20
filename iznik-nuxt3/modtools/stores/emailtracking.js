@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useEmailTrackingStore = defineStore({
-  id: 'emailtracking',
+export const useEmailTrackingStore = defineStore('emailtracking', {
   state: () => ({
     // Aggregate statistics.
     stats: null,

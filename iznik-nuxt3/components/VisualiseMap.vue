@@ -92,7 +92,7 @@ import { attribution, osmtile, getDistance } from '~/composables/useMap'
 
 // We can only render this on the client. Pre-render fails, and vue-leaflet doesn't seem to render the map in
 // any case. See https://github.com/vue-leaflet/vue-leaflet/discussions/208.
-if (process.client) {
+if (import.meta.client) {
   await import('leaflet/dist/leaflet-src.esm')
 }
 

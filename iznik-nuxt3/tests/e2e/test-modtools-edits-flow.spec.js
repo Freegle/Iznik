@@ -10,7 +10,11 @@
 
 const { test, expect } = require('./fixtures')
 const { timeouts, environment } = require('./config')
-const { loginViaModTools, clearSessionData, loginViaHomepage } = require('./utils/user')
+const {
+  loginViaModTools,
+  clearSessionData,
+  loginViaHomepage,
+} = require('./utils/user')
 
 const MODTOOLS_URL = environment.modtoolsBaseUrl
 const API_V2 = environment.apiV2BaseUrl
@@ -72,12 +76,9 @@ test.describe('ModTools Edits Flow', () => {
     console.log('\n--- Step 1c: Approve message via API ---')
 
     // Login as mod to get JWT via V2 API
-    const loginResp = await page.request.post(
-      `${API_V2}/session`,
-      {
-        data: { email: modEmail, password: 'freegle' },
-      }
-    )
+    const loginResp = await page.request.post(`${API_V2}/session`, {
+      data: { email: modEmail, password: 'freegle' },
+    })
     const loginData = await loginResp.json()
     console.log(`Mod login: jwt=${loginData.jwt ? 'present' : 'missing'}`)
     expect(loginData.jwt).toBeTruthy()
@@ -94,9 +95,12 @@ test.describe('ModTools Edits Flow', () => {
     await expect
       .poll(
         async () => {
-          const resp = await page.request.get(`${API_V2}/message/${posted.id}`, {
-            headers: { Authorization: modJwt },
-          })
+          const resp = await page.request.get(
+            `${API_V2}/message/${posted.id}`,
+            {
+              headers: { Authorization: modJwt },
+            }
+          )
           msgData = await resp.json()
           return msgData?.groups?.length > 0
         },
@@ -109,36 +113,32 @@ test.describe('ModTools Edits Flow', () => {
       .toBe(true)
     const fromUserId = msgData?.fromuser
     const actualGroupId = msgData?.groups?.[0]?.groupid ?? testEnv.group.id
-    console.log(`Message fromuser: ${fromUserId}, actual groupid: ${actualGroupId}`)
+    console.log(
+      `Message fromuser: ${fromUserId}, actual groupid: ${actualGroupId}`
+    )
     expect(fromUserId).toBeTruthy()
 
     // Approve the message via V2 API using the actual groupid
-    const approveResp = await page.request.post(
-      `${API_V2}/message`,
-      {
-        data: {
-          action: 'Approve',
-          id: Number(posted.id),
-          groupid: Number(actualGroupId),
-        },
-        headers: { Authorization: modJwt },
-      }
-    )
+    const approveResp = await page.request.post(`${API_V2}/message`, {
+      data: {
+        action: 'Approve',
+        id: Number(posted.id),
+        groupid: Number(actualGroupId),
+      },
+      headers: { Authorization: modJwt },
+    })
     console.log(`Approve status: ${approveResp.status()}`)
     expect(approveResp.ok()).toBeTruthy()
 
     // Set the poster's posting status to MODERATED on this group
-    const memberResp = await page.request.patch(
-      `${API_V2}/memberships`,
-      {
-        data: {
-          userid: Number(fromUserId),
-          groupid: Number(actualGroupId),
-          ourPostingStatus: 'MODERATED',
-        },
-        headers: { Authorization: modJwt },
-      }
-    )
+    const memberResp = await page.request.patch(`${API_V2}/memberships`, {
+      data: {
+        userid: Number(fromUserId),
+        groupid: Number(actualGroupId),
+        ourPostingStatus: 'MODERATED',
+      },
+      headers: { Authorization: modJwt },
+    })
     console.log(`Set moderated status: ${memberResp.status()}`)
     expect(memberResp.ok()).toBeTruthy()
     console.log('Message approved and user set to moderated')

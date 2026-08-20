@@ -424,8 +424,12 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Wait for submit button to be in login mode ("Log in"), switching if needed.
       // Same expect.poll pattern as loginViaModTools to avoid Vue hydration race.
-      const loginSubmitButton = loginModal.locator('button[type="submit"]:has-text("Log in")')
-      const joinSubmitButton = loginModal.locator('button[type="submit"]:has-text("Join Freegle")')
+      const loginSubmitButton = loginModal.locator(
+        'button[type="submit"]:has-text("Log in")'
+      )
+      const joinSubmitButton = loginModal.locator(
+        'button[type="submit"]:has-text("Join Freegle")'
+      )
       await expect
         .poll(
           async () => {
@@ -439,8 +443,13 @@ test.describe('Reply Flow - Edge Cases', () => {
               .isVisible({ timeout: 5000 })
               .catch(() => false)
             if (joinVisible) {
-              const switchBtn = loginModal.locator('button.test-already-a-freegler')
-              await switchBtn.first().click().catch(() => {})
+              const switchBtn = loginModal.locator(
+                'button.test-already-a-freegler'
+              )
+              await switchBtn
+                .first()
+                .click()
+                .catch(() => {})
             }
             return false
           },
@@ -494,7 +503,9 @@ test.describe('Reply Flow - Edge Cases', () => {
           .locator('textarea[name="reply"]')
           .filter({ visible: true })
         if (
-          !(await restoredTextarea.isVisible({ timeout: 5000 }).catch(() => false))
+          !(await restoredTextarea
+            .isVisible({ timeout: 5000 })
+            .catch(() => false))
         ) {
           await clickReplyButton(page)
         }
@@ -504,7 +515,9 @@ test.describe('Reply Flow - Edge Cases', () => {
         const collectAgain = page
           .locator('textarea[name="collect"]')
           .filter({ visible: true })
-        if (await collectAgain.isVisible({ timeout: 3000 }).catch(() => false)) {
+        if (
+          await collectAgain.isVisible({ timeout: 3000 }).catch(() => false)
+        ) {
           if (!(await collectAgain.inputValue())) {
             await collectAgain.fill('Can collect anytime')
           }

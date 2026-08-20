@@ -99,8 +99,8 @@ import { useGroupStore } from '~/stores/group'
 import ReadMore from '~/components/ReadMore'
 import { timeago } from '~/composables/useTimeFormat'
 
-const StoryShareModal = defineAsyncComponent(() =>
-  import('~/components/StoryShareModal')
+const StoryShareModal = defineAsyncComponent(
+  () => import('~/components/StoryShareModal')
 )
 
 const props = defineProps({

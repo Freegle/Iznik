@@ -121,7 +121,12 @@ export const HELPER_GROUP_POOL = ['QUALIFIED']
 export const HELPER_GROUP_NEEDSYOU = ['ESCALATED']
 // The Helper is still working these (contacted / chasing / parked).
 // On the page these are "outreach": collapsed until the person replies.
-export const HELPER_GROUP_OUTREACH = ['NEW', 'GATHERING', 'PARKED_REPLIED', 'PARKED_QUIET']
+export const HELPER_GROUP_OUTREACH = [
+  'NEW',
+  'GATHERING',
+  'PARKED_REPLIED',
+  'PARKED_QUIET',
+]
 export const HELPER_GROUP_INACTIVE = ['TIMED_OUT', 'WITHDRAWN', 'REJECTED']
 
 export const HELPER_STATE_META = {
@@ -131,7 +136,11 @@ export const HELPER_STATE_META = {
   ALLOCATED: { label: 'Allocated', variant: 'success', group: 'allocated' },
   CONFIRMED: { label: 'Confirmed', variant: 'success', group: 'allocated' },
   COLLECTED: { label: 'Collected', variant: 'primary', group: 'allocated' },
-  PARKED_REPLIED: { label: 'Fallback', variant: 'secondary', group: 'outreach' },
+  PARKED_REPLIED: {
+    label: 'Fallback',
+    variant: 'secondary',
+    group: 'outreach',
+  },
   PARKED_QUIET: { label: 'Fallback', variant: 'secondary', group: 'outreach' },
   ESCALATED: { label: 'Needs you', variant: 'danger', group: 'needsyou' },
   TIMED_OUT: { label: 'No reply', variant: 'light', group: 'inactive' },
@@ -174,7 +183,10 @@ export function candidateStatus(interestState, helperState) {
     }
   }
   if (helperState) {
-    return { label: helperStateLabel(helperState), variant: helperStateVariant(helperState) }
+    return {
+      label: helperStateLabel(helperState),
+      variant: helperStateVariant(helperState),
+    }
   }
   return null
 }
@@ -190,7 +202,14 @@ export function formatScore(score) {
 // for the per-item summary shown at the top of each item. `states` is an array of
 // item-state objects (each with a `state`).
 export function summariseItemStates(states = []) {
-  const summary = { allocated: 0, pool: 0, needsyou: 0, outreach: 0, inactive: 0, total: 0 }
+  const summary = {
+    allocated: 0,
+    pool: 0,
+    needsyou: 0,
+    outreach: 0,
+    inactive: 0,
+    total: 0,
+  }
   for (const s of states) {
     const g = helperStateGroup(s.state)
     if (summary[g] === undefined) continue

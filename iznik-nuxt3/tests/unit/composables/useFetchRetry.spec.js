@@ -495,6 +495,34 @@ describe('useFetchRetry', () => {
     })
   })
 
+  describe('SSR safety', () => {
+    // The retry decision callback runs on a later tick, where server-side
+    // (especially Netlify prerender) there is no active pinia any more:
+    // useMiscStore() itself throws, the wrapper promise never settles, and
+    // the throw surfaces as an unhandledRejection (seen as 12 rejections per
+    // Netlify build). The store access must therefore stay gated behind
+    // import.meta.client. This can't be asserted behaviourally here because
+    // the vitest import-meta pre-transform compiles import.meta.client to
+    // `true` in composables, so we assert the source shape instead (same
+    // pattern as tests/unit/config/modernPolyfills.spec.js).
+    it('only touches the misc store behind an import.meta.client gate', async () => {
+      const { readFileSync } = await import('fs')
+      const { fileURLToPath } = await import('url')
+      const { dirname, resolve } = await import('path')
+      const src = readFileSync(
+        resolve(
+          dirname(fileURLToPath(import.meta.url)),
+          '../../../composables/useFetchRetry.js'
+        ),
+        'utf-8'
+      )
+      const gate = src.indexOf('if (import.meta.client)')
+      const storeCall = src.indexOf('useMiscStore()')
+      expect(gate).toBeGreaterThan(-1)
+      expect(storeCall).toBeGreaterThan(gate)
+    })
+  })
+
   // retryOn() used to await waitForOnline() as its very first act, before it
   // had even looked at what came back.  A member whose connection dropped in
   // the moment between sending a request and its reply arriving therefore had

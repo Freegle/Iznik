@@ -129,14 +129,14 @@ defineEmits(['focus-comment'])
 const showNewsPhotoModal = ref(false)
 const showNewsShareModal = ref(false)
 
-const NewsPhotoModal = defineAsyncComponent(() =>
-  import('~/components/NewsPhotoModal')
+const NewsPhotoModal = defineAsyncComponent(
+  () => import('~/components/NewsPhotoModal')
 )
-const StoryAddModal = defineAsyncComponent(() =>
-  import('~/components/StoryAddModal')
+const StoryAddModal = defineAsyncComponent(
+  () => import('~/components/StoryAddModal')
 )
-const StoryShareModal = defineAsyncComponent(() =>
-  import('~/components/StoryShareModal')
+const StoryShareModal = defineAsyncComponent(
+  () => import('~/components/StoryShareModal')
 )
 
 const storyStore = useStoryStore()

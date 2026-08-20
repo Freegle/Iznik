@@ -1,5 +1,10 @@
-import { describe, it, expect } from 'vitest'
-import { badgeTitle, applyBadgeToTitle } from '~/composables/useTitleBadge'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { ref, nextTick } from 'vue'
+import {
+  badgeTitle,
+  applyBadgeToTitle,
+  useReactiveTabBadge,
+} from '~/composables/useTitleBadge'
 
 describe('badgeTitle', () => {
   it('prefixes the count when there are unread items', () => {
@@ -52,5 +57,65 @@ describe('applyBadgeToTitle (live re-apply on document.title)', () => {
   it('is idempotent — re-applying the same count does not stack prefixes', () => {
     const once = applyBadgeToTitle('Freegle', 4)
     expect(applyBadgeToTitle(once, 4)).toBe('(4) Freegle')
+  })
+})
+
+describe('useReactiveTabBadge', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('does nothing when document is unavailable (SSR)', () => {
+    vi.stubGlobal('document', undefined)
+
+    expect(() => useReactiveTabBadge(() => 3)).not.toThrow()
+  })
+
+  it('applies the badge to document.title immediately', () => {
+    document.title = 'Freegle - Home'
+    const count = ref(3)
+
+    useReactiveTabBadge(() => count.value)
+
+    expect(document.title).toBe('(3) Freegle - Home')
+  })
+
+  it('leaves the title unbadged immediately when the count starts at zero', () => {
+    document.title = 'Freegle - Home'
+
+    useReactiveTabBadge(() => 0)
+
+    expect(document.title).toBe('Freegle - Home')
+  })
+
+  it('re-applies the badge to document.title as the count changes', async () => {
+    document.title = 'Freegle - Home'
+    const count = ref(0)
+
+    useReactiveTabBadge(() => count.value)
+    expect(document.title).toBe('Freegle - Home')
+
+    count.value = 5
+    await nextTick()
+    expect(document.title).toBe('(5) Freegle - Home')
+
+    count.value = 0
+    await nextTick()
+    expect(document.title).toBe('Freegle - Home')
+  })
+
+  it('preserves a title changed elsewhere (e.g. by route navigation) between updates', async () => {
+    document.title = 'Freegle - Home'
+    const count = ref(1)
+
+    useReactiveTabBadge(() => count.value)
+    expect(document.title).toBe('(1) Freegle - Home')
+
+    // Something else (e.g. useHead on navigation) sets a fresh title.
+    document.title = 'Freegle - Post an item'
+
+    count.value = 2
+    await nextTick()
+    expect(document.title).toBe('(2) Freegle - Post an item')
   })
 })

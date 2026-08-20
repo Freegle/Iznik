@@ -359,7 +359,7 @@ const {
 
 const { count: aiImagesCount, fetchCount: fetchAIImagesCount } = useAIImages()
 
-if (process.client) {
+if (import.meta.client) {
   // Ensure we don't wrongly think we have some outstanding requests if the server happened to start some.
   miscStore.apiCount = 0
 }
@@ -528,9 +528,8 @@ onMounted(async () => {
   // Capacitor app: clear all delivered notifications on open and sync badge count
   if (mobileStore.isApp) {
     try {
-      const { PushNotifications } = await import(
-        '@freegle/capacitor-push-notifications-cap7'
-      )
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap8')
       await PushNotifications.removeAllDeliveredNotifications()
     } catch (e) {
       console.log('removeAllDeliveredNotifications error', e)
@@ -542,9 +541,8 @@ onMounted(async () => {
       const { App } = await import('@capacitor/app')
       App.addListener('resume', async () => {
         try {
-          const { PushNotifications } = await import(
-            '@freegle/capacitor-push-notifications-cap7'
-          )
+          const { PushNotifications } =
+            await import('@freegle/capacitor-push-notifications-cap8')
           await PushNotifications.removeAllDeliveredNotifications()
         } catch (e) {}
         await checkWork()

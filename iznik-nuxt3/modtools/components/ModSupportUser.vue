@@ -575,9 +575,7 @@
     <ConfirmModal
       v-if="unsubscribeConfirm"
       ref="unsubscribeConfirmRef"
-      :title="
-        'Unsubscribe ' + user.displayname + ' ' + user.email + '?'
-      "
+      :title="'Unsubscribe ' + user.displayname + ' ' + user.email + '?'"
       message="<p><strong>This will put them into the 14-day limbo state.</strong></p><p>Their account is hidden immediately. If they don't log back in within 14 days their data is permanently deleted. If they do, the account is restored intact.</p>"
       @confirm="unsubscribeConfirmed"
     />

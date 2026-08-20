@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useStatsStore = defineStore({
-  id: 'stats',
+export const useStatsStore = defineStore('stats', {
   state: () => ({
     heatmap: {},
   }),

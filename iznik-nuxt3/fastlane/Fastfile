@@ -81,6 +81,11 @@ platform :android do
     UI.success("📊 Maximum version code across all tracks: #{latest_build}")
     UI.success("📊 New version code: #{new_version_code}")
 
+    # Each gradle call runs in its own JVM (--no-daemon). The two builds below are
+    # back to back, and a shared daemon holds the first one's heap while the second
+    # runs. android/gradle.properties allows that daemon 4GB plus 1GB metaspace, which
+    # the 8GB CI container cannot hold alongside the Kotlin daemon and node - the
+    # daemon is killed and gradle reports only that it "disappeared unexpectedly".
     # Build the Android App Bundle (AAB) for Play Store
     gradle(
       task: 'bundle',
@@ -90,7 +95,7 @@ platform :android do
         "versionName" => version,
         "versionCode" => new_version_code.to_s
       },
-      flags: '--stacktrace'  # Enable stack traces for debugging
+      flags: '--stacktrace --no-daemon'
     )
 
     # Also build APK for direct installation and testing
@@ -102,7 +107,7 @@ platform :android do
         "versionName" => version,
         "versionCode" => new_version_code.to_s
       },
-      flags: '--stacktrace'  # Enable stack traces for debugging
+      flags: '--stacktrace --no-daemon'
     )
     UI.success("✅ APK built successfully for manual installation!")
     UI.message("📱 APK location: android/app/build/outputs/apk/release/app-release.apk")
@@ -180,7 +185,7 @@ platform :android do
         "versionName" => version,
         "versionCode" => new_version_code.to_s
       },
-      flags: '--stacktrace'
+      flags: '--stacktrace --no-daemon'
     )
 
     gradle(
@@ -191,7 +196,7 @@ platform :android do
         "versionName" => version,
         "versionCode" => new_version_code.to_s
       },
-      flags: '--stacktrace'
+      flags: '--stacktrace --no-daemon'
     )
 
     changelog_dir = '../fastlane/metadata/android/en-US/changelogs'
@@ -263,7 +268,7 @@ platform :android do
         "versionName" => version,
         "versionCode" => new_version_code.to_s
       },
-      flags: '--stacktrace'
+      flags: '--stacktrace --no-daemon'
     )
 
     gradle(
@@ -274,7 +279,7 @@ platform :android do
         "versionName" => version,
         "versionCode" => new_version_code.to_s
       },
-      flags: '--stacktrace'
+      flags: '--stacktrace --no-daemon'
     )
 
     changelog_dir = '../fastlane/metadata/android/en-US/changelogs'

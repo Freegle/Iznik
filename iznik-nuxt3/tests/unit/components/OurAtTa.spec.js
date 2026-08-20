@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import OurAtTa from '~/components/OurAtTa.vue'
 

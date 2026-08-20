@@ -91,8 +91,8 @@ import OurUploadedImage from '~/components/OurUploadedImage'
 import { attribution, osmtile } from '~/composables/useMap'
 import { MAX_MAP_ZOOM } from '~/constants'
 
-const NewsShareModal = defineAsyncComponent(() =>
-  import('~/components/NewsShareModal')
+const NewsShareModal = defineAsyncComponent(
+  () => import('~/components/NewsShareModal')
 )
 
 const props = defineProps({
@@ -112,7 +112,7 @@ const showNewsShareModal = ref(false)
 const map = ref(null)
 
 // Leaflet instance
-if (process.client) {
+if (import.meta.client) {
   await import('leaflet/dist/leaflet-src.esm')
 }
 

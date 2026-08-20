@@ -143,9 +143,9 @@ describe('ModSettingsStandardMessageModal - Logic Tests', () => {
     const isLocked = (config, myid) =>
       Boolean(
         config &&
-          config.protected &&
-          config.createdby &&
-          parseInt(config.createdby) !== myid
+        config.protected &&
+        config.createdby &&
+        parseInt(config.createdby) !== myid
       )
 
     it('returns false when config is not protected', () => {

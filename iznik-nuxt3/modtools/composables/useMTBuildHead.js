@@ -13,13 +13,13 @@ export function buildHead(
   // These meta params may or may not supersede or add to the ones in nuxt.config.ts and modtools/nuxt.config.ts
   const meta = [
     {
-      hid: 'description',
+      key: 'description',
       name: 'description',
       content: description,
     },
-    { hid: 'og:title', property: 'og:title', content: title },
+    { key: 'og:title', property: 'og:title', content: title },
     {
-      hid: 'og:description',
+      key: 'og:description',
       property: 'og:description',
       content: description,
     },
@@ -29,19 +29,19 @@ export function buildHead(
     image || runtimeConfig.public.MODTOOLS_SITE + '/icon_modtools.png'
 
   meta.push({
-    hid: 'og:image',
+    key: 'og:image',
     property: 'og:image',
     content: retImage,
   })
 
   meta.push({
-    hid: 'og:url',
+    key: 'og:url',
     property: 'og:url',
     content: runtimeConfig.public.MODTOOLS_SITE,
   })
 
   meta.push({
-    hid: 'twitter:image',
+    key: 'twitter:image',
     property: 'twitter:image',
     content: retImage,
   })

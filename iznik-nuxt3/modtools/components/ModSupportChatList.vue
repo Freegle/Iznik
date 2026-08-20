@@ -61,7 +61,10 @@ async function prefetchUsers(slice) {
 }
 
 async function loadMore($state) {
-  const nextSlice = props.chats.slice(showCount.value, showCount.value + PAGE_SIZE)
+  const nextSlice = props.chats.slice(
+    showCount.value,
+    showCount.value + PAGE_SIZE
+  )
 
   if (!nextSlice.length) {
     $state.complete()
@@ -80,11 +83,14 @@ async function loadMore($state) {
 
 populateStore(props.chats)
 
-watch(() => props.chats, (newChats) => {
-  populateStore(newChats)
-  showCount.value = 0
-  infiniteBump.value++
-})
+watch(
+  () => props.chats,
+  (newChats) => {
+    populateStore(newChats)
+    showCount.value = 0
+    infiniteBump.value++
+  }
+)
 
 const chatsShown = computed(() => {
   return props.chats ? props.chats.slice(0, showCount.value) : []

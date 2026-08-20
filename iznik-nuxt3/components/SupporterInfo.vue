@@ -23,8 +23,8 @@
   </div>
 </template>
 <script setup>
-const SupporterInfoModal = defineAsyncComponent(() =>
-  import('~/components/SupporterInfoModal.vue')
+const SupporterInfoModal = defineAsyncComponent(
+  () => import('~/components/SupporterInfoModal.vue')
 )
 
 defineProps({

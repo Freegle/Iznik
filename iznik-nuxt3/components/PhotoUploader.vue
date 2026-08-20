@@ -210,10 +210,10 @@ import {
 } from 'vue'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import * as tus from 'tus-js-client'
-// eslint-disable-next-line import/default
+
 import Uppy from '@uppy/core'
-import { DashboardModal } from '@uppy/vue'
-// eslint-disable-next-line import/default, import/namespace, import/no-named-as-default, import/no-named-as-default-member
+import DashboardModal from '@uppy/vue/dashboard-modal'
+
 import Tus from '@uppy/tus'
 import Compressor from '@uppy/compressor'
 import PhotoCard from './PhotoCard.vue'
@@ -241,8 +241,8 @@ import {
 const FINALISE_TIMEOUT_MS = 60000
 
 const draggable = defineAsyncComponent(() => import('vuedraggable'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
 
 const props = defineProps({
@@ -1059,7 +1059,8 @@ defineExpose({ processPhoto })
   overflow: hidden;
   border: 2px solid $color-black-opacity-15;
   cursor: pointer;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     transform var(--transition-normal);
   position: relative;
 
@@ -1361,7 +1362,8 @@ defineExpose({ processPhoto })
 </style>
 
 <style lang="scss">
-@import '@uppy/core/dist/style.css';
-@import '@uppy/webcam/dist/style.css';
+@import '@uppy/core/css/style.css';
+@import '@uppy/dashboard/css/style.css';
+@import '@uppy/webcam/css/style.css';
 @import 'assets/css/uploader.scss';
 </style>

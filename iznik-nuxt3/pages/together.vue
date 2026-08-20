@@ -634,7 +634,9 @@ const cards = [
   border-top: 4px solid $color-gray--light;
   box-shadow: var(--shadow-sm);
   text-decoration: none;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
 
   &:hover {
     text-decoration: none;

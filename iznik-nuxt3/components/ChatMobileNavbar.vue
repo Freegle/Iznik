@@ -274,13 +274,13 @@ const router = useRouter()
 const ChatBlockModal = defineAsyncComponent(() => import('./ChatBlockModal'))
 const ChatHideModal = defineAsyncComponent(() => import('./ChatHideModal'))
 const ChatReportModal = defineAsyncComponent(
-  () => import('~/components/ChatReportModal'),
+  () => import('~/components/ChatReportModal')
 )
 const UserRatingsDownModal = defineAsyncComponent(
-  () => import('~/components/UserRatingsDownModal'),
+  () => import('~/components/UserRatingsDownModal')
 )
 const UserRatingsRemoveModal = defineAsyncComponent(
-  () => import('~/components/UserRatingsRemoveModal'),
+  () => import('~/components/UserRatingsRemoveModal')
 )
 
 const props = defineProps({

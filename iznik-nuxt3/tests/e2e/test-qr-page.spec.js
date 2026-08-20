@@ -30,7 +30,9 @@ test.describe('QR code generator page (/qr)', () => {
     // Neither of the other two branches' content is present.
     await expect(page_.locator('#qr-url')).toHaveCount(0)
     await expect(
-      page_.getByText('Sorry, this page is only available to Freegle volunteers.')
+      page_.getByText(
+        'Sorry, this page is only available to Freegle volunteers.'
+      )
     ).toHaveCount(0)
 
     await page_.locator('button:has-text("Log in to continue")').click()
@@ -51,7 +53,9 @@ test.describe('QR code generator page (/qr)', () => {
 
     const page_ = page.locator('.qr-page')
     await expect(
-      page_.getByText('Sorry, this page is only available to Freegle volunteers.')
+      page_.getByText(
+        'Sorry, this page is only available to Freegle volunteers.'
+      )
     ).toBeVisible({ timeout: timeouts.ui.appearance })
 
     // Neither the generator nor the logged-out prompt is present.
@@ -59,7 +63,9 @@ test.describe('QR code generator page (/qr)', () => {
     await expect(
       page_.locator('button:has-text("Log in to continue")')
     ).toHaveCount(0)
-    console.log('Logged-in non-mod /qr correctly showed the volunteers-only message')
+    console.log(
+      'Logged-in non-mod /qr correctly showed the volunteers-only message'
+    )
   })
 
   test('logged in as a mod: generates a QR code, reacts to URL changes, and supports download', async ({

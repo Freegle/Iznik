@@ -73,9 +73,8 @@ describe('useModMessages - one refresh per work change', () => {
   })
 
   it('refetches once when the page, its list component and useKeywords have all called setup', async () => {
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
 
     scope.run(() => {
       // The page owns the queue and resets the shared state.
@@ -101,9 +100,8 @@ describe('useModMessages - one refresh per work change', () => {
   })
 
   it('still refreshes when only the owning page has called setup', async () => {
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     scope.run(() => {
       const { workType, collection } = setupModMessages(true)
       collection.value = 'Pending'

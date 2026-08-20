@@ -351,19 +351,19 @@ import AutoHeightTextarea from '~/components/AutoHeightTextarea'
 import { timeago, timeagoShort } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 
-const NewsPhotoModal = defineAsyncComponent(() =>
-  import('./NewsPhotoModal.vue')
+const NewsPhotoModal = defineAsyncComponent(
+  () => import('./NewsPhotoModal.vue')
 )
 const NewsLovesModal = defineAsyncComponent(() => import('./NewsLovesModal'))
 const NewsEditModal = defineAsyncComponent(() => import('./NewsEditModal'))
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
-const NewsReplies = defineAsyncComponent(() =>
-  import('~/components/NewsReplies.vue')
+const NewsReplies = defineAsyncComponent(
+  () => import('~/components/NewsReplies.vue')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const OurAtTa = defineAsyncComponent(() => import('~/components/OurAtTa'))
 
@@ -878,7 +878,9 @@ function showReplyPhotoModal() {
   font-size: 0.85rem;
   line-height: 1.2;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast),
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
     border-color var(--transition-fast);
 
   /* Smaller on xs screens */
@@ -922,7 +924,9 @@ function showReplyPhotoModal() {
   font-weight: 400 !important;
   text-decoration: none !important;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast),
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
     border-color var(--transition-fast);
 
   /* Respect Bootstrap display classes but use flexbox when visible */
@@ -991,7 +995,9 @@ function showReplyPhotoModal() {
   color: $color-gray--darker;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 
   &:hover {
     background: darken($color-gray--lighter, 5%);

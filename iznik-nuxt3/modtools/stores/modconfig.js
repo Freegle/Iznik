@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useModConfigStore = defineStore({
-  id: 'modconfig',
+export const useModConfigStore = defineStore('modconfig', {
   state: () => ({
     configs: [],
     // Cache of full configs (with stdmsgs) keyed by ID.

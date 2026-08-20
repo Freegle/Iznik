@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import DraggableMap from '~/components/DraggableMap.vue'
@@ -23,6 +23,36 @@ vi.mock('#app', () => ({
 
 // Mock leaflet import
 vi.mock('leaflet/dist/leaflet-src.esm', () => ({}))
+
+class MockGeocoder {
+  on(event, cb) {
+    this.handlers = this.handlers || {}
+    this.handlers[event] = cb
+    return this
+  }
+
+  addTo(map) {
+    this.addedTo = map
+    return this
+  }
+
+  setQuery() {}
+}
+
+const mockGeocoderInstances = []
+vi.mock('leaflet-control-geocoder', () => ({
+  Geocoder: vi.fn().mockImplementation(function (opts) {
+    const instance = new MockGeocoder()
+    instance.opts = opts
+    mockGeocoderInstances.push(instance)
+    return instance
+  }),
+  geocoders: {
+    Photon: vi.fn().mockImplementation(function (opts) {
+      this.opts = opts
+    }),
+  },
+}))
 
 describe('DraggableMap', () => {
   beforeEach(() => {
@@ -57,6 +87,15 @@ describe('DraggableMap', () => {
             template: '<div class="l-map" :data-zoom="zoom"><slot /></div>',
             props: ['zoom', 'center', 'style', 'maxZoom'],
             emits: ['ready', 'moveend'],
+            data() {
+              return {
+                leafletObject: {
+                  flyTo: vi.fn(),
+                  flyToBounds: vi.fn(),
+                  getCenter: vi.fn().mockReturnValue([10, 20]),
+                },
+              }
+            },
           },
           'l-tile-layer': {
             name: 'LTileLayer',
@@ -194,6 +233,143 @@ describe('DraggableMap', () => {
       const center = component.vm.getCenter()
       expect(Array.isArray(center)).toBe(true)
       expect(center.length).toBe(2)
+    })
+  })
+
+  describe('find my location', () => {
+    let originalGeolocation
+
+    beforeEach(() => {
+      originalGeolocation = navigator.geolocation
+    })
+
+    afterEach(() => {
+      Object.defineProperty(navigator, 'geolocation', {
+        value: originalGeolocation,
+        configurable: true,
+      })
+    })
+
+    it('flies to the found position on success', async () => {
+      const getCurrentPosition = vi.fn((success) =>
+        success({ coords: { latitude: 51.5, longitude: -0.1 } })
+      )
+      Object.defineProperty(navigator, 'geolocation', {
+        value: { getCurrentPosition },
+        configurable: true,
+      })
+      const wrapper = await createWrapper()
+      const lmap = wrapper.findComponent({ name: 'LMap' })
+      await lmap.vm.$emit('ready')
+      await flushPromises()
+      await wrapper.find('.spin-button').trigger('click')
+      await flushPromises()
+      expect(lmap.vm.leafletObject.flyTo).toHaveBeenCalledWith([51.5, -0.1], 16)
+    })
+
+    it('marks location as failed when geolocation errors', async () => {
+      const getCurrentPosition = vi.fn((success, error) => error())
+      Object.defineProperty(navigator, 'geolocation', {
+        value: { getCurrentPosition },
+        configurable: true,
+      })
+      const wrapper = await createWrapper()
+      await wrapper.find('.spin-button').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.spin-button').attributes('title')).toBe(
+        'Find my location'
+      )
+    })
+
+    it('marks location as failed when geolocation is unsupported', async () => {
+      Object.defineProperty(navigator, 'geolocation', {
+        value: undefined,
+        configurable: true,
+      })
+      const wrapper = await createWrapper()
+      await wrapper.find('.spin-button').trigger('click')
+      await flushPromises()
+      // No throw; findLoc falls back to the "unsupported" branch.
+      expect(wrapper.find('.spin-button').exists()).toBe(true)
+    })
+
+    it('marks location as failed when getCurrentPosition throws', async () => {
+      Object.defineProperty(navigator, 'geolocation', {
+        value: {
+          getCurrentPosition: () => {
+            throw new Error('boom')
+          },
+        },
+        configurable: true,
+      })
+      const wrapper = await createWrapper()
+      await wrapper.find('.spin-button').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.spin-button').exists()).toBe(true)
+    })
+  })
+
+  describe('map idle', () => {
+    it('updates center from the leaflet object on moveend', async () => {
+      const wrapper = await createWrapper()
+      const lmap = wrapper.findComponent({ name: 'LMap' })
+      await lmap.vm.$emit('ready')
+      await flushPromises()
+      await lmap.vm.$emit('moveend')
+      expect(lmap.vm.leafletObject.getCenter).toHaveBeenCalled()
+    })
+  })
+
+  describe('map ready / geocoder', () => {
+    beforeEach(() => {
+      mockGeocoderInstances.length = 0
+      window.L = {
+        LatLngBounds: vi.fn().mockImplementation(function () {
+          this.pad = () => ({
+            getSouthWest: () => ({ lat: 1, lng: 2 }),
+            getNorthEast: () => ({ lat: 3, lng: 4 }),
+          })
+        }),
+      }
+    })
+
+    it('attaches a geocoder control to the map on ready', async () => {
+      const wrapper = await createWrapper()
+      const lmap = wrapper.findComponent({ name: 'LMap' })
+      await lmap.vm.$emit('ready')
+      await flushPromises()
+      expect(mockGeocoderInstances).toHaveLength(1)
+      expect(mockGeocoderInstances[0].addedTo).toBe(lmap.vm.leafletObject)
+    })
+
+    it('flies to the geocoded bounding box when a place is chosen', async () => {
+      const wrapper = await createWrapper()
+      const lmap = wrapper.findComponent({ name: 'LMap' })
+      await lmap.vm.$emit('ready')
+      await flushPromises()
+      const geocoder = mockGeocoderInstances[0]
+      const setQuerySpy = vi.spyOn(geocoder, 'setQuery')
+      geocoder.handlers.markgeocode.call(geocoder, {
+        geocode: {
+          bbox: { getSouthWest: () => ({}), getNorthEast: () => ({}) },
+        },
+      })
+      await flushPromises()
+      expect(setQuerySpy).toHaveBeenCalledWith('')
+      expect(lmap.vm.leafletObject.flyToBounds).toHaveBeenCalledWith([
+        [1, 2],
+        [3, 4],
+      ])
+    })
+
+    it('ignores a markgeocode event with no bbox', async () => {
+      const wrapper = await createWrapper()
+      const lmap = wrapper.findComponent({ name: 'LMap' })
+      await lmap.vm.$emit('ready')
+      await flushPromises()
+      const geocoder = mockGeocoderInstances[0]
+      expect(() => geocoder.handlers.markgeocode({})).not.toThrow()
+      expect(lmap.vm.leafletObject.flyToBounds).not.toHaveBeenCalled()
     })
   })
 })

@@ -134,7 +134,7 @@ vi.mock('leaflet/dist/leaflet-src.esm', () => ({}))
 // flapping the Coveralls gate on PRs that touch no frontend code at all. Mocking them —
 // as every other external in this file already is — makes the geocoder path resolve
 // deterministically. Verified by diffing two lcov reports from the same tree.
-vi.mock('leaflet-control-geocoder/src/control', () => ({
+vi.mock('leaflet-control-geocoder', () => ({
   Geocoder: vi.fn().mockImplementation(() => {
     // ready() chains .on('markgeocode', ...).addTo(map), so both must be chainable.
     const control = {
@@ -143,10 +143,9 @@ vi.mock('leaflet-control-geocoder/src/control', () => ({
     }
     return control
   }),
-}))
-
-vi.mock('leaflet-control-geocoder/src/geocoders/photon', () => ({
-  Photon: vi.fn().mockImplementation(() => ({})),
+  geocoders: {
+    Photon: vi.fn().mockImplementation(() => ({})),
+  },
 }))
 
 // Mock vue-leaflet components
@@ -170,16 +169,19 @@ vi.mock('lodash.clonedeep', () => ({
 // Mock wicket for WKT parsing
 vi.mock('wicket', () => ({
   default: {
-    Wkt: vi.fn().mockImplementation(() => ({
-      read: vi.fn(),
-      toJson: vi.fn().mockReturnValue({}),
-      toObject: vi.fn().mockReturnValue({
-        getBounds: vi.fn().mockReturnValue({
-          getSouthWest: () => ({ lat: 51, lng: -2 }),
-          getNorthEast: () => ({ lat: 54, lng: 0 }),
+    // vitest 4 requires constructor mocks to be constructible (no arrows).
+    Wkt: vi.fn(function () {
+      return {
+        read: vi.fn(),
+        toJson: vi.fn().mockReturnValue({}),
+        toObject: vi.fn().mockReturnValue({
+          getBounds: vi.fn().mockReturnValue({
+            getSouthWest: () => ({ lat: 51, lng: -2 }),
+            getNorthEast: () => ({ lat: 54, lng: 0 }),
+          }),
         }),
-      }),
-    })),
+      }
+    }),
   },
 }))
 
@@ -189,26 +191,28 @@ beforeEach(() => {
   global.window = global.window || {}
   global.window.L = {
     Browser: { mobile: false },
-    LatLngBounds: vi.fn().mockImplementation((bounds) => ({
-      getSouthWest: () => ({
-        lat: Array.isArray(bounds) && bounds[0] ? bounds[0][0] : 51,
-        lng: Array.isArray(bounds) && bounds[0] ? bounds[0][1] : -2,
-      }),
-      getNorthEast: () => ({
-        lat: Array.isArray(bounds) && bounds[1] ? bounds[1][0] : 54,
-        lng: Array.isArray(bounds) && bounds[1] ? bounds[1][1] : 0,
-      }),
-      pad: vi.fn().mockReturnThis(),
-      contains: vi.fn().mockReturnValue(true),
-      toBBoxString: vi.fn().mockReturnValue('51,-2,54,0'),
-    })),
-    LatLng: vi.fn().mockImplementation((lat, lng) => ({ lat, lng })),
+    // vitest 4 requires constructor mocks to be constructible (no arrows).
+    LatLngBounds: vi.fn(function (bounds) {
+      return {
+        getSouthWest: () => ({
+          lat: Array.isArray(bounds) && bounds[0] ? bounds[0][0] : 51,
+          lng: Array.isArray(bounds) && bounds[0] ? bounds[0][1] : -2,
+        }),
+        getNorthEast: () => ({
+          lat: Array.isArray(bounds) && bounds[1] ? bounds[1][0] : 54,
+          lng: Array.isArray(bounds) && bounds[1] ? bounds[1][1] : 0,
+        }),
+        pad: vi.fn().mockReturnThis(),
+        contains: vi.fn().mockReturnValue(true),
+        toBBoxString: vi.fn().mockReturnValue('51,-2,54,0'),
+      }
+    }),
+    LatLng: vi.fn(function (lat, lng) {
+      return { lat, lng }
+    }),
   }
 
-  // Mock process.client without replacing process entirely
-  if (typeof process !== 'undefined') {
-    process.client = true
-  }
+  // import.meta.client is substituted globally via the vitest config define.
 })
 
 describe('PostMap', () => {
@@ -461,7 +465,7 @@ describe('PostMap', () => {
     // dynamic imports above were mocked, the real modules threw in jsdom and hit this
     // catch as a side effect. Asserted deliberately now.
     it('keeps working when the geocoder fails to construct', async () => {
-      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
+      const { Geocoder } = await import('leaflet-control-geocoder')
       Geocoder.mockImplementationOnce(() => {
         throw new Error('leaflet not ready')
       })
@@ -608,7 +612,7 @@ describe('PostMap', () => {
       // We reach into the component's isochroneGEOJSONs computed to assert
       // smoothing happened.  The Wicket mock returns a Polygon geometry whose
       // coordinates array we check.
-      let capturedGeoJSON = null
+      let capturedGeoJSON
       const { smoothGeoJSON } = await import('~/composables/useReachPolygon')
 
       // Build the minimal GeoJSON that Wicket.toJson() would produce for the square.
@@ -848,6 +852,42 @@ describe('PostMap', () => {
       ]
       await flushPromises()
       expect(mockNearbyFetchMessages).toHaveBeenCalled()
+    })
+
+    it('does not re-ask the same search when the feed reloads', async () => {
+      // The navbar polls the unseen count every 60s and MessageList reloads the feed
+      // whenever it rises, which replaces the nearby bounds and re-runs getMessages.
+      // Nothing about the search has changed, so asking again only tears down the list
+      // the member is reading - messageStore.search() empties the store before the new
+      // answer lands (Discourse 10001/10).
+      mockAuthStore.user = {
+        id: 1,
+        lat: 53.945,
+        lng: -2.5209,
+        settings: { mylocation: { name: 'AB1 2CD' } },
+      }
+      await createWrapper({
+        showIsochrones: true,
+        search: 'wardrobe',
+        browseSearch: true,
+      })
+
+      // First feed load: the search runs.
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockMessageStore.search).toHaveBeenCalledTimes(1)
+
+      // A later feed reload hands back an equal-but-new bounds array, exactly as the
+      // store getter does. The question has not changed, so it must not be re-asked.
+      mockNearbyBounds.value = [
+        [51, -2],
+        [54, 0],
+      ]
+      await flushPromises()
+      expect(mockMessageStore.search).toHaveBeenCalledTimes(1)
     })
 
     it('falls back to group bounds when showing nearby posts but the member has no location', async () => {

@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import api from '~/api'
 import { useUserStore } from '~/stores/user'
 
-export const useCommentStore = defineStore({
-  id: 'comment',
+export const useCommentStore = defineStore('comment', {
   state: () => ({
     list: {},
     context: null,

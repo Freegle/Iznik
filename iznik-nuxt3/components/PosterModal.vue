@@ -116,14 +116,14 @@ import SpinButton from '~/components/SpinButton'
 import { useNoticeboardStore } from '~/stores/noticeboard'
 import { useOurModal } from '~/composables/useOurModal'
 
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const DraggableMap = defineAsyncComponent(() =>
-  import('~/components/DraggableMap')
+const DraggableMap = defineAsyncComponent(
+  () => import('~/components/DraggableMap')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 
 const emit = defineEmits(['hidden'])

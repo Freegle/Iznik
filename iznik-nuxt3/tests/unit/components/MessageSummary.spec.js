@@ -423,7 +423,9 @@ describe('MessageSummary', () => {
         resolve(__dirname, '../../../components/MessageSummary.vue'),
         'utf-8'
       )
-      const start = source.indexOf('v-else-if="message.attachments[0]?.externaluid"')
+      const start = source.indexOf(
+        'v-else-if="message.attachments[0]?.externaluid"'
+      )
       expect(start).toBeGreaterThan(-1)
       const end = source.indexOf('/>', start)
       const nuxtPictureBlock = source.substring(start, end)

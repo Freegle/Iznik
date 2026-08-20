@@ -295,12 +295,12 @@ onMounted(() => {
   signInDisabled.value = false
 })
 
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
 
-const NotificationOptions = defineAsyncComponent(() =>
-  import('~/components/NotificationOptions')
+const NotificationOptions = defineAsyncComponent(
+  () => import('~/components/NotificationOptions')
 )
 
 const loggedIn = computed(() => useAuthStore().user !== null)
