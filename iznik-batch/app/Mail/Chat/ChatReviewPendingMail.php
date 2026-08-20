@@ -50,7 +50,7 @@ class ChatReviewPendingMail extends MjmlMailable
         return $this->mjmlView('emails.mjml.chat.review-pending', [
             'groupName'   => $this->groupName,
             'count'       => $this->count,
-            'reviewUrl'   => $modSite . '/modtools/chats/review',
+            'reviewUrl'   => $modSite . '/chats/review',
             'mentorsAddr' => $mentorsAddr,
             'email'       => $this->recipientEmail,
         ]);

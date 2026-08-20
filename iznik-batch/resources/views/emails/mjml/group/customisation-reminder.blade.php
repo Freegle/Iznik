@@ -24,7 +24,7 @@
 
     <mj-section background-color="#ffffff" padding="0 20px 20px">
       <mj-column>
-        <mj-button href="{{ $modSite }}/modtools/settings" mj-class="btn-modtools" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $modSite }}/settings" mj-class="btn-modtools" border-radius="3px" font-size="16px">
           Go to Group Settings
         </mj-button>
         <mj-divider border-color="#eeeeee" border-width="1px" />
