@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 	"strconv"
@@ -240,18 +241,33 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 		// fixed golden with no unresolved gap (the manifest's stale,
 		// presentInCode=false 7ef7f895e8bf is the pre-fix snapshot), so this
 		// is an ordinary fixed-shape multi-join query, not a many-shapes site.
+		// Containment matches the feed: the committed reach, or any overflow ring
+		// that admits this viewer (rippling.ViewerOverflowPaths - the same answer
+		// the feed and badge give, so a post can never be scrollable but
+		// unsearchable). The author cap stays outside the OR: it is the author's
+		// own preference and applies however the viewer got in.
+		containment := "AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
+			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "
+		containArgs := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
+		if ringWhere, ringArgs := rippling.OverflowWhereAny(lng, lat, utils.SRID,
+			rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))); ringWhere != "" {
+			containment = "AND ((ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
+				"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))) " +
+				"OR " + ringWhere + ") "
+			containArgs = append(containArgs, ringArgs...)
+		}
+
+		args := append([]interface{}{}, containArgs...)
+		args = append(args, float64(9007199254740991), lat, lng, lat)
 		db.Table("rippling_reach rr").
 			Select("ms.msgid").
 			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
 			Joins("INNER JOIN messages m ON m.id = ms.msgid").
 			Joins("INNER JOIN users au ON au.id = m.fromuser").
 			Where("ms.successful = 0 AND rr.status != 'held' "+
-				"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
-				"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+				containment+
 				utils.AuthorReachCapWhere,
-				lng, lat, utils.SRID,
-				lng, lat, utils.SRID,
-				float64(9007199254740991), lat, lng, lat).
+				args...).
 			Scan(&reachIDs)
 		storeReachUniverse(key, reachIDs, now)
 	}

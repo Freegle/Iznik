@@ -1881,6 +1881,72 @@ class UnifiedDigestService
         ];
     }
 
+    /**
+     * The rural-access ring as an OR-rescue for the daily digest / daily-posts push reach gate
+     * below: a member whose OWN density band earns a wider travel budget than a post's capped
+     * reach must still see it, exactly as they already can on browse (ReachQueryService) and in
+     * the reach mail (overflowBranch above). Mirrors iznik-server-go rippling.RuralOverflowWhere:
+     * the ring's stored bbox is tested first (four cheap numeric comparisons) before the exact
+     * polygon is parsed, because unlike the mail path (one post, rings read once and bound as
+     * params) this runs once PER CANDIDATE POST for this member.
+     *
+     * The band is resolved HERE in PHP against a fixed allowlist (dense/medium/sparse) rather
+     * than built into a JSON path from the stored value, so a member's settings stay data, not
+     * syntax that could address an arbitrary path.
+     *
+     * Fairness is deliberately NOT consulted here: admission needs a per-member network call to
+     * the routing server (filterFairnessRows' /v1/quintiles), which is answered for a handful of
+     * ring-added mail recipients per post, not affordable once per candidate post in a member's
+     * whole digest backlog.
+     *
+     * Returns ['', []] when the lane is off or the member has no recorded band, so the reach
+     * gate is byte-identical to before whenever this cannot apply.
+     *
+     * $point is the same 'ST_SRID(POINT(?, ?), 3857)' fragment the caller's containment test
+     * uses, reused verbatim so the ring is tested against exactly the point the reach gate is —
+     * it carries its own two placeholders, filled from $latlng like every other use of $point.
+     *
+     * @param  array{0:float,1:float}  $latlng  [lat, lng], as resolveUserLatLng returns
+     * @return array{0: string, 1: array<int, mixed>}
+     */
+    private function ruralRingRescueWhere(User $user, string $point, array $latlng): array
+    {
+        $none = ['', []];
+
+        if (! (bool) config('freegle.ripple.rural_access.enabled', false)) {
+            return $none;
+        }
+
+        $settings = $user->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        $band = is_array($settings) ? ($settings['browseDensityBand'] ?? null) : null;
+
+        $paths = ['dense' => '$.rural.dense', 'medium' => '$.rural.medium', 'sparse' => '$.rural.sparse'];
+        if (! is_string($band) || ! isset($paths[$band])) {
+            return $none;
+        }
+
+        // CAST both sides of the bbox test to DECIMAL. These coordinates bind as STRINGS, and
+        // a string compared against a JSON number is not compared numerically: measured on our
+        // MySQL, `-3 BETWEEN JSON(-3.5) AND JSON(1.5)` is FALSE while `1 BETWEEN ...` is TRUE.
+        // Without the cast this prefilter silently drops every member at a negative longitude,
+        // which is most of the UK, and the ring would appear to work only east of Greenwich.
+        $dec = static fn (string $e): string => "CAST($e AS DECIMAL(20,6))";
+
+        $where = "(rr.overflow_bounds IS NOT NULL"
+            . ' AND ' . $dec('?') . ' BETWEEN ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[0]')")
+                . ' AND ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[2]')")
+            . ' AND ' . $dec('?') . ' BETWEEN ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[1]')")
+                . ' AND ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[3]')")
+            . " AND ST_Contains(ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(rr.overflow_bounds, ?)), 3857), $point))";
+
+        [$lat, $lng] = $latlng;
+
+        return [$where, [$lng, $lat, $paths[$band], $lng, $lat]];
+    }
+
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
         // Immediate pulls only the user's immediate (-1) groups; daily pulls
@@ -1955,25 +2021,59 @@ class UnifiedDigestService
                 // pruning) is treated as ABSENT here: this query has no successful=0
                 // filter — it still shows "came and went" posts — so degraded bounds must
                 // fall back to the exact polygon rather than reject them.
+                //
+                // Rural-ring rescue: rings extend BEYOND outer_bound (they exist precisely for
+                // members the capped reach did not cover), so "outside outer_bound" can no
+                // longer be an unconditional reject. The ring is OR-ed in at the level that
+                // wraps the WHOLE reject test (both the outer_bound branch and the boundary-band
+                // exact-polygon branch) — "AND NOT ring" outside the A-OR-B group below — rather
+                // than nested inside one branch, so either kind of reject is rescued the same way.
                 $point = 'ST_SRID(POINT(?, ?), 3857)';
+                [$ringWhere, $ringParams] = $this->ruralRingRescueWhere($user, $point, $latlng);
+                // COALESCE, not a bare NOT: ST_Contains (and so the whole ringWhere conjunct)
+                // is SQL NULL, not 0, when JSON_EXTRACT can't find the member's band under
+                // 'rural' (a post whose only ring is 'sparse' has no $.rural.dense at all) —
+                // "AND NOT NULL" is NULL, which drops the reject silently and admits everyone,
+                // the same three-valued-logic trap COALESCE(...,0) already guards against on
+                // rr.inner_bound above. Forcing NULL to 0 here keeps this a definite reject.
+                $ringRescue = $ringWhere === '' ? '' : " AND COALESCE($ringWhere, 0) = 0";
+                // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText,
+                // ST_GeometryType) and the correlated-EXISTS sandwich-bounds shape have no
+                // query-builder equivalent.
                 $query->whereRaw(
                     "NOT EXISTS (SELECT 1 FROM rippling_reach rr
                         WHERE rr.msgid = messages.id
-                          AND ((ST_GeometryType(rr.outer_bound) <> 'POINT'
+                          AND (((ST_GeometryType(rr.outer_bound) <> 'POINT'
                                 AND NOT ST_Contains(rr.outer_bound, $point))
                                OR ((ST_GeometryType(rr.outer_bound) = 'POINT'
                                     OR COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 0)
                                    AND NOT EXISTS (SELECT 1 FROM rippling_reach r2
                                        WHERE r2.msgid = rr.msgid
-                                         AND ST_Contains(r2.polygon, $point)))))",
-                    [$latlng[1], $latlng[0], $latlng[1], $latlng[0], $latlng[1], $latlng[0]] // POINT(lng, lat) x3
+                                         AND ST_Contains(r2.polygon, $point))))
+                          $ringRescue))",
+                    array_merge(
+                        [$latlng[1], $latlng[0], $latlng[1], $latlng[0], $latlng[1], $latlng[0]], // POINT(lng, lat) x3
+                        $ringParams
+                    )
                 );
             } else {
-                // Bounds table not migrated yet — the original exact-polygon gate.
+                // Bounds table not migrated yet — the original exact-polygon gate, plus the
+                // same rural-ring rescue as the sandwich branch above.
+                $point = 'ST_SRID(POINT(?, ?), 3857)';
+                [$ringWhere, $ringParams] = $this->ruralRingRescueWhere($user, $point, $latlng);
+                // COALESCE, not a bare NOT: ST_Contains (and so the whole ringWhere conjunct)
+                // is SQL NULL, not 0, when JSON_EXTRACT can't find the member's band under
+                // 'rural' (a post whose only ring is 'sparse' has no $.rural.dense at all) —
+                // "AND NOT NULL" is NULL, which drops the reject silently and admits everyone,
+                // the same three-valued-logic trap COALESCE(...,0) already guards against on
+                // rr.inner_bound above. Forcing NULL to 0 here keeps this a definite reject.
+                $ringRescue = $ringWhere === '' ? '' : " AND COALESCE($ringWhere, 0) = 0";
+                // keep-raw: spatial predicates (ST_Contains, ST_SRID) have no query-builder
+                // equivalent.
                 $query->whereRaw(
-                    'NOT EXISTS (SELECT 1 FROM rippling_reach rr WHERE rr.msgid = messages.id
-                        AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), 3857)) = 0)',
-                    [$latlng[1], $latlng[0]] // POINT(lng, lat)
+                    "NOT EXISTS (SELECT 1 FROM rippling_reach rr WHERE rr.msgid = messages.id
+                        AND ST_Contains(rr.polygon, $point) = 0$ringRescue)",
+                    array_merge([$latlng[1], $latlng[0]], $ringParams) // POINT(lng, lat)
                 );
             }
         }

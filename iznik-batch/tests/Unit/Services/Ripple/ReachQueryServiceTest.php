@@ -158,6 +158,92 @@ class ReachQueryServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * The cluster-anchor wedges as a way to be reply-eligible.
+     *
+     * The website's reply gate reads these wedges (rippling.ViewerOverflowPaths in the Go
+     * side), so this path must too. If it did not, a member could reply from the site but
+     * have the identical reply, sent by replying to the notification email, held instead -
+     * and because a cluster-anchored post's reach never grows, that hold would never release.
+     */
+    private function seedClusterWedges(int $msgid): void
+    {
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'overflow_bounds' => json_encode([
+                'cluster' => [
+                    'w1' => 'POLYGON((0.5 51.9,1.5 51.9,1.5 52.5,0.5 52.5,0.5 51.9))',
+                    'w2' => 'POLYGON((-3.5 53.9,-2.5 53.9,-2.5 54.5,-3.5 54.5,-3.5 53.9))',
+                ],
+                'bbox' => [-3.5, 51.9, 1.5, 54.5],
+            ]),
+        ]);
+    }
+
+    public function test_cluster_wedge_admits_a_replier_the_website_would_accept(): void
+    {
+        config(['freegle.ripple.cluster.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedClusterWedges($msgid);
+
+        $svc = new ReachQueryService();
+        // No band passed at all: the wedges are unconditional, because they sit beyond every
+        // band's ceiling and gating them on a band would refuse the town members they exist for.
+        $this->assertTrue($svc->isWithinReach($msgid, 52.0, 1.0), 'first wedge admits');
+        $this->assertTrue($svc->isWithinReach($msgid, 54.0, -3.0), 'a later wedge admits too');
+    }
+
+    /**
+     * Most of the UK sits at a negative longitude, and these coordinates bind as strings.
+     * A string compared against a JSON number is not compared numerically, so an uncast
+     * bbox prefilter rejects everyone west of Greenwich while appearing to work east of it -
+     * a bug that hides behind any fixture built at a positive longitude.
+     */
+    public function test_ring_admits_at_a_negative_longitude(): void
+    {
+        config(['freegle.ripple.cluster.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedClusterWedges($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertTrue($svc->isWithinReach($msgid, 54.0, -3.0), 'a wedge west of Greenwich admits');
+    }
+
+    public function test_cluster_wedge_does_not_admit_when_the_lane_is_off(): void
+    {
+        config(['freegle.ripple.cluster.enabled' => false]);
+        $msgid = $this->seedReach();
+        $this->seedClusterWedges($msgid);
+
+        $svc = new ReachQueryService();
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
+    }
+
+    public function test_cluster_wedge_does_not_admit_a_point_outside_every_wedge(): void
+    {
+        config(['freegle.ripple.cluster.enabled' => true]);
+        $msgid = $this->seedReach();
+        $this->seedClusterWedges($msgid);
+
+        $svc = new ReachQueryService();
+        // Inside the shared bbox but in neither wedge - the bbox is only a prefilter, so the
+        // exact test behind it still has to reject.
+        $this->assertFalse($svc->isWithinReach($msgid, 53.0, -1.0));
+    }
+
+    public function test_cluster_admissions_are_counted_under_their_own_lane(): void
+    {
+        config(['freegle.ripple.cluster.enabled' => true, 'freegle.ripple.rural_access.enabled' => false]);
+        $msgid = $this->seedReach();
+        $this->seedClusterWedges($msgid);
+
+        (new ReachQueryService())->isWithinReach($msgid, 52.0, 1.0);
+
+        $this->assertDatabaseHas('rippling_event_metrics', [
+            'day' => now()->toDateString(),
+            'event' => 'cluster_admitted',
+        ]);
+    }
+
     public function test_ring_does_not_admit_when_the_lane_is_off(): void
     {
         config(['freegle.ripple.rural_access.enabled' => false]);

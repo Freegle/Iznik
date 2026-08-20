@@ -70,11 +70,10 @@ func spatialReachIDs(latlng utils.LatLng) (in []int64, partial []int64, ok bool)
 // reach row, so a held or retracted post cannot be counted in on the
 // strength of a raster entry or a ring alone. Pure so the composition is
 // unit-testable.
-func fromIDsWhere(in, partial []int64, latlng utils.LatLng, ringPath string) (string, []interface{}) {
+func fromIDsWhere(in, partial []int64, latlng utils.LatLng, ringPaths []string) (string, []interface{}) {
 	ringArm := ""
 	var ringArgs []interface{}
-	if ringPath != "" {
-		ringWhere, ringWhereArgs := rippling.RuralOverflowWhere(float64(latlng.Lng), float64(latlng.Lat), utils.SRID, ringPath)
+	if ringWhere, ringWhereArgs := rippling.OverflowWhereAny(float64(latlng.Lng), float64(latlng.Lat), utils.SRID, ringPaths); ringWhere != "" {
 		ringArm = "OR EXISTS (" +
 			"SELECT 1 FROM rippling_reach rr WHERE rr.msgid = ms.msgid " +
 			"AND rr.status != 'held' AND " + ringWhere + ") "
@@ -103,10 +102,10 @@ func fromIDsWhere(in, partial []int64, latlng utils.LatLng, ringPath string) (st
 	return whereSQL, whereArgs
 }
 
-func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64, ringPath string) *gorm.DB {
+func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64, ringPaths []string) *gorm.DB {
 	// One concatenated WHERE string in a single Where() call — same GORM
 	// extra-paren gotcha as reachCandidateQuery (see there).
-	whereSQL, whereArgs := fromIDsWhere(in, partial, latlng, ringPath)
+	whereSQL, whereArgs := fromIDsWhere(in, partial, latlng, ringPaths)
 
 	return db.Table("messages_spatial ms").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").

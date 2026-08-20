@@ -82,6 +82,31 @@ class RippleReplyServiceTest extends TestCase
         $this->assertFalse($this->service()->shouldHold($msgid, null, null));
     }
 
+    /**
+     * shouldHold's $band already reaches the rural ring end-to-end, via
+     * ReachQueryService::isWithinReach -> isWithinOverflow (see ReachQueryServiceTest for the
+     * ring admission tests proper): an email/TrashNothing replier outside the reach but inside
+     * their own band's ring must not be held, so email replies behave identically to the web
+     * reply gate and to browse.
+     */
+    public function test_should_not_hold_a_replier_admitted_by_their_rural_ring(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReachedPost();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'overflow_bounds' => json_encode([
+                'rural' => ['sparse' => 'POLYGON((0.5 51.9,1.5 51.9,1.5 52.5,0.5 52.5,0.5 51.9))'],
+                'bbox' => [0.5, 51.9, 1.5, 52.5],
+            ]),
+        ]);
+
+        $svc = $this->service();
+        // Same point as self::OUTSIDE (52.0, 1.0), which is held with no band / lane off.
+        $this->assertFalse($svc->shouldHold($msgid, 52.0, 1.0, 'sparse'));
+        $this->assertTrue($svc->shouldHold($msgid, 52.0, 1.0, 'dense'), 'the ring belongs to the band, not the area');
+        $this->assertTrue($svc->shouldHold($msgid, 52.0, 1.0, null), 'no band recorded is not eligible');
+    }
+
     public function test_hold_records_held_row_and_blocks_delivery_without_touching_reviewrequired(): void
     {
         $msgid = $this->seedReachedPost();

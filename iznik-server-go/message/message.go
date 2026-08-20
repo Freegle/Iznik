@@ -1077,7 +1077,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 		// be reach-eligible if ANY of them is within the post's reach. Extending this to
 		// iterate the member's full location set is future work.
 		latlng := user.GetLatLng(myid)
-		reachBlocked := ReachBlockedOrigins(ids, float64(latlng.Lat), float64(latlng.Lng))
+		reachBlocked := ReachBlockedOrigins(myid, ids, float64(latlng.Lat), float64(latlng.Lng))
 
 		// When the reach is expected to arrive at this viewer. Worked out here rather
 		// than left to the client because it needs the post's BLURRED ripple origin
