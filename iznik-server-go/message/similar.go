@@ -222,10 +222,11 @@ func Similar(c *fiber.Ctx) error {
 	}
 
 	out := make([]SimilarResult, 0, limit)
-	// De-duplicate items that appear more than once. A single post rippled to many
-	// groups is one msgid (fine), but rippling can also strand genuine COPIES — a
-	// separate msgid per group for the same item — which would otherwise show as
-	// repeated cards. Same author + same subject identifies those; keep the first
+	// De-duplicate items that appear more than once. A post on many groups is a single
+	// msgid however it got there - rippling and TrashNothing cross-posts both add
+	// messages_groups rows to one message rather than creating another - so what this
+	// catches is a member posting the same thing twice by hand, which is two msgids for
+	// one item. Same author + same subject identifies those; keep the first
 	// (highest-scoring, since candidates are score-ordered).
 	seen := make(map[string]bool)
 	for _, cnd := range candidates {

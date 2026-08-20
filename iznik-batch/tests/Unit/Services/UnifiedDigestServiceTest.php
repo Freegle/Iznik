@@ -1122,11 +1122,13 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'cursor immediate digest skips a post that has a reach row');
     }
 
-    public function test_cursor_immediate_ledger_is_dark_when_rippling_disabled(): void
+    public function test_cursor_immediate_ledger_is_written_even_when_rippling_disabled(): void
     {
-        // With the master activation switch off, the cursor immediate digest still mails normally but
-        // does NOT touch the rippling reach-coordination ledger (the expander mailer that reads it is
-        // inert while off anyway), so the new table stays empty in the dark state.
+        // The ledger records that a member has been told about a post, and has two readers: the
+        // expander mailer, which is inert while rippling is off, and the cursor immediate digest
+        // itself, which reads it so a post on several of a member's groups reaches them once.
+        // The second reader needs the row whatever rippling is doing, so it is written whenever a
+        // send happens. A row for a post that never ripples is simply never read by the first.
         config(['freegle.ripple.enabled' => false]);
         config(['freegle.digest.immediate_allowlist' => '*']);
         $group = $this->createTestGroup();
@@ -1146,10 +1148,10 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
 
-        $this->assertSame(
+        $this->assertGreaterThan(
             0,
             DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count(),
-            'no reach-coordination ledger rows are written while rippling is off'
+            'a send is recorded in the ledger whether or not rippling is switched on'
         );
     }
 
@@ -1550,6 +1552,49 @@ class UnifiedDigestServiceTest extends TestCase
         // poster's own post loops back to them too. Poster is the only
         // immediate-frequency member, so exactly one email goes out — to them.
         $this->assertEquals(1, $stats['emails_sent']);
+    }
+
+    /**
+     * A post on more than one of a member's groups is still one item, and reaches them once.
+     * The immediate path runs once per group, so without a cross-group check the member is
+     * mailed once per group the post is on - two groups, two emails about the same thing.
+     */
+    public function test_immediate_mails_a_member_once_for_a_post_on_two_of_their_groups(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        // The recipient is in both groups; the poster only in A, so they are not also mailed
+        // twice and cannot mask the count.
+        $this->createMembership($poster, $groupA);
+        $this->createMembership($recipient, $groupA);
+        $this->createMembership($recipient, $groupB);
+        $this->seedImmediateCursor($groupA);
+        $this->seedImmediateCursor($groupB);
+
+        // One message, on both groups - the shape of a cross-post or a rippled copy.
+        $msg = $this->createTestMessage($poster, $groupA, ['subject' => 'OFFER: Singular Shared Item (TestLocation)']);
+        \Illuminate\Support\Facades\DB::table('messages_groups')->insert([
+            'msgid' => $msg->id,
+            'groupid' => $groupB->id,
+            'collection' => 'Approved',
+            'arrival' => now(),
+            'msgtype' => 'Offer',
+        ]);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // Poster (group A only) = 1, recipient (both groups) = 1, not 2.
+        $this->assertEquals(
+            2,
+            $stats['emails_sent'],
+            'a post on two of the same member groups must reach them once, not once per group'
+        );
     }
 
     public function test_immediate_sends_one_email_per_new_post(): void
