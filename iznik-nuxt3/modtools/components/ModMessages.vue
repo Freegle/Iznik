@@ -10,6 +10,7 @@
       <ModMessage
         :messageid="message.id"
         :context-groupid="groupid ? Number(groupid) : null"
+        :collection="collection"
         :next="
           ix < visibleMessages.length - 1 ? visibleMessages[ix + 1].id : null
         "
@@ -35,6 +36,7 @@ const messageStore = useMessageStore()
 // composables/modMessagesPage
 const modMessages = setupModMessages()
 const {
+  collection,
   context,
   groupid,
   messageTerm,
