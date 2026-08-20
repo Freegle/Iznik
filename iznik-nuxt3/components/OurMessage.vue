@@ -68,14 +68,14 @@ import { useMiscStore } from '~/stores/misc'
 import { action } from '~/composables/useClientLog'
 import { useDwellView } from '~/composables/useDwellView'
 
-const MessageExpanded = defineAsyncComponent(() =>
-  import('~/components/MessageExpanded')
+const MessageExpanded = defineAsyncComponent(
+  () => import('~/components/MessageExpanded')
 )
-const MessageSummary = defineAsyncComponent(() =>
-  import('~/components/MessageSummary')
+const MessageSummary = defineAsyncComponent(
+  () => import('~/components/MessageSummary')
 )
-const MessageModal = defineAsyncComponent(() =>
-  import('~/components/MessageModal')
+const MessageModal = defineAsyncComponent(
+  () => import('~/components/MessageModal')
 )
 
 const props = defineProps({

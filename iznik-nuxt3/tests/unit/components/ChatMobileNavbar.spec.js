@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest'
 // mounted here; assert on the source (as ChatPane.spec.js does).
 const navbarSource = readFileSync(
   resolve(__dirname, '../../../components/ChatMobileNavbar.vue'),
-  'utf-8',
+  'utf-8'
 )
 
 describe('profile popover hidden for User2Mod (Discourse 9918)', () => {
@@ -19,13 +19,13 @@ describe('profile popover hidden for User2Mod (Discourse 9918)', () => {
     // A User2Mod (contact-the-volunteers) chat has no other-user profile, so the
     // popover must not enable for it - it rendered as an empty white box.
     expect(navbarSource).toMatch(
-      /<b-popover\s+v-if="cssReady && chat\.chattype === 'User2User'"/,
+      /<b-popover\s+v-if="cssReady && chat\.chattype === 'User2User'"/
     )
   })
 
   it('makes the header avatar toggle the profile card only for User2User', () => {
     expect(navbarSource).toMatch(
-      /@click="chat\.chattype === 'User2User' \? toggleProfileCard\(\) : null"/,
+      /@click="chat\.chattype === 'User2User' \? toggleProfileCard\(\) : null"/
     )
   })
 })
@@ -38,13 +38,13 @@ describe('profile card close button', () => {
   it('has a close control that collapses the card', () => {
     expect(navbarSource).toMatch(/class="profile-card-close"/)
     expect(navbarSource).toMatch(
-      /class="profile-card-close"[\s\S]*?@click="profileCardExpanded = false"/,
+      /class="profile-card-close"[\s\S]*?@click="profileCardExpanded = false"/
     )
   })
 
   it('gives the close control an accessible name', () => {
     expect(navbarSource).toMatch(
-      /class="profile-card-close"[\s\S]*?aria-label="Close profile info"/,
+      /class="profile-card-close"[\s\S]*?aria-label="Close profile info"/
     )
   })
 
@@ -52,17 +52,17 @@ describe('profile card close button', () => {
     // dismissHint() already sets profileCardExpanded = false, so "Got it"
     // closes the whole card; a second control there would only overlap it.
     expect(navbarSource).toMatch(
-      /<button\s+v-if="!showProfileHint"\s+class="profile-card-close"/,
+      /<button\s+v-if="!showProfileHint"\s+class="profile-card-close"/
     )
     expect(navbarSource).toMatch(
-      /function dismissHint\(\)[\s\S]*?profileCardExpanded\.value = false/,
+      /function dismissHint\(\)[\s\S]*?profileCardExpanded\.value = false/
     )
   })
 
   it('sizes the close control as a comfortable touch target', () => {
     // This popover only exists below md, so it is always touched, never clicked.
     expect(navbarSource).toMatch(
-      /\.profile-card-close\s*\{[\s\S]*?width:\s*44px[\s\S]*?height:\s*44px/,
+      /\.profile-card-close\s*\{[\s\S]*?width:\s*44px[\s\S]*?height:\s*44px/
     )
   })
 })
@@ -449,17 +449,17 @@ describe('ChatMobileNavbar Freegle system chat', () => {
     // The same reasoning as the desktop header: no rating, no "last seen", no
     // distance for an account that is not a person.
     expect(navbarSource).toMatch(
-      /v-if="chat\.systemchat"[\s\S]{0,200}Automated messages about your posts/,
+      /v-if="chat\.systemchat"[\s\S]{0,200}Automated messages about your posts/
     )
     expect(navbarSource).toMatch(
-      /v-if="!chat\.systemchat" class="profile-card-stats"/,
+      /v-if="!chat\.systemchat" class="profile-card-stats"/
     )
   })
 
   it('drops Profile, Block and Report but keeps Hide', () => {
     const actions = navbarSource.slice(
       navbarSource.indexOf('profile-card-actions'),
-      navbarSource.indexOf('</b-popover>'),
+      navbarSource.indexOf('</b-popover>')
     )
 
     // Each of the three is gated on it not being the Freegle chat...

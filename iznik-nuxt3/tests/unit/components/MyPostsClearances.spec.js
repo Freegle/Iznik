@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 
+import MyPostsClearances from '~/components/MyPostsClearances.vue'
+
 // Full messages in the store, keyed by id. Only id 1 is a clearance.
 const store = {
   1: {
@@ -18,8 +20,6 @@ const store = {
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({ byId: (id) => store[id] || null }),
 }))
-
-import MyPostsClearances from '~/components/MyPostsClearances.vue'
 
 const mountOpts = (posts) => ({
   props: { posts },

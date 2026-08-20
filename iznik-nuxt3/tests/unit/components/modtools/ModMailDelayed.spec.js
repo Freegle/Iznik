@@ -42,7 +42,7 @@ describe('ModMailDelayed', () => {
 
   it('copes when we cannot name the provider', () => {
     expect(words(render({ provider: null }))).toContain(
-      'their email provider is not currently accepting our mail',
+      'their email provider is not currently accepting our mail'
     )
   })
 
@@ -62,7 +62,7 @@ describe('ModMailDelayed', () => {
     const text = words(render())
 
     expect(text).toContain(
-      'This is a problem at our end, not with their address',
+      'This is a problem at our end, not with their address'
     )
     expect(text).toContain('nothing for them or for you to fix')
   })

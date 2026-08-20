@@ -50,8 +50,8 @@ import NoticeMessage from '~/components/NoticeMessage'
 import StoryOne from '~/components/StoryOne'
 import { useStoryAdd } from '~/composables/useStoryAdd'
 
-const StoryAddModal = defineAsyncComponent(() =>
-  import('~/components/StoryAddModal')
+const StoryAddModal = defineAsyncComponent(
+  () => import('~/components/StoryAddModal')
 )
 
 const runtimeConfig = useRuntimeConfig()

@@ -126,7 +126,8 @@ function goto(path) {
   padding: 1rem;
   box-shadow: var(--shadow-md);
   cursor: pointer;
-  transition: transform var(--transition-normal),
+  transition:
+    transform var(--transition-normal),
     box-shadow var(--transition-normal);
 
   &:active {

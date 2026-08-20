@@ -194,8 +194,8 @@ import AddToCalendar from '~/components/AddToCalendar'
 import ProfileImage from '~/components/ProfileImage'
 import ChatMessageCard from '~/components/ChatMessageCard'
 
-const OutcomeModal = defineAsyncComponent(() =>
-  import('~/components/OutcomeModal')
+const OutcomeModal = defineAsyncComponent(
+  () => import('~/components/OutcomeModal')
 )
 
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))

@@ -354,7 +354,7 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
   // Use a closure variable so the doMock factory picks up per-test values.
   let mockNotificationCount = 1
 
-  beforeEach(async () => {
+  beforeEach(() => {
     vi.resetModules()
     mockSetBadgeCount = vi.fn()
     mockNotificationCount = 1 // default: 1 stuck notification
@@ -429,7 +429,7 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
     // Accessing the computed triggers setBadgeCount.
     // BUGGY: setBadgeCount(0) — only chatStore.unreadCount (0).
     // FIXED: setBadgeCount(1) — 0 chats + 1 notification.
-    void chatCount.value
+    expect(chatCount.value).toBeDefined()
 
     expect(mockSetBadgeCount).toHaveBeenCalledWith(1)
   })
@@ -442,7 +442,7 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
 
     const { useNavbar } = await import('~/composables/useNavbar')
     const { chatCount } = useNavbar()
-    void chatCount.value
+    expect(chatCount.value).toBeDefined()
 
     expect(mockSetBadgeCount).toHaveBeenCalledWith(0)
   })
@@ -464,7 +464,7 @@ describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
 
     const { useNavbar } = await import('~/composables/useNavbar')
     const { chatCount } = useNavbar()
-    void chatCount.value
+    expect(chatCount.value).toBeDefined()
 
     expect(mockSetBadgeCount).toHaveBeenCalledWith(99)
   })

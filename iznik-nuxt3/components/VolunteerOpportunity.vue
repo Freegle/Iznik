@@ -171,8 +171,8 @@ import { useAuthStore } from '~/stores/auth'
 import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
 
-const VolunteerOpportunityModal = defineAsyncComponent(() =>
-  import('./VolunteerOpportunityModal')
+const VolunteerOpportunityModal = defineAsyncComponent(
+  () => import('./VolunteerOpportunityModal')
 )
 
 const props = defineProps({
@@ -240,20 +240,6 @@ const volunteering = computed(() => {
   }
 
   return null
-})
-
-// eslint-disable-next-line no-unused-vars
-const groups = computed(() => {
-  const ret = []
-  volunteering.value?.groups?.forEach((id) => {
-    const group = groupStore?.get(id)
-
-    if (group) {
-      ret.push(group)
-    }
-  })
-
-  return ret
 })
 
 const user = computed(() => {

@@ -53,7 +53,33 @@ orbs:
   # rate-limits (429) the GitHub tarball dependency in the lock file, which
   # npm's own --fetch-retries does not cover, and it red-lined master twice on
   # 2026-08-17 for commits that touched no JavaScript.
-  freegle: freegle/tests@1.1.381
+  #
+  # 1.1.371 = master's 1.1.369 plus this branch's rename of the push-fork
+  # package in the app-build jobs, @freegle/capacitor-push-notifications-cap7
+  # -> -cap8. CircleCI resolves freegle/tests from the registry, not from the
+  # copy in this repo, so the pin is what decides: a pin published from master
+  # does not carry the rename, and the app builds here then run `npm update`
+  # against a package this branch no longer depends on - a silent no-op rather
+  # than an error.
+  #
+  # 1.1.378 adds a heartbeat to the parallel container build. Every build group
+  # redirects to a log file, so between "building in parallel" and the first
+  # "build complete" the console says nothing, and a group that legitimately
+  # ran longer than no_output_timeout was killed as if it had hung.
+  #
+  # 1.1.382 is this branch's two changes republished on top of everything
+  # master has published since (1.1.379 and 1.1.381 above). Publishing from
+  # either side alone drops the other side's steps.
+  #
+  # 1.1.383 adds master's retention of the Go coverage profile as a build
+  # artefact, which arrived here in the merge of a18ba0996. That change was
+  # authored expecting to be published as 1.1.382, but this branch had already
+  # taken that number earlier the same day, so it went out unpublished and
+  # master is still pinned to 1.1.381 without it. Republishing the merged
+  # source is what carries it, and master picks it up when this branch lands -
+  # master must not pin 1.1.383 before then, because it also carries the cap8
+  # push-fork rename that only exists on this branch.
+  freegle: freegle/tests@1.1.383
 
 jobs:
   mark-ci-passed:

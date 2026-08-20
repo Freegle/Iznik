@@ -85,8 +85,8 @@ describe('config store', () => {
 
       let resolveFirst
       mockFetchv2.mockReturnValueOnce(
-        new Promise((r) => {
-          resolveFirst = r
+        new Promise((resolve) => {
+          resolveFirst = resolve
         })
       )
 

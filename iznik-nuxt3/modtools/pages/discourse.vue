@@ -54,7 +54,8 @@ function redirect() {
   } else {
     console.warn(
       '[discourse] auth.persistent is null — cannot set SSO cookie.',
-      'hasJwt:', hasJwt
+      'hasJwt:',
+      hasJwt
     )
   }
 
@@ -68,7 +69,9 @@ function redirect() {
       // Can't complete SSO — stop the loop and show an error.
       console.error(
         '[discourse] SSO loop broken: no persistent token available.',
-        'User appears logged in (myid=' + myid.value + ') but auth.persistent is null.',
+        'User appears logged in (myid=' +
+          myid.value +
+          ') but auth.persistent is null.',
         'This means the session was not persisted to the DB or was cleared.'
       )
       ssoError.value = true
@@ -110,7 +113,10 @@ onMounted(() => {
   const authStore = useAuthStore()
   const me = authStore.user
   if (me && me.id) {
-    console.log('[discourse] mounted: user in store but myid not yet reactive, id=', me.id)
+    console.log(
+      '[discourse] mounted: user in store but myid not yet reactive, id=',
+      me.id
+    )
     redirect()
   }
 })

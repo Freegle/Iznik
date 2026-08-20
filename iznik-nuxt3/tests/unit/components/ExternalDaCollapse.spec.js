@@ -71,9 +71,18 @@ function createWrapper(props = {}) {
           template: '<div class="jobs-da-slot" />',
           emits: ['rendered', 'borednow'],
         },
-        OurPlaywireDa: { template: '<div class="playwire-da" />', emits: ['rendered'] },
-        OurGoogleDa: { template: '<div class="google-da" />', emits: ['rendered'] },
-        OurPrebidDa: { template: '<div class="prebid-da" />', emits: ['rendered'] },
+        OurPlaywireDa: {
+          template: '<div class="playwire-da" />',
+          emits: ['rendered'],
+        },
+        OurGoogleDa: {
+          template: '<div class="google-da" />',
+          emits: ['rendered'],
+        },
+        OurPrebidDa: {
+          template: '<div class="prebid-da" />',
+          emits: ['rendered'],
+        },
         'nuxt-link': {
           template: '<a class="nuxt-link" :href="to"><slot /></a>',
           props: ['to'],
@@ -113,7 +122,6 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.useFakeTimers()
   priorRuntimeConfig = globalThis.useRuntimeConfig
-  process.client = true
   setRuntimeConfig({})
   mockMe.value = { id: 1, email: 'member@example.com' }
   mockRecentDonor.value = false
@@ -125,7 +133,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   globalThis.useRuntimeConfig = priorRuntimeConfig
-  delete process.client
 })
 
 describe('supporter (recent donor) — no ads, and no space held for them', () => {

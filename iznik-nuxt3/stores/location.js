@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useLocationStore = defineStore({
-  id: 'location',
+export const useLocationStore = defineStore('location', {
   state: () => ({
     list: {},
   }),

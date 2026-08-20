@@ -5,10 +5,12 @@ import { setActivePinia, createPinia } from 'pinia'
 import { reactive, nextTick } from 'vue'
 
 let mockPlatform = 'web'
+const mockConvertFileSrc = vi.fn((p) => `converted:${p}`)
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     getPlatform: () => mockPlatform,
     isNativePlatform: () => mockPlatform !== 'web',
+    convertFileSrc: (...args) => mockConvertFileSrc(...args),
   },
 }))
 
@@ -18,6 +20,34 @@ vi.mock('@capacitor/text-zoom', () => ({
   TextZoom: {
     getPreferred: (...args) => mockTextZoomGetPreferred(...args),
     set: (...args) => mockTextZoomSet(...args),
+  },
+}))
+
+// Dynamically-imported native modules used only inside initApp().
+vi.mock('@capacitor/device', () => ({ Device: {} }))
+vi.mock('@capawesome/capacitor-badge', () => ({ Badge: {} }))
+vi.mock('@freegle/capacitor-push-notifications-cap8', () => ({
+  PushNotifications: {},
+}))
+vi.mock('@capacitor/app-launcher', () => ({ AppLauncher: {} }))
+// A single top-level mock for the whole file: Vitest hoists every vi.mock()
+// call for a given specifier to the top in file order and the LAST one wins,
+// so this must cover every method any test in this file needs (getState was
+// previously supplied by three separate in-body vi.mock('@capacitor/app')
+// calls further down — those have been folded in here instead).
+const mockAppGetInfo = vi.fn().mockResolvedValue({
+  version: '3.1.4',
+  build: '42',
+  id: 'org.freegle.app',
+})
+const mockAppAddListener = vi.fn()
+const mockAppGetState = vi.fn().mockResolvedValue({ isActive: false })
+vi.mock('@capacitor/app', () => ({
+  App: {
+    getInfo: (...args) => mockAppGetInfo(...args),
+    addListener: (...args) => mockAppAddListener(...args),
+    getState: (...args) => mockAppGetState(...args),
+    minimizeApp: vi.fn(),
   },
 }))
 
@@ -574,10 +604,6 @@ describe('mobile store', () => {
 
     it('sets modtools flag from notification data', async () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      // Mock App import
-      vi.mock('@capacitor/app', () => ({
-        App: { getState: () => Promise.resolve({ isActive: false }) },
-      }))
 
       await store.handleNotification(
         {
@@ -876,11 +902,11 @@ describe('mobile store', () => {
         }),
       }
       // initDeepLinks guards with `if (process.client)`; enable it for tests.
-      process.client = true
+      import.meta.client = true
     })
 
     afterEach(() => {
-      delete process.client
+      delete import.meta.client
     })
 
     async function triggerDeepLink(url) {
@@ -936,11 +962,11 @@ describe('mobile store', () => {
       // reRegisterPush guards with `if (!process.client ...)`; enable the
       // client environment so the checkPermissions/register path runs (same
       // pattern as the initDeepLinks and other native-guarded blocks above).
-      process.client = true
+      import.meta.client = true
     })
 
     afterEach(() => {
-      delete process.client
+      delete import.meta.client
     })
 
     it('calls register() on a native app with a stored plugin and granted permission', async () => {
@@ -1013,11 +1039,11 @@ describe('mobile store', () => {
           if (event === 'resume') capturedListener = fn
         }),
       }
-      process.client = true
+      import.meta.client = true
     })
 
     afterEach(() => {
-      delete process.client
+      delete import.meta.client
     })
 
     it('re-registers push on resume when on a native app', async () => {
@@ -1078,12 +1104,15 @@ describe('mobile store', () => {
       historyBackSpy = vi
         .spyOn(window.history, 'back')
         .mockImplementation(() => {})
-      process.client = true
+      // initBackButton now guards with `import.meta.client` like its siblings,
+      // which the vitest transform substitutes to true at build time — so
+      // nothing needs setting here. (It read `process.client`, which Nuxt 3's
+      // vite builder defined as true but Nuxt 4's does not define at all, so
+      // the upgrade would have shipped this listener silently unregistered.)
     })
 
     afterEach(() => {
       historyBackSpy.mockRestore()
-      delete process.client
     })
 
     it('registers a backButton listener', () => {
@@ -1123,9 +1152,6 @@ describe('mobile store', () => {
     // When the app is in the background (okToMove=true), tapping should navigate
     // to /browse via router.push — exactly like any other routable push.
     it('routes to /browse when new_posts push is tapped (background)', async () => {
-      vi.mock('@capacitor/app', () => ({
-        App: { getState: () => Promise.resolve({ isActive: false }) },
-      }))
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
       await store.handleNotification(
@@ -1255,10 +1281,6 @@ describe('mobile store', () => {
       vi.stubGlobal('useRouter', () => ({
         push: mockRouterPush,
         currentRoute: { value: { path: '/chats/12345' } },
-      }))
-
-      vi.mock('@capacitor/app', () => ({
-        App: { getState: () => Promise.resolve({ isActive: false }) },
       }))
 
       const store = useMobileStore()
@@ -1407,6 +1429,474 @@ describe('mobile store', () => {
       const store = useMobileStore()
 
       expect(() => store.logAppSession()).not.toThrow()
+    })
+  })
+
+  describe('initApp', () => {
+    function stubSubActions(store) {
+      store.initShareIntent = vi.fn()
+      store.initBackButton = vi.fn()
+      store.initWakeUpActions = vi.fn()
+      store.getDeviceInfo = vi.fn().mockResolvedValue()
+      store.logAppSession = vi.fn()
+      store.fixWindowOpen = vi.fn()
+      store.initDeepLinks = vi.fn()
+      store.initTextZoom = vi.fn().mockResolvedValue()
+      store.initPushNotifications = vi.fn().mockResolvedValue()
+      store.checkForAppUpdate = vi.fn().mockResolvedValue()
+    }
+
+    it('orchestrates startup and records the real native app version', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockPlatform = 'ios'
+      const store = useMobileStore()
+      stubSubActions(store)
+
+      await store.initApp()
+
+      expect(store.appVersion).toBe('3.1.4')
+      expect(store.appBuild).toBe('42')
+      expect(mockSetAppVersion).toHaveBeenCalledWith('3.1.4')
+      expect(store.initShareIntent).toHaveBeenCalled()
+      expect(store.initBackButton).toHaveBeenCalled()
+      expect(store.initWakeUpActions).toHaveBeenCalled()
+      expect(store.getDeviceInfo).toHaveBeenCalled()
+      expect(store.logAppSession).toHaveBeenCalled()
+      expect(store.fixWindowOpen).toHaveBeenCalled()
+      expect(store.initDeepLinks).toHaveBeenCalled()
+      expect(store.initTextZoom).toHaveBeenCalled()
+      expect(store.initPushNotifications).toHaveBeenCalled()
+      expect(store.checkForAppUpdate).toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+
+    it('reads and clears a non-empty Android background push log', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockPlatform = 'android'
+      const store = useMobileStore()
+      stubSubActions(store)
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap8')
+      PushNotifications.getBackgroundPushLog = vi
+        .fn()
+        .mockResolvedValue({ log: 'line one\nline two' })
+      PushNotifications.clearBackgroundPushLog = vi.fn().mockResolvedValue()
+
+      await store.initApp()
+
+      expect(PushNotifications.getBackgroundPushLog).toHaveBeenCalled()
+      expect(PushNotifications.clearBackgroundPushLog).toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+
+    it('skips clearing when the Android background push log is empty', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockPlatform = 'android'
+      const store = useMobileStore()
+      stubSubActions(store)
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap8')
+      PushNotifications.getBackgroundPushLog = vi
+        .fn()
+        .mockResolvedValue({ log: '   ' })
+      PushNotifications.clearBackgroundPushLog = vi.fn().mockResolvedValue()
+
+      await store.initApp()
+
+      expect(PushNotifications.clearBackgroundPushLog).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+
+    it('swallows a getBackgroundPushLog failure (not implemented on this plugin version)', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockPlatform = 'android'
+      const store = useMobileStore()
+      stubSubActions(store)
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap8')
+      PushNotifications.getBackgroundPushLog = vi
+        .fn()
+        .mockRejectedValue(new Error('not implemented'))
+
+      await expect(store.initApp()).resolves.toBeUndefined()
+      logSpy.mockRestore()
+    })
+
+    it('does not touch the background push log on iOS', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockPlatform = 'ios'
+      const store = useMobileStore()
+      stubSubActions(store)
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap8')
+      PushNotifications.getBackgroundPushLog = vi.fn()
+
+      await store.initApp()
+
+      expect(PushNotifications.getBackgroundPushLog).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+  })
+
+  describe('fixWindowOpen', () => {
+    let originalOpen
+
+    beforeEach(() => {
+      originalOpen = window.open
+    })
+
+    afterEach(() => {
+      window.open = originalOpen
+    })
+
+    it('routes an internal URL via the router instead of opening a new window', () => {
+      const store = useMobileStore()
+      const mockAppLauncher = { openUrl: vi.fn() }
+
+      store.fixWindowOpen(mockAppLauncher)
+      window.open('/give/mobile/photos', '_self')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/give/mobile/photos')
+      expect(mockAppLauncher.openUrl).not.toHaveBeenCalled()
+    })
+
+    it('opens an external URL via AppLauncher on success', async () => {
+      const store = useMobileStore()
+      const mockAppLauncher = {
+        openUrl: vi.fn().mockResolvedValue({ completed: true }),
+      }
+
+      store.fixWindowOpen(mockAppLauncher)
+      window.open('https://example.com', '_blank')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(mockAppLauncher.openUrl).toHaveBeenCalledWith({
+        url: 'https://example.com',
+      })
+      expect(mockRouterPush).not.toHaveBeenCalled()
+    })
+
+    it('swallows an AppLauncher.openUrl failure', async () => {
+      const store = useMobileStore()
+      const mockAppLauncher = {
+        openUrl: vi.fn().mockRejectedValue(new Error('cannot open')),
+      }
+
+      store.fixWindowOpen(mockAppLauncher)
+      expect(() => window.open('https://example.com', '_blank')).not.toThrow()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  })
+
+  describe('initShareIntent / checkSharedIntent / handleSharedUrl', () => {
+    let originalFreegleShare
+
+    beforeEach(() => {
+      import.meta.client = true
+      originalFreegleShare = window.FreegleShare
+    })
+
+    afterEach(() => {
+      delete import.meta.client
+      if (originalFreegleShare === undefined) {
+        delete window.FreegleShare
+      } else {
+        window.FreegleShare = originalFreegleShare
+      }
+    })
+
+    it('initShareIntent runs an initial check and re-checks on resume', () => {
+      const store = useMobileStore()
+      store.checkSharedIntent = vi.fn()
+      const mockApp = { addListener: vi.fn() }
+
+      store.initShareIntent(mockApp)
+      expect(store.checkSharedIntent).toHaveBeenCalledTimes(1)
+
+      const resumeHandler = mockApp.addListener.mock.calls.find(
+        ([event]) => event === 'resume'
+      )[1]
+      resumeHandler()
+      expect(store.checkSharedIntent).toHaveBeenCalledTimes(2)
+    })
+
+    it('checkSharedIntent is a no-op on the website (isApp false)', () => {
+      const store = useMobileStore()
+      store.isApp = false
+      window.FreegleShare = { consume: () => '["/tmp/a.jpg"]' }
+
+      store.checkSharedIntent()
+
+      expect(store.pendingSharedImages).toEqual([])
+    })
+
+    it('checkSharedIntent is a no-op when there is no native bridge', () => {
+      const store = useMobileStore()
+      store.isApp = true
+      delete window.FreegleShare
+
+      expect(() => store.checkSharedIntent()).not.toThrow()
+      expect(store.pendingSharedImages).toEqual([])
+    })
+
+    it('checkSharedIntent is a no-op when consume() returns nothing', () => {
+      const store = useMobileStore()
+      store.isApp = true
+      window.FreegleShare = { consume: () => null }
+
+      store.checkSharedIntent()
+
+      expect(store.pendingSharedImages).toEqual([])
+    })
+
+    it('checkSharedIntent swallows unparsable JSON from the bridge', () => {
+      const store = useMobileStore()
+      store.isApp = true
+      window.FreegleShare = { consume: () => 'not json' }
+
+      expect(() => store.checkSharedIntent()).not.toThrow()
+      expect(store.pendingSharedImages).toEqual([])
+    })
+
+    it('checkSharedIntent ignores a non-array or empty payload', () => {
+      const store = useMobileStore()
+      store.isApp = true
+      window.FreegleShare = { consume: () => '[]' }
+
+      store.checkSharedIntent()
+
+      expect(store.pendingSharedImages).toEqual([])
+    })
+
+    it('checkSharedIntent converts and queues shared image paths, then routes to the give flow', () => {
+      const store = useMobileStore()
+      store.isApp = true
+      window.FreegleShare = {
+        consume: () => JSON.stringify(['/tmp/a.jpg', '/tmp/b.jpg']),
+      }
+
+      store.checkSharedIntent()
+
+      expect(store.pendingSharedImages).toEqual([
+        'converted:/tmp/a.jpg',
+        'converted:/tmp/b.jpg',
+      ])
+      expect(mockRouterPush).toHaveBeenCalledWith('/give/mobile/photos')
+    })
+
+    it('checkSharedIntent swallows a bridge that throws', () => {
+      const store = useMobileStore()
+      store.isApp = true
+      window.FreegleShare = {
+        consume: () => {
+          throw new Error('bridge exploded')
+        },
+      }
+
+      expect(() => store.checkSharedIntent()).not.toThrow()
+    })
+
+    it('handleSharedUrl is a no-op for a URL with no query string', () => {
+      const store = useMobileStore()
+
+      store.handleSharedUrl('freegleshare://shared')
+
+      expect(store.pendingSharedImages).toEqual([])
+    })
+
+    it('handleSharedUrl is a no-op when there are no p= params', () => {
+      const store = useMobileStore()
+
+      store.handleSharedUrl('freegleshare://shared?x=1')
+
+      expect(store.pendingSharedImages).toEqual([])
+    })
+
+    it('handleSharedUrl parses one or more p= params, queues images and routes', () => {
+      const store = useMobileStore()
+
+      store.handleSharedUrl(
+        'freegleshare://shared?p=%2Ftmp%2Fa.jpg&p=%2Ftmp%2Fb.jpg'
+      )
+
+      expect(store.pendingSharedImages).toEqual([
+        'converted:/tmp/a.jpg',
+        'converted:/tmp/b.jpg',
+      ])
+      expect(mockRouterPush).toHaveBeenCalledWith('/give/mobile/photos')
+    })
+
+    it('handleSharedUrl swallows malformed input instead of throwing', () => {
+      const store = useMobileStore()
+
+      expect(() => store.handleSharedUrl(null)).not.toThrow()
+    })
+  })
+
+  describe('initPushNotifications', () => {
+    function makePushNotifications(overrides = {}) {
+      return {
+        deleteChannel: vi.fn().mockResolvedValue(),
+        createChannel: vi.fn().mockResolvedValue(),
+        registerActionCategories: vi.fn().mockResolvedValue({ ok: true }),
+        checkPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        addListener: vi.fn().mockResolvedValue(),
+        requestPermissions: vi.fn().mockResolvedValue({ receive: 'granted' }),
+        register: vi.fn().mockResolvedValue(),
+        listChannels: vi
+          .fn()
+          .mockResolvedValue({ channels: [{ id: 'chat_messages' }] }),
+        removeAllDeliveredNotifications: vi.fn().mockResolvedValue(),
+        removeDeliveredNotifications: vi.fn().mockResolvedValue(),
+        ...overrides,
+      }
+    }
+    const mockBadge = { set: vi.fn().mockResolvedValue() }
+
+    it('creates Android notification channels and registers when permission is granted', async () => {
+      const store = useMobileStore()
+      store.isiOS = false
+      const pn = makePushNotifications()
+
+      await store.initPushNotifications(pn, mockBadge)
+
+      expect(pn.deleteChannel).toHaveBeenCalledTimes(3)
+      expect(pn.createChannel).toHaveBeenCalledTimes(6)
+      expect(pn.registerActionCategories).not.toHaveBeenCalled()
+      expect(pn.register).toHaveBeenCalled()
+      // pushPlugin is kept for reRegisterPush() to call checkPermissions() on.
+      expect(store.pushPlugin.checkPermissions).toBe(pn.checkPermissions)
+    })
+
+    it('registers iOS action categories instead of Android channels', async () => {
+      const store = useMobileStore()
+      store.isiOS = true
+      const pn = makePushNotifications()
+
+      await store.initPushNotifications(pn, mockBadge)
+
+      expect(pn.deleteChannel).not.toHaveBeenCalled()
+      expect(pn.registerActionCategories).toHaveBeenCalled()
+    })
+
+    it('survives registerActionCategories being unavailable on older iOS plugin versions', async () => {
+      const store = useMobileStore()
+      store.isiOS = true
+      const pn = makePushNotifications({
+        registerActionCategories: vi
+          .fn()
+          .mockRejectedValue(new Error('not available')),
+      })
+
+      await expect(
+        store.initPushNotifications(pn, mockBadge)
+      ).resolves.toBeUndefined()
+    })
+
+    it('does not register when permission is not granted', async () => {
+      const store = useMobileStore()
+      const pn = makePushNotifications({
+        requestPermissions: vi.fn().mockResolvedValue({ receive: 'denied' }),
+      })
+
+      await store.initPushNotifications(pn, mockBadge)
+
+      expect(pn.register).not.toHaveBeenCalled()
+    })
+
+    it('the registration listener stores the token and saves it via authStore', async () => {
+      const store = useMobileStore()
+      store.isiOS = false
+      const pn = makePushNotifications()
+
+      await store.initPushNotifications(pn, mockBadge)
+
+      const registrationHandler = pn.addListener.mock.calls.find(
+        ([event]) => event === 'registration'
+      )[1]
+      registrationHandler({ value: 'device-token-abc' })
+
+      expect(store.mobilePushId).toBe('device-token-abc')
+      expect(mockSavePushId).toHaveBeenCalled()
+      expect(pn.listChannels).toHaveBeenCalled()
+    })
+
+    it('the registrationError listener does not throw', async () => {
+      const store = useMobileStore()
+      const pn = makePushNotifications()
+
+      await store.initPushNotifications(pn, mockBadge)
+
+      const errorHandler = pn.addListener.mock.calls.find(
+        ([event]) => event === 'registrationError'
+      )[1]
+      expect(() => errorHandler({ message: 'boom' })).not.toThrow()
+    })
+
+    it('the pushNotificationReceived listener delegates to handleNotification', async () => {
+      const store = useMobileStore()
+      store.handleNotification = vi.fn()
+      const pn = makePushNotifications()
+
+      await store.initPushNotifications(pn, mockBadge)
+
+      const receivedHandler = pn.addListener.mock.calls.find(
+        ([event]) => event === 'pushNotificationReceived'
+      )[1]
+      const notification = { data: {} }
+      receivedHandler(notification)
+
+      expect(store.handleNotification).toHaveBeenCalledWith(
+        notification,
+        pn,
+        mockBadge
+      )
+    })
+
+    it.each([
+      ['reply', 'handleReplyAction'],
+      ['mark_read', 'handleMarkReadAction'],
+    ])(
+      'the pushNotificationActionPerformed listener routes actionId=%s to %s',
+      async (actionId, method) => {
+        const store = useMobileStore()
+        store[method] = vi.fn()
+        const pn = makePushNotifications()
+
+        await store.initPushNotifications(pn, mockBadge)
+
+        const actionHandler = pn.addListener.mock.calls.find(
+          ([event]) => event === 'pushNotificationActionPerformed'
+        )[1]
+        await actionHandler({
+          actionId,
+          inputValue: 'reply text',
+          notification: { id: 1 },
+        })
+
+        expect(store[method]).toHaveBeenCalled()
+      }
+    )
+
+    it('falls through to handleNotification for an unrecognised action and marks okToMove', async () => {
+      const store = useMobileStore()
+      store.handleNotification = vi.fn()
+      const pn = makePushNotifications()
+
+      await store.initPushNotifications(pn, mockBadge)
+
+      const actionHandler = pn.addListener.mock.calls.find(
+        ([event]) => event === 'pushNotificationActionPerformed'
+      )[1]
+      const notification = {}
+      await actionHandler({ actionId: 'tap', notification })
+
+      expect(notification.okToMove).toBe(true)
+      expect(store.handleNotification).toHaveBeenCalledWith(
+        notification,
+        pn,
+        mockBadge
+      )
     })
   })
 })

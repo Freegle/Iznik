@@ -1,5 +1,5 @@
 diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.js
-index 3566956..a1a02c8 100644
+index 2e2db5d..01f7d23 100644
 --- a/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.js
 +++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.js
 @@ -31,9 +31,11 @@ const nodeOps = {
@@ -17,8 +17,17 @@ index 3566956..a1a02c8 100644
      }
    },
    createElement: (tag, namespace, is, props) => {
+@@ -51,7 +53,7 @@ const nodeOps = {
+   setElementText: (el, text) => {
+     el.textContent = text;
+   },
+-  parentNode: (node) => node.parentNode,
++  parentNode: (node) => (node ? node.parentNode : null),
+   nextSibling: (node) => node.nextSibling,
+   querySelector: (selector) => doc.querySelector(selector),
+   setScopeId(el, id) {
 diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.prod.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.prod.js
-index 654d864..e56ebb5 100644
+index 007eb5d..18859ef 100644
 --- a/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.prod.js
 +++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.cjs.prod.js
 @@ -30,9 +30,11 @@ const nodeOps = {
@@ -36,11 +45,20 @@ index 654d864..e56ebb5 100644
      }
    },
    createElement: (tag, namespace, is, props) => {
+@@ -50,7 +52,7 @@ const nodeOps = {
+   setElementText: (el, text) => {
+     el.textContent = text;
+   },
+-  parentNode: (node) => node.parentNode,
++  parentNode: (node) => (node ? node.parentNode : null),
+   nextSibling: (node) => node.nextSibling,
+   querySelector: (selector) => doc.querySelector(selector),
+   setScopeId(el, id) {
 diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-browser.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-browser.js
-index 1101319..dd987c7 100644
+index 7ddf536..e0127b2 100644
 --- a/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-browser.js
 +++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-browser.js
-@@ -10635,9 +10635,11 @@ const nodeOps = {
+@@ -11000,9 +11000,11 @@ const nodeOps = {
      parent.insertBefore(child, anchor || null);
    },
    remove: (child) => {
@@ -55,8 +73,17 @@ index 1101319..dd987c7 100644
      }
    },
    createElement: (tag, namespace, is, props) => {
+@@ -11020,7 +11022,7 @@ const nodeOps = {
+   setElementText: (el, text) => {
+     el.textContent = text;
+   },
+-  parentNode: (node) => node.parentNode,
++  parentNode: (node) => (node ? node.parentNode : null),
+   nextSibling: (node) => node.nextSibling,
+   querySelector: (selector) => doc.querySelector(selector),
+   setScopeId(el, id) {
 diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js
-index a89d96d..794b01a 100644
+index d791438..d6d734d 100644
 --- a/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js
 +++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.esm-bundler.js
 @@ -28,9 +28,11 @@ const nodeOps = {
@@ -74,11 +101,20 @@ index a89d96d..794b01a 100644
      }
    },
    createElement: (tag, namespace, is, props) => {
+@@ -48,7 +50,7 @@ const nodeOps = {
+   setElementText: (el, text) => {
+     el.textContent = text;
+   },
+-  parentNode: (node) => node.parentNode,
++  parentNode: (node) => (node ? node.parentNode : null),
+   nextSibling: (node) => node.nextSibling,
+   querySelector: (selector) => doc.querySelector(selector),
+   setScopeId(el, id) {
 diff --git a/node_modules/@vue/runtime-dom/dist/runtime-dom.global.js b/node_modules/@vue/runtime-dom/dist/runtime-dom.global.js
-index 9f2b7f5..c3f39b3 100644
+index 91ef888..bcd0914 100644
 --- a/node_modules/@vue/runtime-dom/dist/runtime-dom.global.js
 +++ b/node_modules/@vue/runtime-dom/dist/runtime-dom.global.js
-@@ -10575,9 +10575,11 @@ Component that was made reactive: `,
+@@ -10940,9 +10940,11 @@ Component that was made reactive: `,
        parent.insertBefore(child, anchor || null);
      },
      remove: (child) => {
@@ -93,3 +129,12 @@ index 9f2b7f5..c3f39b3 100644
        }
      },
      createElement: (tag, namespace, is, props) => {
+@@ -10960,7 +10962,7 @@ Component that was made reactive: `,
+     setElementText: (el, text) => {
+       el.textContent = text;
+     },
+-    parentNode: (node) => node.parentNode,
++    parentNode: (node) => (node ? node.parentNode : null),
+     nextSibling: (node) => node.nextSibling,
+     querySelector: (selector) => doc.querySelector(selector),
+     setScopeId(el, id) {

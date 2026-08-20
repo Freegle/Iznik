@@ -659,6 +659,28 @@ commands:
               docker-compose build $INLINE_CACHE_FLAG playwright status spatial-knn spatial > "$OTHER_LOG" 2>&1 &
               OTHER_PID=$!
 
+              # Every group above redirects to a log file, so between "building in
+              # parallel" and the first "build complete" the console says NOTHING.
+              # A group that legitimately runs longer than no_output_timeout (25m)
+              # therefore kills the job with "Too long with no output" while it is
+              # still working - which reads as a hang rather than a slow build.
+              # Heartbeat naming the groups still going, so the timer only ever
+              # fires on a build that has genuinely stopped making progress.
+              (
+                HB_START=$(date +%s)
+                while kill -0 $GO_PID 2>/dev/null || kill -0 $NUXT_PID 2>/dev/null \
+                   || kill -0 $OTHER_PID 2>/dev/null; do
+                  sleep 60
+                  STILL=""
+                  kill -0 $GO_PID    2>/dev/null && STILL="$STILL go"
+                  kill -0 $NUXT_PID  2>/dev/null && STILL="$STILL nuxt"
+                  kill -0 $OTHER_PID 2>/dev/null && STILL="$STILL other"
+                  [ -n "$STILL" ] && \
+                    echo "   ... building for $((($(date +%s) - HB_START) / 60))m, still running:$STILL"
+                done
+              ) &
+              HEARTBEAT_PID=$!
+
               BUILD_FAILED=0
               check_build() {
                 local pid=$1 name=$2 log=$3
@@ -674,6 +696,8 @@ commands:
               check_build $GO_PID    "Go (apiv2)"                "$GO_LOG"
               check_build $NUXT_PID  "Nuxt (freegle/modtools)"   "$NUXT_LOG"
               check_build $OTHER_PID "Playwright + status"       "$OTHER_LOG"
+
+              kill $HEARTBEAT_PID 2>/dev/null || true
 
               if [ $BUILD_FAILED -eq 1 ]; then
                 kill $BATCH_PID 2>/dev/null || true
@@ -5036,7 +5060,7 @@ jobs:
               sleep "$delay"; delay=$((delay*2))
               if [ "$delay" -gt 120 ]; then delay=120; fi
             done
-            npm update @freegle/capacitor-push-notifications-cap7
+            npm update @freegle/capacitor-push-notifications-cap8
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -5228,7 +5252,7 @@ jobs:
               if [ "$delay" -gt 120 ]; then delay=120; fi
             done
             npm install @rollup/rollup-darwin-arm64 @oxc-parser/binding-darwin-arm64 @oxc-transform/binding-darwin-arm64 @oxc-minify/binding-darwin-arm64 --prefer-offline || true
-            npm update @freegle/capacitor-push-notifications-cap7
+            npm update @freegle/capacitor-push-notifications-cap8
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:

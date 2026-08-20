@@ -223,14 +223,14 @@ import {
   dedupKey,
 } from '~/composables/useMessageDedup'
 
-const OurMessage = defineAsyncComponent(() =>
-  import('~/components/OurMessage.vue')
+const OurMessage = defineAsyncComponent(
+  () => import('~/components/OurMessage.vue')
 )
-const GroupHeader = defineAsyncComponent(() =>
-  import('~/components/GroupHeader.vue')
+const GroupHeader = defineAsyncComponent(
+  () => import('~/components/GroupHeader.vue')
 )
-const MessageSkeleton = defineAsyncComponent(() =>
-  import('~/components/MessageSkeleton.vue')
+const MessageSkeleton = defineAsyncComponent(
+  () => import('~/components/MessageSkeleton.vue')
 )
 
 const MIN_TO_SHOW = 10

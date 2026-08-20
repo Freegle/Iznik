@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 
-export const useGiftAidStore = defineStore({
-  id: 'giftaid-modtools',
+export const useGiftAidStore = defineStore('giftaid-modtools', {
   state: () => ({
     list: {},
   }),

@@ -273,12 +273,12 @@ import ExternalDa from '~/components/ExternalDa.vue'
 import ChatListEntry from '~/components/ChatListEntry.vue'
 import { useMiscStore } from '~/stores/misc'
 
-const ContactDetailsAskModal = defineAsyncComponent(() =>
-  import('~/components/ContactDetailsAskModal.vue')
+const ContactDetailsAskModal = defineAsyncComponent(
+  () => import('~/components/ContactDetailsAskModal.vue')
 )
 
-const ChatHideModal = defineAsyncComponent(() =>
-  import('~/components/ChatHideModal')
+const ChatHideModal = defineAsyncComponent(
+  () => import('~/components/ChatHideModal')
 )
 
 const chatStore = useChatStore()
@@ -338,7 +338,7 @@ if (route.query.search) {
   search.value = route.query.search
 }
 
-if (myid && process.client) {
+if (myid && import.meta.client) {
   // Fetch the list of chats. Only on client — SSR has no auth token
   // and the template uses <client-only> anyway.
   await chatStore.fetchChats(search.value, true, initialId)

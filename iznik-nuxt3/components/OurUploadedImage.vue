@@ -108,7 +108,7 @@ const imageClasses = computed(() => {
   return classes.join(' ')
 })
 
-if (process.client && props.src?.includes('gimg_0.jpg')) {
+if (import.meta.client && props.src?.includes('gimg_0.jpg')) {
   sentryCaptureMessage('Broken image: ' + props.src)
 }
 

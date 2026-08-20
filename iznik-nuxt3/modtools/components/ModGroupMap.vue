@@ -301,7 +301,7 @@ import { POSTCODE_REGEX } from '~/constants'
 
 let Wkt = null
 
-if (process.client) {
+if (import.meta.client) {
   Wkt = await import('wicket')
   await import('wicket/wicket-leaflet')
   if (window.L && !window.L.Map.prototype.gestureHandling) {
@@ -389,7 +389,7 @@ watch(shade, (newVal, oldVal) => {
 const mapHeight = computed(() => {
   let height = 0
 
-  if (process.client) {
+  if (import.meta.client) {
     height = window.innerHeight - 150
   }
 

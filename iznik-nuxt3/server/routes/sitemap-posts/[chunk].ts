@@ -15,10 +15,8 @@ import {
 export default defineEventHandler(async (event) => {
   const runtimeConfig = useRuntimeConfig()
 
-  // eslint-disable-next-line no-undef
   appendResponseHeader(event, 'Content-Type', 'text/xml')
 
-  // eslint-disable-next-line no-undef
   const index = parseInt(getRouterParam(event, 'chunk') || '0', 10)
 
   let messages = []

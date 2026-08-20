@@ -21,6 +21,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
+import { useChatStore } from '../../../../stores/chat'
+
 const mockUnHideChat = vi.fn().mockResolvedValue()
 const mockFetchChat = vi.fn().mockResolvedValue(null)
 const mockListChats = vi.fn().mockResolvedValue([])
@@ -66,8 +68,6 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => ({ fetch: vi.fn(), list: {} }),
 }))
 
-import { useChatStore } from '../../../../stores/chat'
-
 describe('bug #9690/14 — unhide must not reset showClosed', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -86,23 +86,20 @@ describe('bug #9690/14 — unhide must not reset showClosed', () => {
    * After the fix (removing `this.showClosed = false` from unhide()) showClosed
    * remains true → test PASSES.
    */
-  it(
-    'preserves showClosed=true after unhide so the user stays on the hidden list',
-    async () => {
-      const store = useChatStore()
-      store.config = {}
-      store.listByChatId[1] = { id: 1, status: 'Closed' }
+  it('preserves showClosed=true after unhide so the user stays on the hidden list', async () => {
+    const store = useChatStore()
+    store.config = {}
+    store.listByChatId[1] = { id: 1, status: 'Closed' }
 
-      // User is viewing the hidden list
-      store.showClosed = true
+    // User is viewing the hidden list
+    store.showClosed = true
 
-      await store.unhide(1)
+    await store.unhide(1)
 
-      // showClosed must NOT be reset — user stays on the hidden-chats view
-      // so they can selectively unhide more chats without navigating away.
-      expect(store.showClosed).toBe(true)
-    }
-  )
+    // showClosed must NOT be reset — user stays on the hidden-chats view
+    // so they can selectively unhide more chats without navigating away.
+    expect(store.showClosed).toBe(true)
+  })
 
   it('updates the chat status to Online when unhidden', async () => {
     const store = useChatStore()

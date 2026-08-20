@@ -421,6 +421,50 @@ jobs:
             done
 
             echo "Done with pre-continuation cancel pass"
+      - run:
+          name: Wait for pinned freegle/tests orb version to be published
+          command: |
+            # continue-config.yml pins an exact freegle/tests@X.Y.Z version. CircleCI
+            # resolves that orb from the registry, not from the copy of the orb source
+            # in this repo — so if a commit bumps the pin and gets pushed before the
+            # matching `circleci orb publish` finishes, the continuation step below
+            # errors with "Cannot find freegle/tests@X.Y.Z in the orb registry" (see
+            # pipeline #10746 on fd125118b: pin bumped to 1.1.376, pipeline fired at
+            # 17:50:38, orb wasn't published until 18:31:54 — a 41 minute gap).
+            # Publishing normally takes well under a minute, so poll briefly instead
+            # of failing immediately on a pin that's still propagating.
+            if [ -z "$CIRCLE_TOKEN" ]; then
+              echo "CIRCLE_TOKEN not set — skipping orb availability check"
+              exit 0
+            fi
+
+            PINNED_VERSION=$(grep -oE 'freegle/tests@[0-9]+\.[0-9]+\.[0-9]+' .circleci/continue-config.yml | head -1 | cut -d@ -f2)
+            if [ -z "$PINNED_VERSION" ]; then
+              echo "Could not find a freegle/tests@X.Y.Z pin in continue-config.yml — skipping check"
+              exit 0
+            fi
+
+            echo "Checking that freegle/tests@${PINNED_VERSION} is published..."
+            for attempt in $(seq 1 12); do
+              FOUND=$(curl -sf -X POST https://circleci.com/graphql-unstable \
+                -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d '{"query":"query($name:String!){orb(name:$name){versions(count:50){version}}}","variables":{"name":"freegle/tests"}}' 2>/dev/null | \
+                jq -r --arg v "$PINNED_VERSION" '.data.orb.versions[]?.version | select(. == $v)') || true
+
+              if [ -n "$FOUND" ]; then
+                echo "freegle/tests@${PINNED_VERSION} is published."
+                exit 0
+              fi
+
+              echo "  attempt ${attempt}/12: not published yet, waiting 10s..."
+              sleep 10
+            done
+
+            echo "freegle/tests@${PINNED_VERSION} still not found in the orb registry after 2 minutes."
+            echo "If continue-config.yml's pin was just bumped, publish it first:"
+            echo "  source .env && ~/.local/bin/circleci orb publish .circleci/orb/freegle-tests.yml freegle/tests@${PINNED_VERSION}"
+            echo "Proceeding anyway — the continuation step below will report the precise error."
       - continuation/continue:
           configuration_path: .circleci/continue-config.yml
           parameters: /tmp/pipeline-params.json

@@ -6,8 +6,7 @@ import { useMiscStore } from '~/stores/misc'
 // Debounce delay for batching user fetches (ms)
 const BATCH_DELAY = 50
 
-export const useUserStore = defineStore({
-  id: 'user',
+export const useUserStore = defineStore('user', {
   state: () => ({
     list: {},
     locationList: {},

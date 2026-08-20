@@ -14,8 +14,7 @@ const BATCH_DELAY = 50
 // Refetch a cached message after this long, in case its state has changed.
 const CACHE_TTL_SECONDS = 600
 
-export const useMessageStore = defineStore({
-  id: 'message',
+export const useMessageStore = defineStore('message', {
   state: () => ({
     list: {},
     byUserList: {},
@@ -260,7 +259,7 @@ export const useMessageStore = defineStore({
       }
     },
     async fetchInBounds(swlat, swlng, nelat, nelng, groupid, limit, cache) {
-      let ret = []
+      let ret
       const key =
         swlat + ':' + swlng + ':' + nelat + ':' + nelng + ':' + groupid
 
@@ -299,7 +298,7 @@ export const useMessageStore = defineStore({
       return await api(this.config).message.matches(query, lat, lng, limit)
     },
     async fetchMyGroups(gid) {
-      let ret = null
+      let ret
 
       if (this.fetchingMyGroups) {
         ret = await this.fetchingMyGroups
@@ -753,7 +752,7 @@ export const useMessageStore = defineStore({
     // pending page (Discourse 9862). Only drop it once nothing's left. The review-queue states
     // match ModMessage's own predicate; mirrors hold()/release()'s re-fetch, but conditional.
     async refreshOrRemoveFromMTList(id) {
-      let message = null
+      let message
       try {
         message = await this.fetchMT({ id }, false)
       } catch (e) {

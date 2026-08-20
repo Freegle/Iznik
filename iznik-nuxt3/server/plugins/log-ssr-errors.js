@@ -29,17 +29,13 @@ export default defineNitroPlugin((nitroApp) => {
 
         let stack
         try {
-          stack =
-            (error && (error.stack || error.message)) || String(error)
+          stack = (error && (error.stack || error.message)) || String(error)
         } catch (_) {
           stack = 'Error stack unavailable'
         }
 
         try {
-          console.error(
-            `SSR error on ${method || '?'} ${url || '?'}:`,
-            stack
-          )
+          console.error(`SSR error on ${method || '?'} ${url || '?'}:`, stack)
         } catch (_) {
           // logging must never throw
         }

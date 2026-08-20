@@ -80,7 +80,10 @@ describe('DASHBOARD_CHART_HEADER', () => {
   })
 
   it('types column 1 as number', () => {
-    expect(DASHBOARD_CHART_HEADER[1]).toEqual({ type: 'number', label: 'Count' })
+    expect(DASHBOARD_CHART_HEADER[1]).toEqual({
+      type: 'number',
+      label: 'Count',
+    })
   })
 })
 

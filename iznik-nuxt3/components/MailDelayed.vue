@@ -19,7 +19,7 @@ import { useMe } from '~/composables/useMe'
 import { timeago } from '~/composables/useTimeFormat'
 
 const NoticeMessage = defineAsyncComponent(
-  () => import('~/components/NoticeMessage'),
+  () => import('~/components/NoticeMessage')
 )
 
 const { me } = useMe()

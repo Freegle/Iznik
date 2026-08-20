@@ -285,8 +285,8 @@ const hiddenmemberofs = computed(() => {
   return allmemberships.value
     ? 0
     : allmemberof.value.length > MEMBERSHIPS_SHOW
-    ? allmemberof.value.length - MEMBERSHIPS_SHOW
-    : 0
+      ? allmemberof.value.length - MEMBERSHIPS_SHOW
+      : 0
 })
 
 const userEmails = computed(() => {

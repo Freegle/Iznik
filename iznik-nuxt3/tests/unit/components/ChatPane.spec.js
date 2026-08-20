@@ -13,7 +13,7 @@ import { describe, it, expect } from 'vitest'
 // pattern in ChatFooterDraftPersistence.spec.js.
 const chatPaneSource = readFileSync(
   resolve(__dirname, '../../../components/ChatPane.vue'),
-  'utf-8',
+  'utf-8'
 )
 
 describe('ChatPane empty-chat footer position (Discourse 9918)', () => {
@@ -26,7 +26,7 @@ describe('ChatPane empty-chat footer position (Discourse 9918)', () => {
     // between the busy branch and the footer.
     const between = chatPaneSource.slice(
       chatPaneSource.indexOf('chatBusy'),
-      chatPaneSource.indexOf('<ChatFooter'),
+      chatPaneSource.indexOf('<ChatFooter')
     )
     expect(between).toMatch(/v-else\b/)
     expect(between).toMatch(/chatContentEmpty/)
@@ -50,7 +50,7 @@ describe('ChatPane Freegle system chat header', () => {
   // person and never reads what you send it.
   const header = chatPaneSource.slice(
     chatPaneSource.indexOf('desktop-profile-header'),
-    chatPaneSource.indexOf('<ChatBlockModal'),
+    chatPaneSource.indexOf('<ChatBlockModal')
   )
 
   it("uses a different header for Freegle's own chat", () => {

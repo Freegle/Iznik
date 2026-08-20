@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // UUID v4 format (permissive — matches both crypto.randomUUID and the Math.random fallback)
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 describe('useTrace', () => {
-  let getSessionId, getTraceId, newTraceId, getTraceHeaders, onTraceChange, useTrace
+  let getSessionId,
+    getTraceId,
+    newTraceId,
+    getTraceHeaders,
+    onTraceChange,
+    useTrace
 
   beforeEach(async () => {
     // Clear browser session state before each test

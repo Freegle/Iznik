@@ -156,6 +156,11 @@ also emits:
 anything shaped like `<word>`, so an item described as fitting "`<angle>`
 brackets" survives.
 
+Each entry carries a `key:`, which is what deduplicates a tag when a page
+overrides a site-wide default. That field used to be `hid:`; unhead 2 (Nuxt 4)
+dropped `hid` entirely, and a stray `hid:` is silently ignored rather than
+rejected, so the tag it was meant to replace ends up emitted twice.
+
 ### Post descriptions
 
 The post page used to emit `content="Click for more details"` on **every post on

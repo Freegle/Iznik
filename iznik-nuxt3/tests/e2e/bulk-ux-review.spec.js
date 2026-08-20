@@ -126,7 +126,9 @@ test.describe('Bulk composer UX review', () => {
         )
         expect(
           unlabelled,
-          `bulk controls missing an accessible name: ${JSON.stringify(unlabelled)}`
+          `bulk controls missing an accessible name: ${JSON.stringify(
+            unlabelled
+          )}`
         ).toHaveLength(0)
       }
 

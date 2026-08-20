@@ -259,8 +259,8 @@ const gone = computed(() => {
 
   return Boolean(
     m.outcomes?.length > 0 ||
-      m.deleted ||
-      (m.groups?.length && m.groups.every((g) => g.collection === 'Rejected'))
+    m.deleted ||
+    (m.groups?.length && m.groups.every((g) => g.collection === 'Rejected'))
   )
 })
 
@@ -321,7 +321,7 @@ if (message.value) {
 } else if (gone.value) {
   /* Nothing to describe, but still keep it out of the index. */
   useHead({
-    meta: [{ hid: 'robots', name: 'robots', content: 'noindex, follow' }],
+    meta: [{ key: 'robots', name: 'robots', content: 'noindex, follow' }],
   })
 }
 

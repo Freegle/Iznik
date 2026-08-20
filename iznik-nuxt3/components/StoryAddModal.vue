@@ -148,8 +148,8 @@ import { useOurModal } from '~/composables/useOurModal'
 import { useImageStore } from '~/stores/image'
 import { useAuthStore } from '~/stores/auth'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 
 const emit = defineEmits(['login-required'])

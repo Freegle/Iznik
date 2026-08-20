@@ -7,8 +7,7 @@ import { warn } from '~/composables/useClientLog'
 // tunnel or a lift, short enough that nothing is parked indefinitely.
 const WAIT_FOR_ONLINE_TIMEOUT_MS = 30000
 
-export const useMiscStore = defineStore({
-  id: 'misc',
+export const useMiscStore = defineStore('misc', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     pick: ['vals', 'source', 'marketingConsent'],
@@ -113,7 +112,7 @@ export const useMiscStore = defineStore({
 
       const p = fetch(url, options)
       let timedout = false
-      let ret = null
+      let ret
 
       let timer = setTimeout(() => {
         console.log('Request timed out', url)
@@ -133,7 +132,6 @@ export const useMiscStore = defineStore({
       } catch (e) {
         if (timer) {
           clearTimeout(timer)
-          timer = null
         }
 
         if (timedout) {

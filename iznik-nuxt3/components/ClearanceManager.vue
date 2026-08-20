@@ -37,7 +37,9 @@
           </b-button>
           <b-button
             size="sm"
-            :variant="helperMode === 'approve' ? 'primary' : 'outline-secondary'"
+            :variant="
+              helperMode === 'approve' ? 'primary' : 'outline-secondary'
+            "
             data-testid="helper-mode-approve"
             @click="setMode('approve')"
           >
@@ -45,7 +47,9 @@
           </b-button>
           <b-button
             size="sm"
-            :variant="helperMode === 'automatic' ? 'success' : 'outline-secondary'"
+            :variant="
+              helperMode === 'automatic' ? 'success' : 'outline-secondary'
+            "
             data-testid="helper-mode-automatic"
             @click="setMode('automatic')"
           >
@@ -53,7 +57,8 @@
           </b-button>
         </div>
         <p v-if="helperMode === 'approve'" class="small text-muted mt-1 mb-0">
-          Approve: every message is held for you to edit and approve before it's sent.
+          Approve: every message is held for you to edit and approve before it's
+          sent.
         </p>
       </div>
 
@@ -120,7 +125,10 @@
       <!-- Private access instructions — only the offerer edits and sees these
            on this page. They are delivered to a collector automatically once
            the offerer allocates (Reserves) them an item. -->
-      <div class="clearance-manager__access mt-3 mb-3" data-testid="clearance-access-section">
+      <div
+        class="clearance-manager__access mt-3 mb-3"
+        data-testid="clearance-access-section"
+      >
         <label class="form-label fw-semibold" for="clearance-access-edit">
           Access instructions
         </label>
@@ -367,7 +375,10 @@ async function onResolve({ id, decision, text }) {
 
 async function saveAccessInstructions() {
   try {
-    await messageStore.patch({ id: props.id, accessinstructions: localAccessInstructions.value })
+    await messageStore.patch({
+      id: props.id,
+      accessinstructions: localAccessInstructions.value,
+    })
   } catch (e) {
     console.error('Failed to save access instructions', e)
   }

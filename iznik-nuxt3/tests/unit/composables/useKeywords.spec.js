@@ -51,11 +51,25 @@ describe('useKeywords typeOptions', () => {
     expect(typeOptions.value.map((o) => o.text)).toEqual(['OFFER', 'WANTED'])
   })
 
+  // The ordinary case: a community is selected but has never renamed anything.
+  // That is a different step of the optional chain from having no community at
+  // all, and it is the one almost every group is in.
+  it('falls back for a community that has not renamed its keywords', async () => {
+    const { setupKeywords } = await import('~/composables/useKeywords')
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
+    const { typeOptions } = setupKeywords()
+    const { group } = setupModMessages()
+
+    group.value = { id: 1, settings: {} }
+    await nextTick()
+    expect(typeOptions.value.map((o) => o.text)).toEqual(['OFFER', 'WANTED'])
+  })
+
   it("uses the selected community's renamed keywords, and follows a change of community", async () => {
     const { setupKeywords } = await import('~/composables/useKeywords')
-    const { setupModMessages } = await import(
-      '~/modtools/composables/useModMessages'
-    )
+    const { setupModMessages } =
+      await import('~/modtools/composables/useModMessages')
     const { typeOptions } = setupKeywords()
     const { group } = setupModMessages()
 

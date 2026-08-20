@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import api from '~/api'
 import { APIError } from '~/api/APIErrors'
 
-export const useNotificationStore = defineStore({
-  id: 'notification',
+export const useNotificationStore = defineStore('notification', {
   state: () => ({
     list: [],
     listById: {},

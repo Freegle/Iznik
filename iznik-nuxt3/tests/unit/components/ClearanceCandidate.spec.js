@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 
+import ClearanceCandidate from '~/components/ClearanceCandidate.vue'
+
 const h = vi.hoisted(() => ({
   bulkInterestState: vi.fn().mockResolvedValue({}),
 }))
@@ -19,11 +21,14 @@ vi.mock('~/stores/user', () => ({
   }),
 }))
 
-import ClearanceCandidate from '~/components/ClearanceCandidate.vue'
-
 const mountOpts = {
   global: {
-    stubs: { 'b-button': true, 'b-badge': true, 'b-form-input': true, ClearanceChatModal: true },
+    stubs: {
+      'b-button': true,
+      'b-badge': true,
+      'b-form-input': true,
+      ClearanceChatModal: true,
+    },
   },
 }
 

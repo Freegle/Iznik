@@ -181,7 +181,7 @@ describe('ModMessageReachMap', () => {
     await wrapper.vm.show()
     await flushPromises()
 
-    expect(wrapper.text()).toContain("no location")
+    expect(wrapper.text()).toContain('no location')
     expect(wrapper.find('.explorer-stub').exists()).toBe(false)
   })
 })

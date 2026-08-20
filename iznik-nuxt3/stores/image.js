@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useImageStore = defineStore({
-  id: 'image',
+export const useImageStore = defineStore('image', {
   state: () => ({}),
   actions: {
     init(config) {

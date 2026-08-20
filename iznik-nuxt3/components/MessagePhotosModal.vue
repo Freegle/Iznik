@@ -575,7 +575,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity var(--transition-normal),
+  transition:
+    opacity var(--transition-normal),
     background var(--transition-normal);
   font-size: 1.25rem;
 
@@ -630,7 +631,8 @@ onUnmounted(() => {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.4);
   cursor: pointer;
-  transition: background var(--transition-normal),
+  transition:
+    background var(--transition-normal),
     transform var(--transition-normal);
 
   &.active {

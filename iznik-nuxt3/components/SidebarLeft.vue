@@ -27,11 +27,11 @@
 import { ref, computed } from 'vue'
 import BotLeftBox from './BotLeftBox'
 import { useMe } from '~/composables/useMe'
-const CommunityEventSidebar = defineAsyncComponent(() =>
-  import('~/components/CommunityEventSidebar')
+const CommunityEventSidebar = defineAsyncComponent(
+  () => import('~/components/CommunityEventSidebar')
 )
-const VolunteerOpportunitySidebar = defineAsyncComponent(() =>
-  import('~/components/VolunteerOpportunitySidebar')
+const VolunteerOpportunitySidebar = defineAsyncComponent(
+  () => import('~/components/VolunteerOpportunitySidebar')
 )
 
 const props = defineProps({

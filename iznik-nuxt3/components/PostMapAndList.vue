@@ -72,14 +72,17 @@
           class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
         >
           <!-- eslint-disable-next-line -->
-          Need help?  Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
+          Need help? Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
         </p>
         <p
           v-if="showStartMessage"
           class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
         >
           <!-- eslint-disable-next-line -->
-          If there's no community for your area, would you like to start one? <ExternalLink href="mailto:newgroups@ilovefreegle.org">Get in touch!</ExternalLink>
+          If there's no community for your area, would you like to start one?
+          <ExternalLink href="mailto:newgroups@ilovefreegle.org"
+            >Get in touch!</ExternalLink
+          >
         </p>
       </div>
       <div v-else>
@@ -279,7 +282,7 @@ const loading = ref(false)
 const bounds = ref(null)
 const zoom = ref(null)
 const centre = ref(null)
-const mapready = ref(process.server)
+const mapready = ref(import.meta.server)
 const mapVisible = ref(true)
 const postsVisible = ref(true)
 const mapMoved = ref(false)
@@ -447,13 +450,13 @@ const sortedMessagesOnMap = computed(() => {
 
 const showRegions = computed(() => {
   // We want to show the regions if we're zoomed out, or for SSR = SEO.
-  return process.server || zoom.value < 7
+  return import.meta.server || zoom.value < 7
 })
 
 const showGroupList = computed(() => {
   // We want to show the list of groups for SSR = SEO, or if we are not showing the regions (because we're
   // zoomed out)
-  return process.server || !showRegions.value
+  return import.meta.server || !showRegions.value
 })
 
 const closestGroups = computed(() => {

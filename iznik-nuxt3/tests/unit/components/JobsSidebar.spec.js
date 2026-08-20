@@ -241,7 +241,10 @@ describe('JobsSidebar', () => {
   })
 
   describe('visibleJobs computed', () => {
-    it('uses SSR mode to return all jobs by default', async () => {
+    it('starts with no visible jobs on the client until infinite scroll loads them', async () => {
+      // The unit-test transform substitutes import.meta.client to true (the
+      // SSR return-all branch is compile-time dead here); on the client the
+      // infinite scroll reveals jobs incrementally from show = 0.
       mockJobList.value = [
         { id: 1, job_reference: 'ref-1' },
         { id: 2, job_reference: 'ref-2' },
@@ -251,9 +254,8 @@ describe('JobsSidebar', () => {
       ]
       const wrapper = await createWrapper()
 
-      // In SSR mode (process.client is false in tests), all jobs are returned
       const component = wrapper.findComponent(JobsSidebar)
-      expect(component.vm.visibleJobs.length).toBe(5)
+      expect(component.vm.visibleJobs.length).toBe(0)
     })
   })
 })

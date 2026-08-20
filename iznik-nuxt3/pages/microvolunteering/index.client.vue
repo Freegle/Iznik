@@ -167,26 +167,26 @@ import { ref, useRouter } from '#imports'
 import { useMe } from '~/composables/useMe'
 import { useClientLog } from '~/composables/useClientLog'
 
-const MicroVolunteeringFacebook = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteeringFacebook')
+const MicroVolunteeringFacebook = defineAsyncComponent(
+  () => import('~/components/MicroVolunteeringFacebook')
 )
-const MicroVolunteeringPhotosRotate = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteeringPhotosRotate')
+const MicroVolunteeringPhotosRotate = defineAsyncComponent(
+  () => import('~/components/MicroVolunteeringPhotosRotate')
 )
-const MicroVolunteeringCheckMessage = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteeringCheckMessage')
+const MicroVolunteeringCheckMessage = defineAsyncComponent(
+  () => import('~/components/MicroVolunteeringCheckMessage')
 )
-const MicroVolunteeringSimilarTerms = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteeringSimilarTerms')
+const MicroVolunteeringSimilarTerms = defineAsyncComponent(
+  () => import('~/components/MicroVolunteeringSimilarTerms')
 )
-const MicroVolunteeringSurvey = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteeringSurvey')
+const MicroVolunteeringSurvey = defineAsyncComponent(
+  () => import('~/components/MicroVolunteeringSurvey')
 )
-const MicroVolunteeringInvite = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteeringInvite')
+const MicroVolunteeringInvite = defineAsyncComponent(
+  () => import('~/components/MicroVolunteeringInvite')
 )
-const MicroVolunteeringAIImageReview = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteeringAIImageReview')
+const MicroVolunteeringAIImageReview = defineAsyncComponent(
+  () => import('~/components/MicroVolunteeringAIImageReview')
 )
 
 definePageMeta({

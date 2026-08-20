@@ -519,9 +519,9 @@ describe('ModPhotoModal', () => {
     it('has white variant on Close button', () => {
       const wrapper = mountComponent()
       // The first white button is the Close button in the photo modal footer.
-      const closeBtn = wrapper.findAll('button').find(
-        (b) => b.text() === 'Close'
-      )
+      const closeBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text() === 'Close')
       expect(closeBtn).toBeTruthy()
       expect(closeBtn.attributes('data-variant')).toBe('white')
     })

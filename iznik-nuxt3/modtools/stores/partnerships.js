@@ -5,8 +5,7 @@ import api from '~/api'
  * State for the ModTools Partnerships page: the council sponsorship deals, the totals and
  * financial-year split behind the income graph, and the queued authority statistics runs.
  */
-export const usePartnershipsStore = defineStore({
-  id: 'partnerships',
+export const usePartnershipsStore = defineStore('partnerships', {
   state: () => ({
     list: [],
     // Keyed by partnership id: { partnership, groups, years, payments }.

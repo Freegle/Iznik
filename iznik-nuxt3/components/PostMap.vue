@@ -289,7 +289,7 @@ const mapHeight = computed(() => {
 const mapOptions = computed(() => {
   return {
     zoomControl: true,
-    dragging: process.client && window?.L?.Browser?.mobile,
+    dragging: import.meta.client && window?.L?.Browser?.mobile,
     touchZoom: true,
     scrollWheelZoom: false,
     bounceAtZoomLimits: true,
@@ -338,7 +338,7 @@ const groupsInBounds = computed(() => {
     const groups = mapIdle.value ? allGroups.value : []
     const boundsObj = mapObject.value ? mapObject.value.getBounds() : null
 
-    if (!process.client && boundsObj) {
+    if (!import.meta.client && boundsObj) {
       // SSR - return all for SEO.
       for (const ix in groups) {
         const group = groups[ix]
@@ -730,7 +730,7 @@ async function ready() {
   emit('update:ready', true)
   mapObject.value = map.value.leafletObject
 
-  if (process.client && mapObject.value) {
+  if (import.meta.client && mapObject.value) {
     try {
       mapObject.value.fitBounds(props.initialBounds)
 
@@ -739,15 +739,12 @@ async function ready() {
 
       const runtimeConfig = useRuntimeConfig()
 
-      const { Geocoder } = await import('leaflet-control-geocoder/src/control')
-      const { Photon } = await import(
-        'leaflet-control-geocoder/src/geocoders/photon'
-      )
+      const { Geocoder, geocoders } = await import('leaflet-control-geocoder')
 
       new Geocoder({
         placeholder: 'Search for a place...',
         defaultMarkGeocode: false,
-        geocoder: new Photon({
+        geocoder: new geocoders.Photon({
           geocodingQueryParams: {
             bbox: '-7.57216793459, 49.959999905, 1.68153079591, 58.6350001085',
           },

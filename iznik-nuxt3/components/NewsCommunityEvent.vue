@@ -104,8 +104,8 @@ import { timeago } from '~/composables/useTimeFormat'
 import NewsLoveComment from '~/components/NewsLoveComment'
 import OurUploadedImage from '~/components/OurUploadedImage'
 
-const CommunityEventModal = defineAsyncComponent(() =>
-  import('~/components/CommunityEventModal')
+const CommunityEventModal = defineAsyncComponent(
+  () => import('~/components/CommunityEventModal')
 )
 
 const props = defineProps({

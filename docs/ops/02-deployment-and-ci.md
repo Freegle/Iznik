@@ -52,7 +52,17 @@ Operational notes worth knowing:
 
 - Docker build caching is controlled by a CI environment variable; bumping version
   suffixes in the orb invalidates the cache.
-- When you change tests, **publish the orb** so CI picks the change up.
+- When you change tests, **publish the orb** so CI picks the change up. Editing the
+  orb source in this repo changes nothing on its own: CircleCI resolves the orb from
+  the registry, and the pin in `continue-config.yml` is what decides which published
+  version runs. An unpublished orb change is inert, not broken.
+- **Do not write the next version number into a commit message before publishing it.**
+  Versions are immutable and first-come, so a branch can take the number another
+  branch was about to use, and the second change then goes out under no version at
+  all. Publish, confirm with `circleci orb info freegle/tests`, then bump the pin.
+- A pin published from a branch carries that branch's orb changes. Master must not
+  adopt it until the branch merges, or master's jobs run steps for code it does not
+  have.
 - SSH debugging of CI machines is available to the team, gated by their CircleCI
   credentials. The mechanics are internal and not reproduced here.
 

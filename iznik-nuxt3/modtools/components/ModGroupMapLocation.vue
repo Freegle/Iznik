@@ -25,7 +25,7 @@ import { useLocationStore } from '~/stores/location'
 
 let Wkt = null
 
-if (process.client) {
+if (import.meta.client) {
   Wkt = await import('wicket')
   await import('wicket/wicket-leaflet')
 }

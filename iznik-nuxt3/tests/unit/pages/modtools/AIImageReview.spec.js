@@ -48,7 +48,8 @@ const stubComponents = {
   'b-spinner': { template: '<span class="spinner" />' },
   'b-badge': { template: '<span class="badge"><slot /></span>' },
   'b-form-textarea': {
-    template: '<textarea v-bind="$attrs" @input="$emit(\'update:modelValue\', $event.target.value)"></textarea>',
+    template:
+      '<textarea v-bind="$attrs" @input="$emit(\'update:modelValue\', $event.target.value)"></textarea>',
     props: ['modelValue'],
     emits: ['update:modelValue'],
   },
@@ -57,7 +58,7 @@ const stubComponents = {
   'b-alert': { template: '<div class="alert"><slot /></div>' },
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   setActivePinia(createPinia())
   mockImages.value = []
   mockLoading.value = false
@@ -93,8 +94,18 @@ describe('Images page', () => {
         regeneration_notes: null,
         pending_externaluid: null,
         votes: [
-          { userid: 10, displayname: 'Alice Smith', result: 'Reject', containspeople: 0 },
-          { userid: 11, displayname: 'Bob Jones', result: 'Reject', containspeople: 0 },
+          {
+            userid: 10,
+            displayname: 'Alice Smith',
+            result: 'Reject',
+            containspeople: 0,
+          },
+          {
+            userid: 11,
+            displayname: 'Bob Jones',
+            result: 'Reject',
+            containspeople: 0,
+          },
         ],
         reject_count: 2,
         approve_count: 0,
@@ -130,8 +141,18 @@ describe('Images page', () => {
         regeneration_notes: null,
         pending_externaluid: null,
         votes: [
-          { userid: 20, displayname: 'Carol White', result: 'Reject', containspeople: 0 },
-          { userid: 21, displayname: 'Dave Brown', result: 'Approve', containspeople: 0 },
+          {
+            userid: 20,
+            displayname: 'Carol White',
+            result: 'Reject',
+            containspeople: 0,
+          },
+          {
+            userid: 21,
+            displayname: 'Dave Brown',
+            result: 'Approve',
+            containspeople: 0,
+          },
         ],
         reject_count: 1,
         approve_count: 1,
@@ -177,7 +198,14 @@ describe('AIImageReview card interactions', () => {
         regeneration_notes: null,
         pending_externaluid: null,
         pending_image_url: null,
-        votes: [{ userid: 5, displayname: 'Eve Green', result: 'Reject', containspeople: 0 }],
+        votes: [
+          {
+            userid: 5,
+            displayname: 'Eve Green',
+            result: 'Reject',
+            containspeople: 0,
+          },
+        ],
         reject_count: 5,
         approve_count: 0,
       },
@@ -185,7 +213,9 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('calls regenerate when Regenerate button is clicked', async () => {
-    mockRegenerate.mockResolvedValue({ preview_url: 'https://delivery.ilovefreegle.org?url=test' })
+    mockRegenerate.mockResolvedValue({
+      preview_url: 'https://delivery.ilovefreegle.org?url=test',
+    })
     const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
     await flushPromises()
 
@@ -197,7 +227,8 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('shows preview image after regeneration', async () => {
-    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
+    const previewURL =
+      'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
     await flushPromises()
@@ -223,7 +254,8 @@ describe('AIImageReview card interactions', () => {
         status: 'regenerating',
         regeneration_notes: null,
         pending_externaluid: 'freegletusd-new-preview',
-        pending_image_url: 'https://delivery.ilovefreegle.org?url=freegletusd-new-preview',
+        pending_image_url:
+          'https://delivery.ilovefreegle.org?url=freegletusd-new-preview',
         votes: [],
         reject_count: 5,
         approve_count: 0,
@@ -234,7 +266,9 @@ describe('AIImageReview card interactions', () => {
 
     // The pending_image_url should be shown without clicking Regenerate.
     const imgs = wrapper.findAll('img')
-    const found = imgs.some((img) => img.attributes('src')?.includes('freegletusd-new-preview'))
+    const found = imgs.some((img) =>
+      img.attributes('src')?.includes('freegletusd-new-preview')
+    )
     expect(found).toBe(true)
 
     // Accept button should be visible since there's already a preview.
@@ -242,7 +276,8 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('calls accept when Accept button is clicked after regeneration', async () => {
-    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
+    const previewURL =
+      'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     mockAccept.mockResolvedValue({ ret: 0 })
 
@@ -263,7 +298,8 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('removes image from list after accept', async () => {
-    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
+    const previewURL =
+      'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     mockAccept.mockResolvedValue({ ret: 0 })
 
@@ -323,7 +359,12 @@ describe('AIImageReview loading and edge cases', () => {
         pending_externaluid: null,
         pending_image_url: null,
         votes: [
-          { userid: 10, displayname: 'Alice Smith', result: 'Reject', containspeople: 1 },
+          {
+            userid: 10,
+            displayname: 'Alice Smith',
+            result: 'Reject',
+            containspeople: 1,
+          },
         ],
         reject_count: 1,
         approve_count: 0,
@@ -396,7 +437,10 @@ describe('AIImageReview error handling', () => {
   it('shows spinner in image area while regeneration is in progress', async () => {
     let resolveRegen
     mockRegenerate.mockImplementation(
-      () => new Promise((resolve) => { resolveRegen = resolve })
+      () =>
+        new Promise((resolve) => {
+          resolveRegen = resolve
+        })
     )
     const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
     await flushPromises()
