@@ -586,10 +586,14 @@ class ChatNotificationService
      * returns - and a chase-up we never sent must not count as one we did, or
      * the member is recorded as having been reminded when they were not.
      */
-    public function chaseupSuppressed(User $sendingTo): bool
+    public function chaseupSuppressed(User $sendingTo, ?int $mailKey = null): bool
     {
+        // $mailKey is the chat message being chased. Like the notification path
+        // above, this skips WITHOUT marking the expectation as chased, so the
+        // same expectation comes round on every run; without an identity the
+        // held-mail counter recorded each pass as another withheld mail.
         return app(\App\Services\Mail\MailSuppressionService::class)
-            ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat');
+            ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat', $mailKey);
     }
 
     /**
