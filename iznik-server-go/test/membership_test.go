@@ -2188,6 +2188,49 @@ func TestGetMembershipsSearchPagination(t *testing.T) {
 	}
 }
 
+// The numeric branch of the search - where the term is a bare userid - honours the cursor
+// too. It matches a single membership, so asking for the page after that member's own id
+// must come back empty rather than handing the same row out again.
+func TestGetMembershipsNumericSearchPagination(t *testing.T) {
+	prefix := uniquePrefix("mod_numsrch")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	// Searching the bare userid finds that one membership.
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&limit=10&jwt=%s", groupID, memberID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&page1)
+	page1Members, _ := page1["members"].([]interface{})
+	assert.Equal(t, 1, len(page1Members), "the numeric search finds the one membership")
+
+	found := page1Members[0].(map[string]interface{})
+	membershipID := uint64(found["id"].(float64))
+
+	// Ask for what comes after it. m.id < membershipID excludes the only match, so there
+	// is nothing left - without the cursor the same row would be returned again.
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&limit=10&context=%d&jwt=%s", groupID, memberID, membershipID, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+	page2Members, _ := page2["members"].([]interface{})
+	assert.Equal(t, 0, len(page2Members), "nothing follows the only match")
+}
+
 // --- GET /memberships?collection=Happiness ---
 
 // parseHappinessResponse decodes the happiness response wrapper and returns the members and ratings arrays.
