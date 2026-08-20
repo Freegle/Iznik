@@ -426,6 +426,16 @@ const hullGeoJSON = computed(() => {
 // nothing about travel time. The reach answers the question the slider actually asks, so it
 // wins whenever we have it.
 const coverageGeoJSON = computed(() => {
+  // Stop feeding the layer once we are going away. vue-leaflet reacts to a new
+  // geojson by removing the old layers, and a removal that lands after the map's
+  // renderer has gone throws inside leaflet (_renderer._removePath of undefined).
+  // Nobody's session broke - it fires during teardown - but it is our update
+  // driving it, so hold still while unmounting. Matches the destroyed guard used
+  // by the async paths that can also outlive the component.
+  if (destroyed.value) {
+    return null
+  }
+
   return reachGeoJSON.value || hullGeoJSON.value
 })
 
@@ -773,15 +783,27 @@ async function ready() {
 
             // For some reason we need to take a copy of the latlng bounds in the event before passing it to
             // flyToBounds.
-            const flyTo = e.geocode.bbox
+            const flyTo = e.geocode?.bbox
             const L = await import('leaflet/dist/leaflet-src.esm')
-            const newBounds = new L.LatLngBounds(
-              new L.LatLng(flyTo.getSouthWest().lat, flyTo.getSouthWest().lng),
-              new L.LatLng(flyTo.getNorthEast().lat, flyTo.getNorthEast().lng)
-            )
-            // Move the map to the location we've found.
-            map.value.leafletObject.flyToBounds(newBounds)
-            emit('searched')
+
+            // Not every geocoder result carries a usable bounding box, and
+            // reading .lat off the missing corner threw for 9 members. Fall
+            // back to the point itself, which every result has.
+            const sw = flyTo?.getSouthWest?.()
+            const ne = flyTo?.getNorthEast?.()
+
+            if (sw && ne) {
+              const newBounds = new L.LatLngBounds(
+                new L.LatLng(sw.lat, sw.lng),
+                new L.LatLng(ne.lat, ne.lng)
+              )
+              // Move the map to the location we've found.
+              map.value.leafletObject.flyToBounds(newBounds)
+              emit('searched')
+            } else if (e.geocode?.center) {
+              map.value.leafletObject.flyTo(e.geocode.center)
+              emit('searched')
+            }
           }
         })
         .addTo(mapObject.value)
@@ -825,9 +847,19 @@ function idle() {
 // Ask the server for a search, unless it is the same question we just asked. See
 // lastSearchKey above for why this is worth guarding.
 async function searchOnce(params) {
-  const key = JSON.stringify(params)
+  // A ref reaching here used to throw "Converting circular structure to JSON"
+  // and take the whole page with it - JSON.stringify walks the ref's own `dep`
+  // and finds the cycle. The unwrapping below is the real fix; this is so that
+  // the next time somebody passes a reactive value the worst outcome is a
+  // missed cache hit rather than a broken browse page.
+  let key = null
+  try {
+    key = JSON.stringify(params)
+  } catch (e) {
+    console.warn('Search params are not serialisable; skipping the cache', e)
+  }
 
-  if (key === lastSearchKey.value && lastSearchResult.value) {
+  if (key !== null && key === lastSearchKey.value && lastSearchResult.value) {
     return lastSearchResult.value
   }
 
@@ -1025,7 +1057,7 @@ async function getMessages() {
         ret = await searchOnce({
           messagetype: props.type,
           search: props.search,
-          groupids: myGroupIds,
+          groupids: myGroupIds.value,
           browse: 1,
         })
       } else {
@@ -1043,7 +1075,7 @@ async function getMessages() {
           swlng: groupbounds[0][1],
           nelat: groupbounds[1][0],
           nelng: groupbounds[1][1],
-          groupids: myGroupIds,
+          groupids: myGroupIds.value,
         })
       }
     } else {
