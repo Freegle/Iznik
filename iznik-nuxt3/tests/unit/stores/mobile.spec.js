@@ -1,5 +1,8 @@
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
+import { reactive, nextTick } from 'vue'
 
 let mockPlatform = 'web'
 vi.mock('@capacitor/core', () => ({
@@ -54,16 +57,26 @@ vi.mock('~/stores/auth', () => ({
 
 const mockFetchChats = vi.fn()
 const mockFetchMessages = vi.fn()
+// Reactive so startBadgeSync's watch() (a real Vue watch) reacts to changes,
+// exactly as it does against the real Pinia chat/notification stores.
+const mockChatState = reactive({ unreadCount: 0 })
 vi.mock('~/stores/chat', () => ({
   useChatStore: () => ({
     fetchChats: mockFetchChats,
     fetchMessages: mockFetchMessages,
+    get unreadCount() {
+      return mockChatState.unreadCount
+    },
   }),
 }))
 
+const mockNotificationState = reactive({ count: 0 })
 vi.mock('~/stores/notification', () => ({
   useNotificationStore: () => ({
     fetchCount: vi.fn(),
+    get count() {
+      return mockNotificationState.count
+    },
   }),
 }))
 
@@ -104,6 +117,8 @@ describe('mobile store', () => {
     mockPlatform = 'web'
     mockAuthUser = null
     mockMobileVersion = '1.0.0'
+    mockChatState.unreadCount = 0
+    mockNotificationState.count = 0
     setActivePinia(createPinia())
     const mod = await import('~/stores/mobile')
     useMobileStore = mod.useMobileStore
@@ -316,6 +331,210 @@ describe('mobile store', () => {
       await store.setBadgeCount(NaN, mockBadge)
       expect(mockBadge.set).toHaveBeenCalledWith({ count: 0 })
       logSpy.mockRestore()
+    })
+  })
+
+  describe('startBadgeSync', () => {
+    // Discourse 9953 (retest — topic 9953 post 6): the native app-icon badge
+    // was only ever set from an incoming push payload (or forced to 0 at
+    // startup), plus a side effect of useNavbar()'s chatCount computed - which
+    // only runs while NavbarMobile's bottom-nav badge is actually rendered.
+    // On /chats/:id at mobile breakpoints, ChatMobileNavbar replaces
+    // NavbarMobile and destructures only { online, backButtonCount,
+    // backButton } from useNavbar() - never chatCount (see the
+    // "matches the exact reported trigger path" test below) - so reading a
+    // chat there, or backgrounding the app before visiting a page that
+    // renders the bottom-nav badge, left the OS badge stuck on a stale count
+    // forever. This watch lives in the store instead, so it fires on every
+    // live chat/notification count change regardless of what's mounted.
+    let badgeSetSpy
+    let stopWatch
+
+    beforeEach(() => {
+      badgeSetSpy = vi.fn()
+      stopWatch = null
+      vi.doMock('@capawesome/capacitor-badge', () => ({
+        Badge: { set: badgeSetSpy },
+      }))
+    })
+
+    afterEach(() => {
+      // The watch() set up by startBadgeSync() has no component lifecycle to
+      // auto-stop it - without this it keeps firing against the shared
+      // mockChatState/mockNotificationState in later tests.
+      if (stopWatch) stopWatch()
+    })
+
+    it('does nothing when not on the app', async () => {
+      const store = useMobileStore()
+      store.isApp = false
+      mockChatState.unreadCount = 2
+      mockNotificationState.count = 1
+
+      stopWatch = store.startBadgeSync()
+      await nextTick()
+
+      expect(badgeSetSpy).not.toHaveBeenCalled()
+    })
+
+    // ModTools reuses this same store, but computes its badge from a
+    // completely different source (pending/spam/volunteering work, via
+    // modtools/composables/useModMe.js's checkWork()). Without this gate,
+    // startBadgeSync would race that writer and overwrite a real work count
+    // with a meaningless chats+notifications total on every ModTools launch.
+    it('does nothing when running as ModTools, so it cannot race the work-count badge', async () => {
+      const { useMiscStore } = await import('~/stores/misc')
+      useMiscStore().modtools = true
+      const store = useMobileStore()
+      store.isApp = true
+      mockChatState.unreadCount = 2
+      mockNotificationState.count = 1
+
+      stopWatch = store.startBadgeSync()
+      await nextTick()
+
+      expect(badgeSetSpy).not.toHaveBeenCalled()
+    })
+
+    it('immediately applies the current live chat+notification total to the native badge', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      mockChatState.unreadCount = 2
+      mockNotificationState.count = 1
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      stopWatch = store.startBadgeSync()
+
+      // AssertFlip: before the fix, nothing ever calls setBadgeCount() from
+      // live store state outside a rendered component - only from a push
+      // payload - so this never fires and the badge is left however a past
+      // push last set it.
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 3 })
+      )
+      logSpy.mockRestore()
+    })
+
+    it('clears a stale non-zero badge once everything has been read in-app, with no new push', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      // A past push left the device badge on a real, non-zero count.
+      store.lastBadgeCount = 4
+      // The member has since read everything in-app - no unread chats or
+      // notifications remain - but no push arrives to say so (Michael's
+      // report: "count of 4 for the last few days" with no unread replies).
+      mockChatState.unreadCount = 0
+      mockNotificationState.count = 0
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      stopWatch = store.startBadgeSync()
+
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 0 })
+      )
+      expect(store.lastBadgeCount).toBe(0)
+      logSpy.mockRestore()
+    })
+
+    it('reacts live as the underlying chat/notification counts change', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      mockChatState.unreadCount = 0
+      mockNotificationState.count = 0
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      stopWatch = store.startBadgeSync()
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 0 })
+      )
+
+      badgeSetSpy.mockClear()
+      mockChatState.unreadCount = 1
+      await nextTick()
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 1 })
+      )
+
+      badgeSetSpy.mockClear()
+      mockChatState.unreadCount = 0
+      await nextTick()
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 0 })
+      )
+      logSpy.mockRestore()
+    })
+
+    it('clamps the combined total to 99, matching the chatCount computed formula', async () => {
+      const store = useMobileStore()
+      store.isApp = true
+      mockChatState.unreadCount = 99
+      mockNotificationState.count = 5
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      stopWatch = store.startBadgeSync()
+
+      await vi.waitFor(() =>
+        expect(badgeSetSpy).toHaveBeenCalledWith({ count: 99 })
+      )
+      logSpy.mockRestore()
+    })
+
+    // Closes the gap the previous attempt at this fix (PR #1139) was auto-closed
+    // for: startBadgeSync() existed but nothing proved it was actually wired
+    // into app startup, so a later refactor could silently drop the call and
+    // every test would still pass. initApp() does real, unmocked Capacitor
+    // plugin imports (see the other describes' use of store.initApp = vi.fn()
+    // to avoid them), so assert on the source rather than executing it.
+    it('is called from initApp, so a later refactor cannot silently drop it', () => {
+      const storeSource = readFileSync(
+        resolve(__dirname, '../../../stores/mobile.js'),
+        'utf-8'
+      )
+      const initAppBody = storeSource.match(
+        /async initApp\(\) \{([\s\S]*?)\n {4}\},/
+      )
+      expect(initAppBody).not.toBeNull()
+      expect(initAppBody[1]).toMatch(/this\.startBadgeSync\(\)/)
+    })
+
+    // Review of this fix: startBadgeSync()'s watch and useNavbar()'s
+    // chatCount computed both computed Math.min(99, chats + notifications)
+    // independently, with no shared helper - two implementations of the same
+    // formula that could silently drift apart. Assert on the source (rather
+    // than the numeric outcome, which is identical either way) so a later
+    // edit that reintroduces an inline duplicate here fails this test.
+    it('computes its watched total via the shared combinedBadgeCount() helper, not an inline duplicate', () => {
+      const storeSource = readFileSync(
+        resolve(__dirname, '../../../stores/mobile.js'),
+        'utf-8'
+      )
+      expect(storeSource).toMatch(
+        /import\s*\{\s*combinedBadgeCount\s*\}\s*from\s*'~\/composables\/useBadgeCount'/
+      )
+
+      const startBadgeSyncBody = storeSource.match(
+        /startBadgeSync\(\) \{([\s\S]*?)\n {4}\},/
+      )
+      expect(startBadgeSyncBody).not.toBeNull()
+      expect(startBadgeSyncBody[1]).toMatch(/combinedBadgeCount\(/)
+    })
+
+    // Closes the other gap the previous attempt was auto-closed for: no test
+    // touched the reported trigger path itself. Assert directly on the
+    // component that replaces NavbarMobile while viewing a specific chat,
+    // proving chatCount's component-coupled sync structurally cannot fire
+    // there - so startBadgeSync() is the only thing that can update the
+    // badge in that scenario.
+    it('matches the exact reported trigger path: ChatMobileNavbar never reads chatCount', () => {
+      const navbarSource = readFileSync(
+        resolve(__dirname, '../../../components/ChatMobileNavbar.vue'),
+        'utf-8'
+      )
+      const destructure = navbarSource.match(
+        /const\s*\{([^}]*)\}\s*=\s*useNavbar\(\)/
+      )
+      expect(destructure).not.toBeNull()
+      expect(destructure[1]).not.toMatch(/\bchatCount\b/)
     })
   })
 
