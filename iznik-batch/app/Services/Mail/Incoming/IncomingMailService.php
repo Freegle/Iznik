@@ -2840,6 +2840,22 @@ class IncomingMailService
             // Determine message type from subject using keyword matching
             $type = Message::determineType($email->subject);
 
+            // A TrashNothing item cross-posted to N groups arrives as N separate emails, one
+            // per group, all carrying the same X-Trash-Nothing-Post-Id. It is one item, so it
+            // is one message: the first email creates it, and each later one attaches its
+            // group to that message. That gives one messages row with N messages_groups rows,
+            // the same shape as a Freegle-native cross-post, which is what the feed, the
+            // badge counts and search all expect - they key on msgid.
+            $tnPostId = $this->normaliseTnPostId($email->getTrashNothingPostId());
+
+            if ($tnPostId !== null) {
+                $existingId = $this->findLiveTnMessage($tnPostId);
+
+                if ($existingId !== null) {
+                    return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
+                }
+            }
+
             // Generate a unique message ID if not present
             $messageId = $email->messageId ?? (microtime(true) . '@' . config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
             // Append group ID to make message ID unique per group
@@ -2917,7 +2933,7 @@ class IncomingMailService
                 'subject' => $email->subject,
                 'suggestedsubject' => $email->subject, // TODO: implement subject suggestion
                 'messageid' => $messageId,
-                'tnpostid' => $email->getTrashNothingPostId(),
+                'tnpostid' => $tnPostId,
                 'textbody' => $cleanedTextBody,
                 'type' => $type,
                 'lat' => $lat,
@@ -2931,6 +2947,30 @@ class IncomingMailService
                 Log::error('Failed to create message record');
 
                 return null;
+            }
+
+            // Two emails for one post id arriving together can both pass the lookup above
+            // and both create. Each insert autocommits, so id order is commit order: the
+            // higher id was written after the lower one was already committed and therefore
+            // sees it here. That one stands down, leaving a single message - no lock needed,
+            // and it holds across cluster nodes because it only reads committed rows.
+            if ($tnPostId !== null) {
+                $earlierId = $this->findLiveTnMessage($tnPostId);
+
+                if ($earlierId !== null && $earlierId !== (int) $message->id) {
+                    DB::table('messages')->where('id', $message->id)->update([
+                        'deleted' => now(),
+                        'tnpostid' => null,
+                        'messageid' => null,
+                    ]);
+
+                    Log::info('TN cross-post lost create race; attaching to earlier message', [
+                        'discarded' => $message->id,
+                        'canonical' => $earlierId,
+                    ]);
+
+                    return $this->attachGroupToTnMessage($earlierId, $email, $user, $group, $type, $spamType);
+                }
             }
 
             // Create the messages_groups entry
@@ -2993,6 +3033,24 @@ class IncomingMailService
         } catch (\Exception $e) {
             // Check for duplicate message ID (can happen if message is resent)
             if (str_contains($e->getMessage(), 'Duplicate entry')) {
+                // If we lost a race for the same TN post, attach this group to the winner
+                // rather than dropping it, and do not leave our half-made row as a copy.
+                if (isset($tnPostId) && $tnPostId !== null) {
+                    $existingId = $this->findLiveTnMessage($tnPostId);
+
+                    if ($existingId !== null) {
+                        if ($message !== null && $message->id && (int) $message->id !== $existingId) {
+                            DB::table('messages')->where('id', $message->id)->update([
+                                'deleted' => now(),
+                                'tnpostid' => null,
+                                'messageid' => null,
+                            ]);
+                        }
+
+                        return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
+                    }
+                }
+
                 Log::info('Duplicate message ID, likely resent message', [
                     'message_id' => $email->messageId,
                 ]);
@@ -3010,6 +3068,108 @@ class IncomingMailService
             if ($message !== null && $message->id) {
                 $this->recordFailure($message->id, $e->getMessage());
             }
+
+            return null;
+        }
+    }
+
+    /**
+     * A TrashNothing post id, trimmed, or null when absent or blank.
+     */
+    private function normaliseTnPostId(?string $tnPostId): ?string
+    {
+        if ($tnPostId === null) {
+            return null;
+        }
+
+        $trimmed = trim($tnPostId);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    /**
+     * The live Freegle message for a TrashNothing post id, if we already hold one.
+     * Lowest id wins, so concurrent arrivals converge on the same message.
+     */
+    private function findLiveTnMessage(string $tnPostId): ?int
+    {
+        $id = DB::table('messages')
+            ->where('tnpostid', $tnPostId)
+            ->whereNull('deleted')
+            ->orderBy('id')
+            ->value('id');
+
+        return $id === null ? null : (int) $id;
+    }
+
+    /**
+     * Record a further group on a TrashNothing message we already hold.
+     *
+     * Only the per-GROUP side effects of createGroupPostMessage belong here: the
+     * messages_groups row, the spam-check history row and the receipt log. The
+     * per-MESSAGE work - the messages_items link, the TN image attachments - belongs to
+     * the message, not to each group on it, and repeating it would double-count the item
+     * in the weight stats and re-upload the photos.
+     */
+    private function attachGroupToTnMessage(
+        int $msgid,
+        ParsedEmail $email,
+        User $user,
+        Group $group,
+        string $type,
+        ?string $spamType = null
+    ): ?int {
+        try {
+            $collection = $spamType !== null
+                ? MessageGroup::COLLECTION_PENDING
+                : MessageGroup::COLLECTION_INCOMING;
+
+            // INSERT IGNORE: a redelivery of the same email for the same group must be a
+            // no-op, not an error. (msgid, groupid) is unique on messages_groups.
+            DB::statement(
+                'INSERT IGNORE INTO messages_groups (msgid, groupid, msgtype, collection, arrival) VALUES (?, ?, ?, ?, ?)',
+                [$msgid, $group->id, $type, $collection, now()]
+            );
+
+            $messageId = ($email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'))).'-'.$group->id;
+
+            DB::table('messages_history')->insert([
+                'groupid' => $group->id,
+                'source' => Message::SOURCE_EMAIL ?? 'Email',
+                'fromuser' => $user->id,
+                'envelopefrom' => $email->envelopeFrom,
+                'envelopeto' => $email->envelopeTo,
+                'fromname' => $email->fromName,
+                'fromaddr' => $email->fromAddress,
+                'fromip' => $email->senderIp,
+                'subject' => $email->subject,
+                'prunedsubject' => $this->pruneSubject($email->subject),
+                'messageid' => $messageId,
+                'msgid' => $msgid,
+            ]);
+
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Message',
+                'subtype' => 'Received',
+                'groupid' => $group->id,
+                'user' => $user->id,
+                'msgid' => $msgid,
+                'text' => $messageId,
+            ]);
+
+            Log::info('TN cross-post attached to existing message', [
+                'msgid' => $msgid,
+                'groupid' => $group->id,
+            ]);
+
+            return $msgid;
+        } catch (\Exception $e) {
+            Log::error('Failed to attach TN cross-post group to existing message', [
+                'msgid' => $msgid,
+                'groupid' => $group->id,
+                'error' => $e->getMessage(),
+            ]);
 
             return null;
         }

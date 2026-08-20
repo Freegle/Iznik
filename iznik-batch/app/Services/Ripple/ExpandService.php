@@ -1514,15 +1514,24 @@ class ExpandService
                 return;
             }
 
-            // TN posts must not be rippled into new groups while TN still cross-posts the same
-            // item to multiple Freegle groups by tnpostid. Once TN is restricted to a single
-            // origin group (design.md #10), this guard can be removed.
-            $isTn = DB::table('messages')
-                ->where('id', $msgid)
-                ->whereNotNull('tnpostid')
-                ->where('tnpostid', '!=', '')
+            // A TrashNothing item cross-posted to several groups is one message, so it
+            // ripples like any other. Copies predating that are still in the database and
+            // would each ripple on their own account, reaching people once per copy, so a
+            // message sharing its post id with another live one sits out until
+            // tn:merge-crossposts has collapsed the set. Self-limiting: once a set is
+            // merged there is nothing to match and this never fires again.
+            $sharesTnPostId = DB::table('messages')
+                ->join('messages as other', function ($join) {
+                    $join->on('other.tnpostid', '=', 'messages.tnpostid')
+                        ->whereColumn('other.id', '!=', 'messages.id')
+                        ->whereNull('other.deleted');
+                })
+                ->where('messages.id', $msgid)
+                ->whereNotNull('messages.tnpostid')
+                ->where('messages.tnpostid', '!=', '')
                 ->exists();
-            if ($isTn) {
+
+            if ($sharesTnPostId) {
                 return;
             }
 

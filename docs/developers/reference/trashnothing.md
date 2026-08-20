@@ -1,10 +1,12 @@
 ---
-last_reviewed: 2026-08-18
+last_reviewed: 2026-08-20
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
   - iznik-batch/app/Console/Commands/TrashNothing/**
   - iznik-batch/app/Models/UserDeletion.php
+  - iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php
+  - iznik-batch/app/Console/Commands/Dedup/**
 ---
 
 # TrashNothing Integration Documentation
@@ -252,6 +254,88 @@ users.ljuserid  BIGINT UNSIGNED  -- LoveJunk user ID
 messages.sourceheader  VARCHAR(80)  -- e.g., "TN-Facebook", "TN-Web"
 messages.tnpostid      VARCHAR(80)  -- TN post identifier
 ```
+
+## Cross-posts and reposts
+
+TN lets a member send one item to several Freegle groups. That arrives as **one inbound
+email per group**, each carrying the same `X-Trash-Nothing-Post-Id`. A **repost** - the
+member offering the same thing again days later - is a different thing: TN allocates it a
+**new** post id, so the two cannot be told apart by id.
+
+The two are handled at different layers, deliberately.
+
+| Case | Same `tnpostid`? | Handled where | Result |
+|------|------------------|---------------|--------|
+| Cross-post: one item, N groups, N emails | Yes | Ingestion, `IncomingMailService::createGroupPostMessage` | One `messages` row with N `messages_groups` rows |
+| Repost: same item offered again later | No - new id each time | `UnifiedDigestService` content key | Collapsed within a digest; both remain live posts on the site |
+
+### Cross-posts: one message, many groups
+
+The first email for a post id creates the message as usual. A later email carrying a post
+id we already hold does **not** create a second message - `attachGroupToTnMessage()` adds
+a `messages_groups` row to the existing one, along with that group's own
+`messages_history` and `logs` rows. Per-message work (the `messages_items` link, the TN
+image attachments) is not repeated.
+
+This makes a TN cross-post structurally identical to a Freegle-native one, which matters
+because everything downstream already collapses on `msgid` - `isochrone/message.go` uses
+`DISTINCT ms.msgid` for the browse feed and `COUNT(DISTINCT ms.msgid)` for the navbar
+badge. No read-side special-casing is needed, and none should be added.
+
+Two emails for one post id arriving together can both pass the lookup and both create a
+message. No lock is used to prevent that. Each insert autocommits, so id order is commit
+order: whichever row got the higher id was written after the lower one had committed, and
+sees it on the check straight after its own insert. That one is soft-deleted and its group
+attached to the winner, so a single message is left. This holds across cluster nodes
+because it only reads committed rows - unlike `GET_LOCK`, which Galera does not
+replicate and which would only appear to work while writes happen to be pinned to one
+node.
+
+There is deliberately no unique index on `messages.tnpostid`. It cannot be added while
+duplicates remain, and there are a great many: ~656k sets covering ~1.87M live messages,
+up to 30 copies each.
+
+Before this, each email created its own message, so one item became N messages sharing
+only a post id - each with its own `messages_spatial` and `rippling_reach` rows, and so
+shown once per copy to anyone whose reach or membership covered more than one of the
+groups (Discourse 9808/689).
+
+### Reposts: content, not id
+
+`UnifiedDigestService::getDeduplicationKey()` keys on `fromuser` + normalised subject +
+location, with an equal `tnpostid` treated as a definitive match in `bodiesMatch()`.
+Keying on the post id alone was tried and reverted (`423c6b0e6`): because a repost gets a
+fresh id, the digest listed the same item once per posting - "Small lamp" four times,
+27 such items in four days (Discourse 9808/#233).
+
+Note the deliberate asymmetry: a repost is **not** collapsed on the browse feed. Two
+postings days apart are two real posts, and the member meant to make both.
+
+### Merging copies created before this
+
+`php artisan tn:merge-crossposts` collapses a set onto its lowest-id message. It derives
+every `msgid`-bearing column from `information_schema` rather than a hand-written list,
+moves what it can onto the canonical message, and deletes rows that cannot move because
+the canonical already has an equivalent - notably `messages_spatial`, whose `msgid` is
+UNIQUE and which is what the feed reads.
+
+It defaults to `--days=90`. Only recent posts are in `messages_spatial`, so only those
+can appear on a feed or ripple; older sets are left alone because merging them would touch
+an enormous number of rows to no visible effect. Over 90 days there are ~11k sets and ~24k
+messages to merge, against ~656k sets across all time. `--limit` runs it in batches, and
+`--dry-run` reports without writing.
+
+**This is a command, not a migration.** Laravel migrations are the source of truth for
+dev and CI only - production does not run them - so this is run by hand on the batch host.
+Nothing depends on it having been run: until a set is collapsed, its messages are simply
+excluded from rippling (below).
+
+### Copies and rippling
+
+A message sharing its post id with another live message does not ripple into new groups.
+Each copy would otherwise ripple on its own account, so one item would reach people once
+per copy. The check is self-limiting: once a set is collapsed there is no other live
+message to match, and the post ripples like any other.
 
 ### Groups Table
 ```sql
