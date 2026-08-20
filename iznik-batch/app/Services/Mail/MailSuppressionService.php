@@ -109,13 +109,41 @@ class MailSuppressionService
      * the catch-up policy can be written in the same terms as the mail it
      * stands in for.
      */
-    public function recordSuppressed(?int $userId, string $emailType, ?int $suppressionId = null): void
+    public function recordSuppressed(?int $userId, string $emailType, ?int $suppressionId = null, ?int $mailKey = null): void
     {
         if ($userId === null || $userId <= 0) {
             return;
         }
 
         try {
+            if ($mailKey !== null && $this->hasLastKey()) {
+                // Count MAILS, not attempts. The chat notifier skips a suppressed
+                // recipient without advancing chat_roster.lastmsgemailed, so the same
+                // unread messages are re-processed every run; counting each pass gave
+                // one member 10,777 for `chat` in 106 minutes on 2026-08-20, which read
+                // as a catastrophic backlog and was really a handful of messages seen
+                // over and over. Identities increase, so only one that exceeds the
+                // highest already counted is a mail we have not counted yet.
+                DB::statement(
+                    'INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, `count`, firstat, lastat, lastkey)
+                     VALUES (?, ?, ?, 1, NOW(), NOW(), ?)
+                     ON DUPLICATE KEY UPDATE
+                        `count` = IF(caughtup_at IS NULL,
+                                     `count` + IF(lastkey IS NULL OR VALUES(lastkey) > lastkey, 1, 0),
+                                     1),
+                        lastat = NOW(),
+                        suppressionid = VALUES(suppressionid),
+                        firstat = IF(caughtup_at IS NULL, firstat, NOW()),
+                        lastkey = IF(caughtup_at IS NULL,
+                                     GREATEST(COALESCE(lastkey, 0), VALUES(lastkey)),
+                                     VALUES(lastkey)),
+                        caughtup_at = NULL',
+                    [$userId, substr($emailType, 0, 32), $suppressionId, $mailKey]
+                );
+
+                return;
+            }
+
             DB::statement(
                 'INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, `count`, firstat, lastat)
                  VALUES (?, ?, ?, 1, NOW(), NOW())
@@ -146,7 +174,7 @@ class MailSuppressionService
      *
      * Returns true when the caller should skip this recipient.
      */
-    public function shouldSkip(?string $email, ?int $userId, string $emailType): bool
+    public function shouldSkip(?string $email, ?int $userId, string $emailType, ?int $mailKey = null): bool
     {
         $suppression = $this->suppressionFor($email);
 
@@ -158,9 +186,30 @@ class MailSuppressionService
         // out after the fact which provider was refusing this member - that
         // would mean reimplementing the mailer's own address-ranking rules in
         // a reporting query, against history that has already moved on.
-        $this->recordSuppressed($userId, $emailType, (int) $suppression->id);
+        $this->recordSuppressed($userId, $emailType, (int) $suppression->id, $mailKey);
 
         return true;
+    }
+
+    /**
+     * Whether the dedupe column exists yet. Cached because this is called from
+     * inside the send loops, and checked at all because the schema change ships
+     * separately from the code - prod migrations are applied by hand, so the
+     * code has to work either side of that.
+     */
+    private ?bool $hasLastKey = null;
+
+    private function hasLastKey(): bool
+    {
+        if ($this->hasLastKey === null) {
+            try {
+                $this->hasLastKey = \Illuminate\Support\Facades\Schema::hasColumn('mail_suppressed_counts', 'lastkey');
+            } catch (\Throwable $e) {
+                $this->hasLastKey = false;
+            }
+        }
+
+        return $this->hasLastKey;
     }
 
     /**
@@ -171,6 +220,7 @@ class MailSuppressionService
     {
         $this->cache = null;
         $this->cacheLoadedAt = null;
+        $this->hasLastKey = null;
     }
 
     /**
