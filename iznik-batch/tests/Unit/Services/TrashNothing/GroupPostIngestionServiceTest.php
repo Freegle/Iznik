@@ -726,6 +726,72 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertNotNull(Message::where('tnpostid', $postId)->first());
     }
 
+    public function test_a_deleted_message_still_counts_as_a_duplicate(): void
+    {
+        // Deleting is a decision — a moderator, the member, or a user purge.
+        // A later run whose window still covers the post (every overlap does)
+        // must not undo it, so the idempotency guard deliberately does NOT
+        // filter on messages.deleted the way the email path's
+        // findLiveTnMessage() does. See existingMessageForGroup().
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $postId = 'tn-deleted-dup-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->id,
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+        ]);
+
+        $service = $this->makeService(dryRun: false);
+        $this->assertSame('pending', $service->ingest($post, $group));
+
+        $message = Message::where('tnpostid', $postId)->firstOrFail();
+        $message->deleted = now();
+        $message->save();
+
+        $this->assertSame('duplicate', $service->ingest($post, $group));
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count());
+    }
+
+    public function test_a_deleted_message_whose_tnpostid_was_cleared_does_not_block_a_later_ingest(): void
+    {
+        // The two paths that soft-delete a TN message as a DUPLICATE rather than
+        // as a decision — the email path's lost-create-race branch and
+        // TnMergeCrosspostsCommand — null tnpostid in the same update. That is
+        // what keeps them out of the guard, so the post can still be ingested.
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $postId = 'tn-merged-away-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->id,
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+        ]);
+
+        $service = $this->makeService(dryRun: false);
+        $this->assertSame('pending', $service->ingest($post, $group));
+
+        // Both callers clear messageid alongside tnpostid, which is what lets a
+        // fresh copy be created without colliding on the messageid unique index.
+        $message = Message::where('tnpostid', $postId)->firstOrFail();
+        DB::table('messages')->where('id', $message->id)->update([
+            'deleted'   => now(),
+            'tnpostid'  => null,
+            'messageid' => null,
+        ]);
+
+        $this->assertSame('pending', $service->ingest($post, $group));
+        $this->assertSame(1, Message::where('tnpostid', $postId)->count());
+    }
+
     public function test_the_same_tn_post_id_is_still_skipped_as_a_duplicate_on_the_same_group(): void
     {
         // The one de-duplication that remains: (tnpostid, groupid) idempotency,

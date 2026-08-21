@@ -201,11 +201,23 @@ class GroupPostIngestionService
             return $this->dropped(self::REASON_CROSSPOST, result: 'crosspost');
         }
 
-        // Idempotency: skip if this post was already ingested for this group.
-        $isDuplicate = $this->postAlreadyExists((string) $postId, $group->id);
-        if ($isDuplicate) {
-            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=duplicate tnpostid=' . $postId . ' groupid=' . $group->id . ($this->dryRun ? ' would_be_duplicate=true' : ''));
-            $this->loki->logEvent('tn-sync', 'post-skip-duplicate', ['tn_post_id' => $postId, 'group_id' => $group->id]);
+        // Idempotency: skip if this post was already ingested for this group,
+        // whether the message we made is still live or has since been deleted —
+        // see existingMessageForGroup() for why deleted still counts.
+        $existing = $this->existingMessageForGroup((string) $postId, $group->id);
+        if ($existing !== null) {
+            $existingDeleted = $existing->deleted !== null;
+            Log::info('TN-SYNC-TRACE [POST-SKIP] reason=duplicate tnpostid=' . $postId . ' groupid=' . $group->id . ' msgid=' . $existing->id . ($existingDeleted ? ' existing_deleted=true' : '') . ($this->dryRun ? ' would_be_duplicate=true' : ''));
+            // existing_deleted separates "we already hold this" from "we held it
+            // and it was deliberately removed", which is otherwise invisible in
+            // the stream and is the case an operator needs to see before
+            // concluding a post went missing.
+            $this->loki->logEvent('tn-sync', 'post-skip-duplicate', [
+                'tn_post_id'       => $postId,
+                'group_id'         => $group->id,
+                'message_id'       => (int) $existing->id,
+                'existing_deleted' => $existingDeleted,
+            ]);
             // No email-path analogue: the email path only discovers a duplicate
             // when the messages.messageid unique index rejects the insert, which
             // it reports as case 10 (a null return, no Loki entry of its own).
@@ -660,13 +672,45 @@ class GroupPostIngestionService
         return User::find($fdUserId);
     }
 
-    private function postAlreadyExists(string $tnPostId, int $groupId): bool
+    /**
+     * The message we already hold for this TN post on this group, live or
+     * deleted, or null if we have never ingested it here. Lowest id wins, so
+     * the answer is stable if an older duplicate somehow survives.
+     *
+     * DELETED MESSAGES DELIBERATELY STILL COUNT, which is why this is not the
+     * email path's findLiveTnMessage() (IncomingMailService.php:3135) with a
+     * different name. The two ask different questions:
+     *
+     *  - findLiveTnMessage() asks "is there a live message I can hang another
+     *    group off?", so it must skip deleted ones — attaching a messages_groups
+     *    row to a deleted message would put the group's copy on something no
+     *    member can see.
+     *  - this asks "have we ingested this post for this group before?" — an
+     *    idempotency guard, which a deleted message answers yes to just as
+     *    firmly as a live one. Filtering deleted out here would mean the next
+     *    run whose window still covers the post RE-CREATES it, resurrecting
+     *    something a moderator, the member or a user purge deliberately removed,
+     *    and doing so again on every overlapping run.
+     *
+     * The two places that soft-delete a TN message as a *duplicate* rather than
+     * as a decision — the email path's lost-create-race branch
+     * (IncomingMailService.php:2999) and TnMergeCrosspostsCommand — both null
+     * tnpostid in the same update, so they never match here and never block a
+     * later ingest.
+     *
+     * Re-ingesting a post whose message was deliberately deleted is therefore an
+     * explicit human action, not a side effect of a window overlap: clear the
+     * tnpostid on the deleted row and re-run the sync for that window.
+     */
+    private function existingMessageForGroup(string $tnPostId, int $groupId): ?object
     {
         return DB::table('messages')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->where('messages.tnpostid', $tnPostId)
             ->where('messages_groups.groupid', $groupId)
-            ->exists();
+            ->orderBy('messages.id')
+            ->select('messages.id', 'messages.deleted')
+            ->first();
     }
 
     /**

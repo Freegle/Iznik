@@ -98,7 +98,7 @@ and `tn:parity-check`, neither of which needs the email path switched off. On, i
 | TN posts become eligible for rippling | `Ripple\ExpandService::rippleIntoNewGroups` — see [rippling-algorithm.md §4b](rippling-algorithm.md) |
 | The `tn:sync (posts)` scheduled-outcome check goes live | `ScheduledOutcomeRegistry` |
 
-Four differences from the email path are intentional, not bugs, and all matter
+Five differences from the email path are intentional, not bugs, and all matter
 when reading any coverage report:
 
 - **Group placement is by coordinates**, via `Location::groupsNear()` on the
@@ -118,6 +118,18 @@ when reading any coverage report:
   content difference, and `ParityComparer` canonicalizes it before comparing
   subjects — otherwise every such post fails parity twice (same-group content
   and Loki entry) and buries the real mismatches.
+- **Deletion is final.** The API path's idempotency guard
+  (`GroupPostIngestionService::existingMessageForGroup()`) counts a *deleted*
+  message as already ingested, unlike the email path's `findLiveTnMessage()`,
+  which skips deleted ones. Deleting is a decision — a moderator, the member, or
+  a user purge — and every overlapping sync window re-fetches the post, so
+  ignoring `deleted` here would resurrect it repeatedly. The skip is reported in
+  Loki with `existing_deleted` set, so it is distinguishable from a plain
+  idempotent skip. To deliberately re-ingest one, clear its `tnpostid` (and
+  `messageid`) on the deleted row and re-run the sync for that window — which is
+  exactly what the two paths that soft-delete a TN message as a *duplicate*
+  (the email path's lost-create-race branch and `TnMergeCrosspostsCommand`)
+  already do.
 - **`sourceheader` is `TN-API`**, not the email path's `TN-Web` / `TN-Facebook` /
   `TN-Mobile` (the API returns no posting-client field). Only the `TN-` prefix is
   load-bearing, and it has to be there: `LoveJunkInvoiceService` splits the monthly
