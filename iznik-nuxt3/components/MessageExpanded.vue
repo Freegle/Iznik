@@ -72,17 +72,6 @@
                 :width="80"
                 :height="80"
               />
-              <NuxtPicture
-                v-else-if="attachment.externaluid"
-                format="webp"
-                provider="uploadcare"
-                :src="attachment.externaluid"
-                :modifiers="attachment.externalmods"
-                :alt="thumbnailAlt(index)"
-                class="thumbnail-image"
-                :width="80"
-                :height="80"
-              />
               <ProxyImage
                 v-else-if="attachment.path"
                 class-name="thumbnail-image"
@@ -104,17 +93,6 @@
             <OurUploadedImage
               v-if="currentAttachment?.ouruid"
               :src="currentAttachment.ouruid"
-              :modifiers="currentAttachment.externalmods"
-              :alt="photoAlt"
-              class="photo-image"
-              :width="640"
-              :height="480"
-            />
-            <NuxtPicture
-              v-else-if="currentAttachment?.externaluid"
-              format="webp"
-              provider="uploadcare"
-              :src="currentAttachment.externaluid"
               :modifiers="currentAttachment.externalmods"
               :alt="photoAlt"
               class="photo-image"

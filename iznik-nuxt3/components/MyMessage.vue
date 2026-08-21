@@ -67,17 +67,6 @@
                     :width="400"
                     :height="200"
                   />
-                  <NuxtPicture
-                    v-else-if="message.attachments[0]?.externaluid"
-                    format="webp"
-                    provider="uploadcare"
-                    :src="message.attachments[0].externaluid"
-                    :modifiers="message.attachments[0].externalmods"
-                    alt="Item Photo"
-                    class="photo-image"
-                    :width="400"
-                    :height="200"
-                  />
                   <ProxyImage
                     v-else-if="message.attachments[0]?.path"
                     class-name="photo-image"

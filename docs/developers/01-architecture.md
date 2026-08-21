@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-20
+last_reviewed: 2026-08-21
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -70,6 +70,27 @@ and per-group membership and roles are the ones you will meet first.
   outside the request path, and if that pass stops working every member silently reverts to
   no limit at all - which is what happened between 11 Aug and 15 Aug 2026. See section 7 of
   the algorithm reference.
+
+  The second structural rule is that every surface must answer "has this post reached this
+  member" the same way. Browse, the unread badge, search, the message page, both reply gates
+  and every mail and push path read the same overflow lanes, decided in one place. Splits
+  here are expensive precisely because each half looks correct on its own: a live one had the
+  mail inviting members the website then refused, so people were emailed a post they could
+  not find, and their replies were held indefinitely. See section 3b of the algorithm
+  reference for the lanes and the table of where each is honoured.
+
+  Agreeing on the answer is not sufficient: how a surface ASKS costs as much as what it
+  concludes. The lane rings are 37,000-vertex polygons stored as JSON, so the read question
+  ("which of these posts admit me") cannot be answered from the column at any level of
+  narrowing - it is hundreds of parses, seconds per page. Read paths ask the spatial server,
+  which rasterises each ring once, and never put the JSON test beside an indexed predicate:
+  do that and the optimiser drops the index for the entire query, which reads as a healthy
+  site returning correct answers right up until it stops returning them. Twice on 21 Aug
+  2026. Same section.
+
+  The same rule applies to what we SHOW moderators: the per-post reach map draws the
+  rings as well as the reach, because a map that stops at the committed outline tells a
+  moderator a post did not get somewhere the mail has already invited people from.
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
   that get no reply at all: a passthrough for a silent post's first reply, individual mail to
   the members who have asked for that specific item (an open post of the opposite type, or a

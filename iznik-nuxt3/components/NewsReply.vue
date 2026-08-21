@@ -89,18 +89,6 @@
             class="clickme replyphoto mt-2 mb-2"
             @click="showReplyPhotoModal"
           />
-          <NuxtPicture
-            v-else-if="reply?.image?.externaluid"
-            format="webp"
-            fit="cover"
-            provider="uploadcare"
-            :src="reply?.image?.externaluid"
-            :modifiers="reply?.image?.externalmods"
-            alt="ChitChat Photo"
-            :width="100"
-            class="clickme replyphoto mt-2 mb-2"
-            @click="showReplyPhotoModal"
-          />
         </div>
         <div v-if="userid" class="text-muted align-items-center">
           <span class="text-muted small me-1">
@@ -272,15 +260,12 @@
         </button>
       </div>
     </div>
-    <NuxtPicture
+    <OurUploadedImage
       v-if="imageuid"
-      format="webp"
-      fit="cover"
-      provider="uploadcare"
       :src="imageuid"
       :modifiers="imagemods"
       alt="ChitChat Photo"
-      width="100"
+      :width="100"
       class="mt-1 ms-4 image__uploaded"
     />
     <OurUploader

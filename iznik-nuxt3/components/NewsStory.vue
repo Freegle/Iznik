@@ -26,18 +26,6 @@
               class="clickme story-image"
               @click="showPhotoModal"
             />
-            <NuxtPicture
-              v-else-if="story?.image?.externaluid"
-              fit="cover"
-              format="webp"
-              provider="uploadcare"
-              :src="story?.image?.externaluid"
-              :modifiers="story?.image?.externalmods"
-              alt="Freegler Story Photo"
-              sizes="100vw md:200px"
-              class="clickme story-image"
-              @click="showPhotoModal"
-            />
             <b-img
               v-else-if="story?.image"
               thumbnail

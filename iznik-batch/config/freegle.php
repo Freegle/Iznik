@@ -785,6 +785,35 @@ return [
         'rural_access' => [
             'enabled' => filter_var(env('RIPPLE_RURAL_ACCESS_ENABLED', true), FILTER_VALIDATE_BOOLEAN),
         ],
+        // Cluster-anchor overflow. A different miss from rural-access above: that lane covers a
+        // post whose audience cap bound short of the travel-time budget; this one covers a post
+        // whose cap did NOT bind (small enough pool that the reach ran its full drive-time
+        // budget) and which still leaves a dense pocket of freeglers stranded just past the
+        // isochrone edge - typically a village or estate the road network routes around. The
+        // routing server looks for one qualifying cell (audience >= cluster_k, only when the
+        // post's own pool is still under cluster_floor) and, if found, draws up to
+        // cluster_max_wedges wedge polygons out to it, bounded by cluster_max_minutes overall.
+        //
+        // Pull-only surface: browse/search/banner/reply read the stored wedges unconditionally
+        // (no band gate, unlike rural_access), but this lane is mailed on the same terms as the others: a member a wedge
+        // UnifiedDigestService::overflowBranch, which reads only 'rural'/'fairness', and the
+        // daily digest / daily-posts push reach gate, which consults the rural ring only.
+        'cluster' => [
+            'enabled' => filter_var(env('RIPPLE_CLUSTER_ANCHOR_ENABLED', true), FILTER_VALIDATE_BOOLEAN), // live-by-default, Edward's convention
+            // Defaults to the AUDIENCE CAP, not to a number of its own, so the two
+            // lanes meet rather than leaving a gap between them. Rural fires when the
+            // cap BOUND; cluster fires when it did not and the post is still under
+            // this floor. With an independent floor of 1,000 against a cap of 4,000,
+            // a post reaching 1,000-3,999 people qualified for neither - measured
+            // 2026-08-21 over three days of live reaches, that was 1,879 posts, a
+            // THIRD of everything posted, and it is exactly the semi-rural case both
+            // lanes were written for. 341 live posts across the Yorkshire Dales
+            // carried no ring of any kind; one sampled at 1,896.
+            'floor' => (int) env('RIPPLE_CLUSTER_FLOOR', (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000)),
+            'cell_k' => (int) env('RIPPLE_CLUSTER_CELL_K', 150),
+            'max_wedges' => (int) env('RIPPLE_CLUSTER_MAX_WEDGES', 3),
+            'max_minutes' => (float) env('RIPPLE_CLUSTER_MAX_MINUTES', 60),
+        ],
         // Demographic-fairness overflow. Measured on live: members in the most deprived fifth
         // are reached by ~457 posts per 30 days against ~574 for every other fifth, while
         // membership is flat across fifths. That shortfall is NOT caused by the extent cap

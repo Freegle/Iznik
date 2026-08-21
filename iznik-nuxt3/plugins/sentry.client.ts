@@ -138,7 +138,7 @@ export default defineNuxtPlugin((nuxtApp) => {
           // before that change still emit the unconditional captureMessage —
           // drop those here until the rollout window closes (remove ~30 days
           // after deploy). Narrowed to freegletusd- so real load failures on
-          // other providers (e.g. uploadcare) still surface.
+          // any other image source still surface.
           if (event.message?.startsWith('Failed to fetch image freegletusd-')) {
             return null
           }

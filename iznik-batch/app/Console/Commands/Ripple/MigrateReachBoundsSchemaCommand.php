@@ -44,6 +44,9 @@ class MigrateReachBoundsSchemaCommand extends Command
 
     private const SRID = 3857;
 
+    /** Cached non-generated column list for the shadow copy. */
+    private ?array $copyColumnsCache = null;
+
     public function handle(): int
     {
         $chunk = max(1, (int) $this->option('chunk'));
@@ -177,16 +180,50 @@ class MigrateReachBoundsSchemaCommand extends Command
     }
 
     /**
+     * Columns to copy: every column of rippling_reach except the generated ones.
+     *
+     * MySQL refuses an explicit value for a generated column, and the shadow inherits
+     * those columns through CREATE TABLE ... LIKE, so `SELECT rr.*` cannot feed the
+     * INSERT once one exists (has_overflow). Read from the live schema rather than
+     * listed here, so a later generated column needs no change.
+     *
+     * @return string[] Column names in ordinal order.
+     */
+    private function copyColumns(): array
+    {
+        if ($this->copyColumnsCache !== null) {
+            return $this->copyColumnsCache;
+        }
+
+        $rows = DB::select(
+            "SELECT COLUMN_NAME AS name
+               FROM INFORMATION_SCHEMA.COLUMNS
+              WHERE TABLE_SCHEMA = DATABASE()
+                AND TABLE_NAME = 'rippling_reach'
+                AND EXTRA NOT LIKE '%GENERATED%'
+              ORDER BY ORDINAL_POSITION",
+            [],
+            false
+        );
+
+        return $this->copyColumnsCache = array_map(fn ($r) => $r->name, $rows);
+    }
+
+    /**
      * INSERT..SELECT into the shadow for rows matching $where, deriving bounds with the
      * sentinel ladder. Falls back to envelope-only for chunks whose geometry makes the
      * derivation throw (then per-row so one bad polygon cannot poison a whole chunk).
      */
     private function insertRows(string $where, bool $single): int
     {
-        $insert = function (string $outerExpr, string $innerExpr) use ($where): int {
+        $cols = $this->copyColumns();
+        $target = implode(", ", array_map(fn ($c) => "`" . $c . "`", $cols));
+        $source = implode(", ", array_map(fn ($c) => "rr.`" . $c . "`", $cols));
+
+        $insert = function (string $outerExpr, string $innerExpr) use ($where, $target, $source): int {
             return DB::affectingStatement(
-                'INSERT INTO rippling_reach_shadow
-                 SELECT rr.*, ' . $outerExpr . ' AS outer_bound, ' . $innerExpr . ' AS inner_bound
+                'INSERT INTO rippling_reach_shadow (' . $target . ', outer_bound, inner_bound)
+                 SELECT ' . $source . ', ' . $outerExpr . ', ' . $innerExpr . '
                    FROM rippling_reach rr
                   WHERE ' . $where
             );

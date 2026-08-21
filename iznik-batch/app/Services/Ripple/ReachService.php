@@ -67,6 +67,27 @@ class ReachService
      */
     private int $fairnessMaxQuintile;
 
+    /**
+     * Cluster-anchor overflow: the opposite miss from rural-access/fairness above. Those two
+     * fire when the audience cap BOUND (the reach stopped short of the travel-time budget);
+     * this fires when it did NOT (the reach ran its full budget and still left a dense pocket
+     * of freeglers stranded just past the isochrone edge). Off unless configured, same as the
+     * other two lanes.
+     */
+    private bool $clusterAnchor;
+
+    /** Audience floor: the cluster pass only runs when the post's own pool is below this. */
+    private int $clusterFloor;
+
+    /** Cluster-cell density threshold (cell + 8 neighbours) a candidate cell must clear. */
+    private int $clusterK;
+
+    /** Hard cap (contract: 3) on how many wedge polygons a post can carry. */
+    private int $clusterMaxWedges;
+
+    /** Absolute drive-time bound for a cluster wedge, independent of the post's own budget. */
+    private float $clusterMaxMinutes;
+
     /** @var int[] hours-since-arrival thresholds, one per expansion tick */
     private array $hazardHours;
 
@@ -83,13 +104,24 @@ class ReachService
         $this->targetUsers = config('freegle.ripple.extent.enabled')
             ? max(0, (int) config('freegle.ripple.extent.target_users', 0))
             : 0;
-        // Both overflow lanes: read once here, mirroring targetUsers above, and sent only
-        // when enabled so an unconfigured deployment gets a byte-identical schedule.
+        // Rural-access and fairness overflow (cluster-anchor follows below): read once here,
+        // mirroring targetUsers above, and sent only when enabled so an unconfigured
+        // deployment gets a byte-identical schedule.
         $this->ruralAccess = (bool) config('freegle.ripple.rural_access.enabled', false);
         $this->fairnessWeight = config('freegle.ripple.fairness.enabled', false)
             ? max(0.0, min(1.0, (float) config('freegle.ripple.fairness.weight', 0.0)))
             : 0.0;
         $this->fairnessMaxQuintile = max(1, min(4, (int) config('freegle.ripple.fairness.max_quintile', 1)));
+        $this->clusterAnchor = (bool) config('freegle.ripple.cluster.enabled', false);
+        // Falls back to the audience cap, not to a number of its own: an independent
+        // default is what left posts between the two lanes with neither.
+        $this->clusterFloor = max(0, (int) config('freegle.ripple.cluster.floor',
+            (int) config('freegle.ripple.extent.target_users', 4000)));
+        $this->clusterK = max(0, (int) config('freegle.ripple.cluster.cell_k', 150));
+        // Hard cap 3 per the interface contract - clamped here too rather than trusted
+        // to the routing server, same posture as fairnessMaxQuintile above.
+        $this->clusterMaxWedges = max(1, min(3, (int) config('freegle.ripple.cluster.max_wedges', 3)));
+        $this->clusterMaxMinutes = max(0.0, (float) config('freegle.ripple.cluster.max_minutes', 60));
         $this->hazardHours = config('freegle.ripple.hazard_hours', [1, 3, 6, 12, 24, 48, 72, 120, 168]);
     }
 
@@ -302,16 +334,29 @@ class ReachService
             $params['target_users'] = $this->targetUsers;
         }
 
-        // The two lanes are mutually exclusive PER POST, but which one applies depends on
-        // whether the cap actually bound for that post, which only the routing server knows
-        // once it has counted. So both are offered here and it picks; asking for both costs
-        // nothing when neither applies.
+        // Rural-access and fairness are mutually exclusive PER POST, but which one applies
+        // depends on whether the audience cap actually bound for that post, which only the
+        // routing server knows once it has counted. So both are offered here and it picks;
+        // asking for either costs nothing when it does not apply.
         if ($this->ruralAccess) {
             $params['rural_access'] = 1;
         }
         if ($this->fairnessWeight > 0) {
             $params['fairness_weight'] = $this->fairnessWeight;
             $params['fairness_max_quintile'] = $this->fairnessMaxQuintile;
+        }
+
+        // Cluster-anchor is independent of the two above: it fires precisely when the audience
+        // cap did NOT bind (see parseOverflow), the opposite condition from rural/fairness, so
+        // a post can carry a cluster ring alongside a rural or fairness one. Offered every time
+        // cluster.enabled is on; the routing server decides per-post whether a qualifying cell
+        // exists.
+        if ($this->clusterAnchor) {
+            $params['cluster_anchor'] = 1;
+            $params['cluster_floor'] = $this->clusterFloor;
+            $params['cluster_k'] = $this->clusterK;
+            $params['cluster_max_wedges'] = $this->clusterMaxWedges;
+            $params['cluster_max_minutes'] = $this->clusterMaxMinutes;
         }
 
         return $params;
@@ -366,7 +411,7 @@ class ReachService
             // omits it (older build); the gate treats [] as "not available".
             'reachable_group_ids' => array_map('intval', $body['reachable_group_ids'] ?? []),
             // The overflow lanes' rings, when a lane was asked for and applied. Absent on
-            // older servers and whenever both lanes are off, so null means "no lane", never
+            // older servers and whenever every lane is off, so null means "no lane", never
             // "a lane with nothing in it".
             'overflow_bounds' => $this->parseOverflow($body),
         ];
@@ -375,10 +420,15 @@ class ReachService
     /**
      * Turn the routing server's overflow rings into the JSON stored on rippling_reach.
      *
-     * The server decides WHICH lane a post gets, from whether the audience cap actually bound
-     * for it, so at most one of these is ever present. Geometry is converted to WKT here for
-     * the same reason the tick polygons are: it is what MySQL's ST_GeomFromText wants and what
-     * the fallback containment test reads back.
+     * Three lanes, keyed by whether the audience cap bound for THIS post: rural and fairness
+     * fire when it DID (the reach stopped at the nearest-N ceiling short of the travel-time
+     * budget); cluster fires when it did NOT (the reach ran its full budget and still left a
+     * dense pocket of freeglers stranded just past the edge). Rural and fairness remain
+     * mutually exclusive with each other, but cluster is decided independently, so a post CAN
+     * carry a cluster ring alongside a rural or fairness one - every lane present in the body
+     * is kept here, not just the first one found. Geometry is converted to WKT here for the
+     * same reason the tick polygons are: it is what MySQL's ST_GeomFromText wants and what the
+     * fallback containment test reads back.
      *
      * Returns null rather than an empty array when there is nothing, so a row's NULL is
      * unambiguous: no lane applied, as against a lane that produced no drawable ring.
@@ -387,7 +437,11 @@ class ReachService
     {
         $out = [];
 
-        foreach (['overflow_rural' => 'rural', 'overflow_fairness' => 'fairness'] as $key => $name) {
+        foreach ([
+            'overflow_rural' => 'rural',
+            'overflow_fairness' => 'fairness',
+            'overflow_cluster' => 'cluster',
+        ] as $key => $name) {
             $rings = $body[$key] ?? null;
             if (! is_array($rings) || empty($rings)) {
                 continue;
@@ -553,6 +607,11 @@ class ReachService
      * never describe a ring different from the one it ships with. Returns null if no ring
      * yielded a usable coordinate, which keeps "no rings" and "a box covering nothing" distinct.
      *
+     * This lane list must be kept in step with parseOverflow()'s key map above: a lane added
+     * there but not here ships rings whose bbox silently excludes them, and the reach mail's
+     * bbox widening (UnifiedDigestService::overflowBboxBranch) then never even offers those
+     * members to the ring index as candidates.
+     *
      * @param  array<string, mixed>  $out
      * @return array{0: float, 1: float, 2: float, 3: float}|null
      */
@@ -562,7 +621,7 @@ class ReachService
         $maxLng = $maxLat = -INF;
         $seen = false;
 
-        foreach (['rural', 'fairness'] as $lane) {
+        foreach (['rural', 'fairness', 'cluster'] as $lane) {
             foreach (($out[$lane] ?? []) as $wkt) {
                 if (!is_string($wkt) || !preg_match('/^POLYGON\(\((.*)\)\)$/', $wkt, $m)) {
                     continue;

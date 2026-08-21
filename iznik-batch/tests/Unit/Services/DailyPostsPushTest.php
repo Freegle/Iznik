@@ -44,6 +44,43 @@ class DailyPostsPushTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Distance preference — the push and the email must agree
+    // -------------------------------------------------------------------------
+
+    /**
+     * The daily EMAIL digest narrows to the member's own distance preference. The daily
+     * PUSH fetches through the same getPostsForUser but used to skip that narrowing, so a
+     * member who had reduced their range still got the far-away post on their phone while
+     * it was correctly absent from their inbox. Both now call this one method.
+     */
+    public function test_distance_preference_filter_narrows_to_the_members_range(): void
+    {
+        $poster = $this->createTestUser();
+        $group  = $this->createTestGroup();
+
+        $member = $this->createTestUser();
+        $member->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1], 'browseMaxDistance' => 5];
+        $member->save();
+        $member->refresh();
+
+        $near = $this->createApprovedMessage($poster, $group, 'OFFER: Near sofa (Kingston)');
+        $far  = $this->createApprovedMessage($poster, $group, 'OFFER: Far sofa (Aberdeen)');
+
+        // Roughly 2 miles away, and roughly 400 miles away.
+        $near->lat = 51.53; $near->lng = -0.1;  $near->fromuser = $poster->id;
+        $far->lat  = 57.15; $far->lng  = -2.1;  $far->fromuser  = $poster->id;
+
+        $kept = $this->digestService->filterByDistancePreference(
+            collect([$near, $far]),
+            $member
+        );
+
+        $ids = $kept->pluck('id')->all();
+        $this->assertContains($near->id, $ids, 'a post inside the range is kept');
+        $this->assertNotContains($far->id, $ids, 'a post beyond the range is dropped');
+    }
+
+    // -------------------------------------------------------------------------
     // buildDailyNewPostsPayload — contract tests
     // -------------------------------------------------------------------------
 
@@ -519,6 +556,43 @@ class DailyPostsPushTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
         $this->createApprovedMessage($this->createTestUser(), $group, 'OFFER: Opted-out item (London)');
+        $this->createUserPushToken($user->id);
+
+        $mockPush = $this->createMock(PushNotificationService::class);
+        $mockPush->expects($this->never())->method('notifyDailyNewPosts');
+        $this->app->instance(PushNotificationService::class, $mockPush);
+
+        $this->artisan('push:daily-posts', ['--user' => $user->id])
+            ->assertExitCode(0);
+    }
+
+    /**
+     * End to end through the command: a post beyond the member's own distance preference
+     * must not be pushed. The email digest already withheld it, so pushing it was the two
+     * channels disagreeing about the same member's own setting.
+     */
+    public function test_command_does_not_push_a_post_beyond_the_distance_preference(): void
+    {
+        Config::set('freegle.posts_push_allowlist', '*');
+
+        $user  = $this->createTestUser();
+        $other = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $user->settings = ['mylocation' => ['lat' => 51.5, 'lng' => -0.1], 'browseMaxDistance' => 5];
+        $user->save();
+        $user->refresh();
+
+        $this->createMembership($user, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        // The only post is hundreds of miles away, well outside the member's 5 miles.
+        $msg = $this->createApprovedMessage($other, $group, 'OFFER: Far away item (Aberdeen)');
+        DB::table('messages')->where('id', $msg->id)->update(['lat' => 57.15, 'lng' => -2.1]);
+        DB::table('messages_spatial')->where('msgid', $msg->id)->update([
+            'point' => DB::raw("ST_SRID(POINT(-2.1, 57.15), 3857)"),
+        ]);
         $this->createUserPushToken($user->id);
 
         $mockPush = $this->createMock(PushNotificationService::class);

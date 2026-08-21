@@ -227,13 +227,14 @@ describe('CommunityEvent', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('renders NuxtPicture when image has externaluid', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockCommunityEventStore.byId.mockReturnValue({
         ...mockEvent,
         image: { externaluid: 'ext-123', externalmods: '{}' },
       })
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('does not render image when no image', async () => {

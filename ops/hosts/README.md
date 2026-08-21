@@ -32,11 +32,22 @@ monit/
   db-node/             db1, db2, db3 - byte-identical on all three
     monitrc.settings
     conf.d/
+batch-host/
+  photon/              the geocoder's launcher (/etc/photon) and the systemd
+                       drop-in that lets monit start it at all - see its README
 ```
 
 `monitrc.settings` holds only the lines that differ from the stock Debian
 `monitrc` (the rest of that file is comments). Restore by editing the packaged
 file, not by replacing it.
+
+**A monit check is not enough on its own.** `monit/batch-host/conf.d/photon`
+names `/etc/photon` as its start program, and that launcher plus a systemd
+drop-in on `monit.service` live in `batch-host/photon/`. Restoring the check
+without those two gives you a monit that watches photon, fails to start it, and
+retries every 2 minutes forever - which is exactly what happened on 2026-08-21.
+If you add a check whose start program lives outside `/etc/monit`, capture that
+program here too.
 
 ## Restoring onto a rebuilt host
 
@@ -82,9 +93,11 @@ copying a check from one to the other.
   supervisor config (that is image-baked from `iznik-batch/docker/supervisor.conf`).
 - **TLS certificates and private keys, DNS zones, firewall rules, package sets,
   users and SSH keys.** What is captured is service *configuration* only - monit
-  (this file) plus MySQL/Galera, HAProxy and postfix (`SERVICES.md`). It is a
-  start on capturing host state, not a complete build recipe, and should not be
-  read as one.
+  and photon (this file) plus MySQL/Galera, HAProxy and postfix (`SERVICES.md`).
+  It is a start on capturing host state, not a complete build recipe, and should
+  not be read as one.
+- **Generated data**, however painful to rebuild: photon's 6.3G Elasticsearch
+  index, the routing graph, caches. Config only.
 
 See also `docs/ops/03-monitoring-and-logging.md` for what the monitoring
 actually watches and how alerts reach people.

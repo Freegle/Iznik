@@ -9,6 +9,12 @@ The two stages are deliberately separable: they live on **different source hosts
 
 > **Status (2026-06-13): the front-end VM has not been provisioned yet.** Everything below is the design + verified current state, not a record of work done. The Compose services for Stage 1 (`delivery`, `tusd`) already exist in `docker-compose.yml`; the Stage 2 tile service and the `frontend-nginx` proxy do not yet exist in Compose.
 
+> **Status (2026-08-21): the uploadcare ACLs referred to below are gone.** Image delivery is tusd
+> end to end and Uploadcare is retired, so `uploadcare-cache` / `uploadcare-proxy-cache` have been
+> dropped rather than migrated, and `http_backend_cache` no longer exists. Read the warnings below
+> about not repointing that shared backend as a record of the constraint at the time: they no
+> longer apply, and taking them at face value leads you to restore routing for two dead hostnames.
+
 **Out of scope (stays where it is for now):**
 - **Geocoding** (`geocode.ilovefreegle.org`) — Photon runs bare-metal on the same `docker` host as the tile server (Java, `127.0.0.1:2322`). It is a natural Stage 3 (same source host, same DNS-repoint cutover as tiles) but is not designed here.
 - **ORS routing** (`ors-app` container on the `docker` host) — running but not used; superseded by PR459, which is not yet merged. It is not part of the front-end VM and gets dropped from the `docker` host once PR459 lands, independently of this work.

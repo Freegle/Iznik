@@ -187,6 +187,71 @@ func ReachContaining(lng, lat float64) (in []int64, partial []int64, err error) 
 	return out.In, out.Partial, nil
 }
 
+// ReachOverflowContaining calls GET /v1/reachoverflow/containing for the lanes
+// the caller is in, and gets back the posts those rings admit at this point.
+//
+// The lanes are named, not decoded: the index stamps each ring item with its
+// lane and filters server-side, so no caller carries a copy of that encoding.
+// One authority answers "does a ring admit this member", and the feed, the
+// badge, search, the message page, the reply gate and the mail all ask it - the
+// only arrangement in which those surfaces cannot drift apart.
+//
+// `in` is definite. `partial` sits in the raster's boundary band and is NOT
+// admitted by any caller: resolving it exactly costs a ring parse per lane per
+// post, which took the read node's load from 8.5 to 45 on 2026-08-21. It is
+// returned so callers can see the band exists, never so they can act on it
+// differently from one another.
+func ReachOverflowContaining(lng, lat float64, lanes []string) (in []int64, partial []int64, err error) {
+	if len(lanes) == 0 {
+		return nil, nil, nil
+	}
+
+	params := url.Values{
+		"lng":   {fmt.Sprintf("%f", lng)},
+		"lat":   {fmt.Sprintf("%f", lat)},
+		"lanes": {strings.Join(lanes, ",")},
+	}
+	reqURL := fmt.Sprintf("%s/v1/reachoverflow/containing?%s", baseURL(), params.Encode())
+
+	resp, err := httpClient.Get(reqURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, nil, fmt.Errorf("spatial dataset \"reachoverflow\" not ready")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing: HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing read body: %w", err)
+	}
+
+	var out struct {
+		In       []int64 `json:"in"`
+		Partial  []int64 `json:"partial"`
+		Filtered bool    `json:"filtered"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing parse: %w", err)
+	}
+
+	// We asked for specific lanes; if the server did not filter, these are its own
+	// PACKED ids (msgid<<4|lane), not msgids. Reading them as msgids would admit
+	// arbitrary other posts - only for ring members, and without any error to show
+	// for it. A server too old to know the parameter says nothing here, so absent
+	// is refused too, and the rings simply stay dark until it is upgraded.
+	if !out.Filtered {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing: server did not filter by lane (too old?)")
+	}
+
+	return out.In, out.Partial, nil
+}
+
 // ExtraString returns a string value from a QueryResult.Extra map, or "" if absent.
 func ExtraString(r QueryResult, key string) string {
 	if v, ok := r.Extra[key].(string); ok {

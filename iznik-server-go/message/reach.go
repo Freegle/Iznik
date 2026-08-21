@@ -1,7 +1,10 @@
 package message
 
 import (
+	"database/sql"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -9,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // ReachBlockedSet returns the subset of msgids that a viewer at (lat,lng) may
@@ -22,16 +26,32 @@ import (
 // (e.g. rippling_reach not yet deployed) yields an empty set, and a viewer with
 // no location (0,0) is never blocked.
 //
+// myid is the VIEWER, when there is one: a viewer an overflow ring admits (see
+// rippling.ViewerOverflowPaths) is not blocked, matching the feed, the badge
+// and search - the mail deliberately invites ring members, so the message page
+// must not tell them "not reached yet" nor the reply gates hold what they send.
+// Callers checking reach from a post's own location rather than a viewer's (the
+// match mailers) pass 0: no viewer, no rings.
+//
+// A FROZEN reach (status 'held', set by FreezeReachIfOriginPending when the origin copy is
+// pulled back for moderation) is treated here exactly like a live one. Freezing stops a post
+// being pushed OUTWARD - it is not mailed or pushed while its origin is under review - but it
+// does not make a member who is outside the polygon reached. They are not, so the message page
+// tells them so, and their reply is held to protect the poster's ordering just as it would be
+// on a post still expanding.
+//
 // Containment consults the sandwich bounds when migrated (see
 // rippling/reachbounds.go): outside a real outer_bound is an authoritative
 // reject, inside inner_bound an authoritative accept, and only the band between
 // touches the ~178KB exact polygon; POINT (completed) bounds fall back to the
-// exact test.
+// exact test. The rings sit OUTSIDE that ladder: they can rescue even an
+// authoritative polygon reject, because a ring extends beyond the outer bound
+// by construction.
 //
 // The query itself is ReachBlockedOrigins; this is the membership-only view of
 // it for the callers that do not need the origins.
-func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
-	origins := ReachBlockedOrigins(msgids, lat, lng)
+func ReachBlockedSet(myid uint64, msgids []uint64, lat, lng float64) map[uint64]bool {
+	origins := ReachBlockedOrigins(myid, msgids, lat, lng)
 	blocked := make(map[uint64]bool, len(origins))
 	for msgid := range origins {
 		blocked[msgid] = true
@@ -64,13 +84,30 @@ type ReachOrigin struct {
 // arithmetic. That matters because this sits on the feed's hot path: an estimate
 // that needed its own query (or worse, a routing call) per post would not be
 // worth showing.
-func ReachBlockedOrigins(msgids []uint64, lat, lng float64) map[uint64]ReachOrigin {
+func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uint64]ReachOrigin {
 	blocked := make(map[uint64]ReachOrigin)
 	if len(msgids) == 0 || (lat == 0 && lng == 0) {
 		return blocked
 	}
 
 	db := database.DBConn
+
+	// The viewer's rings, as a rescue: NOT blocked when a ring admits them,
+	// however the polygon test came out.
+	//
+	// Asked of rippling.AdmittedMsgids - the SAME call the feed, the badge, the
+	// reply gate and the mail make - and applied here in Go rather than as a
+	// predicate in the query. Consistency across surfaces is the constraint this
+	// lane lives under: a member the mail invites must not be told "not reached
+	// yet" here, and the only way to guarantee that is for every surface to read
+	// one answer rather than to re-derive it from the same JSON and hope the
+	// derivations agree. It also keeps the ring test out of a query that has an
+	// index to lose (see the 2026-08-21 incidents).
+	admitted := make(map[uint64]struct{})
+	for _, id := range rippling.AdmittedMsgids(db, lng, lat, utils.SRID,
+		rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))) {
+		admitted[id] = struct{}{}
+	}
 	var rows []struct {
 		Msgid    uint64     `gorm:"column:msgid"`
 		Lat      *float64   `gorm:"column:lat"`
@@ -96,13 +133,20 @@ func ReachBlockedOrigins(msgids []uint64, lat, lng float64) map[uint64]ReachOrig
 			Where("rr.msgid IN (?) AND NOT "+expr, whereArgs...).
 			Scan(&rows).Error
 	} else {
-		err = db.Table("rippling_reach").
-			Select("msgid, lat, lng, schedule, arrival").
-			Where("msgid IN ? AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0", msgids, lng, lat, utils.SRID).
+		err = db.Table("rippling_reach rr").
+			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
+			Where("rr.msgid IN ? AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+				msgids, lng, lat, utils.SRID).
 			Scan(&rows).Error
 	}
 	if err == nil {
 		for _, r := range rows {
+			// A ring admits them: the post is not blocked, whatever the polygon
+			// said. Applied after the query so the ring answer comes from one
+			// place for every surface.
+			if _, ok := admitted[r.Msgid]; ok {
+				continue
+			}
 			origin := ReachOrigin{Arrival: r.Arrival}
 			if r.Lat != nil && r.Lng != nil {
 				origin.Lat, origin.Lng, origin.Ok = *r.Lat, *r.Lng, true
@@ -143,6 +187,81 @@ type ReachResponse struct {
 	// - the grid-fill polygons are highly repetitive) is a deliberate exception to the "never
 	// ship reach polygons" rule that governs the member-facing feed.
 	Polygon string `json:"polygon,omitempty"`
+	// Overflow is the post's rings - the lanes that admit members the committed reach
+	// does not cover - keyed by lane ("rural.sparse", "cluster.w1"), each as GeoJSON.
+	//
+	// Without them the map under-reports where a post went, and it does so exactly for
+	// the rural posts whose moderators are most likely to be asking: a Hawes post's
+	// reach outline stops at the dale, while two wedges carry it to Penrith and
+	// Lancaster and the mail invites those members. "Did this get to X?" answered from
+	// the outline alone is wrong whenever X is in a ring.
+	//
+	// SIMPLIFIED hard (~150m). The stored rings average 37,000 vertices; shipping them
+	// whole would roughly triple the heaviest mod call there is. An outline a moderator
+	// can see the shape of is the whole requirement here - nothing decides admission
+	// from this.
+	Overflow map[string]string `json:"overflow,omitempty"`
+}
+
+// overflowLanePaths are the ring lanes a post can carry, as JSON paths. Fixed set, so
+// the query below can name them: one column each, NULL for the lanes this post has not
+// got. Matches rippling.ViewerOverflowPaths' vocabulary.
+var overflowLanePaths = []struct{ Key, Path string }{
+	{"rural.dense", "$.rural.dense"},
+	{"rural.medium", "$.rural.medium"},
+	{"rural.sparse", "$.rural.sparse"},
+	{"fairness.1", `$.fairness."1"`},
+	{"fairness.2", `$.fairness."2"`},
+	{"fairness.3", `$.fairness."3"`},
+	{"fairness.4", `$.fairness."4"`},
+	{"cluster.w1", "$.cluster.w1"},
+	{"cluster.w2", "$.cluster.w2"},
+	{"cluster.w3", "$.cluster.w3"},
+}
+
+// ringSimplifyDegrees is the simplify tolerance for those outlines, in coordinate
+// degrees (the geometry's SRID label notwithstanding) - about 150m, which takes a
+// 37k-vertex ring to something in the low thousands.
+const ringSimplifyDegrees = 0.0015
+
+// overflowRings reads a post's rings as simplified GeoJSON, keyed by lane.
+//
+// Mod-only and one post per request, so the parse cost this pays - a handful of rings,
+// once - is affordable here in a way it never was on a read surface (see
+// rippling.AdmittedMsgids for what asking this per candidate row cost).
+func overflowRings(db *gorm.DB, msgid uint64) map[string]string {
+	cols := make([]string, 0, len(overflowLanePaths))
+	args := make([]interface{}, 0, len(overflowLanePaths))
+	for i, lane := range overflowLanePaths {
+		cols = append(cols, fmt.Sprintf(
+			"ST_AsGeoJSON(ST_Simplify(ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?)), %d), %v), 5) AS g%d",
+			utils.SRID, ringSimplifyDegrees, i))
+		args = append(args, lane.Path)
+	}
+
+	dest := make([]sql.NullString, len(overflowLanePaths))
+	scan := make([]interface{}, len(overflowLanePaths))
+	for i := range dest {
+		scan[i] = &dest[i]
+	}
+
+	row := db.Raw("SELECT "+strings.Join(cols, ", ")+
+		" FROM rippling_reach WHERE msgid = ? AND overflow_bounds IS NOT NULL",
+		append(args, msgid)...).Row()
+	if row == nil || row.Scan(scan...) != nil {
+		return nil
+	}
+
+	rings := map[string]string{}
+	for i, lane := range overflowLanePaths {
+		if dest[i].Valid && dest[i].String != "" {
+			rings[lane.Key] = dest[i].String
+		}
+	}
+	if len(rings) == 0 {
+		return nil
+	}
+	return rings
 }
 
 type reachRow struct {
@@ -238,5 +357,6 @@ func Reach(c *fiber.Ctx) error {
 		Arrival:         row.Arrival,
 		NextExpansionAt: row.NextExpansionAt,
 		Polygon:         polygon,
+		Overflow:        overflowRings(db, id),
 	})
 }

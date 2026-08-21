@@ -700,7 +700,7 @@ class PushNotificationService
             'image' => $modtools ? 'www/images/modtools_logo.png' : 'www/images/user_logo.png',
             'modtools' => $modtools ? '1' : '0',
             'sound' => 'default',
-            'route' => $modtools ? '/modtools' : '/',
+            'route' => '/',
             'notId' => (string) $userId,
             'test' => '1',
             'channel_id' => $modtools ? 'modtools' : 'chat_messages',

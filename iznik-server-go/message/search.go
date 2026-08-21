@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 	"strconv"
@@ -240,19 +241,76 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 		// fixed golden with no unresolved gap (the manifest's stale,
 		// presentInCode=false 7ef7f895e8bf is the pre-fix snapshot), so this
 		// is an ordinary fixed-shape multi-join query, not a many-shapes site.
+		// Containment matches the feed: the committed reach, or any overflow ring
+		// that admits this viewer (rippling.ViewerOverflowPaths - the same answer
+		// the feed and badge give, so a post can never be scrollable but
+		// unsearchable). The author cap stays outside the OR: it is the author's
+		// own preference and applies however the viewer got in.
+		// TWO ARMS, TWO QUERIES - deliberately not one OR.
+		//
+		// The committed-reach arm is driven by the SPATIAL index on
+		// rippling_reach.polygon. ORing the ring test into it removed that index
+		// (EXPLAIN: key=rippling_reach_polygon rows=1 becomes key=NULL rows=62,534)
+		// and full-scanned a 17GB table on every cold cache fill, which on
+		// 2026-08-21 put 70+ concurrent copies on the read node, 250 running
+		// threads and load 158. The ring test is JSON_EXTRACT over a column and
+		// can never be indexed alongside a geometry predicate, so it has to be
+		// asked separately and merged here.
+		containment := "AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
+			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "
+
+		args := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
+		args = append(args, float64(9007199254740991), lat, lng, lat)
 		db.Table("rippling_reach rr").
 			Select("ms.msgid").
 			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
 			Joins("INNER JOIN messages m ON m.id = ms.msgid").
 			Joins("INNER JOIN users au ON au.id = m.fromuser").
 			Where("ms.successful = 0 AND rr.status != 'held' "+
-				"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
-				"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "+
+				containment+
 				utils.AuthorReachCapWhere,
-				lng, lat, utils.SRID,
-				lng, lat, utils.SRID,
-				float64(9007199254740991), lat, lng, lat).
+				args...).
 			Scan(&reachIDs)
+
+		// Ring arm. The posts an overflow ring admits this viewer to, resolved
+		// through rippling.AdmittedMsgids - the spatial server's rasters, with
+		// only the boundary band going to the JSON. The ids arrive already
+		// decided, so all that is left here is the same visibility and
+		// author-cap filtering the committed arm applies, bounded by primary
+		// key. No ring test reaches this query at all: it is the shape, not the
+		// volume, that took the site down.
+		if admitted := rippling.AdmittedMsgids(db, lng, lat, utils.SRID,
+			rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))); len(admitted) > 0 {
+			var ringIDs []uint64
+			rArgs := []interface{}{admitted}
+			rArgs = append(rArgs, float64(9007199254740991), lat, lng, lat)
+
+			if err := db.Table("rippling_reach rr").
+				Select("ms.msgid").
+				Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+				Joins("INNER JOIN messages m ON m.id = ms.msgid").
+				Joins("INNER JOIN users au ON au.id = m.fromuser").
+				Where("ms.successful = 0 AND rr.status != 'held' AND rr.msgid IN (?) "+
+					utils.AuthorReachCapWhere,
+					rArgs...).
+				Scan(&ringIDs).Error; err != nil {
+				fmt.Printf("search: overflow ring arm gave up (%v)\n", err)
+			}
+
+			if len(ringIDs) > 0 {
+				seen := make(map[uint64]bool, len(reachIDs))
+				for _, id := range reachIDs {
+					seen[id] = true
+				}
+				for _, id := range ringIDs {
+					if !seen[id] {
+						reachIDs = append(reachIDs, id)
+						seen[id] = true
+					}
+				}
+			}
+		}
+
 		storeReachUniverse(key, reachIDs, now)
 	}
 

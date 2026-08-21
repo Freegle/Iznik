@@ -43,6 +43,7 @@ func main() {
 		&JobsDataset{},
 		&PostcodesDataset{},
 		&ReachDataset{},
+		&ReachOverflowDataset{},
 	}
 
 	srv := newServer(mysqlDB, idxDir, allDatasets)
@@ -108,7 +109,7 @@ func main() {
 	})
 
 	// GET /v1/:dataset/containing — all items whose geometry contains the point.
-	// Only datasets implementing PointContainer (currently reach) support it.
+	// Only datasets implementing PointContainer (reach, reachoverflow) support it.
 	// `in` are definite; `partial` items sit in the raster's boundary band and
 	// the caller must resolve them against the exact source geometry.
 	api.Get("/v1/:dataset/containing", func(c *fiber.Ctx) error {
@@ -128,14 +129,36 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "lng and lat required"})
 		}
 
+		// `lanes` selects on whatever category the dataset stamps its items with
+		// (the overflow rings' lane paths) and returns plain ids. Without it the
+		// dataset's own ids come back, encoding and all.
+		lanes := strings.Split(c.Query("lanes", ""), ",")
+		if len(lanes) == 1 && lanes[0] == "" {
+			lanes = nil
+		}
+		pcf, filtered := state.ds.(PointContainerFiltered)
+
 		var in, partial []int64
+		didFilter := false
 		err := state.withIndex(func(idx *Index) error {
 			var e error
+			if lanes != nil && filtered {
+				in, partial, e = pcf.ContainingFiltered(idx, lng, lat, lanes)
+				didFilter = e == nil
+				return e
+			}
 			in, partial, e = pc.Containing(idx, lng, lat)
 			return e
 		})
 		if err == errIndexNotReady {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+		if err != nil && strings.HasPrefix(err.Error(), "unknown overflow lane") {
+			// A lane the index does not know is the caller and the index
+			// disagreeing about what lanes exist. Said out loud: answering
+			// "nobody" would let a surface quietly stop admitting people the
+			// others still do.
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
@@ -147,10 +170,67 @@ func main() {
 		if partial == nil {
 			partial = []int64{}
 		}
-		return c.JSON(fiber.Map{"in": in, "partial": partial})
+		// `filtered` says whether the ids are the dataset's own (packed, in the
+		// reachoverflow case) or plain external ids narrowed to the lanes asked
+		// for. A caller that asked for lanes and is answered by a server too old
+		// to know the parameter would otherwise read packed ids as msgids and
+		// admit entirely the wrong posts - silently, and only for the members a
+		// ring covers. Absent means "not filtered", which is what an old server
+		// implicitly says.
+		return c.JSON(fiber.Map{"in": in, "partial": partial, "filtered": didFilter})
 	})
 
-	// GET /v1/:dataset/knn
+	// POST /v1/reachoverflow/admits — the ring question from the MAIL's end:
+	// one post, many candidate members, which of them does its ring admit?
+	// Body: {"msgid": N, "points": [{"lng": x, "lat": y, "lanes": ["$.rural.sparse"]}]}
+	// Returns the INDEXES of the admitted points, so the caller keeps whatever
+	// it had attached to them.
+	api.Post("/v1/reachoverflow/admits", func(c *fiber.Ctx) error {
+		state, ok := srv.getDataset("reachoverflow")
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+		ds, ok := state.ds.(*ReachOverflowDataset)
+		if !ok {
+			return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "dataset does not answer admits"})
+		}
+
+		var body struct {
+			Msgid  int64       `json:"msgid"`
+			Points []LanePoint `json:"points"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "bad body: " + err.Error()})
+		}
+		if body.Msgid <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "msgid required"})
+		}
+		if len(body.Points) == 0 {
+			return c.JSON(fiber.Map{"admitted": []int{}})
+		}
+
+		var admitted []int
+		err := state.withIndex(func(idx *Index) error {
+			var e error
+			admitted, e = ds.AdmitsPoints(idx, body.Msgid, body.Points)
+			return e
+		})
+		if err == errIndexNotReady {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+		if err != nil && strings.HasPrefix(err.Error(), "unknown overflow lane") {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		if admitted == nil {
+			admitted = []int{}
+		}
+		return c.JSON(fiber.Map{"admitted": admitted})
+	})
+
+	// GET /v1/:dataset/knn	// GET /v1/:dataset/knn
 	api.Get("/v1/:dataset/knn", func(c *fiber.Ctx) error {
 		name := c.Params("dataset")
 		state, ok := srv.getDataset(name)

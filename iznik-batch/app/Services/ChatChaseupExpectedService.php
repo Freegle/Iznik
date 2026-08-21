@@ -112,7 +112,7 @@ class ChatChaseupExpectedService
             // arrive. Skipped BEFORE $chased is incremented: counting a
             // reminder we never sent would record the member as chased and
             // stop us ever chasing them for real.
-            if ($this->chatNotificationService->chaseupSuppressed($recipient)) {
+            if ($this->chatNotificationService->chaseupSuppressed($recipient, (int) $message->id)) {
                 continue;
             }
 

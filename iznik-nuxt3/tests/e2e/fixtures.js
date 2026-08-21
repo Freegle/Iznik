@@ -335,6 +335,7 @@ const test = base.test.extend({
       /\[Exc?eption for Sentry\]:.*Page not found:/, // Go API 404 for unimplemented endpoints (e.g. /dashboard) captured by Sentry — not a code bug
       /Only one navigator\.credentials\.get request may be outstanding at one time/, // FedCM concurrent credential requests in test
       /The provider's accounts list fetch resulted in an error response code/, // FedCM (Google Sign-In) accounts-list fetch to accounts.google.com returned an error — Chrome identity machinery talking to Google's service, not app code; same class as the FedCM entries above/below
+      /The provider's FedCM config file fetch resulted in an error response code/, // The config-file sibling of the accounts-list entry above: Chrome fetching Google's FedCM config, nothing of ours. Listing only one of the pair let the other turn the Together page red.
       /useOurModal show problem/, // Race condition fixed in useOurModal.js (nextTick) - allow until container rebuild
       /Failed to load resource: the server responded with a status of 500.*api\/user/, // Transient 500 on user API — app retries automatically
       /Failed to load resource: the server responded with a status of 500.*connect\.facebook\.net/, // Facebook SDK transient 500 errors

@@ -20,7 +20,6 @@ package isochrone
 import (
 	"os"
 
-	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
@@ -63,22 +62,39 @@ func spatialReachIDs(latlng utils.LatLng) (in []int64, partial []int64, ok bool)
 // reference to rippling_reach at all, so it counted held posts. Requiring a live
 // non-held row for both closes that, and costs one primary-key lookup per id.
 // fromIDsWhere builds the containment WHERE for reachCandidateQueryFromIDs:
-// the two raster buckets, plus — when the viewer has one — their overflow
-// ring as a third arm. The rasters only answer the committed reach, and the
-// feed (reachOrOverflowSQL) additionally admits via the ring, so the badge
+// the two raster buckets, plus — when a ring admits the viewer to something —
+// those posts as a third arm. The rasters only answer the committed reach, and
+// the feed (reachOrOverflowSQL) additionally admits via the ring, so the badge
 // must too or it undercounts the feed. Every arm requires a live non-held
 // reach row, so a held or retracted post cannot be counted in on the
 // strength of a raster entry or a ring alone. Pure so the composition is
 // unit-testable.
-func fromIDsWhere(in, partial []int64, latlng utils.LatLng, ringPath string) (string, []interface{}) {
+//
+// The third arm is a LIST OF MSGIDS (rippling.AdmittedMsgids, which applies the
+// non-held rule as it resolves them), never the JSON ring test. An EXISTS
+// carrying that test correlates on ms.msgid and is true for rows in NEITHER id
+// list, so the optimiser can no longer bound the scan by the raster ids: this
+// query stops being the keyed lookup the whole spatial path exists to be, and
+// walks messages_spatial instead. That is the same defect, in the same shape,
+// that took the feed down on 2026-08-21.
+//
+// Both plans measured on db1 that day, 15 raster ids and 10 admitted:
+// ids    -> ms type=range key=msgid rows=22.
+// EXISTS -> ms type=ALL   key=NULL  rows=58,348, with the JSON parse and the
+// geometry build repeated per row, on a badge that polls ~2/s.
+func fromIDsWhere(in, partial []int64, latlng utils.LatLng, admitted []uint64) (string, []interface{}) {
 	ringArm := ""
 	var ringArgs []interface{}
-	if ringPath != "" {
-		ringWhere, ringWhereArgs := rippling.RuralOverflowWhere(float64(latlng.Lng), float64(latlng.Lat), utils.SRID, ringPath)
-		ringArm = "OR EXISTS (" +
-			"SELECT 1 FROM rippling_reach rr WHERE rr.msgid = ms.msgid " +
-			"AND rr.status != 'held' AND " + ringWhere + ") "
-		ringArgs = ringWhereArgs
+	if len(admitted) > 0 {
+		// The status re-check rides WITH the id list, as the raster arms' does.
+		// The ring ids come from the spatial index, which drops a held reach on
+		// its own two-minute delta - too slow for a badge that must never name a
+		// post the feed will not render. One primary-key lookup per admitted id
+		// closes that, and it is the same EXISTS the other two arms already pay.
+		ringArm = "OR (ms.msgid IN (?) AND EXISTS (" +
+			"SELECT 1 FROM rippling_reach r3 WHERE r3.msgid = ms.msgid " +
+			"AND r3.status != 'held')) "
+		ringArgs = []interface{}{admitted}
 	}
 
 	whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " +
@@ -103,10 +119,10 @@ func fromIDsWhere(in, partial []int64, latlng utils.LatLng, ringPath string) (st
 	return whereSQL, whereArgs
 }
 
-func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64, ringPath string) *gorm.DB {
+func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64, admitted []uint64) *gorm.DB {
 	// One concatenated WHERE string in a single Where() call — same GORM
 	// extra-paren gotcha as reachCandidateQuery (see there).
-	whereSQL, whereArgs := fromIDsWhere(in, partial, latlng, ringPath)
+	whereSQL, whereArgs := fromIDsWhere(in, partial, latlng, admitted)
 
 	return db.Table("messages_spatial ms").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").

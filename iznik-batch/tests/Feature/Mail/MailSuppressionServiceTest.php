@@ -16,6 +16,17 @@ class MailSuppressionServiceTest extends TestCase
         $this->service = new MailSuppressionService;
     }
 
+    /**
+     * mail_suppressed_counts.userid is a foreign key onto users, so a count
+     * cannot be recorded against an id that does not exist - and
+     * recordSuppressed() swallows the rejection rather than break a send loop,
+     * so the row just silently never appears.
+     */
+    private function heldUserId(): int
+    {
+        return (int) $this->createTestUser()->id;
+    }
+
     private function suppress(string $scope, string $value, array $extra = []): int
     {
         $this->service->flushCache();
@@ -106,12 +117,13 @@ class MailSuppressionServiceTest extends TestCase
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
-        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
-        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
-        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
+        $userId = $this->heldUserId();
+        $this->service->shouldSkip('held@yahoo.co.uk', $userId, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $userId, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $userId, 'chat', 1000);
 
         $this->assertSame(1, (int) DB::table('mail_suppressed_counts')
-            ->where('userid', $user->id)->where('emailtype', 'chat')->value('count'));
+            ->where('userid', $userId)->where('emailtype', 'chat')->value('count'));
     }
 
     public function test_a_new_mail_still_counts(): void
@@ -120,12 +132,13 @@ class MailSuppressionServiceTest extends TestCase
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
-        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
-        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1000);
-        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'chat', 1001);
+        $userId = $this->heldUserId();
+        $this->service->shouldSkip('held@yahoo.co.uk', $userId, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $userId, 'chat', 1000);
+        $this->service->shouldSkip('held@yahoo.co.uk', $userId, 'chat', 1001);
 
         $this->assertSame(2, (int) DB::table('mail_suppressed_counts')
-            ->where('userid', $user->id)->where('emailtype', 'chat')->value('count'));
+            ->where('userid', $userId)->where('emailtype', 'chat')->value('count'));
     }
 
     public function test_a_caller_without_an_identity_counts_every_call(): void
@@ -136,11 +149,12 @@ class MailSuppressionServiceTest extends TestCase
         $this->suppress('domain', 'yahoo.co.uk');
         $this->service->flushCache();
 
-        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'engage');
-        $this->service->shouldSkip('held@yahoo.co.uk', $user->id, 'engage');
+        $userId = $this->heldUserId();
+        $this->service->shouldSkip('held@yahoo.co.uk', $userId, 'engage');
+        $this->service->shouldSkip('held@yahoo.co.uk', $userId, 'engage');
 
         $this->assertSame(2, (int) DB::table('mail_suppressed_counts')
-            ->where('userid', $user->id)->where('emailtype', 'engage')->value('count'));
+            ->where('userid', $userId)->where('emailtype', 'engage')->value('count'));
     }
 
     public function test_exposes_the_delayed_since_date_and_provider(): void

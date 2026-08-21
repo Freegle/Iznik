@@ -218,7 +218,11 @@ func Similar(c *fiber.Ctx) error {
 		for _, cnd := range candidates {
 			ids = append(ids, cnd.Msgid)
 		}
-		blocked = ReachBlockedSet(ids, centreLat, centreLng)
+		// myid, not 0: the centre above IS this viewer's location when they are
+		// logged in, so the rings that admit them on browse, search and reply must
+		// admit them here too. Logged out, myid is 0 and the centre is the post's
+		// own location - the no-rings case, which is the same call.
+		blocked = ReachBlockedSet(myid, ids, centreLat, centreLng)
 	}
 
 	out := make([]SimilarResult, 0, limit)

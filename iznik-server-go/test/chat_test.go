@@ -3304,7 +3304,7 @@ func TestChatIconUsesProfileSetPath(t *testing.T) {
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
-	// Give user2 a profile image with a freegletusd- externaluid (simulates Uploadcare).
+	// Give user2 a profile image with a freegletusd- externaluid (the only kind now).
 	// This triggers the delivery-service URL path in ProfileSetPath.
 	fakeExternalUID := "freegletusd-abc123testimage"
 	fakeMods := `{"rotate":90}`

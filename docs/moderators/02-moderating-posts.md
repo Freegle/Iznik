@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-20
+last_reviewed: 2026-08-21
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -78,7 +78,15 @@ ModTools tells you *why* a post needs a look, right on the post:
   where the post is or will be visible. The map is the post's full reach; an individual
   member inside it still only sees the post if it is within the travel time their own
   area justifies, which is further in the countryside than in a city - so "it is on the
-  reach map" and "everyone in that area saw it" are not the same thing. See
+  reach map" and "everyone in that area saw it" are not the same thing.
+
+  The map also shows **rings** - dashed outlines outside the shaded reach. These are
+  places the post has been carried to beyond its ordinary travel time: either members in
+  thinly populated areas whose own area justifies a longer drive, or a narrow corridor
+  aimed at the nearest town with enough freeglers in it. A post from Hawes, for example,
+  reaches its dale as a shaded area and then two corridors, one toward Penrith and one
+  toward Lancaster. People inside a ring can see the post and reply to it, and are
+  emailed about it, exactly as those inside the shaded area are. See
   [rippling out](rippling-out.md).
 - **Bulk clearance** posts show an item count and a "see how members see it" preview.
 

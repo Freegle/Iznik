@@ -5,7 +5,7 @@
     :format="format"
     :fit="fit"
     :preload="preload"
-    :provider="chooseProvider"
+    provider="weserv"
     :src="chooseSrc"
     :modifiers="modString"
     :class="imageClasses"
@@ -114,24 +114,14 @@ if (import.meta.client && props.src?.includes('gimg_0.jpg')) {
 
 const emit = defineEmits(['error'])
 
-// If the source contains a dash then the first part is the provider and the second part the source.
-const chooseProvider = computed(() => {
-  const p = props.src.indexOf('freegletusd-')
-
-  if (p !== -1) {
-    // For now we only have one such option - freegletusd, which we render using Nuxt Image's weserve provider.
-    return 'weserv'
-  } else {
-    // Defaults to uploadcare.
-    return 'uploadcare'
-  }
-})
-
+// Image ids are prefixed with the uploader that produced them. Everything is tusd now, so the
+// only prefix in circulation is freegletusd-, which Nuxt Image's weserv provider renders by
+// pointing at our own upload server. Strip the prefix to get the id weserv wants; an unprefixed
+// id is passed through untouched rather than guessed at.
 const chooseSrc = computed(() => {
   const p = props.src.indexOf('freegletusd-')
 
   if (p !== -1) {
-    // For now we only have one such option - freegletusd, which we render by pointing at our upload server
     return props.src.substring(p + 12)
   }
 

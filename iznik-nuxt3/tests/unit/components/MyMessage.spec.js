@@ -418,12 +418,13 @@ describe('MyMessage', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('renders NuxtPicture when attachment has externaluid', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture. Photos render through OurUploadedImage from ouruid, covered above.
       mockData.message.attachments = [
         { externaluid: 'test-externaluid', externalmods: null },
       ]
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('renders ProxyImage when attachment has path only', async () => {

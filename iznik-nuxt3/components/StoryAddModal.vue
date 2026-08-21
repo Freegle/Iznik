@@ -91,16 +91,6 @@
                     alt="Store Photo"
                     width="250"
                   />
-                  <NuxtPicture
-                    v-else-if="story.image"
-                    fit="cover"
-                    format="webp"
-                    provider="uploadcare"
-                    :src="story.image.imageuid"
-                    :modifiers="story.image.imagemods"
-                    alt="Store Photo"
-                    width="250"
-                  />
                   <b-img v-else thumbnail width="250" src="/placeholder.jpg" />
                 </div>
               </div>

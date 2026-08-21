@@ -6,10 +6,13 @@ use App\Models\ChatMessage;
 use App\Services\Ripple\ReachQueryService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\FakesRingIndex;
 use Tests\TestCase;
 
 class RippleReplyServiceTest extends TestCase
 {
+    use FakesRingIndex;
+
     // Box covering lng [-0.2, 0.0], lat [51.4, 51.6].
     private const POLY = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
     private const INSIDE = [51.5, -0.1];   // [lat, lng]
@@ -18,6 +21,9 @@ class RippleReplyServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Ring admission is the spatial index's answer now, on every surface;
+        // the fake gives it from the rows each test seeds.
+        $this->fakeRingIndex();
         DB::statement('DELETE FROM rippling_held_replies');
         DB::statement('DELETE FROM rippling_reach');
     }
@@ -80,6 +86,31 @@ class RippleReplyServiceTest extends TestCase
     {
         $msgid = $this->seedReachedPost();
         $this->assertFalse($this->service()->shouldHold($msgid, null, null));
+    }
+
+    /**
+     * shouldHold's $band already reaches the rural ring end-to-end, via
+     * ReachQueryService::isWithinReach -> isWithinOverflow (see ReachQueryServiceTest for the
+     * ring admission tests proper): an email/TrashNothing replier outside the reach but inside
+     * their own band's ring must not be held, so email replies behave identically to the web
+     * reply gate and to browse.
+     */
+    public function test_should_not_hold_a_replier_admitted_by_their_rural_ring(): void
+    {
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msgid = $this->seedReachedPost();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update([
+            'overflow_bounds' => json_encode([
+                'rural' => ['sparse' => 'POLYGON((0.5 51.9,1.5 51.9,1.5 52.5,0.5 52.5,0.5 51.9))'],
+                'bbox' => [0.5, 51.9, 1.5, 52.5],
+            ]),
+        ]);
+
+        $svc = $this->service();
+        // Same point as self::OUTSIDE (52.0, 1.0), which is held with no band / lane off.
+        $this->assertFalse($svc->shouldHold($msgid, 52.0, 1.0, 'sparse'));
+        $this->assertTrue($svc->shouldHold($msgid, 52.0, 1.0, 'dense'), 'the ring belongs to the band, not the area');
+        $this->assertTrue($svc->shouldHold($msgid, 52.0, 1.0, null), 'no band recorded is not eligible');
     }
 
     public function test_hold_records_held_row_and_blocks_delivery_without_touching_reviewrequired(): void

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-19
+last_reviewed: 2026-08-21
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -266,6 +266,154 @@ drops out of every column, so the rehome rate is an overestimate in all bands. T
 safe to compare with each other, not to read individually - and only for as long as nothing
 makes withdrawal differ by band.
 
+## 3b. Overflow lanes: admitting people the sizing rules left out
+
+Three lanes widen who a post admits, stored together as WKT in
+`rippling_reach.overflow_bounds` alongside a single `bbox` covering all of them (the cheap
+prefilter every read does before parsing a polygon).
+
+| Lane | Fires when | Shape | Admission |
+|---|---|---|---|
+| `rural` | the audience cap bound | one ring per density band, sliced from the already-computed isochrone | the member's OWN band's ring |
+| `fairness` | the cap did not bind | one ring per deprivation fifth | unconditional within the fifth; off by default |
+| `cluster` | the cap did not bind AND the whole reachable pool is under `cluster.floor` | up to three bearing WEDGES aimed at member clusters in the shell beyond the ceiling | unconditional |
+
+`rural` is exclusive with the other two, because it needs the cap to have bound and they need
+it not to have. `fairness` and `cluster` can both be present on one post.
+
+**The two lanes meet at the cap, and that is deliberate.** `cluster.floor` defaults to
+`extent.target_users` rather than to a number of its own, so every post the cap did not bind
+is a cluster candidate. When the floor was an independent 1,000 against a cap of 4,000, a post
+reaching 1,000–3,999 people qualified for neither lane — measured over three days of live
+reaches on 2026-08-21, **1,879 posts, a third of everything posted**, and precisely the
+semi-rural case both lanes exist for. 341 live posts across the Yorkshire Dales carried no
+ring of any kind; one sampled at a pool of 1,896. Five dead-zone posts sampled after the
+change all drew wedges (one to three each).
+
+It is not free: the lane pays for its own second isochrone out to `cluster.max_minutes` plus a
+spatial round trip, which roughly doubles a schedule call — measured 2.9→6.1s, 1.2→3.0s,
+0.7→1.5s. That is per post, on the expansion pass, for the posts newly brought into the lane
+(~700/day).
+
+**Cluster wedges exist because a ring is the wrong shape for a remote post.** Growing the whole
+circle out to catch one town also claims a large area of empty ground. Measured: a Hawes post
+reaches ~427 members at the 45-minute ceiling while Kendal sits at ~47 minutes; including it
+takes the pool to ~941. Clusters, never a centroid - a two-town community averages to a point
+in a field between them.
+
+**Every lane is honoured identically on every surface**, and this is the property to preserve:
+
+Every one of them asks the SAME service, and none of them tests ring geometry
+itself. That is the only arrangement in which they cannot drift apart:
+
+| Surface | Where | Asks |
+|---|---|---|
+| Browse feed, unread badge | `isochrone/reachbounds.go`, `reachspatial.go` | `rippling.AdmittedMsgids` |
+| Browse-scoped search | `message/search.go` | `rippling.AdmittedMsgids` |
+| Message page banner, reply eligibility | `message/reach.go` | `rippling.AdmittedMsgids` |
+| Web reply gate | `chat/chatmessage.go` | `rippling.AdmittedMsgids` |
+| Email and TN reply hold | `Ripple/ReachQueryService.php` | `RingIndex::admits` |
+| Immediate mail, reach mail | `UnifiedDigestService::keepRingAdmitted` | `RingIndex::admits` |
+| Daily digest, daily-posts push | `UnifiedDigestService::ringRescueIds` | `RingIndex::admittedFor` |
+| First-reply scout mail (excludes the already-admitted) | `FirstReply/MatchMailService` | `RingIndex::admits` |
+
+Both clients call `iznik-spatial-go`'s `reachoverflow` dataset: `/containing`
+for "which posts admit this member" (browse's direction) and `/admits` for
+"which of these members does this post admit" (the mail's). One index, one
+answer, asked from both ends.
+
+The read side decides which paths apply in one place, `rippling/overflowviewer.go`
+(`ViewerOverflowPaths`). Every lane needs a VIEWER: a caller without one is asking whether a
+post reached another POST's location (`message/postmatches.go`, which feeds the matched-posts
+email), and a ring cannot admit somebody who is not standing anywhere.
+
+A surface that consults a lane the others do not is the defect this structure exists to
+prevent, in either direction: mailing someone a post the site then hides from them, or showing
+someone a post they are never told about.
+
+### How a read surface must ask the ring question
+
+**Through `rippling.AdmittedMsgids`, which asks the spatial server - never by
+parsing the ring JSON.** The rings are WKT inside `rippling_reach.overflow_bounds`
+and they are big: **37,000 vertices on average** (measured on prod). The read
+question is "which of these posts admit me", so it needs hundreds of them at
+once. Measured at one real viewer point: 836 candidate rings, **4.8s**, almost
+all of it `ST_GeomFromText`. Narrowing does not rescue it - 558 of those 836
+genuinely admitted, so the parses were real work, not waste. Simplifying the
+stored rings buys about 6x, which is not enough either.
+
+The mail path is different in kind, not degree: one post, one member, one parse
+(~6ms). That asymmetry is why the lanes looked healthy for weeks and then took
+the site down twice in one day the moment they reached browse.
+
+So the rings are rasterised, exactly as reach polygons already are for the
+unread badge:
+
+| Step | Where | Cost |
+|---|---|---|
+| Which rings cover this point | `iznik-spatial-go` `reachoverflow` dataset, `/v1/reachoverflow/containing` | one localhost call; RAM, O(1) per ring |
+| Is the reach still live | the calling query's own `status != 'held'` | already being read |
+| Boundary band | NOT resolved - see below | nothing |
+
+The spatial ids are **packed**: `msgid << 4 | lane code`, because one index has
+to answer a per-lane question - the same post admits a sparse-band member and
+refuses a dense-band one, on different rings. The code table is duplicated
+deliberately in `dataset_reachoverflow.go` and `rippling/overflowlanes.go`, with
+a test on each side asserting the ten pairs verbatim.
+
+**The lookup does no database work at all**, and that is the second lesson of
+2026-08-21. The first version resolved the raster's boundary band against the
+ring JSON - bounded to a handful of msgids by primary key, which sounded cheap.
+It was not: a viewer's band carries up to four lanes, so each row in the band
+parses a ring per lane. On the read node that ran 4-14 concurrent, 1-6s each,
+and load went 8.5 to 45 within five minutes of the deploy. Rolled back.
+
+So a point the raster is unsure about is **not admitted**. The raster only calls
+a cell "in" when the whole cell is inside the ring, so this can never admit
+someone a ring does not; what it costs is a strip about one cell wide (~300-500m)
+just inside each ring's edge, where the mail may invite a member the site does
+not show. That is a genuine surface split, accepted knowingly as the smallest one
+on offer - the alternatives were seconds per page load - and it narrows with the
+raster's resolution (`ringRasterDim`), not by asking the database.
+
+Status is enforced by each surface's own query, not by the ring lookup: the feed
+and search already test `rr.status != 'held'` on a row they are reading anyway,
+and the badge's ring arm carries the same `EXISTS` its raster arms do. The index
+drops held reaches too, but on a two-minute delta - too slow to be what stands
+between a held post and a reader.
+
+**What a surface must never do** is put the ring test in the same query as an
+indexed predicate. ORed against the feed's spatial containment it removed the
+index (`key=rippling_reach_polygon rows=1` became `key=NULL rows=62,534` over a
+17GB table); as an `EXISTS` beside the badge's raster id lists it unbounded the
+scan (`type=ALL rows=58,348`, on a poll running twice a second). Neither failed.
+Both returned correct answers, by scanning.
+
+When the spatial server cannot answer - dataset not built, server down - the read
+surfaces show the committed reach only, and say so in the log. Ring members lose
+their extra posts until it recovers.
+
+**Moderators can see the rings.** `/message/{id}/reach` returns them alongside the
+reach polygon, keyed by lane, each simplified to ~150m (a stored ring averages 37,000
+vertices; at that tolerance one is ~1,000 points and ~20KB, against the 300KB the reach
+polygon already costs). The reach map draws them as dashed outlines over the reach, one
+colour per lane family. Without them the map under-reports where a post went, for
+exactly the rural posts a moderator is most likely to be checking: a Hawes post's
+outline stops in the dale while two wedges carry it to Penrith and Lancaster.
+
+**Backfilling rings** (`ripple:backfill-rings`, paced by `scripts/ring-backfill-drain.sh`)
+visits posts with no rings yet. It skips sub-cap posts ONLY when rural is the sole lane
+running - with cluster on, sub-cap posts are precisely what earns a wedge, and filtering
+them out would let a drain report "nothing left" without asking about a single
+semi-rural post.
+
+**Flags** (`config/freegle.php`): `ripple.rural_access.enabled` and `ripple.cluster.enabled`
+default ON, `ripple.fairness.enabled` defaults OFF. The Go side reads the same names from the
+environment and must default the same way - shipping the two halves with opposite defaults is
+what produced a live split where the mail invited members the website refused.
+
+---
+
 ## 4. Targeting: which groups receive the post
 
 A group receives a rippled copy only if **at least one active freegler who lives in that
@@ -424,6 +572,24 @@ For each due post, `ripple:expand`:
 **Rejoin suppression.** If a freegler's most recent Group/Joined log for a group is a
 ripple-join (`logs.text = 'Rippled'`) and they then left, rippling does not re-add them: they
 opted out of a rippled membership. A later ordinary join-then-leave does not block rippling.
+
+## 5a. Frozen reaches (`status = 'held'`)
+
+`FreezeReachIfOriginPending` (`iznik-server-go/microvolunteering`) sets `status='held'` when a
+post's origin copy stops being live-Approved, typically Back to Pending. It is the only writer,
+and nothing clears it: the freeze exists precisely so that re-approving a copy cannot re-reach
+and re-notify.
+
+Freezing governs what we SEND, not who has been reached:
+
+- **Not sent**: reach mail, daily digest and the daily-posts push all exclude a frozen post. It
+  is under review, so advertising it is the one thing we should not do.
+- **Not browsable**: the feed, badge and search filter `status != 'held'`.
+- **Unchanged**: a member outside the polygon is still told the post has not reached them, and
+  a reply from them is still held. They have not been reached, and freezing does not alter that;
+  the answer is the same one they would get on a post still expanding.
+
+---
 
 ## 6. Retraction
 

@@ -188,48 +188,137 @@ class ReachQueryService
     }
 
     /**
-     * Is this point inside a ring that would let them in?
+     * The cluster-anchor wedges, when that lane is on.
      *
-     * Only consulted when the reach proper has said no, so a post that already covers this
-     * person costs nothing extra.
+     * Unconditional - no band test - because the wedges sit beyond every band's ceiling by
+     * construction (they exist precisely because the nearest town is further away than the
+     * widest travel budget), so gating them on a band would refuse exactly the people they
+     * were built to admit. That is the same rule the Go read side applies in
+     * rippling.ViewerOverflowPaths.
+     *
+     * Consulted on the reply path, and equally by the mail (UnifiedDigestService::overflowBranch
+     * and the daily digest gate): a member a wedge admits sees the post, may reply to it, and is
+     * told about it, because those are the same decision and must not be answered differently.
+     *
+     * Getting this wrong on the reply path is the most damaging version: a cluster-anchored
+     * post's reach never grows, so a reply held here would wait for a release that never comes.
+     *
+     * @return array<int,string>
+     */
+    private function clusterPaths(): array
+    {
+        if (!config('freegle.ripple.cluster.enabled', false)) {
+            return [];
+        }
+
+        // Fixed set, like the band paths: nothing user-supplied reaches a JSON path.
+        return ['$.cluster.w1', '$.cluster.w2', '$.cluster.w3'];
+    }
+
+    /**
+    /**
+     * Does an overflow ring let this person in?
+     *
+     * Asked of the ring index, which is the one place that answers it - for
+     * browse, search, the badge, the message page, the web reply gate, and here
+     * for an emailed or TN reply. The ring geometry is not tested in this
+     * database at all any more: testing it here meant this path deciding for
+     * itself, and on 2026-08-21 the mail's answer and the site's came apart, so
+     * members were invited to posts they could not see and their replies were
+     * held until the item was gone.
+     *
+     * The lanes are asked SEPARATELY so an admit can still be attributed to the
+     * lane that made it - those counters are the only measure of whether a lane
+     * is doing anything.
      */
     private function isWithinOverflow(int $msgid, float $lat, float $lng, ?string $band): bool
     {
-        $path = $this->overflowPath($lat, $lng, $band);
-        if ($path === null) {
+        $bandPath = $this->overflowPath($lat, $lng, $band);
+        $clusterPaths = $this->clusterPaths();
+
+        if ($bandPath === null && $clusterPaths === []) {
             return false;
         }
 
+        // Ask only about lanes this post actually carries. One keyed read of its own
+        // row settles that, and it saves asking the index about three cluster wedges
+        // for the great majority of posts, which carry a rural ring and nothing else.
+        $carried = $this->lanesCarried($msgid, array_filter(array_merge([$bandPath], $clusterPaths)));
+        if ($carried === []) {
+            return false;
+        }
+
+        $viaBand = $bandPath !== null && in_array($bandPath, $carried, true)
+            && RingIndex::admits($msgid, [['lat' => $lat, 'lng' => $lng, 'lanes' => [$bandPath]]]) !== [];
+
+        $viaCluster = false;
+        $carriedWedges = array_values(array_intersect($clusterPaths, $carried));
+        if (! $viaBand && $carriedWedges !== []) {
+            $viaCluster = RingIndex::admits($msgid, [['lat' => $lat, 'lng' => $lng, 'lanes' => $carriedWedges]]) !== [];
+        }
+
+        if ($viaBand) {
+            // Band wins attribution when both could match: it is the narrower,
+            // entitlement-honouring lane. Best-effort, so metrics can never break
+            // a reply flow.
+            $this->countAdmit(str_starts_with((string) $bandPath, '$.rural') ? 'rural_admitted' : 'fairness_admitted');
+        } elseif ($viaCluster) {
+            $this->countAdmit('cluster_admitted');
+        }
+
+        return $viaBand || $viaCluster;
+    }
+
+    /**
+     * Which of these lane paths does this post's reach row actually carry?
+     *
+     * JSON_CONTAINS_PATH, not JSON_EXTRACT: this asks whether a path EXISTS, and
+     * extracting it would copy a ~37k-vertex ring out of the row to answer a
+     * question about presence. Keyed on the primary key, so it is one row.
+     *
+     * @param  array<int, string>  $paths
+     * @return array<int, string>
+     */
+    private function lanesCarried(int $msgid, array $paths): array
+    {
+        // array_values FIRST. Callers build this list with array_filter, which
+        // preserves keys, so a dropped band path leaves the list starting at 1 -
+        // and then the columns are named p1..pn while the read below looks for
+        // p0..pn-1. Every lane answer shifts by one, the first is simply lost,
+        // and the failure is silent: a wedge that should admit somebody just
+        // does not.
+        $paths = array_values($paths);
+
+        if ($paths === []) {
+            return [];
+        }
+
         try {
-            $row = DB::selectOne(
-                'SELECT EXISTS(
-                    SELECT 1 FROM rippling_reach
-                    WHERE msgid = ?
-                      AND overflow_bounds IS NOT NULL
-                      AND ST_Contains(
-                            ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?)), ' . self::SRID . '),
-                            ST_SRID(POINT(?, ?), ' . self::SRID . '))
-                 ) AS within',
-                [$msgid, $path, $lng, $lat]
-            );
+            $selects = [];
+            $params = [];
+            foreach ($paths as $i => $path) {
+                $selects[] = "JSON_CONTAINS_PATH(overflow_bounds, 'one', ?) AS p$i";
+                $params[] = $path;
+            }
+            $params[] = $msgid;
 
-            $within = (bool) ($row->within ?? 0);
-
-            if ($within) {
-                // The day's how-many-did-the-lane-let-in count. This is the only
-                // place either lane admits anyone (the apiv2 ring helper has no
-                // callers yet), so without a count here the lanes' effect is
-                // invisible and "is it working?" has no answer. Same ledger the
-                // reply_blocked counter uses; best-effort, so metrics can never
-                // break a reply flow.
-                $this->countAdmit(str_starts_with($path, '$.rural') ? 'rural_admitted' : 'fairness_admitted');
+            $row = DB::selectOne('SELECT '.implode(', ', $selects).' FROM rippling_reach WHERE msgid = ?', $params);
+            if ($row === null) {
+                return [];
             }
 
-            return $within;
+            $carried = [];
+            foreach ($paths as $i => $path) {
+                if ((int) ($row->{"p$i"} ?? 0) === 1) {
+                    $carried[] = $path;
+                }
+            }
+
+            return $carried;
         } catch (\Throwable $e) {
-            // Same posture as isWithinReach: an unreadable ring means "not within", never an
-            // exception into a reply flow.
-            return false;
+            // Unreadable row: ask about nothing rather than guess. The reply is then
+            // gated on the committed reach alone, which is where it was before rings.
+            return [];
         }
     }
 }

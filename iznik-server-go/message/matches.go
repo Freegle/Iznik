@@ -79,10 +79,11 @@ func Matches(c *fiber.Ctx) error {
 	nelng := float32(lng + matchBoxDegrees)
 	candidates := embedding.Global.Search(queryVec, limit*3, "Offer", nil, nil, swlat, swlng, nelat, nelng)
 
-	// Reach-filter against the poster's chosen location.
-	blocked := ReachBlockedSet(candidateMsgids(candidates), lat, lng)
-
 	myid := user.WhoAmI(c)
+
+	// Reach-filter against the poster's chosen location. myid so that a member an
+	// overflow ring admits is offered the same matches they can see on browse.
+	blocked := ReachBlockedSet(myid, candidateMsgids(candidates), lat, lng)
 
 	out := make([]SimilarResult, 0, limit)
 	for _, cnd := range candidates {

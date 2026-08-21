@@ -35,15 +35,6 @@
           alt="Item picture"
           lazy
         />
-        <NuxtPicture
-          v-else-if="attachment.externaluid"
-          format="webp"
-          provider="uploadcare"
-          :src="attachment.externaluid"
-          :modifiers="attachment.externalmods"
-          alt="Item picture"
-          lazy
-        />
         <b-img
           v-else
           generator-unable-to-provide-required-alt=""

@@ -6,12 +6,16 @@ use App\Models\Message;
 use App\Services\FirstReply\MaxReachService;
 use App\Services\FreegleApiClient;
 use App\Services\FirstReply\MatchMailService;
+use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Tests\Support\FakesRingIndex;
 use Tests\TestCase;
 
 class MatchMailServiceTest extends TestCase
 {
+    use FakesRingIndex;
+
     private const TICK1 = 'POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))';
 
     private const TICK3 = 'POLYGON((-1.0 51.0, 1.0 51.0, 1.0 52.0, -1.0 52.0, -1.0 51.0))';
@@ -215,6 +219,45 @@ class MatchMailServiceTest extends TestCase
 
         $this->assertArrayHasKey($wanter->id, $this->mailedFor((int) $message->id));
         $this->assertSame('wanted', $this->mailedFor((int) $message->id)[$wanter->id]);
+    }
+
+    /**
+     * Somebody an overflow lane already admits is not a candidate for this mail.
+     *
+     * This mail exists to reach past the current edge, and it skips anyone inside the current
+     * polygon because "mailing them spends a slot and a mail to change nothing". A lane admits
+     * precisely the people OUTSIDE that polygon, so the polygon test cannot see them - yet they
+     * can already browse the post, find it in search and reply to it, and the ordinary reach
+     * mail tells them about it. Scouting them spends a slot on somebody already reached.
+     */
+    public function test_skips_someone_a_cluster_wedge_has_already_admitted(): void
+    {
+        $this->fakeRingIndex();
+        config(['freegle.ripple.cluster.enabled' => true]);
+        // Memoised across tests, and false if an earlier one checked before the column existed.
+        UnifiedDigestService::forgetOverflowColumn();
+
+        $message = $this->seedSilentOffer();
+
+        // The same person as test_picks_someone_whose_open_wanted_matches: outside the current
+        // reach, inside the eventual one. Only the wedge below differs.
+        $wanter = $this->memberAt(51.9, 0.8);
+        $this->wantedAt($wanter, 51.9, 0.8);
+
+        DB::table('rippling_reach')->where('msgid', $message->id)->update([
+            'overflow_bounds' => json_encode([
+                'cluster' => ['w1' => 'POLYGON((0.6 51.7,1.0 51.7,1.0 52.1,0.6 52.1,0.6 51.7))'],
+                'bbox' => [0.6, 51.7, 1.0, 52.1],
+            ]),
+        ]);
+
+        $this->service()->run();
+
+        $this->assertArrayNotHasKey(
+            $wanter->id,
+            $this->mailedFor((int) $message->id),
+            'a wedge already lets them see and reply to the post, so this mail has nothing to add'
+        );
     }
 
     public function test_a_wanted_finds_the_people_sitting_on_a_matching_offer(): void

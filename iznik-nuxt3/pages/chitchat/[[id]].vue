@@ -71,17 +71,6 @@
                   width="100"
                   class="mt-2 uploaded-preview"
                 />
-                <NuxtPicture
-                  v-else-if="imageuid"
-                  format="webp"
-                  fit="cover"
-                  provider="uploadcare"
-                  :src="imageuid"
-                  :modifiers="imagemods"
-                  alt="ChitChat Photo"
-                  width="100"
-                  class="mt-2 uploaded-preview"
-                />
                 <OurUploader
                   v-if="uploading"
                   v-model="currentAtts"
