@@ -89,7 +89,10 @@ func stubRingIndex(t *testing.T, lane string, admits ...uint64) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json2.NewEncoder(w).Encode(map[string]any{"in": ids, "partial": []uint64{}})
+		// filtered:true, as the real server reports when it narrowed by lane. The
+		// client refuses an unfiltered answer: those ids would be the index's own
+		// packed ones, not msgids.
+		json2.NewEncoder(w).Encode(map[string]any{"in": ids, "partial": []uint64{}, "filtered": true})
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("SPATIAL_KNN_URL", srv.URL)

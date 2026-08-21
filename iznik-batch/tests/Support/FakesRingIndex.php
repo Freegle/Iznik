@@ -79,7 +79,10 @@ trait FakesRingIndex
                     }
                 }
 
-                return Http::response(['in' => $in, 'partial' => []]);
+                // filtered:true, as the real server reports when it narrowed by
+                // lane - the clients refuse an unfiltered answer, because those
+                // ids would be packed ones and not msgids at all.
+                return Http::response(['in' => $in, 'partial' => [], 'filtered' => true]);
             },
         ];
     }

@@ -120,6 +120,18 @@ class RingIndex
                 return [];
             }
 
+            // We asked for specific lanes. A server that did not filter is answering
+            // with its OWN ids - msgid packed with the lane - and reading those as
+            // msgids would name arbitrary other posts in somebody's digest. A
+            // server too old to know the parameter says nothing here, so absent is
+            // refused as well: the rings stay dark until it is upgraded, which is
+            // the safe direction.
+            if ($response->json('filtered') !== true) {
+                self::note(0, 'server did not filter by lane (too old?)');
+
+                return [];
+            }
+
             $in = $response->json('in');
 
             return is_array($in) ? array_values(array_map('intval', $in)) : [];

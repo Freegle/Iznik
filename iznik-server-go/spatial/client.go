@@ -232,12 +232,23 @@ func ReachOverflowContaining(lng, lat float64, lanes []string) (in []int64, part
 	}
 
 	var out struct {
-		In      []int64 `json:"in"`
-		Partial []int64 `json:"partial"`
+		In       []int64 `json:"in"`
+		Partial  []int64 `json:"partial"`
+		Filtered bool    `json:"filtered"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, nil, fmt.Errorf("spatial reachoverflow containing parse: %w", err)
 	}
+
+	// We asked for specific lanes; if the server did not filter, these are its own
+	// PACKED ids (msgid<<4|lane), not msgids. Reading them as msgids would admit
+	// arbitrary other posts - only for ring members, and without any error to show
+	// for it. A server too old to know the parameter says nothing here, so absent
+	// is refused too, and the rings simply stay dark until it is upgraded.
+	if !out.Filtered {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing: server did not filter by lane (too old?)")
+	}
+
 	return out.In, out.Partial, nil
 }
 
