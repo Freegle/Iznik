@@ -246,18 +246,20 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 		// the feed and badge give, so a post can never be scrollable but
 		// unsearchable). The author cap stays outside the OR: it is the author's
 		// own preference and applies however the viewer got in.
+		// TWO ARMS, TWO QUERIES - deliberately not one OR.
+		//
+		// The committed-reach arm is driven by the SPATIAL index on
+		// rippling_reach.polygon. ORing the ring test into it removed that index
+		// (EXPLAIN: key=rippling_reach_polygon rows=1 becomes key=NULL rows=62,534)
+		// and full-scanned a 17GB table on every cold cache fill, which on
+		// 2026-08-21 put 70+ concurrent copies on the read node, 250 running
+		// threads and load 158. The ring test is JSON_EXTRACT over a column and
+		// can never be indexed alongside a geometry predicate, so it has to be
+		// asked separately and merged here.
 		containment := "AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
 			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "
-		containArgs := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
-		if ringWhere, ringArgs := rippling.OverflowWhereAny(lng, lat, utils.SRID,
-			rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))); ringWhere != "" {
-			containment = "AND ((ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
-				"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))) " +
-				"OR " + ringWhere + ") "
-			containArgs = append(containArgs, ringArgs...)
-		}
 
-		args := append([]interface{}{}, containArgs...)
+		args := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
 		args = append(args, float64(9007199254740991), lat, lng, lat)
 		db.Table("rippling_reach rr").
 			Select("ms.msgid").
@@ -269,6 +271,46 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 				utils.AuthorReachCapWhere,
 				args...).
 			Scan(&reachIDs)
+
+		// Ring arm. Bounded by the ring-row selector, and capped: without the
+		// has_overflow index this still reads a lot of rows, and a read path must
+		// never be able to sit on the database for a minute. If it times out the
+		// member sees the committed reach only - the same answer they got before
+		// rings existed - rather than the site falling over.
+		if ringWhere, ringArgs := rippling.OverflowWhereAny(lng, lat, utils.SRID,
+			rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))); ringWhere != "" {
+			var ringIDs []uint64
+			rArgs := append([]interface{}{}, ringArgs...)
+			rArgs = append(rArgs, float64(9007199254740991), lat, lng, lat)
+
+			if err := db.Table("rippling_reach rr").
+				Select("/*+ MAX_EXECUTION_TIME(5000) */ ms.msgid").
+				Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+				Joins("INNER JOIN messages m ON m.id = ms.msgid").
+				Joins("INNER JOIN users au ON au.id = m.fromuser").
+				Where("ms.successful = 0 AND rr.status != 'held' AND "+
+					rippling.OverflowRowSelector(db)+" AND "+ringWhere+" "+
+					utils.AuthorReachCapWhere,
+					rArgs...).
+				Scan(&ringIDs).Error; err != nil {
+				// Degrade, do not fail: log and keep the committed reach.
+				fmt.Printf("search: overflow ring arm gave up (%v)\n", err)
+			}
+
+			if len(ringIDs) > 0 {
+				seen := make(map[uint64]bool, len(reachIDs))
+				for _, id := range reachIDs {
+					seen[id] = true
+				}
+				for _, id := range ringIDs {
+					if !seen[id] {
+						reachIDs = append(reachIDs, id)
+						seen[id] = true
+					}
+				}
+			}
+		}
+
 		storeReachUniverse(key, reachIDs, now)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"gorm.io/gorm"
 )
@@ -201,4 +202,39 @@ func OverflowWhereAny(lng, lat float64, srid int, paths []string) (string, []int
 	where = strings.TrimSpace(where) + ")) "
 
 	return where, args
+}
+
+// OverflowRowSelector returns a WHERE fragment that isolates the reach rows
+// carrying an overflow ring - about 4,200 of 55,000 on prod.
+//
+// The ring test itself (OverflowWhereAny) is JSON_EXTRACT over a column, which
+// no index can serve. That is survivable only if something else has already cut
+// the rows down; ORing it into a spatial predicate instead removed the SPATIAL
+// index and full-scanned a 17GB table, which is what took the site down on
+// 2026-08-21 (EXPLAIN went from key=rippling_reach_polygon rows=1 to key=NULL
+// rows=62,534, and the arm measured 49s standalone).
+//
+// Prefers the generated has_overflow column when the migration adding it has
+// been applied, and falls back to the unindexed IS NOT NULL test otherwise, so
+// the code is correct either side of a hand-applied DDL. Checked once per
+// process: this is called from read paths.
+var (
+	hasOverflowOnce sync.Once
+	hasOverflowCol  bool
+)
+
+func OverflowRowSelector(db *gorm.DB) string {
+	hasOverflowOnce.Do(func() {
+		var n int64
+		err := db.Raw("SELECT COUNT(*) FROM information_schema.columns " +
+			"WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' " +
+			"AND column_name = 'has_overflow'").Scan(&n).Error
+		hasOverflowCol = err == nil && n > 0
+	})
+
+	if hasOverflowCol {
+		return "rr.has_overflow = 1"
+	}
+
+	return "rr.overflow_bounds IS NOT NULL"
 }
