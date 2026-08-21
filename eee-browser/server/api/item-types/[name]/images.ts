@@ -1,12 +1,12 @@
 import Database from 'better-sqlite3'
 
 function buildImageUrl(externaluid: string): string {
-  if (externaluid.startsWith('freegletusd-')) {
-    const fileId = externaluid.slice('freegletusd-'.length)
-    return `https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/${fileId}&w=768&h=768&fit=inside&output=jpg`
-  }
-  // Legacy Uploadcare UUID
-  return `https://ucarecdn.com/${externaluid}/-/preview/768x768/-/format/jpeg/`
+  // Everything is TUS-uploaded now, so route via the delivery proxy. The freegletusd- prefix is
+  // not part of the stored object name, so strip it when present.
+  const fileId = externaluid.startsWith('freegletusd-')
+    ? externaluid.slice('freegletusd-'.length)
+    : externaluid
+  return `https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/${fileId}&w=768&h=768&fit=inside&output=jpg`
 }
 
 export default defineEventHandler(async (event) => {

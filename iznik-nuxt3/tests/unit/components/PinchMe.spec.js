@@ -103,14 +103,15 @@ describe('PinchMe', () => {
       )
     })
 
-    it('renders NuxtPicture when attachment has externaluid', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       const wrapper = createWrapper({
         attachment: {
           externaluid: 'external-123',
           externalmods: {},
         },
       })
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('renders b-img as fallback when no ouruid or externaluid', () => {

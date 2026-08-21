@@ -15,12 +15,18 @@ export function classifyPost(p) {
     : { color: '#1f77b4', label: 'rippled in', section: 'active' }
 }
 
-// Resolve a post's thumbnail URL.  Uploadcare (externaluid) is preferred
-// because it gives us a clean cropped CDN URL; the legacy attachment-id
-// path falls back to the standard mimg endpoint.
+// Resolve a post's thumbnail URL.  Uploaded images (externaluid) are preferred because we can
+// ask the delivery proxy for an exact crop; the legacy attachment-id path falls back to the
+// standard mimg endpoint.  Ids carry a freegletusd- prefix which is not part of the stored
+// object name, so strip it before building the URL.
 export function thumbUrlFor(p) {
-  if (p.thumb_externaluid)
-    return `https://ucarecdn.com/${p.thumb_externaluid}/-/scale_crop/120x120/center/-/format/auto/-/quality/smart/`
+  if (p.thumb_externaluid) {
+    const uid = p.thumb_externaluid.replace(/^freegletusd-/, '')
+    return (
+      `https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/${uid}` +
+      '&w=120&h=120&fit=cover&a=center&output=webp'
+    )
+  }
   if (p.thumb_attachment_id)
     return `https://images.ilovefreegle.org/tmimg_${p.thumb_attachment_id}.jpg`
   return null

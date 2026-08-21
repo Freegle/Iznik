@@ -65,9 +65,10 @@ describe('ProfileImage', () => {
       expect(wrapper.find('.our-uploaded').exists()).toBe(true)
     })
 
-    it('uses NuxtPicture when externaluid is provided', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       const wrapper = createWrapper({ externaluid: 'ext456' })
-      expect(wrapper.find('picture').exists()).toBe(true)
+      expect(wrapper.find('picture').exists()).toBe(false)
     })
 
     it('uses b-img for data URL images', () => {

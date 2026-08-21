@@ -66,10 +66,18 @@ describe('rippling/scoring', () => {
   })
 
   describe('thumbUrlFor', () => {
-    it('builds a cropped Uploadcare URL when externaluid is present', () => {
+    it('builds a cropped delivery URL when externaluid is present', () => {
       const url = thumbUrlFor({ thumb_externaluid: 'abc123' })
-      expect(url).toContain('https://ucarecdn.com/abc123/')
-      expect(url).toContain('scale_crop/120x120')
+      expect(url).toContain('https://delivery.ilovefreegle.org?url=')
+      expect(url).toContain('uploads.ilovefreegle.org:8080/abc123')
+      expect(url).toContain('w=120&h=120')
+      expect(url).not.toContain('ucarecdn.com')
+    })
+
+    it('strips the freegletusd- prefix, which is not part of the object name', () => {
+      const url = thumbUrlFor({ thumb_externaluid: 'freegletusd-abc123' })
+      expect(url).toContain('uploads.ilovefreegle.org:8080/abc123')
+      expect(url).not.toContain('freegletusd-')
     })
 
     it('falls back to the legacy mimg endpoint when only the attachment id is set', () => {
@@ -81,12 +89,12 @@ describe('rippling/scoring', () => {
       expect(thumbUrlFor({})).toBeNull()
     })
 
-    it('prefers Uploadcare over the legacy attachment when both are present', () => {
+    it('prefers the uploaded image over the legacy attachment when both are present', () => {
       const url = thumbUrlFor({
         thumb_externaluid: 'abc',
         thumb_attachment_id: 42,
       })
-      expect(url).toContain('ucarecdn.com')
+      expect(url).toContain('delivery.ilovefreegle.org')
       expect(url).not.toContain('tmimg_')
     })
   })

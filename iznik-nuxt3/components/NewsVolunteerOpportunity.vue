@@ -48,15 +48,6 @@
           :modifiers="volunteering.image?.externalmods"
           alt="Volunteering Opportunity Photo"
         />
-        <NuxtPicture
-          v-else-if="volunteering.image?.externaluid"
-          fit="cover"
-          format="webp"
-          provider="uploadcare"
-          :src="volunteering.image?.externaluid"
-          :modifiers="volunteering.image?.externalmods"
-          alt="Volunteering Opportunity Photo"
-        />
         <b-img
           v-else-if="volunteering.image.paththumb"
           lazy

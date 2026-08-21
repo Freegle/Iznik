@@ -34,16 +34,6 @@
               alt="Community Event Photo"
               class="modal-image"
             />
-            <NuxtPicture
-              v-else-if="event?.image?.imageuid"
-              format="webp"
-              width="200"
-              provider="uploadcare"
-              :src="event.image.imageuid"
-              :modifiers="event.image.imagemods"
-              alt="Community Event Photo"
-              class="modal-image"
-            />
             <b-img
               v-else
               lazy
