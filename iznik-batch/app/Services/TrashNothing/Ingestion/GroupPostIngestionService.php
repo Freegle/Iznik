@@ -281,17 +281,32 @@ class GroupPostIngestionService
         // Determine routing result.
         $routingResult = 'pending';
         $pendingReason = null;
+        // True when the post is Pending ONLY so the content check can gate it - an
+        // unmoderated poster, clean of the checks above - rather than for a moderator
+        // reason. Mirrors IncomingMailService::handleGroupPost()'s flag of the same
+        // name, and drives the same "don't notify mods, don't index" branch below.
+        $awaitingContentCheck = false;
 
         if ($user->lastlocation === null) {
             $pendingReason = 'unmapped user';
         } elseif ($this->subjectContainsWorryWords($subject, $content)) {
             $pendingReason = 'worry words';
         } else {
+            // Unmoderated posters (DEFAULT/UNMODERATED - including the 'DEFAULT'
+            // fallback a non-member gets above) are NOT approved on arrival. They
+            // start Pending so messages:contentcheck gates them: clean posts are
+            // auto-promoted within a minute, while posts matching a concern keyword or
+            // content rule are held for a moderator instead of going live unchecked.
+            // This matches IncomingMailService::handleGroupPost() and the web/API
+            // submit path (iznik-server-go message.go). Approving on arrival here was
+            // an unintended divergence - the email path was changed to gate these and
+            // this path was not - not a deliberate one like those documented elsewhere
+            // in this file.
             $routingResult = match ($postingStatus) {
-                'DEFAULT', 'UNMODERATED' => 'approved',
-                'PROHIBITED'             => 'dropped',
-                default                  => 'pending',
+                'PROHIBITED' => 'dropped',
+                default      => 'pending',
             };
+            $awaitingContentCheck = in_array($postingStatus, ['DEFAULT', 'UNMODERATED'], true);
         }
 
         if ($routingResult === 'dropped') {
@@ -340,6 +355,10 @@ class GroupPostIngestionService
             ]);
         }
 
+        // Note: unmoderated posters are no longer Approved on arrival (see the
+        // routing note above). This branch is retained for completeness / any future
+        // caller, matching the same retained branch on the email path; unmoderated
+        // posters take the awaiting-content-check branch below.
         if ($routingResult === 'approved') {
             Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Approved,approvedat=now()');
             if (!$this->dryRun) {
@@ -350,7 +369,23 @@ class GroupPostIngestionService
                 $this->addToSpatialIndex($messageId, $group->id);
             }
             $this->loki->logEvent('tn-sync', 'post-create', ['tn_post_id' => $postId, 'msg_id' => $messageId, 'collection' => 'Approved']);
+        } elseif ($awaitingContentCheck) {
+            // Unmoderated poster: start Pending and let messages:contentcheck promote it
+            // (clean) or hold it and notify mods (flagged). Deliberately NO mod
+            // notification and NO spatial index here - both are the content-check job's
+            // to do, so clean posts create no mod work and flagged posts never go live
+            // unchecked. Identical to the email path's branch of the same name; the
+            // trace and Loki lines are unchanged from the moderator-reason branch below
+            // so the two pending kinds stay indistinguishable to a parity comparison,
+            // exactly as they are on the email side.
+            Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
+            if (!$this->dryRun) {
+                MessageGroup::where('msgid', $messageId)->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+            }
+            $this->loki->logEvent('tn-sync', 'post-create', ['tn_post_id' => $postId, 'msg_id' => $messageId, 'collection' => 'Pending', 'reason' => $pendingReason]);
         } else {
+            // Pending for a moderator reason (moderated user/group, worry words,
+            // unmapped user, Big Switch, mod poster) - notify mods now.
             Log::info('TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid=' . $messageId . ' set=collection=Pending reason=' . ($pendingReason ?? 'posting-status'));
             if (!$this->dryRun) {
                 MessageGroup::where('msgid', $messageId)->update(['collection' => MessageGroup::COLLECTION_PENDING]);

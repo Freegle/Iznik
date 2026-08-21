@@ -157,7 +157,11 @@ class GroupPostIngestionServiceTest extends TestCase
         // (Location::groupsNear), not from membership, so the poster is
         // frequently not a member of the resolved group — that must still
         // succeed, using the same 'DEFAULT' posting status a brand-new
-        // member would get, rather than being skipped.
+        // member would get, rather than being skipped. Like any unmoderated
+        // poster it lands Pending for messages:contentcheck to promote;
+        // ContentCheckService::isUserModerated() applies the same DEFAULT
+        // fallback for a TN post whose poster has no membership, so nothing
+        // strands it there.
         $locationId = $this->createTestLocation();
         $user  = $this->createTestUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
@@ -167,14 +171,14 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
-        $this->assertSame('approved', $result);
+        $this->assertSame('pending', $result);
 
         $message = Message::where('tnpostid', $postId)->first();
         $this->assertNotNull($message, 'Expected a messages row even though the poster is not a group member');
 
         $mg = MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->first();
         $this->assertNotNull($mg, 'Expected a messages_groups row for the non-member post');
-        $this->assertSame(MessageGroup::COLLECTION_APPROVED, $mg->collection);
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $mg->collection);
     }
 
     public function test_returns_duplicate_when_post_already_ingested(): void
@@ -241,7 +245,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $result = $this->makeService(dryRun: true)->ingest($post, $group);
 
         // In dry-run the routing result is still computed correctly.
-        $this->assertSame('approved', $result);
+        $this->assertSame('pending', $result);
 
         // At least one WRITE trace line must have been emitted.
         $this->assertNotEmpty($logLines, 'Expected TN-SYNC-TRACE [WRITE] log lines in dry-run');
@@ -266,7 +270,9 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
-        $this->assertSame('approved', $result);
+        // An unmoderated poster starts Pending for the content check — see
+        // test_unmoderated_poster_starts_pending_for_the_content_check().
+        $this->assertSame('pending', $result);
 
         $message = Message::where('tnpostid', $postId)->first();
         $this->assertNotNull($message, 'Expected a messages row with tnpostid=' . $postId);
@@ -276,7 +282,7 @@ class GroupPostIngestionServiceTest extends TestCase
 
         $mg = MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->first();
         $this->assertNotNull($mg, 'Expected a messages_groups row');
-        $this->assertSame(MessageGroup::COLLECTION_APPROVED, $mg->collection);
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $mg->collection);
         $this->assertTrue($mg->mod_messaging_allowed, 'mod_messaging_allowed should default to true when not passed');
     }
 
@@ -291,7 +297,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $post   = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
         $result = $this->makeService(dryRun: false)->ingest($post, $group, modMessagingAllowed: false);
 
-        $this->assertSame('approved', $result);
+        $this->assertSame('pending', $result);
 
         $message = Message::where('tnpostid', $postId)->first();
         $this->assertNotNull($message);
@@ -299,6 +305,56 @@ class GroupPostIngestionServiceTest extends TestCase
         $mg = MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->first();
         $this->assertNotNull($mg);
         $this->assertFalse($mg->mod_messaging_allowed);
+    }
+
+    /**
+     * The email path stopped approving unmoderated posters on arrival - they start
+     * Pending so messages:contentcheck can gate them - and this path must do the
+     * same. It previously mapped DEFAULT/UNMODERATED straight to approved, which
+     * let a TN post that a content rule would block go live unchecked.
+     *
+     * Pending here must NOT notify mods or index the post: both belong to the
+     * content-check job, so a clean post creates no mod work when it is promoted a
+     * minute later, and a flagged one is never visible in the meantime.
+     */
+    public function test_unmoderated_poster_starts_pending_for_the_content_check(): void
+    {
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'UNMODERATED']);
+
+        $notified = false;
+        Log::listen(function ($message) use (&$notified) {
+            if (str_contains((string) $message->message, 'notified group mods')) {
+                $notified = true;
+            }
+        });
+
+        $postId = 'tn-awaiting-check-' . uniqid();
+        $post   = $this->makePost([
+            'post_id'   => $postId,
+            'user_id'   => $user->id,
+            'latitude'  => 55.9533,
+            'longitude' => -3.1883,
+        ]);
+
+        $this->assertSame('pending', $this->makeService(dryRun: false)->ingest($post, $group));
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message);
+
+        $mg = MessageGroup::where('msgid', $message->id)->where('groupid', $group->id)->first();
+        $this->assertSame(MessageGroup::COLLECTION_PENDING, $mg->collection);
+        $this->assertNull($mg->approvedat, 'A post awaiting the content check has not been approved');
+        // Left for the content check to do on promotion.
+        $this->assertNull($mg->contentcheck_checked_at, 'Ingestion must not stamp the content check itself');
+        $this->assertFalse($notified, 'Mods must not be notified for a post that is only awaiting the content check');
+        $this->assertSame(
+            0,
+            DB::table('messages_spatial')->where('msgid', $message->id)->count(),
+            'A post awaiting the content check must not be in the spatial index',
+        );
     }
 
     public function test_live_creates_pending_message_when_group_is_moderated(): void
@@ -336,7 +392,7 @@ class GroupPostIngestionServiceTest extends TestCase
         $first  = $svc->ingest($post, $group);
         $second = $svc->ingest($post, $group);
 
-        $this->assertSame('approved', $first);
+        $this->assertSame('pending', $first);
         $this->assertSame('duplicate', $second);
 
         $count = Message::where('tnpostid', $postId)->count();
@@ -356,7 +412,7 @@ class GroupPostIngestionServiceTest extends TestCase
 
         // Simulates the first sync window: post is created.
         $first = $svc->ingest($post, $group);
-        $this->assertSame('approved', $first);
+        $this->assertSame('pending', $first);
         $this->assertSame(1, Message::where('tnpostid', $postId)->count());
 
         // Simulates the overlap window re-fetching the same post.
@@ -427,7 +483,31 @@ class GroupPostIngestionServiceTest extends TestCase
     // Worry words. Mirrors the email-path tests in IncomingMailServiceTest
     // (test_contains_worry_words_*): both paths must read concern_keywords, so
     // that identical content is routed identically however it arrives.
+    //
+    // Every unmoderated poster's post is now Pending on arrival (the content check
+    // promotes the clean ones), so 'pending' alone no longer says whether the worry
+    // words bit. The reason on the collection=Pending trace line does: 'worry words'
+    // when held, 'posting-status' when the post is merely awaiting the content check.
     // -------------------------------------------------------------------------
+
+    /**
+     * Ingest live and return the reason from the collection=Pending trace line,
+     * or null if the post was not routed to Pending at all.
+     */
+    private function ingestAndCapturePendingReason(array $post, $group): ?string
+    {
+        $reasons = [];
+        Log::listen(function ($message) use (&$reasons) {
+            $text = (string) $message->message;
+            if (str_contains($text, 'set=collection=Pending reason=')) {
+                $reasons[] = substr($text, strpos($text, 'reason=') + strlen('reason='));
+            }
+        });
+
+        $this->makeService(dryRun: false)->ingest($post, $group);
+
+        return $reasons[0] ?? null;
+    }
 
     public function test_worry_words_hold_post_for_concern_keyword(): void
     {
@@ -451,7 +531,7 @@ class GroupPostIngestionServiceTest extends TestCase
             'content' => 'Collection only, please bring a van.',
         ]);
 
-        $this->assertSame('pending', $this->makeService(dryRun: false)->ingest($post, $group));
+        $this->assertSame('worry words', $this->ingestAndCapturePendingReason($post, $group));
     }
 
     public function test_worry_words_ignore_stale_legacy_worrywords_table(): void
@@ -478,7 +558,9 @@ class GroupPostIngestionServiceTest extends TestCase
             'content' => 'Adorable puppy needs a good home.',
         ]);
 
-        $this->assertSame('approved', $this->makeService(dryRun: false)->ingest($post, $group));
+        // Pending only because it is awaiting the content check, NOT because the
+        // legacy row held it.
+        $this->assertSame('posting-status', $this->ingestAndCapturePendingReason($post, $group));
     }
 
     public function test_worry_words_respect_whitelisted_phrase_despite_contained_keyword(): void
@@ -522,8 +604,9 @@ class GroupPostIngestionServiceTest extends TestCase
             'content' => 'Collection only, please bring a van.',
         ]);
 
-        // Whitelisted phrase must suppress the contained 'green' match.
-        $this->assertSame('approved', $this->makeService(dryRun: false)->ingest($post, $group));
+        // Whitelisted phrase must suppress the contained 'green' match, leaving the
+        // post Pending only for the content check rather than held for worry words.
+        $this->assertSame('posting-status', $this->ingestAndCapturePendingReason($post, $group));
     }
 
     // -------------------------------------------------------------------------
@@ -563,7 +646,7 @@ class GroupPostIngestionServiceTest extends TestCase
 
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
-        $this->assertSame('approved', $result);
+        $this->assertSame('pending', $result);
 
         $reposted = Message::where('tnpostid', $postId)->first();
         $this->assertNotNull($reposted, 'A repost must create its own new message');
@@ -617,7 +700,7 @@ class GroupPostIngestionServiceTest extends TestCase
 
         $result = $this->makeService(dryRun: false)->ingest($post, $group);
 
-        $this->assertSame('approved', $result);
+        $this->assertSame('pending', $result);
         $this->assertNotNull(Message::where('tnpostid', $postId)->first());
     }
 
@@ -639,7 +722,7 @@ class GroupPostIngestionServiceTest extends TestCase
             'longitude' => -3.1883,
         ]);
 
-        $this->assertSame('approved', $this->makeService(dryRun: false)->ingest($post, $group));
+        $this->assertSame('pending', $this->makeService(dryRun: false)->ingest($post, $group));
         $this->assertNotNull(Message::where('tnpostid', $postId)->first());
     }
 
@@ -662,7 +745,7 @@ class GroupPostIngestionServiceTest extends TestCase
         ]);
 
         $service = $this->makeService(dryRun: false);
-        $this->assertSame('approved', $service->ingest($post, $group));
+        $this->assertSame('pending', $service->ingest($post, $group));
         $this->assertSame('duplicate', $service->ingest($post, $group));
         $this->assertSame(1, Message::where('tnpostid', $postId)->count());
     }
@@ -677,18 +760,21 @@ class GroupPostIngestionServiceTest extends TestCase
     // See plans/tn-api-post-ingestion.md section I.
     // -------------------------------------------------------------------------
 
-    public function test_approved_ingest_sets_full_routing_context(): void
+    public function test_ingested_post_sets_full_routing_context(): void
     {
         $locationId = $this->createTestLocation();
         $user = $this->createTestUser(['lastlocation' => $locationId]);
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
-        $postId = 'tn-ctx-approved-'.uniqid();
+        $postId = 'tn-ctx-ingested-'.uniqid();
         $post = $this->makePost(['post_id' => $postId, 'user_id' => $user->id]);
         $service = $this->makeService(dryRun: false);
 
-        $this->assertSame('approved', $service->ingest($post, $group));
+        $this->assertSame('pending', $service->ingest($post, $group));
+        $this->assertSame(RoutingResult::PENDING, GroupPostIngestionService::outcomeFor('pending'));
+        // The 'approved' mapping is still exercised: the write branch is retained for
+        // any future caller, mirroring the same retained branch on the email path.
         $this->assertSame(RoutingResult::APPROVED, GroupPostIngestionService::outcomeFor('approved'));
 
         $context = $service->getLastRoutingContext();
@@ -882,7 +968,7 @@ class GroupPostIngestionServiceTest extends TestCase
         ]);
         $service = $this->makeService(dryRun: false);
 
-        $this->assertSame('approved', $service->ingest($post, $group));
+        $this->assertSame('pending', $service->ingest($post, $group));
 
         $context = $service->getLastRoutingContext();
         $this->assertArrayNotHasKey('routing_reason', $context);

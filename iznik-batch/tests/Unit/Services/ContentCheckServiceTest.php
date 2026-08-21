@@ -750,6 +750,43 @@ class ContentCheckServiceTest extends TestCase
         $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
     }
 
+    public function test_is_user_moderated_no_membership_on_a_tn_post_is_not_moderated(): void
+    {
+        // A TN API post is placed on the group its coordinates resolve to, not one
+        // the poster chose, so the poster is frequently not a member and
+        // GroupPostIngestionService falls back to the 'DEFAULT' a brand-new member
+        // gets. Those posts now arrive Pending awaiting this check, so calling the
+        // missing membership "moderated" would strand every one of them in the mod
+        // queue with nothing able to promote it.
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        // No membership inserted.
+        $msg = $this->createTestMessage($user, $group, ['tnpostid' => 'tn-no-membership-' . uniqid()]);
+
+        $this->assertFalse($this->service->isUserModerated($msg->id, $group->id, $user->id));
+    }
+
+    public function test_is_user_moderated_tn_post_still_respects_an_explicit_moderated_membership(): void
+    {
+        // The TN fallback above applies ONLY when there is no membership at all - a
+        // real moderated membership still moderates.
+        $user  = $this->createTestUser();
+        $group = $this->createTestGroup();
+        DB::table('memberships')->insert([
+            'userid'  => $user->id,
+            'groupid' => $group->id,
+            'role'    => 'Member',
+            'collection' => 'Approved',
+            'emailfrequency' => -2,
+            'ourPostingStatus' => 'MODERATED',
+            'added'   => now(),
+        ]);
+
+        $msg = $this->createTestMessage($user, $group, ['tnpostid' => 'tn-moderated-' . uniqid()]);
+
+        $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
+    }
+
     public function test_is_user_moderated_case_insensitive_moderated(): void
     {
         $user  = $this->createTestUser();

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-20
+last_reviewed: 2026-08-21
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -124,6 +124,18 @@ when reading any coverage report:
   TN invoice on `sourceheader LIKE 'TN-%'`, `LoveJunkService` attributes the post's
   source by it, and `ProcessBackgroundTasksCommand` uses it to skip creating
   freebie alerts for TN posts, which TN syndicates itself.
+
+**Routing matches the email path**, including approval. A post from an unmoderated
+poster (`ourPostingStatus` `DEFAULT`/`UNMODERATED`, which is also the fallback used
+when the poster isn't a member of the group its coordinates resolved to) is *not*
+approved on arrival: it lands Pending, and `messages:contentcheck` promotes it
+within a minute if clean, or holds it for a moderator if a concern keyword or
+content rule matches. `GroupPostIngestionService` deliberately does not notify mods
+or add such a post to the spatial index — both belong to the content check, so a
+clean post makes no mod work and a flagged one is never live in the meantime.
+Because these posts often have no membership row, `ContentCheckService::isUserModerated()`
+applies the same `DEFAULT` fallback for a post with a `tnpostid`; without that they
+would sit in the mod queue with nothing able to promote them.
 
 Photos come from the API's own `photos[].images` array rather than being scraped
 out of the post body. TN documents that array as ordered *smallest to largest*

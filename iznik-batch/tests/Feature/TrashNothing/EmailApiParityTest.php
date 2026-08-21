@@ -702,15 +702,14 @@ class EmailApiParityTest extends TestCase
     }
 
     /**
-     * Uses 'MODERATED' rather than 'DEFAULT' for ourPostingStatus. A DEFAULT
-     * member is a known, already-documented divergence between the two
-     * paths — IncomingMailService::handleGroupPost() no longer auto-approves
-     * DEFAULT posters on arrival, while GroupPostIngestionService::ingest()
-     * still does — so both would route the identical post to different
-     * outcomes (pending vs approved) even with byte-identical content,
-     * which is not what these parity tests are about. MODERATED pends on
-     * both paths, keeping outcome (and therefore Layer 3) driven purely by
-     * the scenario's own fixture content, not this unrelated divergence.
+     * Uses 'MODERATED' rather than 'DEFAULT' for ourPostingStatus. Both paths now
+     * pend a DEFAULT poster as well — neither approves on arrival, they wait for
+     * messages:contentcheck — so either status routes identically; the divergence
+     * that originally forced this choice (the API path approving DEFAULT posters
+     * while the email path pended them) is fixed. MODERATED is kept because it pins
+     * the outcome on the posting status alone, so outcome (and therefore Layer 3)
+     * stays driven by the scenario's own fixture content rather than by whatever the
+     * content check would later make of it.
      */
     private function seedParityUser(int $id, string $email, int $groupId): void
     {

@@ -118,14 +118,12 @@ class TnApiLokiParityTest extends TestCase
         $group = $this->createTestGroup(['lat' => 55.9533, 'lng' => -3.1883]);
         $user = $this->createMappedUser();
         $userEmail = $this->createTestUserEmail($user, ['preferred' => 1]);
-        // MODERATED, not DEFAULT, deliberately: a DEFAULT poster walks into an
-        // already-documented divergence — IncomingMailService::handleGroupPost()
-        // no longer auto-approves DEFAULT posters on arrival (they wait for the
-        // content-check job) while GroupPostIngestionService::ingest() still
-        // does, so identical content would route Pending vs Approved for reasons
-        // that have nothing to do with Loki. MODERATED pends on both paths,
-        // isolating what this test is actually for. Same reasoning as
-        // EmailApiParityTest::seedParityUser().
+        // MODERATED, not DEFAULT, deliberately: both paths now pend a DEFAULT poster
+        // too (neither auto-approves on arrival — the content-check job promotes
+        // them), so either status would agree, but MODERATED pins the outcome on the
+        // posting status alone, leaving this test's Loki comparison independent of
+        // what the content check would later do with the fixture's content. Same
+        // reasoning as EmailApiParityTest::seedParityUser().
         $this->createMembership($user, $group, ['ourPostingStatus' => 'MODERATED']);
 
         // The two paths deliberately synthesize the SAME messages.messageid for a
