@@ -43,6 +43,7 @@ func main() {
 		&JobsDataset{},
 		&PostcodesDataset{},
 		&ReachDataset{},
+		&ReachOverflowDataset{},
 	}
 
 	srv := newServer(mysqlDB, idxDir, allDatasets)
@@ -108,7 +109,7 @@ func main() {
 	})
 
 	// GET /v1/:dataset/containing — all items whose geometry contains the point.
-	// Only datasets implementing PointContainer (currently reach) support it.
+	// Only datasets implementing PointContainer (reach, reachoverflow) support it.
 	// `in` are definite; `partial` items sit in the raster's boundary band and
 	// the caller must resolve them against the exact source geometry.
 	api.Get("/v1/:dataset/containing", func(c *fiber.Ctx) error {

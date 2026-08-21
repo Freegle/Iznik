@@ -310,28 +310,46 @@ someone a post they are never told about.
 
 ### How a read surface must ask the ring question
 
-**As a list of msgids, never as the JSON test inside a query that has to be answered by an
-index.** The rings are WKT inside a JSON column, so the test is `JSON_EXTRACT` over
-`rippling_reach.overflow_bounds`, which no index can serve. Put it next to an indexed
-predicate and the optimiser stops using that index for the whole query - and the answer is
-still correct, so nothing fails, it just scans. On 2026-08-21 this took the site down twice
-in a day: ORed against the feed's spatial containment (`key=rippling_reach_polygon rows=1`
-became `key=NULL rows=62,534` over a ~17GB table), and as an `EXISTS` beside the badge's
-raster id lists (`type=ALL rows=58,348`, on a poll running about twice a second).
+**Through `rippling.AdmittedMsgids`, which asks the spatial server - never by
+parsing the ring JSON.** The rings are WKT inside `rippling_reach.overflow_bounds`
+and they are big: **37,000 vertices on average** (measured on prod). The read
+question is "which of these posts admit me", so it needs hundreds of them at
+once. Measured at one real viewer point: 836 candidate rings, **4.8s**, almost
+all of it `ST_GeomFromText`. Narrowing does not rescue it - 558 of those 836
+genuinely admitted, so the parses were real work, not waste. Simplifying the
+stored rings buys about 6x, which is not enough either.
 
-`rippling.AdmittedMsgids` is the way in: `rippling_reach_overflow` holds each post's ring
-bbox as an indexed `POLYGON`, so the spatial index narrows to a handful of candidates, and
-the exact per-lane JSON test then runs against just those, bounded by primary key. Callers
-splice the resulting ids (`rr.msgid IN (...)`, `ms.msgid IN (...)`) and keep their plans:
-feed `index_merge sort_union(rippling_reach_outer, PRIMARY)`, badge `type=range key=msgid`.
+The mail path is different in kind, not degree: one post, one member, one parse
+(~6ms). That asymmetry is why the lanes looked healthy for weeks and then took
+the site down twice in one day the moment they reached browse.
 
-The bbox is a PREFILTER, not the answer - a box containing the point does not mean the ring
-does - so a surface must use the admitted ids, never the candidate list.
+So the rings are rasterised, exactly as reach polygons already are for the
+unread badge:
 
-Until `ripple:backfill-overflow-index` has populated the side table, feed and badge show the
-committed reach only: ring members lose their extra posts rather than the page losing the
-scan race. Search can instead fall back to the capped JSON path, because it asks the ring
-question in a query of its own, where a timeout costs the ring arm and not the results.
+| Step | Where | Cost |
+|---|---|---|
+| Which rings cover this point | `iznik-spatial-go` `reachoverflow` dataset, `/v1/reachoverflow/containing` | RAM, O(1) per ring |
+| Is the reach still live | `rippling.liveMsgids`, primary-key bounded | 23ms for 558 ids |
+| Boundary band only | exact ring JSON test, bounded to those msgids | a handful of rows |
+
+The spatial ids are **packed**: `msgid << 4 | lane code`, because one index has
+to answer a per-lane question - the same post admits a sparse-band member and
+refuses a dense-band one, on different rings. The code table is duplicated
+deliberately in `dataset_reachoverflow.go` and `rippling/overflowlanes.go`, with
+a test on each side asserting the ten pairs verbatim.
+
+**What a surface must never do** is put the ring test in the same query as an
+indexed predicate. ORed against the feed's spatial containment it removed the
+index (`key=rippling_reach_polygon rows=1` became `key=NULL rows=62,534` over a
+17GB table); as an `EXISTS` beside the badge's raster id lists it unbounded the
+scan (`type=ALL rows=58,348`, on a poll running twice a second). Neither failed.
+Both returned correct answers, by scanning.
+
+When the spatial server cannot answer - dataset not built, server down - the
+read surfaces show the committed reach only, and say so in the log. Ring members
+lose their extra posts until it recovers, which is the deliberate trade: on the
+feed and the badge the ring shares ONE query with the containment, so a slow
+ring arm does not degrade the ring, it takes the page with it.
 
 **Flags** (`config/freegle.php`): `ripple.rural_access.enabled` and `ripple.cluster.enabled`
 default ON, `ripple.fairness.enabled` defaults OFF. The Go side reads the same names from the

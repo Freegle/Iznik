@@ -187,6 +187,49 @@ func ReachContaining(lng, lat float64) (in []int64, partial []int64, err error) 
 	return out.In, out.Partial, nil
 }
 
+// ReachOverflowContaining calls GET /v1/reachoverflow/containing: every
+// (post, ring lane) whose ring covers the point.
+//
+// The ids are PACKED - post and lane in one int64, decoded by
+// rippling.DecodeOverflowExtID - because one index answers a per-lane question:
+// the same post admits a sparse-band member on one ring and refuses a
+// dense-band one on another. `in` are definite; `partial` sit in the raster's
+// boundary band and the caller must exact-test them against the ring JSON.
+func ReachOverflowContaining(lng, lat float64) (in []int64, partial []int64, err error) {
+	params := url.Values{
+		"lng": {fmt.Sprintf("%f", lng)},
+		"lat": {fmt.Sprintf("%f", lat)},
+	}
+	reqURL := fmt.Sprintf("%s/v1/reachoverflow/containing?%s", baseURL(), params.Encode())
+
+	resp, err := httpClient.Get(reqURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, nil, fmt.Errorf("spatial dataset \"reachoverflow\" not ready")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing: HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing read body: %w", err)
+	}
+
+	var out struct {
+		In      []int64 `json:"in"`
+		Partial []int64 `json:"partial"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, nil, fmt.Errorf("spatial reachoverflow containing parse: %w", err)
+	}
+	return out.In, out.Partial, nil
+}
+
 // ExtraString returns a string value from a QueryResult.Extra map, or "" if absent.
 func ExtraString(r QueryResult, key string) string {
 	if v, ok := r.Extra[key].(string); ok {

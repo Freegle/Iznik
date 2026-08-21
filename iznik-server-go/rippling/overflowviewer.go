@@ -1,11 +1,14 @@
 package rippling
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/freegle/iznik-server-go/spatial"
 	"gorm.io/gorm"
 )
 
@@ -204,138 +207,156 @@ func OverflowWhereAny(lng, lat float64, srid int, paths []string) (string, []int
 	return where, args
 }
 
-// OverflowRowSelector returns a WHERE fragment that isolates the reach rows
-// carrying an overflow ring - about 4,200 of 55,000 on prod.
-//
-// The ring test itself (OverflowWhereAny) is JSON_EXTRACT over a column, which
-// no index can serve. That is survivable only if something else has already cut
-// the rows down; ORing it into a spatial predicate instead removed the SPATIAL
-// index and full-scanned a 17GB table, which is what took the site down on
-// 2026-08-21 (EXPLAIN went from key=rippling_reach_polygon rows=1 to key=NULL
-// rows=62,534, and the arm measured 49s standalone).
-//
-// Prefers the generated has_overflow column when the migration adding it has
-// been applied, and falls back to the unindexed IS NOT NULL test otherwise, so
-// the code is correct either side of a hand-applied DDL. Checked once per
-// process: this is called from read paths.
-var (
-	hasOverflowOnce sync.Once
-	hasOverflowCol  bool
-)
-
-func OverflowRowSelector(db *gorm.DB) string {
-	hasOverflowOnce.Do(func() {
-		var n int64
-		err := db.Raw("SELECT COUNT(*) FROM information_schema.columns " +
-			"WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' " +
-			"AND column_name = 'has_overflow'").Scan(&n).Error
-		hasOverflowCol = err == nil && n > 0
-	})
-
-	if hasOverflowCol {
-		return "rr.has_overflow = 1"
-	}
-
-	return "rr.overflow_bounds IS NOT NULL"
-}
-
-// --- indexed ring prefilter -------------------------------------------------
-//
-// rippling_reach_overflow holds each ring family's bounding box as an indexed
-// POLYGON. It exists because the authoritative rings are JSON in
-// rippling_reach.overflow_bounds, which no index can answer: asking the ring
-// question against that column means a scan of a ~17GB table, and ORing it into
-// the spatial containment predicate took the site down on 2026-08-21. Indexing
-// rippling_reach in place was not available either - the ALTER blocks the
-// cluster under TOI and blocks the node under RSU - so the index lives here.
-//
-// This is a PREFILTER, not the answer. It narrows to the handful of posts whose
-// rings could admit this point; the exact per-lane test still runs against the
-// JSON, bounded to those msgids by primary key.
-
-var (
-	prefilterOnce  sync.Once
-	prefilterReady bool
-)
-
-// OverflowPrefilterReady reports whether the side table exists AND has rows.
-//
-// Emptiness matters as much as absence: an empty table would silently answer
-// "no post has a ring", quietly removing every ring member's access while
-// looking perfectly healthy. Until the backfill has run we keep using the JSON
-// path. Checked once per process - this is called from read paths.
-func OverflowPrefilterReady(db *gorm.DB) bool {
-	prefilterOnce.Do(func() {
-		var n int64
-		if err := db.Raw("SELECT COUNT(*) FROM information_schema.tables " +
-			"WHERE table_schema = DATABASE() AND table_name = 'rippling_reach_overflow'").
-			Scan(&n).Error; err != nil || n == 0 {
-			return
-		}
-
-		var rows int64
-		if err := db.Raw("SELECT COUNT(*) FROM (SELECT 1 FROM rippling_reach_overflow LIMIT 1) t").
-			Scan(&rows).Error; err == nil && rows > 0 {
-			prefilterReady = true
-		}
-	})
-
-	return prefilterReady
-}
-
-// OverflowCandidates returns the msgids whose ring bounding box contains the
-// point, straight off the SPATIAL index.
-func OverflowCandidates(db *gorm.DB, lng, lat float64, srid int) []uint64 {
-	var ids []uint64
-	db.Table("rippling_reach_overflow").
-		Select("msgid").
-		Where("ST_Contains(bbox, ST_SRID(POINT(?, ?), ?))", lng, lat, srid).
-		Scan(&ids)
-
-	return ids
-}
+// The ring bbox side table (rippling_reach_overflow) is no longer read here.
+// It was built on 2026-08-21 to narrow the JSON ring test to a few candidates,
+// and it did - 836 candidates in 8.7ms - but narrowing was never the problem:
+// 558 of those 836 genuinely admitted, and parsing their 37k-vertex rings cost
+// 4.8s regardless. AdmittedMsgids now asks the spatial server's rasters
+// instead. iznik-batch still maintains the table (RipplingOverflowIndex), which
+// costs one small upsert per ripple and leaves the fallback available; nothing
+// on the read path depends on it.
 
 // AdmittedMsgids returns the posts whose rings genuinely admit this point.
 //
-// Two cheap steps, in place of one ruinous one. The bbox index narrows to a
-// handful of candidates; the exact per-lane JSON test then runs against just
-// those, bounded by primary key. Both were measured on 2026-08-21: the bbox
-// lookup plans as key=rippling_reach_overflow_bbox and returns in 8ms, and the
-// exact test bounded by a msgid list plans as key=PRIMARY. The same question
-// asked directly of the JSON scans a ~17GB table and takes 49s.
+// Asked of the SPATIAL SERVER, not the database. The rings are WKT inside a
+// JSON column, averaging 37,000 vertices (prod, 2026-08-21), and the read
+// question - "which of these posts admit me" - needs hundreds of them at once:
+// 836 candidates measured 4.8s, essentially all of it parsing. No amount of
+// narrowing fixes that, because 558 of those 836 genuinely admitted; the
+// parses were real work. The mail side gets away with the JSON because it asks
+// about one post at a time.
 //
-// The bbox is ONLY a prefilter - a box containing the point does not mean the
-// ring does - so callers must use this rather than the candidate list, or they
-// admit members the rings do not.
+// So the rings are rasterised once, in iznik-spatial-go's reachoverflow
+// dataset, exactly as reach polygons already are for the unread badge. Ids come
+// back packed with their lane; definite hits need no geometry at all, and only
+// the thin boundary band goes to MySQL for the exact JSON test, bounded to a
+// handful of msgids by primary key.
 //
-// Returns nil when nothing admits, which lets a caller leave its query exactly
-// as it was rather than splicing an arm that can never match.
-//
-// It also returns nil when the side table is absent or still empty. That
-// deliberately costs ring members their extra posts until the backfill has run,
-// rather than falling back to the JSON scan: on the feed and the badge the ring
-// test shares ONE query with the containment, so a slow ring arm does not
-// degrade the ring - it takes the whole feed down with it. Search can afford the
-// fallback because it asks the ring question in a query of its own.
+// Returns nil when no ring can apply, and ALSO when the spatial server cannot
+// answer - dataset not built yet, server down, lane unknown to it. That
+// deliberately costs ring members their extra posts rather than falling back to
+// the JSON: on the feed and the badge the ring shares ONE query with the
+// containment, so a slow ring arm does not degrade the ring, it takes the page
+// down. That is not hypothetical - it happened twice on 2026-08-21.
 func AdmittedMsgids(db *gorm.DB, lng, lat float64, srid int, paths []string) []uint64 {
+	codes := laneCodesFor(paths)
+	if len(codes) == 0 {
+		return nil
+	}
+
+	in, partial, err := spatial.ReachOverflowContaining(lng, lat)
+	if err != nil {
+		// Logged, not silent: rings going dark is a visible behaviour change,
+		// and it must be attributable to the spatial server rather than looking
+		// like the lanes were switched off. Throttled, because the state that
+		// produces it - dataset not built on this node yet - produces it on
+		// EVERY feed load, and a deploy window would otherwise fill the log
+		// with one line per request.
+		logRingLookupFailure(err)
+		return nil
+	}
+
+	definite := msgidsForLanes(in, codes)
+	maybe := msgidsForLanes(partial, codes)
+	if len(definite) == 0 && len(maybe) == 0 {
+		return nil
+	}
+
+	admitted := make([]uint64, 0, len(definite)+len(maybe))
+	admitted = append(admitted, liveMsgids(db, definite)...)
+	admitted = append(admitted, exactRingMatches(db, lng, lat, srid, paths, maybe)...)
+
+	if len(admitted) == 0 {
+		return nil
+	}
+	return admitted
+}
+
+// msgidsForLanes decodes packed ids and keeps the posts whose matching lane is
+// one this viewer is in. A post can appear on several lanes; it is admitted
+// once.
+func msgidsForLanes(extIDs []int64, codes map[int64]string) []uint64 {
+	seen := make(map[uint64]struct{}, len(extIDs))
+	var ids []uint64
+	for _, extID := range extIDs {
+		msgid, code := DecodeOverflowExtID(extID)
+		if msgid == 0 {
+			continue
+		}
+		if _, ok := codes[code]; !ok {
+			continue
+		}
+		if _, dup := seen[msgid]; dup {
+			continue
+		}
+		seen[msgid] = struct{}{}
+		ids = append(ids, msgid)
+	}
+	return ids
+}
+
+// liveMsgids keeps only the posts whose reach row is still live.
+//
+// The raster index excludes held reaches, but on a 2-minute delta, so a post
+// pulled back to Pending in the last tick would otherwise be admitted by a ring
+// after every other surface had stopped showing it. One primary-key-bounded
+// query, selecting two small columns so InnoDB never touches the row's
+// off-page polygon blobs.
+func liveMsgids(db *gorm.DB, ids []uint64) []uint64 {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	var live []uint64
+	db.Table("rippling_reach rr").
+		Select("rr.msgid").
+		Where("rr.msgid IN (?) AND rr.status != 'held'", ids).
+		Scan(&live)
+
+	return live
+}
+
+// exactRingMatches resolves the raster's boundary band against the authoritative
+// JSON. These are the cells a ring's edge passes through, so the answer is
+// genuinely unknown until the polygon is parsed - but there are a handful of
+// them, bounded by primary key, rather than the hundreds the unbounded question
+// would have parsed.
+func exactRingMatches(db *gorm.DB, lng, lat float64, srid int, paths []string, ids []uint64) []uint64 {
+	if len(ids) == 0 {
+		return nil
+	}
+
 	ringWhere, ringArgs := OverflowWhereAny(lng, lat, srid, paths)
-	if ringWhere == "" || !OverflowPrefilterReady(db) {
+	if ringWhere == "" {
 		return nil
 	}
 
-	candidates := OverflowCandidates(db, lng, lat, srid)
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	args := []interface{}{candidates}
+	args := []interface{}{ids}
 	args = append(args, ringArgs...)
 
-	var ids []uint64
+	var matched []uint64
 	db.Table("rippling_reach rr").
 		Select("rr.msgid").
 		Where("rr.msgid IN (?) AND rr.status != 'held' AND "+ringWhere, args...).
-		Scan(&ids)
+		Scan(&matched)
 
-	return ids
+	return matched
+}
+
+// ringFailureLog throttles the "rings are dark" line to one a minute: enough to
+// notice and to timestamp the window, not enough to bury everything else.
+var ringFailureLog struct {
+	mu   sync.Mutex
+	last time.Time
+}
+
+func logRingLookupFailure(err error) {
+	ringFailureLog.mu.Lock()
+	defer ringFailureLog.mu.Unlock()
+
+	if time.Since(ringFailureLog.last) < time.Minute {
+		return
+	}
+	ringFailureLog.last = time.Now()
+	log.Printf("rippling: ring lookup unavailable, showing committed reach only: %v", err)
 }

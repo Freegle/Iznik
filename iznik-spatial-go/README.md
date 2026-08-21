@@ -18,7 +18,7 @@ for its nearby-freegler queries.
 
 ## Datasets
 
-The index is rebuilt from MySQL and kept in sync. Six datasets are served:
+The index is rebuilt from MySQL and kept in sync. Eight datasets are served:
 
 | Name | Geometry | Source table | Spatial column | Sync |
 |------|----------|--------------|----------------|------|
@@ -28,6 +28,8 @@ The index is rebuilt from MySQL and kept in sync. Six datasets are served:
 | `userapproxlocs` | Point | `users_approxlocs` | `position` | full rebuild every 15 min (no incremental) |
 | `groups` | Polygon | `groups` | `polyindex` | full rebuild every 15 min (no incremental) |
 | `jobs` | Polygon | `jobs` | `geometry` | incremental on `jobs.seenat`; nightly full rebuild |
+| `reach` | Polygon (rasterised) | `rippling_reach` | `polygon` | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn |
+| `reachoverflow` | Polygon (rasterised) | `rippling_reach` | `overflow_bounds` JSON, one ring per lane | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn. **Ids are packed**: `msgid << 4 \| lane code`, so one index answers a per-lane question — see `dataset_reachoverflow.go` |
 
 Indexes persist to disk as SQLite files under `SPATIAL_INDEX_DIR`, so a restart
 reopens existing indexes instead of rebuilding from MySQL. Pass `-rebuild` to
@@ -48,6 +50,7 @@ trusted callers (`iznik-routing-go`, `apiv2`, batch).
 | `GET` | `/v1/datasets` | All datasets with name, record count, readiness |
 | `GET` | `/v1/{dataset}/status` | Readiness, row count, last sync time for one dataset |
 | `GET` | `/v1/{dataset}/knn?lat=&lng=&limit=&type=&polygon=` | Nearest records to a point. `limit` 1–1000 (default 1); optional `type` filter; optional WKT `polygon` to restrict results |
+| `GET` | `/v1/{dataset}/containing?lat=&lng=` | Items whose geometry contains the point, as `{in, partial}`. Only `reach` and `reachoverflow` support it. `in` is definite; `partial` sits in the raster's boundary band and the caller must exact-test it against the source geometry |
 | `GET` | `/v1/{dataset}/within?polygon=` | IDs of all records inside a WKT polygon. Max **10 000** IDs (HTTP 413 if exceeded) |
 | `GET` | `/v1/{dataset}/within_coords?polygon=` | Like `/within` but returns full items **with coordinates** (no centre-distance bias). Use POST for large polygons |
 | `POST` | `/v1/{dataset}/within_coords` | Same as GET, polygon in the request body — avoids URL-length limits for big isochrone polygons. Body may be raw WKT (`text/plain`) or `polygon=WKT` (`application/x-www-form-urlencoded`) |

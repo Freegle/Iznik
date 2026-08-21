@@ -272,51 +272,27 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 				args...).
 			Scan(&reachIDs)
 
-		// Ring arm. Bounded by the ring-row selector, and capped: without the
-		// has_overflow index this still reads a lot of rows, and a read path must
-		// never be able to sit on the database for a minute. If it times out the
-		// member sees the committed reach only - the same answer they got before
-		// rings existed - rather than the site falling over.
-		if ringWhere, ringArgs := rippling.OverflowWhereAny(lng, lat, utils.SRID,
-			rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))); ringWhere != "" {
+		// Ring arm. The posts an overflow ring admits this viewer to, resolved
+		// through rippling.AdmittedMsgids - the spatial server's rasters, with
+		// only the boundary band going to the JSON. The ids arrive already
+		// decided, so all that is left here is the same visibility and
+		// author-cap filtering the committed arm applies, bounded by primary
+		// key. No ring test reaches this query at all: it is the shape, not the
+		// volume, that took the site down.
+		if admitted := rippling.AdmittedMsgids(db, lng, lat, utils.SRID,
+			rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))); len(admitted) > 0 {
 			var ringIDs []uint64
+			rArgs := []interface{}{admitted}
+			rArgs = append(rArgs, float64(9007199254740991), lat, lng, lat)
 
-			// Narrow FIRST off the indexed side table, then ask the exact
-			// question of just those posts by primary key. Measured: the
-			// unnarrowed JSON form scans and takes 49s; bounded to a msgid list
-			// it plans as key=PRIMARY and returns immediately.
-			if candidates := rippling.OverflowCandidates(db, lng, lat, utils.SRID); rippling.OverflowPrefilterReady(db) {
-				if len(candidates) > 0 {
-					rArgs := []interface{}{candidates}
-					rArgs = append(rArgs, ringArgs...)
-					rArgs = append(rArgs, float64(9007199254740991), lat, lng, lat)
-
-					if err := db.Table("rippling_reach rr").
-						Select("ms.msgid").
-						Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
-						Joins("INNER JOIN messages m ON m.id = ms.msgid").
-						Joins("INNER JOIN users au ON au.id = m.fromuser").
-						Where("ms.successful = 0 AND rr.status != 'held' AND rr.msgid IN (?) AND "+
-							ringWhere+" "+utils.AuthorReachCapWhere,
-							rArgs...).
-						Scan(&ringIDs).Error; err != nil {
-						fmt.Printf("search: overflow ring arm gave up (%v)\n", err)
-					}
-				}
-			} else if err := db.Table("rippling_reach rr").
-				// Backfill has not run yet, so the side table cannot be trusted to
-				// know about every ring. Fall back to the JSON path rather than
-				// silently dropping ring members - capped, because unnarrowed it
-				// is the query that took the site down.
-				Select("/*+ MAX_EXECUTION_TIME(5000) */ ms.msgid").
+			if err := db.Table("rippling_reach rr").
+				Select("ms.msgid").
 				Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
 				Joins("INNER JOIN messages m ON m.id = ms.msgid").
 				Joins("INNER JOIN users au ON au.id = m.fromuser").
-				Where("ms.successful = 0 AND rr.status != 'held' AND "+
-					rippling.OverflowRowSelector(db)+" AND "+ringWhere+" "+
+				Where("ms.successful = 0 AND rr.status != 'held' AND rr.msgid IN (?) "+
 					utils.AuthorReachCapWhere,
-					append(append([]interface{}{}, ringArgs...),
-						float64(9007199254740991), lat, lng, lat)...).
+					rArgs...).
 				Scan(&ringIDs).Error; err != nil {
 				fmt.Printf("search: overflow ring arm gave up (%v)\n", err)
 			}
