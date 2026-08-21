@@ -424,6 +424,109 @@ class GroupPostIngestionServiceTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Worry words. Mirrors the email-path tests in IncomingMailServiceTest
+    // (test_contains_worry_words_*): both paths must read concern_keywords, so
+    // that identical content is routed identically however it arrives.
+    // -------------------------------------------------------------------------
+
+    public function test_worry_words_hold_post_for_concern_keyword(): void
+    {
+        // Sanity check bounding the whitelist tests below: a genuine
+        // (non-whitelisted) concern keyword must still hold the post.
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'cash',
+            'category' => 'review',
+            'action'   => 'flag',
+        ]);
+
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $post = $this->makePost([
+            'post_id' => 'tn-worry-' . uniqid(),
+            'user_id' => $user->id,
+            'title'   => 'Sofa, cash on collection',
+            'content' => 'Collection only, please bring a van.',
+        ]);
+
+        $this->assertSame('pending', $this->makeService(dryRun: false)->ingest($post, $group));
+    }
+
+    public function test_worry_words_ignore_stale_legacy_worrywords_table(): void
+    {
+        // Regression guard (Discourse #9944/7): subjectContainsWorryWords() used to
+        // read the legacy 'worrywords' table, a one-time migration snapshot that is
+        // never written to again (see MigrateConcernKeywordsCommand). A row inserted
+        // only there must NOT be able to hold a post - if it does, this method is
+        // checking the wrong table again.
+        DB::table('worrywords')->insert([
+            'keyword' => 'puppy',
+            'type'    => 'Review',
+        ]);
+
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $post = $this->makePost([
+            'post_id' => 'tn-worry-legacy-' . uniqid(),
+            'user_id' => $user->id,
+            'title'   => 'Free puppy',
+            'content' => 'Adorable puppy needs a good home.',
+        ]);
+
+        $this->assertSame('approved', $this->makeService(dryRun: false)->ingest($post, $group));
+    }
+
+    public function test_worry_words_respect_whitelisted_phrase_despite_contained_keyword(): void
+    {
+        // Discourse #9944/7: 'Cashes Green' was whitelisted via the concern_keywords
+        // 'allowed' category (the current admin UI), but the TN API path kept holding
+        // such posts because it read the legacy 'worrywords' table, which never
+        // received the whitelist row - so identical content was held here while being
+        // let through by email.
+        //
+        // The single-word check is EXACT match only (levenshtein < 1), so this uses a
+        // keyword that is a whole word inside the whitelisted phrase ('green' inside
+        // 'Cashes Green'). The legacy table is seeded with the same keyword (but NOT
+        // the whitelist row, which only ever existed in concern_keywords) so the test
+        // genuinely fails against the pre-fix code rather than passing because the
+        // legacy table had nothing to match on.
+        DB::table('worrywords')->insert([
+            'keyword' => 'green',
+            'type'    => 'Review',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'green',
+            'category' => 'review',
+            'action'   => 'flag',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'Cashes Green',
+            'category' => 'allowed',
+            'action'   => 'flag',
+        ]);
+
+        $locationId = $this->createTestLocation();
+        $user  = $this->createTestUser(['lastlocation' => $locationId]);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $post = $this->makePost([
+            'post_id' => 'tn-worry-allowed-' . uniqid(),
+            'user_id' => $user->id,
+            'title'   => 'Sofa near Cashes Green (Stroud)',
+            'content' => 'Collection only, please bring a van.',
+        ]);
+
+        // Whitelisted phrase must suppress the contained 'green' match.
+        $this->assertSame('approved', $this->makeService(dryRun: false)->ingest($post, $group));
+    }
+
+    // -------------------------------------------------------------------------
     // Reposts vs crossposts. TN keeps a SOURCE post (no group_id) plus one COPY
     // per group it was sent to (group_id set), so each group's mods can moderate
     // their own copy. Copies are crossposts and are discarded — Freegle does its

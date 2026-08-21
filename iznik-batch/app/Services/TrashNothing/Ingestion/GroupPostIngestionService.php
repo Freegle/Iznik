@@ -637,6 +637,15 @@ class GroupPostIngestionService
     /**
      * Duplicate of IncomingMailService::containsWorryWords (subject + body).
      * Kept separate per plan: no extraction until email path parity is proven.
+     *
+     * Reads concern_keywords (scope=global) rather than the legacy 'worrywords'
+     * table, for the same reason the email path was changed in ac3f80c82:
+     * worrywords is a one-time migration snapshot (see MigrateConcernKeywordsCommand)
+     * that is never written to again, so every keyword/whitelist edit made via the
+     * current admin UI (ModSupportConcernKeywords) only reaches concern_keywords.
+     * Reading worrywords here meant a moderator whitelisting a phrase (e.g.
+     * 'Cashes Green', Discourse #9944) had no effect on posts arriving via the TN
+     * API - identical content was held here but let through by email.
      */
     private function subjectContainsWorryWords(string $subject, string $body): bool
     {
@@ -644,10 +653,10 @@ class GroupPostIngestionService
             return true;
         }
 
-        $worryWords = DB::table('worrywords')->get();
+        $worryWords = DB::table('concern_keywords')->where('scope', 'global')->get();
 
         foreach ($worryWords as $ww) {
-            if ($ww->type === 'Allowed') {
+            if ($ww->category === 'allowed') {
                 $pattern  = '/\b' . preg_quote($ww->keyword, '/') . '\b/i';
                 $subject  = preg_replace($pattern, '', $subject) ?? $subject;
                 $body     = preg_replace($pattern, '', $body) ?? $body;
@@ -655,7 +664,7 @@ class GroupPostIngestionService
         }
 
         foreach ($worryWords as $ww) {
-            if ($ww->type !== 'Allowed' && str_contains($ww->keyword, ' ')) {
+            if ($ww->category !== 'allowed' && str_contains($ww->keyword, ' ')) {
                 if (stripos($subject, $ww->keyword) !== false || stripos($body, $ww->keyword) !== false) {
                     return true;
                 }
@@ -669,7 +678,7 @@ class GroupPostIngestionService
                 continue;
             }
             foreach ($worryWords as $ww) {
-                if ($ww->type !== 'Allowed' && !empty($ww->keyword)) {
+                if ($ww->category !== 'allowed' && !empty($ww->keyword)) {
                     $ratio = strlen($word) / strlen($ww->keyword);
                     if ($ratio >= 0.75 && $ratio <= 1.25 && levenshtein(strtolower($ww->keyword), strtolower($word)) < 1) {
                         return true;
