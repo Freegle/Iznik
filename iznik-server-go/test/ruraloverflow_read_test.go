@@ -4,12 +4,14 @@ import (
 	"bytes"
 	json2 "encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -56,6 +58,38 @@ func farReachWithSparseRing(t *testing.T, msgID uint64) {
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), overflow_bounds = VALUES(overflow_bounds)", msgID)
 }
 
+// stubRingIndex points the spatial client at a server answering the ring-containment
+// question the way the real reachoverflow dataset would for these fixtures.
+//
+// The read surfaces stopped asking MySQL that question on 2026-08-21: the rings are
+// 37k-vertex polygons in a JSON column, and parsing the hundreds that cover a point
+// cost 4.8s a page load. They now come from the spatial server's rasters, so a test
+// that seeds a ring must serve one too - otherwise it is asserting that rings are
+// dark, which is what an unreachable spatial server correctly produces.
+//
+// Ids are packed msgid<<4|lane, and this stub stamps ONLY the sparse lane: that is
+// what makes the dense-band viewer's exclusion a real assertion rather than an
+// accident of an empty answer.
+func stubRingIndex(t *testing.T, sparseAdmits ...uint64) {
+	t.Helper()
+
+	ids := make([]int64, 0, len(sparseAdmits))
+	for _, msgid := range sparseAdmits {
+		ids = append(ids, int64(msgid)<<4|rippling.OverflowLaneCodes["$.rural.sparse"])
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/reachoverflow/containing" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json2.NewEncoder(w).Encode(map[string]any{"in": ids, "partial": []int64{}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("SPATIAL_KNN_URL", srv.URL)
+}
+
 // TestBrowseScopedSearch_RingAdmittedPostSearchable: a post the feed shows via the
 // viewer's band ring must also be findable by searching - scrollable-but-unsearchable
 // was the search half of the incident.
@@ -73,6 +107,7 @@ func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", ringed)
 
 	farReachWithSparseRing(t, ringed)
+	stubRingIndex(t, ringed)
 
 	// A sparse-band viewer the ring covers.
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
