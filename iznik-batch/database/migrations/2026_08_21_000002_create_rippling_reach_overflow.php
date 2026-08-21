@@ -30,11 +30,21 @@ use Illuminate\Support\Facades\Schema;
  * says "this post's rings might admit you", and the exact per-lane test still
  * runs against the JSON, bounded by primary key to the few rows that survive it.
  *
- * Maintained by every writer of overflow_bounds (ExpandService's two write
- * paths, BackfillRingsCommand) via RipplingOverflowIndex, and populated for
- * existing rows by the ripple:backfill-overflow-index console command, which
- * walks msgid ranges in chunks - one INSERT...SELECT across this table is the
- * shape that has caused a Galera lock storm here before.
+ * SUPERSEDED THE SAME DAY, and nothing reads or writes it any more.
+ *
+ * The narrowing worked - 836 candidates in 8.7ms - but narrowing was never the
+ * problem: 558 of those 836 genuinely admitted, and parsing their 37k-vertex
+ * rings cost 4.8s regardless. Ring admission is now answered by
+ * iznik-spatial-go's `reachoverflow` dataset, which rasterises each ring once,
+ * and both the site and the mail ask it (rippling.AdmittedMsgids /
+ * App\Services\Ripple\RingIndex). The writer and the backfill command are
+ * deleted; this migration stays because the table exists on prod and migration
+ * history should not be rewritten.
+ *
+ * The table can be DROPped whenever convenient - it holds ~4,400 rows of dead
+ * weight. Prod schema changes are operator-only, so that is theirs to run:
+ *
+ *     DROP TABLE rippling_reach_overflow;
  *
  * Applied on prod by hand on 2026-08-21; prod schema changes are operator-only.
  */

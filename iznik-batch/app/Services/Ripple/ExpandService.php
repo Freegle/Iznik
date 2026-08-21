@@ -366,14 +366,6 @@ class ExpandService
                 DB::statement($shrinkSql($envSet), array_merge([$storeWkt], $envParams, $shrinkTail));
             }
 
-            // The recompute path re-derives the rings, so the indexed bbox has to
-            // move with them - including to nothing, which forgets the row rather
-            // than leaving a box that offers candidates the exact test rejects.
-            if ($withOverflow) {
-                \App\Services\Ripple\RipplingOverflowIndex::upsertFromBounds(
-                    (int) $row->msgid, $overflowJsonForIndex ?? null
-                );
-            }
             // Preserve any secondary-group "out of area" rejection clips (the clip
             // statement shrinks polygon and NULLs inner_bound atomically).
             $this->reapplyClips((int) $row->msgid, $row->rejected_groups ?? null);
@@ -1206,14 +1198,6 @@ class ExpandService
                     $withDensity = $this->densityColumnsReady();
                     $withOverflow = $this->overflowColumnReady();
                     $overflowJson = $this->overflowJson($schedule);
-                    // Keep the indexed bbox in step with the JSON. The read
-                    // surfaces narrow on rippling_reach_overflow before running
-                    // the exact per-lane test; a post whose rings are only in the
-                    // JSON is invisible to them. Deliberately alongside the write
-                    // that sets overflow_bounds, not in a sweep afterwards.
-                    if ($withOverflow) {
-                        \App\Services\Ripple\RipplingOverflowIndex::upsertFromBounds((int) $row->msgid, $overflowJson);
-                    }
                     $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
                     $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $withOverflow, $poly): string {
                         $cols = $ready ? ', outer_bound, inner_bound' : '';
