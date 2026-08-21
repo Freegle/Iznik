@@ -281,6 +281,20 @@ prefilter every read does before parsing a polygon).
 `rural` is exclusive with the other two, because it needs the cap to have bound and they need
 it not to have. `fairness` and `cluster` can both be present on one post.
 
+**The two lanes meet at the cap, and that is deliberate.** `cluster.floor` defaults to
+`extent.target_users` rather than to a number of its own, so every post the cap did not bind
+is a cluster candidate. When the floor was an independent 1,000 against a cap of 4,000, a post
+reaching 1,000–3,999 people qualified for neither lane — measured over three days of live
+reaches on 2026-08-21, **1,879 posts, a third of everything posted**, and precisely the
+semi-rural case both lanes exist for. 341 live posts across the Yorkshire Dales carried no
+ring of any kind; one sampled at a pool of 1,896. Five dead-zone posts sampled after the
+change all drew wedges (one to three each).
+
+It is not free: the lane pays for its own second isochrone out to `cluster.max_minutes` plus a
+spatial round trip, which roughly doubles a schedule call — measured 2.9→6.1s, 1.2→3.0s,
+0.7→1.5s. That is per post, on the expansion pass, for the posts newly brought into the lane
+(~700/day).
+
 **Cluster wedges exist because a ring is the wrong shape for a remote post.** Growing the whole
 circle out to catch one town also claims a large area of empty ground. Measured: a Hawes post
 reaches ~427 members at the 45-minute ceiling while Kendal sits at ~47 minutes; including it
