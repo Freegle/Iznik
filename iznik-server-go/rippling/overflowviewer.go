@@ -238,3 +238,59 @@ func OverflowRowSelector(db *gorm.DB) string {
 
 	return "rr.overflow_bounds IS NOT NULL"
 }
+
+// --- indexed ring prefilter -------------------------------------------------
+//
+// rippling_reach_overflow holds each ring family's bounding box as an indexed
+// POLYGON. It exists because the authoritative rings are JSON in
+// rippling_reach.overflow_bounds, which no index can answer: asking the ring
+// question against that column means a scan of a ~17GB table, and ORing it into
+// the spatial containment predicate took the site down on 2026-08-21. Indexing
+// rippling_reach in place was not available either - the ALTER blocks the
+// cluster under TOI and blocks the node under RSU - so the index lives here.
+//
+// This is a PREFILTER, not the answer. It narrows to the handful of posts whose
+// rings could admit this point; the exact per-lane test still runs against the
+// JSON, bounded to those msgids by primary key.
+
+var (
+	prefilterOnce  sync.Once
+	prefilterReady bool
+)
+
+// OverflowPrefilterReady reports whether the side table exists AND has rows.
+//
+// Emptiness matters as much as absence: an empty table would silently answer
+// "no post has a ring", quietly removing every ring member's access while
+// looking perfectly healthy. Until the backfill has run we keep using the JSON
+// path. Checked once per process - this is called from read paths.
+func OverflowPrefilterReady(db *gorm.DB) bool {
+	prefilterOnce.Do(func() {
+		var n int64
+		if err := db.Raw("SELECT COUNT(*) FROM information_schema.tables " +
+			"WHERE table_schema = DATABASE() AND table_name = 'rippling_reach_overflow'").
+			Scan(&n).Error; err != nil || n == 0 {
+			return
+		}
+
+		var rows int64
+		if err := db.Raw("SELECT COUNT(*) FROM (SELECT 1 FROM rippling_reach_overflow LIMIT 1) t").
+			Scan(&rows).Error; err == nil && rows > 0 {
+			prefilterReady = true
+		}
+	})
+
+	return prefilterReady
+}
+
+// OverflowCandidates returns the msgids whose ring bounding box contains the
+// point, straight off the SPATIAL index.
+func OverflowCandidates(db *gorm.DB, lng, lat float64, srid int) []uint64 {
+	var ids []uint64
+	db.Table("rippling_reach_overflow").
+		Select("msgid").
+		Where("ST_Contains(bbox, ST_SRID(POINT(?, ?), ?))", lng, lat, srid).
+		Scan(&ids)
+
+	return ids
+}

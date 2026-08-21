@@ -168,6 +168,11 @@ class BackfillRingsCommand extends Command
                               WHERE msgid = ? AND overflow_bounds IS NULL',
                             [$json, $row->msgid]
                         );
+
+                        // Index the bbox as well, or the rings this just wrote stay
+                        // invisible to the read surfaces, which narrow on
+                        // rippling_reach_overflow before testing the JSON.
+                        \App\Services\Ripple\RipplingOverflowIndex::upsertFromBounds((int) $row->msgid, $bounds);
                     }
                     $stats['ringed']++;
                     $lastMsgid = max($lastMsgid, (int) $row->msgid);
