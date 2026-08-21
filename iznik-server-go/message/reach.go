@@ -29,6 +29,13 @@ import (
 // Callers checking reach from a post's own location rather than a viewer's (the
 // match mailers) pass 0: no viewer, no rings.
 //
+// A FROZEN reach (status 'held', set by FreezeReachIfOriginPending when the origin copy is
+// pulled back for moderation) is treated here exactly like a live one. Freezing stops a post
+// being pushed OUTWARD - it is not mailed or pushed while its origin is under review - but it
+// does not make a member who is outside the polygon reached. They are not, so the message page
+// tells them so, and their reply is held to protect the poster's ordering just as it would be
+// on a post still expanding.
+//
 // Containment consults the sandwich bounds when migrated (see
 // rippling/reachbounds.go): outside a real outer_bound is an authoritative
 // reject, inside inner_bound an authoritative accept, and only the band between

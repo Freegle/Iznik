@@ -231,3 +231,41 @@ func TestCreateChatMessage_RingAdmittedReplyNotHeld(t *testing.T) {
 	assert.Equal(t, 0, heldCount,
 		"a ring-admitted reply is delivered, not held: the mail invited this member")
 }
+
+// Freezing a reach stops the post being pushed OUTWARD. It does not make anyone reached.
+//
+// FreezeReachIfOriginPending sets status 'held' when a post's origin copy is pulled back for
+// moderation. The mail and push paths must leave such a post alone, because we should not
+// advertise something that is under review. But a member OUTSIDE the polygon still has not
+// been reached by it, so the message page must still say so and their reply must still be
+// held - the same answer they would get on a post that is simply still expanding.
+func TestReachBlocked_FrozenReachStillBlocksThoseOutsideIt(t *testing.T) {
+	db := database.DBConn
+	ringSchemaExec(t)
+
+	prefix := uniquePrefix("heldreach")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	group := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, posterID, group, "Member")
+	msgID := CreateTestMessage(t, posterID, group, "OFFER: frozen reach test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+
+	// A live reach far from the viewer: they are genuinely not reached yet.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 53.0, 2.0, "+
+		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", msgID)
+
+	blocked := message.ReachBlockedSet(viewerID, []uint64{msgID}, 51.5, -0.1)
+	assert.True(t, blocked[msgID], "a live reach that has not arrived yet blocks")
+
+	// Freeze it. The same viewer, the same distance - and the same answer, because freezing
+	// changes what we SEND, not who has been reached.
+	db.Exec("UPDATE rippling_reach SET status = 'held' WHERE msgid = ?", msgID)
+
+	blocked = message.ReachBlockedSet(viewerID, []uint64{msgID}, 51.5, -0.1)
+	assert.True(t, blocked[msgID],
+		"a frozen reach still blocks someone outside it: they have not been reached")
+}

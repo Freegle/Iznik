@@ -300,6 +300,43 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'a withdrawn/taken post must not be digested');
     }
 
+    public function test_daily_digest_excludes_a_post_whose_reach_is_frozen(): void
+    {
+        // A frozen reach (status 'held') means the origin copy has been pulled back for
+        // moderation. Browse, the badge and search hide the post, and nothing ever clears
+        // 'held', so the digest carrying it would leave the mail as the one surface still
+        // pushing a post that is under review.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // A reach that DOES cover the recipient, so only the frozen status can exclude it.
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1,
+                ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857),
+                ST_Envelope(ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857)),
+                'held', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id]
+        );
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'a post under moderation must not be digested');
+    }
+
     public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
     {
         // A messages_likes 'View' (in-app view, or an opened/clicked digest via
@@ -3608,17 +3645,20 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
-     * Cluster is PULL-ONLY (browse/search/banner/reply) and must NEVER be mailed. A member
-     * outside the committed reach whose only route in is a cluster wedge must not be picked up
-     * by the reach mailer, even with both the other lanes enabled - there is no rural/fairness
-     * ring on this post to admit them by, and overflowBranch() never reads 'cluster'.
+     * A cluster wedge admits on every surface, mail included.
+     *
+     * A member a wedge lets in sees the post on browse, finds it in search, is not told it has
+     * not reached them, and may reply to it. Telling them about it is the same decision, so it
+     * is answered the same way. Showing someone a post the mail never mentions is the same
+     * split as mailing someone a post the site hides, only facing the other way.
      */
-    public function test_mail_newly_reached_does_not_mail_a_cluster_only_member(): void
+    public function test_mail_newly_reached_mails_a_cluster_admitted_member(): void
     {
         config([
             'freegle.digest.immediate_allowlist' => '*',
             'freegle.ripple.rural_access.enabled' => true,
             'freegle.ripple.fairness.enabled' => true,
+            'freegle.ripple.cluster.enabled' => true,
         ]);
         UnifiedDigestService::forgetOverflowColumn();
 
@@ -3653,9 +3693,9 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->service->mailNewlyReachedForPost($msg->id);
 
-        $this->assertFalse(
+        $this->assertTrue(
             $this->wasMailed($msg->id, $member->id),
-            'cluster is pull-only and must never reach the mail path'
+            'a member a cluster wedge admits is mailed, exactly as browse and reply admit them'
         );
     }
 }

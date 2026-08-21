@@ -716,13 +716,30 @@ class UnifiedDigestService
      *
      * @return array{0: string, 1: array<int, mixed>}
      */
+    /**
+     * The per-row "an overflow lane admits this member" SQL for one post, as OR-clauses meant
+     * to be appended after a primary containment test.
+     *
+     * Public because MatchMailService needs the same answer for the opposite reason: it mails
+     * people the post has NOT reached yet, so it has to exclude the ones a lane has already
+     * let in. Two definitions of "admitted" drifting apart is the failure this whole area has
+     * been correcting, so there is one, here.
+     *
+     * @return array{0: string, 1: array<int, mixed>, 2: ?string}  [sql, params, lane]
+     */
+    public function overflowAdmissionSql(int $msgid, string $point): array
+    {
+        return $this->overflowBranch($msgid, $point);
+    }
+
     private function overflowBranch(int $msgid, string $point): array
     {
         $none = ['', [], null];
 
         $ruralOn = (bool) config('freegle.ripple.rural_access.enabled', false);
         $fairnessOn = (bool) config('freegle.ripple.fairness.enabled', false);
-        if (! $ruralOn && ! $fairnessOn) {
+        $clusterOn = (bool) config('freegle.ripple.cluster.enabled', false);
+        if (! $ruralOn && ! $fairnessOn && ! $clusterOn) {
             return $none;
         }
 
@@ -742,12 +759,14 @@ class UnifiedDigestService
 
             $srid = (int) config('freegle.srid', 3857);
 
-            // A post carries rings from ONE lane: the routing server picks by whether the
-            // audience cap actually bound, and never sends both. So this reads whichever it
-            // sent rather than trying to combine them.
+            // Rural is exclusive with the other two (it needs the audience cap to have bound,
+            // they need it not to have), but fairness and cluster can both be present, so the
+            // branches accumulate instead of one winning.
+            $sql = '';
+            $params = [];
+            $lanes = [];
+
             if ($ruralOn && is_array($bounds['rural'] ?? null) && ! empty($bounds['rural'])) {
-                $sql = '';
-                $params = [];
                 foreach ($bounds['rural'] as $band => $wkt) {
                     if (! is_string($wkt) || $wkt === '') {
                         continue;
@@ -761,7 +780,9 @@ class UnifiedDigestService
                     $params[] = $srid; // the point's own SRID, repeated per branch
                 }
 
-                return $sql === '' ? $none : [$sql, $params, 'rural'];
+                if ($sql !== '') {
+                    $lanes[] = 'rural';
+                }
             }
 
             if ($fairnessOn && is_array($bounds['fairness'] ?? null) && ! empty($bounds['fairness'])) {
@@ -770,8 +791,7 @@ class UnifiedDigestService
                 // decided afterwards, by the deprivation fifth. That is not in this database
                 // - the spatial server holds the index - so it is answered in one call for
                 // the people the ring adds rather than stored against anybody.
-                $sql = '';
-                $params = [];
+                $before = $sql;
                 foreach ($bounds['fairness'] as $q => $wkt) {
                     if (! is_string($wkt) || $wkt === '' || ! is_numeric($q)) {
                         continue;
@@ -782,10 +802,53 @@ class UnifiedDigestService
                     $params[] = $srid;
                 }
 
-                return $sql === '' ? $none : [$sql, $params, 'fairness'];
+                if ($sql !== $before) {
+                    $lanes[] = 'fairness';
+                }
             }
 
-            return $none;
+            // The cluster wedges, mailed on exactly the same terms as every other lane.
+            //
+            // A member a wedge admits sees the post on browse, in search and on the message
+            // page, and may reply to it. Telling them about it is the same decision, so it
+            // is made the same way: a lane that shows a post to somebody the mail never
+            // mentions is the split this whole change exists to remove, just facing the
+            // other way.
+            //
+            // Unconditional, like fairness and unlike rural: a wedge sits beyond every band's
+            // ceiling by construction, so testing the member's band would refuse exactly the
+            // town it was drawn for.
+            if ($clusterOn && is_array($bounds['cluster'] ?? null) && ! empty($bounds['cluster'])) {
+                $before = $sql;
+                foreach ($bounds['cluster'] as $wedge => $wkt) {
+                    if (! is_string($wkt) || $wkt === '') {
+                        continue;
+                    }
+                    $sql .= " OR ST_Contains(ST_GeomFromText(?, ?), $point)";
+                    $params[] = $wkt;
+                    $params[] = $srid;
+                    $params[] = $srid;
+                }
+                if ($sql !== $before) {
+                    $lanes[] = 'cluster';
+                }
+            }
+
+            if ($sql === '') {
+                return $none;
+            }
+
+            // Only the fairness lane has a post-filter, and it drops every ring-admitted row
+            // that is not in a deprived fifth. It cannot tell WHICH ring admitted someone, so
+            // running it while cluster wedges are also in play would throw away cluster
+            // admits, which are unconditional by design. When both are present the narrowing
+            // is skipped and the label says cluster. Not a live combination today: fairness is
+            // off by default and unset everywhere.
+            if (in_array('fairness', $lanes, true) && ! in_array('cluster', $lanes, true)) {
+                return [$sql, $params, 'fairness'];
+            }
+
+            return [$sql, $params, in_array('cluster', $lanes, true) ? 'cluster' : 'rural'];
         } catch (\Throwable $e) {
             // A post that cannot be checked for overflow still gets its normal reach mail.
             Log::warning('ripple: overflow branch unavailable', ['msgid' => $msgid, 'error' => $e->getMessage()]);
@@ -904,6 +967,14 @@ class UnifiedDigestService
                 $primaryParams[] = $srid;
             }
 
+            // status <> 'held': a frozen reach belongs to a post whose origin copy has been
+            // pulled back for moderation. Browse, the badge and search hide it, so mailing it
+            // would be the one surface still pushing a post that is under review. Freezing is
+            // one-way, so this is not a race that resolves.
+            //
+            // Withdrawn joins Taken/Received: all three mean the post is gone, and a member
+            // newly inside the reach of a withdrawn post has nothing to reply to.
+            //
             // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText) and the
             // JSON_EXTRACT point resolution have no query-builder equivalent.
             $recipientRows = collect(DB::select(
@@ -917,9 +988,10 @@ class UnifiedDigestService
                  JOIN users u ON u.id = m.userid
                  LEFT JOIN locations l ON l.id = u.lastlocation
                  WHERE mg.msgid = ? AND mg.collection = 'Approved' AND mg.deleted = 0
+                   AND mr.status <> 'held'
                    AND NOT EXISTS (
                          SELECT 1 FROM messages_outcomes mo
-                         WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received')
+                         WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
                    AND (ST_Contains(mr.polygon, $point)$overflowSql)
@@ -1680,14 +1752,7 @@ class UnifiedDigestService
             // scoreAndSortAvailable's internal $post->_dist (which is only set when that
             // method doesn't early-return) — see DistancePreferenceFilter and the design
             // doc's "Insertion points" section.
-            $posts = $posts->filter(fn ($p) => $this->passesDistancePreference(
-                $latlng,
-                $p->lat,
-                $p->lng,
-                $user,
-                (int) $p->fromuser === (int) $user->id,
-                $this->authorMaxMiles((int) $p->fromuser)
-            ))->values();
+            $posts = $this->filterByDistancePreference($posts, $user, $latlng);
         }
 
         $completedPosts = $mode === self::MODE_DAILY
@@ -1882,7 +1947,7 @@ class UnifiedDigestService
     }
 
     /**
-     * The rural-access ring as an OR-rescue for the daily digest / daily-posts push reach gate
+     * The overflow rings as an OR-rescue for the daily digest / daily-posts push reach gate
      * below: a member whose OWN density band earns a wider travel budget than a post's capped
      * reach must still see it, exactly as they already can on browse (ReachQueryService) and in
      * the reach mail (overflowBranch above). Mirrors iznik-server-go rippling.RuralOverflowWhere:
@@ -1894,13 +1959,19 @@ class UnifiedDigestService
      * than built into a JSON path from the stored value, so a member's settings stay data, not
      * syntax that could address an arbitrary path.
      *
+     * The cluster wedges are consulted too, and unconditionally: a wedge sits beyond every
+     * band's ceiling, so testing the member's band would refuse the town it was drawn for. A
+     * member a wedge admits can see the post on browse and reply to it, so the daily digest
+     * tells them about it on the same terms - a lane that shows a post to somebody the mail
+     * never mentions is the same split as the one this reach gate exists to close.
+     *
      * Fairness is deliberately NOT consulted here: admission needs a per-member network call to
      * the routing server (filterFairnessRows' /v1/quintiles), which is answered for a handful of
      * ring-added mail recipients per post, not affordable once per candidate post in a member's
      * whole digest backlog.
      *
-     * Returns ['', []] when the lane is off or the member has no recorded band, so the reach
-     * gate is byte-identical to before whenever this cannot apply.
+     * Returns ['', []] when no lane can apply, so the reach gate is byte-identical to before
+     * whenever this cannot contribute.
      *
      * $point is the same 'ST_SRID(POINT(?, ?), 3857)' fragment the caller's containment test
      * uses, reused verbatim so the ring is tested against exactly the point the reach gate is —
@@ -1913,10 +1984,6 @@ class UnifiedDigestService
     {
         $none = ['', []];
 
-        if (! (bool) config('freegle.ripple.rural_access.enabled', false)) {
-            return $none;
-        }
-
         $settings = $user->settings;
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
@@ -1924,7 +1991,19 @@ class UnifiedDigestService
         $band = is_array($settings) ? ($settings['browseDensityBand'] ?? null) : null;
 
         $paths = ['dense' => '$.rural.dense', 'medium' => '$.rural.medium', 'sparse' => '$.rural.sparse'];
-        if (! is_string($band) || ! isset($paths[$band])) {
+
+        $ringPaths = [];
+        if ((bool) config('freegle.ripple.rural_access.enabled', false)
+            && is_string($band) && isset($paths[$band])) {
+            $ringPaths[] = $paths[$band];
+        }
+        if ((bool) config('freegle.ripple.cluster.enabled', false)) {
+            // Fixed set, like the band paths: nothing user-supplied reaches a JSON path.
+            $ringPaths[] = '$.cluster.w1';
+            $ringPaths[] = '$.cluster.w2';
+            $ringPaths[] = '$.cluster.w3';
+        }
+        if ($ringPaths === []) {
             return $none;
         }
 
@@ -1940,11 +2019,27 @@ class UnifiedDigestService
                 . ' AND ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[2]')")
             . ' AND ' . $dec('?') . ' BETWEEN ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[1]')")
                 . ' AND ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[3]')")
-            . " AND ST_Contains(ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(rr.overflow_bounds, ?)), 3857), $point))";
+            . ' AND (';
 
         [$lat, $lng] = $latlng;
+        // Two placeholders so far: the bbox longitude and latitude. The point placeholders
+        // belong to each ring test below and are bound with it.
+        $params = [$lng, $lat];
 
-        return [$where, [$lng, $lat, $paths[$band], $lng, $lat]];
+        // COALESCE so a path this row does not carry reads as false rather than NULL, matching
+        // rippling.OverflowWhereAny: a NULL here would poison the whole disjunction.
+        $tests = [];
+        foreach ($ringPaths as $ringPath) {
+            $tests[] = "COALESCE(ST_Contains("
+                . "ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(rr.overflow_bounds, ?)), 3857), $point), 0) = 1";
+            $params[] = $ringPath;
+            $params[] = $lng;
+            $params[] = $lat;
+        }
+
+        $where .= implode(' OR ', $tests) . '))';
+
+        return [$where, $params];
     }
 
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
@@ -2007,6 +2102,19 @@ class UnifiedDigestService
         // are not notified of posts they cannot yet reply to. Posts with no reach row are
         // unaffected. Skipped entirely when we can't resolve the member's location (fail
         // open — no regression for locationless members).
+        // A frozen reach (status 'held') means the post's origin copy has been pulled back for
+        // moderation. Browse, the badge and search hide it outright, so the daily digest and
+        // the daily-posts push (which share this query) must not carry it either.
+        //
+        // Written as its own exclusion rather than folded into the reach gate below: that gate
+        // is a NOT EXISTS over reach rows which do NOT contain the member, so adding
+        // "status <> 'held'" inside it would EXCLUDE the frozen row from the rejection set and
+        // let the post through - the exact opposite of the intent.
+        $query->whereRaw(
+            "NOT EXISTS (SELECT 1 FROM rippling_reach rrh
+                WHERE rrh.msgid = messages.id AND rrh.status = 'held')"
+        );
+
         $latlng = $this->resolveUserLatLng($user);
         if ($latlng !== null) {
             if ($this->reachBoundsAvailable()) {
@@ -2186,6 +2294,35 @@ class UnifiedDigestService
      * @param mixed $lat Post/message latitude (numeric or null).
      * @param mixed $lng Post/message longitude (numeric or null).
      */
+    /**
+     * Narrow a post collection to the ones inside the member's distance preference.
+     *
+     * Public and shared because the daily EMAIL digest and the daily-posts PUSH must answer
+     * "is this near enough for this member" identically. They previously did not: the email
+     * applied this filter and the push, which calls getPostsForUser directly, did not - so a
+     * member's own distance setting hid a post from their inbox while it still arrived on
+     * their phone.
+     *
+     * $latlng may be passed when the caller has already resolved it (the digest does, for
+     * scoring), otherwise it is resolved here.
+     *
+     * @param  \Illuminate\Support\Collection  $posts
+     * @return \Illuminate\Support\Collection
+     */
+    public function filterByDistancePreference($posts, User $user, ?array $latlng = null)
+    {
+        $latlng ??= $this->resolveUserLatLng($user);
+
+        return $posts->filter(fn ($p) => $this->passesDistancePreference(
+            $latlng,
+            $p->lat,
+            $p->lng,
+            $user,
+            (int) $p->fromuser === (int) $user->id,
+            $this->authorMaxMiles((int) $p->fromuser)
+        ))->values();
+    }
+
     private function passesDistancePreference(?array $recipientLatLng, $lat, $lng, User $user, bool $isOwnPost, ?float $authorMaxMiles = null): bool
     {
         if ($isOwnPost) {

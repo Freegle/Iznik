@@ -76,6 +76,9 @@ says so, and the reach can also be trimmed where members have left a community o
 the poster's own distance preference. A post that has not rippled out yet says so instead of
 drawing an area.
 
+A post in a very rural spot may show one to three narrow **spurs** reaching out further than
+the main area, towards a nearby town. See "Reaching a town from a very rural spot" below.
+
 Any moderator can open this, not just moderators of the communities the post is on - since
 rippling is what carries posts beyond their original community, the person wondering how far
 one travelled is often not a mod of where it started.
@@ -203,6 +206,31 @@ set to "Nearer" is a likely reason.
 
 ---
 
+## Reaching a town from a very rural spot
+
+Rippling normally grows a post outwards in every direction at once, up to a limit on how far
+someone could reasonably travel. That works badly for a genuinely remote poster: the circle
+fills up with empty countryside long before it touches anywhere many people live. Measured on
+a real case, a post from Hawes in the Yorkshire Dales could be seen by about 430 members at
+the maximum, while Kendal - the nearest town, and the one people there actually drive to -
+sat just outside the limit at about 47 minutes.
+
+So for posts whose whole reachable audience is small, the ripple now also looks a little
+further out for a genuine cluster of members - a town - and extends towards up to three of
+them as narrow spurs, rather than pushing the whole circle outwards over more empty ground.
+In that Hawes example, taking in Kendal roughly doubles the number of people who can see the
+post.
+
+Deliberately clusters, not "the nearest community centre": a community covering two towns has
+its middle in the fields between them, so aiming there would reach neither.
+
+Members inside one of those spurs are treated exactly as everyone else the post has reached.
+They see it on Browse and in search, they are told about it in digests, emails and phone
+notifications, and they can reply. There is no separate category of member who can see a post
+but is never told about it, or who is told about a post they then cannot reply to.
+
+---
+
 ## When a poster leaves your community
 
 If a poster leaves your community (or is removed), their rippled-in post is **pulled
@@ -322,6 +350,14 @@ click - so a rippled copy may linger very briefly before it disappears.
 (**Back to Pending** now works differently from Delete/Reject: it keeps each community's
 copy for per-group review and does **not** re-ripple on re-approval - see **Reporting a
 post** below.)
+
+While a post is in that frozen state we stop advertising it: it is not included in daily
+digests, immediate emails or phone notifications, because it is under review and we should
+not be pushing something we may be about to reject. It also stays out of the Nearby feed and
+search. Members who are outside the area it had reached when it froze are still told it has
+not reached them yet, and a reply from one of them is still held, exactly as it would be on a
+post that is simply still spreading - freezing changes what we send out, not who the post had
+actually got to.
 
 The poster is also removed from any community they had been auto-joined to **only** to carry
 that post (i.e. where they have no other posts). They keep their home community and any

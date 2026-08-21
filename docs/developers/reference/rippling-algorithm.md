@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-17
+last_reviewed: 2026-08-21
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -266,6 +266,55 @@ drops out of every column, so the rehome rate is an overestimate in all bands. T
 safe to compare with each other, not to read individually - and only for as long as nothing
 makes withdrawal differ by band.
 
+## 3b. Overflow lanes: admitting people the sizing rules left out
+
+Three lanes widen who a post admits, stored together as WKT in
+`rippling_reach.overflow_bounds` alongside a single `bbox` covering all of them (the cheap
+prefilter every read does before parsing a polygon).
+
+| Lane | Fires when | Shape | Admission |
+|---|---|---|---|
+| `rural` | the audience cap bound | one ring per density band, sliced from the already-computed isochrone | the member's OWN band's ring |
+| `fairness` | the cap did not bind | one ring per deprivation fifth | unconditional within the fifth; off by default |
+| `cluster` | the cap did not bind AND the whole reachable pool is under `cluster.floor` | up to three bearing WEDGES aimed at member clusters in the shell beyond the ceiling | unconditional |
+
+`rural` is exclusive with the other two, because it needs the cap to have bound and they need
+it not to have. `fairness` and `cluster` can both be present on one post.
+
+**Cluster wedges exist because a ring is the wrong shape for a remote post.** Growing the whole
+circle out to catch one town also claims a large area of empty ground. Measured: a Hawes post
+reaches ~427 members at the 45-minute ceiling while Kendal sits at ~47 minutes; including it
+takes the pool to ~941. Clusters, never a centroid - a two-town community averages to a point
+in a field between them.
+
+**Every lane is honoured identically on every surface**, and this is the property to preserve:
+
+| Surface | Where |
+|---|---|
+| Browse feed, unread badge | `isochrone/reachbounds.go`, `reachspatial.go` |
+| Browse-scoped search | `message/search.go` |
+| Message page banner, reply eligibility | `message/reach.go` |
+| Web reply gate | `chat/chatmessage.go` |
+| Email and TN reply hold | `Ripple/ReachQueryService.php` |
+| Immediate mail, reach mail | `UnifiedDigestService::overflowBranch` |
+| Daily digest, daily-posts push | `UnifiedDigestService::ruralRingRescueWhere` (rural + cluster; fairness needs a per-member network call, too costly per candidate post) |
+
+The read side decides which paths apply in one place, `rippling/overflowviewer.go`
+(`ViewerOverflowPaths`). Every lane needs a VIEWER: a caller without one is asking whether a
+post reached another POST's location (`message/postmatches.go`, which feeds the matched-posts
+email), and a ring cannot admit somebody who is not standing anywhere.
+
+A surface that consults a lane the others do not is the defect this structure exists to
+prevent, in either direction: mailing someone a post the site then hides from them, or showing
+someone a post they are never told about.
+
+**Flags** (`config/freegle.php`): `ripple.rural_access.enabled` and `ripple.cluster.enabled`
+default ON, `ripple.fairness.enabled` defaults OFF. The Go side reads the same names from the
+environment and must default the same way - shipping the two halves with opposite defaults is
+what produced a live split where the mail invited members the website refused.
+
+---
+
 ## 4. Targeting: which groups receive the post
 
 A group receives a rippled copy only if **at least one active freegler who lives in that
@@ -408,6 +457,24 @@ For each due post, `ripple:expand`:
 **Rejoin suppression.** If a freegler's most recent Group/Joined log for a group is a
 ripple-join (`logs.text = 'Rippled'`) and they then left, rippling does not re-add them: they
 opted out of a rippled membership. A later ordinary join-then-leave does not block rippling.
+
+## 5a. Frozen reaches (`status = 'held'`)
+
+`FreezeReachIfOriginPending` (`iznik-server-go/microvolunteering`) sets `status='held'` when a
+post's origin copy stops being live-Approved, typically Back to Pending. It is the only writer,
+and nothing clears it: the freeze exists precisely so that re-approving a copy cannot re-reach
+and re-notify.
+
+Freezing governs what we SEND, not who has been reached:
+
+- **Not sent**: reach mail, daily digest and the daily-posts push all exclude a frozen post. It
+  is under review, so advertising it is the one thing we should not do.
+- **Not browsable**: the feed, badge and search filter `status != 'held'`.
+- **Unchanged**: a member outside the polygon is still told the post has not reached them, and
+  a reply from them is still held. They have not been reached, and freezing does not alter that;
+  the answer is the same one they would get on a post still expanding.
+
+---
 
 ## 6. Retraction
 
