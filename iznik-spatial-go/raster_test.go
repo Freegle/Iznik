@@ -217,3 +217,61 @@ func TestRasterOutsideBBoxIsOut(t *testing.T) {
 		t.Fatal("points outside the bbox must be OUT")
 	}
 }
+
+// partialFraction is the share of a raster's cells that need the exact
+// geometry - i.e. how often the dear fallback fires.
+func partialFraction(r *Raster) float64 {
+	partial := 0
+	for row := 0; row < r.Rows; row++ {
+		for col := 0; col < r.Cols; col++ {
+			if r.get(col, row) == cellPartial {
+				partial++
+			}
+		}
+	}
+	return float64(partial) / float64(r.Cols*r.Rows)
+}
+
+// The overflow rings pay ~6ms to resolve one boundary point (37k vertices
+// parsed out of JSON), against a sub-millisecond indexed lookup for a reach.
+// That is why they rasterise at a finer grid, and this is the property that
+// buys: the band is one cell wide along each edge, so smaller cells mean a
+// smaller share of points landing in it.
+func TestBuildRasterDim_FinerGridShrinksThePartialBand(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("POLYGON((")
+	const n = 2000
+	for i := 0; i <= n; i++ {
+		angle := 2 * math.Pi * float64(i%n) / n
+		sb.WriteString(fmt.Sprintf("%.6f %.6f", 5+5*math.Cos(angle), 5+5*math.Sin(angle)))
+		if i < n {
+			sb.WriteString(", ")
+		}
+	}
+	sb.WriteString("))")
+	g := mustGeom(t, sb.String())
+
+	coarse, fine := BuildRasterDim(g, 96), BuildRasterDim(g, 192)
+	if coarse == nil || fine == nil {
+		t.Fatal("nil raster")
+	}
+	if fine.Cols <= coarse.Cols {
+		t.Fatalf("finer grid has %d cols, coarse has %d", fine.Cols, coarse.Cols)
+	}
+	if partialFraction(fine) >= partialFraction(coarse) {
+		t.Errorf("finer grid must shrink the partial band: fine=%.4f coarse=%.4f",
+			partialFraction(fine), partialFraction(coarse))
+	}
+
+	// Finer must not mean looser: every classification still has to be right.
+	assertNeverWrong(t, g, fine)
+}
+
+// A dimension that makes no sense falls back to the default rather than
+// building a one-cell raster that classifies the whole world as partial.
+func TestBuildRasterDim_RejectsANonsenseDimension(t *testing.T) {
+	g := mustGeom(t, "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))")
+	if r := BuildRasterDim(g, 0); r == nil || r.Cols != rasterMaxDim {
+		t.Errorf("dim 0 must fall back to the default grid, got %v", r)
+	}
+}

@@ -42,6 +42,16 @@ func (d *ReachOverflowDataset) Name() string { return "reachoverflow" }
 func (d *ReachOverflowDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *ReachOverflowDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
+// ringRasterDim is finer than the reach dataset's grid, and deliberately so.
+//
+// A point landing in the boundary band costs an exact test, and for a ring that
+// means parsing ~37k vertices out of JSON - about 6ms, against the sub-ms
+// indexed lookup a reach's exact test costs. Halving the cell size halves the
+// band's share of the grid, so the dearer fallback fires half as often. The
+// price is index size (2 bits/cell: ~9KB per ring at 192, ~62MB for the ~6,700
+// live ring items) and load-time CPU, both of which are paid once a day.
+const ringRasterDim = 192
+
 // overflowLaneCodes maps each ring's JSON path to the code packed into an
 // item's ExtID. THE APIV2 SIDE HOLDS THE SAME TABLE
 // (iznik-server-go/rippling/overflowlanes.go) and both have a test asserting it
@@ -141,7 +151,7 @@ func buildOverflowItems(r overflowRowScan, lanes []string) []Item {
 		if err != nil {
 			continue
 		}
-		raster := BuildRaster(g)
+		raster := BuildRasterDim(g, ringRasterDim)
 		if raster == nil {
 			continue
 		}

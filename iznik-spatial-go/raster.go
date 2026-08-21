@@ -152,10 +152,25 @@ func polygonEdges(g geom.Geometry) []edge {
 	return edges
 }
 
-// BuildRaster classifies the grid cells for g. Returns nil for geometries with
-// no polygon edges (points, lines, empties) — callers treat that as
-// "no raster; always use the exact geometry".
+// BuildRaster classifies the grid cells for g at the default resolution.
+// Returns nil for geometries with no polygon edges (points, lines, empties) —
+// callers treat that as "no raster; always use the exact geometry".
 func BuildRaster(g geom.Geometry) *Raster {
+	return BuildRasterDim(g, rasterMaxDim)
+}
+
+// BuildRasterDim is BuildRaster at a chosen resolution, for datasets whose
+// exact fallback is dearer than a reach polygon's.
+//
+// The partial band is one cell wide along every edge, so its share of the grid
+// - and with it the number of points that need the exact geometry - falls as
+// the cells get smaller. That trade is worth paying where the fallback is a
+// 37k-vertex ring parsed out of JSON at ~6ms each (reachoverflow) and not where
+// it is an indexed ST_Contains on a stored polygon (reach).
+func BuildRasterDim(g geom.Geometry, maxDim int) *Raster {
+	if maxDim < 1 {
+		maxDim = rasterMaxDim
+	}
 	edges := polygonEdges(g)
 	if len(edges) == 0 {
 		return nil
@@ -167,13 +182,13 @@ func BuildRaster(g geom.Geometry) *Raster {
 		return nil
 	}
 
-	// Grid dimensions: aspect-fit within rasterMaxDim, at least 1 cell.
+	// Grid dimensions: aspect-fit within maxDim, at least 1 cell.
 	w, h := max.X-min.X, max.Y-min.Y
-	cols, rows := rasterMaxDim, rasterMaxDim
+	cols, rows := maxDim, maxDim
 	if w > h {
-		rows = int(math.Max(1, math.Round(float64(rasterMaxDim)*h/w)))
+		rows = int(math.Max(1, math.Round(float64(maxDim)*h/w)))
 	} else {
-		cols = int(math.Max(1, math.Round(float64(rasterMaxDim)*w/h)))
+		cols = int(math.Max(1, math.Round(float64(maxDim)*w/h)))
 	}
 
 	r := &Raster{
