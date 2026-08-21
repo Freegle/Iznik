@@ -6,7 +6,12 @@
 # data (including any cross-origin framing, via frame-ancestors) needed to move to enforcement later.
 # Note the policy keeps 'unsafe-inline'/'unsafe-eval' for now, so it is defence-in-depth (blocks
 # external script injection from non-allowlisted hosts), not a complete XSS control on its own.
+#
+# report-uri deliberately uses its OWN Sentry key ("CSP reports (report-uri)"), not the key the
+# site reports errors with. Reports arrive at page-load volume, so if they ever swamp the quota
+# that key can be deactivated on its own and real error reporting keeps working. Per-key rate
+# limits are not available on our Sentry plan, so the separate key IS the control.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-  Content-Security-Policy-Report-Only: worker-src blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *.facebook.net *.facebook.com *.sentry.io *.google.com *.googletagservices.com *.gstatic.com accounts.google.com/gsi/client cdn.jsdelivr.net *.paypalobjects.com googleads.g.doubleclick.net *.gumgum.com *.adnxs.com securepubads.g.doubleclick.net *.googlesyndication.com *.netlify.app cdn-cookieyes.com api.rlcdn.com ads.pubmatic.com; frame-ancestors 'self'; report-uri https://o118493.ingest.us.sentry.io/api/4504083802226688/csp-report/?sentry_key=63f870e6c729477ebca4098a0b07fd3a
+  Content-Security-Policy-Report-Only: worker-src blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *.facebook.net *.facebook.com *.sentry.io *.google.com *.googletagservices.com *.gstatic.com accounts.google.com/gsi/client cdn.jsdelivr.net *.paypalobjects.com googleads.g.doubleclick.net *.gumgum.com *.adnxs.com securepubads.g.doubleclick.net *.googlesyndication.com *.netlify.app cdn-cookieyes.com api.rlcdn.com ads.pubmatic.com; frame-ancestors 'self'; report-uri https://o118493.ingest.us.sentry.io/api/4504083802226688/csp-report/?sentry_key=fc7c58841e395ad8f8280492570c4f44
