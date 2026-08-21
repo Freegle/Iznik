@@ -240,12 +240,21 @@ class ReachQueryService
             return false;
         }
 
-        $viaBand = $bandPath !== null
+        // Ask only about lanes this post actually carries. One keyed read of its own
+        // row settles that, and it saves asking the index about three cluster wedges
+        // for the great majority of posts, which carry a rural ring and nothing else.
+        $carried = $this->lanesCarried($msgid, array_filter(array_merge([$bandPath], $clusterPaths)));
+        if ($carried === []) {
+            return false;
+        }
+
+        $viaBand = $bandPath !== null && in_array($bandPath, $carried, true)
             && RingIndex::admits($msgid, [['lat' => $lat, 'lng' => $lng, 'lanes' => [$bandPath]]]) !== [];
 
         $viaCluster = false;
-        if (! $viaBand && $clusterPaths !== []) {
-            $viaCluster = RingIndex::admits($msgid, [['lat' => $lat, 'lng' => $lng, 'lanes' => $clusterPaths]]) !== [];
+        $carriedWedges = array_values(array_intersect($clusterPaths, $carried));
+        if (! $viaBand && $carriedWedges !== []) {
+            $viaCluster = RingIndex::admits($msgid, [['lat' => $lat, 'lng' => $lng, 'lanes' => $carriedWedges]]) !== [];
         }
 
         if ($viaBand) {
@@ -258,5 +267,50 @@ class ReachQueryService
         }
 
         return $viaBand || $viaCluster;
+    }
+
+    /**
+     * Which of these lane paths does this post's reach row actually carry?
+     *
+     * JSON_CONTAINS_PATH, not JSON_EXTRACT: this asks whether a path EXISTS, and
+     * extracting it would copy a ~37k-vertex ring out of the row to answer a
+     * question about presence. Keyed on the primary key, so it is one row.
+     *
+     * @param  array<int, string>  $paths
+     * @return array<int, string>
+     */
+    private function lanesCarried(int $msgid, array $paths): array
+    {
+        if ($paths === []) {
+            return [];
+        }
+
+        try {
+            $selects = [];
+            $params = [];
+            foreach ($paths as $i => $path) {
+                $selects[] = "JSON_CONTAINS_PATH(overflow_bounds, 'one', ?) AS p$i";
+                $params[] = $path;
+            }
+            $params[] = $msgid;
+
+            $row = DB::selectOne('SELECT '.implode(', ', $selects).' FROM rippling_reach WHERE msgid = ?', $params);
+            if ($row === null) {
+                return [];
+            }
+
+            $carried = [];
+            foreach (array_values($paths) as $i => $path) {
+                if ((int) ($row->{"p$i"} ?? 0) === 1) {
+                    $carried[] = $path;
+                }
+            }
+
+            return $carried;
+        } catch (\Throwable $e) {
+            // Unreadable row: ask about nothing rather than guess. The reply is then
+            // gated on the committed reach alone, which is where it was before rings.
+            return [];
+        }
     }
 }

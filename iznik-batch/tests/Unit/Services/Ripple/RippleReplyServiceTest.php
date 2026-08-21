@@ -6,10 +6,13 @@ use App\Models\ChatMessage;
 use App\Services\Ripple\ReachQueryService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\FakesRingIndex;
 use Tests\TestCase;
 
 class RippleReplyServiceTest extends TestCase
 {
+    use FakesRingIndex;
+
     // Box covering lng [-0.2, 0.0], lat [51.4, 51.6].
     private const POLY = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
     private const INSIDE = [51.5, -0.1];   // [lat, lng]
@@ -18,6 +21,9 @@ class RippleReplyServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        // Ring admission is the spatial index's answer now, on every surface;
+        // the fake gives it from the rows each test seeds.
+        $this->fakeRingIndex();
         DB::statement('DELETE FROM rippling_held_replies');
         DB::statement('DELETE FROM rippling_reach');
     }

@@ -703,12 +703,14 @@ class UnifiedDigestService
      * it is only ever a prefilter: keepRingAdmitted() asks the index which of
      * these candidates the ring really admits.
      *
-     * Returns ['', [], null] when no lane is on, so a post with no applicable
-     * lane runs precisely the query it always ran.
+     * Returns ['', []] when no lane is on, so a post with no applicable lane runs
+     * precisely the query it always ran.
+     *
+     * @return array{0: string, 1: array<int, mixed>}
      */
     private function overflowBboxBranch(int $msgid, string $point): array
     {
-        $none = ['', [], null];
+        $none = ['', []];
 
         $ruralOn = (bool) config('freegle.ripple.rural_access.enabled', false);
         $fairnessOn = (bool) config('freegle.ripple.fairness.enabled', false);
@@ -725,32 +727,39 @@ class UnifiedDigestService
 
             $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_bounds');
             $bounds = is_string($raw) ? json_decode($raw, true) : null;
-            if (! is_array($bounds) || ! is_array($bounds['bbox'] ?? null) || count($bounds['bbox']) < 4) {
+            if (! is_array($bounds)) {
                 return $none;
             }
 
-            // Which lane is present decides what the caller does with the rows
-            // afterwards (fairness still needs its per-member quintile call).
-            $lane = null;
-            if ($ruralOn && ! empty($bounds['rural'])) {
-                $lane = 'rural';
-            } elseif ($fairnessOn && ! empty($bounds['fairness'])) {
-                $lane = 'fairness';
-            } elseif ($clusterOn && ! empty($bounds['cluster'])) {
-                $lane = 'cluster';
-            }
-            if ($lane === null) {
+            // Does this post carry a ring on any lane that is switched on? If not,
+            // there is nothing to widen for and the query stays exactly as it was.
+            $applicable = ($ruralOn && ! empty($bounds['rural']))
+                || ($fairnessOn && ! empty($bounds['fairness']))
+                || ($clusterOn && ! empty($bounds['cluster']));
+            if (! $applicable) {
                 return $none;
             }
 
-            [$minLng, $minLat, $maxLng, $maxLat] = array_map('floatval', array_slice($bounds['bbox'], 0, 4));
+            $box = $bounds['bbox'] ?? null;
+            if (! is_array($box) || count($box) < 4) {
+                // A ring with no stored box. Widen to every candidate rather than to
+                // none: narrowing is an optimisation, and skipping the lane instead
+                // would take this post's ring dark HERE while the site went on
+                // honouring it - a member invited by neither, or worse, shown a post
+                // the mail never mentioned. The index still decides who is in, and
+                // the candidate set is this post's own group members at this
+                // frequency, not the membership at large.
+                return [' OR 1 = 1', []];
+            }
+
+            [$minLng, $minLat, $maxLng, $maxLat] = array_map('floatval', array_slice($box, 0, 4));
 
             // The point expression resolves to mylocation else lastlocation; compare
             // its parts against the box. Written against the same expressions the
             // caller built so there is one definition of "where this member is".
             $sql = " OR (ST_X($point) BETWEEN ? AND ? AND ST_Y($point) BETWEEN ? AND ?)";
 
-            return [$sql, [$this->srid(), $minLng, $maxLng, $minLat, $maxLat], $lane];
+            return [$sql, [$this->srid(), $minLng, $maxLng, $minLat, $maxLat]];
         } catch (\Throwable $e) {
             Log::warning('ripple: overflow bbox branch failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
 
@@ -793,6 +802,16 @@ class UnifiedDigestService
             ];
         }
 
+        // The deprivation lane is per MEMBER, not per post: apiv2 tests the ring
+        // belonging to the viewer's OWN fifth (rippling.ViewerFairnessPath), so the
+        // mail must ask the same or the two admit different people. The fifth is not
+        // recorded anywhere - it is asked of the spatial server, in one call for all
+        // the candidates, as it always was.
+        foreach ($this->fairnessLanes($msgid, $candidates) as $i => $lane) {
+            $candidates[$i]['lanes'][] = $lane;
+        }
+        $candidates = array_filter($candidates, fn ($c) => $c['lanes'] !== []);
+
         foreach (RingIndex::admits($msgid, $candidates) as $i) {
             $kept[] = $rows[$i];
         }
@@ -800,74 +819,62 @@ class UnifiedDigestService
         return $kept;
     }
 
-    private function srid(): int
-    {
-        return (int) config('freegle.srid', 3857);
-    }
-
     /**
-     * Drop the people a fairness ring admitted who are not who it was for.
+     * The fairness ring path for each candidate, keyed as $candidates is.
      *
-     * The ring is a stretched isochrone, so on its own it just widens the reach for everyone
-     * inside it - which is a bigger radius, not fairness. The stretch is earned by the
-     * deprivation fifth, so that has to be tested before anyone extra is mailed.
+     * Absent for anyone whose fifth is unknown or outside the lane's range, and for
+     * everyone if the lookup fails - the same fail-closed posture the old
+     * quintile filter had, for the same reason: 0 means "no data", never "deprived".
      *
-     * Asked of the spatial server, in ONE call, for only the people the ring added: it already
-     * holds the IMD index for the isochrone itself, so nothing else has to load or retain IMD
-     * data and no inferred deprivation attribute is written against an individual anywhere.
-     *
-     * Fails CLOSED. If the lookup is unavailable the extra people are dropped and the post
-     * mails its normal reach, because the alternative - mailing everyone the stretched ring
-     * covers - is the widened-radius behaviour this filter exists to prevent.
-     *
-     * @param  array<int, object>  $rows  recipient rows carrying in_primary and resolved coords
-     * @return array<int, object>
+     * @param  array<int|string, array{lat: float, lng: float, lanes: array<int, string>}>  $candidates
+     * @return array<int|string, string>
      */
-    private function filterFairnessRows(array $rows, int $msgid): array
+    private function fairnessLanes(int $msgid, array $candidates): array
     {
-        $extra = array_values(array_filter($rows, fn ($r) => (int) ($r->in_primary ?? 1) === 0));
-        if (empty($extra)) {
-            return $rows;
+        if ($candidates === [] || ! (bool) config('freegle.ripple.fairness.enabled', false)) {
+            return [];
         }
 
+        $keys = array_keys($candidates);
+        $points = array_map(fn ($c) => [$c['lat'], $c['lng']], array_values($candidates));
         $maxQuintile = max(1, min(4, (int) config('freegle.ripple.fairness.max_quintile', 1)));
-        $points = array_map(
-            fn ($r) => [(float) $r->resolved_lat, (float) $r->resolved_lng],
-            $extra
-        );
 
         try {
             $base = rtrim((string) config('freegle.routing_server_url'), '/');
-            $response = Http::timeout(10)->post($base . '/v1/quintiles', ['points' => $points]);
+            $response = Http::timeout(10)->post($base.'/v1/quintiles', ['points' => $points]);
             $quintiles = $response->successful() ? ($response->json('quintiles') ?? null) : null;
 
-            // A short or missing array cannot be matched back to people by position, and a
-            // mismatched one would attribute one member's deprivation to another.
-            if (! is_array($quintiles) || count($quintiles) !== count($extra)) {
+            // A short or missing array cannot be matched back to people by position, and
+            // a mismatched one would attribute one member's deprivation to another.
+            if (! is_array($quintiles) || count($quintiles) !== count($points)) {
                 throw new \RuntimeException('quintile lookup returned '
-                    . (is_array($quintiles) ? count($quintiles) : 'nothing')
-                    . ' answers for ' . count($extra) . ' points');
+                    .(is_array($quintiles) ? count($quintiles) : 'nothing')
+                    .' answers for '.count($points).' points');
             }
         } catch (\Throwable $e) {
-            Log::warning('ripple: fairness quintile lookup failed, dropping overflow recipients', [
-                'msgid' => $msgid, 'extra' => count($extra), 'error' => $e->getMessage(),
+            Log::warning('ripple: fairness quintile lookup failed, no ring admits on that lane', [
+                'msgid' => $msgid, 'candidates' => count($points), 'error' => $e->getMessage(),
             ]);
-            $quintiles = null;
+
+            return [];
         }
 
-        $keep = [];
-        foreach ($extra as $i => $row) {
-            // 0 means "no data", which is not a claim that they are deprived.
-            $q = $quintiles === null ? 0 : (int) ($quintiles[$i] ?? 0);
+        $lanes = [];
+        foreach ($keys as $i => $key) {
+            $q = (int) ($quintiles[$i] ?? 0);
             if ($q >= 1 && $q <= $maxQuintile) {
-                $keep[(int) $row->id] = true;
+                // Quoted: a JSON path member that is a number is not a bare
+                // identifier, so $.fairness.1 addresses nothing.
+                $lanes[$key] = '$.fairness."'.$q.'"';
             }
         }
 
-        return array_values(array_filter(
-            $rows,
-            fn ($r) => (int) ($r->in_primary ?? 1) === 1 || isset($keep[(int) $r->id])
-        ));
+        return $lanes;
+    }
+
+    private function srid(): int
+    {
+        return (int) config('freegle.srid', 3857);
     }
 
     public function mailNewlyReachedForPost(int $msgid, bool $dryRun = false): int
@@ -907,7 +914,9 @@ class UnifiedDigestService
             // only: four numeric comparisons against the stored box, no geometry
             // parsed, no ST_Contains against a 37k-vertex ring. Members it lets
             // through are candidates; the index says which of them are in.
-            [$overflowSql, $overflowParams, $overflowLane] = $this->overflowBboxBranch($msgid, $point);
+            // The lane name is no longer needed here: which lane admits whom is
+            // settled by the lanes each candidate is asked about, in keepRingAdmitted.
+            [$overflowSql, $overflowParams] = $this->overflowBboxBranch($msgid, $point);
 
             // Which arm brought each member in, and which lanes they are in. Both
             // are needed now for every ring lane, not just fairness: a candidate
@@ -963,10 +972,6 @@ class UnifiedDigestService
 
             if ($overflowSql !== '') {
                 $recipientRows = collect($this->keepRingAdmitted($recipientRows->all(), $msgid));
-            }
-
-            if ($overflowLane === 'fairness') {
-                $recipientRows = collect($this->filterFairnessRows($recipientRows->all(), $msgid));
             }
 
             $recipientIds = $recipientRows->pluck('id')->map(fn ($v) => (int) $v)->all();
@@ -1970,7 +1975,7 @@ class UnifiedDigestService
      * never mentions is the same split as the one this reach gate exists to close.
      *
      * Fairness is deliberately NOT consulted here: admission needs a per-member network call to
-     * the routing server (filterFairnessRows' /v1/quintiles), which is answered for a handful of
+     * the routing server (fairnessLanes' /v1/quintiles), which is answered for a handful of
      * ring-added mail recipients per post, not affordable once per candidate post in a member's
      * whole digest backlog.
      *
@@ -1984,6 +1989,41 @@ class UnifiedDigestService
      * @param  array{0:float,1:float}  $latlng  [lat, lng], as resolveUserLatLng returns
      * @return array{0: string, 1: array<int, mixed>}
      */
+    /**
+     * The posts this member's rings admit them to, as a fragment that stops the
+     * "not reached yet" filter rejecting them.
+     *
+     * The rings are not tested here. They are tested once, in the spatial index,
+     * and every surface reads that one answer — see App\Services\Ripple\RingIndex.
+     * A member the digest names a post to is a member who can open it, find it in
+     * search and reply to it, because the same call decided all four.
+     *
+     * @return array{0: string, 1: array<int, mixed>}
+     */
+    private function ringRescueIds(User $user, array $latlng): array
+    {
+        $settings = $user->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        $band = is_array($settings) ? ($settings['browseDensityBand'] ?? null) : null;
+
+        $lanes = RingIndex::lanesFor(is_string($band) ? $band : null);
+        if ($lanes === []) {
+            return ['', []];
+        }
+
+        $admitted = RingIndex::admittedFor((float) $latlng[0], (float) $latlng[1], $lanes);
+        if ($admitted === []) {
+            return ['', []];
+        }
+
+        return [
+            ' AND rr.msgid NOT IN (' . implode(',', array_fill(0, count($admitted), '?')) . ')',
+            $admitted,
+        ];
+    }
+
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
         // Immediate pulls only the user's immediate (-1) groups; daily pulls
