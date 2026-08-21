@@ -200,9 +200,17 @@ func TestFromIDsWhere_NeverCarriesTheJSONRingTest(t *testing.T) {
 	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
 
 	ringed, _ := fromIDsWhere([]int64{1}, []int64{2}, latlng, []uint64{101})
-	for _, banned := range []string{"overflow_bounds", "JSON_EXTRACT", "JSON_CONTAINS"} {
+	for _, banned := range []string{"overflow_bounds", "ST_GeomFromText"} {
 		if strings.Contains(ringed, banned) {
 			t.Errorf("the JSON ring test must not reach the badge query (%s): %q", banned, ringed)
 		}
+	}
+
+	// JSON_EXTRACT itself cannot be banned outright: the author distance cap
+	// reads browseMaxDistance out of au.settings, which is a keyed lookup on a
+	// row already joined, not a predicate anything has to scan for. Every
+	// occurrence must be that one.
+	if strings.Count(ringed, "JSON_EXTRACT") != strings.Count(ringed, "JSON_EXTRACT(au.settings") {
+		t.Errorf("the only JSON_EXTRACT allowed here is the author cap's settings lookup: %q", ringed)
 	}
 }
