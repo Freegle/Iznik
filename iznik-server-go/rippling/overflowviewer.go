@@ -257,7 +257,11 @@ func AdmittedMsgids(db *gorm.DB, lng, lat float64, srid int, paths []string) []u
 	}
 
 	definite := msgidsForLanes(in, codes)
-	maybe := msgidsForLanes(partial, codes)
+	// A post can be definite on one of the viewer's lanes and only maybe on
+	// another. It is already admitted, so drop it from the band: exact-testing
+	// it would buy nothing and cost a ring parse, and returning it twice would
+	// put the same id in the caller's IN list twice.
+	maybe := notAlreadyIn(msgidsForLanes(partial, codes), definite)
 	if len(definite) == 0 && len(maybe) == 0 {
 		return nil
 	}
@@ -293,6 +297,24 @@ func msgidsForLanes(extIDs []int64, codes map[int64]string) []uint64 {
 		ids = append(ids, msgid)
 	}
 	return ids
+}
+
+// notAlreadyIn drops ids that are already admitted.
+func notAlreadyIn(ids, admitted []uint64) []uint64 {
+	if len(admitted) == 0 {
+		return ids
+	}
+	have := make(map[uint64]struct{}, len(admitted))
+	for _, id := range admitted {
+		have[id] = struct{}{}
+	}
+	var out []uint64
+	for _, id := range ids {
+		if _, dup := have[id]; !dup {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // liveMsgids keeps only the posts whose reach row is still live.
