@@ -94,6 +94,19 @@ func countSubstr(s, sub string) int {
 	return n
 }
 
+// The reconcile compares POSTS: it shifts a lane's code back off the id to get
+// the msgid it belongs to. If that ever stopped being the inverse of the
+// stamping, reconcile would decide every item was stale and quietly empty the
+// index one tick after a deploy.
+func TestEncodeOverflowExtID_ShiftsBackToTheMsgid(t *testing.T) {
+	for lane, code := range overflowLaneCodes {
+		const msgid = int64(121564088)
+		if got := encodeOverflowExtID(msgid, code) >> overflowLaneShift; got != msgid {
+			t.Errorf("lane %q: id shifts back to %d, want %d", lane, got, msgid)
+		}
+	}
+}
+
 // A post carrying two lanes becomes two items, each stamped with its own lane,
 // and the lanes it does not carry produce nothing.
 func TestBuildOverflowItems_OneItemPerLaneCarried(t *testing.T) {

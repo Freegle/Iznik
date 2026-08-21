@@ -255,8 +255,14 @@ func (d *ReachOverflowDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since tim
 	cols, args := overflowSelect()
 	args = append(args, since.UTC())
 
+	// has_overflow (generated, indexed) bounds this to rows that actually carry
+	// rings: 16 reach rows change in a typical two minutes, 2 of them ringed, so
+	// the tick reads a couple of megabytes instead of every changed row's ~0.8MB
+	// of ring WKT. A post that LOSES its rings drops out of this filter and is
+	// therefore cleaned up by the reconcile below, not here.
 	rows, err := mysqlDB.Query(
-		"SELECT msgid, status, "+cols+" FROM rippling_reach WHERE updated_at > ?", args...)
+		"SELECT msgid, status, "+cols+
+			" FROM rippling_reach WHERE has_overflow = 1 AND updated_at > ?", args...)
 	if err != nil {
 		return fmt.Errorf("reachoverflow delta query: %w", err)
 	}
@@ -309,28 +315,26 @@ func (d *ReachOverflowDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since tim
 	return d.reconcile(mysqlDB, idx)
 }
 
-// reconcile diffs the index against the source, exactly as the reach dataset
-// does and for the same two reasons: reach rows are hard-DELETEd when a post
-// completes or is purged, and rows changed while this process was down are
-// invisible to an updated_at delta that only looks back one interval.
+// reconcile diffs the index against the source, for the two reasons the reach
+// dataset has one: reach rows are hard-DELETEd when a post completes or is
+// purged, and rows changed while this process was down are invisible to an
+// updated_at delta that only looks back one interval.
 //
-// JSON_CONTAINS_PATH, not JSON_EXTRACT: asking whether a path EXISTS reads the
-// JSON's index, while extracting it would copy every ring's ~0.8MB of WKT out
-// of 4,400 rows every tick to answer a question about presence.
+// It compares POSTS, not lanes, and asks only the indexed has_overflow column
+// for the id list. Both choices are about cost, and both were measured on prod:
+// the id list this way is an index-only scan of 4,447 rows in 2.6ms, while
+// naming the lanes (JSON_CONTAINS_PATH, ten paths) or adding a status test
+// forces the row reads instead - 5.5s with status, 38s with the paths, every
+// two minutes, on the write node. Lane-level drift needs no reconcile anyway:
+// any change to a post's rings bumps updated_at, and the delta rewrites all of
+// that post's lanes together.
+//
+// Held rows are not excluded here for the same reason. A held post's items are
+// removed by the delta the moment it is held; and were one to linger, apiv2
+// re-checks status against MySQL before admitting anyone (rippling.liveMsgids),
+// so the index is not the thing standing between a held post and a reader.
 func (d *ReachOverflowDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
-	lanes := overflowLaneOrder()
-
-	var checks []string
-	var args []interface{}
-	for _, path := range lanes {
-		checks = append(checks, "JSON_CONTAINS_PATH(overflow_bounds, 'one', ?)")
-		args = append(args, path)
-	}
-
-	rows, err := mysqlDB.Query(
-		"SELECT msgid, "+strings.Join(checks, ", ")+
-			" FROM rippling_reach WHERE has_overflow = 1 AND status != 'held'",
-		args...)
+	rows, err := mysqlDB.Query("SELECT msgid FROM rippling_reach WHERE has_overflow = 1")
 	if err != nil {
 		return fmt.Errorf("reachoverflow reconcile ids: %w", err)
 	}
@@ -338,20 +342,11 @@ func (d *ReachOverflowDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 	source := make(map[int64]struct{})
 	for rows.Next() {
 		var msgid int64
-		present := make([]sql.NullBool, len(lanes))
-		dest := []interface{}{&msgid}
-		for i := range present {
-			dest = append(dest, &present[i])
-		}
-		if err := rows.Scan(dest...); err != nil {
+		if err := rows.Scan(&msgid); err != nil {
 			rows.Close()
 			return fmt.Errorf("reachoverflow reconcile scan: %w", err)
 		}
-		for i, p := range present {
-			if p.Valid && p.Bool {
-				source[encodeOverflowExtID(msgid, overflowLaneCodes[lanes[i]])] = struct{}{}
-			}
-		}
+		source[msgid] = struct{}{}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
@@ -362,7 +357,7 @@ func (d *ReachOverflowDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 	// (the lanes have been live and populated since 2026-08-17), and acting on
 	// it would delete every ring in the index. Refuse, exactly as reach does.
 	if len(source) == 0 {
-		return fmt.Errorf("reachoverflow reconcile: source returned 0 ring ids; refusing to reconcile")
+		return fmt.Errorf("reachoverflow reconcile: source returned 0 ringed posts; refusing to reconcile")
 	}
 
 	indexed, err := idx.ExtIDs()
@@ -371,20 +366,21 @@ func (d *ReachOverflowDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 	}
 
 	var stale int
-	for id := range indexed {
-		if _, ok := source[id]; !ok {
-			if err := idx.DeleteByExtID(id); err != nil {
-				log.Printf("reachoverflow reconcile: delete stale extid=%d: %v", id, err)
-				continue
-			}
-			stale++
+	for extID := range indexed {
+		if _, ok := source[extID>>overflowLaneShift]; ok {
+			continue
 		}
+		if err := idx.DeleteByExtID(extID); err != nil {
+			log.Printf("reachoverflow reconcile: delete stale extid=%d: %v", extID, err)
+			continue
+		}
+		stale++
 	}
-	// Missing ids are NOT fetched one by one here. Unlike a reach row, a ring
-	// costs ~0.8MB to fetch and ~37k vertices to rasterise, so a wide gap would
-	// stall the tick; the next delta or the daily rebuild picks them up, and
-	// until then those posts show their committed reach - the same degradation
-	// as a lane that has not been backfilled.
+	// Missing posts are NOT fetched one at a time here. Unlike a reach row, a
+	// ring costs ~0.8MB to fetch and ~37k vertices to rasterise, so a wide gap
+	// would stall the tick; anything the delta missed is picked up by the daily
+	// rebuild, and until then those posts show their committed reach - the same
+	// degradation as a lane that has not been built yet.
 	if stale > 0 {
 		log.Printf("reachoverflow reconcile: removed %d stale ring items", stale)
 	}
