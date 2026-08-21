@@ -31,6 +31,13 @@ The index is rebuilt from MySQL and kept in sync. Eight datasets are served:
 | `reach` | Polygon (rasterised) | `rippling_reach` | `polygon` | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn |
 | `reachoverflow` | Polygon (rasterised) | `rippling_reach` | `overflow_bounds` JSON, one ring per lane | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn. **Ids are packed**: `msgid << 4 \| lane code`, so one index answers a per-lane question — see `dataset_reachoverflow.go` |
 
+Both rasterised datasets classify a query point from a 2-bit-per-cell grid over
+each geometry's bbox, so only the thin boundary band needs the exact geometry.
+`reach` uses a 96-cell grid; `reachoverflow` uses 192, because its exact
+fallback is dear - a ring is ~37k vertices parsed out of JSON (~6ms), against a
+sub-millisecond indexed lookup for a reach - so it is worth spending index size
+to make the band fire half as often.
+
 Indexes persist to disk as SQLite files under `SPATIAL_INDEX_DIR`, so a restart
 reopens existing indexes instead of rebuilding from MySQL. Pass `-rebuild` to
 force a full rebuild on startup.
