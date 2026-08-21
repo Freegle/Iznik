@@ -25,13 +25,19 @@
             v-else-if="reach?.polygon"
             class="text-muted small text-center py-1"
           >
-            Blue area = how far this post has actually rippled out.
+            <span class="reach-key" />
+            Shaded area = how far this post has actually rippled out.
             <template v-if="ringLegendItems.length">
+              <br />
+              The dashed outlines are further places it also reaches. People
+              there can see this post and reply to it, and are emailed about it,
+              just like people in the shaded area. Hover an outline to see why
+              it is included.
               <br />
               <span
                 v-for="item in ringLegendItems"
                 :key="item.label"
-                class="me-2 text-nowrap"
+                class="me-3 text-nowrap"
               >
                 <span
                   class="ring-key"
@@ -39,7 +45,6 @@
                 />
                 {{ item.label }}
               </span>
-              — also reached, beyond that area.
             </template>
           </div>
           <div
@@ -134,13 +139,25 @@ defineExpose({ show, hide })
 </script>
 
 <style scoped>
-.ring-key {
+.ring-key,
+.reach-key {
   display: inline-block;
   width: 0.7rem;
   height: 0.7rem;
   border: 1px solid;
   border-radius: 2px;
-  opacity: 0.55;
   vertical-align: baseline;
+}
+
+/* The rings are drawn dashed and faint on the map; the key says so. */
+.ring-key {
+  opacity: 0.55;
+  border-style: dashed;
+}
+
+.reach-key {
+  border-color: #0055cc;
+  background: #0055cc;
+  opacity: 0.35;
 }
 </style>
