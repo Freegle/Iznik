@@ -730,7 +730,7 @@ return [
         // cluster_max_wedges wedge polygons out to it, bounded by cluster_max_minutes overall.
         //
         // Pull-only surface: browse/search/banner/reply read the stored wedges unconditionally
-        // (no band gate, unlike rural_access), but this lane is NEVER mailed - see
+        // (no band gate, unlike rural_access), but this lane is mailed on the same terms as the others: a member a wedge
         // UnifiedDigestService::overflowBranch, which reads only 'rural'/'fairness', and the
         // daily digest / daily-posts push reach gate, which consults the rural ring only.
         'cluster' => [

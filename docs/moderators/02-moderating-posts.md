@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-20
+last_reviewed: 2026-08-21
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**

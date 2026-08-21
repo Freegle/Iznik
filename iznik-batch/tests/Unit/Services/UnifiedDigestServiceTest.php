@@ -3645,17 +3645,20 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
-     * Cluster is PULL-ONLY (browse/search/banner/reply) and must NEVER be mailed. A member
-     * outside the committed reach whose only route in is a cluster wedge must not be picked up
-     * by the reach mailer, even with both the other lanes enabled - there is no rural/fairness
-     * ring on this post to admit them by, and overflowBranch() never reads 'cluster'.
+     * A cluster wedge admits on every surface, mail included.
+     *
+     * A member a wedge lets in sees the post on browse, finds it in search, is not told it has
+     * not reached them, and may reply to it. Telling them about it is the same decision, so it
+     * is answered the same way. Showing someone a post the mail never mentions is the same
+     * split as mailing someone a post the site hides, only facing the other way.
      */
-    public function test_mail_newly_reached_does_not_mail_a_cluster_only_member(): void
+    public function test_mail_newly_reached_mails_a_cluster_admitted_member(): void
     {
         config([
             'freegle.digest.immediate_allowlist' => '*',
             'freegle.ripple.rural_access.enabled' => true,
             'freegle.ripple.fairness.enabled' => true,
+            'freegle.ripple.cluster.enabled' => true,
         ]);
         UnifiedDigestService::forgetOverflowColumn();
 
@@ -3690,9 +3693,9 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->service->mailNewlyReachedForPost($msg->id);
 
-        $this->assertFalse(
+        $this->assertTrue(
             $this->wasMailed($msg->id, $member->id),
-            'cluster is pull-only and must never reach the mail path'
+            'a member a cluster wedge admits is mailed, exactly as browse and reply admit them'
         );
     }
 }

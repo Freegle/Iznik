@@ -30,12 +30,11 @@ import (
 // match mailers) pass 0: no viewer, no rings.
 //
 // A FROZEN reach (status 'held', set by FreezeReachIfOriginPending when the origin copy is
-// pulled back for moderation) is not counted here at all. Freezing is one-way - nothing
-// clears 'held' - so such a post is not "on its way" to anyone: telling a member it has not
-// reached them yet promises an arrival that cannot come, and holding their reply against it
-// waits for a release that never runs (ripple:release-replies skips held reaches). Browse,
-// the badge and search hide these posts outright; the remaining surfaces simply stop
-// pretending the ripple is still travelling.
+// pulled back for moderation) is treated here exactly like a live one. Freezing stops a post
+// being pushed OUTWARD - it is not mailed or pushed while its origin is under review - but it
+// does not make a member who is outside the polygon reached. They are not, so the message page
+// tells them so, and their reply is held to protect the poster's ordering just as it would be
+// on a post still expanding.
 //
 // Containment consults the sandwich bounds when migrated (see
 // rippling/reachbounds.go): outside a real outer_bound is an authoritative
@@ -120,13 +119,13 @@ func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uin
 		whereArgs = append(whereArgs, ringArgs...)
 		err = db.Table("rippling_reach rr").
 			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
-			Where("rr.msgid IN (?) AND rr.status <> 'held' AND NOT "+expr+ringRescue, whereArgs...).
+			Where("rr.msgid IN (?) AND NOT "+expr+ringRescue, whereArgs...).
 			Scan(&rows).Error
 	} else {
 		legacyArgs := append([]interface{}{msgids, lng, lat, utils.SRID}, ringArgs...)
 		err = db.Table("rippling_reach rr").
 			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
-			Where("rr.msgid IN ? AND rr.status <> 'held' AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) = 0"+ringRescue, legacyArgs...).
+			Where("rr.msgid IN ? AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) = 0"+ringRescue, legacyArgs...).
 			Scan(&rows).Error
 	}
 	if err == nil {

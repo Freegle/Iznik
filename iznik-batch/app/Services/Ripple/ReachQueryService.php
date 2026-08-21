@@ -196,10 +196,12 @@ class ReachQueryService
      * were built to admit. That is the same rule the Go read side applies in
      * rippling.ViewerOverflowPaths.
      *
-     * Consulted HERE, on the reply path, but never by the mail: the lane is pull-only, so it
-     * decides what someone may answer, never what we send them. A reply held here that the
-     * website would have accepted is the worst outcome of all, because a cluster-anchored
-     * post's reach never grows, so the hold would never release.
+     * Consulted on the reply path, and equally by the mail (UnifiedDigestService::overflowBranch
+     * and the daily digest gate): a member a wedge admits sees the post, may reply to it, and is
+     * told about it, because those are the same decision and must not be answered differently.
+     *
+     * Getting this wrong on the reply path is the most damaging version: a cluster-anchored
+     * post's reach never grows, so a reply held here would wait for a release that never comes.
      *
      * @return array<int,string>
      */

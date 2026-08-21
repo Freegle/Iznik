@@ -778,11 +778,9 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// Layer 1 did not catch it: the rendered SQL TEXT is identical
 					// either way, and the golden comparison never counts binds.
 					// Only executing it fails, which is what the chat tests did.
-					// status <> 'held': a frozen reach never grows, so holding a reply against
-					// it would wait for a release that never runs. See ReachBlockedOrigins.
 					gateErr = db.Table("rippling_reach rr").
 						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+expr+"), 0) AS in_reach", exprArgs...).
-						Where("rr.msgid = ? AND rr.status <> 'held'", *payload.Refmsgid).
+						Where("rr.msgid = ?", *payload.Refmsgid).
 						Scan(&rc).Error
 				} else {
 					legacyExpr := "ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))"
@@ -794,7 +792,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					gateErr = db.Table("rippling_reach rr").
 						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+legacyExpr+"), 0) AS in_reach",
 							legacyArgs...).
-						Where("rr.msgid = ? AND rr.status <> 'held'", *payload.Refmsgid).
+						Where("rr.msgid = ?", *payload.Refmsgid).
 						Scan(&rc).Error
 				}
 				if gateErr == nil {
