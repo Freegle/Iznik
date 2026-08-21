@@ -247,9 +247,9 @@ class PostSyncer
             return $maxDate;
         }
 
-        // TN also returns an out-of-spec `freegle_group_ids` field (see the comment on
-        // Post::__construct()) — the Freegle groups the poster has allowed moderator
-        // messages from. Both array (fixture) and Post object post shapes support
+        // TN also returns an out-of-spec `freegle_group_ids` field (see the FREEGLE LOCAL
+        // MODIFICATION note on the Post model) — the Freegle groups the poster has allowed
+        // moderator messages from. Both array (fixture) and Post object post shapes support
         // ArrayAccess, so this works for either without a getter on the model.
         //
         // Unlike messages_groups.mod_messaging_allowed's table-wide default (allowed,
@@ -257,8 +257,13 @@ class PostSyncer
         // posters haven't consented to mod contact unless the resolved group is
         // explicitly present in freegle_group_ids. A missing/empty field (e.g. a
         // non-FD API key) means no consent was given, so it stays disallowed.
+        //
+        // Ids are normalized before the strict comparison: the live path deserializes them
+        // as int[], but fixtures are raw JSON that can carry them as strings, and a strict
+        // in_array() against a string id would silently read as "no consent".
         $freegleGroupIds           = $post['freegle_group_ids'] ?? [];
-        $moderatorMessagingAllowed = in_array($group->id, $freegleGroupIds, true);
+        $freegleGroupIds           = array_map('intval', is_array($freegleGroupIds) ? $freegleGroupIds : []);
+        $moderatorMessagingAllowed = in_array((int) $group->id, $freegleGroupIds, true);
 
         // Own trace tag (not [POST-RESULT]/[POST-SKIP]/[WRITE]) — EmailApiParityTest diffs
         // those tags line-for-line against the email path, which has no equivalent of this

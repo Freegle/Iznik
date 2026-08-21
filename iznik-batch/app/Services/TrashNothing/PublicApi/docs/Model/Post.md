@@ -21,5 +21,6 @@ Name | Type | Description | Notes
 **reselling** | **bool** | For wanted posts, whether the item is being requested in order to resell it or not. Will be null for all posts that are not wanted posts and for wanted posts where the poster hasn&#39;t indicated whether or not they intend to resell the item they are requesting. | [optional]
 **url** | **string** | The link to use to view the post on the Trash Nothing site. | [optional]
 **repost_count** | **int** | The count of how many times this post has been reposted in the last 90 days. A value of zero is used to indicate that the post is not a repost. The count is specific to the source of the post (eg. the specific group the post is on). If a post is crossposted to multiple groups, the repost_count of the post on each group may be different for each group depending on how many times the post has been posted on that group in the last 90 days. | [optional]
+**freegle_group_ids** | **int[]** | NOT IN TN&#39;S PUBLISHED SPEC. Returned by the live API for FD API keys: the Freegle group ids whose moderators the poster has allowed to message them. Hand-maintained in lib/Model/Post.php — see .openapi-generator-ignore. | [optional]
 
 [[Back to Model list]](../../README.md#models) [[Back to API list]](../../README.md#endpoints) [[Back to README]](../../README.md)

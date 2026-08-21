@@ -8,6 +8,8 @@ use App\Services\LokiService;
 use App\Services\Mail\Incoming\RoutingResult;
 use App\Services\TrashNothing\Ingestion\GroupPostIngestionService;
 use App\Services\TrashNothing\Sync\PostSyncer;
+use OpenAPI\Client\Model\GetAllPosts200Response;
+use OpenAPI\Client\ObjectSerializer;
 use Tests\TestCase;
 
 /**
@@ -63,7 +65,7 @@ class PostSyncerTest extends TestCase
         return $spy;
     }
 
-    private function callProcessPost(PostSyncer $syncer, array $post): void
+    private function callProcessPost(PostSyncer $syncer, mixed $post): void
     {
         $method = new \ReflectionMethod(PostSyncer::class, 'processPost');
         $method->invoke($syncer, $post, null);
@@ -235,5 +237,77 @@ class PostSyncerTest extends TestCase
             'longitude'         => 10.0,
             'freegle_group_ids' => [$other->id],
         ]));
+    }
+
+    /**
+     * Turn a raw API payload into the Post objects PostSyncer actually receives in
+     * production, using the same deserializer PostsApi uses.
+     *
+     * @return \OpenAPI\Client\Model\Post[]
+     */
+    private function deserializePosts(array $posts): array
+    {
+        $response = ObjectSerializer::deserialize(
+            json_encode(['posts' => $posts]),
+            GetAllPosts200Response::class,
+        );
+
+        return $response->getPosts();
+    }
+
+    public function test_mod_messaging_consent_survives_api_deserialization(): void
+    {
+        // The tests above hand processPost() plain arrays, which is only ever the
+        // --local-testing fixture shape. On the live path PostsApi returns Post objects
+        // built by ObjectSerializer::deserialize(), which constructs an empty model and
+        // copies across only the properties named in openAPITypes()/attributeMap()/
+        // setters(). freegle_group_ids is not in TN's published spec, so if it is missing
+        // from those maps — or is deleted by a regeneration of the client — it is dropped
+        // in silence and every TN post is stamped as no-consent in production while every
+        // array-based test above still passes. That is the regression this test exists for.
+        $group = $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+
+        $posts = $this->deserializePosts([$this->makePost([
+            'latitude'          => 10.0,
+            'longitude'         => 10.0,
+            'freegle_group_ids' => [$group->id],
+        ])]);
+
+        $this->assertCount(1, $posts);
+        $this->assertSame([(int) $group->id], $posts[0]->getFreegleGroupIds());
+
+        $syncer = $this->makeSyncer();
+        $spy    = $this->injectIngestionSpy($syncer);
+
+        $spy->expects($this->once())
+            ->method('ingest')
+            ->with($this->anything(), $this->anything(), true)
+            ->willReturn('approved');
+
+        $this->callProcessPost($syncer, $posts[0]);
+    }
+
+    public function test_mod_messaging_disallowed_after_api_deserialization_when_field_absent(): void
+    {
+        // Same live path, no consent field: the property must come back null rather than
+        // erroring, and the post stays disallowed.
+        $this->createTestGroup(['lat' => 10.0, 'lng' => 10.0]);
+
+        $posts = $this->deserializePosts([$this->makePost([
+            'latitude'  => 10.0,
+            'longitude' => 10.0,
+        ])]);
+
+        $this->assertNull($posts[0]->getFreegleGroupIds());
+
+        $syncer = $this->makeSyncer();
+        $spy    = $this->injectIngestionSpy($syncer);
+
+        $spy->expects($this->once())
+            ->method('ingest')
+            ->with($this->anything(), $this->anything(), false)
+            ->willReturn('approved');
+
+        $this->callProcessPost($syncer, $posts[0]);
     }
 }

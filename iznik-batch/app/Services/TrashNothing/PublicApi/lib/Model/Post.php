@@ -41,6 +41,14 @@ use \OpenAPI\Client\ObjectSerializer;
  * @link     https://openapi-generator.tech
  * @implements \ArrayAccess<string, mixed>
  */
+/**
+ * FREEGLE LOCAL MODIFICATION: this file carries a `freegle_group_ids` property that is not
+ * in TN's published OpenAPI spec, and is therefore protected from regeneration by
+ * .openapi-generator-ignore. If the client is regenerated, that entry must be removed from
+ * the ignore file, the model regenerated, and the property re-added by hand — search this
+ * file for freegle_group_ids for every place it has to appear. PostSyncerTest's
+ * deserialization test fails loudly if it is lost.
+ */
 class Post implements ModelInterface, ArrayAccess, \JsonSerializable
 {
     public const DISCRIMINATOR = null;
@@ -74,7 +82,16 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         'expiration' => '\DateTime',
         'reselling' => 'bool',
         'url' => 'string',
-        'repost_count' => 'int'
+        'repost_count' => 'int',
+        // Not part of the published OpenAPI spec (see the note above the class
+        // declaration): TN's live API returns freegle_group_ids for FD API keys — the
+        // Freegle group ids the poster has allowed moderator messages from. It has to be
+        // declared in every one of these generated maps, not just the constructor:
+        // ObjectSerializer::deserialize() builds a Post with `new Post()` and no data,
+        // then copies only the properties listed in openAPITypes()/attributeMap()/
+        // setters(), so a property missing from them is silently dropped on the live API
+        // path. Typed as int[] so ids arrive as ints whether TN sends numbers or strings.
+        'freegle_group_ids' => 'int[]'
     ];
 
     /**
@@ -101,7 +118,8 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         'expiration' => 'date-time',
         'reselling' => null,
         'url' => null,
-        'repost_count' => null
+        'repost_count' => null,
+        'freegle_group_ids' => null
     ];
 
     /**
@@ -126,7 +144,8 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         'expiration' => false,
         'reselling' => false,
         'url' => false,
-        'repost_count' => false
+        'repost_count' => false,
+        'freegle_group_ids' => false
     ];
 
     /**
@@ -231,7 +250,8 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         'expiration' => 'expiration',
         'reselling' => 'reselling',
         'url' => 'url',
-        'repost_count' => 'repost_count'
+        'repost_count' => 'repost_count',
+        'freegle_group_ids' => 'freegle_group_ids'
     ];
 
     /**
@@ -256,7 +276,8 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         'expiration' => 'setExpiration',
         'reselling' => 'setReselling',
         'url' => 'setUrl',
-        'repost_count' => 'setRepostCount'
+        'repost_count' => 'setRepostCount',
+        'freegle_group_ids' => 'setFreegleGroupIds'
     ];
 
     /**
@@ -281,7 +302,8 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         'expiration' => 'getExpiration',
         'reselling' => 'getReselling',
         'url' => 'getUrl',
-        'repost_count' => 'getRepostCount'
+        'repost_count' => 'getRepostCount',
+        'freegle_group_ids' => 'getFreegleGroupIds'
     ];
 
     /**
@@ -359,8 +381,7 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
         $this->setIfExists('url', $data ?? [], null);
         $this->setIfExists('repost_count', $data ?? [], null);
 
-        // Not part of the published OpenAPI spec, but present in live API responses when using a FD API key —
-        // array of Freegle group ids (int) that the user has allowed moderator messages from.
+        // Not part of the published OpenAPI spec — see the note on $openAPITypes.
         $this->setIfExists('freegle_group_ids', $data ?? [], null);
     }
 
@@ -861,6 +882,34 @@ class Post implements ModelInterface, ArrayAccess, \JsonSerializable
             throw new \InvalidArgumentException('non-nullable repost_count cannot be null');
         }
         $this->container['repost_count'] = $repost_count;
+
+        return $this;
+    }
+
+    /**
+     * Gets freegle_group_ids
+     *
+     * Not part of the published OpenAPI spec — see the note on $openAPITypes.
+     *
+     * @return int[]|null
+     */
+    public function getFreegleGroupIds()
+    {
+        return $this->container['freegle_group_ids'];
+    }
+
+    /**
+     * Sets freegle_group_ids
+     *
+     * @param int[]|null $freegle_group_ids The Freegle group ids whose moderators the poster
+     *                                      has allowed to message them. Absent unless the
+     *                                      request used an FD API key.
+     *
+     * @return self
+     */
+    public function setFreegleGroupIds($freegle_group_ids)
+    {
+        $this->container['freegle_group_ids'] = $freegle_group_ids;
 
         return $this;
     }
