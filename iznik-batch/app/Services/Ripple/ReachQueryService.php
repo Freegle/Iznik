@@ -281,6 +281,14 @@ class ReachQueryService
      */
     private function lanesCarried(int $msgid, array $paths): array
     {
+        // array_values FIRST. Callers build this list with array_filter, which
+        // preserves keys, so a dropped band path leaves the list starting at 1 -
+        // and then the columns are named p1..pn while the read below looks for
+        // p0..pn-1. Every lane answer shifts by one, the first is simply lost,
+        // and the failure is silent: a wedge that should admit somebody just
+        // does not.
+        $paths = array_values($paths);
+
         if ($paths === []) {
             return [];
         }
@@ -300,7 +308,7 @@ class ReachQueryService
             }
 
             $carried = [];
-            foreach (array_values($paths) as $i => $path) {
+            foreach ($paths as $i => $path) {
                 if ((int) ($row->{"p$i"} ?? 0) === 1) {
                     $carried[] = $path;
                 }
