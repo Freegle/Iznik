@@ -478,6 +478,12 @@ const props = defineProps({
   // The ACTUAL stored reach outline (GeoJSON Polygon string or object, from the mod-only
   // /message/{id}/reach endpoint). Arrives after mount (fetched separately), so it's watched.
   actualReach: { type: [String, Object], default: null },
+  // The post's overflow RINGS, keyed by lane ("rural.sparse", "cluster.w1"), each
+  // GeoJSON, from the same mod-only endpoint. Drawn over the reach as outlines: a post
+  // reaches these members too, and a map that shows only the reach says it does not -
+  // which is wrong for precisely the rural posts a moderator is most likely to be
+  // checking.
+  overflowRings: { type: Object, default: null },
   // Suppress the projected (schedule-modelled) reach polygons, leaving the actual stored
   // reach as the only reach drawn. For the per-post reach modal: once we can show where a
   // post really got to, a model of where it should have got to is just a second, contradictory

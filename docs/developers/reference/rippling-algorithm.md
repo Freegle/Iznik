@@ -393,6 +393,20 @@ When the spatial server cannot answer - dataset not built, server down - the rea
 surfaces show the committed reach only, and say so in the log. Ring members lose
 their extra posts until it recovers.
 
+**Moderators can see the rings.** `/message/{id}/reach` returns them alongside the
+reach polygon, keyed by lane, each simplified to ~150m (a stored ring averages 37,000
+vertices; at that tolerance one is ~1,000 points and ~20KB, against the 300KB the reach
+polygon already costs). The reach map draws them as dashed outlines over the reach, one
+colour per lane family. Without them the map under-reports where a post went, for
+exactly the rural posts a moderator is most likely to be checking: a Hawes post's
+outline stops in the dale while two wedges carry it to Penrith and Lancaster.
+
+**Backfilling rings** (`ripple:backfill-rings`, paced by `scripts/ring-backfill-drain.sh`)
+visits posts with no rings yet. It skips sub-cap posts ONLY when rural is the sole lane
+running - with cluster on, sub-cap posts are precisely what earns a wedge, and filtering
+them out would let a drain report "nothing left" without asking about a single
+semi-rural post.
+
 **Flags** (`config/freegle.php`): `ripple.rural_access.enabled` and `ripple.cluster.enabled`
 default ON, `ripple.fairness.enabled` defaults OFF. The Go side reads the same names from the
 environment and must default the same way - shipping the two halves with opposite defaults is

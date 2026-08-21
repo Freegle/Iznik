@@ -26,6 +26,21 @@
             class="text-muted small text-center py-1"
           >
             Blue area = how far this post has actually rippled out.
+            <template v-if="ringLegendItems.length">
+              <br />
+              <span
+                v-for="item in ringLegendItems"
+                :key="item.label"
+                class="me-2 text-nowrap"
+              >
+                <span
+                  class="ring-key"
+                  :style="{ borderColor: item.color, background: item.color }"
+                />
+                {{ item.label }}
+              </span>
+              — also reached, beyond that area.
+            </template>
           </div>
           <div
             v-else-if="reach && !reach.rippling"
@@ -42,6 +57,7 @@
             :initial-lng="lng"
             :initial-elapsed-hours="elapsedHours"
             :actual-reach="reach?.polygon || null"
+            :overflow-rings="reach?.overflow || null"
             :spatial-url="spatialUrl"
             :jwt="jwt"
           />
@@ -57,6 +73,7 @@ import { useRuntimeConfig } from '#imports'
 import { useOurModal } from '~/composables/useOurModal'
 import { useMe } from '~/composables/useMe'
 import { useMessageStore } from '~/stores/message'
+import { ringLegend } from '~/modtools/composables/rippling/overflowrings.js'
 
 const props = defineProps({
   messageid: { type: Number, default: null },
@@ -77,6 +94,10 @@ const { modal, show: showModal, hide } = useOurModal({ autoShow: false })
 const rendered = ref(false)
 // The post's ACTUAL rippling progress from the backend (null until fetched).
 const reach = ref(null)
+
+// Which ring lanes this post carries, for the caption under the map. Empty for the
+// great majority of posts, which have no rings at all.
+const ringLegendItems = computed(() => ringLegend(reach.value?.overflow))
 
 const spatialUrl = computed(
   () => runtimeConfig.public.SPATIAL_SERVER_URL || 'http://localhost:8196'
@@ -111,3 +132,15 @@ async function show() {
 
 defineExpose({ show, hide })
 </script>
+
+<style scoped>
+.ring-key {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 1px solid;
+  border-radius: 2px;
+  opacity: 0.55;
+  vertical-align: baseline;
+}
+</style>
