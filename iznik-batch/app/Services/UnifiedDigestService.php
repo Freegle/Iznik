@@ -716,6 +716,22 @@ class UnifiedDigestService
      *
      * @return array{0: string, 1: array<int, mixed>}
      */
+    /**
+     * The per-row "an overflow lane admits this member" SQL for one post, as OR-clauses meant
+     * to be appended after a primary containment test.
+     *
+     * Public because MatchMailService needs the same answer for the opposite reason: it mails
+     * people the post has NOT reached yet, so it has to exclude the ones a lane has already
+     * let in. Two definitions of "admitted" drifting apart is the failure this whole area has
+     * been correcting, so there is one, here.
+     *
+     * @return array{0: string, 1: array<int, mixed>, 2: ?string}  [sql, params, lane]
+     */
+    public function overflowAdmissionSql(int $msgid, string $point): array
+    {
+        return $this->overflowBranch($msgid, $point);
+    }
+
     private function overflowBranch(int $msgid, string $point): array
     {
         $none = ['', [], null];

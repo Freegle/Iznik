@@ -707,6 +707,22 @@ class MatchMailService
         // keep-raw: spatial ST_Contains/ST_Distance band tests over a JSON-vs-
         // locations CASE point expression, a dynamic IN list and a conditional
         // cadence-gate fragment - the builder cannot render this shape.
+        // Someone an overflow lane has already admitted is NOT a candidate for this mail.
+        // They can see the post on browse, find it in search and reply to it, and the ordinary
+        // reach mail tells them about it - so by this query's own rule ("mailing them spends a
+        // slot and a mail to change nothing") they are already reached. The polygon test below
+        // cannot see them, because a lane admits precisely the people outside it.
+        //
+        // Same SQL the mail path itself admits on, borrowed rather than restated: two
+        // definitions of "admitted" drifting apart is the failure this area has been correcting.
+        [$laneSql, $laneParams] = app(UnifiedDigestService::class)->overflowAdmissionSql($msgid, $pointExpr);
+        $laneExclusion = '';
+        if ($laneSql !== '') {
+            // The lane SQL is a run of " OR (...)" clauses meant to follow a containment test;
+            // stripped of that leading OR it is the bare "a lane admits them" condition.
+            $laneExclusion = ' AND NOT (' . preg_replace('/^\s*OR\s+/', '', $laneSql) . ')';
+        }
+
         $rows = DB::select(
             "SELECT u.id AS id,
                     ST_Distance(rr.polygon, $pointExpr) AS dist
@@ -723,7 +739,7 @@ class MatchMailService
                -- polygon is going to be told anyway, by the ordinary ripple, so
                -- mailing them spends a slot and a mail to change nothing.
                -- The whole point of this mail is to reach past the current edge.
-               AND NOT ST_Contains(rr.polygon, $pointExpr)
+               AND NOT ST_Contains(rr.polygon, $pointExpr)$laneExclusion
                AND ST_Contains(rr.max_polygon, $pointExpr) = 1
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
@@ -740,7 +756,14 @@ class MatchMailService
                -- earlier, and that is the consent for it - the same one the
                -- engagement and non-essential admin mails honour.
                AND u.relevantallowed = 1",
-            array_merge([self::SRID, $msgid], $userIds, $unmailableParams, [self::SRID, self::SRID, $cooldown, $weekCap, $msgid])
+            array_merge(
+                [self::SRID, $msgid],
+                $userIds,
+                $unmailableParams,
+                [self::SRID],
+                $laneParams,
+                [self::SRID, $cooldown, $weekCap, $msgid]
+            )
         );
 
         $out = [];
