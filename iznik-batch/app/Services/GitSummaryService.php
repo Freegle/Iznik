@@ -202,6 +202,119 @@ class GitSummaryService
     }
 
     /**
+     * Permission markers, mapped to who the gated code is actually for.
+     *
+     * Matched case-insensitively against added diff lines, so the Go `SupportOrAdmin`,
+     * the Vue `supportOrAdmin` and the PHP `SYSTEMROLE_SUPPORT` all land on the same
+     * audience without listing every spelling.
+     */
+    protected const ACCESS_MARKERS = [
+        'systemrole_admin' => 'Admin staff only',
+        'systemrole_support' => 'Support and Admin staff only',
+        'supportoradmin' => 'Support and Admin staff only',
+        'isadmin' => 'Admin staff only',
+    ];
+
+    /**
+     * Paths that place a change in a restricted area on their own.
+     *
+     * Matched in full rather than as loose fragments: a bare "/support/" would also hit
+     * Laravel's app/Support and tests/Support, and wrongly mark ordinary work as staff-only.
+     */
+    protected const ACCESS_PATHS = [
+        'modtools/pages/sysadmin/' => 'Admin staff only',
+        'modtools/pages/support/' => 'Support and Admin staff only',
+        'iznik-server-go/admin/' => 'Admin staff only',
+    ];
+
+    /**
+     * Maximum number of files reported, so a large diff cannot crowd out the summary.
+     */
+    protected const MAX_ACCESS_SIGNALS = 40;
+
+    /**
+     * Find the access checks in the diffs, so the summary can say who a change is for.
+     *
+     * Commit messages and file names do not say whether a feature is open to every
+     * volunteer or reserved for Support and Admin staff. Without this, the model has to
+     * guess, and anything ModTools-shaped reads as being for all volunteers - so a
+     * staff-only tool gets announced to people who cannot reach it. Only the
+     * permission-bearing lines are passed on; the full diffs are far too long.
+     *
+     * @param array $allChanges Repository changes, as returned by getRepositoryChanges().
+     * @return string Access notes for the prompt, or '' when nothing is gated.
+     */
+    public function extractAccessSignals(array $allChanges): string
+    {
+        $found = [];
+
+        foreach ($allChanges as $change) {
+            $diff = $change['diff'] ?? '';
+            if (!is_string($diff) || $diff === '') {
+                continue;
+            }
+
+            $file = '';
+
+            foreach (explode("\n", $diff) as $line) {
+                // Track which file we are inside. Skip the /dev/null of a deletion.
+                if (str_starts_with($line, '+++ ')) {
+                    $path = trim(substr($line, 4));
+                    $file = str_starts_with($path, 'b/') ? substr($path, 2) : $path;
+
+                    if ($file !== '' && $file !== '/dev/null') {
+                        foreach (self::ACCESS_PATHS as $fragment => $audience) {
+                            if (str_contains(strtolower($file), $fragment)) {
+                                $found[$file][$audience] = 'path is under ' . trim($fragment, '/');
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                // Only added lines: a marker in removed or unchanged code says nothing
+                // about what this change did.
+                if ($file === '' || !str_starts_with($line, '+') || str_starts_with($line, '+++')) {
+                    continue;
+                }
+
+                $lower = strtolower($line);
+
+                foreach (self::ACCESS_MARKERS as $marker => $audience) {
+                    // Require a word boundary, so "isadmin" does not also match a name
+                    // like "thisAdminThing". A false restriction note would be the same
+                    // mistake as the one this is here to prevent, pointing the other way.
+                    if (preg_match("/(?<![a-z0-9_])" . preg_quote($marker, "/") . "/", $lower, $m, PREG_OFFSET_CAPTURE)) {
+                        $found[$file][$audience] = substr($line, $m[0][1], strlen($marker));
+                    }
+                }
+            }
+        }
+
+        if (empty($found)) {
+            return '';
+        }
+
+        $notes = '';
+        $shown = 0;
+
+        foreach ($found as $file => $audiences) {
+            if ($shown >= self::MAX_ACCESS_SIGNALS) {
+                $notes .= "- ... and " . (count($found) - $shown) . " more restricted file(s)\n";
+                break;
+            }
+
+            foreach ($audiences as $audience => $evidence) {
+                $notes .= "- {$file}: {$audience} ({$evidence})\n";
+            }
+
+            $shown++;
+        }
+
+        return $notes;
+    }
+
+    /**
      * Generate AI summary of all changes across repositories.
      *
      * @param array $allChanges Array of repository changes.
@@ -229,6 +342,15 @@ class GitSummaryService
             $prompt .= "\nFiles changed:\n{$change['stat']}\n\n";
         }
 
+        $accessSignals = $this->extractAccessSignals($allChanges);
+
+        if ($accessSignals !== "") {
+            $prompt .= "Access control found in these changes. Use this to work out WHO can use each thing:\n";
+            $prompt .= $accessSignals;
+            $prompt .= "\nModTools is used by ordinary community volunteers AND by a much smaller group of Support and Admin staff. ";
+            $prompt .= "A change listed above is NOT available to ordinary volunteers.\n\n";
+        }
+
         $prompt .= "\n\nPlease provide a structured summary organized by user impact.\n\n";
         $prompt .= "Start with a brief intro paragraph (2-3 sentences) that:\n";
         $prompt .= "- Explains this is an AI-generated summary of recent code changes\n";
@@ -242,6 +364,7 @@ class GitSummaryService
 
         $prompt .= "## MODTOOLS (Volunteer Website)\n";
         $prompt .= "List changes that affect volunteers/moderators (3-5 bullet points).\n";
+        $prompt .= "Say who each item is for: all volunteers, or only Support and Admin staff. Do not write \"volunteers can now\" for something only staff can reach.\n";
         $prompt .= "IMPORTANT: Sort items by impact - put changes that affect the most volunteers most significantly at the top of the list.\n\n";
 
         $prompt .= "## BACKEND SYSTEMS (Behind the scenes)\n";
@@ -257,6 +380,8 @@ class GitSummaryService
         $prompt .= "- Focus on WHAT changed, not HOW it was implemented technically\n";
         $prompt .= "- Identify prototype/experimental/investigation code clearly (look for test files, 'investigate', 'analyse', 'simulation', 'prototype' in commit messages or file paths)\n";
         $prompt .= "- When describing prototype work, say 'investigating', 'prototyping', 'testing approaches for' rather than implying it's live\n";
+        $prompt .= "- Check who can actually use a change before describing it. Anything behind supportOrAdmin, SYSTEMROLE_ADMIN or SYSTEMROLE_SUPPORT, or under a sysadmin/admin path, is staff-only: say 'Support and Admin staff can now...' rather than 'volunteers can now...'\n";
+        $prompt .= "- If you cannot tell who a change is for, describe what changed without claiming who can use it - do not guess\n";
         $prompt .= "- If a category has no changes, say 'No changes in this period'\n";
         $prompt .= "- Be specific but concise - get straight to the point\n";
         $prompt .= "- Use bullet points starting with '-'\n\n";
