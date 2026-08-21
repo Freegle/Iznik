@@ -109,9 +109,10 @@ describe('PostPhoto', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('shows NuxtPicture when externaluid provided', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       const wrapper = createWrapper({ externaluid: 'ext456' })
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('shows b-img with thumbnail when paththumb provided', () => {
@@ -227,11 +228,6 @@ describe('PostPhoto', () => {
       expect(wrapper.emitted('click')).toBeTruthy()
     })
 
-    it('emits click when image clicked (externaluid)', async () => {
-      const wrapper = createWrapper({ externaluid: 'ext456' })
-      await wrapper.find('.nuxt-picture').trigger('click')
-      expect(wrapper.emitted('click')).toBeTruthy()
-    })
   })
 
   describe('responsive width', () => {

@@ -48,15 +48,6 @@
           :modifiers="event.image?.externalmods"
           alt="Community Event Photo"
         />
-        <NuxtPicture
-          v-else-if="event.image?.externaluid"
-          format="webp"
-          fit="cover"
-          provider="uploadcare"
-          :src="event.image?.externaluid"
-          :modifiers="event.image?.externalmods"
-          alt="Community Event Photo"
-        />
         <b-img
           v-else-if="event.image.paththumb"
           lazy

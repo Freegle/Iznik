@@ -1192,11 +1192,6 @@ export default defineNuxtConfig({
     },
   },
   image: {
-    uploadcare: {
-      provider: 'uploadcare',
-      cdnURL: config.UPLOADCARE_CDN,
-    },
-
     weserv: {
       provider: 'weserv',
       // Source URL passed to weserv as `?url=…<image-id>`. Reads
@@ -1213,9 +1208,8 @@ export default defineNuxtConfig({
     // We want sharp images on fancy screens.
     densities: [1, 2],
 
-    // Uploadcare only supports images upto 3000, and the screen sizes are doubled when requesting because of densities.
-    // So we already need to drop the top-level screen sizes, and we also don't want to request images which are too
-    // large because this affects our charged bandwidth.  So we only go up to 768.
+    // Screen sizes are doubled when requesting because of densities, so the top-level screen sizes
+    // would ask for images far larger than anyone can see, and we pay for that bandwidth. Cap at 768.
     screens: {
       xs: 320,
       sm: 576,

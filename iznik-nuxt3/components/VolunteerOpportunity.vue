@@ -85,15 +85,6 @@
             :modifiers="volunteering.image.externalmods"
             alt="Volunteering Opportunity Photo"
           />
-          <NuxtPicture
-            v-else-if="volunteering?.image?.externaluid"
-            fit="cover"
-            format="webp"
-            provider="uploadcare"
-            :src="volunteering.image.externaluid"
-            :modifiers="volunteering.image.externalmods"
-            alt="Volunteering Opportunity Photo"
-          />
           <b-img v-else lazy :src="volunteering.image.path" />
         </div>
       </div>
@@ -137,15 +128,6 @@
           <OurUploadedImage
             v-if="volunteering?.image?.ouruid"
             :src="volunteering.image.ouruid"
-            :modifiers="volunteering.image.externalmods"
-            alt="Volunteering Opportunity Photo"
-          />
-          <NuxtPicture
-            v-else-if="volunteering?.image?.externaluid"
-            fit="cover"
-            format="webp"
-            provider="uploadcare"
-            :src="volunteering.image.externaluid"
             :modifiers="volunteering.image.externalmods"
             alt="Volunteering Opportunity Photo"
           />

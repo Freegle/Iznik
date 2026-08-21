@@ -41,16 +41,6 @@
               alt="Volunteer Opportunity Photo"
               class="modal-image"
             />
-            <NuxtPicture
-              v-else-if="volunteering?.image?.imageuid"
-              width="200"
-              format="webp"
-              provider="uploadcare"
-              :src="volunteering.image.imageuid"
-              :modifiers="volunteering.image.imagemods"
-              alt="Volunteer Opportunity Photo"
-              class="modal-image"
-            />
             <b-img
               v-else
               lazy

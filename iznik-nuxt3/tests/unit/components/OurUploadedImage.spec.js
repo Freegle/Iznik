@@ -81,17 +81,24 @@ describe('OurUploadedImage', () => {
   })
 
   describe('provider selection', () => {
-    it('uses uploadcare by default', () => {
-      const wrapper = createWrapper({ src: 'regular-image-id' })
-      expect(wrapper.find('.nuxt-picture').attributes('data-provider')).toBe(
-        'uploadcare'
-      )
-    })
-
     it('uses weserv for freegletusd- prefixed sources', () => {
       const wrapper = createWrapper({ src: 'freegletusd-image.jpg' })
       expect(wrapper.find('.nuxt-picture').attributes('data-provider')).toBe(
         'weserv'
+      )
+    })
+
+    it('uses weserv for an unprefixed source too, now uploadcare is gone', () => {
+      const wrapper = createWrapper({ src: 'regular-image-id' })
+      expect(wrapper.find('.nuxt-picture').attributes('data-provider')).toBe(
+        'weserv'
+      )
+    })
+
+    it('passes an unprefixed source through untouched', () => {
+      const wrapper = createWrapper({ src: 'regular-image-id' })
+      expect(wrapper.find('.nuxt-picture').attributes('src')).toBe(
+        'regular-image-id'
       )
     })
 

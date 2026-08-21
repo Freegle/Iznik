@@ -15,19 +15,6 @@
         fit="cover"
         sizes="300px"
       />
-      <NuxtPicture
-        v-else-if="message.attachments?.[0]?.externaluid"
-        format="webp"
-        provider="uploadcare"
-        :src="message.attachments[0].externaluid"
-        :modifiers="message.attachments[0].externalmods"
-        :alt="photoAlt"
-        class="spc__img"
-        :width="400"
-        fit="cover"
-        sizes="300px"
-        loading="lazy"
-      />
       <ProxyImage
         v-else-if="message.attachments?.[0]?.path"
         class-name="spc__img"

@@ -87,9 +87,6 @@ export default defineNuxtConfig({
   // building this child layer (Nuxt module config from parent layers may not
   // propagate correctly to child static builds).
   image: {
-    uploadcare: {
-      provider: 'uploadcare',
-    },
     weserv: {
       provider: 'weserv',
       // Hardcoded — see runtimeConfig note above (CircleCI env leakage).

@@ -75,16 +75,6 @@
           alt="Poster Photo"
           width="250"
         />
-        <NuxtPicture
-          v-else-if="image?.imageuid"
-          fit="cover"
-          format="webp"
-          provider="uploadcare"
-          :src="image.imageuid"
-          :modifiers="image.imagemods"
-          alt="Poster Photo"
-          width="250"
-        />
         <b-img v-else width="250" thumbnail src="/placeholder.jpg" />
       </div>
     </div>

@@ -53,20 +53,6 @@
         @error="brokenImage"
         @click="$emit('zoom')"
       />
-      <NuxtPicture
-        v-else-if="attachments[0].externaluid"
-        format="webp"
-        provider="uploadcare"
-        :src="attachments[0].externaluid"
-        :modifiers="attachments[0].externalmods"
-        :alt="photoAlt"
-        :width="width"
-        :height="height"
-        :sizes="thumbnail ? '200px' : '320px md:768px'"
-        :preload="preload"
-        @error="brokenImage"
-        @click="$emit('zoom')"
-      />
       <ProxyImage
         v-else
         class-name="p-0 rounded"

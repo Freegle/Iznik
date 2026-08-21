@@ -49,15 +49,6 @@
             :modifiers="event.image.externalmods"
             alt="Community Event Photo"
           />
-          <NuxtPicture
-            v-else-if="event?.image?.externaluid"
-            format="webp"
-            fit="cover"
-            provider="uploadcare"
-            :src="event.image.externaluid"
-            :modifiers="event.image.externalmods"
-            alt="Community Event Photo"
-          />
           <b-img v-else lazy :src="event.image.path" />
         </div>
       </div>
@@ -111,15 +102,6 @@
           <OurUploadedImage
             v-if="event?.image?.ouruid"
             :src="event.image.ouruid"
-            :modifiers="event.image.externalmods"
-            alt="Community Event Photo"
-          />
-          <NuxtPicture
-            v-else-if="event?.image?.externaluid"
-            format="webp"
-            fit="cover"
-            provider="uploadcare"
-            :src="event.image.externaluid"
             :modifiers="event.image.externalmods"
             alt="Community Event Photo"
           />
