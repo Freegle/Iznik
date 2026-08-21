@@ -608,9 +608,9 @@ class ReachService
      * yielded a usable coordinate, which keeps "no rings" and "a box covering nothing" distinct.
      *
      * This lane list must be kept in step with parseOverflow()'s key map above: a lane added
-     * there but not here ships rings whose bbox silently excludes them, and the read-side bbox
-     * prefilter (RuralOverflowWhere / the digest ring rescue) then rejects every candidate for
-     * that lane before the exact ring test ever runs.
+     * there but not here ships rings whose bbox silently excludes them, and the reach mail's
+     * bbox widening (UnifiedDigestService::overflowBboxBranch) then never even offers those
+     * members to the ring index as candidates.
      *
      * @param  array<string, mixed>  $out
      * @return array{0: float, 1: float, 2: float, 3: float}|null

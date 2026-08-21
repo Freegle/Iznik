@@ -1959,38 +1959,15 @@ class UnifiedDigestService
     }
 
     /**
-     * The overflow rings as an OR-rescue for the daily digest / daily-posts push reach gate
-     * below: a member whose OWN density band earns a wider travel budget than a post's capped
-     * reach must still see it, exactly as they already can on browse (ReachQueryService) and in
-     * the reach mail (overflowBranch above). Mirrors iznik-server-go rippling.RuralOverflowWhere:
-     * the ring's stored bbox is tested first (four cheap numeric comparisons) before the exact
-     * polygon is parsed, because unlike the mail path (one post, rings read once and bound as
-     * params) this runs once PER CANDIDATE POST for this member.
+     * Docblock for the daily digest / daily-posts push reach gate below.
      *
-     * The band is resolved HERE in PHP against a fixed allowlist (dense/medium/sparse) rather
-     * than built into a JSON path from the stored value, so a member's settings stay data, not
-     * syntax that could address an arbitrary path.
-     *
-     * The cluster wedges are consulted too, and unconditionally: a wedge sits beyond every
-     * band's ceiling, so testing the member's band would refuse the town it was drawn for. A
-     * member a wedge admits can see the post on browse and reply to it, so the daily digest
-     * tells them about it on the same terms - a lane that shows a post to somebody the mail
-     * never mentions is the same split as the one this reach gate exists to close.
-     *
-     * Fairness is deliberately NOT consulted here: admission needs a per-member network call to
-     * the routing server (fairnessLanes' /v1/quintiles), which is answered for a handful of
-     * ring-added mail recipients per post, not affordable once per candidate post in a member's
-     * whole digest backlog.
-     *
-     * Returns ['', []] when no lane can apply, so the reach gate is byte-identical to before
-     * whenever this cannot contribute.
-     *
-     * $point is the same 'ST_SRID(POINT(?, ?), 3857)' fragment the caller's containment test
-     * uses, reused verbatim so the ring is tested against exactly the point the reach gate is —
-     * it carries its own two placeholders, filled from $latlng like every other use of $point.
-     *
-     * @param  array{0:float,1:float}  $latlng  [lat, lng], as resolveUserLatLng returns
-     * @return array{0: string, 1: array<int, mixed>}
+     * A member whose own rings admit a post must not be told they have not been reached
+     * by it, exactly as on browse, in search and at the reply gate. Which posts those
+     * are is asked of the spatial index once for this member (ringRescueIds ->
+     * RingIndex::admittedFor) and spliced in as a list of ids; the ring geometry is not
+     * tested here, or anywhere else in this codebase, because one question with two
+     * implementations is what put members in the position of being emailed posts the
+     * site refused them.
      */
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
