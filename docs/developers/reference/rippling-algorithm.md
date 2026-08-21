@@ -308,6 +308,31 @@ A surface that consults a lane the others do not is the defect this structure ex
 prevent, in either direction: mailing someone a post the site then hides from them, or showing
 someone a post they are never told about.
 
+### How a read surface must ask the ring question
+
+**As a list of msgids, never as the JSON test inside a query that has to be answered by an
+index.** The rings are WKT inside a JSON column, so the test is `JSON_EXTRACT` over
+`rippling_reach.overflow_bounds`, which no index can serve. Put it next to an indexed
+predicate and the optimiser stops using that index for the whole query - and the answer is
+still correct, so nothing fails, it just scans. On 2026-08-21 this took the site down twice
+in a day: ORed against the feed's spatial containment (`key=rippling_reach_polygon rows=1`
+became `key=NULL rows=62,534` over a ~17GB table), and as an `EXISTS` beside the badge's
+raster id lists (`type=ALL rows=58,348`, on a poll running about twice a second).
+
+`rippling.AdmittedMsgids` is the way in: `rippling_reach_overflow` holds each post's ring
+bbox as an indexed `POLYGON`, so the spatial index narrows to a handful of candidates, and
+the exact per-lane JSON test then runs against just those, bounded by primary key. Callers
+splice the resulting ids (`rr.msgid IN (...)`, `ms.msgid IN (...)`) and keep their plans:
+feed `index_merge sort_union(rippling_reach_outer, PRIMARY)`, badge `type=range key=msgid`.
+
+The bbox is a PREFILTER, not the answer - a box containing the point does not mean the ring
+does - so a surface must use the admitted ids, never the candidate list.
+
+Until `ripple:backfill-overflow-index` has populated the side table, feed and badge show the
+committed reach only: ring members lose their extra posts rather than the page losing the
+scan race. Search can instead fall back to the capped JSON path, because it asks the ring
+question in a query of its own, where a timeout costs the ring arm and not the results.
+
 **Flags** (`config/freegle.php`): `ripple.rural_access.enabled` and `ripple.cluster.enabled`
 default ON, `ripple.fairness.enabled` defaults OFF. The Go side reads the same names from the
 environment and must default the same way - shipping the two halves with opposite defaults is
