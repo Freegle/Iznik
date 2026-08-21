@@ -807,10 +807,17 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	// The rasters answer only the committed reach. The feed additionally admits
 	// via the viewer's overflow ring (reachOrOverflowSQL), so the badge must ask
 	// the same question or it undercounts what the feed shows — the exact
-	// badge/feed disagreement this whole path exists to prevent. The ring is a
-	// bbox-prefiltered test over the few rows carrying overflow_bounds, so
-	// keeping it in SQL does not undo the raster saving.
-	ringPaths := viewerOverflowPaths(db, myid, latlng.Lat, latlng.Lng)
+	// badge/feed disagreement this whole path exists to prevent.
+	//
+	// Asked as ids, off the bbox side table, for the reason spelled out in
+	// fromIDsWhere: the ring test itself cannot go into this WHERE without
+	// unbounding it. Only in spatial mode — the SQL fallback below resolves its
+	// own rings inside reachOrOverflowSQL, and this lookup is two indexed
+	// queries we would otherwise be paying for twice.
+	var ringAdmitted []uint64
+	if useSpatial {
+		ringAdmitted = viewerAdmittedMsgids(db, myid, latlng.Lat, latlng.Lng)
+	}
 
 	if maxDistanceMiles >= BrowseDistanceUnlimited {
 		// Viewer sets no inbound limit: one COUNT over the shared reach-arm membership,
@@ -820,10 +827,10 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		if useSpatial {
 			// Zero raster ids does not mean zero for a ring viewer: their ring
 			// can admit posts the committed reach does not cover.
-			if len(spatialIn)+len(spatialPartial) == 0 && len(ringPaths) == 0 {
+			if len(spatialIn)+len(spatialPartial) == 0 && len(ringAdmitted) == 0 {
 				return 0
 			}
-			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringPaths).
+			reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringAdmitted).
 				Select("COUNT(DISTINCT ms.msgid)").
 				Scan(&count)
 			return count
@@ -842,10 +849,10 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	if useSpatial {
 		// Same ring caveat as the fast COUNT above: empty raster buckets do not
 		// mean an empty candidate set for a ring viewer.
-		if len(spatialIn)+len(spatialPartial) == 0 && len(ringPaths) == 0 {
+		if len(spatialIn)+len(spatialPartial) == 0 && len(ringAdmitted) == 0 {
 			return 0
 		}
-		reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringPaths).
+		reachCandidateQueryFromIDs(db, myid, latlng, spatialIn, spatialPartial, ringAdmitted).
 			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
 			Scan(&cands)
 	} else {

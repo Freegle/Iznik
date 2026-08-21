@@ -294,3 +294,48 @@ func OverflowCandidates(db *gorm.DB, lng, lat float64, srid int) []uint64 {
 
 	return ids
 }
+
+// AdmittedMsgids returns the posts whose rings genuinely admit this point.
+//
+// Two cheap steps, in place of one ruinous one. The bbox index narrows to a
+// handful of candidates; the exact per-lane JSON test then runs against just
+// those, bounded by primary key. Both were measured on 2026-08-21: the bbox
+// lookup plans as key=rippling_reach_overflow_bbox and returns in 8ms, and the
+// exact test bounded by a msgid list plans as key=PRIMARY. The same question
+// asked directly of the JSON scans a ~17GB table and takes 49s.
+//
+// The bbox is ONLY a prefilter - a box containing the point does not mean the
+// ring does - so callers must use this rather than the candidate list, or they
+// admit members the rings do not.
+//
+// Returns nil when nothing admits, which lets a caller leave its query exactly
+// as it was rather than splicing an arm that can never match.
+//
+// It also returns nil when the side table is absent or still empty. That
+// deliberately costs ring members their extra posts until the backfill has run,
+// rather than falling back to the JSON scan: on the feed and the badge the ring
+// test shares ONE query with the containment, so a slow ring arm does not
+// degrade the ring - it takes the whole feed down with it. Search can afford the
+// fallback because it asks the ring question in a query of its own.
+func AdmittedMsgids(db *gorm.DB, lng, lat float64, srid int, paths []string) []uint64 {
+	ringWhere, ringArgs := OverflowWhereAny(lng, lat, srid, paths)
+	if ringWhere == "" || !OverflowPrefilterReady(db) {
+		return nil
+	}
+
+	candidates := OverflowCandidates(db, lng, lat, srid)
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	args := []interface{}{candidates}
+	args = append(args, ringArgs...)
+
+	var ids []uint64
+	db.Table("rippling_reach rr").
+		Select("rr.msgid").
+		Where("rr.msgid IN (?) AND rr.status != 'held' AND "+ringWhere, args...).
+		Scan(&ids)
+
+	return ids
+}

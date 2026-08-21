@@ -57,7 +57,9 @@ func TestComposeReachOverflow_UnchangedWhenTheLaneCannotApply(t *testing.T) {
 	plain := "AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "
 	plainArgs := []interface{}{-0.1, 51.5, utils.SRID}
 
-	got, gotArgs := composeReachOverflow(plain, plainArgs, -0.1, 51.5, "")
+	// Nobody admitted - the same case as "the lane cannot apply", now expressed
+	// as an empty msgid list because the rings are resolved before we get here.
+	got, gotArgs := composeReachOverflow(plain, plainArgs, nil)
 
 	// Not merely equivalent - IDENTICAL. A lane nobody is using must not change the query
 	// the feed has always run, nor its cost.
@@ -100,11 +102,19 @@ func TestRuralOverflowWhere_BoxIsTestedBeforeTheRing(t *testing.T) {
 // wrapping it without stripping that would produce "AND ((AND ...".
 func TestReachOrOverflowSQL_ComposesWithoutADoubledKeyword(t *testing.T) {
 	reachWhere := "AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "
-	where, args := composeReachOverflow(reachWhere, []interface{}{-0.1, 51.5, utils.SRID}, -0.1, 51.5, "$.rural.sparse")
+	where, args := composeReachOverflow(reachWhere, []interface{}{-0.1, 51.5, utils.SRID}, []uint64{101, 102})
 
-	// 3 for the reach test, 7 for the ring.
-	if len(args) != 10 {
-		t.Errorf("expected 10 args, got %d", len(args))
+	// 3 for the reach test, 1 for the msgid list. The ring arm is a list of ids
+	// now, not seven JSON binds: ORing the JSON test against the spatial
+	// predicate removed the SPATIAL index and scanned a ~17GB table.
+	if len(args) != 4 {
+		t.Errorf("expected 4 args, got %d", len(args))
+	}
+	if !strings.Contains(where, "rr.msgid IN (?)") {
+		t.Errorf("expected the ring arm as a msgid list, got: %s", where)
+	}
+	if strings.Contains(where, "overflow_bounds") || strings.Contains(where, "JSON_EXTRACT") {
+		t.Errorf("the JSON ring test must not reach the feed query: %s", where)
 	}
 	if strings.Contains(where, "AND (AND") || strings.Contains(where, "((AND") {
 		t.Errorf("doubled AND in composed SQL: %s", where)
@@ -152,30 +162,47 @@ func TestViewerFairnessPath_EmptyWhenDeprivationCannotBeAnswered(t *testing.T) {
 }
 
 // The badge's id-list query must carry the viewer's ring as a third containment
-// arm - and only for viewers who have one. Without it, a ring-admitted post
-// appears in the feed but not the badge count.
+// arm - and only for viewers a ring actually admits. Without it, a ring-admitted
+// post appears in the feed but not the badge count.
 func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
 
 	plain, plainArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, nil)
-	if strings.Contains(plain, "overflow_bounds") {
-		t.Fatalf("no ring path must mean no ring arm, got %q", plain)
+	if strings.Contains(plain, "ms.msgid IN (?) AND EXISTS") == false {
+		t.Fatalf("raster arms must stay keyed on the id lists, got %q", plain)
+	}
+	if strings.Count(plain, "ms.msgid IN (?)") != 2 {
+		t.Fatalf("nothing admitted must mean two arms, not three: %q", plain)
 	}
 	if len(plainArgs) != 9 {
 		t.Fatalf("plain arg count = %d, want 9 (in, partial, lng, lat, srid + 4 author-cap)", len(plainArgs))
 	}
 
-	ringed, ringedArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, []string{"$.rural.sparse"})
-	if !strings.Contains(ringed, "overflow_bounds") {
-		t.Fatalf("ring path must add the ring arm, got %q", ringed)
+	ringed, ringedArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, []uint64{101, 102})
+	if strings.Count(ringed, "ms.msgid IN (?)") != 3 {
+		t.Fatalf("admitted posts must add a third id-list arm, got %q", ringed)
 	}
-	if !strings.Contains(ringed, "rr.status != 'held' AND (rr.overflow_bounds IS NOT NULL") {
-		t.Fatalf("ring arm must require a live non-held reach row, got %q", ringed)
+	if len(ringedArgs) != 10 {
+		t.Fatalf("ringed arg count = %d, want 10 (9 + the admitted list)", len(ringedArgs))
 	}
-	if len(ringedArgs) != 16 {
-		t.Fatalf("ringed arg count = %d, want 16 (9 + the ring's 7)", len(ringedArgs))
+	if ids, ok := ringedArgs[5].([]uint64); !ok || len(ids) != 2 || ids[0] != 101 {
+		t.Fatalf("admitted ids must bind in the ring arm's slot, got %v at index 5", ringedArgs[5])
 	}
-	if ringedArgs[7] != "$.rural.sparse" {
-		t.Fatalf("ring path must bind in the ring arm's slot, got %v at index 7", ringedArgs[7])
+}
+
+// The ring test is JSON_EXTRACT over a column. In this WHERE it can only be
+// carried by an EXISTS correlated on ms.msgid, which is true for rows in NEITHER
+// raster bucket - so the id lists stop bounding the scan and the badge walks
+// messages_spatial. Ids keep it keyed; this asserts the shape, because the query
+// still returns the right answer when it is wrong, just slowly enough to take the
+// site with it.
+func TestFromIDsWhere_NeverCarriesTheJSONRingTest(t *testing.T) {
+	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
+
+	ringed, _ := fromIDsWhere([]int64{1}, []int64{2}, latlng, []uint64{101})
+	for _, banned := range []string{"overflow_bounds", "JSON_EXTRACT", "JSON_CONTAINS"} {
+		if strings.Contains(ringed, banned) {
+			t.Errorf("the JSON ring test must not reach the badge query (%s): %q", banned, ringed)
+		}
 	}
 }

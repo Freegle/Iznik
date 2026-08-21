@@ -36,6 +36,16 @@ func viewerOverflowPaths(db *gorm.DB, myid uint64, lat, lng float32) []string {
 	return rippling.ViewerOverflowPaths(db, myid, lat, lng)
 }
 
+// viewerAdmittedMsgids is viewerOverflowPaths resolved to the posts those rings
+// actually admit. Every read surface that has to bound a scan wants the ids, not
+// the ring test: the JSON test can only be asked cheaply of rows already narrowed
+// by an index (rippling.AdmittedMsgids), and asked of anything else it removes the
+// index that was doing the narrowing.
+func viewerAdmittedMsgids(db *gorm.DB, myid uint64, lat, lng float32) []uint64 {
+	return rippling.AdmittedMsgids(db, float64(lng), float64(lat), utils.SRID,
+		viewerOverflowPaths(db, myid, lat, lng))
+}
+
 // reachOrOverflowSQL is reachContainmentSQL plus, when any overflow ring applies to this
 // viewer, the rings as alternative ways in. Returned as ONE conjunct so it can be spliced
 // into the single concatenated WHERE the browse query builds - see the note in
@@ -43,8 +53,10 @@ func viewerOverflowPaths(db *gorm.DB, myid uint64, lat, lng float32) []string {
 func reachOrOverflowSQL(db *gorm.DB, myid uint64, lng, lat float32) (string, []interface{}) {
 	reachWhere, reachArgs := reachContainmentSQL(db, lng, lat)
 
-	return composeReachOverflow(reachWhere, reachArgs, lng, lat,
-		viewerOverflowPaths(db, myid, lat, lng)...)
+	// The rings are resolved to msgids HERE, so composeReachOverflow stays pure
+	// and its SQL shape remains directly testable - which is the point of the
+	// split, and the shape is where this fails silently.
+	return composeReachOverflow(reachWhere, reachArgs, viewerAdmittedMsgids(db, myid, lat, lng))
 }
 
 // composeReachOverflow brackets the reach test and the rings as ALTERNATIVES within one
@@ -54,9 +66,23 @@ func reachOrOverflowSQL(db *gorm.DB, myid uint64, lng, lat float32) (string, []i
 //
 // No paths returns the containment SQL untouched, byte for byte: a lane nobody is using
 // must not change the query the feed has always run, nor its cost.
-func composeReachOverflow(reachWhere string, reachArgs []interface{}, lng, lat float32, paths ...string) (string, []interface{}) {
-	overflowWhere, overflowArgs := rippling.OverflowWhereAny(float64(lng), float64(lat), utils.SRID, paths)
-	if overflowWhere == "" {
+func composeReachOverflow(reachWhere string, reachArgs []interface{}, admitted []uint64) (string, []interface{}) {
+	// The ring arm is a LIST OF MSGIDS, not the JSON ring test.
+	//
+	// Splicing the JSON test in here is what took the site down on 2026-08-21:
+	// ORing JSON_EXTRACT against the spatial containment removed the SPATIAL
+	// index from the feed's query - EXPLAIN key=rippling_reach_polygon rows=1
+	// became key=NULL rows=62,534 - so every uncached feed load scanned a ~17GB
+	// table. This is the browse feed, so that is most of them.
+	//
+	// Resolving the rings to msgids first keeps both indexes: measured on db1,
+	// the browse form with `... OR rr.msgid IN (10 ids)` plans as
+	// index_merge sort_union(rippling_reach_outer, PRIMARY), rows=11.
+	//
+	// No admitted posts returns the containment SQL untouched, byte for byte: a
+	// viewer no ring admits must run precisely the query the feed always ran,
+	// and must not pay for an arm that can never match.
+	if len(admitted) == 0 {
 		return reachWhere, reachArgs
 	}
 
@@ -66,6 +92,6 @@ func composeReachOverflow(reachWhere string, reachArgs []interface{}, lng, lat f
 	// dissolve every other filter in the WHERE.
 	inner := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(reachWhere), "AND"))
 
-	return "AND ((" + inner + ") OR " + overflowWhere + ") ",
-		append(append([]interface{}{}, reachArgs...), overflowArgs...)
+	return "AND ((" + inner + ") OR rr.msgid IN (?)) ",
+		append(append([]interface{}{}, reachArgs...), admitted)
 }
