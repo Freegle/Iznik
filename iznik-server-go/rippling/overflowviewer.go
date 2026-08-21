@@ -218,71 +218,50 @@ func OverflowWhereAny(lng, lat float64, srid int, paths []string) (string, []int
 
 // AdmittedMsgids returns the posts whose rings admit this point.
 //
-// Answered ENTIRELY from the spatial server's rasters - no database work at
-// all. Two earlier shapes are why:
+// Answered ENTIRELY by the spatial server - no database work, and no local
+// derivation. Every surface calls THIS, so that "does a ring admit this member"
+// has one answer: the feed, the badge, search, the message page banner, the
+// reply gate, and (through its own client) the mail. Consistency between them is
+// not a property to be maintained by keeping several copies of a JSON test in
+// step; it is a property of there being one copy.
 //
-//   - the JSON ring test in the query: 37k-vertex polygons, 836 of them at one
-//     real point, 4.8s per page load. Took the site down twice on 2026-08-21.
-//   - the raster plus an exact test of its boundary band: bounded, but a
-//     viewer's band carries up to four lanes and each row parses a ring per
-//     lane. Measured on the read node at 16:00 that day: 4-14 of those running
-//     concurrently, 1-6s each, and db2's load went 8.5 to 45 within five
-//     minutes of the deploy. Rolled back.
+// Two earlier shapes are why the database is not involved:
 //
-// So the band is not resolved: a point the raster is unsure about is NOT
-// admitted. The raster is conservative - a cell is only "in" when the whole
-// cell is inside the ring - so this can never admit someone a ring does not,
-// and what it costs is a strip about one cell wide (~300-500m at the ring
-// grid's resolution) just inside each ring's edge, whose members the mail may
-// invite while the site does not show them. That is a real surface split and
-// the smallest one available: the alternative shapes were seconds per page.
-// Narrowing it further is a matter of the raster's resolution, not of asking
-// the database (see ringRasterDim in the spatial server).
+//   - the ring JSON in the query: 37k-vertex polygons, 836 of them at one real
+//     point, 4.8s per page load, and it removed the index it sat beside. Took
+//     the site down twice on 2026-08-21.
+//   - the raster plus an exact test of its boundary band: bounded to a handful
+//     of msgids, which sounded cheap, but a viewer's band carries up to four
+//     lanes and each row parses a ring per lane. 4-14 running concurrently at
+//     1-6s each; the read node went from load 8.5 to 45 in five minutes.
 //
-// Returns nil when no ring can apply, and when the spatial server cannot answer
-// - dataset not built, server down, lane it does not know. Ring members then
-// see the committed reach only, which is logged, throttled.
+// So the band is not resolved, by anyone. The raster is conservative - a cell
+// counts as "in" only when the whole cell is inside the ring - so this never
+// admits someone a ring does not, and the strip it declines is about one cell
+// wide just inside each ring's edge. Every surface declines the same strip,
+// which is what makes it acceptable: nobody is mailed a post another surface
+// will refuse them.
+//
+// Returns nil when no ring can apply, and when the spatial server cannot answer.
+// Ring members then see the committed reach only, on every surface at once,
+// logged and throttled.
 func AdmittedMsgids(db *gorm.DB, lng, lat float64, srid int, paths []string) []uint64 {
-	codes := laneCodesFor(paths)
-	if len(codes) == 0 {
+	lanes := knownLanes(paths)
+	if len(lanes) == 0 {
 		return nil
 	}
 
-	in, _, err := spatial.ReachOverflowContaining(lng, lat)
+	in, _, err := spatial.ReachOverflowContaining(lng, lat, lanes)
 	if err != nil {
 		logRingLookupFailure(err)
 		return nil
 	}
 
-	return msgidsForLanes(in, codes)
-}
-
-// msgidsForLanes decodes packed ids and keeps the posts whose matching lane is
-// one this viewer is in. A post can appear on several lanes; it is admitted
-// once.
-//
-// Nothing here checks the reach row's STATUS. The index excludes held reaches,
-// on a two-minute delta, and every caller's own query tests
-// `status != 'held'` against a row it is already reading - so a hold takes
-// effect on the surfaces immediately regardless of the index's staleness, and
-// re-checking it here would be a second query per request for an answer the
-// first one already has.
-func msgidsForLanes(extIDs []int64, codes map[int64]string) []uint64 {
-	seen := make(map[uint64]struct{}, len(extIDs))
-	var ids []uint64
-	for _, extID := range extIDs {
-		msgid, code := DecodeOverflowExtID(extID)
-		if msgid == 0 {
-			continue
+	ids := make([]uint64, 0, len(in))
+	for _, id := range in {
+		if id > 0 {
+			ids = append(ids, uint64(id))
 		}
-		if _, ok := codes[code]; !ok {
-			continue
-		}
-		if _, dup := seen[msgid]; dup {
-			continue
-		}
-		seen[msgid] = struct{}{}
-		ids = append(ids, msgid)
 	}
 	return ids
 }

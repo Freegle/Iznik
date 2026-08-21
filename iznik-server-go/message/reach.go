@@ -88,13 +88,21 @@ func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uin
 
 	db := database.DBConn
 
-	// The viewer's rings, as a rescue on both branches below: NOT blocked when a ring
-	// admits them, however the polygon test came out.
-	ringWhere, ringArgs := rippling.OverflowWhereAny(lng, lat, utils.SRID,
-		rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng)))
-	ringRescue := ""
-	if ringWhere != "" {
-		ringRescue = " AND NOT " + ringWhere
+	// The viewer's rings, as a rescue: NOT blocked when a ring admits them,
+	// however the polygon test came out.
+	//
+	// Asked of rippling.AdmittedMsgids - the SAME call the feed, the badge, the
+	// reply gate and the mail make - and applied here in Go rather than as a
+	// predicate in the query. Consistency across surfaces is the constraint this
+	// lane lives under: a member the mail invites must not be told "not reached
+	// yet" here, and the only way to guarantee that is for every surface to read
+	// one answer rather than to re-derive it from the same JSON and hope the
+	// derivations agree. It also keeps the ring test out of a query that has an
+	// index to lose (see the 2026-08-21 incidents).
+	admitted := make(map[uint64]struct{})
+	for _, id := range rippling.AdmittedMsgids(db, lng, lat, utils.SRID,
+		rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))) {
+		admitted[id] = struct{}{}
 	}
 	var rows []struct {
 		Msgid    uint64     `gorm:"column:msgid"`
@@ -116,20 +124,25 @@ func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uin
 		// the golden.
 		expr, exprArgs := rippling.ReachInReachExpr(lng, lat, utils.SRID)
 		whereArgs := append([]interface{}{msgids}, exprArgs...)
-		whereArgs = append(whereArgs, ringArgs...)
 		err = db.Table("rippling_reach rr").
 			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
-			Where("rr.msgid IN (?) AND NOT "+expr+ringRescue, whereArgs...).
+			Where("rr.msgid IN (?) AND NOT "+expr, whereArgs...).
 			Scan(&rows).Error
 	} else {
-		legacyArgs := append([]interface{}{msgids, lng, lat, utils.SRID}, ringArgs...)
 		err = db.Table("rippling_reach rr").
 			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
-			Where("rr.msgid IN ? AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) = 0"+ringRescue, legacyArgs...).
+			Where("rr.msgid IN ? AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+				msgids, lng, lat, utils.SRID).
 			Scan(&rows).Error
 	}
 	if err == nil {
 		for _, r := range rows {
+			// A ring admits them: the post is not blocked, whatever the polygon
+			// said. Applied after the query so the ring answer comes from one
+			// place for every surface.
+			if _, ok := admitted[r.Msgid]; ok {
+				continue
+			}
 			origin := ReachOrigin{Arrival: r.Arrival}
 			if r.Lat != nil && r.Lng != nil {
 				origin.Lat, origin.Lng, origin.Ok = *r.Lat, *r.Lng, true

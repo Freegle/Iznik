@@ -187,18 +187,29 @@ func ReachContaining(lng, lat float64) (in []int64, partial []int64, err error) 
 	return out.In, out.Partial, nil
 }
 
-// ReachOverflowContaining calls GET /v1/reachoverflow/containing: every
-// (post, ring lane) whose ring covers the point.
+// ReachOverflowContaining calls GET /v1/reachoverflow/containing for the lanes
+// the caller is in, and gets back the posts those rings admit at this point.
 //
-// The ids are PACKED - post and lane in one int64, decoded by
-// rippling.DecodeOverflowExtID - because one index answers a per-lane question:
-// the same post admits a sparse-band member on one ring and refuses a
-// dense-band one on another. `in` are definite; `partial` sit in the raster's
-// boundary band and the caller must exact-test them against the ring JSON.
-func ReachOverflowContaining(lng, lat float64) (in []int64, partial []int64, err error) {
+// The lanes are named, not decoded: the index stamps each ring item with its
+// lane and filters server-side, so no caller carries a copy of that encoding.
+// One authority answers "does a ring admit this member", and the feed, the
+// badge, search, the message page, the reply gate and the mail all ask it - the
+// only arrangement in which those surfaces cannot drift apart.
+//
+// `in` is definite. `partial` sits in the raster's boundary band and is NOT
+// admitted by any caller: resolving it exactly costs a ring parse per lane per
+// post, which took the read node's load from 8.5 to 45 on 2026-08-21. It is
+// returned so callers can see the band exists, never so they can act on it
+// differently from one another.
+func ReachOverflowContaining(lng, lat float64, lanes []string) (in []int64, partial []int64, err error) {
+	if len(lanes) == 0 {
+		return nil, nil, nil
+	}
+
 	params := url.Values{
-		"lng": {fmt.Sprintf("%f", lng)},
-		"lat": {fmt.Sprintf("%f", lat)},
+		"lng":   {fmt.Sprintf("%f", lng)},
+		"lat":   {fmt.Sprintf("%f", lat)},
+		"lanes": {strings.Join(lanes, ",")},
 	}
 	reqURL := fmt.Sprintf("%s/v1/reachoverflow/containing?%s", baseURL(), params.Encode())
 

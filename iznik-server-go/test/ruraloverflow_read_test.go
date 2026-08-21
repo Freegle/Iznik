@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
-	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -58,33 +58,38 @@ func farReachWithSparseRing(t *testing.T, msgID uint64) {
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), overflow_bounds = VALUES(overflow_bounds)", msgID)
 }
 
-// stubRingIndex points the spatial client at a server answering the ring-containment
-// question the way the real reachoverflow dataset would for these fixtures.
+// stubRingIndex points the spatial client at a server answering the ring
+// containment question the way the real reachoverflow dataset would for these
+// fixtures.
 //
-// The read surfaces stopped asking MySQL that question on 2026-08-21: the rings are
-// 37k-vertex polygons in a JSON column, and parsing the hundreds that cover a point
-// cost 4.8s a page load. They now come from the spatial server's rasters, so a test
-// that seeds a ring must serve one too - otherwise it is asserting that rings are
-// dark, which is what an unreachable spatial server correctly produces.
+// Every read surface asks that one question now - browse, search, the badge, the
+// message page and the reply gate - because re-deriving it per surface from the
+// ring JSON is how they drift apart, and because the JSON form cost 4.8s a page
+// load. So a test that seeds a ring has to serve one; without it the fixture
+// asserts that rings are dark, which is what an unreachable spatial server
+// correctly produces.
 //
-// Ids are packed msgid<<4|lane, and this stub stamps ONLY the sparse lane: that is
-// what makes the dense-band viewer's exclusion a real assertion rather than an
-// accident of an empty answer.
-func stubRingIndex(t *testing.T, sparseAdmits ...uint64) {
+// The stub answers only for the lanes the caller asks about, which is what makes
+// the dense-band viewer's exclusion a real assertion rather than an artefact of
+// an empty answer: a dense-band viewer asks about "$.rural.dense" and this ring
+// is a sparse one.
+func stubRingIndex(t *testing.T, lane string, admits ...uint64) {
 	t.Helper()
-
-	ids := make([]int64, 0, len(sparseAdmits))
-	for _, msgid := range sparseAdmits {
-		ids = append(ids, int64(msgid)<<4|rippling.OverflowLaneCodes["$.rural.sparse"])
-	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/reachoverflow/containing" {
 			http.NotFound(w, r)
 			return
 		}
+		ids := []uint64{}
+		for _, l := range strings.Split(r.URL.Query().Get("lanes"), ",") {
+			if l == lane {
+				ids = append(ids, admits...)
+				break
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json2.NewEncoder(w).Encode(map[string]any{"in": ids, "partial": []int64{}})
+		json2.NewEncoder(w).Encode(map[string]any{"in": ids, "partial": []uint64{}})
 	}))
 	t.Cleanup(srv.Close)
 	t.Setenv("SPATIAL_KNN_URL", srv.URL)
@@ -107,7 +112,7 @@ func TestBrowseScopedSearch_RingAdmittedPostSearchable(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", ringed)
 
 	farReachWithSparseRing(t, ringed)
-	stubRingIndex(t, ringed)
+	stubRingIndex(t, "$.rural.sparse", ringed)
 
 	// A sparse-band viewer the ring covers.
 	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
@@ -162,6 +167,7 @@ func TestReachBlocked_RingAdmittedViewerNotBlocked(t *testing.T) {
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
 	db.Exec("UPDATE users SET settings = JSON_SET(COALESCE(settings,'{}'), "+
 		"'$.browseDensityBand', 'sparse') WHERE id = ?", viewerID)
+	stubRingIndex(t, "$.rural.sparse", msgID)
 
 	// No viewer: the far polygon blocks the point, ring or no ring - the match mailers
 	// check from the post's own location and must stay strict.
@@ -202,7 +208,11 @@ func TestReachBlocked_ClusterRingNeverRescuesTheMailer(t *testing.T) {
 		"'cluster', JSON_OBJECT('w1', 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))'))) "+
 		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), overflow_bounds = VALUES(overflow_bounds)", msgID)
 
+	stubRingIndex(t, "$.cluster.w1", msgID)
+
 	// No viewer: the mailer's call. The wedge covers the point, and must not rescue it.
+	// ViewerOverflowPaths returns nothing without a viewer, so the ring index is never
+	// even asked - which is the guarantee, not an accident of this stub.
 	blocked := message.ReachBlockedSet(0, []uint64{msgID}, 51.5, -0.1)
 	assert.True(t, blocked[msgID],
 		"a cluster wedge must never admit a viewer-less caller: postmatches feeds the matched-posts email")
@@ -247,6 +257,7 @@ func TestCreateChatMessage_RingAdmittedReplyNotHeld(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", msgID)
 
 	farReachWithSparseRing(t, msgID)
+	stubRingIndex(t, "$.rural.sparse", msgID)
 
 	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
 	_, token := CreateTestSession(t, replierID)

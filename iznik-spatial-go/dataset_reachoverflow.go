@@ -406,6 +406,54 @@ func (d *ReachOverflowDataset) Within(_ *Index, _ QueryParams) ([]int64, error) 
 	return nil, fmt.Errorf("reachoverflow dataset does not support within; use /containing")
 }
 
+// ContainingFiltered implements PointContainerFiltered: the same question, but
+// with the caller naming the lanes it is in, and answered as PLAIN msgids.
+//
+// This is the form every surface uses - apiv2's feed, badge, search, message
+// page and reply gate, and the batch's mail paths. It exists so that no caller
+// needs its own copy of the lane table: the lane a member is in is already a
+// path string they hold ("$.rural.sparse"), and sending that is enough. A lane
+// this index does not know is an error, not an empty answer, because silently
+// returning nothing for a lane the mail is inviting on is precisely the
+// surface split this whole mechanism exists to prevent.
+func (d *ReachOverflowDataset) ContainingFiltered(idx *Index, lng, lat float64, lanes []string) (in []int64, partial []int64, err error) {
+	codes := make(map[int64]struct{}, len(lanes))
+	for _, lane := range lanes {
+		code, ok := overflowLaneCodes[lane]
+		if !ok {
+			return nil, nil, fmt.Errorf("unknown overflow lane %q", lane)
+		}
+		codes[code] = struct{}{}
+	}
+	if len(codes) == 0 {
+		return nil, nil, nil
+	}
+
+	rawIn, rawPartial, err := d.Containing(idx, lng, lat)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	keep := func(ids []int64) []int64 {
+		seen := make(map[int64]struct{}, len(ids))
+		var out []int64
+		for _, id := range ids {
+			if _, ok := codes[id&((1<<overflowLaneShift)-1)]; !ok {
+				continue
+			}
+			msgid := id >> overflowLaneShift
+			if _, dup := seen[msgid]; dup {
+				continue
+			}
+			seen[msgid] = struct{}{}
+			out = append(out, msgid)
+		}
+		return out
+	}
+
+	return keep(rawIn), keep(rawPartial), nil
+}
+
 // Containing implements PointContainer, returning ENCODED ids: the caller
 // decodes each into (msgid, lane) and keeps only the lanes that apply to its
 // viewer. Returning them per-lane rather than as bare msgids is what lets one

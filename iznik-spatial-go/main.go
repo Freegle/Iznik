@@ -129,14 +129,34 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "lng and lat required"})
 		}
 
+		// `lanes` selects on whatever category the dataset stamps its items with
+		// (the overflow rings' lane paths) and returns plain ids. Without it the
+		// dataset's own ids come back, encoding and all.
+		lanes := strings.Split(c.Query("lanes", ""), ",")
+		if len(lanes) == 1 && lanes[0] == "" {
+			lanes = nil
+		}
+		pcf, filtered := state.ds.(PointContainerFiltered)
+
 		var in, partial []int64
 		err := state.withIndex(func(idx *Index) error {
 			var e error
+			if lanes != nil && filtered {
+				in, partial, e = pcf.ContainingFiltered(idx, lng, lat, lanes)
+				return e
+			}
 			in, partial, e = pc.Containing(idx, lng, lat)
 			return e
 		})
 		if err == errIndexNotReady {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+		if err != nil && strings.HasPrefix(err.Error(), "unknown overflow lane") {
+			// A lane the index does not know is the caller and the index
+			// disagreeing about what lanes exist. Said out loud: answering
+			// "nobody" would let a surface quietly stop admitting people the
+			// others still do.
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
