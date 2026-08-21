@@ -464,11 +464,17 @@ re-rippling from scratch**.
 
 ## TrashNothing posts
 
-TrashNothing posts are currently **not** rippled out into new communities. TrashNothing
-still cross-posts an item to several Freegle communities itself, so rippling deliberately
-stays out of its way to avoid the same item appearing twice. They behave on your community
-exactly as they always have. This exclusion is temporary - once TrashNothing posts to a
-single origin community, those posts will ripple like any other.
+TrashNothing posts ripple like any other post. They did not used to: while TrashNothing
+cross-posted an item to several Freegle communities itself, rippling stayed out of its way
+so the same item did not appear twice.
+
+The one exception is an item we still hold as **several posts** - the older way of
+receiving them made one post per community, all for the same physical item. Until those
+copies have been merged into one post, none of them ripples, because each would otherwise
+carry the same item outward on its own account and members near two of them would be shown
+it twice. Nothing is needed from you: merging those copies is a job for the tech team, and
+once it has been done the post ripples normally. There is no moderator setting behind this,
+and nothing to report - a post in that state simply has no reach map yet.
 
 ---
 

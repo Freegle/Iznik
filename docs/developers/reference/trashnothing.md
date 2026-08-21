@@ -95,7 +95,6 @@ and `tn:parity-check`, neither of which needs the email path switched off. On, i
 | `tn:sync` ingests posts from the TN API | `TNSyncCommand` |
 | The email path stops **routing** TN group posts (it still **archives** them) | `TnEmailRoutingGate`, called by `IncomingMailController` / `IncomingMailCommand` |
 | `tn:verify-email-coverage` starts running hourly | `routes/console.php`, and the command's own guard |
-| TN posts become eligible for rippling | `Ripple\ExpandService::rippleIntoNewGroups` — see [rippling-algorithm.md §4b](rippling-algorithm.md) |
 | The `tn:sync (posts)` scheduled-outcome check goes live | `ScheduledOutcomeRegistry` |
 
 Five differences from the email path are intentional, not bugs, and all matter
@@ -108,8 +107,15 @@ when reading any coverage report:
   id and emails each one, so the email path creates N messages for an item
   crossposted to N groups. The API path ingests only the source post (empty
   `group_id`) and discards the copies, letting Freegle's own rippling do the
-  cross-posting — see `GroupPostIngestionService::REASON_CROSSPOST`. That is also
-  why the ripple exclusion on TN posts lifts with the same flag.
+  cross-posting — see `GroupPostIngestionService::REASON_CROSSPOST`. Note the
+  flag does **not** reach into rippling to say so: `ExpandService` never reads
+  it, and holds back only a message whose post id another live message still
+  carries ([rippling-algorithm.md §4b](rippling-algorithm.md)). So an
+  API-ingested post that lands beside unmerged email-era copies of the same item
+  sits out until `tn:merge-crossposts` collapses the set, flag or no flag —
+  during the cutover, watch `tn_duplicate_sat_out` in the `ripple:expand
+  complete` stats, and run the merge (by hand on the batch host, as below) when
+  it climbs.
 - **The subject's type prefix is normalized.** The email path keeps whatever
   prefix TN put in the email subject, which is what the member typed — `OFFERED:`
   is common. The API path always synthesizes `strtoupper(type) . ': '` from TN's

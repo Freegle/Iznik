@@ -88,6 +88,11 @@ ModTools tells you *why* a post needs a look, right on the post:
   toward Lancaster. People inside a ring can see the post and reply to it, and are
   emailed about it, exactly as those inside the shaded area are. See
   [rippling out](rippling-out.md).
+
+  A few posts have **no reach map at all**, and that is not a fault: a post on a phantom
+  or training community never ripples, and neither does a TrashNothing item we still hold
+  as several separate posts, until those are merged into one. See
+  [TrashNothing posts](rippling-out.md#trashnothing-posts).
 - **Bulk clearance** posts show an item count and a "see how members see it" preview.
 
 ## Standard messages

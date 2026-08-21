@@ -462,18 +462,6 @@ so the animation you watch is the targeting decision at each step, not a geometr
 approximation of it. On by default; `RIPPLE_REACHABLE_GATE=false` is the killswitch, reverting
 targeting and retraction to the polygon-overlap test.
 
-### 4b. Posts that sit out: an item still held as several messages
-
-A post whose TrashNothing post id is also held by another live message does not ripple into
-new groups. Such a set is one physical item existing as more than one Freegle message, and
-each would otherwise ripple on its own account, so the item would reach people once per
-copy. Enforced in `rippleIntoNewGroups`.
-
-This is self-limiting rather than a standing exclusion: once
-`php artisan tn:merge-crossposts` has collapsed the set onto one message there is no other
-live message to match, and the post ripples like any other. Ingestion no longer creates such
-sets - see [TrashNothing](trashnothing.md#cross-posts-and-reposts).
-
 ### 4a. Communities that never ripple: phantom and training
 
 Some communities exist to hold moderator practice posts rather than real items, and their
@@ -512,21 +500,36 @@ only ever covered ripple-in, and only communities named that way - `FreeglePlayg
 its practice posts at a real Edinburgh postcode, so before this change a practice post there
 crossposted into the live Lothians communities.
 
-### 4b. TrashNothing posts: excluded until TN posts arrive by API
+### 4b. Posts that sit out: an item still held as several messages
 
-A TN post (`messages.tnpostid` set and non-empty) is not rippled into new groups while TN
-posts still arrive by **email**. TN cross-posts an item itself, emailing a separate copy per
-group, so each copy is already its own Freegle message on its own group; rippling on top of
-that would spread one item across a much wider area than either system intended.
+A post whose TrashNothing post id is also held by another **live** (not deleted) message does
+not ripple into new groups. Such a set is one physical item existing as more than one Freegle
+message, and each would otherwise ripple on its own account, so the item would reach people
+once per copy. Enforced in `rippleIntoNewGroups`.
 
-`FREEGLE_TN_INGEST_POSTS_VIA_API` removes the overlap. The API path takes only TN's *source*
-post and discards the per-group copies
-([`GroupPostIngestionService::REASON_CROSSPOST`](../../../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php)),
-so a TN post lives on one group and cross-posting becomes Freegle's job — i.e. rippling. The
-exclusion in `rippleIntoNewGroups` is therefore gated on that flag rather than deleted:
-posts ingested by email before the cutover are still multi-group, though they are also well
-past the ripple window a day after the flag is flipped. See
-[trashnothing.md](trashnothing.md#post-ingestion-via-api-and-the-email-cutover).
+**There is no blanket TN exclusion any more, and no feature flag on what is left.** It used to
+be a standing exclusion on every TN post while TN posts arrived by email - TN cross-posted an
+item itself, emailing a separate copy per group, so rippling on top of that spread one item
+much further than either system intended. What replaced it is the rule above, which asks what
+the database holds rather than which era we are in. `FREEGLE_TN_INGEST_POSTS_VIA_API` is what
+stopped new such sets being created (the API path takes only TN's *source* post and discards
+the per-group copies -
+[`GroupPostIngestionService::REASON_CROSSPOST`](../../../iznik-batch/app/Services/TrashNothing/Ingestion/GroupPostIngestionService.php)),
+but `ExpandService` never reads it, and flipping it releases nothing on its own.
+
+That distinction matters during the cutover, where the two eras coexist: an API-ingested
+message can land beside unmerged email-era copies of the same item, and it then sits out
+like any other member of such a set - the flag being on does not release it. **Collapsing the
+set does**: once `php artisan tn:merge-crossposts` has merged it onto one message there is no
+other live message to match, and the post ripples like any other. So the exclusion is
+self-limiting rather than permanent, but it is only as short-lived as the merge backlog - and
+the merge is run by hand on the batch host, not scheduled.
+
+Because a post sitting out is otherwise invisible, each one is counted as
+`tn_duplicate_sat_out` in the run stats, which `ripple:expand complete` logs. A cutover window
+where posts are being held back at volume shows up there; the remedy is to run
+`tn:merge-crossposts`, not to touch the flag. See
+[trashnothing.md](trashnothing.md#cross-posts-and-reposts).
 
 ### Rejected targeting approaches
 
