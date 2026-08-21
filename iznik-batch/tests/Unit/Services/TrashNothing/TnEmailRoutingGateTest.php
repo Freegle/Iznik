@@ -19,12 +19,19 @@ class TnEmailRoutingGateTest extends TestCase
         return new TnEmailRoutingGate();
     }
 
-    private function parse(string $envelopeTo, array $headers = []): \App\Services\Mail\Incoming\ParsedEmail
+    /**
+     * @param  array<string, string>  $headers
+     * @param  array{subject?: string, from?: string, envelopeFrom?: string}  $overrides
+     */
+    private function parse(string $envelopeTo, array $headers = [], array $overrides = []): \App\Services\Mail\Incoming\ParsedEmail
     {
+        $from = $overrides['from'] ?? 'Poster <poster@user.trashnothing.com>';
+        $envelopeFrom = $overrides['envelopeFrom'] ?? 'poster@user.trashnothing.com';
+
         $lines = [
-            'From: Poster <poster@user.trashnothing.com>',
+            'From: ' . $from,
             'To: ' . $envelopeTo,
-            'Subject: OFFER: Bookshelf (Camden)',
+            'Subject: ' . ($overrides['subject'] ?? 'OFFER: Bookshelf (Camden)'),
             'Message-ID: <tn-test@trashnothing.com>',
             'Date: Fri, 14 Aug 2026 09:00:00 +0000',
         ];
@@ -35,7 +42,7 @@ class TnEmailRoutingGateTest extends TestCase
 
         $raw = implode("\r\n", $lines) . "\r\n\r\nFree to collect.\r\n";
 
-        return app(MailParserService::class)->parse($raw, 'poster@user.trashnothing.com', $envelopeTo);
+        return app(MailParserService::class)->parse($raw, $envelopeFrom, $envelopeTo);
     }
 
     private function groupAddress(string $localPart): string
@@ -89,6 +96,62 @@ class TnEmailRoutingGateTest extends TestCase
         $email = $this->parse('someone@example.com', [
             'X-Trash-Nothing-Post-Id' => '47102958',
         ]);
+
+        $this->assertFalse($this->gate()->isTrashNothingGroupPost($email));
+    }
+
+    public function test_ignores_a_bounce_to_a_group_address(): void
+    {
+        // route() Phase 3 claims bounces before group posts, and handleBounce()
+        // does real work — recording the bounce, and eventually turning a
+        // member's mail off. Skipping one would lose that silently.
+        $email = $this->parse($this->groupAddress('camdengroup'), [
+            'X-Trash-Nothing-Post-Id' => '47102958',
+        ], ['subject' => 'Mail delivery failed: returning message to sender']);
+
+        $this->assertTrue($email->isBounce(), 'fixture should reach the bounce branch');
+        $this->assertFalse($this->gate()->isTrashNothingGroupPost($email));
+    }
+
+    public function test_ignores_a_digest_reply(): void
+    {
+        // Phase 3c: replies to a digest get an explanatory auto-response, which
+        // is not something the API path replaces.
+        $email = $this->parse($this->groupAddress('camdengroup'), [
+            'X-Trash-Nothing-Post-Id' => '47102958',
+            'In-Reply-To' => '<UnifiedDigest-1234@users.ilovefreegle.org>',
+        ]);
+
+        $this->assertTrue($email->isDigestReply(), 'fixture should reach the digest-reply branch');
+        $this->assertFalse($this->gate()->isTrashNothingGroupPost($email));
+    }
+
+    public function test_ignores_an_auto_reply(): void
+    {
+        $email = $this->parse($this->groupAddress('camdengroup'), [
+            'X-Trash-Nothing-Post-Id' => '47102958',
+            'Auto-Submitted' => 'auto-replied',
+        ]);
+
+        $this->assertTrue($email->isAutoReply(), 'fixture should reach the auto-reply branch');
+        $this->assertFalse($this->gate()->isTrashNothingGroupPost($email));
+    }
+
+    public function test_ignores_a_self_sent_message(): void
+    {
+        $groupAddress = $this->groupAddress('camdengroup');
+        $email = $this->parse($groupAddress, [
+            'X-Trash-Nothing-Post-Id' => '47102958',
+        ], ['envelopeFrom' => $groupAddress, 'from' => $groupAddress]);
+
+        $this->assertFalse($this->gate()->isTrashNothingGroupPost($email));
+    }
+
+    public function test_ignores_a_dropped_sender(): void
+    {
+        $email = $this->parse($this->groupAddress('camdengroup'), [
+            'X-Trash-Nothing-Post-Id' => '47102958',
+        ], ['from' => 'Twitter <info@twitter.com>', 'envelopeFrom' => 'info@twitter.com']);
 
         $this->assertFalse($this->gate()->isTrashNothingGroupPost($email));
     }

@@ -162,7 +162,7 @@ replaces it, checking coverage only.
 
 | Piece | Role |
 |---|---|
-| `TnEmailRoutingGate` | Decides which inbound mail stops being routed. Narrow by design — a wider predicate silently drops mail, and TN chat replies must keep routing. |
+| `TnEmailRoutingGate` | Decides which inbound mail stops being routed. Narrow by design — a wider predicate silently drops mail. It mirrors `IncomingMailService::route()` phase by phase and matches only what would have reached Phase 5, so chat replies, bounces, digest replies, auto-replies and volunteer mail all keep routing. |
 | `ArchiveInventoryService` | Lists the TN posts that arrived in a window — the independent witness. Walks the archive via the shared `IncomingArchiveReader` (also used by `mail:recover-dropped-merged`); only the TN-specific selection and keying live here. |
 | `CoverageVerifier` | Checks each against `messages.tnpostid` and classifies the absences. |
 | `TNVerifyEmailCoverageCommand` | Orchestrates, backfills, reports. |
