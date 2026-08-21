@@ -78,6 +78,13 @@ and per-group membership and roles are the ones you will meet first.
   mail inviting members the website then refused, so people were emailed a post they could
   not find, and their replies were held indefinitely. See section 3b of the algorithm
   reference for the lanes and the table of where each is honoured.
+
+  Agreeing on the answer is not sufficient: how a surface ASKS costs as much as what it
+  concludes. The lanes are JSON, which no index can serve, so a read path resolves them to
+  msgids off an indexed bbox table and never puts the JSON test beside an indexed predicate
+  - do that and the optimiser drops the index for the entire query, which reads as a healthy
+  site returning correct answers right up until it stops returning them. Twice on 21 Aug
+  2026. Same section.
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
   that get no reply at all: a passthrough for a silent post's first reply, individual mail to
   the members who have asked for that specific item (an open post of the opposite type, or a
