@@ -708,7 +708,7 @@ class UnifiedDigestService
      *
      * @return array{0: string, 1: array<int, mixed>}
      */
-    private function overflowBboxBranch(int $msgid, string $point): array
+    private function overflowBboxBranch(int $msgid, string $lngExpr, string $latExpr): array
     {
         $none = ['', []];
 
@@ -754,12 +754,15 @@ class UnifiedDigestService
 
             [$minLng, $minLat, $maxLng, $maxLat] = array_map('floatval', array_slice($box, 0, 4));
 
-            // The point expression resolves to mylocation else lastlocation; compare
-            // its parts against the box. Written against the same expressions the
-            // caller built so there is one definition of "where this member is".
-            $sql = " OR (ST_X($point) BETWEEN ? AND ? AND ST_Y($point) BETWEEN ? AND ?)";
+            // Compared against the member's coordinate EXPRESSIONS (mylocation else
+            // lastlocation), not against a constructed point. Building a geometry to
+            // pull ST_X/ST_Y back out of it would cost a geometry per candidate row -
+            // and, because the point expression carries its own SRID placeholder,
+            // naming it twice silently changes how many binds this fragment needs.
+            // Four values, four placeholders, no geometry.
+            $sql = " OR ($lngExpr BETWEEN ? AND ? AND $latExpr BETWEEN ? AND ?)";
 
-            return [$sql, [$this->srid(), $minLng, $maxLng, $minLat, $maxLat]];
+            return [$sql, [$minLng, $maxLng, $minLat, $maxLat]];
         } catch (\Throwable $e) {
             Log::warning('ripple: overflow bbox branch failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
 
@@ -916,7 +919,7 @@ class UnifiedDigestService
             // through are candidates; the index says which of them are in.
             // The lane name is no longer needed here: which lane admits whom is
             // settled by the lanes each candidate is asked about, in keepRingAdmitted.
-            [$overflowSql, $overflowParams] = $this->overflowBboxBranch($msgid, $point);
+            [$overflowSql, $overflowParams] = $this->overflowBboxBranch($msgid, $lngExpr, $latExpr);
 
             // Which arm brought each member in, and which lanes they are in. Both
             // are needed now for every ring lane, not just fairness: a candidate
@@ -1989,41 +1992,6 @@ class UnifiedDigestService
      * @param  array{0:float,1:float}  $latlng  [lat, lng], as resolveUserLatLng returns
      * @return array{0: string, 1: array<int, mixed>}
      */
-    /**
-     * The posts this member's rings admit them to, as a fragment that stops the
-     * "not reached yet" filter rejecting them.
-     *
-     * The rings are not tested here. They are tested once, in the spatial index,
-     * and every surface reads that one answer — see App\Services\Ripple\RingIndex.
-     * A member the digest names a post to is a member who can open it, find it in
-     * search and reply to it, because the same call decided all four.
-     *
-     * @return array{0: string, 1: array<int, mixed>}
-     */
-    private function ringRescueIds(User $user, array $latlng): array
-    {
-        $settings = $user->settings;
-        if (is_string($settings)) {
-            $settings = json_decode($settings, true) ?: [];
-        }
-        $band = is_array($settings) ? ($settings['browseDensityBand'] ?? null) : null;
-
-        $lanes = RingIndex::lanesFor(is_string($band) ? $band : null);
-        if ($lanes === []) {
-            return ['', []];
-        }
-
-        $admitted = RingIndex::admittedFor((float) $latlng[0], (float) $latlng[1], $lanes);
-        if ($admitted === []) {
-            return ['', []];
-        }
-
-        return [
-            ' AND rr.msgid NOT IN (' . implode(',', array_fill(0, count($admitted), '?')) . ')',
-            $admitted,
-        ];
-    }
-
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
         // Immediate pulls only the user's immediate (-1) groups; daily pulls
