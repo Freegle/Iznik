@@ -216,69 +216,57 @@ func OverflowWhereAny(lng, lat float64, srid int, paths []string) (string, []int
 // costs one small upsert per ripple and leaves the fallback available; nothing
 // on the read path depends on it.
 
-// AdmittedMsgids returns the posts whose rings genuinely admit this point.
+// AdmittedMsgids returns the posts whose rings admit this point.
 //
-// Asked of the SPATIAL SERVER, not the database. The rings are WKT inside a
-// JSON column, averaging 37,000 vertices (prod, 2026-08-21), and the read
-// question - "which of these posts admit me" - needs hundreds of them at once:
-// 836 candidates measured 4.8s, essentially all of it parsing. No amount of
-// narrowing fixes that, because 558 of those 836 genuinely admitted; the
-// parses were real work. The mail side gets away with the JSON because it asks
-// about one post at a time.
+// Answered ENTIRELY from the spatial server's rasters - no database work at
+// all. Two earlier shapes are why:
 //
-// So the rings are rasterised once, in iznik-spatial-go's reachoverflow
-// dataset, exactly as reach polygons already are for the unread badge. Ids come
-// back packed with their lane; definite hits need no geometry at all, and only
-// the thin boundary band goes to MySQL for the exact JSON test, bounded to a
-// handful of msgids by primary key.
+//   - the JSON ring test in the query: 37k-vertex polygons, 836 of them at one
+//     real point, 4.8s per page load. Took the site down twice on 2026-08-21.
+//   - the raster plus an exact test of its boundary band: bounded, but a
+//     viewer's band carries up to four lanes and each row parses a ring per
+//     lane. Measured on the read node at 16:00 that day: 4-14 of those running
+//     concurrently, 1-6s each, and db2's load went 8.5 to 45 within five
+//     minutes of the deploy. Rolled back.
 //
-// Returns nil when no ring can apply, and ALSO when the spatial server cannot
-// answer - dataset not built yet, server down, lane unknown to it. That
-// deliberately costs ring members their extra posts rather than falling back to
-// the JSON: on the feed and the badge the ring shares ONE query with the
-// containment, so a slow ring arm does not degrade the ring, it takes the page
-// down. That is not hypothetical - it happened twice on 2026-08-21.
+// So the band is not resolved: a point the raster is unsure about is NOT
+// admitted. The raster is conservative - a cell is only "in" when the whole
+// cell is inside the ring - so this can never admit someone a ring does not,
+// and what it costs is a strip about one cell wide (~300-500m at the ring
+// grid's resolution) just inside each ring's edge, whose members the mail may
+// invite while the site does not show them. That is a real surface split and
+// the smallest one available: the alternative shapes were seconds per page.
+// Narrowing it further is a matter of the raster's resolution, not of asking
+// the database (see ringRasterDim in the spatial server).
+//
+// Returns nil when no ring can apply, and when the spatial server cannot answer
+// - dataset not built, server down, lane it does not know. Ring members then
+// see the committed reach only, which is logged, throttled.
 func AdmittedMsgids(db *gorm.DB, lng, lat float64, srid int, paths []string) []uint64 {
 	codes := laneCodesFor(paths)
 	if len(codes) == 0 {
 		return nil
 	}
 
-	in, partial, err := spatial.ReachOverflowContaining(lng, lat)
+	in, _, err := spatial.ReachOverflowContaining(lng, lat)
 	if err != nil {
-		// Logged, not silent: rings going dark is a visible behaviour change,
-		// and it must be attributable to the spatial server rather than looking
-		// like the lanes were switched off. Throttled, because the state that
-		// produces it - dataset not built on this node yet - produces it on
-		// EVERY feed load, and a deploy window would otherwise fill the log
-		// with one line per request.
 		logRingLookupFailure(err)
 		return nil
 	}
 
-	definite := msgidsForLanes(in, codes)
-	// A post can be definite on one of the viewer's lanes and only maybe on
-	// another. It is already admitted, so drop it from the band: exact-testing
-	// it would buy nothing and cost a ring parse, and returning it twice would
-	// put the same id in the caller's IN list twice.
-	maybe := notAlreadyIn(msgidsForLanes(partial, codes), definite)
-	if len(definite) == 0 && len(maybe) == 0 {
-		return nil
-	}
-
-	admitted := make([]uint64, 0, len(definite)+len(maybe))
-	admitted = append(admitted, liveMsgids(db, definite)...)
-	admitted = append(admitted, exactRingMatches(db, lng, lat, srid, paths, maybe)...)
-
-	if len(admitted) == 0 {
-		return nil
-	}
-	return admitted
+	return msgidsForLanes(in, codes)
 }
 
 // msgidsForLanes decodes packed ids and keeps the posts whose matching lane is
 // one this viewer is in. A post can appear on several lanes; it is admitted
 // once.
+//
+// Nothing here checks the reach row's STATUS. The index excludes held reaches,
+// on a two-minute delta, and every caller's own query tests
+// `status != 'held'` against a row it is already reading - so a hold takes
+// effect on the surfaces immediately regardless of the index's staleness, and
+// re-checking it here would be a second query per request for an answer the
+// first one already has.
 func msgidsForLanes(extIDs []int64, codes map[int64]string) []uint64 {
 	seen := make(map[uint64]struct{}, len(extIDs))
 	var ids []uint64
@@ -297,72 +285,6 @@ func msgidsForLanes(extIDs []int64, codes map[int64]string) []uint64 {
 		ids = append(ids, msgid)
 	}
 	return ids
-}
-
-// notAlreadyIn drops ids that are already admitted.
-func notAlreadyIn(ids, admitted []uint64) []uint64 {
-	if len(admitted) == 0 {
-		return ids
-	}
-	have := make(map[uint64]struct{}, len(admitted))
-	for _, id := range admitted {
-		have[id] = struct{}{}
-	}
-	var out []uint64
-	for _, id := range ids {
-		if _, dup := have[id]; !dup {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
-// liveMsgids keeps only the posts whose reach row is still live.
-//
-// The raster index excludes held reaches, but on a 2-minute delta, so a post
-// pulled back to Pending in the last tick would otherwise be admitted by a ring
-// after every other surface had stopped showing it. One primary-key-bounded
-// query, selecting two small columns so InnoDB never touches the row's
-// off-page polygon blobs.
-func liveMsgids(db *gorm.DB, ids []uint64) []uint64 {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	var live []uint64
-	db.Table("rippling_reach rr").
-		Select("rr.msgid").
-		Where("rr.msgid IN (?) AND rr.status != 'held'", ids).
-		Scan(&live)
-
-	return live
-}
-
-// exactRingMatches resolves the raster's boundary band against the authoritative
-// JSON. These are the cells a ring's edge passes through, so the answer is
-// genuinely unknown until the polygon is parsed - but there are a handful of
-// them, bounded by primary key, rather than the hundreds the unbounded question
-// would have parsed.
-func exactRingMatches(db *gorm.DB, lng, lat float64, srid int, paths []string, ids []uint64) []uint64 {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	ringWhere, ringArgs := OverflowWhereAny(lng, lat, srid, paths)
-	if ringWhere == "" {
-		return nil
-	}
-
-	args := []interface{}{ids}
-	args = append(args, ringArgs...)
-
-	var matched []uint64
-	db.Table("rippling_reach rr").
-		Select("rr.msgid").
-		Where("rr.msgid IN (?) AND rr.status != 'held' AND "+ringWhere, args...).
-		Scan(&matched)
-
-	return matched
 }
 
 // ringFailureLog throttles the "rings are dark" line to one a minute: enough to

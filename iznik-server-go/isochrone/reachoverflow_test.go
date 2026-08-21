@@ -182,6 +182,12 @@ func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 	if strings.Count(ringed, "ms.msgid IN (?)") != 3 {
 		t.Fatalf("admitted posts must add a third id-list arm, got %q", ringed)
 	}
+	// The ring ids come from an index on a two-minute delta, so the arm carries
+	// its own live-row test - otherwise the badge counts a post the feed, which
+	// reads status directly, will not render.
+	if !strings.Contains(ringed, "r3.status != 'held'") {
+		t.Errorf("the ring arm must require a live non-held reach row: %q", ringed)
+	}
 	if len(ringedArgs) != 10 {
 		t.Fatalf("ringed arg count = %d, want 10 (9 + the admitted list)", len(ringedArgs))
 	}

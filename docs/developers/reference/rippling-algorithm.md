@@ -328,15 +328,36 @@ unread badge:
 
 | Step | Where | Cost |
 |---|---|---|
-| Which rings cover this point | `iznik-spatial-go` `reachoverflow` dataset, `/v1/reachoverflow/containing` | RAM, O(1) per ring |
-| Is the reach still live | `rippling.liveMsgids`, primary-key bounded | 23ms for 558 ids |
-| Boundary band only | exact ring JSON test, bounded to those msgids | a handful of rows |
+| Which rings cover this point | `iznik-spatial-go` `reachoverflow` dataset, `/v1/reachoverflow/containing` | one localhost call; RAM, O(1) per ring |
+| Is the reach still live | the calling query's own `status != 'held'` | already being read |
+| Boundary band | NOT resolved - see below | nothing |
 
 The spatial ids are **packed**: `msgid << 4 | lane code`, because one index has
 to answer a per-lane question - the same post admits a sparse-band member and
 refuses a dense-band one, on different rings. The code table is duplicated
 deliberately in `dataset_reachoverflow.go` and `rippling/overflowlanes.go`, with
 a test on each side asserting the ten pairs verbatim.
+
+**The lookup does no database work at all**, and that is the second lesson of
+2026-08-21. The first version resolved the raster's boundary band against the
+ring JSON - bounded to a handful of msgids by primary key, which sounded cheap.
+It was not: a viewer's band carries up to four lanes, so each row in the band
+parses a ring per lane. On the read node that ran 4-14 concurrent, 1-6s each,
+and load went 8.5 to 45 within five minutes of the deploy. Rolled back.
+
+So a point the raster is unsure about is **not admitted**. The raster only calls
+a cell "in" when the whole cell is inside the ring, so this can never admit
+someone a ring does not; what it costs is a strip about one cell wide (~300-500m)
+just inside each ring's edge, where the mail may invite a member the site does
+not show. That is a genuine surface split, accepted knowingly as the smallest one
+on offer - the alternatives were seconds per page load - and it narrows with the
+raster's resolution (`ringRasterDim`), not by asking the database.
+
+Status is enforced by each surface's own query, not by the ring lookup: the feed
+and search already test `rr.status != 'held'` on a row they are reading anyway,
+and the badge's ring arm carries the same `EXISTS` its raster arms do. The index
+drops held reaches too, but on a two-minute delta - too slow to be what stands
+between a held post and a reader.
 
 **What a surface must never do** is put the ring test in the same query as an
 indexed predicate. ORed against the feed's spatial containment it removed the
@@ -345,11 +366,9 @@ index (`key=rippling_reach_polygon rows=1` became `key=NULL rows=62,534` over a
 scan (`type=ALL rows=58,348`, on a poll running twice a second). Neither failed.
 Both returned correct answers, by scanning.
 
-When the spatial server cannot answer - dataset not built, server down - the
-read surfaces show the committed reach only, and say so in the log. Ring members
-lose their extra posts until it recovers, which is the deliberate trade: on the
-feed and the badge the ring shares ONE query with the containment, so a slow
-ring arm does not degrade the ring, it takes the page with it.
+When the spatial server cannot answer - dataset not built, server down - the read
+surfaces show the committed reach only, and say so in the log. Ring members lose
+their extra posts until it recovers.
 
 **Flags** (`config/freegle.php`): `ripple.rural_access.enabled` and `ripple.cluster.enabled`
 default ON, `ripple.fairness.enabled` defaults OFF. The Go side reads the same names from the

@@ -127,16 +127,3 @@ func TestLaneCodesFor_UnknownPathsAreDropped(t *testing.T) {
 		t.Errorf("unknown lanes must be dropped, got %v", codes)
 	}
 }
-
-// A post can be definite on one lane and borderline on another. It is already
-// admitted, so it must not also be exact-tested (a ring parse for nothing) nor
-// appear twice in the caller's id list.
-func TestNotAlreadyIn_DropsPostsAlreadyAdmitted(t *testing.T) {
-	got := notAlreadyIn([]uint64{101, 102, 103}, []uint64{102})
-	if len(got) != 2 || got[0] != 101 || got[1] != 103 {
-		t.Errorf("band = %v, want [101 103]", got)
-	}
-	if got := notAlreadyIn([]uint64{101}, nil); len(got) != 1 {
-		t.Errorf("nothing admitted yet must leave the band alone, got %v", got)
-	}
-}

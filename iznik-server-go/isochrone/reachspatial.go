@@ -86,7 +86,14 @@ func fromIDsWhere(in, partial []int64, latlng utils.LatLng, admitted []uint64) (
 	ringArm := ""
 	var ringArgs []interface{}
 	if len(admitted) > 0 {
-		ringArm = "OR ms.msgid IN (?) "
+		// The status re-check rides WITH the id list, as the raster arms' does.
+		// The ring ids come from the spatial index, which drops a held reach on
+		// its own two-minute delta - too slow for a badge that must never name a
+		// post the feed will not render. One primary-key lookup per admitted id
+		// closes that, and it is the same EXISTS the other two arms already pay.
+		ringArm = "OR (ms.msgid IN (?) AND EXISTS (" +
+			"SELECT 1 FROM rippling_reach r3 WHERE r3.msgid = ms.msgid " +
+			"AND r3.status != 'held')) "
 		ringArgs = []interface{}{admitted}
 	}
 
