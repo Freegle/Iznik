@@ -16,8 +16,10 @@ import (
 // a plausible-looking feed.
 
 func TestViewerRuralPath_EmptyWhenTheLaneIsOff(t *testing.T) {
-	t.Setenv("RIPPLE_RURAL_ACCESS_ENABLED", "")
-	if p := viewerRuralPath(nil, 42); p != "" {
+	// Explicitly off: the lane is ON by default now (matching the batch config),
+	// so only a stated "false" turns it away.
+	t.Setenv("RIPPLE_RURAL_ACCESS_ENABLED", "false")
+	if p := rippling.ViewerRuralPath(nil, 42); p != "" {
 		t.Errorf("lane off must yield no path, got %q", p)
 	}
 }
@@ -26,7 +28,7 @@ func TestViewerRuralPath_EmptyWhenTheLaneIsOff(t *testing.T) {
 // database is touched, so a nil handle here is also proof that it short-circuits.
 func TestViewerRuralPath_EmptyWithoutAViewer(t *testing.T) {
 	t.Setenv("RIPPLE_RURAL_ACCESS_ENABLED", "1")
-	if p := viewerRuralPath(nil, 0); p != "" {
+	if p := rippling.ViewerRuralPath(nil, 0); p != "" {
 		t.Errorf("no viewer must yield no path, got %q", p)
 	}
 }
@@ -39,13 +41,13 @@ func TestRuralBandPaths_OnlyKnownBandsResolve(t *testing.T) {
 		"medium": "$.rural.medium",
 		"sparse": "$.rural.sparse",
 	} {
-		if got := ruralBandPaths[band]; got != want {
+		if got := rippling.RuralBandPath(band); got != want {
 			t.Errorf("band %q gave %q, expected %q", band, got, want)
 		}
 	}
 
 	for _, bogus := range []string{"", "SPARSE", "rural", `sparse"] OR 1=1 --`} {
-		if got := ruralBandPaths[bogus]; got != "" {
+		if got := rippling.RuralBandPath(bogus); got != "" {
 			t.Errorf("unknown band %q resolved to %q, expected nothing", bogus, got)
 		}
 	}
@@ -125,7 +127,7 @@ func TestFairnessMaxQuintile_ClampedToTheRangeRingsExistFor(t *testing.T) {
 	// other way round, is worse than either behaviour on its own.
 	for env, want := range map[string]int{"": 1, "0": 1, "1": 1, "3": 3, "4": 4, "9": 4, "nonsense": 1} {
 		t.Setenv("RIPPLE_FAIRNESS_MAX_QUINTILE", env)
-		if got := fairnessMaxQuintile(); got != want {
+		if got := rippling.FairnessMaxQuintile(); got != want {
 			t.Errorf("env %q gave %d, expected %d", env, got, want)
 		}
 	}
@@ -133,7 +135,7 @@ func TestFairnessMaxQuintile_ClampedToTheRangeRingsExistFor(t *testing.T) {
 
 func TestViewerFairnessPath_EmptyWhenTheLaneIsOff(t *testing.T) {
 	t.Setenv("RIPPLE_FAIRNESS_ENABLED", "")
-	if p := viewerFairnessPath(51.5, -0.1); p != "" {
+	if p := rippling.ViewerFairnessPath(51.5, -0.1); p != "" {
 		t.Errorf("lane off must yield no path, got %q", p)
 	}
 }
@@ -144,7 +146,7 @@ func TestViewerFairnessPath_EmptyWhenTheLaneIsOff(t *testing.T) {
 func TestViewerFairnessPath_EmptyWhenDeprivationCannotBeAnswered(t *testing.T) {
 	t.Setenv("RIPPLE_FAIRNESS_ENABLED", "1")
 	t.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
-	if p := viewerFairnessPath(51.5, -0.1); p != "" {
+	if p := rippling.ViewerFairnessPath(51.5, -0.1); p != "" {
 		t.Errorf("unanswerable deprivation must yield no path, got %q", p)
 	}
 }
@@ -155,7 +157,7 @@ func TestViewerFairnessPath_EmptyWhenDeprivationCannotBeAnswered(t *testing.T) {
 func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
 
-	plain, plainArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, "")
+	plain, plainArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, nil)
 	if strings.Contains(plain, "overflow_bounds") {
 		t.Fatalf("no ring path must mean no ring arm, got %q", plain)
 	}
@@ -163,7 +165,7 @@ func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 		t.Fatalf("plain arg count = %d, want 9 (in, partial, lng, lat, srid + 4 author-cap)", len(plainArgs))
 	}
 
-	ringed, ringedArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, "$.rural.sparse")
+	ringed, ringedArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, []string{"$.rural.sparse"})
 	if !strings.Contains(ringed, "overflow_bounds") {
 		t.Fatalf("ring path must add the ring arm, got %q", ringed)
 	}

@@ -156,7 +156,7 @@ func PostMatches(c *fiber.Ctx) error {
 	// Reach-filter against the post's location (the owner is the recipient): drop
 	// opposite posts that haven't rippled out to where the post is, so we never
 	// email a match the owner couldn't reply to. Fail-open (no reach row → kept).
-	blocked := ReachBlockedSet(candidateMsgids(candidates), srcLat, srcLng)
+	blocked := ReachBlockedSet(0, candidateMsgids(candidates), srcLat, srcLng)
 
 	out := make([]SimilarResult, 0, limit)
 	for _, cnd := range candidates {

@@ -300,6 +300,43 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'a withdrawn/taken post must not be digested');
     }
 
+    public function test_daily_digest_excludes_a_post_whose_reach_is_frozen(): void
+    {
+        // A frozen reach (status 'held') means the origin copy has been pulled back for
+        // moderation. Browse, the badge and search hide the post, and nothing ever clears
+        // 'held', so the digest carrying it would leave the mail as the one surface still
+        // pushing a post that is under review.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // A reach that DOES cover the recipient, so only the frozen status can exclude it.
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1,
+                ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857),
+                ST_Envelope(ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857)),
+                'held', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id]
+        );
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'a post under moderation must not be digested');
+    }
+
     public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
     {
         // A messages_likes 'View' (in-app view, or an opened/clicked digest via
@@ -1328,6 +1365,99 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertContains($bandIn->id, $ids, 'boundary band falls back to the exact polygon (covered → included)');
         $this->assertNotContains($bandOut->id, $ids, 'boundary band falls back to the exact polygon (not covered → excluded)');
+    }
+
+    /**
+     * Seed a post whose committed reach (and outer_bound, which seedReach derives as the
+     * polygon's own envelope) EXCLUDE the ring member's location, with a rural overflow ring
+     * — bbox included, as ReachService::parseOverflow would compute it — that DOES cover them.
+     * Placing the member outside the envelope (not just outside the exact polygon) exercises
+     * the authoritative outer_bound reject, not only the boundary-band fallback, which is the
+     * branch the rural-ring rescue must reach into. Returns the created Message.
+     */
+    private function seedRuralRingDigestPost(string $ringKey = 'sparse'): Message
+    {
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: ring rescue (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        // Committed reach stops at lng 0.0, well short of the member at 0.4.
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update([
+            'overflow_bounds' => json_encode([
+                'rural' => [$ringKey => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'],
+                'bbox' => [-0.2, 51.4, 0.6, 51.6],
+            ]),
+        ]);
+
+        return $msg;
+    }
+
+    /** The ring-rescue member: outside the reach envelope at (51.5, 0.4), inside the ring. */
+    private function makeRingMember(Group $group, ?string $band): User
+    {
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
+        $settings = ['mylocation' => ['lat' => 51.5, 'lng' => 0.4]];
+        if ($band !== null) {
+            $settings['browseDensityBand'] = $band;
+        }
+        $member->settings = $settings;
+        $member->save();
+
+        return $member;
+    }
+
+    public function test_daily_digest_admits_member_via_rural_ring_when_outside_reach(): void
+    {
+        // The daily digest / daily-posts push reach gate must admit via the member's rural
+        // ring exactly as browse (ReachQueryService) and the reach mail (overflowBranch)
+        // already do — the gap this closes.
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msg = $this->seedRuralRingDigestPost('sparse');
+        $group = Group::find(DB::table('messages_groups')->where('msgid', $msg->id)->value('groupid'));
+        $member = $this->makeRingMember($group, 'sparse');
+
+        $tracker = UserDigest::create(['userid' => $member->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0]);
+        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)->pluck('id')->all();
+
+        $this->assertContains(
+            $msg->id,
+            $ids,
+            'outside the capped reach (and its outer_bound) but inside their own band ring - admitted'
+        );
+    }
+
+    public function test_daily_digest_excludes_member_whose_band_has_no_matching_ring(): void
+    {
+        // Geographically inside the sparse ring, but a dense-band member has not earned that
+        // budget: the ring belongs to the band, not the area - same rule as the mail path.
+        config(['freegle.ripple.rural_access.enabled' => true]);
+        $msg = $this->seedRuralRingDigestPost('sparse');
+        $group = Group::find(DB::table('messages_groups')->where('msgid', $msg->id)->value('groupid'));
+        $member = $this->makeRingMember($group, 'dense');
+
+        $tracker = UserDigest::create(['userid' => $member->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0]);
+        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)->pluck('id')->all();
+
+        $this->assertNotContains($msg->id, $ids, 'a dense-band member inside the sparse ring must not be admitted by it');
+    }
+
+    public function test_daily_digest_rural_ring_rescue_disabled_by_config(): void
+    {
+        // Lane off: the ring is stored but must be ignored entirely - old behaviour.
+        config(['freegle.ripple.rural_access.enabled' => false]);
+        $msg = $this->seedRuralRingDigestPost('sparse');
+        $group = Group::find(DB::table('messages_groups')->where('msgid', $msg->id)->value('groupid'));
+        $member = $this->makeRingMember($group, 'sparse');
+
+        $tracker = UserDigest::create(['userid' => $member->id, 'mode' => UnifiedDigestService::MODE_DAILY, 'lastmsgid' => 0]);
+        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)->pluck('id')->all();
+
+        $this->assertNotContains($msg->id, $ids, 'lane off means the ring is inert - only the reach polygon decides');
     }
 
     public function test_daily_digest_ignores_degraded_bounds_for_came_and_went_posts(): void
@@ -3511,6 +3641,61 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertFalse(
             $this->wasMailed($msg->id, $member->id),
             'no band recorded must not be admitted by any ring'
+        );
+    }
+
+    /**
+     * A cluster wedge admits on every surface, mail included.
+     *
+     * A member a wedge lets in sees the post on browse, finds it in search, is not told it has
+     * not reached them, and may reply to it. Telling them about it is the same decision, so it
+     * is answered the same way. Showing someone a post the mail never mentions is the same
+     * split as mailing someone a post the site hides, only facing the other way.
+     */
+    public function test_mail_newly_reached_mails_a_cluster_admitted_member(): void
+    {
+        config([
+            'freegle.digest.immediate_allowlist' => '*',
+            'freegle.ripple.rural_access.enabled' => true,
+            'freegle.ripple.fairness.enabled' => true,
+            'freegle.ripple.cluster.enabled' => true,
+        ]);
+        UnifiedDigestService::forgetOverflowColumn();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $member->settings = [
+            'mylocation' => ['lat' => 51.5, 'lng' => 0.4],
+            'browseDensityBand' => 'sparse',
+        ];
+        $member->save();
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: cluster only (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-'.str_repeat('c', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        // The committed reach stops at lng 0.0 - well short of the member at 0.4 - and the
+        // only overflow lane on this post is 'cluster', which covers them geographically.
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update([
+            'overflow_bounds' => json_encode([
+                'cluster' => ['w1' => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'],
+                'bbox' => [-0.2, 51.4, 0.6, 51.6],
+            ]),
+        ]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertTrue(
+            $this->wasMailed($msg->id, $member->id),
+            'a member a cluster wedge admits is mailed, exactly as browse and reply admit them'
         );
     }
 }

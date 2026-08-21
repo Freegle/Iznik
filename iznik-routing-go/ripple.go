@@ -356,12 +356,101 @@ type rippleScheduleResponse struct {
 	// FairnessBudgetMin is the widest stretched budget actually routed, so the stored reach
 	// records what was done rather than what happened to be configured at the time.
 	FairnessBudgetMin float64 `json:"fairness_budget_min,omitempty"`
+	// OverflowCluster is up to cluster_max_wedges bearing-wedge polygons ("w1".."w3", best
+	// cluster first), for a thin uncapped pool that has a genuine population cluster (a town)
+	// just past the committed ceiling - see clusteroverflow.go. Present only when
+	// cluster_anchor was requested AND the cap did not bind AND the pool at the ceiling is
+	// below cluster_floor. omitempty on purpose: with the lane off the response is unchanged.
+	OverflowCluster map[string]*GeoJSONPolygon `json:"overflow_cluster,omitempty"`
 }
 
 // wantRuralAccess parses the rural_access query parameter. Off unless explicitly asked for, so
 // the lane ships dark and every existing caller is unaffected.
 func wantRuralAccess(v string) bool {
 	return v == "1" || v == "true"
+}
+
+// wantClusterAnchor parses the cluster_anchor query parameter that engages the cluster-anchor
+// lane (clusteroverflow.go). Off unless explicitly asked for, so the lane ships dark.
+func wantClusterAnchor(v string) bool {
+	return v == "1" || v == "true"
+}
+
+// fetchClusterOverflow pays for the cluster lane's own second Isochrone (out to
+// clusterMaxMinutes) and its own spatial-KNN round trip for member POSITIONS over the wider
+// bbox that Isochrone reaches, then hands the shell members to clusterOverflowWedges
+// (clusteroverflow.go) to find clusters and trace wedges. Unlike the rural/fairness lanes this
+// needs member positions, not just the already-computed reach, which is why it is a helper
+// with its own network round trip rather than a pure function taking already-fetched data.
+//
+// Returns nil on any failure (nothing routed, spatial unavailable) in the same soft-fail style
+// as the rest of this endpoint: the schedule itself has already been computed and must still
+// be returned regardless of what this lane finds.
+func fetchClusterOverflow(g *Graph, spatialURL string, lat, lng float64, mode Mode,
+	committedMinutes, clusterMaxMinutes float64, cellK, maxWedges, floor, poolAtCeiling int) map[string]*GeoJSONPolygon {
+
+	clusterMaxSecs := float32(clusterMaxMinutes * 60)
+	iso2 := Isochrone(g, lat, lng, clusterMaxSecs, mode)
+	if len(iso2.ReachedNodes) == 0 {
+		return nil
+	}
+
+	minLat, maxLat, minLng, maxLng := reachedBBox(g, iso2.ReachedNodes)
+	wkt := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
+		minLng, maxLng, minLat, maxLat)
+
+	reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
+	resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
+	if err != nil || resp.StatusCode != 200 {
+		log.Printf("cluster-overflow: within_coords failed (status=%v err=%v)", func() int {
+			if resp != nil {
+				return resp.StatusCode
+			}
+			return 0
+		}(), err)
+		return nil
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	var within struct {
+		Results []struct {
+			Extra map[string]any `json:"extra"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &within); err != nil {
+		return nil
+	}
+
+	// Shell members are those routed by iso2 but beyond the committed ceiling: already-
+	// committed members contribute nothing new, and anything iso2 didn't reach was never
+	// routed in the first place.
+	committedSecs := float32(committedMinutes * 60)
+	shellMembers := make([]clusterMember, 0, len(within.Results))
+	for _, r := range within.Results {
+		if r.Extra == nil {
+			continue
+		}
+		mLat, ok1 := r.Extra["lat"].(float64)
+		mLng, ok2 := r.Extra["lng"].(float64)
+		if !ok1 || !ok2 {
+			continue
+		}
+		nid := nearestNodeForMode(g, mLat, mLng, mode)
+		if nid == noNode {
+			continue
+		}
+		t, ok := iso2.ReachedNodes[nid]
+		if !ok || t <= committedSecs || t > clusterMaxSecs {
+			continue
+		}
+		shellMembers = append(shellMembers, clusterMember{Lat: mLat, Lng: mLng, Secs: t})
+	}
+
+	return clusterOverflowWedges(g, iso2, lat, lng, mode, shellMembers, committedSecs, clusterMaxSecs,
+		cellK, maxWedges, floor, poolAtCeiling)
 }
 
 // handleRippleSchedule produces the density-driven ripple schedule for a given
@@ -403,6 +492,35 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		maxMinutes, _ := strconv.ParseFloat(c.Query("max_minutes", "30"), 64)
 		if maxMinutes <= 0 || maxMinutes > 120 {
 			maxMinutes = 30
+		}
+
+		// Cluster-anchor overflow lane params (clusteroverflow.go). Parsed here alongside the
+		// other query params, but acted on only later once capBound and the pool total are
+		// known - the second Isochrone and spatial round-trip the lane needs are paid only
+		// when its firing condition actually holds.
+		clusterFloor, _ := strconv.Atoi(c.Query("cluster_floor", "1000"))
+		if clusterFloor <= 0 {
+			clusterFloor = 1000
+		}
+		clusterK, _ := strconv.Atoi(c.Query("cluster_k", "150"))
+		if clusterK <= 0 {
+			clusterK = 150
+		}
+		// cluster_max_wedges is hard-capped at 3 regardless of what is requested - three
+		// wedges is already generous for one post, and it bounds this lane's worst-case cost.
+		clusterMaxWedges, _ := strconv.Atoi(c.Query("cluster_max_wedges", "3"))
+		if clusterMaxWedges > 3 {
+			clusterMaxWedges = 3
+		}
+		if clusterMaxWedges < 0 {
+			clusterMaxWedges = 0
+		}
+		clusterMaxMinutes, cmmErr := strconv.ParseFloat(c.Query("cluster_max_minutes", "60"), 64)
+		if cmmErr != nil || clusterMaxMinutes <= 0 || clusterMaxMinutes > 180 {
+			clusterMaxMinutes = 60
+		}
+		if clusterMaxMinutes < maxMinutes {
+			clusterMaxMinutes = maxMinutes // the shell (committed..cluster ceiling) cannot have negative width
 		}
 
 		// Audience-budget cap (Stage-A extent governor, Discourse #9808): when
@@ -604,15 +722,18 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			maxDriveMin = float64(fwt[effectiveTotal-1].seconds) / 60.0
 		}
 
-		// The two overflow lanes are MUTUALLY EXCLUSIVE, decided by whether the headcount cap
-		// actually bound. That split is not tidiness: it is where each problem was measured to
-		// live. Reaches the cap cut short are already at deprivation parity but exclude members
-		// who are inside their own travel budget, so they get the rural lane. Reaches that ran
-		// to the ceiling have no headcount problem but under-serve Q1 by about 40%, so they get
-		// the fairness lane. Running both on one post would spend compute on a problem that
-		// post does not have.
+		// The rural lane and the other two are MUTUALLY EXCLUSIVE, decided by whether the
+		// headcount cap actually bound. That split is not tidiness: it is where each problem
+		// was measured to live. Reaches the cap cut short are already at deprivation parity but
+		// exclude members who are inside their own travel budget, so they get the rural lane.
+		// Reaches that ran to the ceiling have no headcount problem: either they under-serve Q1
+		// (the fairness lane) or the whole pool is thin because the origin is rural and a real
+		// town sits just past the edge (the cluster lane). Fairness and cluster are not
+		// mutually exclusive with each other - a thin, Q1-under-served pool can want both - so
+		// both are tried once the cap is known not to have bound.
 		var overflowRural map[string]*GeoJSONPolygon
 		var overflowFairness *fairnessOverflowResult
+		var overflowCluster map[string]*GeoJSONPolygon
 
 		if capBound {
 			if wantRuralAccess(c.Query("rural_access", "0")) {
@@ -624,12 +745,25 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 				}
 				overflowRural = ruralOverflowRings(g, iso.ReachedNodes, ringRes, maxMinutes, maxDriveMin)
 			}
-		} else if w, _ := strconv.ParseFloat(c.Query("fairness_weight", "0"), 64); w > 0 {
-			maxQ, err := strconv.Atoi(c.Query("fairness_max_quintile", "1"))
-			if err != nil {
-				maxQ = 1
+		} else {
+			if w, _ := strconv.ParseFloat(c.Query("fairness_weight", "0"), 64); w > 0 {
+				maxQ, err := strconv.Atoi(c.Query("fairness_max_quintile", "1"))
+				if err != nil {
+					maxQ = 1
+				}
+				overflowFairness = fairnessOverflowRings(g, latF, lngF, mode, maxMinutes, w, maxQ)
 			}
-			overflowFairness = fairnessOverflowRings(g, latF, lngF, mode, maxMinutes, w, maxQ)
+
+			// The cluster lane needs its own second Isochrone AND its own spatial-KNN round
+			// trip (member POSITIONS, not just drive-times, are what cluster detection needs),
+			// so - unlike the other two lanes - it is worth a helper rather than an inline
+			// block here. Costed the same way as the rural/fairness lanes: only paid when the
+			// firing condition (cluster_anchor requested, cap not bound, pool below
+			// cluster_floor) already holds.
+			if wantClusterAnchor(c.Query("cluster_anchor", "0")) && total < clusterFloor && clusterMaxWedges > 0 {
+				overflowCluster = fetchClusterOverflow(g, spatialURL, latF, lngF, mode,
+					maxMinutes, clusterMaxMinutes, clusterK, clusterMaxWedges, clusterFloor, total)
+			}
 		}
 
 		// Named schedResp, not resp: the within_coords call above already holds `resp`.
@@ -644,6 +778,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			schedResp.OverflowFairness = overflowFairness.Rings
 			schedResp.FairnessBudgetMin = overflowFairness.BudgetMinutes
 		}
+		schedResp.OverflowCluster = overflowCluster
 		return c.JSON(schedResp)
 	}
 }

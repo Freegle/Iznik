@@ -473,4 +473,139 @@ class ReachServiceTest extends TestCase
         ]);
         $this->assertNull($parsed['overflow_bounds']);
     }
+
+    // --- Cluster-anchor overflow (contract: cluster_anchor / cluster_floor / cluster_k /
+    // cluster_max_wedges / cluster_max_minutes; overflow_cluster keyed w1..w3) -------------
+
+    public function test_parseScheduleResponse_carries_the_cluster_wedges(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_cluster' => [
+                'w1' => $this->geoSquare(-0.2, 51.4, 0.0, 51.6),
+                'w2' => $this->geoSquare(0.0, 51.4, 0.2, 51.6),
+            ],
+        ]);
+
+        $this->assertNotNull($parsed['overflow_bounds']);
+        $this->assertArrayHasKey('cluster', $parsed['overflow_bounds']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['cluster']['w1']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['cluster']['w2']);
+        $this->assertArrayNotHasKey('rural', $parsed['overflow_bounds']);
+        $this->assertArrayNotHasKey('fairness', $parsed['overflow_bounds']);
+    }
+
+    /**
+     * Rural fires when the audience cap bound; cluster fires when it did not - opposite
+     * conditions, so the two are independent rather than mutually exclusive. Both keys must
+     * survive parsing at once, not just whichever the loop happens to see first.
+     */
+    public function test_parseScheduleResponse_rural_and_cluster_coexist(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_rural' => [
+                'sparse' => $this->geoSquare(-0.3, 51.3, -0.1, 51.5),
+            ],
+            'overflow_cluster' => [
+                'w1' => $this->geoSquare(0.2, 51.4, 0.4, 51.6),
+            ],
+        ]);
+
+        $this->assertArrayHasKey('rural', $parsed['overflow_bounds'], 'rural lane must survive alongside cluster');
+        $this->assertArrayHasKey('cluster', $parsed['overflow_bounds'], 'cluster lane must survive alongside rural');
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['rural']['sparse']);
+        $this->assertStringStartsWith('POLYGON((', $parsed['overflow_bounds']['cluster']['w1']);
+    }
+
+    /**
+     * Regression for the bug where a new lane ships with a bbox that silently excludes it:
+     * ringsBbox() has its own lane list and must be told about every lane parseOverflow can
+     * produce, or the read-side bbox prefilter rejects every candidate for that lane before
+     * the exact ring test ever runs. Cluster-only (no rural/fairness) isolates the bug: before
+     * the fix ringsBbox() never even looks at 'cluster', so 'bbox' is absent entirely.
+     */
+    public function test_bbox_covers_cluster_wedges_when_no_other_lane_present(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_cluster' => [
+                'w1' => $this->geoSquare(0.2, 51.4, 0.4, 51.6),
+            ],
+        ]);
+
+        $this->assertArrayHasKey('bbox', $parsed['overflow_bounds'], 'cluster-only rings must still get a bbox');
+        [$minLng, $minLat, $maxLng, $maxLat] = $parsed['overflow_bounds']['bbox'];
+        $this->assertEqualsWithDelta(0.2, $minLng, 0.0001);
+        $this->assertEqualsWithDelta(51.4, $minLat, 0.0001);
+        $this->assertEqualsWithDelta(0.4, $maxLng, 0.0001);
+        $this->assertEqualsWithDelta(51.6, $maxLat, 0.0001);
+    }
+
+    /** bbox must cover cluster wedges TOO when rural is also present, not just rural's box. */
+    public function test_bbox_covers_cluster_wedges_alongside_rural(): void
+    {
+        $parsed = $this->service()->parseScheduleResponse([
+            'schedule' => [['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 10]],
+            'overflow_rural' => [
+                'sparse' => $this->geoSquare(-0.3, 51.3, -0.1, 51.5),
+            ],
+            'overflow_cluster' => [
+                'w1' => $this->geoSquare(0.2, 51.4, 0.4, 51.6),
+            ],
+        ]);
+
+        [$minLng, $minLat, $maxLng, $maxLat] = $parsed['overflow_bounds']['bbox'];
+        // The union of the rural box (-0.3..-0.1, 51.3..51.5) and the cluster box
+        // (0.2..0.4, 51.4..51.6): the far corners on each axis.
+        $this->assertEqualsWithDelta(-0.3, $minLng, 0.0001);
+        $this->assertEqualsWithDelta(51.3, $minLat, 0.0001);
+        $this->assertEqualsWithDelta(0.4, $maxLng, 0.0001);
+        $this->assertEqualsWithDelta(51.6, $maxLat, 0.0001);
+    }
+
+    public function test_schedule_omits_cluster_params_when_disabled(): void
+    {
+        config(['freegle.ripple.cluster.enabled' => false]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => !str_contains($request->url(), 'cluster_anchor')
+            && !str_contains($request->url(), 'cluster_floor')
+            && !str_contains($request->url(), 'cluster_k')
+            && !str_contains($request->url(), 'cluster_max_wedges')
+            && !str_contains($request->url(), 'cluster_max_minutes'));
+    }
+
+    public function test_schedule_sends_cluster_params_when_enabled(): void
+    {
+        config([
+            'freegle.ripple.cluster.enabled' => true,
+            'freegle.ripple.cluster.floor' => 1000,
+            'freegle.ripple.cluster.cell_k' => 150,
+            'freegle.ripple.cluster.max_wedges' => 3,
+            'freegle.ripple.cluster.max_minutes' => 60,
+        ]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'cluster_anchor=1')
+            && str_contains($request->url(), 'cluster_floor=1000')
+            && str_contains($request->url(), 'cluster_k=150')
+            && str_contains($request->url(), 'cluster_max_wedges=3')
+            && str_contains($request->url(), 'cluster_max_minutes=60'));
+    }
+
+    /** Hard cap 3 (contract) - a misconfigured value must be clamped here, not trusted. */
+    public function test_schedule_clamps_cluster_max_wedges_above_the_hard_cap(): void
+    {
+        config(['freegle.ripple.cluster.enabled' => true, 'freegle.ripple.cluster.max_wedges' => 9]);
+        Http::fake(['*ripple-schedule*' => Http::response(['schedule' => []], 200)]);
+
+        $this->service()->computeSchedule(51.5, -0.1);
+
+        Http::assertSent(fn ($request) => str_contains($request->url(), 'cluster_max_wedges=3'));
+    }
 }

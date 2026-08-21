@@ -536,8 +536,10 @@ class ExpandService
      * replies still held against the reach we are dropping.
      *
      * Skips 'held' rows for the same reason the other retraction paths do: their copies are
-     * deliberately Pending for per-group moderation. A held post that is later re-approved
-     * flips back out of 'held' and is caught by the next run of this pass.
+     * deliberately Pending for per-group moderation. Freezing is one-way: nothing clears
+     * 'held' (FreezeReachIfOriginPending in iznik-server-go's microvolunteering package is
+     * the only writer, and freezes precisely so that re-approving a copy cannot re-reach and
+     * re-notify), so a frozen post stays outside this pass for the rest of its life.
      *
      * Scope: only --msgid restricts it, matching removeStaleAndRetract - retracting a committed
      * copy must complete regardless of the current area scope.

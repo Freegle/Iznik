@@ -750,6 +750,13 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					ReachRows int `gorm:"column:reach_rows"`
 					InReach   int `gorm:"column:in_reach"`
 				}
+				// The replier's overflow rings count as being in reach, exactly as they
+				// do on the feed, the badge, search and the message page
+				// (rippling.ViewerOverflowPaths): the mail deliberately invites ring
+				// members, and a capped post never grows, so holding a ring member's
+				// reply would sit on it until the item was taken.
+				ringWhere, ringArgs := rippling.OverflowWhereAny(reach.lng, reach.lat, utils.SRID,
+					rippling.ViewerOverflowPaths(db, myid, float32(reach.lat), float32(reach.lng)))
 				var gateErr error
 				if rippling.ReachBoundsReady(db) {
 					// ReachInReachExpr always returns the same expression text
@@ -759,6 +766,10 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// by the retired ormharness (shapes.json /
 					// TestTier3Shapes_67cd5e1cc4ec, removed in d22ba1d6c).
 					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
+					if ringWhere != "" {
+						expr = "(" + expr + " OR " + strings.TrimSpace(ringWhere) + ")"
+						exprArgs = append(exprArgs, ringArgs...)
+					}
 					// Select takes ONLY the expression's own binds. Appending
 					// Refmsgid here as well - while Where binds it too - sent one
 					// argument more than the statement had placeholders, and
@@ -772,10 +783,16 @@ func CreateChatMessage(c *fiber.Ctx) error {
 						Where("rr.msgid = ?", *payload.Refmsgid).
 						Scan(&rc).Error
 				} else {
-					gateErr = db.Table("rippling_reach").
-						Select("COUNT(*) AS reach_rows, COALESCE(MAX(ST_Contains(polygon, ST_SRID(POINT(?, ?), ?))), 0) AS in_reach",
-							latlng.Lng, latlng.Lat, utils.SRID).
-						Where("msgid = ?", *payload.Refmsgid).
+					legacyExpr := "ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))"
+					legacyArgs := []interface{}{latlng.Lng, latlng.Lat, utils.SRID}
+					if ringWhere != "" {
+						legacyExpr = "(" + legacyExpr + " OR " + strings.TrimSpace(ringWhere) + ")"
+						legacyArgs = append(legacyArgs, ringArgs...)
+					}
+					gateErr = db.Table("rippling_reach rr").
+						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+legacyExpr+"), 0) AS in_reach",
+							legacyArgs...).
+						Where("rr.msgid = ?", *payload.Refmsgid).
 						Scan(&rc).Error
 				}
 				if gateErr == nil {

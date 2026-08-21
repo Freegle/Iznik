@@ -22,16 +22,32 @@ import (
 // (e.g. rippling_reach not yet deployed) yields an empty set, and a viewer with
 // no location (0,0) is never blocked.
 //
+// myid is the VIEWER, when there is one: a viewer an overflow ring admits (see
+// rippling.ViewerOverflowPaths) is not blocked, matching the feed, the badge
+// and search - the mail deliberately invites ring members, so the message page
+// must not tell them "not reached yet" nor the reply gates hold what they send.
+// Callers checking reach from a post's own location rather than a viewer's (the
+// match mailers) pass 0: no viewer, no rings.
+//
+// A FROZEN reach (status 'held', set by FreezeReachIfOriginPending when the origin copy is
+// pulled back for moderation) is treated here exactly like a live one. Freezing stops a post
+// being pushed OUTWARD - it is not mailed or pushed while its origin is under review - but it
+// does not make a member who is outside the polygon reached. They are not, so the message page
+// tells them so, and their reply is held to protect the poster's ordering just as it would be
+// on a post still expanding.
+//
 // Containment consults the sandwich bounds when migrated (see
 // rippling/reachbounds.go): outside a real outer_bound is an authoritative
 // reject, inside inner_bound an authoritative accept, and only the band between
 // touches the ~178KB exact polygon; POINT (completed) bounds fall back to the
-// exact test.
+// exact test. The rings sit OUTSIDE that ladder: they can rescue even an
+// authoritative polygon reject, because a ring extends beyond the outer bound
+// by construction.
 //
 // The query itself is ReachBlockedOrigins; this is the membership-only view of
 // it for the callers that do not need the origins.
-func ReachBlockedSet(msgids []uint64, lat, lng float64) map[uint64]bool {
-	origins := ReachBlockedOrigins(msgids, lat, lng)
+func ReachBlockedSet(myid uint64, msgids []uint64, lat, lng float64) map[uint64]bool {
+	origins := ReachBlockedOrigins(myid, msgids, lat, lng)
 	blocked := make(map[uint64]bool, len(origins))
 	for msgid := range origins {
 		blocked[msgid] = true
@@ -64,13 +80,22 @@ type ReachOrigin struct {
 // arithmetic. That matters because this sits on the feed's hot path: an estimate
 // that needed its own query (or worse, a routing call) per post would not be
 // worth showing.
-func ReachBlockedOrigins(msgids []uint64, lat, lng float64) map[uint64]ReachOrigin {
+func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uint64]ReachOrigin {
 	blocked := make(map[uint64]ReachOrigin)
 	if len(msgids) == 0 || (lat == 0 && lng == 0) {
 		return blocked
 	}
 
 	db := database.DBConn
+
+	// The viewer's rings, as a rescue on both branches below: NOT blocked when a ring
+	// admits them, however the polygon test came out.
+	ringWhere, ringArgs := rippling.OverflowWhereAny(lng, lat, utils.SRID,
+		rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng)))
+	ringRescue := ""
+	if ringWhere != "" {
+		ringRescue = " AND NOT " + ringWhere
+	}
 	var rows []struct {
 		Msgid    uint64     `gorm:"column:msgid"`
 		Lat      *float64   `gorm:"column:lat"`
@@ -91,14 +116,16 @@ func ReachBlockedOrigins(msgids []uint64, lat, lng float64) map[uint64]ReachOrig
 		// the golden.
 		expr, exprArgs := rippling.ReachInReachExpr(lng, lat, utils.SRID)
 		whereArgs := append([]interface{}{msgids}, exprArgs...)
+		whereArgs = append(whereArgs, ringArgs...)
 		err = db.Table("rippling_reach rr").
 			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
-			Where("rr.msgid IN (?) AND NOT "+expr, whereArgs...).
+			Where("rr.msgid IN (?) AND NOT "+expr+ringRescue, whereArgs...).
 			Scan(&rows).Error
 	} else {
-		err = db.Table("rippling_reach").
-			Select("msgid, lat, lng, schedule, arrival").
-			Where("msgid IN ? AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ?)) = 0", msgids, lng, lat, utils.SRID).
+		legacyArgs := append([]interface{}{msgids, lng, lat, utils.SRID}, ringArgs...)
+		err = db.Table("rippling_reach rr").
+			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
+			Where("rr.msgid IN ? AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) = 0"+ringRescue, legacyArgs...).
 			Scan(&rows).Error
 	}
 	if err == nil {
