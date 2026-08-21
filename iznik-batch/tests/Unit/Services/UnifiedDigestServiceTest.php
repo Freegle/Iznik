@@ -300,6 +300,43 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'a withdrawn/taken post must not be digested');
     }
 
+    public function test_daily_digest_excludes_a_post_whose_reach_is_frozen(): void
+    {
+        // A frozen reach (status 'held') means the origin copy has been pulled back for
+        // moderation. Browse, the badge and search hide the post, and nothing ever clears
+        // 'held', so the digest carrying it would leave the mail as the one surface still
+        // pushing a post that is under review.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // A reach that DOES cover the recipient, so only the frozen status can exclude it.
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1,
+                ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857),
+                ST_Envelope(ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857)),
+                'held', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id]
+        );
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'a post under moderation must not be digested');
+    }
+
     public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
     {
         // A messages_likes 'View' (in-app view, or an opened/clicked digest via

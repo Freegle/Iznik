@@ -231,3 +231,40 @@ func TestCreateChatMessage_RingAdmittedReplyNotHeld(t *testing.T) {
 	assert.Equal(t, 0, heldCount,
 		"a ring-admitted reply is delivered, not held: the mail invited this member")
 }
+
+// A FROZEN reach (status 'held') is not a reach that is still on its way.
+//
+// FreezeReachIfOriginPending sets it when a post's origin copy is pulled back for moderation,
+// and nothing ever clears it. Browse, the badge and search hide such posts. The remaining
+// surfaces used to treat the frozen polygon as a live one, which produced two false promises:
+// a member outside it was told the post had "not reached them yet" (it never will), and their
+// reply was held for a release that ripple:release-replies never runs for held reaches.
+func TestReachBlocked_FrozenReachIsNotPending(t *testing.T) {
+	db := database.DBConn
+	ringSchemaExec(t)
+
+	prefix := uniquePrefix("heldreach")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	group := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, posterID, group, "Member")
+	msgID := CreateTestMessage(t, posterID, group, "OFFER: frozen reach test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+
+	// A live reach far from the viewer: they are genuinely not reached yet.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 53.0, 2.0, "+
+		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", msgID)
+
+	blocked := message.ReachBlockedSet(viewerID, []uint64{msgID}, 51.5, -0.1)
+	assert.True(t, blocked[msgID], "a live reach that has not arrived yet does block, as before")
+
+	// Freeze it. The same viewer, the same distance - but the post is no longer travelling.
+	db.Exec("UPDATE rippling_reach SET status = 'held' WHERE msgid = ?", msgID)
+
+	blocked = message.ReachBlockedSet(viewerID, []uint64{msgID}, 51.5, -0.1)
+	assert.False(t, blocked[msgID],
+		"a frozen reach must not be reported as pending arrival: it can never arrive")
+}

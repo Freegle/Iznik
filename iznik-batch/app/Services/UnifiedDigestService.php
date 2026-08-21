@@ -904,6 +904,14 @@ class UnifiedDigestService
                 $primaryParams[] = $srid;
             }
 
+            // status <> 'held': a frozen reach belongs to a post whose origin copy has been
+            // pulled back for moderation. Browse, the badge and search hide it, so mailing it
+            // would be the one surface still pushing a post that is under review. Freezing is
+            // one-way, so this is not a race that resolves.
+            //
+            // Withdrawn joins Taken/Received: all three mean the post is gone, and a member
+            // newly inside the reach of a withdrawn post has nothing to reply to.
+            //
             // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText) and the
             // JSON_EXTRACT point resolution have no query-builder equivalent.
             $recipientRows = collect(DB::select(
@@ -917,9 +925,10 @@ class UnifiedDigestService
                  JOIN users u ON u.id = m.userid
                  LEFT JOIN locations l ON l.id = u.lastlocation
                  WHERE mg.msgid = ? AND mg.collection = 'Approved' AND mg.deleted = 0
+                   AND mr.status <> 'held'
                    AND NOT EXISTS (
                          SELECT 1 FROM messages_outcomes mo
-                         WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received')
+                         WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
                    AND (ST_Contains(mr.polygon, $point)$overflowSql)
@@ -1680,14 +1689,7 @@ class UnifiedDigestService
             // scoreAndSortAvailable's internal $post->_dist (which is only set when that
             // method doesn't early-return) — see DistancePreferenceFilter and the design
             // doc's "Insertion points" section.
-            $posts = $posts->filter(fn ($p) => $this->passesDistancePreference(
-                $latlng,
-                $p->lat,
-                $p->lng,
-                $user,
-                (int) $p->fromuser === (int) $user->id,
-                $this->authorMaxMiles((int) $p->fromuser)
-            ))->values();
+            $posts = $this->filterByDistancePreference($posts, $user, $latlng);
         }
 
         $completedPosts = $mode === self::MODE_DAILY
@@ -2007,6 +2009,19 @@ class UnifiedDigestService
         // are not notified of posts they cannot yet reply to. Posts with no reach row are
         // unaffected. Skipped entirely when we can't resolve the member's location (fail
         // open — no regression for locationless members).
+        // A frozen reach (status 'held') means the post's origin copy has been pulled back for
+        // moderation. Browse, the badge and search hide it outright, so the daily digest and
+        // the daily-posts push (which share this query) must not carry it either.
+        //
+        // Written as its own exclusion rather than folded into the reach gate below: that gate
+        // is a NOT EXISTS over reach rows which do NOT contain the member, so adding
+        // "status <> 'held'" inside it would EXCLUDE the frozen row from the rejection set and
+        // let the post through - the exact opposite of the intent.
+        $query->whereRaw(
+            "NOT EXISTS (SELECT 1 FROM rippling_reach rrh
+                WHERE rrh.msgid = messages.id AND rrh.status = 'held')"
+        );
+
         $latlng = $this->resolveUserLatLng($user);
         if ($latlng !== null) {
             if ($this->reachBoundsAvailable()) {
@@ -2186,6 +2201,35 @@ class UnifiedDigestService
      * @param mixed $lat Post/message latitude (numeric or null).
      * @param mixed $lng Post/message longitude (numeric or null).
      */
+    /**
+     * Narrow a post collection to the ones inside the member's distance preference.
+     *
+     * Public and shared because the daily EMAIL digest and the daily-posts PUSH must answer
+     * "is this near enough for this member" identically. They previously did not: the email
+     * applied this filter and the push, which calls getPostsForUser directly, did not - so a
+     * member's own distance setting hid a post from their inbox while it still arrived on
+     * their phone.
+     *
+     * $latlng may be passed when the caller has already resolved it (the digest does, for
+     * scoring), otherwise it is resolved here.
+     *
+     * @param  \Illuminate\Support\Collection  $posts
+     * @return \Illuminate\Support\Collection
+     */
+    public function filterByDistancePreference($posts, User $user, ?array $latlng = null)
+    {
+        $latlng ??= $this->resolveUserLatLng($user);
+
+        return $posts->filter(fn ($p) => $this->passesDistancePreference(
+            $latlng,
+            $p->lat,
+            $p->lng,
+            $user,
+            (int) $p->fromuser === (int) $user->id,
+            $this->authorMaxMiles((int) $p->fromuser)
+        ))->values();
+    }
+
     private function passesDistancePreference(?array $recipientLatLng, $lat, $lng, User $user, bool $isOwnPost, ?float $authorMaxMiles = null): bool
     {
         if ($isOwnPost) {
