@@ -6,10 +6,13 @@ use App\Models\Message;
 use App\Services\Ripple\ReachQueryService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Tests\Support\FakesRingIndex;
 use Tests\TestCase;
 
 class ReachQueryServiceTest extends TestCase
 {
+    use FakesRingIndex;
+
     // A box covering lng [-0.2, 0.0], lat [51.4, 51.6].
     private const POLY = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
 
@@ -17,6 +20,10 @@ class ReachQueryServiceTest extends TestCase
     {
         parent::setUp();
         DB::statement('DELETE FROM rippling_reach');
+        // The ring question is answered by the spatial index now, for every surface
+        // at once. The fake answers from the rows each test seeds, so a test still
+        // says what it said - only the route to the answer changed.
+        $this->fakeRingIndex();
     }
 
     private function seedReach(): int
@@ -341,7 +348,7 @@ class ReachQueryServiceTest extends TestCase
     public function test_fairness_ring_admits_someone_in_the_target_fifth(): void
     {
         config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
-        Http::fake(['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]);
+        Http::fake(array_merge($this->ringIndexStubs(), ['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]));
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
@@ -354,7 +361,7 @@ class ReachQueryServiceTest extends TestCase
         // Same point, same ring. Containment gets them considered; the fifth decides. Without
         // this the lane is just a wider reach for everybody.
         config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
-        Http::fake(['*/v1/quintile*' => Http::response(['quintile' => 4, 'available' => true])]);
+        Http::fake(array_merge($this->ringIndexStubs(), ['*/v1/quintile*' => Http::response(['quintile' => 4, 'available' => true])]));
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
@@ -367,7 +374,7 @@ class ReachQueryServiceTest extends TestCase
         // Fails closed: admitting everyone inside a stretched ring is the very thing the fifth
         // exists to prevent.
         config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
-        Http::fake(['*/v1/quintile*' => Http::response(null, 500)]);
+        Http::fake(array_merge($this->ringIndexStubs(), ['*/v1/quintile*' => Http::response(null, 500)]));
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
@@ -378,7 +385,7 @@ class ReachQueryServiceTest extends TestCase
     public function test_fairness_ring_is_not_consulted_when_the_lane_is_off(): void
     {
         config(['freegle.ripple.fairness.enabled' => false]);
-        Http::fake(['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]);
+        Http::fake(array_merge($this->ringIndexStubs(), ['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]));
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 
@@ -392,7 +399,7 @@ class ReachQueryServiceTest extends TestCase
         // The ring is only consulted once the reach proper has said no, so a post that already
         // covers someone must not pay for a network call on every check.
         config(['freegle.ripple.fairness.enabled' => true]);
-        Http::fake(['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]);
+        Http::fake(array_merge($this->ringIndexStubs(), ['*/v1/quintile*' => Http::response(['quintile' => 1, 'available' => true])]));
         $msgid = $this->seedReach();
         $this->seedFairnessRing($msgid);
 

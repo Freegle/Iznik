@@ -171,7 +171,57 @@ func main() {
 		return c.JSON(fiber.Map{"in": in, "partial": partial})
 	})
 
-	// GET /v1/:dataset/knn
+	// POST /v1/reachoverflow/admits — the ring question from the MAIL's end:
+	// one post, many candidate members, which of them does its ring admit?
+	// Body: {"msgid": N, "points": [{"lng": x, "lat": y, "lanes": ["$.rural.sparse"]}]}
+	// Returns the INDEXES of the admitted points, so the caller keeps whatever
+	// it had attached to them.
+	api.Post("/v1/reachoverflow/admits", func(c *fiber.Ctx) error {
+		state, ok := srv.getDataset("reachoverflow")
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+		ds, ok := state.ds.(*ReachOverflowDataset)
+		if !ok {
+			return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "dataset does not answer admits"})
+		}
+
+		var body struct {
+			Msgid  int64       `json:"msgid"`
+			Points []LanePoint `json:"points"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "bad body: " + err.Error()})
+		}
+		if body.Msgid <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "msgid required"})
+		}
+		if len(body.Points) == 0 {
+			return c.JSON(fiber.Map{"admitted": []int{}})
+		}
+
+		var admitted []int
+		err := state.withIndex(func(idx *Index) error {
+			var e error
+			admitted, e = ds.AdmitsPoints(idx, body.Msgid, body.Points)
+			return e
+		})
+		if err == errIndexNotReady {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+		if err != nil && strings.HasPrefix(err.Error(), "unknown overflow lane") {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		if admitted == nil {
+			admitted = []int{}
+		}
+		return c.JSON(fiber.Map{"admitted": admitted})
+	})
+
+	// GET /v1/:dataset/knn	// GET /v1/:dataset/knn
 	api.Get("/v1/:dataset/knn", func(c *fiber.Ctx) error {
 		name := c.Params("dataset")
 		state, ok := srv.getDataset(name)

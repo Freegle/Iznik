@@ -216,10 +216,20 @@ class ReachQueryService
     }
 
     /**
-     * Is this point inside a ring that would let them in?
+    /**
+     * Does an overflow ring let this person in?
      *
-     * Only consulted when the reach proper has said no, so a post that already covers this
-     * person costs nothing extra.
+     * Asked of the ring index, which is the one place that answers it - for
+     * browse, search, the badge, the message page, the web reply gate, and here
+     * for an emailed or TN reply. The ring geometry is not tested in this
+     * database at all any more: testing it here meant this path deciding for
+     * itself, and on 2026-08-21 the mail's answer and the site's came apart, so
+     * members were invited to posts they could not see and their replies were
+     * held until the item was gone.
+     *
+     * The lanes are asked SEPARATELY so an admit can still be attributed to the
+     * lane that made it - those counters are the only measure of whether a lane
+     * is doing anything.
      */
     private function isWithinOverflow(int $msgid, float $lat, float $lng, ?string $band): bool
     {
@@ -230,84 +240,23 @@ class ReachQueryService
             return false;
         }
 
-        try {
-            // The lanes are tested as SEPARATE flags rather than one OR, so an admit can be
-            // attributed to the lane that actually made it - these counters are the only
-            // measure of whether a lane is doing anything. Still one round trip.
-            $params = [];
-            $bandSql = $this->ringExists($bandPath === null ? [] : [$bandPath], $msgid, $lat, $lng, $params);
-            $clusterSql = $this->ringExists($clusterPaths, $msgid, $lat, $lng, $params);
+        $viaBand = $bandPath !== null
+            && RingIndex::admits($msgid, [['lat' => $lat, 'lng' => $lng, 'lanes' => [$bandPath]]]) !== [];
 
-            $row = DB::selectOne('SELECT ' . $bandSql . ' AS via_band, ' . $clusterSql . ' AS via_cluster', $params);
-
-            $viaBand = (bool) ($row->via_band ?? 0);
-            $viaCluster = (bool) ($row->via_cluster ?? 0);
-
-            if ($viaBand) {
-                // The day's how-many-did-the-lane-let-in count. This is the only place these
-                // lanes admit anyone, so without a count here their effect is invisible and
-                // "is it working?" has no answer. Same ledger the reply_blocked counter uses;
-                // best-effort, so metrics can never break a reply flow. Band wins attribution
-                // when both matched: it is the narrower, entitlement-honouring lane.
-                $this->countAdmit(str_starts_with($bandPath, '$.rural') ? 'rural_admitted' : 'fairness_admitted');
-            } elseif ($viaCluster) {
-                $this->countAdmit('cluster_admitted');
-            }
-
-            return $viaBand || $viaCluster;
-        } catch (\Throwable $e) {
-            // Same posture as isWithinReach: an unreadable ring means "not within", never an
-            // exception into a reply flow.
-            return false;
-        }
-    }
-
-    /**
-     * An EXISTS flag for "this point is inside any of these rings on this post", or the
-     * literal 0 when there are none. Appends its own binds to $params in text order.
-     *
-     * One shared bbox prefilter guards the polygon parses, and COALESCE keeps a path the row
-     * does not carry as FALSE rather than NULL - matching rippling.OverflowWhereAny on the Go
-     * side, so the website and an emailed reply cannot disagree about the same member.
-     *
-     * @param array<int,string> $paths
-     * @param array<int,mixed>  $params
-     */
-    private function ringExists(array $paths, int $msgid, float $lat, float $lng, array &$params): string
-    {
-        if ($paths === []) {
-            return '0';
+        $viaCluster = false;
+        if (! $viaBand && $clusterPaths !== []) {
+            $viaCluster = RingIndex::admits($msgid, [['lat' => $lat, 'lng' => $lng, 'lanes' => $clusterPaths]]) !== [];
         }
 
-        $params[] = $msgid;
-        $params[] = $lng;
-        $params[] = $lat;
-
-        $tests = [];
-        foreach ($paths as $path) {
-            $tests[] = 'COALESCE(ST_Contains('
-                . 'ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?)), ' . self::SRID . '), '
-                . 'ST_SRID(POINT(?, ?), ' . self::SRID . ')), 0) = 1';
-            $params[] = $path;
-            $params[] = $lng;
-            $params[] = $lat;
+        if ($viaBand) {
+            // Band wins attribution when both could match: it is the narrower,
+            // entitlement-honouring lane. Best-effort, so metrics can never break
+            // a reply flow.
+            $this->countAdmit(str_starts_with((string) $bandPath, '$.rural') ? 'rural_admitted' : 'fairness_admitted');
+        } elseif ($viaCluster) {
+            $this->countAdmit('cluster_admitted');
         }
 
-        // CAST both sides of the bbox test to DECIMAL. PDO binds these coordinates as
-        // STRINGS, and a string compared against a JSON number is not compared numerically:
-        // measured on our MySQL, `-3 BETWEEN JSON(-3.5) AND JSON(1.5)` is FALSE while
-        // `1 BETWEEN ...` is TRUE, so without the cast the prefilter silently rejects every
-        // member at a negative longitude - which is most of the UK. The Go side binds floats
-        // natively and does not have this, so it would have disagreed with us member by member.
-        $dec = static fn (string $e): string => 'CAST(' . $e . ' AS DECIMAL(20,6))';
-
-        return 'EXISTS(SELECT 1 FROM rippling_reach
-                    WHERE msgid = ?
-                      AND overflow_bounds IS NOT NULL
-                      AND ' . $dec('?') . ' BETWEEN ' . $dec('JSON_EXTRACT(overflow_bounds, \'$.bbox[0]\')')
-                                . ' AND ' . $dec('JSON_EXTRACT(overflow_bounds, \'$.bbox[2]\')') . '
-                      AND ' . $dec('?') . ' BETWEEN ' . $dec('JSON_EXTRACT(overflow_bounds, \'$.bbox[1]\')')
-                                . ' AND ' . $dec('JSON_EXTRACT(overflow_bounds, \'$.bbox[3]\')') . '
-                      AND (' . implode(' OR ', $tests) . '))';
+        return $viaBand || $viaCluster;
     }
 }

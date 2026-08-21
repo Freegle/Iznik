@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\Ripple\DigestPostScorer;
 use App\Services\Ripple\DistancePreferenceFilter;
+use App\Services\Ripple\RingIndex;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -692,47 +693,20 @@ class UnifiedDigestService
     }
 
     /**
-     * The rural-access overflow rings for a post, as an extra containment branch on the
-     * recipient query: one ring per density band, admitting a member whose OWN band earns
-     * the wider travel budget even though the capped reach stopped short of them.
+     * The ring's BOUNDING BOX as a widening of who this post's mail enumerates.
      *
-     * Returns ['', []] whenever the lane cannot apply, and that is a stronger statement than
-     * "false": with no rings the clause is ABSENT, so the query compiles to exactly what it
-     * was before this existed and costs exactly what it cost. A disabled lane cannot slow the
-     * mail path down.
+     * Not the ring itself. The ring is 37,000 vertices of WKT inside a JSON
+     * column: testing it here means parsing it per candidate row, and - worse -
+     * it means this path deciding for itself who a ring admits while every other
+     * surface asks the spatial index. That is how the mail came to invite members
+     * the site refused. The box is four numeric comparisons and no geometry, and
+     * it is only ever a prefilter: keepRingAdmitted() asks the index which of
+     * these candidates the ring really admits.
      *
-     * The rings are read here and bound as parameters rather than extracted inside the query.
-     * rippling_reach is one row per post, so an ST_GeomFromText over a JSON_EXTRACT in the
-     * WHERE clause would re-parse the SAME polygon for every candidate member - tens of
-     * thousands of identical parses on a large group, in the mail path.
-     *
-     * Binding the band name as a parameter rather than building a '$.rural.<band>' path also
-     * keeps a member's stored settings value data rather than syntax.
-     *
-     * Only the bands actually present are considered. The routing server deliberately omits
-     * any band at or inside the committed reach, because every member it would admit is
-     * already admitted by the reach proper - so an absent band means "already covered", not
-     * "missing".
-     *
-     * @return array{0: string, 1: array<int, mixed>}
+     * Returns ['', [], null] when no lane is on, so a post with no applicable
+     * lane runs precisely the query it always ran.
      */
-    /**
-     * The per-row "an overflow lane admits this member" SQL for one post, as OR-clauses meant
-     * to be appended after a primary containment test.
-     *
-     * Public because MatchMailService needs the same answer for the opposite reason: it mails
-     * people the post has NOT reached yet, so it has to exclude the ones a lane has already
-     * let in. Two definitions of "admitted" drifting apart is the failure this whole area has
-     * been correcting, so there is one, here.
-     *
-     * @return array{0: string, 1: array<int, mixed>, 2: ?string}  [sql, params, lane]
-     */
-    public function overflowAdmissionSql(int $msgid, string $point): array
-    {
-        return $this->overflowBranch($msgid, $point);
-    }
-
-    private function overflowBranch(int $msgid, string $point): array
+    private function overflowBboxBranch(int $msgid, string $point): array
     {
         $none = ['', [], null];
 
@@ -744,8 +718,6 @@ class UnifiedDigestService
         }
 
         try {
-            // Memoized: this runs once per post in the reach-mail pass, and the schema does
-            // not change under it mid-run.
             self::$overflowColumn ??= Schema::hasColumn('rippling_reach', 'overflow_bounds');
             if (! self::$overflowColumn) {
                 return $none;
@@ -753,108 +725,84 @@ class UnifiedDigestService
 
             $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_bounds');
             $bounds = is_string($raw) ? json_decode($raw, true) : null;
-            if (! is_array($bounds)) {
+            if (! is_array($bounds) || ! is_array($bounds['bbox'] ?? null) || count($bounds['bbox']) < 4) {
                 return $none;
             }
 
-            $srid = (int) config('freegle.srid', 3857);
-
-            // Rural is exclusive with the other two (it needs the audience cap to have bound,
-            // they need it not to have), but fairness and cluster can both be present, so the
-            // branches accumulate instead of one winning.
-            $sql = '';
-            $params = [];
-            $lanes = [];
-
-            if ($ruralOn && is_array($bounds['rural'] ?? null) && ! empty($bounds['rural'])) {
-                foreach ($bounds['rural'] as $band => $wkt) {
-                    if (! is_string($wkt) || $wkt === '') {
-                        continue;
-                    }
-                    // The band equality is exclusive, so nested rings cannot admit one member twice.
-                    $sql .= " OR (JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) = ?"
-                        . " AND ST_Contains(ST_GeomFromText(?, ?), $point))";
-                    $params[] = (string) $band;
-                    $params[] = $wkt;
-                    $params[] = $srid;
-                    $params[] = $srid; // the point's own SRID, repeated per branch
-                }
-
-                if ($sql !== '') {
-                    $lanes[] = 'rural';
-                }
+            // Which lane is present decides what the caller does with the rows
+            // afterwards (fairness still needs its per-member quintile call).
+            $lane = null;
+            if ($ruralOn && ! empty($bounds['rural'])) {
+                $lane = 'rural';
+            } elseif ($fairnessOn && ! empty($bounds['fairness'])) {
+                $lane = 'fairness';
+            } elseif ($clusterOn && ! empty($bounds['cluster'])) {
+                $lane = 'cluster';
             }
-
-            if ($fairnessOn && is_array($bounds['fairness'] ?? null) && ! empty($bounds['fairness'])) {
-                // No per-member test here, deliberately: the ring says who is close enough
-                // under the stretched budget, and WHICH of those the stretch was for is
-                // decided afterwards, by the deprivation fifth. That is not in this database
-                // - the spatial server holds the index - so it is answered in one call for
-                // the people the ring adds rather than stored against anybody.
-                $before = $sql;
-                foreach ($bounds['fairness'] as $q => $wkt) {
-                    if (! is_string($wkt) || $wkt === '' || ! is_numeric($q)) {
-                        continue;
-                    }
-                    $sql .= " OR ST_Contains(ST_GeomFromText(?, ?), $point)";
-                    $params[] = $wkt;
-                    $params[] = $srid;
-                    $params[] = $srid;
-                }
-
-                if ($sql !== $before) {
-                    $lanes[] = 'fairness';
-                }
-            }
-
-            // The cluster wedges, mailed on exactly the same terms as every other lane.
-            //
-            // A member a wedge admits sees the post on browse, in search and on the message
-            // page, and may reply to it. Telling them about it is the same decision, so it
-            // is made the same way: a lane that shows a post to somebody the mail never
-            // mentions is the split this whole change exists to remove, just facing the
-            // other way.
-            //
-            // Unconditional, like fairness and unlike rural: a wedge sits beyond every band's
-            // ceiling by construction, so testing the member's band would refuse exactly the
-            // town it was drawn for.
-            if ($clusterOn && is_array($bounds['cluster'] ?? null) && ! empty($bounds['cluster'])) {
-                $before = $sql;
-                foreach ($bounds['cluster'] as $wedge => $wkt) {
-                    if (! is_string($wkt) || $wkt === '') {
-                        continue;
-                    }
-                    $sql .= " OR ST_Contains(ST_GeomFromText(?, ?), $point)";
-                    $params[] = $wkt;
-                    $params[] = $srid;
-                    $params[] = $srid;
-                }
-                if ($sql !== $before) {
-                    $lanes[] = 'cluster';
-                }
-            }
-
-            if ($sql === '') {
+            if ($lane === null) {
                 return $none;
             }
 
-            // Only the fairness lane has a post-filter, and it drops every ring-admitted row
-            // that is not in a deprived fifth. It cannot tell WHICH ring admitted someone, so
-            // running it while cluster wedges are also in play would throw away cluster
-            // admits, which are unconditional by design. When both are present the narrowing
-            // is skipped and the label says cluster. Not a live combination today: fairness is
-            // off by default and unset everywhere.
-            if (in_array('fairness', $lanes, true) && ! in_array('cluster', $lanes, true)) {
-                return [$sql, $params, 'fairness'];
-            }
+            [$minLng, $minLat, $maxLng, $maxLat] = array_map('floatval', array_slice($bounds['bbox'], 0, 4));
 
-            return [$sql, $params, in_array('cluster', $lanes, true) ? 'cluster' : 'rural'];
+            // The point expression resolves to mylocation else lastlocation; compare
+            // its parts against the box. Written against the same expressions the
+            // caller built so there is one definition of "where this member is".
+            $sql = " OR (ST_X($point) BETWEEN ? AND ? AND ST_Y($point) BETWEEN ? AND ?)";
+
+            return [$sql, [$this->srid(), $minLng, $maxLng, $minLat, $maxLat], $lane];
         } catch (\Throwable $e) {
-            // A post that cannot be checked for overflow still gets its normal reach mail.
-            Log::warning('ripple: overflow branch unavailable', ['msgid' => $msgid, 'error' => $e->getMessage()]);
+            Log::warning('ripple: overflow bbox branch failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
 
             return $none;
         }
+    }
+
+    /**
+     * Keep the members the post's ring actually admits, plus everyone the
+     * committed reach already covered.
+     *
+     * The rows arrive from a query widened by the ring's bounding box, so the
+     * ones outside the polygon are candidates and nothing more. The spatial
+     * index decides - the same index, and the same answer, that browse, search,
+     * the badge, the message page and the reply gate get. A member this drops is
+     * a member no surface would have admitted; a member it keeps can find the
+     * post and reply to it.
+     */
+    private function keepRingAdmitted(array $rows, int $msgid): array
+    {
+        $candidates = [];
+        $kept = [];
+
+        foreach ($rows as $i => $row) {
+            if ((int) ($row->in_primary ?? 0) === 1) {
+                $kept[] = $row;                       // already in the committed reach
+                continue;
+            }
+            if ($row->resolved_lat === null || $row->resolved_lng === null) {
+                continue;                             // no location: no ring can admit them
+            }
+            $lanes = RingIndex::lanesFor(is_string($row->density_band ?? null) ? $row->density_band : null);
+            if ($lanes === []) {
+                continue;
+            }
+            $candidates[$i] = [
+                'lat' => (float) $row->resolved_lat,
+                'lng' => (float) $row->resolved_lng,
+                'lanes' => $lanes,
+            ];
+        }
+
+        foreach (RingIndex::admits($msgid, $candidates) as $i) {
+            $kept[] = $rows[$i];
+        }
+
+        return $kept;
+    }
+
+    private function srid(): int
+    {
+        return (int) config('freegle.srid', 3857);
     }
 
     /**
@@ -953,17 +901,25 @@ class UnifiedDigestService
                             ELSE l.lng END";
             $point = "ST_SRID(POINT($lngExpr, $latExpr), ?)";
 
-            [$overflowSql, $overflowParams, $overflowLane] = $this->overflowBranch($msgid, $point);
+            // The ring WIDENS who this query enumerates, but it does not decide who
+            // the ring admits. That decision belongs to the spatial index, and to
+            // nothing else - see RingIndex. Here the widening is the ring bbox
+            // only: four numeric comparisons against the stored box, no geometry
+            // parsed, no ST_Contains against a 37k-vertex ring. Members it lets
+            // through are candidates; the index says which of them are in.
+            [$overflowSql, $overflowParams, $overflowLane] = $this->overflowBboxBranch($msgid, $point);
 
-            // Which arm admitted each member. Only needed to tell "already in the reach" from
-            // "added by a ring", and only the fairness lane acts on it - so it is projected
-            // just for that lane rather than paying for a second containment test on every
-            // post. NOTE: this sits before the WHERE in the SQL text, so its SRID parameter
-            // comes FIRST in the array below.
+            // Which arm brought each member in, and which lanes they are in. Both
+            // are needed now for every ring lane, not just fairness: a candidate
+            // outside the polygon is only a recipient if the ring index says so,
+            // and the index needs their band to know which rural ring may admit
+            // them. NOTE: these sit before the WHERE in the SQL text, so their
+            // parameters come FIRST in the array below.
             $primaryFlag = '';
             $primaryParams = [];
-            if ($overflowLane === 'fairness') {
-                $primaryFlag = ", ST_Contains(mr.polygon, $point) AS in_primary";
+            if ($overflowSql !== '') {
+                $primaryFlag = ", ST_Contains(mr.polygon, $point) AS in_primary"
+                    . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band";
                 $primaryParams[] = $srid;
             }
 
@@ -1004,6 +960,10 @@ class UnifiedDigestService
                     $overflowParams
                 )
             ));
+
+            if ($overflowSql !== '') {
+                $recipientRows = collect($this->keepRingAdmitted($recipientRows->all(), $msgid));
+            }
 
             if ($overflowLane === 'fairness') {
                 $recipientRows = collect($this->filterFairnessRows($recipientRows->all(), $msgid));
@@ -1980,68 +1940,6 @@ class UnifiedDigestService
      * @param  array{0:float,1:float}  $latlng  [lat, lng], as resolveUserLatLng returns
      * @return array{0: string, 1: array<int, mixed>}
      */
-    private function ruralRingRescueWhere(User $user, string $point, array $latlng): array
-    {
-        $none = ['', []];
-
-        $settings = $user->settings;
-        if (is_string($settings)) {
-            $settings = json_decode($settings, true) ?: [];
-        }
-        $band = is_array($settings) ? ($settings['browseDensityBand'] ?? null) : null;
-
-        $paths = ['dense' => '$.rural.dense', 'medium' => '$.rural.medium', 'sparse' => '$.rural.sparse'];
-
-        $ringPaths = [];
-        if ((bool) config('freegle.ripple.rural_access.enabled', false)
-            && is_string($band) && isset($paths[$band])) {
-            $ringPaths[] = $paths[$band];
-        }
-        if ((bool) config('freegle.ripple.cluster.enabled', false)) {
-            // Fixed set, like the band paths: nothing user-supplied reaches a JSON path.
-            $ringPaths[] = '$.cluster.w1';
-            $ringPaths[] = '$.cluster.w2';
-            $ringPaths[] = '$.cluster.w3';
-        }
-        if ($ringPaths === []) {
-            return $none;
-        }
-
-        // CAST both sides of the bbox test to DECIMAL. These coordinates bind as STRINGS, and
-        // a string compared against a JSON number is not compared numerically: measured on our
-        // MySQL, `-3 BETWEEN JSON(-3.5) AND JSON(1.5)` is FALSE while `1 BETWEEN ...` is TRUE.
-        // Without the cast this prefilter silently drops every member at a negative longitude,
-        // which is most of the UK, and the ring would appear to work only east of Greenwich.
-        $dec = static fn (string $e): string => "CAST($e AS DECIMAL(20,6))";
-
-        $where = "(rr.overflow_bounds IS NOT NULL"
-            . ' AND ' . $dec('?') . ' BETWEEN ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[0]')")
-                . ' AND ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[2]')")
-            . ' AND ' . $dec('?') . ' BETWEEN ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[1]')")
-                . ' AND ' . $dec("JSON_EXTRACT(rr.overflow_bounds, '\$.bbox[3]')")
-            . ' AND (';
-
-        [$lat, $lng] = $latlng;
-        // Two placeholders so far: the bbox longitude and latitude. The point placeholders
-        // belong to each ring test below and are bound with it.
-        $params = [$lng, $lat];
-
-        // COALESCE so a path this row does not carry reads as false rather than NULL, matching
-        // rippling.OverflowWhereAny: a NULL here would poison the whole disjunction.
-        $tests = [];
-        foreach ($ringPaths as $ringPath) {
-            $tests[] = "COALESCE(ST_Contains("
-                . "ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(rr.overflow_bounds, ?)), 3857), $point), 0) = 1";
-            $params[] = $ringPath;
-            $params[] = $lng;
-            $params[] = $lat;
-        }
-
-        $where .= implode(' OR ', $tests) . '))';
-
-        return [$where, $params];
-    }
-
     public function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
         // Immediate pulls only the user's immediate (-1) groups; daily pulls
@@ -2137,14 +2035,12 @@ class UnifiedDigestService
                 // exact-polygon branch) — "AND NOT ring" outside the A-OR-B group below — rather
                 // than nested inside one branch, so either kind of reject is rescued the same way.
                 $point = 'ST_SRID(POINT(?, ?), 3857)';
-                [$ringWhere, $ringParams] = $this->ruralRingRescueWhere($user, $point, $latlng);
-                // COALESCE, not a bare NOT: ST_Contains (and so the whole ringWhere conjunct)
-                // is SQL NULL, not 0, when JSON_EXTRACT can't find the member's band under
-                // 'rural' (a post whose only ring is 'sparse' has no $.rural.dense at all) —
-                // "AND NOT NULL" is NULL, which drops the reject silently and admits everyone,
-                // the same three-valued-logic trap COALESCE(...,0) already guards against on
-                // rr.inner_bound above. Forcing NULL to 0 here keeps this a definite reject.
-                $ringRescue = $ringWhere === '' ? '' : " AND COALESCE($ringWhere, 0) = 0";
+                // Ring rescue as an id list from the spatial index - the same call, and
+                // the same answer, the website's feed and badge get for this member. The
+                // ring test used to be spliced in here as SQL, which meant this path
+                // deciding for itself who a ring admits; that is how the digest came to
+                // name posts the site would not show.
+                [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
                 // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText,
                 // ST_GeometryType) and the correlated-EXISTS sandwich-bounds shape have no
                 // query-builder equivalent.
@@ -2168,14 +2064,8 @@ class UnifiedDigestService
                 // Bounds table not migrated yet — the original exact-polygon gate, plus the
                 // same rural-ring rescue as the sandwich branch above.
                 $point = 'ST_SRID(POINT(?, ?), 3857)';
-                [$ringWhere, $ringParams] = $this->ruralRingRescueWhere($user, $point, $latlng);
-                // COALESCE, not a bare NOT: ST_Contains (and so the whole ringWhere conjunct)
-                // is SQL NULL, not 0, when JSON_EXTRACT can't find the member's band under
-                // 'rural' (a post whose only ring is 'sparse' has no $.rural.dense at all) —
-                // "AND NOT NULL" is NULL, which drops the reject silently and admits everyone,
-                // the same three-valued-logic trap COALESCE(...,0) already guards against on
-                // rr.inner_bound above. Forcing NULL to 0 here keeps this a definite reject.
-                $ringRescue = $ringWhere === '' ? '' : " AND COALESCE($ringWhere, 0) = 0";
+                // Same rescue, same source as the sandwich branch above.
+                [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
                 // keep-raw: spatial predicates (ST_Contains, ST_SRID) have no query-builder
                 // equivalent.
                 $query->whereRaw(

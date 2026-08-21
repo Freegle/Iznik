@@ -13,10 +13,13 @@ use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
+use Tests\Support\FakesRingIndex;
 use Tests\TestCase;
 
 class UnifiedDigestServiceTest extends TestCase
 {
+    use FakesRingIndex;
+
     protected UnifiedDigestService $service;
 
     protected function setUp(): void
@@ -26,6 +29,7 @@ class UnifiedDigestServiceTest extends TestCase
         Mail::fake();
         // Rippling ships dark; enable it so the reach-coordination ledger path is exercised.
         config(['freegle.ripple.enabled' => true]);
+        $this->fakeRingIndex();
     }
 
     public function test_deduplication_with_tnpostid(): void
@@ -3496,7 +3500,7 @@ class UnifiedDigestServiceTest extends TestCase
     /** Answer the spatial server's batch deprivation lookup with one fifth per point. */
     private function fakeQuintiles(array $quintiles): void
     {
-        Http::fake(['*/v1/quintiles' => Http::response(['quintiles' => $quintiles, 'available' => true])]);
+        Http::fake(array_merge($this->ringIndexStubs(), ['*/v1/quintiles' => Http::response(['quintiles' => $quintiles, 'available' => true])]));
     }
 
     private function wasMailed(int $msgid, int $userid): bool
@@ -3596,7 +3600,7 @@ class UnifiedDigestServiceTest extends TestCase
         // cost the lane its extra people rather than hand them all the mail.
         config(['freegle.ripple.fairness.enabled' => true, 'freegle.ripple.fairness.max_quintile' => 1]);
         [$member, $msg] = $this->seedFairnessCase();
-        Http::fake(['*/v1/quintiles' => Http::response(null, 500)]);
+        Http::fake(array_merge($this->ringIndexStubs(), ['*/v1/quintiles' => Http::response(null, 500)]));
 
         $this->service->mailNewlyReachedForPost($msg->id);
 
@@ -3620,7 +3624,7 @@ class UnifiedDigestServiceTest extends TestCase
     {
         config(['freegle.ripple.fairness.enabled' => false]);
         [$member, $msg] = $this->seedFairnessCase();
-        Http::fake(['*/v1/quintiles' => Http::response(['quintiles' => [1], 'available' => true])]);
+        Http::fake(array_merge($this->ringIndexStubs(), ['*/v1/quintiles' => Http::response(['quintiles' => [1], 'available' => true])]));
 
         $this->service->mailNewlyReachedForPost($msg->id);
 

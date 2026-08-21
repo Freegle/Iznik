@@ -9,10 +9,13 @@ use App\Services\FirstReply\MatchMailService;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Tests\Support\FakesRingIndex;
 use Tests\TestCase;
 
 class MatchMailServiceTest extends TestCase
 {
+    use FakesRingIndex;
+
     private const TICK1 = 'POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))';
 
     private const TICK3 = 'POLYGON((-1.0 51.0, 1.0 51.0, 1.0 52.0, -1.0 52.0, -1.0 51.0))';
@@ -229,6 +232,7 @@ class MatchMailServiceTest extends TestCase
      */
     public function test_skips_someone_a_cluster_wedge_has_already_admitted(): void
     {
+        $this->fakeRingIndex();
         config(['freegle.ripple.cluster.enabled' => true]);
         // Memoised across tests, and false if an earlier one checked before the column existed.
         UnifiedDigestService::forgetOverflowColumn();

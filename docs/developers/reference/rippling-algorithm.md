@@ -289,15 +289,24 @@ in a field between them.
 
 **Every lane is honoured identically on every surface**, and this is the property to preserve:
 
-| Surface | Where |
-|---|---|
-| Browse feed, unread badge | `isochrone/reachbounds.go`, `reachspatial.go` |
-| Browse-scoped search | `message/search.go` |
-| Message page banner, reply eligibility | `message/reach.go` |
-| Web reply gate | `chat/chatmessage.go` |
-| Email and TN reply hold | `Ripple/ReachQueryService.php` |
-| Immediate mail, reach mail | `UnifiedDigestService::overflowBranch` |
-| Daily digest, daily-posts push | `UnifiedDigestService::ruralRingRescueWhere` (rural + cluster; fairness needs a per-member network call, too costly per candidate post) |
+Every one of them asks the SAME service, and none of them tests ring geometry
+itself. That is the only arrangement in which they cannot drift apart:
+
+| Surface | Where | Asks |
+|---|---|---|
+| Browse feed, unread badge | `isochrone/reachbounds.go`, `reachspatial.go` | `rippling.AdmittedMsgids` |
+| Browse-scoped search | `message/search.go` | `rippling.AdmittedMsgids` |
+| Message page banner, reply eligibility | `message/reach.go` | `rippling.AdmittedMsgids` |
+| Web reply gate | `chat/chatmessage.go` | `rippling.AdmittedMsgids` |
+| Email and TN reply hold | `Ripple/ReachQueryService.php` | `RingIndex::admits` |
+| Immediate mail, reach mail | `UnifiedDigestService::keepRingAdmitted` | `RingIndex::admits` |
+| Daily digest, daily-posts push | `UnifiedDigestService::ringRescueIds` | `RingIndex::admittedFor` |
+| First-reply scout mail (excludes the already-admitted) | `FirstReply/MatchMailService` | `RingIndex::admits` |
+
+Both clients call `iznik-spatial-go`'s `reachoverflow` dataset: `/containing`
+for "which posts admit this member" (browse's direction) and `/admits` for
+"which of these members does this post admit" (the mail's). One index, one
+answer, asked from both ends.
 
 The read side decides which paths apply in one place, `rippling/overflowviewer.go`
 (`ViewerOverflowPaths`). Every lane needs a VIEWER: a caller without one is asking whether a

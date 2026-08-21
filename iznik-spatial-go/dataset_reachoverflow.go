@@ -406,6 +406,57 @@ func (d *ReachOverflowDataset) Within(_ *Index, _ QueryParams) ([]int64, error) 
 	return nil, fmt.Errorf("reachoverflow dataset does not support within; use /containing")
 }
 
+// AdmitsPoints answers the MAIL side's question: given one post and the lanes
+// each candidate member is in, which of those members does this post's ring
+// admit?
+//
+// It is the same question the read surfaces ask, asked from the other end. The
+// mail has one post and many members; browse has one member and many posts. Both
+// have to come out of the same rasters or the surfaces disagree - and the way
+// they disagreed in production was the worst way round: the mail invited people
+// the site then refused, and the reply gate held their replies until the item
+// was gone.
+//
+// A point in a ring's boundary band is NOT admitted, exactly as on the read
+// side. That is what makes the band harmless: everybody declines the same strip.
+func (d *ReachOverflowDataset) AdmitsPoints(idx *Index, msgid int64, points []LanePoint) ([]int, error) {
+	var admitted []int
+
+	for i, p := range points {
+		for _, lane := range p.Lanes {
+			code, ok := overflowLaneCodes[lane]
+			if !ok {
+				return nil, fmt.Errorf("unknown overflow lane %q", lane)
+			}
+
+			item, err := idx.GetByExtID(encodeOverflowExtID(msgid, code))
+			if err != nil || item == nil || item.WKB == nil {
+				continue
+			}
+			raster, err := DeserializeRaster(item.WKB)
+			if err != nil {
+				continue
+			}
+			if raster.Classify(p.Lng, p.Lat) == cellIn {
+				admitted = append(admitted, i)
+				break
+			}
+		}
+	}
+
+	return admitted, nil
+}
+
+// LanePoint is one candidate member: where they are, and which ring lanes they
+// are in. The lanes travel with the point because they are per-member - a
+// member's density band decides which rural ring can admit them, and only the
+// caller knows it.
+type LanePoint struct {
+	Lng   float64  `json:"lng"`
+	Lat   float64  `json:"lat"`
+	Lanes []string `json:"lanes"`
+}
+
 // ContainingFiltered implements PointContainerFiltered: the same question, but
 // with the caller naming the lanes it is in, and answered as PLAIN msgids.
 //
