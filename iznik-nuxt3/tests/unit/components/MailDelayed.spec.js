@@ -15,6 +15,19 @@ vi.mock('~/composables/useTimeFormat', () => ({
   timeago: (val) => `ago:${val}`,
 }))
 
+const mockVals = ref({})
+const mockSet = vi.fn((params) => {
+  mockVals.value[params.key] = params.value
+})
+vi.mock('~/stores/misc', () => ({
+  useMiscStore: () => ({
+    get vals() {
+      return mockVals.value
+    },
+    set: mockSet,
+  }),
+}))
+
 const stubs = {
   'b-row': { template: '<div class="row"><slot /></div>' },
   'b-col': { template: '<div class="col"><slot /></div>' },
@@ -36,6 +49,8 @@ function words(wrapper) {
 describe('MailDelayed', () => {
   beforeEach(() => {
     mockMe.value = null
+    mockVals.value = {}
+    mockSet.mockClear()
   })
 
   it('shows nothing to a logged-out visitor', () => {
@@ -92,5 +107,69 @@ describe('MailDelayed', () => {
     mockMe.value = { id: 1, emaildeferred: { domain: 'yahoo.co.uk' } }
 
     expect(words(render())).toContain('Nothing is lost')
+  })
+
+  // Andy (#41600618) could not press Send on a phone: this banner is fixed to the
+  // bottom of the viewport, so it sits over the button, and there was no way to
+  // get rid of it. Three different browsers behaved the same way, because the
+  // banner - not the browser - was the problem.
+  it('offers a way to get rid of it', () => {
+    mockMe.value = { id: 1, emaildeferred: { domain: 'yahoo.co.uk' } }
+
+    expect(render().find('.test-dismiss').exists()).toBe(true)
+  })
+
+  it('goes away when dismissed', async () => {
+    mockMe.value = { id: 1, emaildeferred: { domain: 'yahoo.co.uk' } }
+
+    const wrapper = render()
+    await wrapper.find('.test-dismiss').trigger('click')
+
+    expect(wrapper.find('.notice').exists()).toBe(false)
+  })
+
+  it('stays gone on the next page', () => {
+    mockMe.value = {
+      id: 1,
+      emaildeferred: { domain: 'yahoo.co.uk', since: '2026-08-15 16:38:00' },
+    }
+    mockVals.value = { mailDelayedDismissed: 'yahoo.co.uk:2026-08-15 16:38:00' }
+
+    expect(render().find('.notice').exists()).toBe(false)
+  })
+
+  // Dismissing says "I have read this one", not "never tell me about mail again".
+  it('speaks up again for a later delay', () => {
+    mockVals.value = { mailDelayedDismissed: 'yahoo.co.uk:2026-08-15 16:38:00' }
+    mockMe.value = {
+      id: 1,
+      emaildeferred: { domain: 'yahoo.co.uk', since: '2026-08-20 09:00:00' },
+    }
+
+    expect(render().find('.notice').exists()).toBe(true)
+  })
+
+  it('speaks up again when a different domain starts holding mail up', () => {
+    mockVals.value = { mailDelayedDismissed: 'yahoo.co.uk:2026-08-15 16:38:00' }
+    mockMe.value = {
+      id: 1,
+      emaildeferred: { domain: 'btinternet.com', since: '2026-08-15 16:38:00' },
+    }
+
+    expect(render().find('.notice').exists()).toBe(true)
+  })
+
+  it('remembers the dismissal so it survives a reload', async () => {
+    mockMe.value = {
+      id: 1,
+      emaildeferred: { domain: 'yahoo.co.uk', since: '2026-08-15 16:38:00' },
+    }
+
+    await render().find('.test-dismiss').trigger('click')
+
+    expect(mockSet).toHaveBeenCalledWith({
+      key: 'mailDelayedDismissed',
+      value: 'yahoo.co.uk:2026-08-15 16:38:00',
+    })
   })
 })
