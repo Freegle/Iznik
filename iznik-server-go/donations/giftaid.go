@@ -270,6 +270,19 @@ func SetGiftAid(c *fiber.Ctx) error {
 	// write returned — never issue a separate SELECT LAST_INSERT_ID() as it's
 	// unsafe under parallel load (GORM's connection pool may assign a
 	// different connection).
+	//
+	// giftaid has UNIQUE KEY (userid), so a member who declares again reuses their
+	// existing row. `timestamp` is DEFAULT CURRENT_TIMESTAMP with no ON UPDATE, so it
+	// must be refreshed here or the row keeps the date of the member's *first* ever
+	// declaration. That date is not cosmetic: it is written to the HMRC claim CSV as
+	// the declaration date, and GiftAidClaimService::identifyGiftAidedDonations
+	// matches donations against it (`>=` for period Future, `=` for This). Leaving it
+	// stale lets someone who declined years ago and re-declares Future today pull
+	// every donation since that old date into a claim.
+	//
+	// `reviewed` is cleared for the same reason: this is a new declaration, possibly
+	// with a new name or address, so it has to go back through review before we claim
+	// on it.
 	res := gorm.WithResult()
 	tx := db.Table("giftaid").Clauses(res, clause.OnConflict{
 		DoUpdates: clause.Set{
@@ -280,6 +293,8 @@ func SetGiftAid(c *fiber.Ctx) error {
 			{Column: clause.Column{Name: "lastname"}, Value: gorm.Expr("?", req.Lastname)},
 			{Column: clause.Column{Name: "homeaddress"}, Value: gorm.Expr("?", req.Homeaddress)},
 			{Column: clause.Column{Name: "deleted"}, Value: gorm.Expr("NULL")},
+			{Column: clause.Column{Name: "timestamp"}, Value: gorm.Expr("NOW()")},
+			{Column: clause.Column{Name: "reviewed"}, Value: gorm.Expr("NULL")},
 		},
 	}).Create(map[string]interface{}{
 		"userid": myid, "period": req.Period, "fullname": req.Fullname,
