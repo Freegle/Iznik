@@ -1,6 +1,6 @@
 # Security headers for the Netlify-hosted site.
 #
-# The CSP is REPORT-ONLY: it reports violations to csp.php without blocking, so we can tune it
+# The CSP is REPORT-ONLY: it reports violations to Sentry without blocking, so we can tune it
 # against the ad/analytics domains before enforcing. Enforcing CSP was previously disabled entirely
 # because ads load from many domains; report-only is safe alongside ads and gives us the violation
 # data (including any cross-origin framing, via frame-ancestors) needed to move to enforcement later.
@@ -9,4 +9,4 @@
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-  Content-Security-Policy-Report-Only: worker-src blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *.facebook.net *.facebook.com *.sentry.io *.google.com *.googletagservices.com *.gstatic.com accounts.google.com/gsi/client cdn.jsdelivr.net *.paypalobjects.com googleads.g.doubleclick.net *.gumgum.com *.adnxs.com securepubads.g.doubleclick.net *.googlesyndication.com *.netlify.app cdn-cookieyes.com api.rlcdn.com ads.pubmatic.com; frame-ancestors 'self'; report-uri https://fdapilive.ilovefreegle.org/csp.php
+  Content-Security-Policy-Report-Only: worker-src blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *.facebook.net *.facebook.com *.sentry.io *.google.com *.googletagservices.com *.gstatic.com accounts.google.com/gsi/client cdn.jsdelivr.net *.paypalobjects.com googleads.g.doubleclick.net *.gumgum.com *.adnxs.com securepubads.g.doubleclick.net *.googlesyndication.com *.netlify.app cdn-cookieyes.com api.rlcdn.com ads.pubmatic.com; frame-ancestors 'self'; report-uri https://o118493.ingest.us.sentry.io/api/4504083802226688/csp-report/?sentry_key=63f870e6c729477ebca4098a0b07fd3a

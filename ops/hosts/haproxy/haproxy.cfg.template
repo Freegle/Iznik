@@ -113,10 +113,6 @@ frontend https_frontend
   # Same-origin for ModTools; Support/Admin JWT is enforced by the service.
   acl ai_support_path path_beg -i /api/ai-support
   use_backend ai_support_backend if new_modtools ai_support_path
-  # The next two lines are redirects we were using before the proxy was working.
-  #http-request redirect code 302 location https://modtools--golden-caramel-d2c3a7.netlify.app%[capture.req.uri] if new_modtools !api_path
-  #http-request redirect code 302 location https://fdapilive.ilovefreegle.org/api%[capture.req.uri] if new_modtools api_path
-  # ...end redirects
 
   # The uploader requires a different backend and headers, so spot if we're accessing that.
   #
