@@ -1907,6 +1907,50 @@ class UnifiedDigestService
     }
 
     /**
+     * The posts a ring admits this member to, as an SQL exclusion for the reach gate.
+     *
+     * The reach gate rejects a post when a reach row says the member is outside it.
+     * A ring exists precisely to admit people the capped reach did not cover, so a
+     * post a ring admits must not be rejected: the fragment narrows the reject to
+     * posts NOT on that list.
+     *
+     * The list comes from RingIndex - the same call, and so the same answer, that
+     * the website's feed, badge and search get for this member. Asking differently
+     * here is how the digest came to name posts the site would not show.
+     *
+     * Fails closed, because RingIndex does: no rings means no rescue, which shows
+     * the committed reach only rather than mailing a post nobody can open.
+     *
+     * @param array $latlng [lat, lng] - the member's location.
+     * @return array{0: string, 1: array} SQL fragment (may be empty) and its bindings.
+     */
+    private function ringRescueIds(User $user, array $latlng): array
+    {
+        $none = ['', []];
+
+        $settings = $user->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        $band = is_array($settings) ? ($settings['browseDensityBand'] ?? null) : null;
+
+        $lanes = RingIndex::lanesFor(is_string($band) ? $band : null);
+        if ($lanes === []) {
+            return $none;
+        }
+
+        $ids = RingIndex::admittedFor($latlng[0], $latlng[1], $lanes);
+        if ($ids === []) {
+            return $none;
+        }
+
+        return [
+            ' AND rr.msgid NOT IN (' . implode(',', array_fill(0, count($ids), '?')) . ')',
+            $ids,
+        ];
+    }
+
+    /**
      * The overflow rings as an OR-rescue for the daily digest / daily-posts push reach gate
      * below: a member whose OWN density band earns a wider travel budget than a post's capped
      * reach must still see it, exactly as they already can on browse (ReachQueryService) and in
