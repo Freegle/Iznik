@@ -246,7 +246,8 @@ class GitSummaryService
      */
     public function extractAccessSignals(array $allChanges): string
     {
-        $found = [];
+        $byMarker = [];
+        $byPath = [];
 
         foreach ($allChanges as $change) {
             $diff = $change['diff'] ?? '';
@@ -265,7 +266,7 @@ class GitSummaryService
                     if ($file !== '' && $file !== '/dev/null') {
                         foreach (self::ACCESS_PATHS as $fragment => $audience) {
                             if (str_contains(strtolower($file), $fragment)) {
-                                $found[$file][$audience] = 'path is under ' . trim($fragment, '/');
+                                $byPath[$file][$audience] = 'path is under ' . trim($fragment, '/');
                             }
                         }
                     }
@@ -285,9 +286,20 @@ class GitSummaryService
                     // like "thisAdminThing". A false restriction note would be the same
                     // mistake as the one this is here to prevent, pointing the other way.
                     if (preg_match("/(?<![a-z0-9_])" . preg_quote($marker, "/") . "/", $lower, $m, PREG_OFFSET_CAPTURE)) {
-                        $found[$file][$audience] = substr($line, $m[0][1], strlen($marker));
+                        $byMarker[$file][$audience] = substr($line, $m[0][1], strlen($marker));
                     }
                 }
+            }
+        }
+
+        // An actual guard in the file beats the convention its path follows. Reporting
+        // both would hand the model two different answers for one file: a sysadmin page
+        // guarded by supportOrAdmin is open to Support, whatever the directory implies.
+        $found = $byMarker;
+
+        foreach ($byPath as $file => $audiences) {
+            if (!isset($found[$file])) {
+                $found[$file] = $audiences;
             }
         }
 

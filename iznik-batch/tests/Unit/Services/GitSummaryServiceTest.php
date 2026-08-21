@@ -261,6 +261,29 @@ class GitSummaryServiceTest extends TestCase
     }
 
     /**
+     * A sysadmin page guarded by supportOrAdmin is open to Support, whatever its
+     * directory implies. Reporting both would give the model two different answers for
+     * one file, so the guard in the code wins over the convention in the path.
+     */
+    public function test_a_guard_in_the_file_beats_the_convention_of_its_path(): void
+    {
+        $signals = app(GitSummaryService::class)->extractAccessSignals([
+            [
+                'repo' => 'iznik-nuxt3',
+                'category' => 'ModTools',
+                'commits' => [],
+                'stat' => '',
+                'diff' => "--- a/modtools/pages/sysadmin/index.vue\n+++ b/modtools/pages/sysadmin/index.vue\n@@ -1,1 +1,2 @@\n+const { supportOrAdmin } = useMe()\n",
+            ],
+        ]);
+
+        $this->assertSame(
+            "- modtools/pages/sysadmin/index.vue: Support and Admin staff only (supportOrAdmin)\n",
+            $signals
+        );
+    }
+
+    /**
      * Capture the prompt that would go to Gemini.
      */
     private function capturePrompt(array $allChanges): string
