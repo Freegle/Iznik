@@ -207,9 +207,31 @@ func TestMessageReachIncludesTheRings(t *testing.T) {
 	assert.NoError(t, json.Unmarshal([]byte(sparse), &geo), "each ring parses as GeoJSON")
 	assert.Equal(t, "Polygon", geo.Type)
 	assert.NotEmpty(t, geo.Coordinates)
+
+	// Assert the ring's EXTENT, not its first vertex: simplifying normalises the
+	// winding and start point, so which corner comes first is MySQL's business and
+	// asserting it tests nothing about whether the right area came back.
 	// Coordinates are [lng, lat] degrees, as the reach polygon's are.
-	assert.InDelta(t, 0.5, geo.Coordinates[0][0][0], 0.01)
-	assert.InDelta(t, 51.9, geo.Coordinates[0][0][1], 0.01)
+	minLng, maxLng := geo.Coordinates[0][0][0], geo.Coordinates[0][0][0]
+	minLat, maxLat := geo.Coordinates[0][0][1], geo.Coordinates[0][0][1]
+	for _, p := range geo.Coordinates[0] {
+		if p[0] < minLng {
+			minLng = p[0]
+		}
+		if p[0] > maxLng {
+			maxLng = p[0]
+		}
+		if p[1] < minLat {
+			minLat = p[1]
+		}
+		if p[1] > maxLat {
+			maxLat = p[1]
+		}
+	}
+	assert.InDelta(t, 0.5, minLng, 0.01, "the ring spans the longitudes it was seeded with")
+	assert.InDelta(t, 1.5, maxLng, 0.01)
+	assert.InDelta(t, 51.9, minLat, 0.01, "and the latitudes")
+	assert.InDelta(t, 52.5, maxLat, 0.01)
 }
 
 // A post with no rings says nothing about them, rather than shipping ten nulls.
