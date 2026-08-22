@@ -1770,17 +1770,23 @@ export async function setupRipplingExplorer({
     // Same population either way round; what changes is what it means. Outbound they
     // are the people a post from the pin can reach, inbound the people whose posts can
     // reach the pin.
+    //
+    // "Active" is not decoration: these come from users_approxlocs, which UserApproxLocService
+    // rebuilds from members who have used the site within USER_INACTIVE_SECONDS (half a year)
+    // and prunes once they fall outside it. A bare "Freeglers" reads as total membership,
+    // which is a much bigger and much less useful number - and it is the count the reach
+    // gate itself uses, so it is the one worth naming precisely.
     const headline =
       viewMode === 'inbound'
-        ? `~${totalEstimate.toLocaleString()} Freeglers whose posts you'd see`
-        : `~${totalEstimate.toLocaleString()} would be notified`
+        ? `~${totalEstimate.toLocaleString()} active Freeglers whose posts you'd see`
+        : `~${totalEstimate.toLocaleString()} active Freeglers would be notified`
     bar.innerHTML =
       `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">${headline}</div>` +
       `<div style="font-size:10px;color:#666;margin-top:1px">${estimatedInsideLocated.toLocaleString()} with known location` +
       (unlocatedShare > 0
         ? ` + ~${unlocatedShare.toLocaleString()} estimated unlocated`
         : '') +
-      `</div><div style="font-size:10px;color:#aaa;font-style:italic;margin-top:3px">TrashNothing members use a separate algorithm</div>`
+      `</div><div style="font-size:10px;color:#aaa;font-style:italic;margin-top:3px">Active = used Freegle in the last 6 months. TrashNothing members use a separate algorithm.</div>`
     bar.style.display = ''
   }
 
