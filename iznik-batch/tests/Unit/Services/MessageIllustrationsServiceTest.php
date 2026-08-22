@@ -94,6 +94,26 @@ class MessageIllustrationsServiceTest extends TestCase
         $this->assertGreaterThanOrEqual(1, $result['processed']);
     }
 
+    public function test_courtesy_word_in_subject_reuses_clean_cached_illustration(): void
+    {
+        // Discourse topic 9209/98: "WANTED: iron please" generated its own illustration for
+        // the item "iron please" instead of reusing the good cached "iron" one.
+        $message = $this->createMessageInSpatial('WANTED: Vintage Lamp please (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name' => 'Vintage Lamp',
+            'externaluid' => 'freegletusd-cached999',
+            'imagehash' => 'abc123',
+        ]);
+
+        $service = $this->makeService();
+        $service->processIllustrations();
+
+        $attachment = DB::table('messages_attachments')->where('msgid', $message->id)->first();
+        $this->assertNotNull($attachment, 'Expected the clean cached illustration to be reused');
+        $this->assertEquals('freegletusd-cached999', $attachment->externaluid);
+    }
+
     public function test_skips_message_in_declined_table(): void
     {
         $message = $this->createMessageInSpatial('OFFER: Widget (TestTown)');

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\ItemName;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -228,7 +229,9 @@ class MessageIllustrationsService
         $name = preg_replace('/^(OFFER|WANTED|TAKEN|RECEIVED):\s*/i', '', $subject);
         $name = preg_replace('/\s*\([^)]+\)\s*$/', '', $name ?? '');
 
-        return trim($name ?? '');
+        // "iron please" is a request for an iron, not for an "iron please" - and the clean
+        // name is what finds the illustration we have already generated for one.
+        return ItemName::stripCourtesy(trim($name ?? ''));
     }
 
     private function getLastArrival(): string
