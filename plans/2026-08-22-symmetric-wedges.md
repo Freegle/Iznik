@@ -184,13 +184,15 @@ the session transcript; the numbers below are the ones that matter.
    membership. Live DB: the whole upper Wensleydale box holds 2 active members; both
    belong to KENDAL (plus Penrith/Northallerton/Skipton one each), neither to Carnforth
    or Lancaster-Morecambe. The complaint's named groups cannot mail these members at all.
-2. **The mail path claim was wrong.** UnifiedDigestService::getPostsForUser scopes
-   digest candidates to the member's OWN memberships (whereIn messages_groups.groupid)
-   BEFORE any ring test; rings only relax rejection within that set. "The digest follows
-   the site automatically" is false for any post on a group the member has not joined.
-   (The newly-reached push path, mailNewlyReachedForPost, DOES reach outside the capped
-   polygon: verified 2026-08-20, 35% of notified members outside it, so overflow lanes
-   do feed one mail surface. But the daily digest is group-scoped first.)
+2. **The mail path needed care, and the review's own first reading overstated it.**
+   getPostsForUser is indeed membership-scoped before the ring test, but
+   ExpandService::rippleIntoNewGroups copies a post onto EVERY published group whose
+   area its reach covers, so candidacy spreads with reach. Verified live (Edward's
+   challenge, 2026-08-22): of 532 posts through Carnforth/Lancaster in 7 days, 390
+   (73%) carry a KendalFreegle copy, and the Wensleydale members are Kendal members.
+   The ring test is the only blocker; the digest is reach-driven in effect, and a
+   reach-side fix reaches their email with no membership work. Membership binds only
+   for a member none of whose groups' areas the post's reach touches.
 3. **A sibling investigation of the SAME complaint (2026-08-20, Discourse 10046) was
    not consulted.** It had already measured: the towns table lacks
    Kendal/Lancaster/Carnforth/Penrith/Skipton/Barrow (so this plan's anchor default was
@@ -302,3 +304,32 @@ lane-enum extension, or gameable geometry:
   vs auto-membership vs leave as is).
 - Sequencing against target_by_ru (the governor currently caps 55.9% of sparse-origin
   posts; that fix may matter more than any of this).
+
+### Cliff edges (Edward's objection to the population floor, same day)
+
+"Grow until ~1,000 people, capped at 60 minutes" replaces one arbitrary constant with
+two and keeps the cliff: correct, and it dies here. The cliff-free formulation:
+
+- The system ALREADY measures a continuous field per location: the radius holding the
+  nearest K freeglers (DensityService, K=400). Today it collapses that measurement
+  into three bands with three caps (20/30/45), which is where every cliff comes from:
+  band boundaries, cap walls, starved/not-starved gates.
+- Use the measurement directly instead. Each member gets a personal admission radius
+  as a SMOOTH function of their own K-radius: no bands, no caps, no classification.
+  Neighbouring villages get near-identical radii, so there is no two-village edge.
+  Hawes comes out around an hour, Masham around 40 minutes, London around 12, all
+  from one curve.
+- Ranking, not walls, bounds the far tail: distance normalised by the same field,
+  decayed by MEASURED conversion (the past-45 <8.5%-per-reply figure becomes a decay
+  shape, not a cutoff), through the existing digest scorer and the 65-slot attention
+  budget. Abundant areas never surface far posts because near ones fill the budget;
+  famine areas fill from further away automatically. Self-limiting without a wall.
+- Numbers that remain are of a different kind: K (exists, 400), the decay shape
+  (measured from logs, not chosen), and the digest's 65-slot cap (an attention
+  budget, not geography: it cannot make two neighbours categorically different).
+  Walls act as cliffs; normalisers and slopes do not. Any remaining hard bound is a
+  compute ceiling in the routing layer, set beyond where ranking has already made
+  content invisible, so it is never the binding policy.
+- This shrinks the change surface: the member-side fix is ONE function (banded cap ->
+  continuous personal radius) plus scorer decay, flowing to browse, digest and push
+  through the single ring-admits gate that already exists.
