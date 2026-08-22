@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -295,7 +296,9 @@ func splitItems(subject string) []string {
 // asks for every item to be shown together, instead of the single-object prompt below, which
 // otherwise leads the model to draw only the first item and drop the rest.
 func buildImagePrompt(name string) string {
-	subject := subjectForName(name)
+	// Names are stored as the member typed them, so a regenerate can still be handed
+	// "iron please". Strip the courtesy word before splitting, or the last item keeps it.
+	subject := misc.StripCourtesy(subjectForName(name))
 	items := splitItems(subject)
 
 	if len(items) > 1 {

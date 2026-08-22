@@ -127,3 +127,33 @@ func TestIllustrationLocationSuffixStripping(t *testing.T) {
 	// Clean up.
 	db.Exec("DELETE FROM ai_images WHERE name = ?", testItem)
 }
+
+func TestIllustrationCourtesyStripping(t *testing.T) {
+	// Discourse topic 9209/98: members type "iron please" in the item box. The courtesy word
+	// is not part of the item, so the lookup must find the clean cached "iron" illustration
+	// rather than missing and generating a fresh (and worse) image for "iron please".
+	testUid := fmt.Sprintf("test-uid-courtesy-%d", time.Now().UnixNano())
+	testItem := "Steam Iron"
+
+	db := database.DBConn
+	db.Exec("INSERT INTO ai_images (name, externaluid) VALUES (?, ?)", testItem, testUid)
+
+	for _, item := range []string{
+		"WANTED:%20Steam%20Iron%20please%20(London)",
+		"Steam%20Iron%20Please!",
+		"Steam%20Iron%20pls",
+	} {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/illustration?item="+item, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var result misc.IllustrationResult
+		json2.Unmarshal(rsp(resp), &result)
+		assert.Equal(t, 0, result.Ret, "expected cache hit for %s", item)
+		if assert.NotNil(t, result.Illustration, "expected illustration for %s", item) {
+			assert.Equal(t, testUid, result.Illustration.ExternalUID)
+		}
+	}
+
+	// Clean up.
+	db.Exec("DELETE FROM ai_images WHERE name = ?", testItem)
+}
