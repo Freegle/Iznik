@@ -87,6 +87,10 @@ and per-group membership and roles are the ones you will meet first.
   do that and the optimiser drops the index for the entire query, which reads as a healthy
   site returning correct answers right up until it stops returning them. Twice on 21 Aug
   2026. Same section.
+
+  The same rule applies to what we SHOW moderators: the per-post reach map draws the
+  rings as well as the reach, because a map that stops at the committed outline tells a
+  moderator a post did not get somewhere the mail has already invited people from.
 - **Getting a first reply in** sits alongside rippling and attacks the 44% of rippled posts
   that get no reply at all: a passthrough for a silent post's first reply, individual mail to
   the members who have asked for that specific item (an open post of the opposite type, or a

@@ -1,7 +1,6 @@
 package rippling
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -122,56 +121,5 @@ func TestViewerOverflowPaths_EmptyWhenEveryLaneRefused(t *testing.T) {
 
 	if paths := ViewerOverflowPaths(nil, 42, 51.5, -0.1); len(paths) != 0 {
 		t.Errorf("every lane off must mean no paths, got %v", paths)
-	}
-}
-
-// One bbox prefilter guards however many polygon parses follow: the box covers every
-// ring the row carries, so testing it once per path would be pure repeat cost.
-func TestOverflowWhereAny_SharesOneBoxAcrossPaths(t *testing.T) {
-	where, args := OverflowWhereAny(-0.1, 51.5, 3857,
-		[]string{"$.cluster.w1", "$.cluster.w2", "$.cluster.w3"})
-
-	if n := strings.Count(where, "$.bbox[0]"); n != 1 {
-		t.Errorf("expected one shared box test, found %d in %s", n, where)
-	}
-	if n := strings.Count(where, "ST_GeomFromText"); n != 3 {
-		t.Errorf("expected three ring parses, found %d in %s", n, where)
-	}
-	// 2 box args + 5 per path.
-	if len(args) != 2+3*5 {
-		t.Errorf("expected 17 args, got %d", len(args))
-	}
-	if args[2] != "$.cluster.w1" || args[7] != "$.cluster.w2" || args[12] != "$.cluster.w3" {
-		t.Errorf("paths must bind in slot order, got %v", args)
-	}
-	if strings.Count(where, "(") != strings.Count(where, ")") {
-		t.Errorf("unbalanced parentheses: %s", where)
-	}
-}
-
-func TestOverflowWhereAny_NothingFromNoUsablePaths(t *testing.T) {
-	for _, paths := range [][]string{nil, {}, {""}, {"", ""}} {
-		if where, args := OverflowWhereAny(-0.1, 51.5, 3857, paths); where != "" || args != nil {
-			t.Errorf("paths %v must yield nothing, got %q / %v", paths, where, args)
-		}
-	}
-}
-
-// Single-path output keeps RuralOverflowWhere's argument order - lng, lat, then path,
-// srid, lng, lat, srid - so the call sites that were built against that order (the badge
-// arm's arg-index assertions) hold whichever form built the fragment.
-func TestOverflowWhereAny_SinglePathKeepsTheKnownArgOrder(t *testing.T) {
-	where, args := OverflowWhereAny(-0.1, 51.5, 3857, []string{"$.rural.sparse"})
-
-	if len(args) != 7 {
-		t.Fatalf("expected 7 args, got %d: %v", len(args), args)
-	}
-	if args[2] != "$.rural.sparse" {
-		t.Errorf("expected the path third, got %v", args[2])
-	}
-	box := strings.Index(where, "$.bbox[0]")
-	ring := strings.Index(where, "ST_GeomFromText")
-	if box == -1 || ring == -1 || box > ring {
-		t.Errorf("the box test must precede the ring parse: %s", where)
 	}
 }

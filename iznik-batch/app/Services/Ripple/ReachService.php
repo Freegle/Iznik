@@ -113,7 +113,10 @@ class ReachService
             : 0.0;
         $this->fairnessMaxQuintile = max(1, min(4, (int) config('freegle.ripple.fairness.max_quintile', 1)));
         $this->clusterAnchor = (bool) config('freegle.ripple.cluster.enabled', false);
-        $this->clusterFloor = max(0, (int) config('freegle.ripple.cluster.floor', 1000));
+        // Falls back to the audience cap, not to a number of its own: an independent
+        // default is what left posts between the two lanes with neither.
+        $this->clusterFloor = max(0, (int) config('freegle.ripple.cluster.floor',
+            (int) config('freegle.ripple.extent.target_users', 4000)));
         $this->clusterK = max(0, (int) config('freegle.ripple.cluster.cell_k', 150));
         // Hard cap 3 per the interface contract - clamped here too rather than trusted
         // to the routing server, same posture as fairnessMaxQuintile above.
@@ -605,9 +608,9 @@ class ReachService
      * yielded a usable coordinate, which keeps "no rings" and "a box covering nothing" distinct.
      *
      * This lane list must be kept in step with parseOverflow()'s key map above: a lane added
-     * there but not here ships rings whose bbox silently excludes them, and the read-side bbox
-     * prefilter (RuralOverflowWhere / the digest ring rescue) then rejects every candidate for
-     * that lane before the exact ring test ever runs.
+     * there but not here ships rings whose bbox silently excludes them, and the reach mail's
+     * bbox widening (UnifiedDigestService::overflowBboxBranch) then never even offers those
+     * members to the ring index as candidates.
      *
      * @param  array<string, mixed>  $out
      * @return array{0: float, 1: float, 2: float, 3: float}|null

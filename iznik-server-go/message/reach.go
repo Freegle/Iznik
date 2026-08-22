@@ -1,7 +1,10 @@
 package message
 
 import (
+	"database/sql"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -9,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // ReachBlockedSet returns the subset of msgids that a viewer at (lat,lng) may
@@ -183,6 +187,81 @@ type ReachResponse struct {
 	// - the grid-fill polygons are highly repetitive) is a deliberate exception to the "never
 	// ship reach polygons" rule that governs the member-facing feed.
 	Polygon string `json:"polygon,omitempty"`
+	// Overflow is the post's rings - the lanes that admit members the committed reach
+	// does not cover - keyed by lane ("rural.sparse", "cluster.w1"), each as GeoJSON.
+	//
+	// Without them the map under-reports where a post went, and it does so exactly for
+	// the rural posts whose moderators are most likely to be asking: a Hawes post's
+	// reach outline stops at the dale, while two wedges carry it to Penrith and
+	// Lancaster and the mail invites those members. "Did this get to X?" answered from
+	// the outline alone is wrong whenever X is in a ring.
+	//
+	// SIMPLIFIED hard (~150m). The stored rings average 37,000 vertices; shipping them
+	// whole would roughly triple the heaviest mod call there is. An outline a moderator
+	// can see the shape of is the whole requirement here - nothing decides admission
+	// from this.
+	Overflow map[string]string `json:"overflow,omitempty"`
+}
+
+// overflowLanePaths are the ring lanes a post can carry, as JSON paths. Fixed set, so
+// the query below can name them: one column each, NULL for the lanes this post has not
+// got. Matches rippling.ViewerOverflowPaths' vocabulary.
+var overflowLanePaths = []struct{ Key, Path string }{
+	{"rural.dense", "$.rural.dense"},
+	{"rural.medium", "$.rural.medium"},
+	{"rural.sparse", "$.rural.sparse"},
+	{"fairness.1", `$.fairness."1"`},
+	{"fairness.2", `$.fairness."2"`},
+	{"fairness.3", `$.fairness."3"`},
+	{"fairness.4", `$.fairness."4"`},
+	{"cluster.w1", "$.cluster.w1"},
+	{"cluster.w2", "$.cluster.w2"},
+	{"cluster.w3", "$.cluster.w3"},
+}
+
+// ringSimplifyDegrees is the simplify tolerance for those outlines, in coordinate
+// degrees (the geometry's SRID label notwithstanding) - about 150m, which takes a
+// 37k-vertex ring to something in the low thousands.
+const ringSimplifyDegrees = 0.0015
+
+// overflowRings reads a post's rings as simplified GeoJSON, keyed by lane.
+//
+// Mod-only and one post per request, so the parse cost this pays - a handful of rings,
+// once - is affordable here in a way it never was on a read surface (see
+// rippling.AdmittedMsgids for what asking this per candidate row cost).
+func overflowRings(db *gorm.DB, msgid uint64) map[string]string {
+	cols := make([]string, 0, len(overflowLanePaths))
+	args := make([]interface{}, 0, len(overflowLanePaths))
+	for i, lane := range overflowLanePaths {
+		cols = append(cols, fmt.Sprintf(
+			"ST_AsGeoJSON(ST_Simplify(ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?)), %d), %v), 5) AS g%d",
+			utils.SRID, ringSimplifyDegrees, i))
+		args = append(args, lane.Path)
+	}
+
+	dest := make([]sql.NullString, len(overflowLanePaths))
+	scan := make([]interface{}, len(overflowLanePaths))
+	for i := range dest {
+		scan[i] = &dest[i]
+	}
+
+	row := db.Raw("SELECT "+strings.Join(cols, ", ")+
+		" FROM rippling_reach WHERE msgid = ? AND overflow_bounds IS NOT NULL",
+		append(args, msgid)...).Row()
+	if row == nil || row.Scan(scan...) != nil {
+		return nil
+	}
+
+	rings := map[string]string{}
+	for i, lane := range overflowLanePaths {
+		if dest[i].Valid && dest[i].String != "" {
+			rings[lane.Key] = dest[i].String
+		}
+	}
+	if len(rings) == 0 {
+		return nil
+	}
+	return rings
 }
 
 type reachRow struct {
@@ -278,5 +357,6 @@ func Reach(c *fiber.Ctx) error {
 		Arrival:         row.Arrival,
 		NextExpansionAt: row.NextExpansionAt,
 		Polygon:         polygon,
+		Overflow:        overflowRings(db, id),
 	})
 }

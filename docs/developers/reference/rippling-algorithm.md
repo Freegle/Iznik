@@ -281,6 +281,20 @@ prefilter every read does before parsing a polygon).
 `rural` is exclusive with the other two, because it needs the cap to have bound and they need
 it not to have. `fairness` and `cluster` can both be present on one post.
 
+**The two lanes meet at the cap, and that is deliberate.** `cluster.floor` defaults to
+`extent.target_users` rather than to a number of its own, so every post the cap did not bind
+is a cluster candidate. When the floor was an independent 1,000 against a cap of 4,000, a post
+reaching 1,000–3,999 people qualified for neither lane — measured over three days of live
+reaches on 2026-08-21, **1,879 posts, a third of everything posted**, and precisely the
+semi-rural case both lanes exist for. 341 live posts across the Yorkshire Dales carried no
+ring of any kind; one sampled at a pool of 1,896. Five dead-zone posts sampled after the
+change all drew wedges (one to three each).
+
+It is not free: the lane pays for its own second isochrone out to `cluster.max_minutes` plus a
+spatial round trip, which roughly doubles a schedule call — measured 2.9→6.1s, 1.2→3.0s,
+0.7→1.5s. That is per post, on the expansion pass, for the posts newly brought into the lane
+(~700/day).
+
 **Cluster wedges exist because a ring is the wrong shape for a remote post.** Growing the whole
 circle out to catch one town also claims a large area of empty ground. Measured: a Hawes post
 reaches ~427 members at the 45-minute ceiling while Kendal sits at ~47 minutes; including it
@@ -378,6 +392,20 @@ Both returned correct answers, by scanning.
 When the spatial server cannot answer - dataset not built, server down - the read
 surfaces show the committed reach only, and say so in the log. Ring members lose
 their extra posts until it recovers.
+
+**Moderators can see the rings.** `/message/{id}/reach` returns them alongside the
+reach polygon, keyed by lane, each simplified to ~150m (a stored ring averages 37,000
+vertices; at that tolerance one is ~1,000 points and ~20KB, against the 300KB the reach
+polygon already costs). The reach map draws them as dashed outlines over the reach, one
+colour per lane family. Without them the map under-reports where a post went, for
+exactly the rural posts a moderator is most likely to be checking: a Hawes post's
+outline stops in the dale while two wedges carry it to Penrith and Lancaster.
+
+**Backfilling rings** (`ripple:backfill-rings`, paced by `scripts/ring-backfill-drain.sh`)
+visits posts with no rings yet. It skips sub-cap posts ONLY when rural is the sole lane
+running - with cluster on, sub-cap posts are precisely what earns a wedge, and filtering
+them out would let a drain report "nothing left" without asking about a single
+semi-rural post.
 
 **Flags** (`config/freegle.php`): `ripple.rural_access.enabled` and `ripple.cluster.enabled`
 default ON, `ripple.fairness.enabled` defaults OFF. The Go side reads the same names from the

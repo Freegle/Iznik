@@ -106,6 +106,109 @@ class DeferralCatchUpServiceTest extends TestCase
         });
     }
 
+    /**
+     * The count is what they MISSED and have not read - not everything we never
+     * happened to email them about.
+     *
+     * chat_roster.lastmsgemailed records what we have EMAILED. A member who
+     * reads on the website is rarely emailed, so it sits far behind for ever,
+     * and where it is NULL the whole chat counts from its first message.
+     * Measured on prod 2026-08-22, member 420 was emailed "1,247 messages
+     * across 7 chats" when he had 8 unread in total, none of them from the
+     * outage, and the oldest message counted was from January 2019.
+     */
+    public function test_does_not_count_old_messages_the_member_has_already_read(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $other = $this->createTestUser();
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+
+        // A long history, all read on the website, none of it emailed.
+        $lastRead = null;
+        for ($i = 0; $i < 12; $i++) {
+            $lastRead = $this->createTestChatMessage($room, $other);
+        }
+        // Directly by chatid: MySQL refuses an UPDATE whose subquery reads the same
+        // table (error 1093), so the self-referencing whereIn form errors on every
+        // run. The subquery selected nothing the WHERE cannot say alone.
+        DB::table('chat_messages')->where('chatid', $room->id)
+            ->update(['date' => '2019-01-16 10:00:00']);
+
+        // Seen everything; never emailed about any of it.
+        DB::table('chat_roster')->where('chatid', $room->id)->where('userid', $member->id)
+            ->update(['lastmsgseen' => $lastRead->id, 'lastmsgemailed' => null]);
+
+        // Two that arrived during the outage and are genuinely unread.
+        $this->createTestChatMessage($room, $other);
+        $this->createTestChatMessage($room, $other);
+
+        $this->owe($member->id, 'chat', 2);
+
+        $this->catchUp->run();
+
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->messageCount === 2 && $mail->chatCount === 1;
+        });
+    }
+
+    /**
+     * The email says "while it was going on you had N messages", so anything
+     * from before the provider started refusing us is a different number.
+     */
+    public function test_counts_only_what_arrived_during_the_outage(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $other = $this->createTestUser();
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+
+        // Unread, but from well before the outage began (owe() dates it 08-15).
+        $old = $this->createTestChatMessage($room, $other);
+        DB::table('chat_messages')->where('id', $old->id)
+            ->update(['date' => '2026-07-01 09:00:00']);
+
+        $this->createTestChatMessage($room, $other);
+
+        $this->owe($member->id, 'chat', 1);
+
+        $this->catchUp->run();
+
+        Mail::assertSent(UnreadChatCatchUpMail::class, function ($mail) {
+            return $mail->messageCount === 1;
+        });
+    }
+
+    /**
+     * Nothing unread from the outage means no email. Telling somebody we held
+     * their messages back and then showing them an empty inbox is worse than
+     * saying nothing.
+     */
+    public function test_sends_nothing_when_the_outage_cost_them_nothing(): void
+    {
+        Mail::fake();
+
+        $member = $this->createTestUser();
+        $other = $this->createTestUser();
+        $room = $this->createTestChatRoom($other, $member);
+        $this->roster($room, $other, $member);
+
+        $read = $this->createTestChatMessage($room, $other);
+        DB::table('chat_roster')->where('chatid', $room->id)->where('userid', $member->id)
+            ->update(['lastmsgseen' => $read->id, 'lastmsgemailed' => null]);
+
+        $this->owe($member->id, 'chat', 1);
+
+        $result = $this->catchUp->run();
+
+        $this->assertSame(0, $result['sent']);
+        Mail::assertNotSent(UnreadChatCatchUpMail::class);
+    }
+
     public function test_counts_distinct_chats_not_just_messages(): void
     {
         Mail::fake();

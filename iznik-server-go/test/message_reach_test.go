@@ -151,3 +151,111 @@ func TestMessageReachNoReachRow(t *testing.T) {
 	assert.Equal(t, false, result["rippling"], "no reach row → rippling:false")
 	assert.NotEmpty(t, result["reason"], "a reason is given for why it isn't rippling")
 }
+
+// The reach map shows a post's RINGS as well as its reach.
+//
+// Without them the map under-reports where a post went, for exactly the posts whose
+// moderators are most likely to be asking: a Hawes post's reach outline stops in the
+// dale while two cluster wedges carry it to Penrith and Lancaster, browse shows those
+// members the post and the mail invites them. "Did this get to X?" answered from the
+// outline alone is wrong whenever X is in a ring.
+func TestMessageReachIncludesTheRings(t *testing.T) {
+	ensureRippleReachTable()
+	db := database.DBConn
+	db.Exec("ALTER TABLE rippling_reach ADD COLUMN overflow_bounds JSON NULL")
+
+	prefix := uniquePrefix("reachrings")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	group := CreateTestGroup(t, prefix)
+	mid := CreateTestMessage(t, posterID, group, "OFFER: reach rings test", 51.5, -0.1)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, group, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	insertReach(mid, 3, 9)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
+
+	// A band ring and a wedge, well outside the reach polygon above.
+	db.Exec("UPDATE rippling_reach SET overflow_bounds = JSON_OBJECT("+
+		"'bbox', JSON_ARRAY(0.5, 51.9, 1.5, 52.5), "+
+		"'rural', JSON_OBJECT('sparse', 'POLYGON((0.5 51.9,1.5 51.9,1.5 52.5,0.5 52.5,0.5 51.9))'), "+
+		"'cluster', JSON_OBJECT('w1', 'POLYGON((-3.5 53.9,-2.5 53.9,-2.5 54.5,-3.5 54.5,-3.5 53.9))')"+
+		") WHERE msgid = ?", mid)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d/reach?jwt=%s", mid, token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+
+	rings, ok := result["overflow"].(map[string]interface{})
+	assert.True(t, ok, "the rings come back keyed by lane")
+	assert.Len(t, rings, 2, "one entry per lane the post carries, and only those")
+
+	// Keyed by lane, because which lane admitted somebody is the question a moderator
+	// asks next: a band ring means the cap bound, a wedge means it did not.
+	sparse, ok := rings["rural.sparse"].(string)
+	assert.True(t, ok, "the band ring is keyed by its lane")
+	assert.Contains(t, rings, "cluster.w1", "the wedge is keyed by its slot")
+	assert.NotContains(t, rings, "cluster.w2", "a lane this post has not got is absent, not null")
+
+	var geo struct {
+		Type        string         `json:"type"`
+		Coordinates [][][2]float64 `json:"coordinates"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(sparse), &geo), "each ring parses as GeoJSON")
+	assert.Equal(t, "Polygon", geo.Type)
+	assert.NotEmpty(t, geo.Coordinates)
+
+	// Assert the ring's EXTENT, not its first vertex: simplifying normalises the
+	// winding and start point, so which corner comes first is MySQL's business and
+	// asserting it tests nothing about whether the right area came back.
+	// Coordinates are [lng, lat] degrees, as the reach polygon's are.
+	minLng, maxLng := geo.Coordinates[0][0][0], geo.Coordinates[0][0][0]
+	minLat, maxLat := geo.Coordinates[0][0][1], geo.Coordinates[0][0][1]
+	for _, p := range geo.Coordinates[0] {
+		if p[0] < minLng {
+			minLng = p[0]
+		}
+		if p[0] > maxLng {
+			maxLng = p[0]
+		}
+		if p[1] < minLat {
+			minLat = p[1]
+		}
+		if p[1] > maxLat {
+			maxLat = p[1]
+		}
+	}
+	assert.InDelta(t, 0.5, minLng, 0.01, "the ring spans the longitudes it was seeded with")
+	assert.InDelta(t, 1.5, maxLng, 0.01)
+	assert.InDelta(t, 51.9, minLat, 0.01, "and the latitudes")
+	assert.InDelta(t, 52.5, maxLat, 0.01)
+}
+
+// A post with no rings says nothing about them, rather than shipping ten nulls.
+func TestMessageReachOmitsRingsWhenThereAreNone(t *testing.T) {
+	ensureRippleReachTable()
+	db := database.DBConn
+
+	prefix := uniquePrefix("reachnorings")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	group := CreateTestGroup(t, prefix)
+	mid := CreateTestMessage(t, posterID, group, "OFFER: no rings", 51.5, -0.1)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, group, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	insertReach(mid, 1, 9)
+	db.Exec("UPDATE rippling_reach SET overflow_bounds = NULL WHERE msgid = ?", mid)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d/reach?jwt=%s", mid, token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	assert.NotContains(t, result, "overflow", "no rings means no key at all")
+}

@@ -74,30 +74,6 @@ func TestComposeReachOverflow_UnchangedWhenTheLaneCannotApply(t *testing.T) {
 	}
 }
 
-// The cheap box test must come BEFORE the polygon parse. Reversed, every candidate row would
-// parse a ring - which is the cost this prefilter exists to avoid, and it would not show up as
-// a wrong answer anywhere.
-func TestRuralOverflowWhere_BoxIsTestedBeforeTheRing(t *testing.T) {
-	where, args := rippling.RuralOverflowWhere(-0.1, 51.5, utils.SRID, "$.rural.sparse")
-
-	box := strings.Index(where, "$.bbox[0]")
-	ring := strings.Index(where, "ST_GeomFromText")
-	if box == -1 || ring == -1 {
-		t.Fatalf("expected both a box test and a ring test, got: %s", where)
-	}
-	if box > ring {
-		t.Errorf("the box test must precede the ring parse, got: %s", where)
-	}
-
-	// lng, lat, path, srid, lng, lat, srid
-	if len(args) != 7 {
-		t.Fatalf("expected 7 args, got %d: %v", len(args), args)
-	}
-	if args[2] != "$.rural.sparse" {
-		t.Errorf("expected the band path third, got %v", args[2])
-	}
-}
-
 // Composition, which is where a stray keyword hides: the reach fragment opens with "AND ", so
 // wrapping it without stripping that would produce "AND ((AND ...".
 func TestReachOrOverflowSQL_ComposesWithoutADoubledKeyword(t *testing.T) {

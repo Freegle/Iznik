@@ -27,6 +27,7 @@ import {
   homeGroupOverlapFraction,
 } from './polygon.js'
 import { updateActualReachLayer } from './actualreach.js'
+import { updateOverflowRingLayers } from './overflowrings.js'
 import { swingometerDisplay } from './scoring.js'
 import { pickViewerGroup } from './viewergroup.js'
 import {
@@ -100,6 +101,24 @@ export async function setupRipplingExplorer({
           actualReachLayer,
           raw,
           props.hideProjection
+        )
+      },
+      { immediate: true }
+    )
+  )
+
+  // The rings, alongside the reach. Same shape of watcher: they arrive with the reach
+  // from the same mod-only fetch, so they are watched rather than read once at mount.
+  let overflowRingLayers = []
+  cleanupFns.push(
+    watch(
+      () => props.overflowRings,
+      (rings) => {
+        overflowRingLayers = updateOverflowRingLayers(
+          L,
+          map,
+          overflowRingLayers,
+          rings
         )
       },
       { immediate: true }

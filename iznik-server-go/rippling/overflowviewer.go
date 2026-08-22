@@ -167,45 +167,13 @@ func ViewerOverflowPaths(db *gorm.DB, myid uint64, lat, lng float32) []string {
 	return paths
 }
 
-// OverflowWhereAny is the containment test for a set of ring paths against one reach
-// row's overflow_bounds. The bbox prefilter is shared - the box covers every ring the
-// row carries, so one cheap box test guards however many polygon parses follow, with the
-// same argument order per path as RuralOverflowWhere. No usable paths yields "" -
-// callers splice nothing, keeping the untouched-query guarantee.
-func OverflowWhereAny(lng, lat float64, srid int, paths []string) (string, []interface{}) {
-	usable := make([]string, 0, len(paths))
-	for _, p := range paths {
-		if p != "" {
-			// A caller with no path for a lane passes "" rather than filtering; an
-			// empty path must contribute nothing, not a fragment that matches
-			// nothing at real query cost.
-			usable = append(usable, p)
-		}
-	}
-	if len(usable) == 0 {
-		return "", nil
-	}
-
-	where := "(rr.overflow_bounds IS NOT NULL " +
-		"AND ? BETWEEN JSON_EXTRACT(rr.overflow_bounds, '$.bbox[0]') AND JSON_EXTRACT(rr.overflow_bounds, '$.bbox[2]') " +
-		"AND ? BETWEEN JSON_EXTRACT(rr.overflow_bounds, '$.bbox[1]') AND JSON_EXTRACT(rr.overflow_bounds, '$.bbox[3]') " +
-		"AND ("
-	args := []interface{}{lng, lat}
-	for i, p := range usable {
-		if i > 0 {
-			where += "OR "
-		}
-		// COALESCE is load-bearing: a row without this path yields a NULL geometry, and
-		// ST_Contains(NULL, ...) is NULL, not FALSE. In a negated context (the banner's
-		// "AND NOT <ring>") that NULL would poison the whole predicate and quietly
-		// unblock every post carrying any overflow row at all.
-		where += "COALESCE(ST_Contains(ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(rr.overflow_bounds, ?)), ?), ST_SRID(POINT(?, ?), ?)), 0) = 1 "
-		args = append(args, p, srid, lng, lat, srid)
-	}
-	where = strings.TrimSpace(where) + ")) "
-
-	return where, args
-}
+// The JSON ring test that used to live here is gone, and its absence is the
+// point. Every surface now asks the spatial index (AdmittedMsgids), so there is
+// no second way to answer "does a ring admit this member" for one of them to
+// drift onto - not by accident, and not under deadline. Restoring a SQL form of
+// this question means restoring the 2026-08-21 outages: 37k-vertex polygons
+// parsed per candidate row, and an index dropped from whatever query it was
+// spliced into.
 
 // The ring bbox side table (rippling_reach_overflow) is no longer read here.
 // It was built on 2026-08-21 to narrow the JSON ring test to a few candidates,

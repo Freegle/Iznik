@@ -368,3 +368,26 @@ func TestBuildImagePrompt_GenuineMultiItem_StillSplits(t *testing.T) {
 		assert.NotContains(t, prompt, "single object only", name+" lists multiple items")
 	}
 }
+
+func TestBuildImagePrompt_StripsCourtesyWords(t *testing.T) {
+	// Regression test for Discourse topic 9209/98: "WANTED: iron please" stored
+	// ai_images.name = "iron please", so the model was asked to draw an "iron please" and
+	// produced a smooth white blob. Moderator regeneration goes through buildImagePrompt()
+	// with the stored (uncleaned) name, so the strip has to happen here too.
+	prompt := buildImagePrompt("iron please")
+	assert.Contains(t, prompt, "single isolated iron centered")
+	assert.NotContains(t, prompt, "please")
+}
+
+func TestBuildImagePrompt_CourtesyWordDoesNotBreakMultiItemSplit(t *testing.T) {
+	// "sofa and a bed please" must still be recognised as two items once "please" has gone.
+	prompt := buildImagePrompt("sofa and a bed please")
+	assert.Contains(t, prompt, "sofa and a bed shown together")
+	assert.NotContains(t, prompt, "please")
+}
+
+func TestBuildImagePrompt_LeavesRealWordsBeginningWithPlease(t *testing.T) {
+	// Only the standalone courtesy word goes; a brand name that starts with it stays.
+	prompt := buildImagePrompt("Pleaser platform boots")
+	assert.Contains(t, prompt, "Pleaser platform boots")
+}

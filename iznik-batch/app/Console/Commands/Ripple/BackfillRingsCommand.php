@@ -87,13 +87,19 @@ class BackfillRingsCommand extends Command
         // The rural lane only rings posts the audience cap actually bound, so a
         // post whose whole reachable pool is under the cap can never earn one -
         // asking routing about it costs a Dijkstra to be told nothing applies
-        // (measured: 16,667 of 28,492 candidates at backfill time). Skip them
-        // while rural is the only lane running. The fairness lane is the
-        // opposite case - it rings the posts the cap did NOT bind - so when that
-        // is on, every post is a candidate again and the filter must not apply.
+        // (measured: 16,667 of 28,492 candidates at backfill time). Skip those
+        // ONLY while rural is the sole lane running.
+        //
+        // Fairness and cluster are both the opposite case: they ring posts the
+        // cap did NOT bind. Cluster's floor now defaults to the cap itself, so
+        // with it on, every sub-cap post is a candidate again - and those are
+        // precisely the posts this backfill exists to reach. Leaving the filter
+        // in would have let a full drain report "nothing left to backfill" while
+        // never once asking about the semi-rural posts that carry no ring.
         $target = (int) config('freegle.ripple.extent.target_users', 0);
         $fairnessOn = (bool) config('freegle.ripple.fairness.enabled', false);
-        if (!$fairnessOn && $target > 0) {
+        $clusterOn = (bool) config('freegle.ripple.cluster.enabled', false);
+        if (!$fairnessOn && !$clusterOn && $target > 0) {
             $q->where('rr.total_freeglers', '>', $target);
         }
 
@@ -169,10 +175,6 @@ class BackfillRingsCommand extends Command
                             [$json, $row->msgid]
                         );
 
-                        // Index the bbox as well, or the rings this just wrote stay
-                        // invisible to the read surfaces, which narrow on
-                        // rippling_reach_overflow before testing the JSON.
-                        \App\Services\Ripple\RipplingOverflowIndex::upsertFromBounds((int) $row->msgid, $bounds);
                     }
                     $stats['ringed']++;
                     $lastMsgid = max($lastMsgid, (int) $row->msgid);

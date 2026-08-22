@@ -139,10 +139,12 @@ func main() {
 		pcf, filtered := state.ds.(PointContainerFiltered)
 
 		var in, partial []int64
+		didFilter := false
 		err := state.withIndex(func(idx *Index) error {
 			var e error
 			if lanes != nil && filtered {
 				in, partial, e = pcf.ContainingFiltered(idx, lng, lat, lanes)
+				didFilter = e == nil
 				return e
 			}
 			in, partial, e = pc.Containing(idx, lng, lat)
@@ -168,7 +170,14 @@ func main() {
 		if partial == nil {
 			partial = []int64{}
 		}
-		return c.JSON(fiber.Map{"in": in, "partial": partial})
+		// `filtered` says whether the ids are the dataset's own (packed, in the
+		// reachoverflow case) or plain external ids narrowed to the lanes asked
+		// for. A caller that asked for lanes and is answered by a server too old
+		// to know the parameter would otherwise read packed ids as msgids and
+		// admit entirely the wrong posts - silently, and only for the members a
+		// ring covers. Absent means "not filtered", which is what an old server
+		// implicitly says.
+		return c.JSON(fiber.Map{"in": in, "partial": partial, "filtered": didFilter})
 	})
 
 	// POST /v1/reachoverflow/admits — the ring question from the MAIL's end:

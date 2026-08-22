@@ -735,7 +735,16 @@ return [
         // daily digest / daily-posts push reach gate, which consults the rural ring only.
         'cluster' => [
             'enabled' => filter_var(env('RIPPLE_CLUSTER_ANCHOR_ENABLED', true), FILTER_VALIDATE_BOOLEAN), // live-by-default, Edward's convention
-            'floor' => (int) env('RIPPLE_CLUSTER_FLOOR', 1000),
+            // Defaults to the AUDIENCE CAP, not to a number of its own, so the two
+            // lanes meet rather than leaving a gap between them. Rural fires when the
+            // cap BOUND; cluster fires when it did not and the post is still under
+            // this floor. With an independent floor of 1,000 against a cap of 4,000,
+            // a post reaching 1,000-3,999 people qualified for neither - measured
+            // 2026-08-21 over three days of live reaches, that was 1,879 posts, a
+            // THIRD of everything posted, and it is exactly the semi-rural case both
+            // lanes were written for. 341 live posts across the Yorkshire Dales
+            // carried no ring of any kind; one sampled at 1,896.
+            'floor' => (int) env('RIPPLE_CLUSTER_FLOOR', (int) env('RIPPLE_EXTENT_TARGET_USERS', 4000)),
             'cell_k' => (int) env('RIPPLE_CLUSTER_CELL_K', 150),
             'max_wedges' => (int) env('RIPPLE_CLUSTER_MAX_WEDGES', 3),
             'max_minutes' => (float) env('RIPPLE_CLUSTER_MAX_MINUTES', 60),

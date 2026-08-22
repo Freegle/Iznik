@@ -61,27 +61,6 @@ func ReachBrowseWhere(lng, lat float64, srid int) (string, []interface{}) {
 	return where, args
 }
 
-// RuralOverflowWhere is the rural-access ring as an alternative way in, for a viewer whose own
-// density band earns a wider travel budget than the reach the audience cap allowed.
-//
-// Two tests, cheap one first, and the order is the whole point. On the mail path the rings can
-// be read once and bound as parameters, because there is one post; here every candidate row is
-// a DIFFERENT post with a different ring, so the exact test has to parse a polygon per row - on
-// the path every browse request goes through. The stored bounding box rejects almost every row
-// with four numeric comparisons before that happens, which is the same shape as the cheap
-// outer/inner check already sitting in front of the exact reach polygon.
-//
-// jsonPath selects the ring for the viewer's own band and is built by the caller from a fixed
-// set, never from anything a member controls. Empty means "this viewer has no band recorded",
-// which callers must treat as no overflow at all rather than as a ring that matches anything.
-func RuralOverflowWhere(lng, lat float64, srid int, jsonPath string) (string, []interface{}) {
-	where := "(rr.overflow_bounds IS NOT NULL " +
-		"AND ? BETWEEN JSON_EXTRACT(rr.overflow_bounds, '$.bbox[0]') AND JSON_EXTRACT(rr.overflow_bounds, '$.bbox[2]') " +
-		"AND ? BETWEEN JSON_EXTRACT(rr.overflow_bounds, '$.bbox[1]') AND JSON_EXTRACT(rr.overflow_bounds, '$.bbox[3]') " +
-		"AND ST_Contains(ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(rr.overflow_bounds, ?)), ?), ST_SRID(POINT(?, ?), ?))) "
-	return where, []interface{}{lng, lat, jsonPath, srid, lng, lat, srid}
-}
-
 var reachBoundsOnce sync.Once
 var reachBoundsExists bool
 

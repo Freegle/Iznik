@@ -1,17 +1,29 @@
 # Security headers for the Netlify-hosted site.
 #
-# The CSP is REPORT-ONLY: it reports violations to Sentry without blocking, so we can tune it
-# against the ad/analytics domains before enforcing. Enforcing CSP was previously disabled entirely
-# because ads load from many domains; report-only is safe alongside ads and gives us the violation
-# data (including any cross-origin framing, via frame-ancestors) needed to move to enforcement later.
-# Note the policy keeps 'unsafe-inline'/'unsafe-eval' for now, so it is defence-in-depth (blocks
-# external script injection from non-allowlisted hosts), not a complete XSS control on its own.
+# The CSP enforces only the directives that are worth enforcing and safe to enforce here.
 #
-# report-uri deliberately uses its OWN Sentry key ("CSP reports (report-uri)"), not the key the
-# site reports errors with. Reports arrive at page-load volume, so if they ever swamp the quota
-# that key can be deactivated on its own and real error reporting keeps working. Per-key rate
-# limits are not available on our Sentry plan, so the separate key IS the control.
+# script-src is deliberately ABSENT. A URL-allowlist script-src cannot be made correct on this
+# site: header bidding picks bidder scripts at auction time from a long and changing tail of
+# domains, so any list is stale within weeks. It would also not be worth having if it were
+# correct, because the policy needs 'unsafe-inline' for the ad and analytics tags, and that
+# alone lets an injected inline script run. OWASP and Google both say allowlist policies are
+# ineffective against XSS for exactly this reason; the effective form is a per-request nonce
+# with 'strict-dynamic'. That is a real piece of work (a nonce on every inline script, and
+# CDN-cached HTML reuses its nonce) and it would still trust everything prebid loads, so it
+# does not address third-party ad JS either. Output escaping is what actually holds this line:
+# see composables/useLinkify.js, which escapes before it linkifies.
+#
+# It was previously report-only with an allowlist, reporting to Sentry. That produced ~14,500
+# violation events a day, all of them script-src-elem from ad domains, with no action attached
+# to any of them, and no protection either, since report-only blocks nothing.
+#
+# What IS enforced below was measured, not guessed: 24 hours of report-only data contained
+# violations of script-src-elem ONLY. Nothing tripped object-src, frame-ancestors or worker-src,
+# so enforcing those three changes no behaviour. base-uri was not in the old policy at all and
+# is the one real gap it had: without it an injected <base> tag reroutes every relative script
+# URL on the page. worker-src gains 'self' because the site registers a PWA service worker from
+# its own origin, which a bare "worker-src blob:" would have blocked the moment it was enforced.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
-  Content-Security-Policy-Report-Only: worker-src blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' *.facebook.net *.facebook.com *.sentry.io *.google.com *.googletagservices.com *.gstatic.com accounts.google.com/gsi/client cdn.jsdelivr.net *.paypalobjects.com googleads.g.doubleclick.net *.gumgum.com *.adnxs.com securepubads.g.doubleclick.net *.googlesyndication.com *.netlify.app cdn-cookieyes.com api.rlcdn.com ads.pubmatic.com; frame-ancestors 'self'; report-uri https://o118493.ingest.us.sentry.io/api/4504083802226688/csp-report/?sentry_key=fc7c58841e395ad8f8280492570c4f44
+  Content-Security-Policy: base-uri 'self'; object-src 'none'; frame-ancestors 'self'; worker-src 'self' blob:
