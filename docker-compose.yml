@@ -945,8 +945,10 @@ services:
       - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
       - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
       # Routing server (graph) for on-the-fly rippling drive-time analytics. Prod: the routing
-      # internal no-auth port. Locally, point ROUTING_EVAL_URL at the live routing tunnel in .env.
-      - ROUTING_EVAL_URL=${ROUTING_EVAL_URL:-http://spatial:8194}
+      # internal no-auth port. Locally the SIBLING live container, not the dev one: this API
+      # answers for the production database, so a reach measured against the dev graph and the
+      # dev member index would be a local answer wearing a live label.
+      - ROUTING_EVAL_URL=${LIVE_ROUTING_EVAL_URL:-http://spatial-live:8194}
       # Drive-time sample size + routing concurrency for the analytics endpoint. Tunable without a
       # rebuild. apiv2-live reaches routing over the slow SSH tunnel, so raise concurrency locally.
       - RIPPLE_ANALYTICS_SAMPLE=${RIPPLE_ANALYTICS_SAMPLE:-250}
@@ -970,7 +972,13 @@ services:
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
-      - SPATIAL_SERVER_URL=${SPATIAL_SERVER_URL:-http://spatial:8196}
+      - SPATIAL_SERVER_URL=${LIVE_SPATIAL_SERVER_URL:-http://spatial-live:8196}
+      # Density banding (which decides a member's reach cap, and so what /town/near reports)
+      # asks this KNN index for the nearest k members. Left pointing at the dev index - which
+      # holds the seeded test users, not 169k real ones - every point measures as BandUnknown
+      # and /town/near quietly serves the flat fallback cap instead of the band's. That is the
+      # one number the rippling explorer's "whose posts can I see" direction is about.
+      - SPATIAL_KNN_URL=${LIVE_SPATIAL_KNN_URL:-http://spatial-knn-live:8194}
     volumes:
       - apiv2_logs:/var/log/freegle
     healthcheck:

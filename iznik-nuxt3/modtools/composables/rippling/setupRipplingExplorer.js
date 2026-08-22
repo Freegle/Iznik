@@ -9,8 +9,8 @@
 //
 // Parameters:
 //   props        — { spatialUrl, jwt } from the host component
-//   digestModal  — ref to <RipplingDigestModal>; modal opening is delegated
-//   legendMode   — ref ('outbound' | 'inbound') flipped by view-toggle
+//   legendMode   — ref ('outbound' | 'inbound' | 'catchment') set by the tab/direction
+//                  toggles, so the key on the map matches what is drawn
 import { watch } from 'vue'
 import {
   chaikinSmooth,
@@ -27,18 +27,22 @@ import {
   homeGroupOverlapFraction,
 } from './polygon.js'
 import { updateActualReachLayer } from './actualreach.js'
-import { partitionInboxData, swingometerDisplay } from './scoring.js'
-import { renderPie as renderPieSvg } from './pie.js'
+import { swingometerDisplay } from './scoring.js'
 import { pickViewerGroup } from './viewergroup.js'
 import {
   REACH_CEILING_MINUTES,
-  reachModelSentence,
+  inboundReachSentence,
   reachSliderHelp,
 } from './reachmodel.js'
+import {
+  defaultReachMinutes,
+  groupsSectionTitle,
+  panelVisibility,
+  reachSliderLabel,
+} from './viewmode.js'
 
 export async function setupRipplingExplorer({
   props,
-  digestModal,
   legendMode,
   catchmentLegend,
 }) {
@@ -104,7 +108,10 @@ export async function setupRipplingExplorer({
 
   let currentLat = null
   let currentLng = null
-  let currentMode = 'drive'
+  // Walk and cycle were dropped from the panel: rippling is a drive-time model
+  // throughout, so the routing calls name the mode explicitly rather than leaving a
+  // selector the engine would ignore.
+  const currentMode = 'drive'
   // Catchment tab: the selected group's own area (blue) + its inbound catchment (green).
   let catchmentGroupLayer = null
   let catchmentAreaLayer = null
@@ -150,20 +157,72 @@ export async function setupRipplingExplorer({
   const timeHelpEl = document.getElementById('rippling-time-help')
   if (timeHelpEl) timeHelpEl.textContent = reachSliderHelp()
 
+  // The reach slider means a different number in each direction, so each direction keeps
+  // its own: outbound the ceiling a post ripples to, inbound the cap this member's own
+  // area earns them. Switching direction restores that direction's value instead of
+  // carrying the other one's across, which would silently misdescribe the reach. null =
+  // "not chosen for this pin yet", so the measured cap can still claim it.
+  // Catchment is in here too: it drives the same slider, and without its own slot an
+  // inbound pin in a city (cap 20) would silently redraw the catchment at 20 minutes
+  // the moment you switched tabs.
+  const reachMinutes = {
+    catchment: REACH_CEILING_MINUTES,
+    outbound: REACH_CEILING_MINUTES,
+    inbound: null,
+  }
+  // The pin's own density band and cap, from /town/near. Density is genuinely
+  // unmeasurable in some places, so null has to remain a supported state.
+  let markerBand = null
+  let markerCapMinutes = null
+
+  // Put this direction's minutes on the slider and relabel it. Returns true when the
+  // slider actually moved, so callers know whether a redraw is owed.
+  function applyReachMinutes(dir) {
+    const target =
+      reachMinutes[dir] != null
+        ? reachMinutes[dir]
+        : defaultReachMinutes(dir, markerCapMinutes)
+    const changed = String(target) !== timeSlider.value
+    timeSlider.value = String(target)
+    return changed
+  }
+
   /**
-   * Show which density band the dropped marker sits in, and therefore how far a member
-   * THERE is shown posts — the limit that is not the same as how far the post travels.
+   * Caption the pin with the band and cap that bind it as a RECIPIENT.
    *
-   * Asks apiv2 rather than measuring it here: /town/near already returns cap_minutes and
-   * density_band from the Go density package, and a fourth copy of the band thresholds
-   * would be one more thing to forget when they are re-tuned. Best-effort in every
-   * direction — no apiv2 URL, a failed call or an unmeasurable band all leave the line
-   * hidden rather than showing a guess.
+   * Inbound only. Outbound the pin's own band is irrelevant - the ripple grows to the
+   * ceiling whatever the poster's surroundings - and the slider caption above already
+   * says so; a second box repeating it side by side just read as the panel saying the
+   * same thing twice.
+   *
+   * The band comes from apiv2 rather than being measured here: /town/near already
+   * returns cap_minutes and density_band from the Go density package, and a fourth copy
+   * of the band thresholds would be one more thing to forget when they are re-tuned.
    */
-  async function updateRecipientCap(lat, lng, gen) {
+  function renderReachCapLine() {
     const el = document.getElementById('rippling-recipient-cap')
     if (!el) return
-    el.style.display = 'none'
+    const sentence =
+      viewMode === 'inbound' && currentLat !== null
+        ? inboundReachSentence(markerBand, markerCapMinutes)
+        : null
+    if (!sentence) {
+      // Clear it as well as hiding it: a stale sentence about the previous pin sitting
+      // in the DOM is one refactor away from being shown again.
+      el.textContent = ''
+      el.style.display = 'none'
+      return
+    }
+    el.textContent = sentence
+    el.style.display = ''
+  }
+
+  // Best-effort in every direction — no apiv2 URL, a failed call or an unmeasurable
+  // band all leave the band unknown rather than showing a guess.
+  async function updateRecipientCap(lat, lng, gen) {
+    markerBand = null
+    markerCapMinutes = null
+    renderReachCapLine()
     if (!props.apiv2Url) return
 
     try {
@@ -177,49 +236,68 @@ export async function setupRipplingExplorer({
       // A late answer for a previous marker must not caption the current one.
       if (gen !== locationGeneration) return
 
-      const sentence = reachModelSentence(data.density_band, data.cap_minutes)
-      if (!sentence) return
-      el.textContent = sentence
-      el.style.display = ''
+      markerBand = data.density_band
+      markerCapMinutes = data.cap_minutes
+      renderReachCapLine()
+      // Inbound opens on the measured cap, so the map answers "whose posts can I see"
+      // rather than "whose posts would I see if I lived somewhere more rural". Only
+      // while the slider is untouched for this pin — reachMinutes.inbound is cleared
+      // per location, and set as soon as the moderator drags it.
+      if (viewMode === 'inbound' && reachMinutes.inbound == null) {
+        if (applyReachMinutes('inbound')) {
+          fitViewOnNextIsochrone = true
+          scheduleUpdate()
+        }
+      }
     } catch {
       // Leave it hidden: no band is a supported state, a wrong band is not.
     }
   }
 
-  document.querySelectorAll('.rpl-mode-btn[data-mode]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document
-        .querySelectorAll('.rpl-mode-btn[data-mode]')
-        .forEach((b) => b.classList.remove('rpl-active'))
-      btn.classList.add('rpl-active')
-      currentMode = btn.dataset.mode
-      if (ripplePlaying || rippleFrames.length > 0) stopRipple()
-      if (currentLat !== null) scheduleUpdate()
-    })
-  })
-
-  // ── Inbound / outbound view-mode toggle ────────────────────────────
-  // Outbound (default): "who'd see my post" — the rippling-out animation.
-  // Inbound:            "what would I see" — dots for posts I'd be eligible
-  //                     to see in my digest for a given day.
-  // Group catchment is the default landing view (first tab). The per-post reach modal
-  // overrides this via initial-view="outbound"; bookmarkable URLs can pass ?view=.
+  // ── Tab + direction toggles ────────────────────────────────────────
+  // Two tabs: the group catchment, and one "reach from a place" tab that answers both
+  // directions for a single pin. Direction is a selector INSIDE that tab rather than a
+  // third tab, because the postcode is the same postcode either way and re-entering it
+  // to flip direction was the awkward part of the old three-tab split.
+  //
+  // viewMode still carries all three values ('catchment' | 'outbound' | 'inbound'):
+  // that is what ?view= bookmarks and the per-post reach modal's initial-view prop
+  // hold, and the drawing code branches on direction, not on which tab is lit.
   let viewMode = 'catchment'
-  let inboxLayer = null
-  let inboxIsoLayer = null
-  let lastDigestData = null // last digest-simulator response, used by the mock-up modal
-  const inboundRow = document.getElementById('rippling-inbound-row')
+  // The direction the reach tab returns to. Remembered so a trip to the catchment tab
+  // and back doesn't silently reset it to outbound.
+  let reachDirection = 'outbound'
 
-  document.querySelectorAll('.rpl-mode-btn[data-view]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document
-        .querySelectorAll('.rpl-mode-btn[data-view]')
-        .forEach((b) => b.classList.remove('rpl-active'))
-      btn.classList.add('rpl-active')
-      viewMode = btn.dataset.view
-      applyViewMode()
-      syncUrl()
+  function selectTab(tab) {
+    document.querySelectorAll('.rpl-mode-btn[data-tab]').forEach((b) => {
+      b.classList.toggle('rpl-active', b.dataset.tab === tab)
     })
+    viewMode = tab === 'catchment' ? 'catchment' : reachDirection
+    applyReachMinutes(viewMode)
+    applyViewMode()
+    syncUrl()
+  }
+
+  function selectDirection(dir) {
+    reachDirection = dir
+    viewMode = dir
+    document.querySelectorAll('.rpl-mode-btn[data-tab]').forEach((b) => {
+      b.classList.toggle('rpl-active', b.dataset.tab === 'reach')
+    })
+    applyReachMinutes(dir)
+    // The two directions can differ by more than half the reach - a city pin is 45
+    // minutes outbound and 20 inbound - so keeping the old zoom leaves the new boundary
+    // as a speck in the middle of the previous one, which reads as nothing happening.
+    fitViewOnNextIsochrone = true
+    applyViewMode()
+    syncUrl()
+  }
+
+  document.querySelectorAll('.rpl-mode-btn[data-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => selectTab(btn.dataset.tab))
+  })
+  document.querySelectorAll('.rpl-mode-btn[data-dir]').forEach((btn) => {
+    btn.addEventListener('click', () => selectDirection(btn.dataset.dir))
   })
 
   // Keep the browser URL in sync with the current view + location so the
@@ -256,100 +334,59 @@ export async function setupRipplingExplorer({
   function applyViewMode() {
     const inbound = viewMode === 'inbound'
     const catchment = viewMode === 'catchment'
-    const outbound = viewMode === 'outbound'
-    // Outbound-only sliders/rows. The time slider ("Maximum reach") applies to all three
-    // views (it's the catchment's minutes too); the inbound-row is inbound-only.
-    document
-      .querySelectorAll(
-        '#rippling-panel-body > .rpl-slider-row, .rpl-ripple-row, #rippling-freegler-bar'
-      )
-      .forEach((el) => {
-        if (el.id === 'rippling-inbound-row') return
-        if (el.id === 'rippling-time-row') {
-          el.style.display = '' // always shown
-          return
-        }
-        el.style.display = outbound ? '' : 'none'
-      })
-    // Deprivation/freeglers/groups + connectivity-friction toggles: outbound only.
-    const layerToggles = document.querySelector(
-      '#rippling-panel-body > div[style*="flex-wrap"]'
-    )
-    if (layerToggles) layerToggles.style.display = outbound ? '' : 'none'
-    // Walk/cycle/drive travel-mode row: outbound only.
-    const travelModeRow = document.querySelector(
-      '#rippling-panel-body > .rpl-mode-row:not(#rippling-view-mode)'
-    )
-    if (travelModeRow) travelModeRow.style.display = outbound ? '' : 'none'
-    inboundRow.style.display = inbound ? '' : 'none'
-    // Legend: outbound reach / inbound digest / catchment heatmap key.
-    legendMode.value = outbound
-      ? 'outbound'
-      : catchment
-        ? 'catchment'
-        : 'inbound'
-    // Search-by-location box: not relevant in catchment (group picker is used instead).
-    const searchWrap = document.getElementById('rippling-search-wrap')
-    if (searchWrap) searchWrap.style.display = catchment ? 'none' : ''
-    const statsEl = document.getElementById('rippling-stats')
-    if (statsEl) statsEl.style.display = outbound ? '' : 'none'
-    const groupsSection = document.getElementById('rippling-groups-section')
-    if (groupsSection && !outbound) groupsSection.style.display = 'none'
-    // Intros.
-    const introOutbound = document.getElementById('rippling-intro-outbound')
-    const introInbound = document.getElementById('rippling-intro-inbound')
-    const introCatchment = document.getElementById('rippling-intro-catchment')
-    if (introOutbound) introOutbound.style.display = outbound ? '' : 'none'
-    if (introInbound) introInbound.style.display = inbound ? '' : 'none'
-    if (introCatchment) introCatchment.style.display = catchment ? '' : 'none'
-    // Inbound-only "what's in the digest" / sort wrappers.
-    const contentsBox = document.getElementById('rippling-sim-contents')
-    const pieWrap = document.getElementById('rippling-sim-pie-wrap')
-    const sortTitle = document.getElementById('rippling-sim-sort-title')
-    if (contentsBox) contentsBox.style.display = inbound ? '' : 'none'
-    if (pieWrap) pieWrap.style.display = inbound ? '' : 'none'
-    if (sortTitle) sortTitle.style.display = inbound ? '' : 'none'
-    // Catchment-tab panel (searchable group picker + connectivity toggle).
-    const catchmentPanel = document.getElementById('rippling-catchment-panel')
-    if (catchmentPanel) catchmentPanel.style.display = catchment ? '' : 'none'
 
-    if (inbound) {
-      clearOutboundLayers()
-      clearCatchmentLayers()
-      if (ripplePlaying || rippleFrames.length > 0) stopRipple()
-      if (currentLat !== null) fetchInbox()
-    } else if (catchment) {
-      clearOutboundLayers()
-      clearInboundLayers()
+    const show = (id, on) => {
+      const el = document.getElementById(id)
+      if (el) el.style.display = on ? '' : 'none'
+    }
+
+    // Which rows belong to which view lives in viewmode.js, where it can be tested: a
+    // control left visible in the wrong view doesn't throw, it just offers a knob that
+    // does nothing.
+    const visible = panelVisibility(viewMode)
+    Object.entries(visible).forEach(([id, on]) => show(id, on))
+    document.querySelectorAll('.rpl-mode-btn[data-dir]').forEach((b) => {
+      b.classList.toggle('rpl-active', b.dataset.dir === reachDirection)
+    })
+    if (catchment) {
+      // These two are driven by their own data (the freegler estimate, the group list),
+      // so they are hidden here and left to re-show themselves on the reach tab.
+      show('rippling-freegler-bar', false)
+      show('rippling-groups-section', false)
+    }
+
+    // Legend: outbound reach / inbound reach / catchment heatmap key.
+    legendMode.value = viewMode
+
+    renderReachCapLine()
+    const timeLabel = document.getElementById('rippling-time-label')
+    if (timeLabel) timeLabel.textContent = reachSliderLabel(viewMode)
+    const groupsTitle = document.getElementById('rippling-groups-title')
+    if (groupsTitle) groupsTitle.textContent = groupsSectionTitle(viewMode)
+
+    if (catchment) {
+      clearReachLayers()
       if (ripplePlaying || rippleFrames.length > 0) stopRipple()
       loadCatchmentGroups()
       drawCatchment() // redraw if a group is already chosen
       seedCatchmentGroupForViewer() // ...or open on the viewer's own, if they have one
-    } else {
-      clearInboundLayers()
-      clearCatchmentLayers()
-      if (currentLat !== null) scheduleUpdate()
+      return
     }
-  }
 
-  function clearOutboundLayers() {
+    clearCatchmentLayers()
+    // A half-played outbound ripple has nothing to say about what reaches the pin.
+    if (inbound && (ripplePlaying || rippleFrames.length > 0)) stopRipple()
+    if (currentLat !== null) scheduleUpdate()
+  }
+  // Both reach directions draw the same isochrone layers (only the minutes and the
+  // wording differ), so there is one teardown for the pair rather than one each.
+  function clearReachLayers() {
     Object.values(layers).forEach((l) => map.removeLayer(l))
     layers = {}
     // freeglersMarkers is declared later in the script (temporal dead zone),
     // so we can't reference it by name from here.  Instead, fire a custom
     // event that the freeglers-clearing block listens for.
     document.dispatchEvent(new CustomEvent('rippling-clear-freeglers'))
-  }
-
-  function clearInboundLayers() {
-    if (inboxLayer) {
-      map.removeLayer(inboxLayer)
-      inboxLayer = null
-    }
-    if (inboxIsoLayer) {
-      map.removeLayer(inboxIsoLayer)
-      inboxIsoLayer = null
-    }
   }
 
   // ── Group-catchment tab ────────────────────────────────────────────
@@ -783,268 +820,17 @@ export async function setupRipplingExplorer({
     catchmentDebounce = setTimeout(drawCatchment, 250)
   }
 
-  function renderPie(slices) {
-    renderPieSvg(document.getElementById('rippling-pie'), slices)
-  }
-
-  // ── Digest-simulator sliders ──────────────────────────────────────
-  const knobs = {
-    close: {
-      input: document.getElementById('rippling-w-close'),
-      val: document.getElementById('rippling-w-close-val'),
-    },
-    budget: {
-      input: document.getElementById('rippling-w-budget'),
-      val: document.getElementById('rippling-w-budget-val'),
-    },
-    anchor: {
-      input: document.getElementById('rippling-w-anchor'),
-      val: document.getElementById('rippling-w-anchor-val'),
-    },
-  }
-  const showDigestBtn = document.getElementById('rippling-show-digest')
-  const simSummaryEl = document.getElementById('rippling-sim-summary')
-
-  let inboundDebounce = null
-  function scheduleInboundUpdate() {
-    if (viewMode !== 'inbound' || currentLat === null) return
-    clearTimeout(inboundDebounce)
-    inboundDebounce = setTimeout(fetchInbox, 200)
-  }
-
-  Object.entries(knobs).forEach(([k, ref]) => {
-    ref.input.addEventListener('input', () => {
-      ref.val.textContent = parseFloat(ref.input.value).toFixed(1)
-      scheduleInboundUpdate()
-    })
-  })
-
-  // Digest mock-up modal — opens a side panel listing the selection
-  // in digest order.  All rendering lives in <RipplingDigestModal>; this
-  // file just calls it with the data and the member's current location.
-  showDigestBtn.addEventListener('click', () =>
-    digestModal.value?.openDigest(lastDigestData, currentLat, currentLng)
-  )
-  function openPostDetail(p, rank) {
-    digestModal.value?.openPost(p, rank, currentLat, currentLng)
-  }
-  function openClusterDetail(posts) {
-    digestModal.value?.openCluster(posts, currentLat, currentLng)
-  }
-
-  async function fetchInbox() {
-    if (currentLat === null) return
-    clearInboundLayers()
-    // Belt-and-braces: also wipe any outbound layers that may still be on
-    // the map (freeglers, isochrone polygons, group outlines) — these don't
-    // belong in the inbound view.
-    clearOutboundLayers()
-    // messages_spatial is updated in place; only "now" is meaningful.
-    const qs = new URLSearchParams({
-      lat: currentLat.toFixed(6),
-      lng: currentLng.toFixed(6),
-      // Maximum reach driven by the shared time slider at the top.
-      max_minutes: timeSlider.value,
-      w_closeness: knobs.close.input.value,
-      w_freshness: '0', // freshness disabled — time-of-arrival within a daily-digest window doesn't carry useful signal
-      w_budget: knobs.budget.input.value,
-      w_anchor: knobs.anchor.input.value,
-      // No cap: the sort order is what matters, not a hard cut.  Pass the
-      // backend ceiling (1000) so the full reachable pool comes back.
-      cap: '1000',
-      group_by_poster: 'false',
-    })
-    const url = apiUrl(`/v1/digest-simulator?${qs.toString()}`)
-    try {
-      const r = await fetch(url)
-      if (!r.ok) return
-      const data = await r.json()
-      drawInbox(data)
-    } catch (e) {
-      // ignore
-    }
-  }
-
-  // Writes the text summary + pie chart that sit above the sliders.
-  function updateInboxHomeSummary(data, parts) {
-    const homeSummary = document.getElementById('rippling-home-summary')
-    // deduped_count is the deduped Top-picks total (what's actually in the
-    // digest); pool_size is the raw pre-dedup count (debug only) in the new
-    // simulator contract, so don't use it for the headline.
-    const total =
-      data.deduped_count != null ? data.deduped_count : data.pool_size || 0
-    const homeHead =
-      data.home_groups && data.home_groups.length
-        ? `<strong>Home:</strong> ${data.home_groups
-            .map((g) => g.name)
-            .join(', ')}`
-        : `<strong>No home group at this point.</strong>`
-    homeSummary.innerHTML =
-      `<div style="font-size:13px;font-weight:700;color:#333;margin-bottom:2px">${total} post${
-        total === 1 ? '' : 's'
-      } in digest</div>` +
-      `${homeHead}<br>` +
-      `<span style="color:#27ae60">●</span> ${parts.activeHome.length} active home-group · ` +
-      `<span style="color:#1f77b4">●</span> ${parts.activeCross.length} rippled in<br>` +
-      `<span style="color:#f39c12">●</span> ${parts.promised.length} promised · ` +
-      `<span style="color:#888">●</span> ${parts.taken.length} completed`
-    renderPie([
-      { count: parts.activeHome.length, color: '#27ae60' },
-      { count: parts.activeCross.length, color: '#1f77b4' },
-      { count: parts.promised.length, color: '#f39c12' },
-      { count: parts.taken.length, color: '#888' },
-    ])
-    // Lower summary: cluster note only, when there are any clusters.
-    simSummaryEl.innerHTML =
-      data.poster_groups && data.poster_groups.length
-        ? `<strong>${data.poster_groups.length}</strong> same-poster cluster${
-            data.poster_groups.length === 1 ? '' : 's'
-          }.`
-        : ''
-  }
-
-  // Draws each home-group polygon on the map, lazily creating the inbox
-  // feature group on first use.
-  function drawHomeGroupPolygons(homeGroups) {
-    if (!homeGroups || !homeGroups.length) return
-    if (!inboxLayer) inboxLayer = L.featureGroup().addTo(map)
-    homeGroups.forEach((g) => {
-      if (!g.polygon) return
-      const layer = L.geoJSON(
-        { type: 'Feature', geometry: g.polygon },
-        {
-          style: {
-            color: '#7d3c98',
-            weight: 1.5,
-            fill: true,
-            fillColor: '#7d3c98',
-            fillOpacity: 0.05,
-            dashArray: '2,3',
-          },
-        }
-      )
-        .bindTooltip(`Home group: ${g.name}`, { sticky: true })
-        .addTo(map)
-      inboxLayer.addLayer(layer)
-    })
-  }
-
-  // Outlines the maximum-reach isochrone as a smooth red polygon.  Chaikin
-  // smoothing on the client makes the grid-derived ring read as a curve
-  // rather than a staircase.
-  function drawInboxIsochrone(isochrone) {
-    if (!isochrone || !isochrone.geometry) return
-    const ring = isochrone.geometry.coordinates[0]
-    if (!ring || ring.length <= 3) return
-    const smoothed = chaikinSmooth(ring).map(([lng, lat]) => [lat, lng])
-    inboxIsoLayer = L.polygon(smoothed, {
-      color: '#cc0000',
-      weight: 2.5,
-      fill: false,
-    }).addTo(map)
-  }
-
-  // Numbered post markers, co-located posts collapsed into one marker
-  // with a comma-separated rank list.
-  function drawDigestMarkers(ranked, group) {
-    const buckets = new Map()
-    ranked.forEach((p) => {
-      const key = p.lat.toFixed(5) + ',' + p.lng.toFixed(5)
-      if (!buckets.has(key)) buckets.set(key, [])
-      buckets.get(key).push(p)
-    })
-    const totalRanked = ranked.length
-    const colorFor = (p) => {
-      if (p.successful || p.has_success) return '#888'
-      if (p.promised) return '#f39c12'
-      return p.home_group ? '#27ae60' : '#1f77b4'
-    }
-    buckets.forEach((bucketPosts) => {
-      const minRank = bucketPosts[0]._rank
-      const color = colorFor(bucketPosts[0])
-      const t =
-        totalRanked > 1 ? (minRank - 1) / Math.max(totalRanked - 1, 1) : 0
-      const baseOpacity = 0.95 - 0.45 * t
-      const dotOpacity =
-        bucketPosts[0].successful ||
-        bucketPosts[0].has_success ||
-        bucketPosts[0].promised
-          ? 0.85
-          : baseOpacity
-      // Truncate the label list at 6 ranks to avoid overflow.
-      const ranks = bucketPosts.map((p) => p._rank)
-      let label = ranks.slice(0, 6).join(',')
-      if (ranks.length > 6) label += ',+' + (ranks.length - 6)
-      const icon = L.divIcon({
-        className: 'rpl-digest-marker',
-        html:
-          `<div style="display:flex;align-items:center;gap:2px;` +
-          `text-shadow:0 0 2px #fff,0 0 2px #fff;font-size:10px;` +
-          `font-weight:700;color:#222;line-height:1;white-space:nowrap">` +
-          `<div style="width:9px;height:9px;border-radius:50%;background:${color};` +
-          `border:1.5px solid #fff;box-shadow:0 0 1px rgba(0,0,0,0.4);` +
-          `opacity:${dotOpacity};flex-shrink:0"></div>` +
-          `<span>${label}</span></div>`,
-        iconSize: null,
-        iconAnchor: [4, 4],
-      })
-      const tip =
-        bucketPosts.length === 1
-          ? 'Click for details'
-          : `Click for ${bucketPosts.length} posts at this location`
-      L.marker([bucketPosts[0].lat, bucketPosts[0].lng], { icon })
-        .bindTooltip(tip, { sticky: true, direction: 'top' })
-        .on('click', () => {
-          if (bucketPosts.length === 1)
-            openPostDetail(bucketPosts[0], bucketPosts[0]._rank - 1)
-          else openClusterDetail(bucketPosts)
-        })
-        .addTo(group)
-    })
-  }
-
-  // Purple dashed ring around every position that has >1 post from the
-  // same Freegle user (helps spot TrashNothing-style cross-posters).
-  function drawPosterClusterRings(posterGroups, group) {
-    ;(posterGroups || []).forEach((cl) => {
-      L.circleMarker([cl.top_lat, cl.top_lng], {
-        radius: 12,
-        color: '#9b59b6',
-        weight: 2,
-        fill: false,
-        dashArray: '3,3',
-      })
-        .bindTooltip(
-          `Same poster: ${cl.count} posts (top + ${cl.count - 1} others)`,
-          { sticky: true }
-        )
-        .addTo(group)
-    })
-  }
-
-  function drawInbox(data) {
-    if (!data) return
-    const parts = partitionInboxData(data)
-    lastDigestData = data
-
-    updateInboxHomeSummary(data, parts)
-    drawHomeGroupPolygons(data.home_groups)
-    drawInboxIsochrone(data.isochrone)
-
-    const group = inboxLayer || L.featureGroup().addTo(map)
-    inboxLayer = group
-    drawDigestMarkers(parts.ranked, group)
-    drawPosterClusterRings(data.poster_groups, group)
-  }
-
   timeSlider.addEventListener('input', () => {
     if (viewMode === 'catchment') {
       scheduleCatchment()
       return
     }
+    // Dragging it claims this direction's reach: from here on the measured cap no
+    // longer overwrites it for this pin, so an inbound "what if I could see further"
+    // survives the /town/near answer landing.
+    reachMinutes[viewMode] = parseInt(timeSlider.value)
     if (currentLat === null) return
-    if (viewMode === 'inbound') scheduleInboundUpdate()
-    else scheduleUpdate()
+    scheduleUpdate()
   })
   fairnessSlider.addEventListener('input', () => {
     document.getElementById('rippling-fairness-val').textContent =
@@ -1182,16 +968,11 @@ export async function setupRipplingExplorer({
   const seededFromProps = props.initialLat != null && props.initialLng != null
 
   async function applyUrlInit() {
-    if (
-      pendingView === 'inbound' ||
-      pendingView === 'outbound' ||
-      pendingView === 'catchment'
-    ) {
-      const btn = document.querySelector(
-        `.rpl-mode-btn[data-view="${pendingView}"]`
-      )
-      if (btn) btn.click()
-    }
+    // ?view= (and the per-post modal's initial-view) still name a DIRECTION, not a tab:
+    // the bookmarks predate the merge and the modal only ever wants outbound.
+    if (pendingView === 'catchment') selectTab('catchment')
+    else if (pendingView === 'inbound' || pendingView === 'outbound')
+      selectDirection(pendingView)
     // Catchment ?group=Name — populate the picker and draw (no lat/lng needed).
     const isCatchment =
       pendingView === 'catchment' || (!pendingView && viewMode === 'catchment')
@@ -1273,8 +1054,7 @@ export async function setupRipplingExplorer({
   // same effect from a clean slate; this gives the in-place equivalent.
   function resetForNewLocation() {
     // Map overlays from the old location.
-    clearOutboundLayers() // isochrone + quintile layers, and freegler dots (via event)
-    clearInboundLayers() // digest inbox + its isochrone
+    clearReachLayers() // isochrone + quintile layers, and freegler dots (via event)
     Object.values(groupLayerMap).forEach((l) => map.removeLayer(l))
     groupLayerMap = {}
     if (morphLayer && map.hasLayer(morphLayer)) {
@@ -1289,7 +1069,6 @@ export async function setupRipplingExplorer({
     groupFeatures = []
     homeGroupIds = new Set()
     lastIsoData = null
-    lastDigestData = null
     allFreeglers = []
     freeglersGrid = []
     totalLocatedFromServer = 0
@@ -1297,6 +1076,9 @@ export async function setupRipplingExplorer({
     rippleFrames = []
     crossPostingDetected = false
     rippleMaxImbalance = null
+    // A new pin has a new density band, so the inbound reach goes back to "whatever
+    // this spot's cap turns out to be" rather than keeping the last spot's answer.
+    reachMinutes.inbound = null
     // Derived panels that would otherwise keep showing the old answer.
     const groupsList = document.getElementById('rippling-groups-list')
     if (groupsList) groupsList.innerHTML = ''
@@ -1320,58 +1102,30 @@ export async function setupRipplingExplorer({
     syncUrl()
     updateRecipientCap(lat, lng, locationGeneration)
     if (marker) map.removeLayer(marker)
-    const inbound = viewMode === 'inbound'
-    if (inbound) {
-      // Inbound mode: use a real divIcon marker (not a circleMarker) so
-      // we can put it in a dedicated topmost pane.  Otherwise digest
-      // post markers, which are L.markers in the default marker pane,
-      // can sit on top of the SVG circle and hide the red dot.
-      if (!map.getPane('locationPane')) {
-        const p = map.createPane('locationPane')
-        p.style.zIndex = 700 // above markerPane (600) and overlayPane (400)
-      }
-      marker = L.marker([lat, lng], {
-        pane: 'locationPane',
-        interactive: false,
-        icon: L.divIcon({
-          className: 'rpl-location-marker',
-          html: '<div style="width:16px;height:16px;border-radius:50%;background:#cc0000;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>',
-          iconSize: [16, 16],
-          iconAnchor: [8, 8],
-        }),
-      }).addTo(map)
-    } else {
-      marker = L.circleMarker([lat, lng], {
-        radius: 8,
-        color: '#e8380d',
-        weight: 3,
-        fillColor: '#fff',
-        fillOpacity: 1,
-      }).addTo(map)
-    }
+    marker = L.circleMarker([lat, lng], {
+      radius: 8,
+      color: '#e8380d',
+      weight: 3,
+      fillColor: '#fff',
+      fillOpacity: 1,
+    }).addTo(map)
     if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13))
-    if (inbound) {
-      // Inbound mode: don't recompute outbound isochrones; just refresh
-      // the posts-for-member dots.  Also wipe any freegler dots that may
-      // still be on the map from the outbound view.
-      clearOutboundLayers()
-      fetchInbox()
-      return
-    }
     if (viewMode === 'catchment') {
       // Catchment draws its own group ring and heat bands, keyed off the group
-      // picker rather than a point. Falling through here painted the outbound
+      // picker rather than a point. Falling through here painted the reach
       // set - green group outlines, the red travel-time boundary and the
       // blue-stroked deprivation quintiles - on top of it, so the map showed
-      // outbound layers while the intro and key described catchment. Reported
+      // reach layers while the intro and key described catchment. Reported
       // as "the group's own area is not outlined in blue, and there is no
       // heat-shading": both true, because none of what was on screen was the
       // catchment view.
-      clearOutboundLayers()
+      clearReachLayers()
       return
     }
     fitViewOnNextIsochrone = true
-    fetchLocalBaseline(lat, lng)
+    // The swingometer measures a POST's targeting against its area's natural mix, so
+    // the baseline is only wanted where that gauge is shown.
+    if (viewMode === 'outbound') fetchLocalBaseline(lat, lng)
     fetchAndDrawGroups(lat, lng)
     updateIsochrone()
   }
@@ -1436,14 +1190,18 @@ export async function setupRipplingExplorer({
 
   function updateIsochrone() {
     if (currentLat === null) return
-    // Outbound-only. Several callers (the fairness slider, the Proportionate
-    // button, ensureDriveMode) reach here without checking the tab, and this
+    // Reach tab only. Several callers (the fairness slider, the Proportionate
+    // button, the layer toggles) reach here without checking the tab, and this
     // draws the red boundary and the blue-stroked quintiles, so an unguarded
-    // late call repaints the outbound view over catchment.
+    // late call repaints the reach view over catchment.
     if (viewMode === 'catchment') return
     const gen = ++isochroneGeneration
     const minutes = parseInt(timeSlider.value)
-    const fairness = parseInt(fairnessSlider.value) / 100
+    // Inbound is bounded by the member's own cap, and the fairness adjustment widens a
+    // POST's targeting - it does not move what any one member is shown. Sending the
+    // slider's value here would draw bonus islands nobody inbound ever gets.
+    const fairness =
+      viewMode === 'inbound' ? 0 : parseInt(fairnessSlider.value) / 100
     const url = apiUrl(
       `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
         6
@@ -1774,6 +1532,14 @@ export async function setupRipplingExplorer({
 
   function updateStats(data) {
     const statsEl = document.getElementById('rippling-stats')
+    // The swingometer reads a POST's targeting against the area's natural deprivation
+    // mix. Inbound there is no targeting to read - the member's cap is the whole story,
+    // and it is already stated above the map - so leave the panel out rather than
+    // recycling an outbound gauge under an inbound heading.
+    if (viewMode === 'inbound') {
+      statsEl.innerHTML = ''
+      return
+    }
     const hasFairness =
       data.fairness_score !== undefined && data.fairness_score >= 0
 
@@ -1860,7 +1626,7 @@ export async function setupRipplingExplorer({
   let freeglersMarkers = []
   let freeglersMapTimer = null
 
-  // clearOutboundLayers fires this so it can wipe freegler dots without
+  // clearReachLayers fires this so it can wipe freegler dots without
   // referencing the freeglersMarkers binding before initialisation.
   document.addEventListener('rippling-clear-freeglers', () => {
     freeglersMarkers.forEach((m) => map.removeLayer(m))
@@ -1935,7 +1701,6 @@ export async function setupRipplingExplorer({
     // deprivation percentage even when dots are hidden (toggle off or zoom < 11).
     buildFreeglersGrid()
     if (!showFreeglers) return
-    if (viewMode === 'inbound') return // freegler dots are outbound-only
     if (map.getZoom() < FREEGLER_DOT_MIN_ZOOM) return
     freeglersGrid.forEach((g) => {
       const m = L.circleMarker([g.lat, g.lng], {
@@ -2002,8 +1767,15 @@ export async function setupRipplingExplorer({
       estimatedInsideLocated / (1 - UNLOCATED_FRACTION)
     )
     const unlocatedShare = totalEstimate - estimatedInsideLocated
+    // Same population either way round; what changes is what it means. Outbound they
+    // are the people a post from the pin can reach, inbound the people whose posts can
+    // reach the pin.
+    const headline =
+      viewMode === 'inbound'
+        ? `~${totalEstimate.toLocaleString()} Freeglers whose posts you'd see`
+        : `~${totalEstimate.toLocaleString()} would be notified`
     bar.innerHTML =
-      `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">~${totalEstimate.toLocaleString()} would be notified</div>` +
+      `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">${headline}</div>` +
       `<div style="font-size:10px;color:#666;margin-top:1px">${estimatedInsideLocated.toLocaleString()} with known location` +
       (unlocatedShare > 0
         ? ` + ~${unlocatedShare.toLocaleString()} estimated unlocated`
@@ -2771,14 +2543,6 @@ export async function setupRipplingExplorer({
 
   // Ripple always uses drive mode — switch silently if the user is in walk
   // mode when they hit play, so the schedule fetch below sees the right mode.
-  function ensureDriveMode() {
-    if (currentMode === 'drive') return
-    currentMode = 'drive'
-    document.querySelectorAll('.rpl-mode-btn').forEach((b) => {
-      b.classList.toggle('rpl-active', b.dataset.mode === 'drive')
-    })
-    if (currentLat !== null) updateIsochrone()
-  }
 
   // Reset the panel + timeline UI and re-centre the map ahead of a new
   // ripple animation.
@@ -2854,8 +2618,6 @@ export async function setupRipplingExplorer({
       showStatus('Click a location first', false)
       return
     }
-
-    ensureDriveMode()
 
     const btn = document.getElementById('rippling-btn')
     prepareRippleUI(btn)

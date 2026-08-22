@@ -55,25 +55,34 @@ export function bandLabel(band) {
 }
 
 /**
- * The two-limit explanation for a dropped marker, once its band is known.
+ * "Whose posts can I see": what the pin is as a RECIPIENT.
  *
- * Deliberately says both numbers. Reading only the first is what made the page
- * confusing: a moderator saw the demo offer 45 minutes while their own slider stopped
- * at 7-8 miles, with nothing on the page connecting the two.
+ * This is the limit that actually binds a member, and the one that moves when an area
+ * is rural rather than built-up - so it names both the band and the number.
  *
  * @param {string} band density_band from /town/near
  * @param {number} capMinutes cap_minutes from /town/near
  * @returns {string|null} null when there is no usable band, so callers can stay quiet
  */
-export function reachModelSentence(band, capMinutes) {
+export function inboundReachSentence(band, capMinutes) {
+  if (!Number.isFinite(capMinutes) || capMinutes <= 0) return null
+  const mins = Math.round(capMinutes)
   const label = bandLabel(band)
-  if (!label || !Number.isFinite(capMinutes) || capMinutes <= 0) return null
+
+  // Density is genuinely unmeasurable in some places, and the engine then falls back to
+  // the flat cap. Going silent there loses the one number this direction is about, and
+  // an empty line reads as the page having failed — so state the cap and say why it has
+  // no band behind it.
+  if (!label) {
+    return (
+      `Density could not be measured here, so the flat fallback cap applies: someone ` +
+      `here is shown posts made within ${mins} minutes' drive of them.`
+    )
+  }
 
   return (
-    `A post here ripples out to ${REACH_CEILING_MINUTES} minutes' drive. ` +
-    `This spot is ${label}, so a member here is shown posts within ${Math.round(
-      capMinutes
-    )} minutes of them.`
+    `This spot is ${label}, so someone here is shown posts made within ` +
+    `${mins} minutes' drive of them.`
   )
 }
 
