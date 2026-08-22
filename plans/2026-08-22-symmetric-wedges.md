@@ -333,3 +333,23 @@ two and keeps the cliff: correct, and it dies here. The cliff-free formulation:
 - This shrinks the change surface: the member-side fix is ONE function (banded cap ->
   continuous personal radius) plus scorer decay, flowing to browse, digest and push
   through the single ring-admits gate that already exists.
+
+### Why the K-radius field itself is not a cliff (Edward's challenge, same day)
+
+r_400(x), the distance holding the nearest 400 active members of point x, is
+1-Lipschitz: move a mile and it changes by at most a mile (the ball around the old
+point, widened by a mile, still holds the same 400). So the field cannot jump between
+neighbours; bands can (one step flips 20 to 30). Large K also makes it stable in TIME:
+one member joining or leaving moves the 400th-nearest distance by at most the gap to
+the 401st, which is tiny. K=1 would twitch; K=400 averages the noise away.
+
+Cliffs can only sneak back in three known ways, all avoidable:
+1. Downstream if-statements. Any threshold applied to the field re-creates the chop.
+   Discipline: curves only, no category tests, anywhere downstream.
+2. Road-snapping artefacts: a point can snap onto the network ~6 min worse than a
+   point 0.9 miles away (measured, 2026-08-20 sibling investigation). Implementation
+   jumpiness, bounded and smoothable; not policy.
+3. The final show/do-not-show of one post to one member is inherently yes/no. Under
+   ranking decay the yes/no line sits where the score has already faded to
+   irrelevance, and the line's POSITION varies smoothly between neighbours, so no two
+   neighbours are treated categorically differently and no retune flips a region.
