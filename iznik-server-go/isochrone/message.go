@@ -162,7 +162,9 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
 			"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
 			"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = ms.msgid AND mgv.deleted = 0), m.arrival) AS visiblesince, "+
-			"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
+			"CASE WHEN ml.msgid IS NULL AND ms.id > "+
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+
+			" THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
 			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt",
@@ -187,6 +189,75 @@ func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reach
 	return candidates
 }
 
+// ClearCount clears the member's browse unread count in one call.
+//
+// It exists because there was no way to clear the count except to scroll every post into
+// view: "Mark seen" could only name the posts the browser had loaded, and the ordinary
+// backlog is ~1,000 (Discourse 10055). It deliberately does NOT write messages_likes View
+// rows - the member has not viewed these posts, and a View row is an impression that feeds
+// the view count posters see and the recommendation funnels. It moves one watermark instead.
+//
+// The watermark is the highest messages_spatial row that exists right now, so everything
+// currently in any feed falls under it, and anything appearing afterwards gets a higher id
+// and counts normally. It is view-independent on purpose: "I have cleared up to here" does
+// not depend on whether they were looking at nearby or mygroups.
+//
+// @Summary Clear the browse unread count
+// @Description Marks the member's whole browse feed as cleared, without needing the client to enumerate posts.
+// @Tags messages
+// @Success 200 {object} map[string]interface{} "Success response"
+// @Failure 401 {object} map[string]string "Not logged in"
+// @Router /messages/clearcount [post]
+func ClearCount(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	db := database.DBConn
+
+	// MAX over the primary key, so this is an index lookup rather than a scan.
+	var highest uint64
+	db.Table("messages_spatial").Select("COALESCE(MAX(id), 0)").Row().Scan(&highest)
+
+	database.RetryExec(db,
+		"INSERT INTO browse_cleared (userid, spatialid) VALUES (?, ?) "+
+			"ON DUPLICATE KEY UPDATE spatialid = ?, timestamp = NOW()",
+		myid, highest, highest)
+
+	// The badge is remembered for a few seconds (see the browsecount package). The drop to
+	// zero is how the member knows this worked, so forget it rather than let it stand.
+	browsecount.Invalidate(myid)
+
+	return c.JSON(fiber.Map{
+		"success": true,
+	})
+}
+
+// browseClearedWatermark is the messages_spatial.id this member has cleared their browse
+// count up to, or 0 if they never have - an absent row is the right state for everyone who
+// has not pressed the button.
+//
+// Clearing moves this rather than writing a messages_likes View row per post: a View row is
+// an impression, feeding the view count posters see and the recommendation funnels, and the
+// ordinary member is sitting on ~1,000 unseen posts they have plainly not looked at.
+//
+// The axis is messages_spatial.id, not arrival and not msgid, because both of those are
+// stamped when the post was WRITTEN: a post Pending when the member cleared and approved
+// afterwards carries a backdated value, would fall under the watermark, and would never be
+// counted again. The spatial row is created when the post enters the feed.
+func browseClearedWatermark(db *gorm.DB, myid uint64) uint64 {
+	var cleared uint64
+
+	if myid > 0 {
+		// No row leaves cleared at its zero value, which is what "cleared nothing" means.
+		db.Table("browse_cleared").Select("spatialid").Where("userid = ?", myid).Row().Scan(&cleared)
+	}
+
+	return cleared
+}
+
 // reachCandidateQuery composes the reach arm's FROM/JOINs/WHERE - the single definition of
 // "which open posts is this viewer inside the reach of". The feed (fetchReachCandidates),
 // the distance-limited badge walk (reachCandidatePoints) and the fast unlimited badge COUNT
@@ -196,7 +267,10 @@ func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reach
 func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOnly bool) *gorm.DB {
 	unseenFilter := ""
 	if unseenOnly {
-		unseenFilter = "AND ml.msgid IS NULL "
+		// Unseen = no impression AND above the cleared watermark. Inlined rather than bound
+		// because whereArgs below is positional and this fragment precedes reachWhere.
+		unseenFilter = "AND ml.msgid IS NULL AND ms.id > " +
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10) + " "
 	}
 
 	reachWhere, pointArgs := reachOrOverflowSQL(db, myid, latlng.Lng, latlng.Lat)
@@ -564,7 +638,9 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
 				"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
 				"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = ms.msgid AND mgv.deleted = 0), m.arrival) AS visiblesince, "+
-				"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen, "+
+				"CASE WHEN ml.msgid IS NULL AND ms.id > "+
+				strconv.FormatUint(browseClearedWatermark(db, myid), 10)+
+				" THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
 				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '') AS reach_wkt",
@@ -669,7 +745,8 @@ func myGroupsCountUnfiltered(db *gorm.DB, myid uint64) uint64 {
 	db.Table("messages_spatial ms").
 		Select("COUNT(DISTINCT ms.msgid)").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-		Where("ms.successful = 0 AND ml.msgid IS NULL "+
+		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" "+
 			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
 			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+
@@ -703,7 +780,8 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 	db.Table("messages_spatial ms").
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-		Where("ms.successful = 0 AND ml.msgid IS NULL "+
+		Where("ms.successful = 0 AND ml.msgid IS NULL AND ms.id > "+
+			strconv.FormatUint(browseClearedWatermark(db, myid), 10)+" "+
 			"AND EXISTS (SELECT 1 FROM messages_groups mg "+
 			"INNER JOIN memberships mem ON mem.groupid = mg.groupid "+
 			"WHERE mg.msgid = ms.msgid AND mem.userid = ? "+

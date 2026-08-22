@@ -1218,6 +1218,25 @@ func Post(c *fiber.Ctx) error {
 			db.Table("users_notifications").Where("touser = ? AND newsfeedid = ?", myid, req.ID).
 				Update("seen", gorm.Expr("1"))
 		}
+	case "SeenAll":
+		// Clear the ChitChat count outright. The client can only ever name the items it has
+		// loaded, so no id it can send clears a backlog it has not scrolled through - the
+		// same reason the browse count was unclearable (Discourse 10055).
+		//
+		// The watermark is the highest newsfeed row that exists now, so everything currently
+		// in any feed falls under it and anything posted afterwards counts normally. Count()
+		// only ever compares feed ids against this, so it drains to zero by construction.
+		//
+		// Deliberately does NOT touch users_notifications: the notification bell is a
+		// separate count with its own meaning, and clearing ChitChat is not a statement
+		// about replies addressed to you.
+		var highestNewsfeedID uint64
+		db.Table("newsfeed").Select("COALESCE(MAX(id), 0)").Row().Scan(&highestNewsfeedID)
+
+		if highestNewsfeedID > 0 {
+			db.Table("newsfeed_users").Clauses(clause.Insert{Modifier: "REPLACE"}).
+				Create(map[string]interface{}{"userid": myid, "newsfeedid": highestNewsfeedID})
+		}
 	case "Follow":
 		if req.ID > 0 {
 			db.Table("newsfeed_unfollow").Where("userid = ? AND newsfeedid = ?", myid, req.ID).Delete(nil)

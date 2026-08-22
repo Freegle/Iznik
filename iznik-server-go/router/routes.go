@@ -1020,6 +1020,23 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 401 {object} fiber.Error "Not logged in"
 		rg.Post("/messages/markseen", message.MarkSeen)
 
+		// Clear Browse Count
+		//
+		// Distinct from markseen above, and deliberately so: markseen records that these
+		// particular posts were VIEWED (a messages_likes impression, feeding the view count
+		// posters see). This one records only that the member has cleared their unread
+		// count, which is not a claim that they looked at anything.
+		//
+		// @Router /messages/clearcount [post]
+		// @Summary Clear the browse unread count
+		// @Description Marks the member's whole browse feed as cleared, without the client enumerating posts
+		// @Tags message
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Post("/messages/clearcount", isochrone.ClearCount)
+
 		// Message Actions (POST)
 		// @Router /message [post]
 		// @Summary Message actions
