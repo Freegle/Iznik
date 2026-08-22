@@ -203,4 +203,33 @@ describe('ProxyImage', () => {
       expect(wrapper.props('placeholder')).toBe(null)
     })
   })
+
+  // A member's avatar is a Gravatar URL carrying ?s=200&d=identicon&r=g. Those
+  // parameters used to be percent-encoded here before being handed to the
+  // provider, and the escaping survived to Gravatar itself, which then saw no
+  // d= and served its own logo - a blue disc with a white ring. Every member
+  // without a Gravatar account got that same picture in place of their own
+  // identicon, and reported it as their avatar having changed.
+  describe('source URLs that carry a query string', () => {
+    it('hands the query to the provider exactly as given', () => {
+      const src =
+        'https://www.gravatar.com/avatar/992d65128?s=200&d=identicon&r=g'
+      const wrapper = createWrapper({ src })
+
+      expect(wrapper.find('img').attributes('src')).toBe(src)
+    })
+
+    // The provider encodes the whole URL once when it builds ?url=, which is
+    // what both keeps these separators away from wsrv and delivers them intact
+    // to the origin. Escaping them here as well is what corrupted them.
+    it('leaves the separators the origin needs unescaped', () => {
+      const wrapper = createWrapper({
+        src: 'https://example.com/photo.jpg?w=1&h=2',
+      })
+      const rendered = wrapper.find('img').attributes('src')
+
+      expect(rendered).not.toContain('%3D')
+      expect(rendered).not.toContain('%26')
+    })
+  })
 })
