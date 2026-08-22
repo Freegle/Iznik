@@ -114,6 +114,23 @@ class MessageIllustrationsServiceTest extends TestCase
         $this->assertEquals('freegletusd-cached999', $attachment->externaluid);
     }
 
+    public function test_stops_when_a_pass_creates_no_attachment(): void
+    {
+        // The candidate query is inclusive of $lastArrival, so a message that ends up with no
+        // attachment is returned again by the next pass, unchanged. Generation that yields
+        // neither an image nor a recorded failure therefore used to loop for ever, until MySQL
+        // killed the query at its 30s execution cap. Nothing here is cached and the mocked
+        // fetchBatch returns no results, so this test hangs unless the loop gives up.
+        $message = $this->createMessageInSpatial('OFFER: Uncacheable Thing (TestTown)');
+
+        $service = $this->makeService();
+        $result = $service->processIllustrations();
+
+        $count = DB::table('messages_attachments')->where('msgid', $message->id)->count();
+        $this->assertEquals(0, $count, 'Nothing was generated, so no attachment should exist');
+        $this->assertEquals(0, $result['processed']);
+    }
+
     public function test_skips_message_in_declined_table(): void
     {
         $message = $this->createMessageInSpatial('OFFER: Widget (TestTown)');

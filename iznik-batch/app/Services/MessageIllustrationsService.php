@@ -98,6 +98,7 @@ class MessageIllustrationsService
             $cachedMessages = [];
             $newMessages = [];
             $maxArrival = $lastArrival;
+            $createdThisPass = 0;
 
             foreach ($msgs as $msg) {
                 $arrival = $msg->arrival;
@@ -138,6 +139,7 @@ class MessageIllustrationsService
                             'contenttype' => 'image/jpeg',
                         ]);
                         $processed++;
+                        $createdThisPass++;
                         Log::info("MessageIllustrations: used cached illustration for message {$cached['msgid']}: {$cached['itemName']}");
                     }
                     $cachedHits++;
@@ -200,6 +202,7 @@ class MessageIllustrationsService
                             'contenttype' => 'image/jpeg',
                         ]);
                         $processed++;
+                        $createdThisPass++;
                         Log::info("MessageIllustrations: created illustration for message {$msgid}: {$itemName}");
                     }
                 }
@@ -212,7 +215,12 @@ class MessageIllustrationsService
                 }
             }
 
-            if (empty($newMessages) && empty($cachedMessages)) {
+            // The candidate query is inclusive of $lastArrival and selects on the absence of an
+            // attachment, so a message we failed to illustrate comes back in the next pass
+            // unchanged. If a pass attaches nothing, the next one would see exactly the same rows:
+            // stop, rather than re-run the same query until MySQL kills it at 30s. Covers the
+            // empty-batch case too, and stops a dry run after one pass, which is what it wants.
+            if ($createdThisPass === 0) {
                 break;
             }
         }
