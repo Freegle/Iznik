@@ -11,7 +11,7 @@
 --
 -- WHY NOT A 'Dismissed' VALUE IN messages_likes.type. That table is ~86M rows and an ENUM
 -- change is a TOI DDL, i.e. the cluster-wide freeze this codebase has been bitten by
--- repeatedly (see the rippling_reach_overflow note above: an ALTER on a hot table sat 36
+-- repeatedly (see 2026_08_21_000002_create_rippling_reach_overflow_migration.sql: an ALTER on a hot table sat 36
 -- minutes at `checking permissions` and took the site down). CREATE TABLE has nothing to
 -- build: no scan, no lock on anything hot, returns immediately.
 --
@@ -23,14 +23,17 @@
 -- created when the post ENTERS the feed, so its auto-increment id is the honest "became
 -- visible" clock.
 --
--- Mirrors newsfeed_users(userid UNIQUE, newsfeedid), which is this same watermark for ChitChat.
+-- Mirrors newsfeed_users(userid UNIQUE, newsfeedid), which is this same watermark for ChitChat,
+-- except that this one carries a foreign key: the row is meaningless once the member is gone,
+-- so it cascades rather than being left behind pointing at nothing.
 CREATE TABLE IF NOT EXISTS browse_cleared (
     id        BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     userid    BIGINT UNSIGNED NOT NULL,
     spatialid BIGINT UNSIGNED NOT NULL COMMENT 'messages_spatial.id cleared up to and including',
     timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
-    UNIQUE KEY userid (userid)
+    UNIQUE KEY userid (userid),
+    CONSTRAINT browse_cleared_ibfk_1 FOREIGN KEY (userid) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='How far a member has cleared their browse unread count';
 
 -- No backfill. An absent row means "cleared nothing", which is the correct state for every

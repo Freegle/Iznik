@@ -39,6 +39,10 @@ return new class extends Migration
             $table->unsignedBigInteger('userid')->unique('userid');
             $table->unsignedBigInteger('spatialid')->comment('messages_spatial.id cleared up to and including');
             $table->timestamp('timestamp')->useCurrent();
+
+            // The row is meaningless once the member is gone, so it goes with them rather
+            // than being left behind pointing at nothing.
+            $table->foreign('userid', 'browse_cleared_ibfk_1')->references('id')->on('users')->onDelete('cascade');
         });
     }
 
