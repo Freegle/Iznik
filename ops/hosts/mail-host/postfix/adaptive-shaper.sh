@@ -54,6 +54,21 @@ MIN_ATTEMPTS=${MIN_ATTEMPTS:-50}      # ignore domains too small to judge
 # Successful deliveries in the window above which a domain is never shaped, and
 # is released if it was. Immune to the retry-inflation feedback above.
 MIN_SENT_RELEASE=${MIN_SENT_RELEASE:-20}
+# ...but a trickle is not acceptance. A provider throttling us can still let a
+# handful through: on 2026-08-22 yahoo.co.uk logged 4,834 attempts at 96%
+# deferred - about 190 delivered - and 190 clears any absolute floor, so the
+# release rule below read it as healthy and let it go. It was shaped and
+# released 305 times, reloading postfix each time, while the queue held ~6,000
+# of its messages and the oldest reached the five-day lifetime and bounced.
+#
+# So deliveries release a domain only when it is NOT deferring catastrophically.
+# The bar is set high on purpose, well above any load-related deferral: gmail
+# measured 39-48% deferred while healthy (and 52% of its attempts delivered),
+# where the throttled Yahoo family sits at 96-100%. Nothing legitimate lives up
+# there, so this cannot re-create the "once shaped, always shaped" trap that
+# releasing on the deferral rate alone caused - a recovering domain crosses back
+# under 90% long before it looks healthy by any other measure.
+CATASTROPHIC_PCT=${CATASTROPHIC_PCT:-90}
 # Deferred count in the sample below which a delivering domain is fully
 # released. Above it the domain keeps a (widening) concurrency cap so the
 # backlog drains at a rate the provider has shown it will accept, instead of
@@ -218,7 +233,7 @@ prev=""
 # accepting mail should never stay throttled, whatever its deferral ratio looks
 # like: yahoo.co.uk delivered 0 of 5571 attempts, gmail delivered ~253 of 487.
 # That distinction is the whole decision.
-shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsent="$MIN_SENT_RELEASE" -v agree="$AGREE_SCANS" -v prev="$prev" '
+shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsent="$MIN_SENT_RELEASE" -v catpct="$CATASTROPHIC_PCT" -v agree="$AGREE_SCANS" -v prev="$prev" '
   BEGIN {
     # state lines are "domain shapedflag votes"
     n=split(prev, L, /\n/)
@@ -237,7 +252,11 @@ shaped=$(echo "$stats" | awk -v hi="$HIGH_PCT" -v minn="$MIN_ATTEMPTS" -v minsen
     # printed a blank flag column, which only re-parsed correctly by luck of
     # whitespace splitting.
     prevstate = was[dom] + 0
-    want = (sent >= minsent) ? 0 : ((prevstate ? (pct >= hi - 20) : (pct >= hi)) ? 1 : 0)
+    # Delivering means healthy - unless it is deferring nearly everything, in
+    # which case the deliveries are a trickle past a throttle rather than a
+    # provider accepting our mail.
+    delivering = (sent >= minsent && pct < catpct)
+    want = delivering ? 0 : ((prevstate ? (pct >= hi - 20) : (pct >= hi)) ? 1 : 0)
 
     # Only change state once `agree` consecutive scans want the same thing.
     if (want == prevstate) { v = 0 }
