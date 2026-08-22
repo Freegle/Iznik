@@ -378,3 +378,27 @@ because thin-origin posts are few, which is the famine fact itself. Post-side co
 ceiling follows R(origin) with a flattening curve rather than a wall; the far
 Highlands (Fort William r_400 beyond any drivable radius) remain honestly out of scope
 for any reach mechanism.
+
+### Satiation at the town edge (Edward's objection), measured
+
+Objection: a rural person near a busy town collects their 400 at the first suburbs, so
+their radius never crosses the town. Measured r_400 (crow-fly, live index):
+
+| point | r_400 | r_100 |
+|---|---|---|
+| Kendal centre | 2.1 mi | 0.2 mi |
+| Old Hutton (hinterland, ~4 mi SE of Kendal) | 4.7 mi | 2.6 mi |
+| Lancaster centre | 0.9 mi | 0.3 mi |
+| Caton (hinterland, ~4 mi E of Lancaster) | 7.7 mi | 3.6 mi |
+| Hawes | 24.9 mi (only 228 exist) | 17.9 mi |
+
+K=400 is large relative to a suburb crescent: the ball has to push deep into the town
+to find 400, so the hinterland radii already cross their towns whole (Caton's 7.7 mi
+spans all of Lancaster; Old Hutton's 4.7 spans Kendal). The satiation failure is real
+for SMALL K (r_100 shows it starting), so K stays large. Two further margins keep the
+town whole without cliffs: the viewing radius is a smooth curve ON the field and can
+overshoot it (one slope dial, calibratable against revealed catchments: membership
+joins, bus/TTWA data as calibration targets, not infrastructure); and concave ranking
+decay makes near side vs far side of a town rank nearly equally at range. Conurbation
+partiality (Ealing does not see Croydon) emerges from scale rather than needing
+settlement polygons.
