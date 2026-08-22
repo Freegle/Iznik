@@ -353,3 +353,28 @@ Cliffs can only sneak back in three known ways, all avoidable:
    ranking decay the yes/no line sits where the score has already faded to
    irrelevance, and the line's POSITION varies smoothly between neighbours, so no two
    neighbours are treated categorically differently and no retune flips a region.
+
+### The orphaned-rural-post objection, and the two-ended rule (Edward, same day)
+
+A pure recipient-radius model orphans rural POSTS: every potential viewer of a Hawes
+offer is a town member whose own radius is small, so the offer is seen by nobody.
+(Today's system has this failure too: the Hawes post's ring stops at 45 min, short of
+Kendal centre; the outbound cluster lane was the patch for it.)
+
+Fix: read the SAME field at both ends. With R(x) the smooth personal radius, a post at
+x is visible to a member at y when d(x,y) <= max(R(x), R(y)). d is symmetric and max
+is symmetric, so visibility becomes a symmetric relation BY CONSTRUCTION: if you can
+see me, I can see you. Edward's original symmetry requirement stops being a feature to
+build and becomes a property of the rule. Dense-dense pairs stay tight (both radii
+small), thin-thin pairs see far (rural-rural was also a severed quadrant), and the
+asymmetric pairs work in both directions: the dale member sees the town because their
+own R is large, and the town member can find the dale offer because the POST carries
+the origin's R outward.
+
+Prominence stays local: ranking normalises distance by the VIEWER's own R, so the
+Hawes offer sits low in a full Lancaster feed (findable, not prominent) and high in a
+dale feed. Admission symmetric, attention local. Mail volume in town stays bounded
+because thin-origin posts are few, which is the famine fact itself. Post-side compute
+ceiling follows R(origin) with a flattening curve rather than a wall; the far
+Highlands (Fort William r_400 beyond any drivable radius) remain honestly out of scope
+for any reach mechanism.
