@@ -131,9 +131,11 @@ class DeferralCatchUpServiceTest extends TestCase
         for ($i = 0; $i < 12; $i++) {
             $lastRead = $this->createTestChatMessage($room, $other);
         }
-        DB::table('chat_messages')->whereIn('id', function ($q) use ($room) {
-            $q->select('id')->from('chat_messages')->where('chatid', $room->id);
-        })->update(['date' => '2019-01-16 10:00:00']);
+        // Directly by chatid: MySQL refuses an UPDATE whose subquery reads the same
+        // table (error 1093), so the self-referencing whereIn form errors on every
+        // run. The subquery selected nothing the WHERE cannot say alone.
+        DB::table('chat_messages')->where('chatid', $room->id)
+            ->update(['date' => '2019-01-16 10:00:00']);
 
         // Seen everything; never emailed about any of it.
         DB::table('chat_roster')->where('chatid', $room->id)->where('userid', $member->id)
