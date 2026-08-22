@@ -67,11 +67,16 @@ test.describe('ProxyImage and SupportLink branch coverage', () => {
     await expect(banner).toBeVisible({ timeout: timeouts.ui.appearance })
 
     // fullSrc must have prepended the site origin (didn't start with http)
-    // and correctly re-encoded the '?a=1' query string (encodeURIComponent
-    // turns 'a=1' into 'a%3D1') before handing it to the weserv provider.
-    // (decode once: @nuxt/image 2 URL-encodes the weserv url= param.)
+    // and passed the '?a=1' query through untouched.
+    //
+    // This used to assert 'a%3D1' - escaped - which is what the origin then
+    // received. Harmless for a banner whose parameter nothing reads; not
+    // harmless for Gravatar, which lost d=identicon that way and served its
+    // own logo to every member without a Gravatar account. @nuxt/image encodes
+    // the weserv url= param once, so one decode must show the query as the
+    // origin will see it.
     const bannerSrc = await banner.getAttribute('src')
-    expect(decodeURIComponent(bannerSrc)).toContain('/NRD/Banner.png?a%3D1')
+    expect(decodeURIComponent(bannerSrc)).toContain('/NRD/Banner.png?a=1')
 
     // SupportLink is <client-only>; wait for its mailto link explicitly
     // rather than relying on the page title, so hydration has actually
