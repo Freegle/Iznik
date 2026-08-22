@@ -98,11 +98,12 @@ class DeferralCatchUpService
                     continue;
                 }
 
-                $summary = $this->unreadChatSummary((int) $userId);
+                $summary = $this->unreadChatSummary((int) $userId, $row->firstat ?? null);
 
-                if ($summary['chats'] === 0) {
-                    // They have read everything in the meantime, or the other
-                    // side gave up. No email is the right email.
+                if ($summary['chats'] === 0 || $summary['messages'] === 0) {
+                    // Nothing arrived while we were silent that they have not
+                    // since read - they went to the website, or the other side
+                    // gave up. No email is the right email.
                     $dropped++;
 
                     continue;
@@ -171,29 +172,47 @@ class DeferralCatchUpService
     }
 
     /**
-     * How many chats have messages this member has not been emailed about.
+     * What this member missed WHILE WE WERE NOT EMAILING THEM, and has still not
+     * read.
      *
-     * chat_roster.lastmsgemailed is a genuine per-(chat, member) watermark, so
-     * skipping a member during suppression leaves exactly the state we need
-     * here - no side table required. The normal notification sweep would have
-     * missed these because it also time-windows on message date, which is why
-     * this asks the question chat-wide instead.
+     * Both halves of that are load-bearing, and getting either wrong makes the
+     * email lie in the alarming direction.
+     *
+     * NOT lastmsgemailed. That watermark records what we have EMAILED, not what
+     * they have SEEN, so for anyone who reads on the website - who is therefore
+     * rarely emailed - it sits far behind for ever, and where it is NULL the
+     * whole chat counts from its first message. Measured on 2026-08-22, member
+     * 420 was told "1,247 messages across 7 chats"; the true unread figure was
+     * 8 across 3, the oldest message it counted was from January 2019, and the
+     * number that arrived during the outage and is still unread was ZERO. He
+     * should not have had this email at all.
+     *
+     * And bounded to the outage. The sentence this feeds is "while it was going
+     * on you had N messages", so counting anything from before the provider
+     * started refusing us is counting something else entirely.
      *
      * @return array{chats:int, messages:int}
      */
-    private function unreadChatSummary(int $userId): array
+    private function unreadChatSummary(int $userId, ?string $since): array
     {
-        $row = DB::table('chat_roster')
+        $q = DB::table('chat_roster')
             ->join('chat_messages', 'chat_messages.chatid', '=', 'chat_roster.chatid')
             ->where('chat_roster.userid', $userId)
             // Their own messages are not something to catch up on.
             ->where('chat_messages.userid', '!=', $userId)
             ->where('chat_messages.reviewrejected', 0)
-            ->where(function ($q) {
-                $q->whereNull('chat_roster.lastmsgemailed')
-                    ->orWhereColumn('chat_messages.id', '>', 'chat_roster.lastmsgemailed');
-            })
-            ->selectRaw('COUNT(DISTINCT chat_roster.chatid) AS chats, COUNT(*) AS messages')
+            // Unread: never seen this chat at all, or seen it only up to an
+            // earlier message than this one.
+            ->where(function ($w) {
+                $w->whereNull('chat_roster.lastmsgseen')
+                    ->orWhereColumn('chat_messages.id', '>', 'chat_roster.lastmsgseen');
+            });
+
+        if ($since !== null) {
+            $q->where('chat_messages.date', '>=', $since);
+        }
+
+        $row = $q->selectRaw('COUNT(DISTINCT chat_roster.chatid) AS chats, COUNT(*) AS messages')
             ->first();
 
         return [
