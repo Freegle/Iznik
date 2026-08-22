@@ -450,9 +450,21 @@ func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 		if len(ring) == 0 || len(ring[0]) < 4 {
 			return c.JSON(empty)
 		}
+		outer := ring[0]
 
-		// Convert the outer ring to a WKT POLYGON for the within_coords query.
-		wkt := ringToWKT(ring[0])
+		// Candidates come from the reach's BOUNDING BOX, not its boundary; the exact
+		// boundary test then runs here, on `outer`, so the answer is the same set as
+		// asking the index to do the containment.
+		//
+		// Posting the boundary itself stopped working once display smoothing went from
+		// the tracer: a 45-minute drive reach out of central London traces ~13k vertices,
+		// over the spatial index's 10,000-vertex WKT limit, so the query 400d and this
+		// handler soft-failed to an empty list. 45 minutes is the DEFAULT reach, so the
+		// explorer's Freegler dots and its "~N would be notified" panel both read as
+		// "nobody" in exactly the case they exist for, with only a server-side log line
+		// to say why. ripple.go already takes the bbox route for this reason.
+		minLat, maxLat, minLng, maxLng := reachedBBox(g, iso.ReachedNodes)
+		wkt := bboxWKT(minLat, maxLat, minLng, maxLng)
 
 		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
@@ -492,7 +504,9 @@ func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 			}
 			lat, ok1 := r.Extra["lat"].(float64)
 			lng, ok2 := r.Extra["lng"].(float64)
-			if ok1 && ok2 {
+			// The bbox is wider than the reach, so drop the corners the boundary
+			// excludes. This is the containment the index used to do for us.
+			if ok1 && ok2 && pointInRing(lng, lat, outer) {
 				pts = append(pts, pt{lat, lng})
 			}
 		}
@@ -508,6 +522,15 @@ func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 
 		return c.JSON(fiber.Map{"freeglers": pts, "total_located": totalLocated})
 	}
+}
+
+// bboxWKT renders a lat/lng bounding box as a WKT POLYGON, for spatial-index queries
+// that want a candidate set rather than an exact answer. Four corners, so it can never
+// hit the index's vertex limit however large the reach is - which is the whole reason
+// callers ask by box and filter the boundary themselves.
+func bboxWKT(minLat, maxLat, minLng, maxLng float64) string {
+	return fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
+		minLng, maxLng, minLat, maxLat)
 }
 
 // ringToWKT converts a GeoJSON polygon ring ([lng,lat] pairs) to WKT POLYGON.
