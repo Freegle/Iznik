@@ -16,7 +16,20 @@ final class ItemName
      * way ("Pleaser" boots); trailing punctuation goes with the word so "Pallets Please!!"
      * leaves no stray "!!".
      */
-    private const COURTESY = '/\b(?:please+|pls|plz)\b[!?.]*/i';
+    private const COURTESY = '/\b(?:please+|pls|plz)\b[!?.,]*/i';
+
+    /**
+     * A sign-off at the END of a name: "thanks", "thank you", "thank you in advance". Unlike
+     * "please" these are anchored to the end, because they DO occur inside real item names -
+     * production has 113 posts for a "thank you card" or "thank you gift", and stripping
+     * mid-name would offer those as plain "cards". All 14 production names carrying a thanks
+     * trailer have it at the end. The repeat group eats a run of them ("please, thank you").
+     *
+     * Deliberately absent: "ta" and "tia". Both look like courtesy words and neither is safe -
+     * all 20 production names containing "ta" are job titles ("SEN TA", "Teaching Assistant
+     * (TA)"), and half the "tia" ones are the Siemens "TIA Portal".
+     */
+    private const TRAILING_THANKS = '/(?:[\s,;:.!?]*\b(?:thanks?(?:\s+you)?(?:\s+very\s+much)?(?:\s+in\s+advance)?|thankyou|thx)\b)+[\s,;:.!?]*$/i';
 
     /**
      * Remove courtesy words from an item name: members write "iron please", and an image
@@ -28,7 +41,8 @@ final class ItemName
      */
     public static function stripCourtesy(string $name): string
     {
-        $cleaned = preg_replace(self::COURTESY, ' ', $name) ?? $name;
+        $cleaned = preg_replace(self::TRAILING_THANKS, '', $name) ?? $name;
+        $cleaned = preg_replace(self::COURTESY, ' ', $cleaned) ?? $cleaned;
         $cleaned = trim(preg_replace('/\s+/', ' ', $cleaned) ?? $cleaned);
         $cleaned = rtrim($cleaned, " \t,;:");
 

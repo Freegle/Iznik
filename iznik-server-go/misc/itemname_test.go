@@ -27,6 +27,23 @@ func TestStripCourtesy(t *testing.T) {
 		{"nothing left falls back to original", "please", "please"},
 		{"nothing left but punctuation falls back", "Please!", "Please!"},
 		{"empty stays empty", "", ""},
+
+		// Thanks-family sign-offs, anchored to the end of the name.
+		{"trailing thanks", "Anything fitness related thanks", "Anything fitness related"},
+		{"thank you in advance", "digital multi meter thank you in advance", "digital multi meter"},
+		{"thank you very much", "any old laptops for spares thank you very much", "any old laptops for spares"},
+		{"thanks jammed against a comma", "Active speakers for PC,small,thanks.", "Active speakers for PC,small"},
+		{"a run of sign-offs", "Working 2 slice toaster please, Thank you", "Working 2 slice toaster"},
+		{"plz and thanks together", "3 chairs and 2 sofas plz thanks", "3 chairs and 2 sofas"},
+		{"thanks alone falls back", "thanks", "thanks"},
+
+		// Names that only LOOK like courtesy, and must survive intact.
+		{"thank you is the item itself", "thank you cards", "thank you cards"},
+		{"thank you gift is the item", "thank you gift bags", "thank you gift bags"},
+		{"ta is a job title", "SEN TA", "SEN TA"},
+		{"ta inside a longer job title", "Early Years Teaching Assistant (TA)", "Early Years Teaching Assistant (TA)"},
+		{"tia is Siemens software", "Junior Controls Engineer (TIA Portal)", "Junior Controls Engineer (TIA Portal)"},
+		{"thanksgiving is not thanks", "decorations for Thanksgiving", "decorations for Thanksgiving"},
 	}
 
 	for _, c := range cases {
