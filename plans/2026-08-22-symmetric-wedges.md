@@ -1,8 +1,8 @@
 # Symmetric wedges: let starved areas see their market towns
 
-Status: design agreed in principle with Edward 2026-08-22 (session: rippling explorer
-merge). Not yet built. This captures the argument, the measurements behind it, and the
-implementation shape, so the build can start without re-deriving any of it.
+Status: SUPERSEDED in large part by the adversarial review below (same day). The
+problem analysis and the symmetry argument stand; the implementation shape does not.
+See "Adversarial review outcome" at the end before acting on anything above it.
 
 ## The reported problem
 
@@ -166,3 +166,139 @@ reverse index is small by construction.
   nine combinations.
 - Gate location: iznik-routing-go/ripple.go:759
   (`cluster_anchor && total < clusterFloor`, in the cap-did-not-bind branch).
+
+---
+
+## Adversarial review outcome (2026-08-22, later the same day)
+
+Ten-agent pass: six probe agents over 36 UK places against the live graph and member
+index, four adversarial reviewers over this plan and the code, plus direct live-DB
+membership queries and a national famine count. Full probe rows and review findings in
+the session transcript; the numbers below are the ones that matter.
+
+### Errors in this plan, found by the review
+
+1. **The membership premise was wrong.** "A Hawes member is a member of the
+   Carnforth/Lancaster groups" was inferred from /v1/reachable-groups, which is an
+   OUTBOUND targeting signal (which groups have a member drivable from a point), not
+   membership. Live DB: the whole upper Wensleydale box holds 2 active members; both
+   belong to KENDAL (plus Penrith/Northallerton/Skipton one each), neither to Carnforth
+   or Lancaster-Morecambe. The complaint's named groups cannot mail these members at all.
+2. **The mail path claim was wrong.** UnifiedDigestService::getPostsForUser scopes
+   digest candidates to the member's OWN memberships (whereIn messages_groups.groupid)
+   BEFORE any ring test; rings only relax rejection within that set. "The digest follows
+   the site automatically" is false for any post on a group the member has not joined.
+   (The newly-reached push path, mailNewlyReachedForPost, DOES reach outside the capped
+   polygon: verified 2026-08-20, 35% of notified members outside it, so overflow lanes
+   do feed one mail surface. But the daily digest is group-scoped first.)
+3. **A sibling investigation of the SAME complaint (2026-08-20, Discourse 10046) was
+   not consulted.** It had already measured: the towns table lacks
+   Kendal/Lancaster/Carnforth/Penrith/Skipton/Barrow (so this plan's anchor default was
+   known-broken before it was written); the Hawes step-change (pre-cap pool 427 at
+   45 min, 941 at 50, 1,250 at 55, 2,008 at 60: crossing into a town doubles the
+   audience in ~5 minutes); conversion past 45 min under 8.5% per reply; honest yield of
+   a bounded rural extension 2-15 extra rehomes/fortnight nationally; and a surviving
+   design, the POPULATION FLOOR (grow past 45 until ~1,000 freeglers, bounded +15
+   min/60 absolute) with its three known prerequisites (paired admission exception,
+   ringsBbox inclusion, digest budget-decay fix). The 314-vs-427 Hawes pool difference
+   is metric and origin-point drift (located-in-polygon vs pre-cap total; Nominatim
+   postcode point vs post origin), not a contradiction.
+4. **Implementation holes**: the reachoverflow lane space is a closed 4-bit enum synced
+   across two repos (5 spare codes), not an open reverse index; the inbound lane as
+   described had no self-limiting floor/fan-in cap (the outbound lane has both), making
+   it a location-gameable amplifier; anchor-town posts usually sit in the capBound
+   branch where the cluster lane never runs, so the firing condition cannot be reused;
+   Lancaster (62.5 min) is beyond the 60-min ceiling anyway; reuse_reach has no
+   staleness guard for adjacency changes; the digest closeness score clamps to 0 for
+   every rescued post so ranking cannot order them; the far-away reply warning gates on
+   Offer only; and WhichPostsExplanation.vue would misdescribe the model further.
+
+### What the 36-place probe showed
+
+- **Genuinely starved (pool at cap under ~10% of the 4,000 target), rural**: Fort
+  William 4, Newton Stewart 15, Aberystwyth 33, Tregaron 34, Machynlleth 44, Eyemouth
+  43, Hawick 52, Berwick 56, Bellingham 57, Moffat 85, Bala 83, Lynton 96, Spilsby 142,
+  Camelford 177, Hatherleigh 196, Brecon 229, Reeth 238, Goathland 278, St Johns Chapel
+  296, Kirkbymoorside 297, Llanidloes 318. Wales and the Borders are far worse than the
+  Pennines. Thurso: pool 0, band unknown; the far Highlands are effectively outside the
+  system and no reach mechanism fixes that.
+- **False positives a pool-ratio gate would admit**: Hull city centre measures SPARSE,
+  cap 45, pool 664 (17%) with 84 live posts in its bbox; Merthyr Tydfil sparse, 747
+  (19%), Cardiff 44 min. Content famine and member famine are different things: the
+  gate must include live-post supply, not member pool alone.
+- **The Penrith circularity**: Penrith measures DENSE, cap 20, and at that cap its pool
+  is 802 (20%). A remote market town capped like inner London, made "starved" by its
+  own cap. It is simultaneously the post-supply hub of the North Pennines (166 live
+  posts in bbox, the largest measured outside Norwich 209). Fixing the band measure
+  fixes Penrith; a pool-at-cap gate must be computed at 45 min for everyone or it
+  inherits the cap's own distortions.
+- **Supply deserts**: Barnard Castle, 18.8 min from Middleton-in-Teesdale, has ZERO
+  live posts. Reaching your market town is not enough if the town has nothing; content
+  famine is regional in the North Pennines and mid-Wales.
+- **The existing outbound wedges fail where need is greatest**: across mid-Wales and
+  the Borders the cluster finder returns nothing (no 150-member/km cell exists within
+  60 min of Tregaron); where wedges DO fire they point at freegler mass, which
+  membership data sometimes vindicates (Bellingham's wedge toward Newcastle matches its
+  members' Newcastle-area group joins) and sometimes not (Middleton's wedge points west
+  to the Eden valley, away from both its candidate towns).
+- **Anchors are plural** (Edward: "towns, not town"): Alston members joined Penrith 12,
+  Bishop Auckland 2, Hexham 2; Camelford members joined Wadebridge 19, Launceston 13,
+  St Austell 6, Newquay 5. Any hub assignment must return a weighted SET. Membership
+  data is the ground truth but carries moved-house noise (Machynlleth members still in
+  Watford/Bushey groups): filter by distance.
+- **National famine floor** (crow-fly, conservative): 653 active members have fewer
+  than 50 others within 15 miles; 1,202 under 100; 3,404 under 250; 9,386 under 500.
+  Not a niche of two, not a third of the country.
+
+### Bus-route hypothesis (Edward's, same day)
+
+Terminus = hub = natural place for out-of-town people to see posts from and have posts
+seen in. Verdict: sound as a hub NOMINATOR, wrong as sole assignment (not every road
+has buses). Division of labour: bus termini and frequency nominate and weight hubs
+(BODS/NaPTAN open data; effectively national coverage at hub level); OSM place=town
+tags from the already-loaded pbf fill nomination gaps; the road graph we already hold
+generalises assignment to unbused cells (drive-time gravity, top 2-3 hubs per cell);
+membership joins validate. The 234-row towns table is not a viable source (verified:
+of Penrith/Hexham/Kendal/Lancaster/Carnforth/Wadebridge/Launceston/Northallerton it
+contains only Northallerton).
+
+### Where the evidence now points
+
+The symmetric idea survives; the wedge/anchor implementation does not need to carry
+it. The 10046 step-change measurement (427 -> 2,008 in 15 minutes of growth) means
+ISOTROPIC growth reaches the hub almost immediately in exactly the places that need
+it, so a population floor does the work anchors were for, without an anchor table, a
+lane-enum extension, or gameable geometry:
+
+- Post side (10046's surviving design, unchanged): grow a thin post's reach past 45
+  until it holds ~1,000 freeglers, bounded +15 min / 60 absolute, with its three known
+  prerequisites (admission exception, ringsBbox, budget decay).
+- Member side (the symmetric half, new): the member's own admission cap grows past
+  their band cap until their catchment holds a target population, bounded at 60.
+  Recipient-side, so it fixes Penrith (802 at cap 20 grows) and cannot swamp anyone
+  (it only ever grows famine feeds toward a target and stops). Browse is already a
+  member-side isochrone query, so this is a change to CapFor, not new geometry.
+  Digest reach follows where the member cap is consulted, but daily-digest candidacy
+  stays group-scoped: for the specific Carnforth/Lancaster ask the remaining gap is
+  MEMBERSHIP (the members are not in those groups), which is a join-suggestion/UX
+  question, not a reach question.
+- Hub/bus/adjacency work is demoted to telemetry and validation: log what grown
+  reach actually gets engaged with, per direction and travel time (the review found
+  lane stamping does not exist yet and the current logs cannot answer the past-45
+  question), and use hub data to sanity-check growth direction later if needed.
+- Counter-evidence to respect: conversion past 45 is under 8.5% per reply, and the
+  honest national yield of the post-side extension was 2-15 rehomes/fortnight. The
+  member-side case does not rest on conversion (a famine feed with anything in it
+  beats an empty one, and WANTEDs cut the other way), but nothing here should ship
+  unlogged or unmeasured.
+
+### Still open (Edward)
+
+- Population-floor targets and bounds for each side (post side ~1,000 was 10046's
+  number; member side unset).
+- Whether member-side growth gates on member pool, live-post supply, or both (Hull
+  says: include supply).
+- The membership/UX half of the original complaint (join suggestions for hub groups
+  vs auto-membership vs leave as is).
+- Sequencing against target_by_ru (the governor currently caps 55.9% of sparse-origin
+  posts; that fix may matter more than any of this).
