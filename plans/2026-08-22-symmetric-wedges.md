@@ -432,3 +432,55 @@ Repairs, cliff-free:
    month of browsing). Supply concentrates in towns more than people do, which might
    restore town-pull in regime three without calibration; per-capita posting in
    sprinkle country is unmeasured, so this is an experiment, not a claim.
+
+---
+
+## Bus-network validation (Edward's simple approach, 2026-08-22 evening)
+
+Claim tested: from the bus network alone, any GB location is either inside a coherent
+centre of population or outside one, and if outside, the nearest centre is
+identifiable. Data: NaPTAN (open, no key, 435,367 records, 375,264 active bus stops
+with OSGB coordinates and locality names). Map artifact: "Bus-Drawn Britain"
+(claude.ai/code/artifact/1c7b4978-629c-4bdf-94d2-1fe9eab6b7ce).
+
+Rule that emerged (two tiers, both from stop geometry alone):
+- HUB: 8-connected component of 1km cells with >=4 stops each, component >=30 stops.
+  702 nationally; 204 contain bus-station infrastructure (BCS/BCE stop types), which
+  is terminus evidence needing no timetable download.
+- TOWN: an isolated 1km cell holding >=5 stops that is not hub-adjacent. 3,344
+  nationally. The marketplace signature: Hawes has 7-11 stops in ONE cell; a
+  strung-out roadside village (Hatherleigh: busiest cell 2) never concentrates.
+
+Validation results:
+- All 19 must-be-inside test towns classify inside a hub.
+- 9 of 12 tiny market towns surface in the town tier (Hawes, Leyburn, Settle,
+  Bishop's Castle, Rhayader, Camelford, Machynlleth, Lampeter, Presteigne); Sedbergh,
+  Bala and Kirkby Stephen miss by one stop in a cell (threshold sensitivity, not
+  structure).
+- Outside->nearest matches lived catchments across the hinterland cases when computed
+  BY ROAD: Old Hutton->Kendal, Caton->Lancaster 20 min, Reeth->Richmond 19,
+  Masham->Ripon, Goathland->Whitby, Middleton->Barnard Castle, Alston->Penrith/Hexham
+  (membership votes Penrith 12-2). Crow distance fails in pinched terrain
+  (Hawes->Catterick over the fells); the road graph we already run is the fix.
+- Catchments come out PLURAL naturally: the road-nearest top-k list is the answer
+  (Machynlleth: Tywyn AND Aberystwyth), matching "towns, not town".
+
+Defects found (five-reviewer regional sweep + case testing):
+- Conurbations merge into belt-blobs and the modal-locality naming is wrong on them
+  ("Aylesbury" = the South-East, "Paisley" = Glasgow, "Mayfield" = Edinburgh,
+  "Aberavon" = Port Talbot). Inside/outside geometry fine; naming needs substructure
+  (a higher-density second pass inside mega-components would split them into cities).
+- Small-end false hubs: stop-dense ex-colliery villages (Tow Law, Butterknowle) rank
+  as centres and can win nearest-centre (St John's Chapel->Tow Law 29 min). Prune by
+  requiring station infrastructure or a minimum town-tier corroboration.
+- A lat/lng averaging bug zeroed Carlisle's coordinates (missing per-stop lat/lng
+  rows); fixed same day. NaPTAN locality names have spelling drift (Boness).
+- Hebridean crofting townships classify as centres; arguably correct locally.
+
+Verdict: the claim substantially HOLDS, with roads (not crow) doing the nearest
+assignment, and it is far simpler than the continuous-field design: two integer
+thresholds, one open dataset, and the road graph already in production. What it does
+not by itself give: reach policy (how far a member sees). It gives the natural-town
+structure that policy needs (which centre is yours, whether you are in one), i.e. the
+calibration/anchor layer the earlier sections kept reaching for. BODS timetable data
+(free account) would add frequency-weighted termini as the hub-strength refinement.
