@@ -98,20 +98,20 @@ type cacheFile struct {
 // ---------------------------------------------------------------------------
 
 var (
-	dataPath       = flag.String("data", "/tmp/ripple_sim_data.json", "input post/reply JSON (from ripple_simulator_extract.php)")
-	cachePath      = flag.String("cache", "/tmp/ripple_sim_cache.json", "routing-eval cache JSON (read-write)")
-	routingURL     = flag.String("routing", "http://localhost:8194", "routing server base URL (internal/no-auth)")
-	ticks          = flag.Int("ticks", 30, "number of cron ticks across the post lifetime")
-	lifetimeDays   = flag.Float64("post-lifetime-days", 30, "post lifetime (days)")
-	maxMinutes     = flag.Float64("max-minutes", 30, "max drive-time isochrone (minutes)")
-	mode           = flag.String("mode", "drive", "travel mode: walk / cycle / drive")
-	workers        = flag.Int("workers", 8, "concurrent eval workers")
-	rebuildCache   = flag.Bool("rebuild-cache", false, "ignore existing cache and re-fetch everything")
-	limit          = flag.Int("limit", 0, "max posts to evaluate (0 = all)")
-	groupBy        = flag.String("group-by", "", "stratify results by post attribute: \"\"=all, \"ru\"=RU category, \"ru-coarse\"=Urban/Rural/Other")
-	jsonOutput     = flag.String("json-output", "", "if set, write structured results JSON here (for Layer-3 monitoring)")
-	filterEmail    = flag.String("filter-email-freq", "", "only count repliers with this email-frequency setting: 'immediate' (=-1), 'digest' (>0), or '' for no filter")
-	maxReach       = flag.Int("max-reach", 0, "population cap on the reach: notify at most the closest N located freeglers per post (0 = uncapped, i.e. the full max-minutes isochrone). Models a density-adaptive reach — dense areas stop early, sparse areas fall back to the time cap.")
+	dataPath     = flag.String("data", "/tmp/ripple_sim_data.json", "input post/reply JSON (from ripple_simulator_extract.php)")
+	cachePath    = flag.String("cache", "/tmp/ripple_sim_cache.json", "routing-eval cache JSON (read-write)")
+	routingURL   = flag.String("routing", "http://localhost:8194", "routing server base URL (internal/no-auth)")
+	ticks        = flag.Int("ticks", 30, "number of cron ticks across the post lifetime")
+	lifetimeDays = flag.Float64("post-lifetime-days", 30, "post lifetime (days)")
+	maxMinutes   = flag.Float64("max-minutes", 30, "max drive-time isochrone (minutes)")
+	mode         = flag.String("mode", "drive", "travel mode: walk / cycle / drive")
+	workers      = flag.Int("workers", 8, "concurrent eval workers")
+	rebuildCache = flag.Bool("rebuild-cache", false, "ignore existing cache and re-fetch everything")
+	limit        = flag.Int("limit", 0, "max posts to evaluate (0 = all)")
+	groupBy      = flag.String("group-by", "", "stratify results by post attribute: \"\"=all, \"ru\"=RU category, \"ru-coarse\"=Urban/Rural/Other")
+	jsonOutput   = flag.String("json-output", "", "if set, write structured results JSON here (for Layer-3 monitoring)")
+	filterEmail  = flag.String("filter-email-freq", "", "only count repliers with this email-frequency setting: 'immediate' (=-1), 'digest' (>0), or '' for no filter")
+	maxReach     = flag.Int("max-reach", 0, "population cap on the reach: notify at most the closest N located freeglers per post (0 = uncapped, i.e. the full max-minutes isochrone). Models a density-adaptive reach — dense areas stop early, sparse areas fall back to the time cap.")
 )
 
 // effectiveReach returns the number of freeglers actually in the notification
@@ -261,17 +261,17 @@ type jsonGroupRow struct {
 }
 
 type jsonSummary struct {
-	Ticks                 int            `json:"ticks"`
-	LifetimeDays          float64        `json:"lifetime_days"`
-	MaxMinutes            float64        `json:"max_minutes"`
-	MaxReach              int            `json:"max_reach"`
-	Mode                  string         `json:"mode"`
-	PostsEvaluated        int            `json:"posts_evaluated"`
-	ReplyP50Hours         float64        `json:"reply_p50_hours"`
-	ReplyP75Hours         float64        `json:"reply_p75_hours"`
-	ReplierRankP50        float64        `json:"replier_rank_p50"`
-	ReplierDriveMinP75    float64        `json:"replier_drive_min_p75"`
-	Rows                  []jsonGroupRow `json:"rows"`
+	Ticks              int            `json:"ticks"`
+	LifetimeDays       float64        `json:"lifetime_days"`
+	MaxMinutes         float64        `json:"max_minutes"`
+	MaxReach           int            `json:"max_reach"`
+	Mode               string         `json:"mode"`
+	PostsEvaluated     int            `json:"posts_evaluated"`
+	ReplyP50Hours      float64        `json:"reply_p50_hours"`
+	ReplyP75Hours      float64        `json:"reply_p75_hours"`
+	ReplierRankP50     float64        `json:"replier_rank_p50"`
+	ReplierDriveMinP75 float64        `json:"replier_drive_min_p75"`
+	Rows               []jsonGroupRow `json:"rows"`
 }
 
 func writeJSONResults(path string, posts []extractedPost, groups map[string][]curveResult) error {
@@ -566,19 +566,19 @@ type curve struct {
 }
 
 type curveResult struct {
-	Name              string
-	PairsTotal        int
-	PairsReachedInTime int
-	PairsReachableButLate int  // we'd have notified them eventually but after they replied
-	PairsUnreachable  int     // never reached by max isochrone
-	NotificationsSent int     // total notifications across simulated runs
+	Name                  string
+	PairsTotal            int
+	PairsReachedInTime    int
+	PairsReachableButLate int // we'd have notified them eventually but after they replied
+	PairsUnreachable      int // never reached by max isochrone
+	NotificationsSent     int // total notifications across simulated runs
 
 	// First-replier breakdown (the replier whose reply_time was earliest).
 	// Arguably this is what matters most: catching the FIRST person who'd
 	// reply, since they're the most likely to actually claim the item.
-	FirstRepliersTotal   int
-	FirstRepliersInTime  int
-	FirstRepliersLate    int
+	FirstRepliersTotal       int
+	FirstRepliersInTime      int
+	FirstRepliersLate        int
 	FirstRepliersUnreachable int
 
 	// Per-tick "caught" histogram: how many in-time pairs were notified

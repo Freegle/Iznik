@@ -5,8 +5,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/golang-jwt/jwt/v4"
 	"github.com/gofiber/fiber/v2"
+	"github.com/golang-jwt/jwt/v4"
 )
 
 // jwtAuthMiddleware validates the JWT from ?jwt= or Authorization header.
