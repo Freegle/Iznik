@@ -402,3 +402,33 @@ joins, bus/TTWA data as calibration targets, not infrastructure); and concave ra
 decay makes near side vs far side of a town rank nearly equally at range. Conurbation
 partiality (Ealing does not see Croydon) emerges from scale rather than needing
 settlement polygons.
+
+### The moderate-sprinkle counterexample (Edward, same day): "always" was wrong
+
+Claim killed: "a starved point's radius always terminates inside its nearest town".
+True only when the hinterland holds fewer than K people. Measured counterexamples
+(crow-fly r_400 vs crow distance to the towns):
+
+- Bishop's Castle: r_400 13.9 mi; Ludlow 14.5 OUT, Shrewsbury 18.1 OUT.
+- Kington: r_400 10.3 mi; Leominster 12.4 OUT, Hereford 16.6 OUT.
+- Holt: r_400 20.2 mi; Cromer 9.1 in, Norwich 21.0 OUT by a whisker.
+- (Masham: 17.8 mi; Ripon and Northallerton both in. Not all sprinkle fails.)
+
+Three regimes: empty country (count forced into the town: Hawes), near-town
+hinterland (town supplies the count: Caton, Old Hutton), and moderate sprinkle
+(count self-completes short of the town: the Marches). Today's flat 45-min cap
+serves regime three FINE (Shrewsbury 39.7 min from Bishop's Castle), so the raw
+field would REGRESS it.
+
+Repairs, cliff-free:
+1. The curve on the field is fitted against REVEALED CATCHMENTS (membership joins,
+   bus termini, TTWAs) with the constraint that a hinterland member's radius covers
+   their demonstrated towns. Regime three is exactly where the constraint binds.
+   Edward's two-density argument closes Edward's own counterexample: freegler
+   density supplies the smooth machinery, lived geography supplies the target.
+2. Deployment monotonicity: constrain the curve to never give anyone less than the
+   current system does. The change becomes extension-only from current behaviour.
+3. Shelf variant, untested: measure the field in POSTS not people (radius holding a
+   month of browsing). Supply concentrates in towns more than people do, which might
+   restore town-pull in regime three without calibration; per-capita posting in
+   sprinkle country is unmeasured, so this is an experiment, not a claim.
