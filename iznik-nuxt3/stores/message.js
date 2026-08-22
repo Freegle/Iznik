@@ -552,6 +552,12 @@ export const useMessageStore = defineStore('message', {
         ? activeMessages.length
         : 0
     },
+    // Clears the whole browse count server-side. No ids: see MessageAPI.clearCount.
+    async clearCount() {
+      await api(this.config).message.clearCount()
+      this.count = 0
+    },
+
     async markSeen(ids, source) {
       try {
         await api(this.config).message.markSeen(ids, source)

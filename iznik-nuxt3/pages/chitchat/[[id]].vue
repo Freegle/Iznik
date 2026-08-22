@@ -130,6 +130,19 @@
             <NewsCommunityEventVolunteerSummary class="events-section" />
           </VisibleWhen>
 
+          <!-- Only offered when there is something to clear, and only on the feed itself
+               (not a single thread), where "all" has an obvious meaning. -->
+          <div v-if="!id && unreadCount" class="markallread-row">
+            <button
+              type="button"
+              class="markallread-btn"
+              @click="markAllRead"
+            >
+              <v-icon icon="check-double" class="me-1" />
+              Mark all {{ unreadCount }} read
+            </button>
+          </div>
+
           <!-- Posts feed -->
           <div class="posts-feed">
             <NoticeMessage v-if="error" class="mt-2">
@@ -455,6 +468,12 @@ const newsfeedToShow = computed(() => {
 // Track snapshot of what was seen before visiting this page.
 // This is used to show the "you're up to date" divider.
 const seenBeforeVisit = computed(() => newsfeedStore.seenBeforeVisit)
+
+const unreadCount = computed(() => newsfeedStore.count)
+
+async function markAllRead() {
+  await newsfeedStore.markAllRead()
+}
 
 // Find the index in newsfeedToShow where we should show the divider.
 // The divider goes after the last "new" item (items with id > seenBeforeVisit).
@@ -892,6 +911,26 @@ if (me.value) {
 }
 
 // Filter section
+.markallread-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.markallread-btn {
+  background: none;
+  border: none;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  color: $primary;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
 .filter-section {
   margin-top: 0;
   background: white;
