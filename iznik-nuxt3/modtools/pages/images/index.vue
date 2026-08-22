@@ -279,7 +279,10 @@ async function handleAccept(img) {
     await accept(img.id, img.pending_externaluid || '')
     localImages.value = localImages.value.filter((i) => i.id !== img.id)
   } catch (e) {
-    errors.value[img.id] = apiMessage(e, 'Failed to accept image. Please try again.')
+    errors.value[img.id] = apiMessage(
+      e,
+      'Failed to accept image. Please try again.'
+    )
   } finally {
     accepting.value[img.id] = false
   }
@@ -293,7 +296,10 @@ async function handleKeep(img) {
     await keep(img.id)
     localImages.value = localImages.value.filter((i) => i.id !== img.id)
   } catch (e) {
-    errors.value[img.id] = apiMessage(e, 'Failed to keep current image. Please try again.')
+    errors.value[img.id] = apiMessage(
+      e,
+      'Failed to keep current image. Please try again.'
+    )
   } finally {
     keeping.value[img.id] = false
   }
@@ -310,7 +316,10 @@ async function handleSuppress(img) {
     await suppress(img.id)
     localImages.value = localImages.value.filter((i) => i.id !== img.id)
   } catch (e) {
-    errors.value[img.id] = apiMessage(e, 'Failed to suppress this item. Please try again.')
+    errors.value[img.id] = apiMessage(
+      e,
+      'Failed to suppress this item. Please try again.'
+    )
   } finally {
     suppressing.value[img.id] = false
   }

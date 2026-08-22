@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"math"
@@ -109,8 +108,7 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 			// unsimplified and too large for a WKT query); the nearest-node-in-reached-set
 			// test below filters each candidate exactly, so the result is unchanged.
 			evMinLat, evMaxLat, evMinLng, evMaxLng := reachedBBox(g, iso.ReachedNodes)
-			wkt := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
-				evMinLng, evMaxLng, evMinLat, evMaxLat)
+			wkt := bboxWKT(evMinLat, evMaxLat, evMinLng, evMaxLng)
 
 			reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 			resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
@@ -396,8 +394,7 @@ func fetchClusterOverflow(g *Graph, spatialURL string, lat, lng float64, mode Mo
 	}
 
 	minLat, maxLat, minLng, maxLng := reachedBBox(g, iso2.ReachedNodes)
-	wkt := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
-		minLng, maxLng, minLat, maxLat)
+	wkt := bboxWKT(minLat, maxLat, minLng, maxLng)
 
 	reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 	resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
@@ -603,8 +600,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			res = NetworkResolution(g, iso.ReachedNodes, mode)
 		}
 		bMinLat, bMaxLat, bMinLng, bMaxLng := reachedBBox(g, iso.ReachedNodes)
-		wkt := fmt.Sprintf("POLYGON((%[1]f %[3]f, %[2]f %[3]f, %[2]f %[4]f, %[1]f %[4]f, %[1]f %[3]f))",
-			bMinLng, bMaxLng, bMinLat, bMaxLat)
+		wkt := bboxWKT(bMinLat, bMaxLat, bMinLng, bMaxLng)
 
 		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec

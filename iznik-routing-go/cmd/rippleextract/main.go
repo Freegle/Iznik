@@ -40,14 +40,14 @@ type Replier struct {
 }
 
 type Post struct {
-	PostID    int       `json:"post_id"`
-	Lat       float64   `json:"lat"`
-	Lng       float64   `json:"lng"`
-	Arrival   string    `json:"arrival"`
-	Type      string    `json:"type"`
-	FromUser  int       `json:"fromuser"`
-	Outcome   *string   `json:"outcome"`
-	OutcomeAt *string   `json:"outcome_at"`
+	PostID    int     `json:"post_id"`
+	Lat       float64 `json:"lat"`
+	Lng       float64 `json:"lng"`
+	Arrival   string  `json:"arrival"`
+	Type      string  `json:"type"`
+	FromUser  int     `json:"fromuser"`
+	Outcome   *string `json:"outcome"`
+	OutcomeAt *string `json:"outcome_at"`
 	// RU category (e.g. "A1" Urban Major Conurbation, "F1" Rural Hamlets)
 	// — derived from the post's postcode via transport_postcode_classification.
 	// Empty if the postcode isn't classified (rare, mostly outside England).

@@ -1023,8 +1023,8 @@ const currentGroupid = computed(() => {
     const pool = matchingListedCollection.length
       ? matchingListedCollection
       : pending.length
-      ? pending
-      : mine
+        ? pending
+        : mine
     // Anchor to the group the post ORIGINATED on (home), not a copy that rippled in
     // later. A mod active on both the origin and a group the post rippled into should
     // act on / reply from the origin, so a Blank reply appends to the member's existing
