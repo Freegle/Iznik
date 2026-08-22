@@ -3467,15 +3467,29 @@ func GetUserReplies(c *fiber.Ctx) error {
 		whereArgs = append(whereArgs, msgtype)
 	}
 
+	// One row per post, matching the replies badge beside the modal, which counts
+	// COUNT(DISTINCT cm.refmsgid). Both joins below fan out, and SELECT DISTINCT cannot
+	// collapse them because the fanned-out columns are themselves selected:
+	//
+	//   - messages_groups holds a row per group the post reached, and rippling adds one
+	//     (rippled_in = 1) per receiving group with its own arrival. A post rippling
+	//     outwards over a day therefore yielded one row per distinct ripple time.
+	//     MIN(mg.arrival) is the origin arrival, i.e. when the post was actually made.
+	//     Grouping rather than filtering on rippled_in = 0 because a few posts carry no
+	//     origin row at all and filtering would drop them from the list entirely.
+	//   - messages_outcomes holds a row per outcome, so a post Withdrawn and then Taken
+	//     doubled again. The subquery takes the most recent, as GetUserMessageHistory does.
 	tx := db.Table("chat_messages cm").
-		Select("DISTINCT m.id, m.subject, m.type, mg.arrival, mo.outcome").
+		Select("m.id, m.subject, m.type, MIN(mg.arrival) AS arrival, "+
+			"(SELECT mo.outcome FROM messages_outcomes mo WHERE mo.msgid = m.id "+
+			"ORDER BY mo.timestamp DESC LIMIT 1) AS outcome").
 		Joins("INNER JOIN messages m ON m.id = cm.refmsgid").
 		Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id").
-		Joins("LEFT JOIN messages_outcomes mo ON mo.msgid = m.id").
-		Where(whereSQL, whereArgs...)
+		Where(whereSQL, whereArgs...).
+		Group("m.id, m.subject, m.type")
 
 	var replies []ReplyRow
-	tx.Order("mg.arrival DESC").Limit(100).Scan(&replies)
+	tx.Order("arrival DESC").Limit(100).Scan(&replies)
 
 	if replies == nil {
 		replies = []ReplyRow{}
