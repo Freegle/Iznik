@@ -484,3 +484,37 @@ not by itself give: reach policy (how far a member sees). It gives the natural-t
 structure that policy needs (which centre is yours, whether you are in one), i.e. the
 calibration/anchor layer the earlier sections kept reaching for. BODS timetable data
 (free account) would add frequency-weighted termini as the hub-strength refinement.
+
+### The dominance rule, finalised (Edward's, tested twelve cases)
+
+"Is there a place within an hour's drive with a significantly larger number of stops?
+If so, that's your hub." Formalised: hub(x) = nearest-by-road centre with stops >= 5x
+your own settlement's total, searched within 60 road-minutes, among plausible hubs
+(>= 50 stops or bus-station infrastructure). Terminal = nothing dominates you.
+
+Twelve-case verdict (live road graph, NaPTAN centres):
+- Exact: Old Hutton->Kendal 13m, Caton->Lancaster 20m, Reeth->Richmond 19m,
+  Alston->Penrith 34m (membership 12-2), Kington->Hereford 35m,
+  Machynlleth->Aberystwyth 39m, Penrith->Carlisle 32m, Kendal->TERMINAL,
+  St Johns Chapel->Barnard Castle 35m (Tow Law correctly pruned by the
+  plausibility floor).
+- Defensible: Hawes->Catterick/Richmond 42m nearest-dominating with Kendal 183 as
+  biggest-in-hour (the two outputs bracket the dale's real plural catchment: down-dale
+  towns and the market town over the top); Bishops Castle->Ludlow 32m (its TTWA);
+  Richmond->the Darlington-area component (geometry right, name is the known
+  conurbation-labelling artefact).
+
+Fixes applied en route: base = the whole settlement's stops, not its densest cell;
+candidate hubs must be plausible (>= 50 stops or a station), which kills the
+ex-colliery false hubs. Remaining parameters are four and each has a physical
+meaning: K=5 dominance, 60-minute search, 50-stop/station plausibility, floor-5
+open-country base. The nearest-dominating and biggest-in-hour outputs together give
+the plural catchment ("towns, not town") without further machinery.
+
+Open design decision: what adjacency GRANTS. Candidate semantics, one sentence:
+you always see your surroundings (as today) plus your hub towns' posts; your posts
+are seen by your surroundings plus your hub towns' members. One edge deep (immediate
+hubs only; the chain to Carlisle stays unused until measured). Digest included via
+the ring-admits gate, or it is a no-op for the members it serves. The adversarial
+review's implementation cautions above (lane storage, fan-in caps, firing branch,
+help copy, WANTED warning, scorer decay for rescued posts) all still bind.
