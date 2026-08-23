@@ -71,6 +71,25 @@ func applyUnseen(msgs []MessageSummary, viewed map[uint64]bool) {
 	}
 }
 
+// ownMessageIDs returns the subset of ids the given user wrote, batched in the same
+// chunk size as viewedMessageIDs. It reads only the messages table's own primary key and
+// fromuser, so it is a cheap way to answer "which of these are mine" for a list we have
+// already decided to return.
+func ownMessageIDs(db *gorm.DB, ids []uint64, userid uint64) map[uint64]bool {
+	own := make(map[uint64]bool, len(ids))
+
+	for _, chunk := range chunkWindows(ids, boundsLikesChunk) {
+		var chunkIDs []uint64
+		db.Raw("SELECT id FROM messages WHERE fromuser = ? AND id IN (?)", userid, chunk).Scan(&chunkIDs)
+
+		for _, id := range chunkIDs {
+			own[id] = true
+		}
+	}
+
+	return own
+}
+
 func Bounds(c *fiber.Ctx) error {
 	db := database.DBConn
 
@@ -204,6 +223,29 @@ func Bounds(c *fiber.Ctx) error {
 		merged = append(merged, m)
 	}
 	msgs = merged
+
+	// Flag the viewer's own posts, as the other browse feeds do (message.Groups,
+	// isochrone.Messages): the client pins them above the feed, and this endpoint is what
+	// browse switches to the moment the member moves the map - so without this a member's
+	// own post was pinned until they panned, then vanished into the list.
+	//
+	// Asked as its own batched lookup over the ids we are actually returning, rather than
+	// taken from the own arm above: that arm carries its own bounds test, OPEN_AGE window and
+	// outcome filter, so an own post that reached this list via the SPATIAL arm alone would
+	// not be in it and would go unflagged. Authorship is not a property of which arm found
+	// the post.
+	if myid != 0 {
+		ids := make([]uint64, len(msgs))
+		for ix, m := range msgs {
+			ids[ix] = m.ID
+		}
+		own := ownMessageIDs(db, ids, myid)
+		for ix := range msgs {
+			if own[msgs[ix].ID] {
+				msgs[ix].Mine = true
+			}
+		}
+	}
 
 	// Order to match the old combined SQL: unseen first, then most-recent arrival, then highest id.
 	sort.SliceStable(msgs, func(i, j int) bool {
