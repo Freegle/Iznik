@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-21
+last_reviewed: 2026-08-23
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -345,6 +345,34 @@ stored rings buys about 6x, which is not enough either.
 The mail path is different in kind, not degree: one post, one member, one parse
 (~6ms). That asymmetry is why the lanes looked healthy for weeks and then took
 the site down twice in one day the moment they reached browse.
+
+#### Ring coordinate precision (changed 2026-08-23)
+
+`overflow_bounds` was **half of `rippling_reach`** - 860KB a row against a 47.7GB
+table - and most of that was noise rather than geometry. PHP renders a float with
+14 significant digits, so `ReachService::polygonToWkt` wrote every vertex as
+`-2.012234405899 52.537323913574`: a position to roughly a tenth of a micrometre.
+
+The rings do not have that precision and never did. They are traced from a raster,
+so **every vertex sits on an exact 0.0003 degree lattice (~33 m)** - the steps
+between consecutive vertices are exactly 0.0003, 0.0006, 0.0009, 0.0012 and nothing
+else. Nine orders of magnitude of the stored digits described nothing.
+
+`ReachService::coord()` now writes **6 decimal places** (~0.11 m, still 300x finer
+than the lattice), which moves a vertex by at most 4 cm and takes a measured
+production ring from 236,275 bytes to 145,938 - **1.62x**. Rows written before that
+are rewritten by `ripple:shrink-overflow-bounds`, which is bounded, resumable,
+holds `updated_at` still so the reach mailer does not reconsider the row, and
+checks every coordinate before writing.
+
+This is deliberately **not** simplification. Collapsing the staircase to its
+diagonal is worth about 4.7x rather than 1.6x, but it moves the ring boundary by up
+to half a cell, which changes who a post admits. That is a decision about reach and
+would need measuring across the whole distribution, not an encoding change.
+
+The geometry columns (`polygon`, `max_polygon`, `outer_bound`) are unaffected in
+size: MySQL stores those as binary at 16 bytes a vertex whatever precision the WKT
+we hand it carries.
 
 So the rings are rasterised, exactly as reach polygons already are for the
 unread badge:
