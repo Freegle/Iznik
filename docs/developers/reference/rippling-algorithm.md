@@ -359,11 +359,18 @@ between consecutive vertices are exactly 0.0003, 0.0006, 0.0009, 0.0012 and noth
 else. Nine orders of magnitude of the stored digits described nothing.
 
 `ReachService::coord()` now writes **6 decimal places** (~0.11 m, still 300x finer
-than the lattice), which moves a vertex by at most 4 cm and takes a measured
+than the lattice), which moves a vertex by at most 5.6 cm and takes a measured
 production ring from 236,275 bytes to 145,938 - **1.62x**. Rows written before that
 are rewritten by `ripple:shrink-overflow-bounds`, which is bounded, resumable,
 holds `updated_at` still so the reach mailer does not reconsider the row, and
-checks every coordinate before writing.
+checks every coordinate before writing. Dry-run over 40 production rows: **35% off,
+1.54x**, per-row 1.00x to 1.80x, worst coordinate shift 5.46 cm, nothing refused.
+
+The backfill will not converge on its own, because **`ExpandService` reuses a stored
+schedule and its rings verbatim** when the blurred origin and config match. Legacy
+rings therefore keep propagating into brand-new rows until the rows they are copied
+from have been rewritten; after that, reuse carries the small version forward. Run it
+repeatedly until it reports nothing left.
 
 This is deliberately **not** simplification. Collapsing the staircase to its
 diagonal is worth about 4.7x rather than 1.6x, but it moves the ring boundary by up

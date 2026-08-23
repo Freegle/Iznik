@@ -657,7 +657,8 @@ class ReachService
      * routing grid. Nine orders of magnitude of the digits we were storing were noise.
      *
      * Six places is ~0.11 m at UK latitudes - still 300x finer than the lattice the
-     * points sit on - and moves a vertex by at most 4 cm. Measured on a production
+     * points sit on - and moves a vertex by at most 5.6 cm (5e-7 degrees of latitude;
+     * less in longitude at UK latitudes). Measured on a production
      * ring it takes the stored WKT from 236,275 bytes to 145,938, a 1.62x saving on
      * what is half of rippling_reach (~24GB of the table's 47.7GB on 2026-08-23).
      *
@@ -666,7 +667,7 @@ class ReachService
      * are held as binary by MySQL at 16 bytes a vertex whatever we send, so there the
      * only gain is a smaller statement to parse - real but small.
      *
-     * NOT a geometry change: this does not drop or move vertices beyond that 4 cm, and
+     * NOT a geometry change: this does not drop or move vertices beyond that 5.6 cm, and
      * deliberately stops short of simplifying the staircase, which would shift the
      * boundary by up to half a cell and is a decision about reach, not encoding.
      */

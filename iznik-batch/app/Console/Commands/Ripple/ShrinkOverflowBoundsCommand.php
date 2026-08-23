@@ -16,13 +16,20 @@ use Illuminate\Support\Facades\DB;
  * because they are traced from a raster. Nine orders of magnitude of noise, stored.
  *
  * ReachService::coord() now writes six decimals, so NEW rows are already small. This
- * command is only for the rows written before that. Measured on a production ring:
- * 236,275 bytes to 145,938, a 1.62x saving.
+ * command is only for the rows written before that. Dry-run over 40 production rows
+ * (2026-08-23): 42,466,282 bytes to 27,583,651 — 35% off, 1.54x, per-row 1.00x to 1.80x,
+ * worst coordinate shift 5.46cm, and NOTHING refused. The 1.00x rows are ones already
+ * written by the fixed producer, which the min-saving check then skips.
+ *
+ * NOTE it will not converge on its own: ExpandService REUSES a stored schedule and its
+ * rings verbatim when the blurred origin and config match, so legacy rings keep
+ * propagating into brand-new rows until the rows they are copied from have been done.
+ * Run it repeatedly until it reports nothing left.
  *
  * WHAT THIS IS NOT. It does not simplify the rings. Collapsing the staircase would save
  * far more (about 4.7x rather than 1.6x) but moves the boundary by up to half a cell,
  * and that is a decision about who a post reaches, not about encoding. This command
- * moves no vertex more than ~4cm and drops none, so the admitted set cannot change.
+ * moves no vertex more than ~5.6cm and drops none, so the admitted set cannot change.
  *
  * WHY IT IS SAFE TO REWRITE THE COLUMN AT ALL:
  *  - overflow_bounds is not spatially indexed, so this avoids the trap of rewriting two
