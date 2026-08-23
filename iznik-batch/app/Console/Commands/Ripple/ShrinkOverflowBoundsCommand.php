@@ -58,7 +58,7 @@ class ShrinkOverflowBoundsCommand extends Command
                             {--min-saving=1024 : Skip a row unless it sheds at least this many bytes}
                             {--dry-run : Report what would be written without writing}';
 
-    protected $description = 'Rewrite rippling_reach.overflow_bounds ring WKT at 6dp instead of 14 significant digits';
+    protected $description = 'Rewrite rippling_reach.overflow_bounds ring WKT at 4dp instead of 14 significant digits';
 
     /** Where the sweep got to, so a bounded run can be repeated until done. */
     private const CONFIG_KEY_MARK = 'ripple_shrink_overflow_bounds_last_msgid';
