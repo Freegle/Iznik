@@ -149,13 +149,33 @@ checker cannot disagree about canonicalisation.
 
 ## Stages
 
-**Stage 0 — settle the unverified half.** `polygon`/`outer_bound` keying on (origin, tick)
-is MEASURED. `max_polygon` and `overflow_bounds` are **78% of the bytes** and are believed
-to key on origin *alone* — the max reach is final, and the rings are computed once at
-schedule derivation, not per tick — but this is **UNVERIFIED**. The 40-row sample had NULL
-for both, and the follow-up query had to be killed after 129 s when db3's load went from
-10.8 to 21. Hash a handful of rows with `has_overflow=1 AND max_polygon IS NOT NULL`, on a
-quiet node. **This decides whether the project is worth ~27 GB or ~4 GB. Do it first.**
+**Stage 0 — DONE 2026-08-23, measured on db1** (load 0.21, idle; db3 was at 21). 22
+origins carrying rings and spanning two ticks each, hashed by primary key:
+
+| column | identical across ticks | keys on |
+|---|---|---|
+| `polygon` | **0 / 22** | (origin, tick) — strictly tick-dependent |
+| `max_polygon` | **16 / 22** (73%) | mostly origin, but NOT always |
+| `overflow_bounds` | **22 / 22** | origin alone — confirmed |
+
+`overflow_bounds` is 50% of the table and de-duplicates on origin: **61.4%** of it is
+redundant. That is the bulk of the prize and it is now evidence, not belief.
+
+**`max_polygon` is the finding that matters for the design.** It is *usually* a function of
+origin but not reliably — 6 of 22 differed across ticks at the same origin. That is
+consistent with the code: a secondary-group rejection clips the current polygon and an
+origin-group union can extend it, so max reach depends on the post's GROUPS, not only where
+it came from. **A logical key on (origin) would therefore have been wrong**, silently
+sharing max reach between posts whose eventual-reach eligibility genuinely differs. Content
+addressing has no such failure mode: it shares exactly what is byte-identical and nothing
+else. This is the argument for the hash over any logical or surrogate key, and it is now
+measured rather than asserted.
+
+Getting there needs care: `has_overflow = 1` now matches **9,501** rows (up from the 4,257
+recorded on 2026-08-21), and grouping them by origin timed out at 30 s even on an idle db1,
+because each row lookup pulls a page from a 50 GB file. Bound it with
+`ORDER BY updated_at DESC LIMIT n` on the `has_overflow` index — 400 rows in 1.4 s — and
+hash only by primary key afterwards (6 rows with blob reads: 0.08 s).
 
 **Stage 1 — table, column, dual-write.** Additive and invisible: writers populate both the
 blob and the shared row, everything still reads the old column. Revertible by ignoring the
@@ -208,8 +228,18 @@ round to identical bytes. UNVERIFIED and not worth measuring separately.
 
 ## Estimated saving
 
-- **polygon (VERIFIED key):** 19% of the table × 42.3% ≈ 8% ≈ **3.8 GB**.
-- **max_polygon + overflow_bounds (UNVERIFIED key):** 78% × 61.4% ≈ 48% ≈ **23 GB**.
+All three now rest on measured de-duplication rates:
 
-Total if Stage 0 confirms: roughly **27 GB of 47.7 GB**. If it does not, this is a ~4 GB
-project and the compression route is the better use of the effort.
+| column | share of row | de-dup rate | saving |
+|---|---|---|---|
+| `overflow_bounds` | 50% | 61.4% (origin) | **30.7%** |
+| `max_polygon` | 28% | ~55% (73% share across ticks) | **15.4%** |
+| `polygon` | 19% | 42.3% (origin, tick) | **8.0%** |
+| `outer_bound`, `inner_bound` | 2.5% | not shared, by design | 0 |
+
+Roughly **54% of the table — about 26 GB of 47.7 GB.**
+
+The `max_polygon` rate is the softest number: 73% of cross-tick pairs shared, so its true
+rate sits between the (origin, tick) rate of 42.3% and the origin rate of 61.4%, and ~55%
+is the midpoint rather than a measurement. Content addressing means getting it wrong costs
+accuracy in this estimate, not correctness in the result.
