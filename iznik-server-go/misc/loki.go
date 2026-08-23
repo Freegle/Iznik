@@ -170,12 +170,12 @@ func truncateValueDepth(v interface{}, depth int) interface{} {
 // entirely. Drop the bulky bodies - which are the only unbounded parts - and keep
 // the fields that make the entry worth having, recording what was dropped so the
 // gap is visible in the logs rather than silent.
+// It never returns nil: emitting nothing is the very failure this exists to
+// prevent, so a payload that cannot be marshalled at all still leaves a trace.
+// Note it may replace oversized fields in logData in place; callers do not reuse
+// the map afterwards.
 func capLogLine(logData map[string]interface{}) []byte {
-	line, err := json.Marshal(logData)
-	if err != nil {
-		return nil
-	}
-	if len(line) <= maxLogLineBytes {
+	if line, err := json.Marshal(logData); err == nil && len(line) <= maxLogLineBytes {
 		return line
 	}
 
@@ -188,29 +188,35 @@ func capLogLine(logData map[string]interface{}) []byte {
 			}
 		}
 
-		line, err = json.Marshal(logData)
-		if err != nil {
-			return nil
-		}
-		if len(line) <= maxLogLineBytes {
+		if line, err := json.Marshal(logData); err == nil && len(line) <= maxLogLineBytes {
 			return line
 		}
 	}
 
-	// Still too big - something other than the bodies is huge. Hard-clip so we
-	// emit a valid, in-limit JSON entry instead of losing the request entirely.
+	// Still too big - something other than the bodies is huge. Hard-clip to the
+	// context fields so we emit a valid, in-limit entry instead of losing the
+	// request entirely. Truncate those too: `endpoint` and friends are strings we
+	// do not control, and copying them through verbatim would leave the "always
+	// emits something" guarantee resting on an assumption about their length.
 	minimal := map[string]interface{}{
-		"endpoint":    logData["endpoint"],
 		"duration_ms": logData["duration_ms"],
 		"user_id":     logData["user_id"],
-		"timestamp":   logData["timestamp"],
-		"request_id":  logData["request_id"],
 		"_truncated":  fmt.Sprintf("entry exceeded %d bytes", maxLogLineBytes),
 	}
-	if line, err = json.Marshal(minimal); err != nil {
-		return nil
+	for _, field := range []string{"endpoint", "timestamp", "request_id"} {
+		if v, ok := logData[field]; ok {
+			minimal[field] = truncateValue(v)
+		}
 	}
-	return line
+
+	if line, err := json.Marshal(minimal); err == nil && len(line) <= maxLogLineBytes {
+		return line
+	}
+
+	// Nothing above worked - user_id or duration_ms is not the scalar we assume,
+	// or marshalling failed. Emit a fixed entry that cannot itself be oversized,
+	// so the request still leaves a trace.
+	return []byte(fmt.Sprintf(`{"_truncated":"entry exceeded %d bytes and could not be clipped"}`, maxLogLineBytes))
 }
 
 // LogApiRequest logs an API request to Loki.
@@ -251,11 +257,7 @@ func (l *LokiClient) LogApiRequest(version, method, endpoint string, statusCode 
 		logData[k] = v
 	}
 
-	logLine := capLogLine(logData)
-	if logLine == nil {
-		return
-	}
-	l.log(labels, string(logLine))
+	l.log(labels, string(capLogLine(logData)))
 }
 
 // LogApiRequestFull logs an API request with full request/response data.
@@ -316,11 +318,7 @@ func (l *LokiClient) LogApiRequestFull(version, method, endpoint string, statusC
 		logData["response_body"] = truncateMap(responseBody)
 	}
 
-	logLine := capLogLine(logData)
-	if logLine == nil {
-		return
-	}
-	l.log(labels, string(logLine))
+	l.log(labels, string(capLogLine(logData)))
 }
 
 // Sensitive header patterns to exclude from logging.
@@ -375,11 +373,7 @@ func (l *LokiClient) LogApiHeaders(version, method, endpoint string, requestHead
 		"timestamp":        time.Now().Format(time.RFC3339),
 	}
 
-	logLine := capLogLine(logData)
-	if logLine == nil {
-		return
-	}
-	l.log(labels, string(logLine))
+	l.log(labels, string(capLogLine(logData)))
 }
 
 // filterHeaders removes sensitive headers and applies allowlist for request headers.
@@ -445,11 +439,7 @@ func (l *LokiClient) LogFromLogsTable(logType, subtype string, groupId, userId, 
 		"timestamp": time.Now().Format(time.RFC3339),
 	}
 
-	logLine := capLogLine(logData)
-	if logLine == nil {
-		return
-	}
-	l.log(labels, string(logLine))
+	l.log(labels, string(capLogLine(logData)))
 }
 
 // LogClientEntry logs entries from the client-side browser to Loki.
@@ -471,11 +461,7 @@ func (l *LokiClient) LogClientEntry(level, eventType string, logData map[string]
 		labels["user_id"] = strconv.FormatInt(int64(userID), 10)
 	}
 
-	logLine := capLogLine(logData)
-	if logLine == nil {
-		return
-	}
-	l.log(labels, string(logLine))
+	l.log(labels, string(capLogLine(logData)))
 }
 
 // log writes a log entry to a JSON file for Alloy to ship.
@@ -548,11 +534,7 @@ func (l *LokiClient) LogCustom(source string, extraLabels map[string]string, dat
 		data["timestamp"] = time.Now().Format(time.RFC3339Nano)
 	}
 
-	logLine := capLogLine(data)
-	if logLine == nil {
-		return
-	}
-	l.log(labels, string(logLine))
+	l.log(labels, string(capLogLine(data)))
 }
 
 // LogChatReply logs a chat reply event with source tracking for dashboard analytics.
@@ -578,11 +560,7 @@ func (l *LokiClient) LogChatReply(source string, chatID, userID uint64, messageI
 		"timestamp":         time.Now().Format(time.RFC3339),
 	}
 
-	logLine := capLogLine(logData)
-	if logLine == nil {
-		return
-	}
-	l.log(labels, string(logLine))
+	l.log(labels, string(capLogLine(logData)))
 }
 
 // Flush waits for all in-flight async log goroutines to complete.

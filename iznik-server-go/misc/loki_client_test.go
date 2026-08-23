@@ -1131,3 +1131,62 @@ func TestLogApiRequestFull_HugeResponseBody_LineUnderLokiLimit(t *testing.T) {
 	assert.NotEmpty(t, entries, "the request must still be logged, not dropped")
 	assert.Equal(t, "/api/changes", messageOf(t, entries[0])["endpoint"])
 }
+
+func TestCapLogLine_OversizedNonBodyField_HardClipped(t *testing.T) {
+	// Nothing here is a body, so dropping bodies cannot help: the guard has to
+	// fall through to the hard clip. `endpoint` is a string we do not control,
+	// so the clip must truncate it rather than copy it through.
+	logData := map[string]interface{}{
+		"endpoint":    strings.Repeat("e", maxLogLineBytes*2),
+		"duration_ms": float64(3),
+		"user_id":     float64(99),
+		"timestamp":   "2026-08-23T17:13:48Z",
+	}
+
+	line := capLogLine(logData)
+	assert.NotNil(t, line)
+	assert.LessOrEqual(t, len(line), maxLogLineBytes,
+		"the last-resort clip must itself be within the limit")
+
+	var decoded map[string]interface{}
+	assert.NoError(t, json.Unmarshal(line, &decoded))
+	assert.Contains(t, decoded["_truncated"], "exceeded")
+	assert.Equal(t, float64(99), decoded["user_id"], "context worth keeping survives the clip")
+	assert.LessOrEqual(t, len(decoded["endpoint"].(string)), maxStringLength+3)
+}
+
+func TestCapLogLine_UnmarshalableValue_StillEmitsAnEntry(t *testing.T) {
+	// A channel cannot be marshalled. The first Marshal fails, so every later
+	// step fails too - we must still emit a valid line rather than nothing.
+	line := capLogLine(map[string]interface{}{
+		"endpoint": "/api/thing",
+		"bad":      make(chan int),
+	})
+
+	assert.NotNil(t, line, "an unmarshalable payload must not silently vanish")
+	var decoded map[string]interface{}
+	assert.NoError(t, json.Unmarshal(line, &decoded), "whatever we emit must be valid JSON")
+}
+
+func TestTruncateValueDepth_ScalarAtDepthLimit_Marked(t *testing.T) {
+	assert.Equal(t, fmt.Sprintf("...(depth limit %d reached)", maxValueDepth),
+		truncateValueDepth("anything", maxValueDepth))
+}
+
+func TestLogClientEntry_HugeBrowserPayload_LineUnderLokiLimit(t *testing.T) {
+	// LogClientEntry marshals a map supplied straight from the browser, so its
+	// size is controlled by the client rather than by us.
+	dir := t.TempDir()
+	l := newDirectEnabledClient(dir)
+	l.LogClientEntry("info", "scroll", map[string]interface{}{
+		"user_id": float64(3378155),
+		"blob":    strings.Repeat("z", maxLogLineBytes*2),
+	})
+	l.Close()
+
+	data, err := os.ReadFile(filepath.Join(dir, "go-api-"+time.Now().Format("2006-01-02")+".log"))
+	assert.NoError(t, err)
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		assert.LessOrEqual(t, len(line), 256*1024)
+	}
+}
