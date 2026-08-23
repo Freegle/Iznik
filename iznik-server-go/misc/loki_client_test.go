@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1189,4 +1190,58 @@ func TestLogClientEntry_HugeBrowserPayload_LineUnderLokiLimit(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
 		assert.LessOrEqual(t, len(line), 256*1024)
 	}
+}
+
+// --- user_id cardinality / bucketing ---------------------------------------
+
+func TestUserBucket_InRange(t *testing.T) {
+	for _, uid := range []uint64{0, 1, 31, 32, 33, 3378155, 45076655, 1 << 62} {
+		b, err := strconv.Atoi(UserBucket(uid))
+		assert.NoError(t, err)
+		assert.GreaterOrEqual(t, b, 0)
+		assert.Less(t, b, userBucketCount, "bucket must stay inside the configured count")
+	}
+}
+
+func TestUserBucket_Stable(t *testing.T) {
+	// Readers recompute this to find a user's logs. If it is not stable, a dump
+	// silently returns nothing for that user.
+	assert.Equal(t, UserBucket(45076655), UserBucket(45076655))
+	assert.Equal(t, "0", UserBucket(0))
+	assert.Equal(t, "1", UserBucket(1))
+	assert.Equal(t, "0", UserBucket(uint64(userBucketCount)))
+	assert.Equal(t, "7", UserBucket(uint64(userBucketCount)*3+7))
+}
+
+func TestUserBucket_SpreadsAcrossAllBuckets(t *testing.T) {
+	// A bucket that everyone lands in would be a full scan wearing a label.
+	seen := map[string]bool{}
+	for uid := uint64(1); uid <= 5000; uid++ {
+		seen[UserBucket(uid)] = true
+	}
+	assert.Len(t, seen, userBucketCount)
+}
+
+func TestLogApiRequest_SetsBucketLabelNotJustUserID(t *testing.T) {
+	dir := t.TempDir()
+	l := newDirectEnabledClient(dir)
+	uid := uint64(45076655)
+	l.LogApiRequest("v2", "GET", "/api/thing", 200, 1.0, &uid, nil)
+	l.Close()
+
+	labels := labelsOf(t, readAllLogEntries(t, dir)[0])
+	assert.Equal(t, "45076655", labels["user_id"])
+	assert.Equal(t, UserBucket(uid), labels["user_bucket"],
+		"without this label the shipper has nothing to index on")
+}
+
+func TestLogApiRequest_NoUserID_NoBucketLabel(t *testing.T) {
+	dir := t.TempDir()
+	l := newDirectEnabledClient(dir)
+	l.LogApiRequest("v2", "GET", "/api/thing", 200, 1.0, nil, nil)
+	l.Close()
+
+	labels := labelsOf(t, readAllLogEntries(t, dir)[0])
+	_, has := labels["user_bucket"]
+	assert.False(t, has, "anonymous traffic must not be bucketed into user 0")
 }
