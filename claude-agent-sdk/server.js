@@ -7,6 +7,17 @@
  * fact queries from the browser to get user data (privacy-preserving).
  */
 
+// Loki addresses a user's logs in two ways, and a query window can straddle both.
+// Entries written before 2026-08-23 carry user_id as a stream label. Later ones
+// carry a coarse user_bucket label plus the exact user_id as structured metadata,
+// because user_id had far too many values to be a label (it was silently
+// discarding entries) but structured metadata alone is not indexed and made the
+// lookup ~356x more expensive. Readers therefore ask for both and merge.
+//
+// USER_BUCKET_COUNT must match misc.userBucketCount in iznik-server-go.
+const USER_BUCKET_COUNT = 32
+const userBucket = (userid) => Number(userid) % USER_BUCKET_COUNT
+
 const express = require('express')
 const cors = require('cors')
 const { v4: uuidv4 } = require('uuid')
@@ -253,14 +264,21 @@ app.get('/api/device-summary', async (req, res) => {
   const window = '7d'
   try {
     // Client session_start events for this member, straight from prod Loki.
-    // user_id is an indexed label, so this is a cheap targeted lookup. userId is
-    // a validated positive integer, so it is safe to interpolate into the label
-    // selector (no injection surface).
-    const rows = await lokiQuery({
-      query: `{app="freegle", source="client", user_id="${userId}"} |= "session_start"`,
-      start: window,
-      limit: 500,
-    })
+    // Both addressing schemes, merged - see userBucket. userId is a validated
+    // positive integer, so it is safe to interpolate into the selector (no
+    // injection surface).
+    const rows = [
+      ...(await lokiQuery({
+        query: `{app="freegle", source="client", user_id="${userId}"} |= "session_start"`,
+        start: window,
+        limit: 500,
+      })),
+      ...(await lokiQuery({
+        query: `{app="freegle", source="client", user_bucket="${userBucket(userId)}"} |= "session_start" | user_id="${userId}"`,
+        start: window,
+        limit: 500,
+      })),
+    ]
 
     // The app logs session_start twice per session (the second one carries the
     // native app version and Capacitor device info), so merge duplicates rather
@@ -277,11 +295,18 @@ app.get('/api/device-summary', async (req, res) => {
     let lastApiActivity = null
     if (!devices.length) {
       try {
-        const apiRows = await lokiQuery({
-          query: `{app="freegle", source="api", user_id="${userId}"}`,
-          start: window,
-          limit: 1,
-        })
+        const apiRows = [
+          ...(await lokiQuery({
+            query: `{app="freegle", source="api", user_id="${userId}"}`,
+            start: window,
+            limit: 1,
+          })),
+          ...(await lokiQuery({
+            query: `{app="freegle", source="api", user_bucket="${userBucket(userId)}"} | user_id="${userId}"`,
+            start: window,
+            limit: 1,
+          })),
+        ]
         if (apiRows.length) {
           lastApiActivity = new Date(Number(BigInt(apiRows[0].ts) / 1000000n)).toISOString()
         }

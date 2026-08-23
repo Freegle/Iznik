@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-17
+last_reviewed: 2026-08-23
 owner: Freegle dev team
 covers:
   - claude-agent-sdk/support-agent.js
@@ -77,7 +77,7 @@ SDK's `Read`/`Grep`/`Glob` confined to the codebase checkout:
 | `identify_user` | resolve an email / name / id to a member (must be done first) |
 | `get_user_dump` + `query_dump` | pull a per-user SQLite dump (~69 tables + Loki + Sentry, secrets redacted) via the Go API and run SQL against it locally |
 | `db_query` | ad-hoc **read-only** SQL against the live DB (guarded — see below) |
-| `loki_search` | 3-pass `user_id` JSON-field search, or raw LogQL (window capped) |
+| `loki_search` | multi-pass member-id search (both label eras), or raw LogQL (window capped) |
 | `sentry_search` | recent Sentry issues across the nuxt3/go/capacitor/modtools projects |
 | `discourse_search` | search the community forum (bug reports cite topic numbers) |
 | `code_history_search` / `git_fixed_already` | grep git history to see if an issue is already fixed |
@@ -99,12 +99,20 @@ a real bound, not a hint:
 - **Loki logs are clamped to 30 days** whatever `since` says, because production Loki
   rejects any `query_range` longer than `30d1h` outright.
 - **Loki collection runs in value order under a time budget** (`userdump/loki.go`):
-  indexed `user_id` label first, then the slim unlabelled sources and email passes
+  the indexed member-id passes first, then the slim unlabelled sources and email passes
   (each `|=`-prefiltered before any `| json`/regex, in 15-day halves), then two-leg
   session lookups, and finally `api_headers` — the ~67GB/7d firehose — newest-first in
   budget-capped 1.5-day slices. Anything the caps drop is recorded in `_sections` as
   `loki_bounds`. The same prefilter-before-parse rule applies to every LogQL the helper
   or `systemlogs` builds.
+- **A member's logs are addressed two ways, and both are asked** (changed 2026-08-23).
+  Entries written before that carry `user_id` as a Loki stream label; later ones carry a
+  coarse `user_bucket` label plus the exact `user_id` as structured metadata, because
+  `user_id` had far too many values to be a label and was silently discarding entries.
+  Both the dump and the helper query both forms and merge; they are disjoint, so nothing
+  double-counts. Until nothing older than the change is left in retention, **dropping
+  either leg silently returns a partial answer**. See
+  [../../ops/reference/logging.md](../../ops/reference/logging.md).
 - Anything the dump had to bound is recorded in its **`_sections`** table with
   `status='warning'` and a note. Read it before concluding "there is nothing there" — an
   empty table can mean *not collected*, not *did not happen*.
