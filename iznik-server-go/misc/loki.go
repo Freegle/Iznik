@@ -65,6 +65,37 @@ func (l *LokiClient) IsEnabled() bool {
 	return l.enabled
 }
 
+// userBucketCount is how many coarse buckets user IDs are spread across as a
+// Loki stream label.
+//
+// user_id CANNOT be a stream label on its own: it had 11,565 distinct values in
+// 24h against Loki's default 5,000-stream ceiling, and the overflow was silently
+// discarded - 535,859 entries in two days, measured 2026-08-23. That quietly made
+// the subject-access dump incomplete.
+//
+// It cannot be structured metadata alone either. Structured metadata is not
+// indexed, so the dump's 30-day lookup would have to scan every freegle stream:
+// measured over one hour, {app="freegle"} | user_id="x" reads 115MB and 138,594
+// lines where the label lookup reads 324KB and 239 - about 356x the work, on a
+// tool that answers legal requests under a timeout.
+//
+// So do both: a COARSE indexed label to narrow, and the exact value in structured
+// metadata to be exact. There are 66 distinct label-sets without user_id, so 32
+// buckets is roughly 2,100 streams - comfortably inside the ceiling - while
+// cutting a dump's scan to 1/32 of the data.
+//
+// CHANGING THIS NUMBER CHANGES WHERE EVERY USER'S LOGS LIVE. Readers compute the
+// same bucket to find them, so producer and every consumer must agree. Old data
+// written before this existed has no user_bucket label at all, which is why
+// readers query the pre-bucket form as well. See docs/ops/reference/logging.md.
+const userBucketCount = 32
+
+// UserBucket returns the stream-label bucket for a user ID. Exported because
+// every reader must compute exactly the same bucket the writer did.
+func UserBucket(userID uint64) string {
+	return strconv.FormatUint(userID%userBucketCount, 10)
+}
+
 // maxStringLength is the maximum length for logged string values.
 const maxStringLength = 32
 
@@ -241,9 +272,10 @@ func (l *LokiClient) LogApiRequest(version, method, endpoint string, statusCode 
 		"level":       level,
 	}
 
-	// Add user_id as label for indexed queries.
+	// user_id becomes structured metadata; user_bucket is the indexed label.
 	if userId != nil && *userId != 0 {
 		labels["user_id"] = strconv.FormatUint(*userId, 10)
+		labels["user_bucket"] = UserBucket(*userId)
 	}
 
 	logData := map[string]interface{}{
@@ -282,10 +314,12 @@ func (l *LokiClient) LogApiRequestFull(version, method, endpoint string, statusC
 		"level":       level,
 	}
 
-	// Add user_id as label for indexed queries (low-ish cardinality).
-	// Note: trace_id and session_id stay in JSON body only (high cardinality).
+	// user_id goes out as structured metadata, not a stream label - it has far
+	// too many values. user_bucket is the coarse label that keeps lookups indexed.
+	// trace_id and session_id stay in the JSON body only.
 	if userId != nil && *userId != 0 {
 		labels["user_id"] = strconv.FormatUint(*userId, 10)
+		labels["user_bucket"] = UserBucket(*userId)
 	}
 
 	logData := map[string]interface{}{
@@ -428,6 +462,7 @@ func (l *LokiClient) LogFromLogsTable(logType, subtype string, groupId, userId, 
 	}
 	if userId != nil && *userId != 0 {
 		labels["user_id"] = strconv.FormatUint(*userId, 10)
+		labels["user_bucket"] = UserBucket(*userId)
 	}
 
 	logData := map[string]interface{}{
@@ -455,10 +490,12 @@ func (l *LokiClient) LogClientEntry(level, eventType string, logData map[string]
 		"event_type": eventType,
 	}
 
-	// Add user_id as label for indexed queries (low-ish cardinality).
-	// Note: trace_id and session_id stay in JSON body only (high cardinality).
+	// user_id goes out as structured metadata, not a stream label - it has far
+	// too many values. user_bucket is the coarse label that keeps lookups indexed.
+	// trace_id and session_id stay in the JSON body only.
 	if userID, ok := logData["user_id"].(float64); ok && userID != 0 {
 		labels["user_id"] = strconv.FormatInt(int64(userID), 10)
+		labels["user_bucket"] = UserBucket(uint64(userID))
 	}
 
 	l.log(labels, string(capLogLine(logData)))

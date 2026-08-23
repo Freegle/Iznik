@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-21
+last_reviewed: 2026-08-23
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -345,6 +345,61 @@ stored rings buys about 6x, which is not enough either.
 The mail path is different in kind, not degree: one post, one member, one parse
 (~6ms). That asymmetry is why the lanes looked healthy for weeks and then took
 the site down twice in one day the moment they reached browse.
+
+#### Ring coordinate precision (changed 2026-08-23)
+
+`overflow_bounds` was **half of `rippling_reach`** - 860KB a row against a 47.7GB
+table - and most of that was noise rather than geometry. PHP renders a float with
+14 significant digits, so `ReachService::polygonToWkt` wrote every vertex as
+`-2.012234405899 52.537323913574`: a position to roughly a tenth of a micrometre.
+
+The rings do not have that precision and never did. They are traced from a raster,
+so **every vertex sits on an exact 0.0003 degree lattice (~33 m)** - the steps
+between consecutive vertices are exactly 0.0003, 0.0006, 0.0009, 0.0012 and nothing
+else. Nine orders of magnitude of the stored digits described nothing.
+
+`ReachService::coord()` now writes **4 decimal places** (~11 m of resolution), which
+moves a vertex by at most **5.3 m**. That is 16% of the 33 m cell the vertex already
+sits on, and a few percent of the ~130 m cell the ring gets rasterised into for
+reading, so it is inside the noise the data already carries. It cannot merge two
+neighbours either - lattice points are three whole units apart at 0.0001 resolution
+and rounding moves each by at most half a unit (checked over 632,152 consecutive
+pairs; none collapsed). Measured **1.70x** on its own. Rows written before that
+are rewritten by `ripple:shrink-overflow-bounds`, which is bounded, resumable,
+holds `updated_at` still so the reach mailer does not reconsider the row, and
+checks every coordinate before writing. Dry-run over production rows: **1.70x**,
+nothing refused.
+
+**Precision is the small lever; compression is the big one.** Measured on real rows:
+
+| setting | size | worst vertex move | as % of the 33 m cell |
+|---|---|---|---|
+| 6dp | 1.37x | 5.0 cm | 0.2% |
+| **4dp** | **1.70x** | **5.3 m** | **16%** |
+| 3dp | 1.94x | 55 m | 167% - past the cell, would move the boundary |
+| compression alone | 10.60x | none | - |
+| **4dp + compression** | **12.68x** | 5.3 m | 16% |
+
+Going finer than 4dp buys very little; going coarser than 4dp starts moving the ring
+rather than just describing it more cheaply. The binary geometry columns compress
+about **4.6x** too, so table-level compression is worth far more than any rounding -
+but it costs CPU on every page read, and db3 is the only active apiv2 backend, so
+measure it somewhere else first.
+
+The backfill will not converge on its own, because **`ExpandService` reuses a stored
+schedule and its rings verbatim** when the blurred origin and config match. Legacy
+rings therefore keep propagating into brand-new rows until the rows they are copied
+from have been rewritten; after that, reuse carries the small version forward. Run it
+repeatedly until it reports nothing left.
+
+This is deliberately **not** simplification. Collapsing the staircase to its
+diagonal is worth about 4.7x rather than 1.6x, but it moves the ring boundary by up
+to half a cell, which changes who a post admits. That is a decision about reach and
+would need measuring across the whole distribution, not an encoding change.
+
+The geometry columns (`polygon`, `max_polygon`, `outer_bound`) are unaffected in
+size: MySQL stores those as binary at 16 bytes a vertex whatever precision the WKT
+we hand it carries.
 
 So the rings are rasterised, exactly as reach polygons already are for the
 unread badge:
