@@ -358,13 +358,33 @@ so **every vertex sits on an exact 0.0003 degree lattice (~33 m)** - the steps
 between consecutive vertices are exactly 0.0003, 0.0006, 0.0009, 0.0012 and nothing
 else. Nine orders of magnitude of the stored digits described nothing.
 
-`ReachService::coord()` now writes **6 decimal places** (~0.11 m, still 300x finer
-than the lattice), which moves a vertex by at most 5.6 cm and takes a measured
-production ring from 236,275 bytes to 145,938 - **1.62x**. Rows written before that
+`ReachService::coord()` now writes **4 decimal places** (~11 m of resolution), which
+moves a vertex by at most **5.3 m**. That is 16% of the 33 m cell the vertex already
+sits on, and a few percent of the ~130 m cell the ring gets rasterised into for
+reading, so it is inside the noise the data already carries. It cannot merge two
+neighbours either - lattice points are three whole units apart at 0.0001 resolution
+and rounding moves each by at most half a unit (checked over 632,152 consecutive
+pairs; none collapsed). Measured **1.70x** on its own. Rows written before that
 are rewritten by `ripple:shrink-overflow-bounds`, which is bounded, resumable,
 holds `updated_at` still so the reach mailer does not reconsider the row, and
-checks every coordinate before writing. Dry-run over 40 production rows: **35% off,
-1.54x**, per-row 1.00x to 1.80x, worst coordinate shift 5.46 cm, nothing refused.
+checks every coordinate before writing. Dry-run over production rows: **1.70x**,
+nothing refused.
+
+**Precision is the small lever; compression is the big one.** Measured on real rows:
+
+| setting | size | worst vertex move | as % of the 33 m cell |
+|---|---|---|---|
+| 6dp | 1.37x | 5.0 cm | 0.2% |
+| **4dp** | **1.70x** | **5.3 m** | **16%** |
+| 3dp | 1.94x | 55 m | 167% - past the cell, would move the boundary |
+| compression alone | 10.60x | none | - |
+| **4dp + compression** | **12.68x** | 5.3 m | 16% |
+
+Going finer than 4dp buys very little; going coarser than 4dp starts moving the ring
+rather than just describing it more cheaply. The binary geometry columns compress
+about **4.6x** too, so table-level compression is worth far more than any rounding -
+but it costs CPU on every page read, and db3 is the only active apiv2 backend, so
+measure it somewhere else first.
 
 The backfill will not converge on its own, because **`ExpandService` reuses a stored
 schedule and its rings verbatim** when the blurred origin and config match. Legacy

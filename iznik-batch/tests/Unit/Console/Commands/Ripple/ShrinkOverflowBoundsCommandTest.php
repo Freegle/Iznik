@@ -47,9 +47,9 @@ class ShrinkOverflowBoundsCommandTest extends TestCase
         $this->assertSameSize($b[0], $a[0], 'no vertex may be dropped');
         foreach ($a[0] as $i => $v) {
             $this->assertLessThanOrEqual(
-                0.000001,
+                0.00005,
                 abs(((float) $v) - ((float) $b[0][$i])),
-                "coordinate {$i} moved further than rounding can move it"
+                "coordinate {$i} moved further than rounding to 4dp can move it"
             );
         }
     }
@@ -96,9 +96,33 @@ class ShrinkOverflowBoundsCommandTest extends TestCase
     {
         // Written by the fixed ReachService, so there is nothing to round. It must come
         // back byte-identical, and the caller's min-saving check then skips the row.
-        $json = json_encode(['cluster' => ['w1' => 'POLYGON((-2.012234 52.537324, -2.011934 52.537324, -2.011934 52.537624, -2.012234 52.537324))']]);
+        $json = json_encode(['cluster' => ['w1' => 'POLYGON((-2.0122 52.5373, -2.0119 52.5373, -2.0119 52.5376, -2.0122 52.5373))']]);
 
         $this->assertSame($json, $this->command()->shrink($json));
+    }
+
+    public function test_neighbouring_lattice_points_never_collapse(): void
+    {
+        // The rings are a raster staircase: neighbours are 0.0003 apart, which is three
+        // whole units at 0.0001 resolution, and rounding moves each by at most half a
+        // unit. If two ever merged, the ring would gain a zero-length segment and the
+        // saving would be hiding a geometry change.
+        $pts = [];
+        for ($i = 0; $i < 200; $i++) {
+            $pts[] = sprintf('%.12f %.12f', -2.012234405899 + ($i * 0.0003), 52.537323913574);
+        }
+        $pts[] = $pts[0];
+        $json = json_encode(['cluster' => ['w1' => 'POLYGON(('.implode(', ', $pts).'))']]);
+
+        $out = json_decode($this->command()->shrink($json), true)['cluster']['w1'];
+        preg_match_all('/(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/', $out, $m, PREG_SET_ORDER);
+
+        $seen = null;
+        foreach ($m as $pair) {
+            $here = $pair[1].' '.$pair[2];
+            $this->assertNotSame($seen, $here, 'two adjacent vertices collapsed into one');
+            $seen = $here;
+        }
     }
 
     public function test_rejects_json_that_is_not_an_object(): void

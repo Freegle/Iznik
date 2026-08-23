@@ -15,11 +15,12 @@ use Illuminate\Support\Facades\DB;
  * micrometre, for rings whose vertices all sit on an exact 0.0003 degree (~33 m) lattice
  * because they are traced from a raster. Nine orders of magnitude of noise, stored.
  *
- * ReachService::coord() now writes six decimals, so NEW rows are already small. This
- * command is only for the rows written before that. Dry-run over 40 production rows
- * (2026-08-23): 42,466,282 bytes to 27,583,651 — 35% off, 1.54x, per-row 1.00x to 1.80x,
- * worst coordinate shift 5.46cm, and NOTHING refused. The 1.00x rows are ones already
- * written by the fixed producer, which the min-saving check then skips.
+ * ReachService::coord() now writes FOUR decimals, so NEW rows are already small. This
+ * command is only for the rows written before that. Four places is ~11 m of resolution
+ * and moves a vertex by at most 5.3 m - 16% of the 33 m cell it already sits on, and a
+ * few percent of the ~130 m cell the ring is rasterised into for reading. Dry-run over
+ * production rows (2026-08-23): 1.70x on its own, 12.68x with the column compressed,
+ * and NOTHING refused by the checks below.
  *
  * NOTE it will not converge on its own: ExpandService REUSES a stored schedule and its
  * rings verbatim when the blurred origin and config match, so legacy rings keep
@@ -29,7 +30,10 @@ use Illuminate\Support\Facades\DB;
  * WHAT THIS IS NOT. It does not simplify the rings. Collapsing the staircase would save
  * far more (about 4.7x rather than 1.6x) but moves the boundary by up to half a cell,
  * and that is a decision about who a post reaches, not about encoding. This command
- * moves no vertex more than ~5.6cm and drops none, so the admitted set cannot change.
+ * moves no vertex more than 5.3 m and drops none. It also cannot merge two neighbours:
+ * lattice points are 0.0003 apart, three whole units at 0.0001 resolution, and rounding
+ * moves each by at most half a unit — checked over 632,152 consecutive pairs, none
+ * collapsed.
  *
  * WHY IT IS SAFE TO REWRITE THE COLUMN AT ALL:
  *  - overflow_bounds is not spatially indexed, so this avoids the trap of rewriting two
@@ -60,14 +64,14 @@ class ShrinkOverflowBoundsCommand extends Command
     private const CONFIG_KEY_MARK = 'ripple_shrink_overflow_bounds_last_msgid';
 
     /** Must match ReachService::WKT_DECIMALS — the point is that the two agree. */
-    private const WKT_DECIMALS = 6;
+    private const WKT_DECIMALS = 4;
 
     /**
-     * A vertex may not move further than this, in degrees. Six decimals rounds by at
-     * most 5e-7; anything beyond that means the rewrite did something other than round
+     * A vertex may not move further than this, in degrees. Four decimals rounds by at
+     * most 5e-5; anything beyond that means the rewrite did something other than round
      * and the row is left exactly as it was.
      */
-    private const MAX_SHIFT_DEG = 0.000001;
+    private const MAX_SHIFT_DEG = 0.0001;
 
     /** One pattern for both the rewrite and its verification, so they cannot drift. */
     private const NUMBER_RE = '/-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/';
