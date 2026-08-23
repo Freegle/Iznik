@@ -3,9 +3,11 @@ package misc
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1006,4 +1008,126 @@ func TestNewLokiMiddleware_EnabledLoki_SkipFuncTrue_Skips(t *testing.T) {
 	resp, err := app.Test(req)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+// --- line-size bounding -----------------------------------------------------
+//
+// Truncating string VALUES does not bound a log line. A response body that is a
+// long array of small objects sailed through truncateMap at full length, and a
+// real /api/changes response reached 1.85MB that way. Loki's max_line_size is
+// 256KB and it discards the whole entry rather than clipping it, so those
+// requests vanished from the logs completely - 1,727 entries / 1.10GB in two
+// days on 2026-08-23. These tests pin the bound on every dimension.
+
+func wideResponseBody(elements int) map[string]interface{} {
+	items := make([]interface{}, elements)
+	for i := range items {
+		items[i] = map[string]interface{}{
+			"id":      float64(i),
+			"subject": "a reasonably typical subject line",
+			"type":    "Offer",
+		}
+	}
+	return map[string]interface{}{"messages": items}
+}
+
+func TestTruncateValue_LongSlice_CappedWithCount(t *testing.T) {
+	in := make([]interface{}, maxSliceElements+50)
+	for i := range in {
+		in[i] = float64(i)
+	}
+
+	out, ok := truncateValue(in).([]interface{})
+	assert.True(t, ok)
+	assert.Len(t, out, maxSliceElements+1, "kept elements plus one marker")
+	assert.Equal(t, "...(50 more elements)", out[len(out)-1])
+}
+
+func TestTruncateValue_ShortSlice_Unchanged(t *testing.T) {
+	in := []interface{}{float64(1), float64(2), float64(3)}
+	out, ok := truncateValue(in).([]interface{})
+	assert.True(t, ok)
+	assert.Len(t, out, 3, "a slice within the cap must not gain a marker")
+	assert.Equal(t, float64(3), out[2])
+}
+
+func TestTruncateMap_ManyKeys_Capped(t *testing.T) {
+	in := map[string]interface{}{}
+	for i := 0; i < maxMapKeys+10; i++ {
+		in[fmt.Sprintf("key%03d", i)] = "v"
+	}
+
+	out := truncateMap(in)
+	assert.Len(t, out, maxMapKeys+1, "kept keys plus the _truncated marker")
+	assert.Equal(t, "10 more keys", out["_truncated"])
+}
+
+func TestTruncateMap_DeepNesting_StopsAtDepthLimit(t *testing.T) {
+	// Build a chain deeper than the limit; it must terminate, not recurse away.
+	deep := map[string]interface{}{"leaf": "end"}
+	for i := 0; i < maxValueDepth+5; i++ {
+		deep = map[string]interface{}{"next": deep}
+	}
+
+	encoded, err := json.Marshal(truncateMap(deep))
+	assert.NoError(t, err)
+	assert.Contains(t, string(encoded), "depth limit")
+}
+
+func TestCapLogLine_OversizedResponseBody_OmittedNotDropped(t *testing.T) {
+	logData := map[string]interface{}{
+		"endpoint":      "/api/changes",
+		"duration_ms":   float64(10500),
+		"user_id":       float64(3378155),
+		"timestamp":     "2026-08-23T17:13:48Z",
+		"request_id":    "1a02f9d3b37eca9efc0",
+		"response_body": strings.Repeat("x", maxLogLineBytes*2),
+	}
+
+	line := capLogLine(logData)
+	assert.NotNil(t, line, "an oversized entry must still produce a line")
+	assert.LessOrEqual(t, len(line), maxLogLineBytes)
+
+	var decoded map[string]interface{}
+	assert.NoError(t, json.Unmarshal(line, &decoded))
+	assert.Equal(t, "/api/changes", decoded["endpoint"], "context fields survive")
+	assert.Equal(t, float64(3378155), decoded["user_id"])
+	assert.Contains(t, decoded["response_body"], "omitted")
+}
+
+func TestCapLogLine_NormalEntry_Untouched(t *testing.T) {
+	logData := map[string]interface{}{
+		"endpoint":      "/api/item/42",
+		"response_body": map[string]interface{}{"status": "ok"},
+	}
+
+	line := capLogLine(logData)
+	assert.NotNil(t, line)
+
+	var decoded map[string]interface{}
+	assert.NoError(t, json.Unmarshal(line, &decoded))
+	body, ok := decoded["response_body"].(map[string]interface{})
+	assert.True(t, ok, "a small body must be left intact, not stringified")
+	assert.Equal(t, "ok", body["status"])
+}
+
+func TestLogApiRequestFull_HugeResponseBody_LineUnderLokiLimit(t *testing.T) {
+	dir := t.TempDir()
+	l := newDirectEnabledClient(dir)
+	// 5,000 small objects: every string inside is already under maxStringLength,
+	// so the old string-only truncation left this at megabytes.
+	l.LogApiRequestFull("v2", "GET", "/api/changes", 200, 10500.0, nil, nil, nil, nil, wideResponseBody(5000))
+	l.Close()
+
+	data, err := os.ReadFile(filepath.Join(dir, "go-api-"+time.Now().Format("2006-01-02")+".log"))
+	assert.NoError(t, err)
+
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		assert.LessOrEqual(t, len(line), 256*1024,
+			"every emitted line must fit Loki's max_line_size or the entry is discarded whole")
+	}
+
+	entries := readAllLogEntries(t, dir)
+	assert.NotEmpty(t, entries, "the request must still be logged, not dropped")
+	assert.Equal(t, "/api/changes", messageOf(t, entries[0])["endpoint"])
 }
