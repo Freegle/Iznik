@@ -226,6 +226,35 @@ Independent of, and multiplies with:
 Rounding may even raise the de-duplication hit rate slightly, as near-identical polygons
 round to identical bytes. UNVERIFIED and not worth measuring separately.
 
+## CORRECTION 2026-08-23: the column shares below are measured on a BIASED sample
+
+The per-row column shares used further down (overflow_bounds 50%, max_polygon 28%,
+polygon 19%) came from the **300 most recent rows by `created_at`**, and that is not
+representative of the table. Rings are far more common in recent rows than across the
+whole table:
+
+- `has_overflow = 1` matches **9,501 of 56,471 rows — 17%**, not most of them (exact,
+  from the index; the generated column, its index and `overflow_bounds IS NOT NULL` were
+  cross-checked on 300 rows and agree exactly, so this is not an indexing fault).
+- The live backfill measures ringed rows at **~1.03 MB of `overflow_bounds` each** over
+  its first 999 rows, so the column totals roughly **10 GB — about 20% of the table**,
+  not 50%.
+- `polygon` is NOT NULL on every row and averages ~370 KB, so it totals roughly **20 GB,
+  about 42%** — making it the largest single column, not the third.
+
+**The de-duplication RATES are unaffected** — those were measured directly (polygon 0/22
+across ticks, overflow_bounds 22/22, max_polygon 16/22) and stand. It is only the shares
+they multiply that were wrong. On the corrected shares the ranking flips: `polygon` at
+~20 GB × 42.3% ≈ **8.5 GB** is the biggest prize, ahead of `overflow_bounds` at ~10 GB ×
+61.4% ≈ **6 GB**. `max_polygon`'s share is not reliably measured yet.
+
+Why the sample misled: the table retains roughly 30 days, so the mass of rows sits in a
+narrow recent `msgid` band while a handful of ancient stragglers trail back to msgid 8.15M.
+Any sample taken from one end is unrepresentative of the other. Counting non-NULLs across
+the whole table times out even on an idle db1 (60s) because each row lookup pulls a page
+from a 50 GB tablespace, so a proper share measurement needs the drain's own byte counts
+or a stratified sample, not one window.
+
 ## Estimated saving
 
 All three now rest on measured de-duplication rates:
