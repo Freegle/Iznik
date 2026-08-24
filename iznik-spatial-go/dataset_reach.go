@@ -44,14 +44,29 @@ func (d *ReachDataset) Name() string { return "reach" }
 func (d *ReachDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *ReachDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
+// reachGeomExpr is the geometry every reach query below reads: the shared,
+// content-addressed row when polygon_hash points at one (dedup:
+// plans/2026-08-23-rippling-reach-polygon-dedup.md), else the local blob.
+// COALESCE keeps this correct pre-backfill, mid-backfill, and after the
+// drain replaces a backfilled polygon blob with a sentinel POINT(0 0) — a
+// non-NULL hash always wins over the sentinel. No information_schema
+// readiness gate here, unlike the batch/Go API services: this module has no
+// existing precedent for one (has_overflow/overflow_bounds are queried
+// unconditionally too — see dataset_reachoverflow.go), and rippling_reach_geom
+// + polygon_hash are created by Stage 1 of the dedup migration BEFORE any
+// service is redeployed to read them, so the column always exists by the
+// time this code runs live.
+const reachGeomExpr = `ST_AsWKB(COALESCE(g.geom, rr.polygon))`
+const reachGeomJoin = ` LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash`
+
 func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 	// Load ALL non-held statuses; held rows are simply absent (the delta
 	// re-adds them if released). ST_AsWKB gives portable WKB; the polygon
 	// column is SRID 3857-tagged but stores plain degrees (site convention).
 	rows, err := mysqlDB.Query(`
-		SELECT msgid, status, ST_AsWKB(polygon)
-		FROM rippling_reach
-		WHERE status != 'held'
+		SELECT rr.msgid, rr.status, ` + reachGeomExpr + `
+		FROM rippling_reach rr` + reachGeomJoin + `
+		WHERE rr.status != 'held'
 	`)
 	if err != nil {
 		return fmt.Errorf("reach load query: %w", err)
@@ -130,10 +145,13 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 // arrive as plain updates: the whole raster is rebuilt from the current
 // polygon, so there is no cell-set drift to reconcile.
 func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
+	// The driving predicate (rr.updated_at > ?) is untouched and stays the index
+	// driver — only the geometry SELECT expression and its join gained the
+	// COALESCE-shared-geometry read.
 	rows, err := mysqlDB.Query(`
-		SELECT msgid, status, ST_AsWKB(polygon)
-		FROM rippling_reach
-		WHERE updated_at > ?
+		SELECT rr.msgid, rr.status, `+reachGeomExpr+`
+		FROM rippling_reach rr`+reachGeomJoin+`
+		WHERE rr.updated_at > ?
 	`, since.UTC())
 	if err != nil {
 		return fmt.Errorf("reach delta query: %w", err)
@@ -224,7 +242,8 @@ func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 		if _, ok := indexed[id]; ok {
 			continue
 		}
-		row := mysqlDB.QueryRow(`SELECT msgid, status, ST_AsWKB(polygon) FROM rippling_reach WHERE msgid = ?`, id)
+		row := mysqlDB.QueryRow(`SELECT rr.msgid, rr.status, `+reachGeomExpr+
+			` FROM rippling_reach rr`+reachGeomJoin+` WHERE rr.msgid = ?`, id)
 		var msgid int64
 		var status string
 		var wkbRaw []byte

@@ -163,9 +163,12 @@ class FirstReplyPassthroughTest extends TestCase
 
     public function test_unpopulated_max_reach_leaves_the_hold_in_place(): void
     {
-        // Deploying ahead of the backfill must change nothing.
+        // Deploying ahead of the backfill must change nothing. "Unpopulated" means
+        // BOTH the blob and its hash are absent: with the geometry dedup, a NULL
+        // blob alone is the DRAINED state, where the max reach is still known via
+        // rippling_reach_geom and the passthrough is right to fire.
         [$msgid] = $this->seedRipplingPost();
-        DB::statement('UPDATE rippling_reach SET max_polygon = NULL WHERE msgid = ?', [$msgid]);
+        DB::statement('UPDATE rippling_reach SET max_polygon = NULL, max_polygon_hash = NULL WHERE msgid = ?', [$msgid]);
 
         $this->assertTrue(
             $this->service()->shouldHold($msgid, self::REACHED_LATER[0], self::REACHED_LATER[1])

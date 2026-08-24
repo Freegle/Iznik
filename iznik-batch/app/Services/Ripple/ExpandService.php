@@ -273,8 +273,12 @@ class ExpandService
         }
         $q = DB::table('rippling_reach')
             ->select($cols)
+            // The geometry may live in rippling_reach_geom (content-addressed dedup).
+            ->when(GeomShareService::ready(), fn ($qq) => $qq->leftJoin(
+                'rippling_reach_geom as gsh', 'gsh.hash', '=', 'rippling_reach.polygon_hash'
+            ))
             // keep-raw: ST_AsText is a spatial function the builder cannot render
-            ->selectRaw('ST_AsText(polygon) AS cur_wkt')   // current footprint, for the crosspost-breadth stat
+            ->selectRaw('ST_AsText(' . GeomShareService::sourceExpr('rippling_reach', 'polygon', 'gsh') . ') AS cur_wkt')   // current footprint, for the crosspost-breadth stat
             ->where('status', '!=', 'rejected')            // active reach rows only
             ->where('total_freeglers', '>', $target);      // only rows that can exceed the cap
         if ($onlyMsgid !== null) {
@@ -343,8 +347,16 @@ class ExpandService
             // as a whole rather than to a tick, so there is nothing for it to update.)
             $withOverflow = $this->overflowColumnReady();
             $ovSet = $withOverflow ? ', overflow_bounds = ?' : '';
+            // Hash from the polygon bytes this statement stores (SET is left to right);
+            // geom row upserted first because the FK insists.
+            $hashSet = GeomShareService::ready()
+                ? ', polygon_hash = ' . GeomShareService::hashOfColumnExpr('polygon')
+                : '';
+            if (GeomShareService::ready()) {
+                GeomShareService::upsertFromWkt($storeWkt);
+            }
             $shrinkSql = fn (string $set): string => 'UPDATE rippling_reach
-                    SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $set . ',
+                    SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $hashSet . $set . ',
                         schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?' . $ovSet . ',
                         updated_at = updated_at
                   WHERE msgid = ?';
@@ -731,19 +743,24 @@ class ExpandService
         // and targeting already treats [] as unavailable - so retraction must never
         // act on it either, or one bad routing-side query would retract every copy
         // of the post. Polygon-based retraction still applies to such rows.
+        // The reach geometry may live in rippling_reach_geom (content-addressed dedup).
+        // Alias gsh, not g: `groups g` already owns that alias in this query.
+        $rrJoin = GeomShareService::joinSql('rr', 'polygon', 'gsh');
+        $rrPoly = GeomShareService::sourceExpr('rr', 'polygon', 'gsh');
         $reachClause = $this->reachableGateEnabled()
-            ? "AND (NOT ST_Intersects(g.polyindex, rr.polygon)
+            ? "AND (NOT ST_Intersects(g.polyindex, $rrPoly)
                     OR (rr.reachable_group_ids IS NOT NULL
                         AND JSON_VALID(rr.reachable_group_ids)
                         AND JSON_LENGTH(rr.reachable_group_ids) > 0
                         AND NOT JSON_CONTAINS(rr.reachable_group_ids, CAST(g.id AS JSON))))"
-            : "AND NOT ST_Intersects(g.polyindex, rr.polygon)";
+            : "AND NOT ST_Intersects(g.polyindex, $rrPoly)";
 
+        // keep-raw: ST_Intersects/ST_GeometryType spatial predicates - the builder cannot render these
         $rows = DB::select(
             "SELECT g.id
                FROM messages_groups mg
                JOIN `groups` g ON g.id = mg.groupid
-               JOIN rippling_reach rr ON rr.msgid = mg.msgid
+               JOIN rippling_reach rr ON rr.msgid = mg.msgid$rrJoin
               WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
                 AND rr.status <> 'held'
                 AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'
@@ -1197,9 +1214,15 @@ class ExpandService
                     $ready = $this->bounds->ready();
                     $withDensity = $this->densityColumnsReady();
                     $withOverflow = $this->overflowColumnReady();
+                    $withHash = GeomShareService::ready();
                     $overflowJson = $this->overflowJson($schedule);
                     $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
-                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $withOverflow, $poly): string {
+                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $withOverflow, $withHash, $poly): string {
+                        // polygon_hash consumes a second bind of the same WKT: an INSERT
+                        // column list cannot reference the sibling polygon column.
+                        $hCol = $withHash ? ', polygon_hash' : '';
+                        $hVal = $withHash ? ', ' . GeomShareService::hashOfWktExpr() : '';
+                        $hDup = $withHash ? ', polygon_hash = VALUES(polygon_hash)' : '';
                         $cols = $ready ? ', outer_bound, inner_bound' : '';
                         $vals = $ready ? ", $outerExpr, $innerExpr" : '';
                         $dup = $ready ? ', outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)' : '';
@@ -1214,12 +1237,12 @@ class ExpandService
                             . ($withOverflow ? ', overflow_bounds = VALUES(overflow_bounds)' : '');
 
                         return 'INSERT INTO rippling_reach
-                           (msgid, lat, lng, polygon' . $cols . ', arrival, mode, tick, total_ticks,
+                           (msgid, lat, lng, polygon' . $hCol . $cols . ', arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
                             next_expansion_at, status' . $dCols . ', created_at, updated_at)
-                         VALUES (?, ?, ?, ' . $poly . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
+                         VALUES (?, ?, ?, ' . $poly . $hVal . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
-                            lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon)' . $dup . ',
+                            lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon)' . $hDup . $dup . ',
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
@@ -1235,8 +1258,15 @@ class ExpandService
                         $next, $status,
                     ], $withDensity ? [$cap['band'], $cap['radius_miles'], $ceiling] : [],
                        $withOverflow ? [$overflowJson] : []);
-                    $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $poly): void {
-                        $head = [$row->msgid, $lat, $lng, $wkt];
+                    $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $withHash, $poly): void {
+                        if ($withHash) {
+                            // Shared geom row first - the FK on polygon_hash insists. A crash
+                            // between here and the upsert below just leaves an orphan geom row
+                            // for ripple:gc-reach-geometry. Inside this closure so every
+                            // undo-log-shrink retry upserts ITS OWN (simplified) bytes.
+                            GeomShareService::upsertFromWkt($wkt);
+                        }
+                        $head = array_merge([$row->msgid, $lat, $lng, $wkt], $withHash ? [$wkt] : []);
                         try {
                             // keep-raw: upsert with ST_GeomFromText/derived-bounds SQL expressions in the column list - the builder cannot render these
                             DB::statement(
@@ -1409,13 +1439,23 @@ class ExpandService
                     $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
                     // Polygon + derived bounds in ONE statement (no stale-bounds window);
                     // envelope retry if the derivation throws on pathological geometry.
+                    // SET is applied left to right in a single-table UPDATE, so the hash
+                    // is computed from the polygon bytes this same statement just stored -
+                    // and it rides the polygon statement through advanceSplitForUndoLog
+                    // (16 bytes of undo, nothing like the spatial columns that split).
+                    $hashSet = GeomShareService::ready()
+                        ? ', polygon_hash = ' . GeomShareService::hashOfColumnExpr('polygon')
+                        : '';
                     $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
-                         SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $set . ',
+                         SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $hashSet . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
                          WHERE msgid = ?';
                     $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
                     $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $row): void {
+                        if (GeomShareService::ready()) {
+                            GeomShareService::upsertFromWkt($wkt); // FK: geom row before its hash
+                        }
                         [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
                         try {
                             try {
@@ -2310,8 +2350,16 @@ class ExpandService
                 $storeWkt = $this->unionWithOriginGroupArea((int) $row->msgid, $tickWkt);
                 // Polygon + derived bounds in ONE statement; envelope retry on throw.
                 [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
+                // Hash from the polygon bytes this statement stores (SET is left to
+                // right); geom row upserted first because the FK insists.
+                $hashSet = GeomShareService::ready()
+                    ? ', polygon_hash = ' . GeomShareService::hashOfColumnExpr('polygon')
+                    : '';
+                if (GeomShareService::ready()) {
+                    GeomShareService::upsertFromWkt($storeWkt);
+                }
                 $backfillSql = fn (string $set): string => 'UPDATE rippling_reach
-                        SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $set . ',
+                        SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $hashSet . $set . ',
                             schedule = ?, reachable_group_ids = ?,
                             total_freeglers = ?, max_drive_min = ?,
                             updated_at = updated_at
@@ -2439,17 +2487,39 @@ class ExpandService
         // The polygon SHRINKS here: a stale inner bound could cheap-accept viewers in
         // the clipped-out area, so it is NULLed in the SAME statement. The outer bound
         // is left stale-loose (safe — the MBR/exact tests still decide correctly).
+        //
+        // polygon_hash is NULLed in that same statement too. This mutates the blob in
+        // place, and the hash may be shared: rewriting the SHARED rippling_reach_geom
+        // row instead would silently clip every other post pointing at it (261 in the
+        // worst case measured). Detach atomically, then re-point at the clipped bytes
+        // below; a crash between leaves the hash NULL, which readers treat as "use the
+        // blob". Multi-table UPDATEs guarantee no assignment order, so the hash cannot
+        // be recomputed inline here the way the single-table writes do.
+        $withHash = GeomShareService::ready();
+        // Alias gsh, not g: `groups g` already owns that alias here. COALESCE reads
+        // the shared geometry when the hash points at one (a drained row clips
+        // correctly, materialising the clipped bytes back into its own blob).
+        $join = GeomShareService::joinSql('mr', 'polygon', 'gsh');
+        $poly = GeomShareService::sourceExpr('mr', 'polygon', 'gsh');
+        $hashClear = $withHash ? ', mr.polygon_hash = NULL' : '';
         $innerClear = $this->bounds->ready() ? ', mr.inner_bound = NULL' : '';
+        $clipped = false;
         foreach ($gids as $gid) {
-            DB::statement(
-                'UPDATE rippling_reach mr JOIN `groups` g ON g.id = ?
-                 SET mr.polygon = ST_Difference(mr.polygon, g.polyindex)' . $innerClear . '
+            // keep-raw: multi-table UPDATE with ST_Difference/ST_Intersects spatial expressions - the builder cannot render these
+            $n = DB::affectingStatement(
+                'UPDATE rippling_reach mr JOIN `groups` g ON g.id = ?' . $join . '
+                 SET mr.polygon = ST_Difference(' . $poly . ', g.polyindex)' . $hashClear . $innerClear . '
                  WHERE mr.msgid = ? AND g.polyindex IS NOT NULL
                    AND ST_GeometryType(g.polyindex) <> \'POINT\'
-                   AND ST_Intersects(mr.polygon, g.polyindex)
-                   AND NOT ST_Within(mr.polygon, g.polyindex)',
+                   AND ST_Intersects(' . $poly . ', g.polyindex)
+                   AND NOT ST_Within(' . $poly . ', g.polyindex)',
                 [(int) $gid, $msgid]
             );
+            $clipped = $clipped || $n > 0;
+        }
+        if ($clipped && $withHash) {
+            GeomShareService::upsertFromRow($msgid, 'polygon');
+            GeomShareService::rehashFromRow($msgid, 'polygon');
         }
     }
 

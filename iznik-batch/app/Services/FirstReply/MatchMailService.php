@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\RingIndex;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
@@ -719,27 +720,37 @@ class MatchMailService
         // it - see App\Services\Ripple\RingIndex. A second definition living in
         // this file is exactly how the mail came to invite people the site refused.
 
+        // Both reach geometries may live in rippling_reach_geom (content-addressed
+        // dedup); COALESCE reads the shared row when the hash points at one, the blob
+        // otherwise. "IS NOT NULL" keeps meaning "a max reach is known" across the
+        // drain, which NULLs the blob but not the hash.
+        $pJoin = GeomShareService::joinSql('rr', 'polygon', 'gp');
+        $mJoin = GeomShareService::joinSql('rr', 'max_polygon', 'gm');
+        $poly = GeomShareService::sourceExpr('rr', 'polygon', 'gp');
+        $maxPoly = GeomShareService::sourceExpr('rr', 'max_polygon', 'gm');
+
+        // keep-raw: spatial ST_Contains/ST_Distance band tests over a JSON-vs-locations CASE point expression - the builder cannot render this shape
         $rows = DB::select(
             "SELECT u.id AS id,
-                    ST_Distance(rr.polygon, $pointExpr) AS dist,
+                    ST_Distance($poly, $pointExpr) AS dist,
                     ST_Y($pointExpr) AS cand_lat,
                     ST_X($pointExpr) AS cand_lng,
                     JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band
              FROM users u
              LEFT JOIN locations l ON l.id = u.lastlocation
-             JOIN rippling_reach rr ON rr.msgid = ?
+             JOIN rippling_reach rr ON rr.msgid = ?$pJoin$mJoin
              WHERE u.id IN (" . implode(',', array_fill(0, count($userIds), '?')) . ")
                AND u.deleted IS NULL
                AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
                AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
-               AND rr.max_polygon IS NOT NULL
+               AND ($maxPoly) IS NOT NULL
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
                -- polygon is going to be told anyway, by the ordinary ripple, so
                -- mailing them spends a slot and a mail to change nothing.
                -- The whole point of this mail is to reach past the current edge.
-               AND NOT ST_Contains(rr.polygon, $pointExpr)
-               AND ST_Contains(rr.max_polygon, $pointExpr) = 1
+               AND NOT ST_Contains($poly, $pointExpr)
+               AND ST_Contains($maxPoly, $pointExpr) = 1
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
                      WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)

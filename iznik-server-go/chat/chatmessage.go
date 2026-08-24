@@ -776,7 +776,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 					// exactly one rendered form. Proven (as a single shape)
 					// by the retired ormharness (shapes.json /
 					// TestTier3Shapes_67cd5e1cc4ec, removed in d22ba1d6c).
-					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
+					expr, exprArgs := rippling.ReachInReachExpr(rippling.GeomShareReady(db), reach.lng, reach.lat, utils.SRID)
 					// Select takes ONLY the expression's own binds. Appending
 					// Refmsgid here as well - while Where binds it too - sent one
 					// argument more than the statement had placeholders, and
@@ -790,9 +790,13 @@ func CreateChatMessage(c *fiber.Ctx) error {
 						Where("rr.msgid = ?", *payload.Refmsgid).
 						Scan(&rc).Error
 				} else {
-					legacyExpr := "ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))"
+					// Pre-sandwich fallback: the exact geometry may live in
+					// rippling_reach_geom (content-addressed dedup), so read
+					// through the PK join like every other exact-polygon test.
+					share := rippling.GeomShareReady(db)
+					legacyExpr := "ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g2") + ", ST_SRID(POINT(?, ?), ?))"
 					legacyArgs := []interface{}{latlng.Lng, latlng.Lat, utils.SRID}
-					gateErr = db.Table("rippling_reach rr").
+					gateErr = db.Table("rippling_reach rr"+rippling.GeomJoin(share, "rr", "polygon", "g2")).
 						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+legacyExpr+"), 0) AS in_reach",
 							legacyArgs...).
 						Where("rr.msgid = ?", *payload.Refmsgid).

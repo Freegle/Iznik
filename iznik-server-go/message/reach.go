@@ -126,16 +126,20 @@ func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uin
 		// paren pair once there is more than one Where expression to
 		// combine (clause/where.go buildExprs), which would diverge from
 		// the golden.
-		expr, exprArgs := rippling.ReachInReachExpr(lng, lat, utils.SRID)
+		expr, exprArgs := rippling.ReachInReachExpr(rippling.GeomShareReady(db), lng, lat, utils.SRID)
 		whereArgs := append([]interface{}{msgids}, exprArgs...)
 		err = db.Table("rippling_reach rr").
 			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
 			Where("rr.msgid IN (?) AND NOT "+expr, whereArgs...).
 			Scan(&rows).Error
 	} else {
-		err = db.Table("rippling_reach rr").
+		// Pre-sandwich fallback: the exact geometry may live in rippling_reach_geom
+		// (content-addressed dedup), so read through the PK join like every other
+		// exact-polygon test.
+		share := rippling.GeomShareReady(db)
+		err = db.Table("rippling_reach rr"+rippling.GeomJoin(share, "rr", "polygon", "g2")).
 			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
-			Where("rr.msgid IN ? AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) = 0",
+			Where("rr.msgid IN ? AND ST_Contains("+rippling.GeomExpr(share, "rr", "polygon", "g2")+", ST_SRID(POINT(?, ?), ?)) = 0",
 				msgids, lng, lat, utils.SRID).
 			Scan(&rows).Error
 	}
@@ -318,11 +322,15 @@ func Reach(c *fiber.Ctx) error {
 	// 5 decimal places ≈ 1m - plenty for a map overlay, and it keeps the grid-fill polygons
 	// (~11k vertices) to a fraction of their full-precision WKT size. The stored geometry's
 	// coordinates are lng/lat degrees (the SRID label notwithstanding), which is exactly
-	// GeoJSON's [lng, lat] order, so no transform is needed.
+	// GeoJSON's [lng, lat] order, so no transform is needed. The geometry may live in
+	// rippling_reach_geom (content-addressed dedup): COALESCE reads the shared row when
+	// the hash points at one - on a drained row the local blob is only a sentinel POINT.
+	share := rippling.GeomShareReady(db)
 	var row reachRow
-	found := db.Table("rippling_reach").
-		Select("tick, total_ticks, status, arrival, next_expansion_at, ST_AsGeoJSON(polygon, 5) AS polygon").
-		Where("msgid = ?", id).
+	found := db.Table("rippling_reach rr"+rippling.GeomJoin(share, "rr", "polygon", "g")).
+		Select("rr.tick, rr.total_ticks, rr.status, rr.arrival, rr.next_expansion_at, ST_AsGeoJSON("+
+			rippling.GeomExpr(share, "rr", "polygon", "g")+", 5) AS polygon").
+		Where("rr.msgid = ?", id).
 		Scan(&row)
 
 	if found.RowsAffected == 0 {

@@ -320,12 +320,14 @@ class RippleReplyService
     private function milesOutsideReach(int $msgid, float $lat, float $lng): ?float
     {
         try {
+            // keep-raw: ST_Distance over the deduped-or-local geometry - the builder cannot render this
             $row = DB::selectOne(
                 'SELECT ST_Distance(
-                        ST_SRID(polygon, 4326),
+                        ST_SRID(' . GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g') . ', 4326),
                         ST_SRID(POINT(?, ?), 4326)
                     ) AS metres
-                 FROM rippling_reach WHERE msgid = ?',
+                 FROM rippling_reach' . GeomShareService::joinSql('rippling_reach', 'polygon', 'g') . '
+                 WHERE msgid = ?',
                 [$lng, $lat, $msgid]
             );
         } catch (\Throwable $e) {

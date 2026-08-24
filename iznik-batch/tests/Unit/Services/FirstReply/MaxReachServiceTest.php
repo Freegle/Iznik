@@ -3,6 +3,7 @@
 namespace Tests\Unit\Services\FirstReply;
 
 use App\Services\FirstReply\MaxReachService;
+use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -25,10 +26,12 @@ class MaxReachServiceTest extends TestCase
     {
         parent::setUp();
         MaxReachService::forgetAvailability();
+        GeomShareService::forgetReady();
         // The sizing sweep works on every pending row, so leftovers from another
         // test would show up in this one's counts.
         DB::statement('DELETE FROM firstreply_passthroughs');
         DB::statement('DELETE FROM rippling_reach');
+        DB::statement('DELETE FROM rippling_reach_geom');
     }
 
     private function service(): MaxReachService
@@ -246,5 +249,62 @@ class MaxReachServiceTest extends TestCase
 
         $this->assertSame(1, $this->service()->computePassthroughSavings()['scanned']);
         $this->assertSame(0, $this->service()->computePassthroughSavings()['scanned']);
+    }
+
+    // -- geometry dedup dual-write -------------------------------------------------
+
+    public function test_populate_stores_a_max_polygon_hash_and_shares_the_geom_row(): void
+    {
+        $msgid = $this->seedRipplingPost();
+
+        $this->service()->populate();
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row->max_polygon_hash);
+        $expected = DB::selectOne(
+            'SELECT UNHEX(MD5(ST_AsBinary(max_polygon))) AS h FROM rippling_reach WHERE msgid = ?',
+            [$msgid]
+        )->h;
+        $this->assertSame((string) $expected, (string) $row->max_polygon_hash);
+        $this->assertNotNull(DB::table('rippling_reach_geom')->where('hash', $row->max_polygon_hash)->first());
+    }
+
+    public function test_populate_does_not_refill_a_drained_max_polygon(): void
+    {
+        $msgid = $this->seedRipplingPost();
+        $this->service()->populate();
+        $hash = DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon_hash');
+        $this->assertNotNull($hash, 'the dual-write set a hash before we simulate the drain');
+
+        // Simulate ripple:drain-deduped-blobs: blob gone, hash stays.
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['max_polygon' => null]);
+
+        $stats = $this->service()->populate();
+
+        $this->assertSame(
+            0,
+            $stats['scanned'],
+            'a drained row (hash set, blob gone) still HAS a max reach and must not be re-scanned'
+        );
+        $this->assertNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon'),
+            'the drain is not undone'
+        );
+    }
+
+    public function test_populate_for_post_does_not_refill_a_drained_max_polygon(): void
+    {
+        $msgid = $this->seedRipplingPost();
+        $this->assertTrue($this->service()->populateForPost($msgid));
+        $hash = DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon_hash');
+        $this->assertNotNull($hash);
+
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['max_polygon' => null]);
+
+        $this->assertFalse(
+            $this->service()->populateForPost($msgid),
+            'a drained row (hash set, blob gone) must not be treated as still needing a fill'
+        );
+        $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon'));
     }
 }

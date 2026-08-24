@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-23
+last_reviewed: 2026-08-24
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -1005,6 +1005,40 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
 - `memberships.rippled = 1` - marks a membership rippling created, when the member's own post
   rippled into that group and we auto-joined them (§5). Every statistic that asks "were they
   already a member?" must exclude these - see §10a.
+
+### 9a. Shared geometry (`rippling_reach_geom`)
+
+`polygon` is byte-for-byte a function of (origin, tick), so posts from the same origin store
+identical multi-hundred-KB blobs - measured 42% redundant across the table, which is the
+estate's binding disk constraint (design: `plans/2026-08-23-rippling-reach-polygon-dedup.md`).
+Each distinct geometry is therefore stored once in `rippling_reach_geom`, keyed by the MD5 of
+its WKB, and reach rows point at it via nullable `polygon_hash` / `max_polygon_hash` columns
+(FK RESTRICT, so deleting a still-referenced geometry physically fails).
+
+The contract, defined once per language in `GeomShareService` (PHP) and
+`rippling/geomshare.go` (Go):
+
+- **Readers** never assume the shared row: `LEFT JOIN` + `COALESCE(g.geom, blob)`, correct
+  before the backfill, during it, and after the drain. A NULL hash always means "read the
+  blob".
+- **Writers** upsert the geom row first (no-op `ON DUPLICATE KEY UPDATE`, idempotent under
+  the concurrent backfill shards / maxreach cron / Go clip), then write blob + hash in one
+  statement - single-table UPDATEs hash the polygon column AFTER assigning it, so the hash
+  always matches the stored bytes.
+- **The clips** (`ExpandService::reapplyClips`, Go `ClipReachForRejectedGroup`) mutate the
+  blob in place, so they NULL the hash in that same statement and re-point afterwards - a
+  shared geom row is never mutated, because up to 261 posts share one.
+- **No reference counter, deliberately.** The `messages` FK cascade and four explicit delete
+  paths bypass any counter, so on Galera it could only drift. `ripple:gc-reach-geometry`
+  instead PROVES a geometry unreferenced: age grace, two passes agreeing across at least the
+  grace interval, an anti-join re-checked inside the DELETE itself, and the FK as backstop.
+
+Operator lifecycle: `ripple:dedup-geometry` (backfill hashes),
+`ripple:verify-geometry-dedup` (recompute-and-compare checker; non-zero when anything
+mismatches OR when it compared nothing), `ripple:drain-deduped-blobs` (the actual disk win:
+verified blobs become a sentinel `POINT(0 0)` for `polygon` - NOT NULL + spatial index rule
+out NULL - and NULL for `max_polygon`), then the GC on repeat. `overflow_bounds` is NOT
+deduplicated here: it is JSON-of-WKT, not a GEOMETRY, and has_overflow is generated from it.
 
 ## 10. The sysadmin analytics tab
 

@@ -3,6 +3,7 @@
 namespace App\Console\Commands\Ripple;
 
 use App\Console\Concerns\PreventsOverlapping;
+use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\ReachBoundsService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -70,12 +71,15 @@ class BackfillInnerBoundsCommand extends Command
 
                     try {
                         // keep-raw: ST_GeometryType/ST_Area GIS expressions per single row
+                        // (COALESCE reads the shared rippling_reach_geom row when deduped)
                         $row = DB::selectOne(
                             'SELECT ST_GeometryType(outer_bound) AS outer_type,
                                     inner_bound IS NULL AS missing,
-                                    COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area(polygon), 0), 0) AS ratio
-                               FROM rippling_reach
-                              WHERE msgid = ? AND polygon IS NOT NULL AND outer_bound IS NOT NULL',
+                                    COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area('
+                            . GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g') . '), 0), 0) AS ratio
+                               FROM rippling_reach' . GeomShareService::joinSql('rippling_reach', 'polygon', 'g') . '
+                              WHERE msgid = ? AND ('
+                            . GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g') . ') IS NOT NULL AND outer_bound IS NOT NULL',
                             [$lastId]
                         );
                     } catch (\Throwable) {

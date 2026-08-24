@@ -23,8 +23,16 @@ import (
 // bounds columns exist, else the legacy exact-polygon test. Callers splice it in place
 // of the old ST_Contains conjunct.
 func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []interface{}) {
+	share := rippling.GeomShareReady(db)
 	if rippling.ReachBoundsReady(db) {
-		return rippling.ReachBrowseWhere(float64(lng), float64(lat), utils.SRID)
+		return rippling.ReachBrowseWhere(share, float64(lng), float64(lat), utils.SRID)
+	}
+
+	// Pre-sandwich fallback: no join here (the enclosing query owns the FROM), so
+	// test via a correlated PK-pair lookup when the geometry may be deduped.
+	if share {
+		return "AND ST_Contains(COALESCE((SELECT g2.geom FROM rippling_reach_geom g2 WHERE g2.hash = rr.polygon_hash), rr.polygon), ST_SRID(POINT(?, ?), ?)) ",
+			[]interface{}{lng, lat, utils.SRID}
 	}
 
 	return "AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) ", []interface{}{lng, lat, utils.SRID}

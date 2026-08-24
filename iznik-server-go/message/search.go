@@ -233,6 +233,17 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	// search repeatedly in quick succession, so consecutive searches skip the expensive
 	// containment entirely (measured: ~1.4s cold, ~0.15s warm end-to-end). The own arm
 	// stays fresh so a just-posted item is searchable immediately.
+	//
+	// The exact polygon may live in rippling_reach_geom (content-addressed dedup,
+	// plans/2026-08-23-rippling-reach-polygon-dedup.md): COALESCE reads the shared row
+	// when rr.polygon_hash points at one, the local blob otherwise. The DRIVING index
+	// for this query is now rippling_reach_outer (the outer_bound conjunct below), not
+	// rippling_reach_polygon: the exact-polygon conjunct is a COALESCE expression and
+	// can no longer be an R-tree access path on its own, but outer_bound is unchanged,
+	// unindexed by the dedup, and a genuine superset (see the comment above) - so the
+	// plan is unaffected in practice. Confirm with EXPLAIN on db1 before this ships
+	// (Stage 3 of the dedup plan; this is the exact query the 2026-08-21 outage hit).
+	share := rippling.GeomShareReady(db)
 	now := time.Now()
 	key := reachUniverseKey(myid, lat, lng)
 	reachIDs, hit := cachedReachUniverse(key, now)
@@ -257,11 +268,11 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 		// can never be indexed alongside a geometry predicate, so it has to be
 		// asked separately and merged here.
 		containment := "AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
-			"AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) "
+			"AND ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)) "
 
 		args := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
 		args = append(args, float64(9007199254740991), lat, lng, lat)
-		db.Table("rippling_reach rr").
+		db.Table("rippling_reach rr"+rippling.GeomJoin(share, "rr", "polygon", "g")).
 			Select("ms.msgid").
 			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
 			Joins("INNER JOIN messages m ON m.id = ms.msgid").

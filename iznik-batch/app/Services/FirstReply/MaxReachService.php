@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\ReachService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -81,12 +82,20 @@ class MaxReachService
 
         try {
             $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
+            // Both geometries may live in rippling_reach_geom (content-addressed
+            // dedup); COALESCE reads the shared row when the hash points at one,
+            // the blob otherwise. "IS NOT NULL" keeps meaning "a max reach is
+            // known" across the drain, which NULLs the blob but not the hash.
+            $pJoin = GeomShareService::joinSql('rippling_reach', 'polygon', 'gp');
+            $mJoin = GeomShareService::joinSql('rippling_reach', 'max_polygon', 'gm');
+            $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'gp');
+            $maxPoly = GeomShareService::sourceExpr('rippling_reach', 'max_polygon', 'gm');
             $row = DB::selectOne(
                 "SELECT EXISTS(
-                    SELECT 1 FROM rippling_reach
+                    SELECT 1 FROM rippling_reach$pJoin$mJoin
                     WHERE msgid = ?
-                      AND (ST_Contains(polygon, $point) = 1
-                           OR (max_polygon IS NOT NULL AND ST_Contains(max_polygon, $point) = 1))
+                      AND (ST_Contains($poly, $point) = 1
+                           OR (($maxPoly) IS NOT NULL AND ST_Contains($maxPoly, $point) = 1))
                  ) AS within",
                 [$msgid, $lng, $lat, $lng, $lat]
             );
@@ -144,7 +153,11 @@ class MaxReachService
 
         $rows = DB::table('rippling_reach')
             ->select('msgid', 'lat', 'lng', 'schedule')
+            // "Lacks a max reach" means BOTH the blob and the hash are absent: after
+            // ripple:drain-deduped-blobs the blob is NULL while the hash still points
+            // at the shared geometry, and refilling such a row would undo the drain.
             ->whereNull('max_polygon')
+            ->when(GeomShareService::ready(), fn ($q) => $q->whereNull('max_polygon_hash'))
             ->whereNotNull('schedule')
             // Only posts still expanding: a done post's current reach IS its
             // eventual reach, so no reply to it can be held inside max_polygon
@@ -195,13 +208,7 @@ class MaxReachService
 
                 $cumulative = isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null;
 
-                DB::statement(
-                    'UPDATE rippling_reach
-                     SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
-                         max_cumulative_users = ?
-                     WHERE msgid = ?',
-                    [$wkt, $cumulative, $row->msgid]
-                );
+                $this->storeMaxPolygon((int) $row->msgid, $wkt, $cumulative);
                 $stats['filled']++;
             } catch (\Throwable $e) {
                 $stats['skipped']++;
@@ -240,7 +247,10 @@ class MaxReachService
             $row = DB::table('rippling_reach')
                 ->select('schedule')
                 ->where('msgid', $msgid)
+                // Same both-absent rule as populate(): a drained row still HAS a
+                // max reach, in rippling_reach_geom.
                 ->whereNull('max_polygon')
+                ->when(GeomShareService::ready(), fn ($q) => $q->whereNull('max_polygon_hash'))
                 ->whereNotNull('schedule')
                 ->first();
 
@@ -260,16 +270,10 @@ class MaxReachService
                 return false;
             }
 
-            DB::statement(
-                'UPDATE rippling_reach
-                 SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),
-                     max_cumulative_users = ?
-                 WHERE msgid = ?',
-                [
-                    (string) $final['wkt'],
-                    isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null,
-                    $msgid,
-                ]
+            $this->storeMaxPolygon(
+                $msgid,
+                (string) $final['wkt'],
+                isset($final['cumulative_users']) ? (int) $final['cumulative_users'] : null
             );
 
             return true;
@@ -372,6 +376,30 @@ class MaxReachService
         }
 
         return $stats;
+    }
+
+    /**
+     * The one write of max_polygon, shared by both populate paths so the hash
+     * discipline cannot drift between them: shared geom row first (the FK
+     * insists), then blob + hash in one statement - SET is left to right, so
+     * the hash is computed from the bytes this statement stores.
+     */
+    private function storeMaxPolygon(int $msgid, string $wkt, ?int $cumulative): void
+    {
+        $withHash = GeomShareService::ready();
+        if ($withHash) {
+            GeomShareService::upsertFromWkt($wkt);
+        }
+
+        // keep-raw: UPDATE with ST_GeomFromText/hash spatial expressions in SET - the builder cannot render these
+        DB::statement(
+            'UPDATE rippling_reach
+             SET max_polygon = ST_GeomFromText(?, ' . self::SRID . '),'
+            . ($withHash ? ' max_polygon_hash = ' . GeomShareService::hashOfColumnExpr('max_polygon') . ',' : '')
+            . ' max_cumulative_users = ?
+             WHERE msgid = ?',
+            [$wkt, $cumulative, $msgid]
+        );
     }
 
     /**

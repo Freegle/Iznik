@@ -20,6 +20,7 @@ package isochrone
 import (
 	"os"
 
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
@@ -82,7 +83,7 @@ func spatialReachIDs(latlng utils.LatLng) (in []int64, partial []int64, ok bool)
 // ids    -> ms type=range key=msgid rows=22.
 // EXISTS -> ms type=ALL   key=NULL  rows=58,348, with the JSON parse and the
 // geometry build repeated per row, on a badge that polls ~2/s.
-func fromIDsWhere(in, partial []int64, latlng utils.LatLng, admitted []uint64) (string, []interface{}) {
+func fromIDsWhere(share bool, in, partial []int64, latlng utils.LatLng, admitted []uint64) (string, []interface{}) {
 	ringArm := ""
 	var ringArgs []interface{}
 	if len(admitted) > 0 {
@@ -97,14 +98,21 @@ func fromIDsWhere(in, partial []int64, latlng utils.LatLng, admitted []uint64) (
 		ringArgs = []interface{}{admitted}
 	}
 
+	// The partial bucket's exact test may read a shared geometry
+	// (content-addressed dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md):
+	// PK join + COALESCE, same shape as every other exact-polygon test, primary
+	// key bound by r2.msgid = ms.msgid so this stays the keyed lookup the whole
+	// spatial path exists to be. share is GeomShareReady(db) at the call site
+	// (an explicit bool, not a db handle, so this stays testable without one -
+	// matching rippling.ReachBrowseWhere/ReachInReachExpr).
 	whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " +
 		"AND ((ms.msgid IN (?) AND EXISTS (" +
 		"SELECT 1 FROM rippling_reach r1 WHERE r1.msgid = ms.msgid " +
 		"AND r1.status != 'held')) " +
 		"OR (ms.msgid IN (?) AND EXISTS (" +
-		"SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = ms.msgid " +
+		"SELECT 1 FROM rippling_reach r2" + rippling.GeomJoin(share, "r2", "polygon", "g2") + " WHERE r2.msgid = ms.msgid " +
 		"AND r2.status != 'held' " +
-		"AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) " +
+		"AND ST_Contains(" + rippling.GeomExpr(share, "r2", "polygon", "g2") + ", ST_SRID(POINT(?, ?), ?)))) " +
 		ringArm + ") " +
 		authorReachCapWhere
 
@@ -122,7 +130,7 @@ func fromIDsWhere(in, partial []int64, latlng utils.LatLng, admitted []uint64) (
 func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64, admitted []uint64) *gorm.DB {
 	// One concatenated WHERE string in a single Where() call — same GORM
 	// extra-paren gotcha as reachCandidateQuery (see there).
-	whereSQL, whereArgs := fromIDsWhere(in, partial, latlng, admitted)
+	whereSQL, whereArgs := fromIDsWhere(rippling.GeomShareReady(db), in, partial, latlng, admitted)
 
 	return db.Table("messages_spatial ms").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").
