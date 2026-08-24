@@ -31,11 +31,11 @@ class DatasetExtractorTest extends TestCase
         );
 
         $this->assertCount(1, $rows);
-        $this->assertEqual(123, $rows[0]['room_id']);
-        $this->assertEqual('Offer', $rows[0]['post_type']);
-        $this->assertEqual(0, $rows[0]['end_turn']);
-        $this->assertEqual(1, $rows[0]['promise_turn']);
-        $this->assertEqual(0, $rows[0]['label']);
+        $this->assertEquals(123, $rows[0]['room_id']);
+        $this->assertEquals('Offer', $rows[0]['post_type']);
+        $this->assertEquals(0, $rows[0]['end_turn']);
+        $this->assertEquals(1, $rows[0]['promise_turn']);
+        $this->assertEquals(0, $rows[0]['label']);
     }
 
     public function test_exclude_event_types()
@@ -57,7 +57,7 @@ class DatasetExtractorTest extends TestCase
         // Only 2 real-text turns: "Is this available?" and "Address sent."
         // Promised event is after "Address sent.", so promise_turn = 1
         $this->assertCount(1, $rows);
-        $this->assertEqual(1, $rows[0]['promise_turn']);
+        $this->assertEquals(1, $rows[0]['promise_turn']);
     }
 
     public function test_window_size_smaller_than_available_turns()
@@ -81,7 +81,7 @@ class DatasetExtractorTest extends TestCase
         // Drop |j - 2| <= 1, i.e., j in [1, 2, 3]
         // Keep j in [0]
         $this->assertCount(1, $rows);
-        $this->assertEqual(0, $rows[0]['end_turn']);
+        $this->assertEquals(0, $rows[0]['end_turn']);
     }
 
     public function test_span_format_speaker_tagged()
@@ -118,8 +118,8 @@ class DatasetExtractorTest extends TestCase
             opts: ['window' => 8, 'tolerance' => 1, 'negativesPerRoom' => null]
         );
 
-        $this->assertEqual(-1, $rows[0]['promise_turn']);
-        $this->assertEqual(0, $rows[0]['label']);
+        $this->assertEquals(-1, $rows[0]['promise_turn']);
+        $this->assertEquals(0, $rows[0]['label']);
     }
 
     public function test_label_before_promise_turn()
@@ -145,10 +145,10 @@ class DatasetExtractorTest extends TestCase
         $atPromise = collect($rows)->firstWhere('end_turn', '>=', 2);
 
         if ($beforePromise) {
-            $this->assertEqual(0, $beforePromise['label']);
+            $this->assertEquals(0, $beforePromise['label']);
         }
         if ($atPromise) {
-            $this->assertEqual(1, $atPromise['label']);
+            $this->assertEquals(1, $atPromise['label']);
         }
     }
 
@@ -172,7 +172,7 @@ class DatasetExtractorTest extends TestCase
         // Rows with end_turn in [1, 2, 3] should be dropped (|j-2|<=1)
         // Keep end_turn = 0
         $this->assertCount(1, $rows);
-        $this->assertEqual(0, $rows[0]['end_turn']);
+        $this->assertEquals(0, $rows[0]['end_turn']);
     }
 
     public function test_negatives_per_room_cap()
@@ -239,9 +239,9 @@ class DatasetExtractorTest extends TestCase
         // Only "Turn 0" is a real turn (index 0 in real-text space)
         // Promised happens after it, so promise_turn = 0
         $this->assertCount(1, $rows);
-        $this->assertEqual(0, $rows[0]['promise_turn']);
-        $this->assertEqual(0, $rows[0]['end_turn']);
-        $this->assertEqual(1, $rows[0]['label']);  // j >= promise_turn
+        $this->assertEquals(0, $rows[0]['promise_turn']);
+        $this->assertEquals(0, $rows[0]['end_turn']);
+        $this->assertEquals(1, $rows[0]['label']);  // j >= promise_turn
     }
 
     public function test_window_does_not_exceed_available_turns()
@@ -276,7 +276,7 @@ class DatasetExtractorTest extends TestCase
             opts: ['window' => 8, 'tolerance' => 1, 'negativesPerRoom' => null]
         );
 
-        $this->assertEqual('Wanted', $rows[0]['post_type']);
+        $this->assertEquals('Wanted', $rows[0]['post_type']);
     }
 
     public function test_include_positive_and_negative_with_wider_tolerance()

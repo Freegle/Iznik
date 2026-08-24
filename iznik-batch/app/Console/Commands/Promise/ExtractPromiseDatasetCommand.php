@@ -42,11 +42,14 @@ class ExtractPromiseDatasetCommand extends Command
             mkdir($outDir, 0755, true);
         }
 
-        // Query User2User chat rooms
+        // Query User2User chat rooms.
+        // NB: do NOT use ORDER BY RAND() — it filesorts the entire filtered set and
+        // times out the live-DB tunnel on large windows. Use a cheap PK-ordered scan
+        // (most-recent first) and bound the sample with --since / --max-rooms.
         $query = DB::table('chat_rooms')
             ->where('chattype', 'User2User')
             ->where('created', '>=', $since)
-            ->orderByRaw('RAND()');
+            ->orderBy('id', 'desc');
 
         if ($maxRooms) {
             $query->limit($maxRooms);
@@ -73,91 +76,84 @@ class ExtractPromiseDatasetCommand extends Command
         $successCount = 0;
         $skipCount = 0;
 
-        // Process rooms in chunks, batch-fetching messages and posts per chunk to
-        // avoid N+1 round-trips over the (high-latency) SSH tunnel: ~2 queries per
-        // 500-room chunk instead of ~2 per room.
-        foreach ($rooms->chunk(500) as $chunk) {
-            $roomIds = $chunk->pluck('id')->all();
+        foreach ($rooms as $room) {
+            // Get all messages in this room, ordered by date
+            $messages = DB::table('chat_messages')
+                ->where('chatid', $room->id)
+                ->orderBy('date', 'asc')
+                ->get(['userid', 'type', 'message', 'refmsgid']);
 
-            // All messages for these rooms in one query, grouped by room.
-            $messagesByRoom = DB::table('chat_messages')
-                ->whereIn('chatid', $roomIds)
-                ->orderBy('chatid')
-                ->orderBy('date')
-                ->get(['chatid', 'userid', 'type', 'message', 'refmsgid'])
-                ->groupBy('chatid');
-
-            // Earliest refmsgid per room, then batch-fetch all referenced posts.
-            $refByRoom = [];
-            foreach ($messagesByRoom as $cid => $msgs) {
-                $earliest = $msgs->filter(fn($m) => $m->refmsgid !== null)
-                    ->sortBy(fn($m) => $m->refmsgid)
-                    ->first();
-                if ($earliest) {
-                    $refByRoom[$cid] = $earliest->refmsgid;
-                }
+            if ($messages->isEmpty()) {
+                $skipCount++;
+                continue;
             }
-            $posts = empty($refByRoom)
-                ? collect()
-                : DB::table('messages')
-                    ->whereIn('id', array_values(array_unique($refByRoom)))
-                    ->get(['id', 'type', 'fromuser'])
-                    ->keyBy('id');
 
-            foreach ($chunk as $room) {
-                $messages = $messagesByRoom[$room->id] ?? collect();
-                if ($messages->isEmpty()) {
-                    $skipCount++;
-                    continue;
-                }
+            // Determine post_type and roles
+            $postType = null;
+            $postOwnerId = null;
 
-                $postType = null;
-                $postOwnerId = null;
-                if (isset($refByRoom[$room->id]) && $posts->has($refByRoom[$room->id])) {
-                    $post = $posts[$refByRoom[$room->id]];
-                    $postType = $post->type;       // 'Offer' or 'Wanted'
+            // Find the earliest refmsgid to locate the originating post
+            $earliestRefMsg = $messages
+                ->filter(fn($m) => $m->refmsgid !== null)
+                ->sortBy(fn($m) => $m->refmsgid)
+                ->first();
+
+            if ($earliestRefMsg) {
+                $post = DB::table('messages')
+                    ->where('id', $earliestRefMsg->refmsgid)
+                    ->first(['id', 'type', 'fromuser']);
+
+                if ($post) {
+                    $postType = $post->type; // 'Offer' or 'Wanted'
                     $postOwnerId = $post->fromuser;
                 }
-
-                if (!$postType || !$postOwnerId) {
-                    $skipCount++;
-                    continue;
-                }
-
-                // Offer: post owner is GIVER, other user is TAKER. Wanted: flipped.
-                $otherUserId = ($room->user1 === $postOwnerId) ? $room->user2 : $room->user1;
-                $giverRole = $postType === 'Offer' ? $postOwnerId : $otherUserId;
-
-                $mappedMessages = [];
-                foreach ($messages as $msg) {
-                    $mappedMessages[] = [
-                        'type' => $msg->type,
-                        'role' => $msg->userid === $giverRole ? 'GIVER' : 'TAKER',
-                        'text' => $msg->message ?? '',
-                    ];
-                }
-
-                $rows = $this->extractor->extractRoom(
-                    roomId: $room->id,
-                    postType: $postType,
-                    messages: $mappedMessages,
-                    opts: [
-                        'window' => $window,
-                        'tolerance' => $tolerance,
-                        'negativesPerRoom' => $negativesPerRoom,
-                    ]
-                );
-
-                foreach ($rows as $row) {
-                    fputcsv($fp, $row, escape: '');
-                    $totalRows++;
-                    if ($row['label'] === 1) {
-                        $totalPositives++;
-                    }
-                }
-
-                $successCount++;
             }
+
+            if (!$postType || !$postOwnerId) {
+                $skipCount++;
+                continue;
+            }
+
+            // Determine GIVER and TAKER
+            // For Offer: owner is GIVER, other user is TAKER
+            // For Wanted: owner is TAKER, other user is GIVER
+            $otherUserId = ($room->user1 === $postOwnerId) ? $room->user2 : $room->user1;
+
+            $giverRole = $postType === 'Offer' ? $postOwnerId : $otherUserId;
+            $takerRole = $postType === 'Offer' ? $otherUserId : $postOwnerId;
+
+            // Map messages to role
+            $mappedMessages = [];
+            foreach ($messages as $msg) {
+                $role = $msg->userid === $giverRole ? 'GIVER' : 'TAKER';
+                $mappedMessages[] = [
+                    'type' => $msg->type,
+                    'role' => $role,
+                    'text' => $msg->message ?? '',
+                ];
+            }
+
+            // Extract dataset rows
+            $rows = $this->extractor->extractRoom(
+                roomId: $room->id,
+                postType: $postType,
+                messages: $mappedMessages,
+                opts: [
+                    'window' => $window,
+                    'tolerance' => $tolerance,
+                    'negativesPerRoom' => $negativesPerRoom,
+                ]
+            );
+
+            foreach ($rows as $row) {
+                fputcsv($fp, $row, escape: '');
+                $totalRows++;
+                if ($row['label'] === 1) {
+                    $totalPositives++;
+                }
+            }
+
+            $successCount++;
         }
 
         fclose($fp);

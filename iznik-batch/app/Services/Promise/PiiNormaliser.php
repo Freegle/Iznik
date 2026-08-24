@@ -71,16 +71,23 @@ class PiiNormaliser
             $text
         );
 
-        // Replace street addresses
-        // Pattern 1: "Number Street" (e.g., "12 High Street")
-        // Pattern 2: "Flat/Apartment N, ..." (e.g., "Flat 3, Oakwood Lane")
+        // Replace street addresses.
+        // A bare "number + word" (e.g. "6 pm", "3 chairs", "2 days") is NOT an
+        // address — that over-matched and injected fake <ADDRESS> tokens (a strong
+        // promise signal) into times/quantities. Require a real street suffix with a
+        // capitalised street name; the suffix word may be any case.
+        // Pattern 1: "12 High Street", "45 Elm Road", "10 Downing Street"
+        $streetSuffix = 'Street|St|Road|Rd|Lane|Ln|Avenue|Ave|Close|Drive|Dr|Way|Court|Ct'
+            . '|Crescent|Cres|Place|Pl|Gardens|Gdns|Terrace|Grove|Walk|Row|Square|Sq|Mews'
+            . '|Parade|Rise|Park|Green|Hill|Vale|Croft|Wharf|Quay|Gate|Yard|Boulevard|Broadway';
         $text = preg_replace(
-            '/\b\d{1,4}\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/i',
+            '/\b\d{1,4}[a-z]?\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+(?i:' . $streetSuffix . ')\b/',
             '<ADDRESS>',
             $text
         );
+        // Pattern 2: "Flat 3, Oakwood Lane" — sub-dwelling prefix + number + capitalised name
         $text = preg_replace(
-            '/\b(?:Flat|Apartment|Apt|Suite|Unit|House)\s+\d+\s*,?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/i',
+            '/\b(?i:Flat|Apartment|Apt|Suite|Unit|House)\s+\d+[a-z]?\s*,?\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/',
             '<ADDRESS>',
             $text
         );

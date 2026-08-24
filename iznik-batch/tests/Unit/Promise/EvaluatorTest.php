@@ -86,9 +86,9 @@ class EvaluatorTest extends TestCase
 
     public function test_roc_auc_random(): void
     {
-        // Random ordering should be ~0.5
+        // Random ordering should be ~0.5 — positives and negatives interleaved
         $yTrue = [0, 1, 0, 1, 0, 1];
-        $yProba = [0.3, 0.4, 0.5, 0.2, 0.6, 0.1];
+        $yProba = [0.4, 0.6, 0.3, 0.7, 0.5, 0.2];
 
         $metrics = $this->evaluator->evaluate($yTrue, $yProba);
 

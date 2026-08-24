@@ -84,6 +84,44 @@ class PiiNormaliserTest extends TestCase
         $this->assertStringNotContainsString('Flat 3', $result);
     }
 
+    public function test_does_not_redact_times_or_quantities_as_address()
+    {
+        // A bare "<number> <word>" is NOT an address. The old regex matched any
+        // number+word and injected fake <ADDRESS> tokens (a strong promise signal)
+        // into times, durations and quantities — corrupting the dataset. Regression guard.
+        foreach ([
+            'come at 6 pm',
+            'in 2 days',
+            'give me 10 minutes',
+            'I have 3 chairs',
+            'around 7 tonight',
+            'ready in 5 mins',
+            '11 am works for me',
+        ] as $input) {
+            $this->assertStringNotContainsString(
+                '<ADDRESS>',
+                $this->normaliser->normalise($input),
+                "'$input' must not be redacted as an address"
+            );
+        }
+    }
+
+    public function test_still_redacts_real_street_addresses()
+    {
+        foreach ([
+            '12 High Street in town',
+            'my address is 45 Elm Road',
+            '10 Downing Street',
+            'come to 7 Mill Lane',
+        ] as $input) {
+            $this->assertStringContainsString(
+                '<ADDRESS>',
+                $this->normaliser->normalise($input),
+                "'$input' should be redacted as an address"
+            );
+        }
+    }
+
     public function test_preserve_emoji()
     {
         $input = 'Great item 🎉 very happy 😊';
@@ -111,11 +149,13 @@ class PiiNormaliserTest extends TestCase
 
     public function test_collapse_carriage_return_newline_tab()
     {
-        $result = $this->normaliser->normalise("Line 1\r\nLine 2\tTabbed");
-        $this->assertStringNotContainsString("\r");
-        $this->assertStringNotContainsString("\n");
-        $this->assertStringNotContainsString("\t");
-        $this->assertStringContainsString("Line 1 Line 2 Tabbed", $result);
+        // Use digit-free words so the address regex ("<number> <Word>") doesn't fire —
+        // this test is about \r\n\t collapsing, not PII.
+        $result = $this->normaliser->normalise("Line one\r\nLine two\tTabbed");
+        $this->assertStringNotContainsString("\r", $result);
+        $this->assertStringNotContainsString("\n", $result);
+        $this->assertStringNotContainsString("\t", $result);
+        $this->assertStringContainsString("Line one Line two Tabbed", $result);
     }
 
     public function test_collapse_multiple_spaces()
@@ -140,12 +180,12 @@ class PiiNormaliserTest extends TestCase
     public function test_empty_string()
     {
         $result = $this->normaliser->normalise('');
-        $this->assertEqual('', $result);
+        $this->assertEquals('', $result);
     }
 
     public function test_whitespace_only()
     {
         $result = $this->normaliser->normalise('   ');
-        $this->assertStringNotContainsString('   ');
+        $this->assertStringNotContainsString('   ', $result);
     }
 }
