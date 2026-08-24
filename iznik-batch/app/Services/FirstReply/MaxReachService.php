@@ -2,6 +2,7 @@
 
 namespace App\Services\FirstReply;
 
+use App\Services\Ripple\CellSetService;
 use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\ReachService;
 use Carbon\Carbon;
@@ -38,8 +39,36 @@ class MaxReachService
     /** Memoized column-existence check so a pre-migration deploy is a no-op. */
     private static ?bool $columnExists = null;
 
-    public function __construct(private ReachService $reach)
+    /** Memoized: has the max_polygon_cells (raster-storage) migration run? */
+    private static ?bool $cellsColumnExists = null;
+
+    public function __construct(private ReachService $reach, private CellSetService $cellSets)
     {
+    }
+
+    /** Test-only: forget the memoized cells-column check. */
+    public static function forgetCellsAvailability(): void
+    {
+        self::$cellsColumnExists = null;
+    }
+
+    /**
+     * Has plans/2026-08-24-rippling-reach-raster-storage.md's column landed?
+     * A deploy ahead of it keeps writing/reading max_polygon exactly as
+     * before - this is purely additive, stacked on the polygon-hash-dedup
+     * change.
+     */
+    private function cellsAvailable(): bool
+    {
+        if (self::$cellsColumnExists === null) {
+            try {
+                self::$cellsColumnExists = Schema::hasColumn('rippling_reach', 'max_polygon_cells');
+            } catch (\Throwable) {
+                self::$cellsColumnExists = false;
+            }
+        }
+
+        return self::$cellsColumnExists;
     }
 
     /** Has the max_polygon migration run? Everything here no-ops if not. */
@@ -82,28 +111,69 @@ class MaxReachService
 
         try {
             $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
-            // Both geometries may live in rippling_reach_geom (content-addressed
-            // dedup); COALESCE reads the shared row when the hash points at one,
-            // the blob otherwise. "IS NOT NULL" keeps meaning "a max reach is
-            // known" across the drain, which NULLs the blob but not the hash.
+            // polygon may live in rippling_reach_geom (content-addressed
+            // dedup); COALESCE reads the shared row when the hash points at
+            // one, the blob otherwise.
             $pJoin = GeomShareService::joinSql('rippling_reach', 'polygon', 'gp');
-            $mJoin = GeomShareService::joinSql('rippling_reach', 'max_polygon', 'gm');
             $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'gp');
-            $maxPoly = GeomShareService::sourceExpr('rippling_reach', 'max_polygon', 'gm');
+
+            // "In reach now" and the compact max-reach cell set (plans/2026-
+            // 08-24-rippling-reach-raster-storage.md) come back in ONE round
+            // trip. When max_polygon_cells is set, "eventually reached" is
+            // decided by a local decode-and-bit-test - no further SQL, no
+            // network call - so it costs nothing on this reply-gate hot path.
+            $cellsCol = $this->cellsAvailable() ? ', max_polygon_cells' : '';
             $row = DB::selectOne(
-                "SELECT EXISTS(
-                    SELECT 1 FROM rippling_reach$pJoin$mJoin
-                    WHERE msgid = ?
-                      AND (ST_Contains($poly, $point) = 1
-                           OR (($maxPoly) IS NOT NULL AND ST_Contains($maxPoly, $point) = 1))
-                 ) AS within",
-                [$msgid, $lng, $lat, $lng, $lat]
+                "SELECT ST_Contains($poly, $point) = 1 AS in_now$cellsCol
+                   FROM rippling_reach$pJoin
+                  WHERE msgid = ?",
+                [$lng, $lat, $msgid]
             );
 
-            return (bool) ($row->within ?? 0);
+            if ($row === null) {
+                return false;
+            }
+            if ((bool) $row->in_now) {
+                return true;
+            }
+            $cells = $cellsCol !== '' ? $row->max_polygon_cells : null;
+            if ($cells !== null) {
+                try {
+                    $decoded = $this->cellSets->decode($cells);
+
+                    return $this->cellSets->contains($decoded, $lng, $lat);
+                } catch (\Throwable $e) {
+                    // A malformed blob must not silently pass every reply
+                    // through; fall back to the exact legacy test below like
+                    // any other decode failure (matches the Go passthrough
+                    // path's same fallback).
+                    Log::warning('firstreply: max reach cell set decode failed', [
+                        'msgid' => $msgid, 'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            // Not backfilled with a cell set yet: the exact behaviour this
+            // method had before plans/2026-08-24-rippling-reach-raster-
+            // storage.md - both geometries may live in rippling_reach_geom
+            // (content-addressed dedup); "IS NOT NULL" keeps meaning "a max
+            // reach is known" across the drain, which NULLs the blob but not
+            // the hash.
+            $mJoin = GeomShareService::joinSql('rippling_reach', 'max_polygon', 'gm');
+            $maxPoly = GeomShareService::sourceExpr('rippling_reach', 'max_polygon', 'gm');
+            $fallback = DB::selectOne(
+                "SELECT EXISTS(
+                    SELECT 1 FROM rippling_reach$mJoin
+                    WHERE msgid = ? AND ($maxPoly) IS NOT NULL AND ST_Contains($maxPoly, $point) = 1
+                 ) AS within",
+                [$msgid, $lng, $lat]
+            );
+
+            return (bool) ($fallback->within ?? 0);
         } catch (\Throwable $e) {
-            // Invalid stored geometry can make ST_Contains throw. A spatial failure
-            // must never decide a reply's fate by exception, so fall back to "no".
+            // Invalid stored geometry (or a malformed cell set) can throw. A
+            // spatial failure must never decide a reply's fate by exception,
+            // so fall back to "no".
             Log::warning('firstreply: max reach test failed', ['msgid' => $msgid, 'error' => $e->getMessage()]);
 
             return false;
@@ -400,6 +470,17 @@ class MaxReachService
              WHERE msgid = ?',
             [$wkt, $cumulative, $msgid]
         );
+
+        // The compact cell-set form (plans/2026-08-24-rippling-reach-raster-
+        // storage.md), best-effort: a rasterise failure leaves the column
+        // NULL and every reader falls back to max_polygon exactly as before
+        // this existed - never a reason to fail the write that matters.
+        if ($this->cellsAvailable()) {
+            $cells = $this->cellSets->rasterize($wkt);
+            if ($cells !== null) {
+                DB::table('rippling_reach')->where('msgid', $msgid)->update(['max_polygon_cells' => $cells]);
+            }
+        }
     }
 
     /**

@@ -230,6 +230,21 @@ func main() {
 		return c.JSON(fiber.Map{"admitted": admitted})
 	})
 
+	// POST /v1/reach/rasterize — WKT in (raw text/plain body), the compact
+	// cellset form out (application/octet-stream). This is the only place a
+	// rippling reach polygon is converted to its canonical stored
+	// representation (plans/2026-08-24-rippling-reach-raster-storage.md) -
+	// callers store the returned bytes verbatim; they never rasterise it
+	// themselves.
+	api.Post("/v1/reach/rasterize", func(c *fiber.Ctx) error {
+		out, err := rasterizeWKT(string(c.Body()))
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		c.Set("Content-Type", "application/octet-stream")
+		return c.Send(out)
+	})
+
 	// GET /v1/:dataset/knn	// GET /v1/:dataset/knn
 	api.Get("/v1/:dataset/knn", func(c *fiber.Ctx) error {
 		name := c.Params("dataset")

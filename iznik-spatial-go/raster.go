@@ -26,6 +26,7 @@ import (
 	"math"
 
 	"github.com/peterstace/simplefeatures/geom"
+	"spatial-server/cellset"
 )
 
 const (
@@ -364,6 +365,89 @@ func (r *Raster) markEdge(e edge) {
 	}
 
 	markWithSpill(fc2, fr2)
+}
+
+// BuildRasterFromCellSet builds the same bounded coarse accelerator as
+// BuildRasterDim, but from a cellset.CellSet (plans/2026-08-24-rippling-
+// reach-raster-storage.md) instead of a parsed WKT/WKB polygon. This is the
+// intended long-run path: the cellset IS a fine-grained membership grid
+// already, so classifying a coarse cell is bit-array sampling, not edge
+// geometry - cheaper than BuildRasterDim's supercover+scanline fill, and it
+// never needs to parse or hold a polygon at all.
+//
+// A coarse cell is classified by sampling every constituent fine cell within
+// it (stepping in cellset.CellDegrees, which does not need to share the fine
+// grid's exact phase — a dense sample is what decides "needs the exact
+// answer", not a claim of enumerating every fine cell). All-set -> cellIn,
+// all-clear -> cellOut, mixed -> cellPartial, exactly mirroring
+// BuildRasterDim's contract: partial cells are resolved by the caller
+// against the fine CellSet itself (a bit test), never against a polygon —
+// there no longer is one.
+func BuildRasterFromCellSet(cs *cellset.CellSet, maxDim int) *Raster {
+	if maxDim < 1 {
+		maxDim = rasterMaxDim
+	}
+	minLng, minLat, maxLng, maxLat := cs.Bounds()
+	w, h := maxLng-minLng, maxLat-minLat
+	if w <= 0 || h <= 0 {
+		return nil
+	}
+
+	cols, rows := maxDim, maxDim
+	if w > h {
+		rows = int(math.Max(1, math.Round(float64(maxDim)*h/w)))
+	} else {
+		cols = int(math.Max(1, math.Round(float64(maxDim)*w/h)))
+	}
+
+	r := &Raster{
+		MinLng: minLng, MinLat: minLat,
+		CellW: w / float64(cols), CellH: h / float64(rows),
+		Cols: cols, Rows: rows,
+		cells: make([]byte, (cols*rows+3)/4),
+	}
+
+	for row := 0; row < rows; row++ {
+		cy0 := minLat + float64(row)*r.CellH
+		cy1 := cy0 + r.CellH
+		for col := 0; col < cols; col++ {
+			cx0 := minLng + float64(col)*r.CellW
+			cx1 := cx0 + r.CellW
+
+			sawIn, sawOut := false, false
+			for fy := cy0; fy < cy1; fy += cellset.CellDegrees {
+				for fx := cx0; fx < cx1; fx += cellset.CellDegrees {
+					if cs.Contains(fx+cellset.CellDegrees/2, fy+cellset.CellDegrees/2) {
+						sawIn = true
+					} else {
+						sawOut = true
+					}
+					if sawIn && sawOut {
+						break
+					}
+				}
+				if sawIn && sawOut {
+					break
+				}
+			}
+			// A coarse cell finer than one fine cell (small reach, big
+			// maxDim) samples exactly one point - treat that single answer
+			// as definite, matching BuildRasterDim's centre-test cells.
+			if !sawIn && !sawOut {
+				sawIn = cs.Contains((cx0+cx1)/2, (cy0+cy1)/2)
+				sawOut = !sawIn
+			}
+
+			switch {
+			case sawIn && sawOut:
+				r.set(col, row, cellPartial)
+			case sawIn:
+				r.set(col, row, cellIn)
+			}
+		}
+	}
+
+	return r
 }
 
 func boolToInt(b bool) int {
