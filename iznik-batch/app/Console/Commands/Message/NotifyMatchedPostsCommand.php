@@ -142,6 +142,28 @@ class NotifyMatchedPostsCommand extends Command
                 continue;
             }
 
+            // CLAIM FIRST. "Never re-send" is only true if the record of having
+            // sent is written BEFORE the send, not after: a push and an email
+            // both leave our control the moment they are issued, so if the
+            // recording write then fails the next run sees the same matches as
+            // un-notified and issues them again. insertOrIgnore makes the claim
+            // atomic - the unique key on (msgid, userid) means a concurrent run
+            // cannot claim the same match - and a zero return means every item
+            // was already claimed, so there is nothing left to tell this user
+            // about.
+            //
+            // A failed claim now costs one missed notification instead of an
+            // unbounded repeat; the next genuinely new match brings the user back.
+            $rows = array_map(fn ($i) => [
+                'msgid' => (int) $i['message']->id,
+                'userid' => (int) $user->id,
+                'mailed_at' => $now->toDateTimeString(),
+            ], $items);
+
+            if (! DB::table('messages_matched_notified')->insertOrIgnore($rows)) {
+                continue;
+            }
+
             // In-app (bell) notification + device push — the primary channel,
             // delivered to every eligible recipient regardless of email.
             $this->notifyUserOfMatches($user, $items, $now, $push);
@@ -153,14 +175,7 @@ class NotifyMatchedPostsCommand extends Command
                 $emails++;
             }
 
-            // Record every matched post as notified to this user (never re-send,
-            // across both channels) and bump the per-user cooldown.
-            $rows = array_map(fn ($i) => [
-                'msgid' => (int) $i['message']->id,
-                'userid' => (int) $user->id,
-                'mailed_at' => $now->toDateTimeString(),
-            ], $items);
-            DB::table('messages_matched_notified')->insertOrIgnore($rows);
+            // Bump the per-user cooldown.
             DB::table('users')->where('id', $user->id)->update(['lastrelevantcheck' => $now->toDateTimeString()]);
 
             $matches += count($items);
