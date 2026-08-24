@@ -151,7 +151,21 @@ class MaxReachService
             return $stats;
         }
 
-        $rows = DB::table('rippling_reach')
+        // FORCE INDEX, because the planner's natural choice here is pathological.
+        // ORDER BY updated_at DESC LIMIT 200 makes it drive off
+        // rippling_reach_updated_at and filter each row - fine while there was a
+        // backlog, since the LIMIT was satisfied early. Once every expanding post
+        // has a max reach the predicate matches NOTHING, so it walks the WHOLE
+        // index to prove it: 55,990 row lookups in a ~50 GB table, measured at
+        // 2m09s on an idle db1, once a minute. Driving off status instead bounds
+        // it by the expanding rows (8.5k of them) and the same query returns the
+        // same zero rows in 5.3s. Measured 2026-08-24; the empty-set case dates
+        // from 993a85b7b, which added the status filter.
+        //
+        // A composite (status, max_polygon_hash) index would make this a lookup
+        // rather than a scan, but that is DDL and belongs to the operator.
+        $rows = DB::query()
+            ->fromRaw('rippling_reach FORCE INDEX (rippling_reach_status_index)')
             ->select('msgid', 'lat', 'lng', 'schedule')
             // "Lacks a max reach" means BOTH the blob and the hash are absent: after
             // ripple:drain-deduped-blobs the blob is NULL while the hash still points
