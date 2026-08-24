@@ -28,15 +28,31 @@ import (
 // This lives in package rippling because it is imported by chat, message AND isochrone
 // without cycles (isochrone imports message, so neither of those can host it).
 
+// exactReachExists is the shared correlated-EXISTS arm testing the exact reach
+// geometry. With share, the geometry may live in rippling_reach_geom
+// (content-addressed dedup): PK join + COALESCE keeps the same lazy-BLOB shape
+// whether the row is deduped, drained or untouched. The driver predicates on
+// outer_bound/inner_bound around it never change - they are what the browse
+// R-tree plan hangs off, and the 2026-08-21 outage is what perturbing them
+// looks like.
+func exactReachExists(share bool) string {
+	if share {
+		return "EXISTS (SELECT 1 FROM rippling_reach r2 LEFT JOIN rippling_reach_geom g2 ON g2.hash = r2.polygon_hash " +
+			"WHERE r2.msgid = rr.msgid AND ST_Contains(COALESCE(g2.geom, r2.polygon), ST_SRID(POINT(?, ?), ?)))"
+	}
+	return "EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))"
+}
+
 // ReachInReachExpr returns a boolean SQL expression — true when rr's reach contains the
 // point — for consumers that may serve COMPLETED posts (single-point gates): a POINT
 // outer falls back to the exact polygon rather than rejecting. Consumes FOUR
-// (lng, lat, srid) triples.
-func ReachInReachExpr(lng, lat float64, srid int) (string, []interface{}) {
+// (lng, lat, srid) triples. share is GeomShareReady(db) at the call site.
+func ReachInReachExpr(share bool, lng, lat float64, srid int) (string, []interface{}) {
+	exact := exactReachExists(share)
 	expr := "((ST_GeometryType(rr.outer_bound) <> 'POINT' AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
 		"AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 " +
-		"OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?))))) " +
-		"OR (ST_GeometryType(rr.outer_bound) = 'POINT' AND EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))))"
+		"OR " + exact + ")) " +
+		"OR (ST_GeometryType(rr.outer_bound) = 'POINT' AND " + exact + "))"
 	args := make([]interface{}, 0, 12)
 	for i := 0; i < 4; i++ {
 		args = append(args, lng, lat, srid)
@@ -48,12 +64,12 @@ func ReachInReachExpr(lng, lat float64, srid int) (string, []interface{}) {
 // the R-tree is DRIVEN from the small outer_bound index — the design's target shape —
 // so degraded (POINT) bounds of completed posts are pruned by the index itself and no
 // POINT special-case is needed (browse additionally filters ms.successful = 0).
-// Consumes FOUR (lng, lat, srid) triples.
-func ReachBrowseWhere(lng, lat float64, srid int) (string, []interface{}) {
+// Consumes FOUR (lng, lat, srid) triples. share is GeomShareReady(db) at the call site.
+func ReachBrowseWhere(share bool, lng, lat float64, srid int) (string, []interface{}) {
 	where := "AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
 		"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
 		"AND (COALESCE(ST_Contains(rr.inner_bound, ST_SRID(POINT(?, ?), ?)), 0) = 1 " +
-		"OR EXISTS (SELECT 1 FROM rippling_reach r2 WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?)))) "
+		"OR " + exactReachExists(share) + ") "
 	args := make([]interface{}, 0, 12)
 	for i := 0; i < 4; i++ {
 		args = append(args, lng, lat, srid)

@@ -8,6 +8,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Services\Ripple\ExpandService;
+use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\ReachService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Carbon;
@@ -22,6 +23,9 @@ class ExpandServiceTest extends TestCase
 
     private const WKT = 'POLYGON((-0.1 51.5, -0.2 51.5, -0.2 51.6, -0.1 51.6, -0.1 51.5))';
 
+    /** A second, disjoint shape - distinct bytes, distinct hash, from WKT. */
+    private const WKT2 = 'POLYGON((1.0 52.0, 1.3 52.0, 1.3 52.3, 1.0 52.3, 1.0 52.0))';
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -35,7 +39,9 @@ class ExpandServiceTest extends TestCase
         config(['freegle.ripple.enabled_at' => '']);
         DB::statement('DELETE FROM rippling_held_replies');
         DB::statement('DELETE FROM rippling_reach');
+        DB::statement('DELETE FROM rippling_reach_geom');
         DB::statement('DELETE FROM messages_spatial');
+        GeomShareService::forgetReady();
     }
 
     private function service(): ExpandService
@@ -3674,5 +3680,180 @@ class ExpandServiceTest extends TestCase
             [$msgid]
         )->c;
         $this->assertSame(0, $innerAccepts, 'inner bound must not cover the clipped-out rejected area');
+    }
+
+    // -- geometry dedup dual-write -------------------------------------------------
+
+    public function test_init_stores_a_polygon_hash_matching_its_own_bytes(): void
+    {
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row->polygon_hash);
+        $expected = DB::selectOne(
+            'SELECT UNHEX(MD5(ST_AsBinary(polygon))) AS h FROM rippling_reach WHERE msgid = ?',
+            [$msgid]
+        )->h;
+        $this->assertSame((string) $expected, (string) $row->polygon_hash);
+
+        $geom = DB::table('rippling_reach_geom')->where('hash', $row->polygon_hash)->first();
+        $this->assertNotNull($geom, 'the shared geom row was created alongside the reach row');
+    }
+
+    public function test_two_posts_with_identical_stored_polygons_share_one_geometry_row(): void
+    {
+        $this->fakeRouting(3);
+        $a = $this->seedSpatialPost(now()->subMinutes(30), 51.5, -0.1);
+        $b = $this->seedSpatialPost(now()->subMinutes(30), 51.5, -0.1);
+
+        $this->service()->process(false, 500);
+
+        $rows = DB::table('rippling_reach')->whereIn('msgid', [$a, $b])->get();
+        $this->assertCount(2, $rows);
+        $hashes = $rows->pluck('polygon_hash')->unique();
+        $this->assertCount(1, $hashes, 'identical stored polygons hash to the SAME geom row');
+        $this->assertNotNull($hashes->first());
+        $this->assertSame(
+            1,
+            DB::table('rippling_reach_geom')->count(),
+            'sharing means exactly one geom row, not one per post'
+        );
+    }
+
+    public function test_advance_repoints_hash_to_the_new_tick_leaving_the_old_geom_row_untouched(): void
+    {
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+        // Tick 1 and 2 share WKT; the final tick this post advances to is WKT2 - a
+        // genuinely different geometry, so advancing must move the hash.
+        $ticksJson = json_encode([
+            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
+            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
+            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT2],
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+        );
+        GeomShareService::upsertFromRow($msgid, 'polygon');
+        GeomShareService::rehashFromRow($msgid, 'polygon');
+        $oldHash = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_hash');
+        $this->assertNotNull($oldHash);
+        $oldBytesBefore = DB::selectOne(
+            'SELECT ST_AsBinary(geom) AS b FROM rippling_reach_geom WHERE hash = ?', [$oldHash]
+        )->b;
+
+        Http::fake(); // advance uses the cached schedule, no routing call expected
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(3, (int) $row->tick, 'elapsed time carried the post to the final tick');
+        $newHash = $row->polygon_hash;
+        $this->assertNotNull($newHash);
+        $this->assertNotEquals($oldHash, $newHash, 'the hash moved to the new tick geometry');
+
+        $oldGeom = DB::table('rippling_reach_geom')->where('hash', $oldHash)->first();
+        $this->assertNotNull($oldGeom, 'the tick-1 shared geometry is not deleted by advancing past it');
+        $oldBytesAfter = DB::selectOne(
+            'SELECT ST_AsBinary(geom) AS b FROM rippling_reach_geom WHERE hash = ?', [$oldHash]
+        )->b;
+        $this->assertSame($oldBytesBefore, $oldBytesAfter, 'the old geom row is never mutated in place');
+
+        $newGeom = DB::table('rippling_reach_geom')->where('hash', $newHash)->first();
+        $this->assertNotNull($newGeom, 'the tick-3 geometry has its own shared row');
+    }
+
+    public function test_clip_repoints_only_the_clipped_posts_hash_leaving_the_shared_row_and_sibling_untouched(): void
+    {
+        // Two posts sharing one reach polygon and its hash - the setup the corruption
+        // guard exists for (up to 261 posts observed sharing one geometry live). Only
+        // one carries a secondary-group rejection.
+        $clippedMsgid = $this->seedSpatialPost(now()->subHours(7));
+        $siblingMsgid = $this->seedSpatialPost(now()->subHours(7));
+        $rejectGroup = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET polyindex = ST_GeomFromText(
+                'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', 3857)
+             WHERE id = ?",
+            [$rejectGroup->id]
+        );
+
+        $ticksJson = json_encode([
+            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
+            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
+            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
+        ]);
+        foreach ([
+            [$clippedMsgid, json_encode([(int) $rejectGroup->id])],
+            [$siblingMsgid, null],
+        ] as [$msgid, $rejected]) {
+            DB::statement(
+                "INSERT INTO rippling_reach
+                   (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                    max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
+                 VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+                [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), $rejected]
+            );
+            GeomShareService::upsertFromRow($msgid, 'polygon');
+            GeomShareService::rehashFromRow($msgid, 'polygon');
+        }
+
+        $sharedHashBefore = DB::table('rippling_reach')->where('msgid', $clippedMsgid)->value('polygon_hash');
+        $siblingHashBefore = DB::table('rippling_reach')->where('msgid', $siblingMsgid)->value('polygon_hash');
+        $this->assertSame(
+            (string) $sharedHashBefore,
+            (string) $siblingHashBefore,
+            'both posts point at the same shared geometry before the clip'
+        );
+        $originalBytes = DB::selectOne(
+            'SELECT ST_AsBinary(geom) AS b FROM rippling_reach_geom WHERE hash = ?', [$sharedHashBefore]
+        )->b;
+
+        Http::fake();
+        $this->service()->process(false, 500);
+
+        $clipped = DB::table('rippling_reach')->where('msgid', $clippedMsgid)->first();
+        $untouched = DB::table('rippling_reach')->where('msgid', $siblingMsgid)->first();
+
+        $this->assertNotNull($clipped->polygon_hash);
+        $this->assertNotEquals(
+            $sharedHashBefore,
+            $clipped->polygon_hash,
+            'the clipped post repoints to a new hash rather than mutating the shared one'
+        );
+        $expectedClippedHash = DB::selectOne(
+            'SELECT UNHEX(MD5(ST_AsBinary(polygon))) AS h FROM rippling_reach WHERE msgid = ?', [$clippedMsgid]
+        )->h;
+        $this->assertSame((string) $expectedClippedHash, (string) $clipped->polygon_hash);
+
+        $this->assertSame(
+            (string) $siblingHashBefore,
+            (string) $untouched->polygon_hash,
+            'the sibling post keeps its original hash - it was never touched by the other post being clipped'
+        );
+        $untouchedBytes = DB::selectOne(
+            'SELECT ST_AsBinary(polygon) AS b FROM rippling_reach WHERE msgid = ?', [$siblingMsgid]
+        )->b;
+        $originalWktBytes = DB::selectOne('SELECT ST_AsBinary(ST_GeomFromText(?, 3857)) AS b', [self::WKT])->b;
+        $this->assertSame(
+            $originalWktBytes,
+            $untouchedBytes,
+            "the sibling's polygon bytes are byte-identical to before the clip"
+        );
+
+        $originalStillThere = DB::selectOne(
+            'SELECT ST_AsBinary(geom) AS b FROM rippling_reach_geom WHERE hash = ?', [$sharedHashBefore]
+        )->b;
+        $this->assertSame(
+            $originalBytes,
+            $originalStillThere,
+            'the ORIGINAL shared geom row was never mutated in place - this is the 261-post corruption guard'
+        );
     }
 }

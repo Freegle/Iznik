@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-17
+last_reviewed: 2026-08-24
 covers:
   - iznik-batch/app/Services/FirstReply/**
   - iznik-batch/app/Console/Commands/FirstReply/**
@@ -483,7 +483,7 @@ them in a quiet channel would mean nobody ever answers them.
 
 | Table | What |
 |---|---|
-| `rippling_reach.max_polygon` | the reach the post ends up with. NULL = not computed yet, and every reader falls back to current-reach behaviour |
+| `rippling_reach.max_polygon` | the reach the post ends up with. "Not computed yet" now means the blob AND `max_polygon_hash` are both NULL - the geometry may live content-addressed in `rippling_reach_geom` with the blob drained (see the rippling reference §9a); readers COALESCE through the hash and fall back to current-reach behaviour when neither is set |
 | `rippling_reach.min_tick` | a floor the expander must not sit below, set when a matched member replies. NULL = expand on elapsed time alone, exactly as before |
 | `users_searches_embeddings` | a saved search term as a vector, embedded as a DOCUMENT so it shares the post threshold |
 | `chat_prompts` | options and answer for a `Prompt` chat message |

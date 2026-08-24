@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
@@ -142,12 +143,19 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 
 	// max_polygon is populated by the firstreply:maxreach batch pass and is NULL
 	// until it gets there (and on any deploy that predates the migration), so a
-	// missing column or value degrades to the existing hold behaviour.
+	// missing column or value degrades to the existing hold behaviour. The
+	// geometry may live in rippling_reach_geom (content-addressed dedup,
+	// plans/2026-08-23-rippling-reach-polygon-dedup.md): COALESCE reads the
+	// shared row when max_polygon_hash points at one, the local blob otherwise;
+	// "IS NOT NULL" tests the SAME expression so it keeps meaning "a max reach
+	// is known" after the drain, which NULLs the blob but not the hash.
+	share := rippling.GeomShareReady(db)
+	maxPoly := rippling.GeomExpr(share, "rippling_reach", "max_polygon", "g")
 	var within int
-	if err := db.Table("rippling_reach").
-		Select("COALESCE(MAX(ST_Contains(max_polygon, ST_SRID(POINT(?, ?), ?))), 0)",
+	if err := db.Table("rippling_reach"+rippling.GeomJoin(share, "rippling_reach", "max_polygon", "g")).
+		Select("COALESCE(MAX(ST_Contains("+maxPoly+", ST_SRID(POINT(?, ?), ?))), 0)",
 			lng, lat, utils.SRID).
-		Where("msgid = ? AND max_polygon IS NOT NULL", refmsgid).
+		Where("msgid = ? AND ("+maxPoly+") IS NOT NULL", refmsgid).
 		Scan(&within).Error; err != nil {
 		return false
 	}

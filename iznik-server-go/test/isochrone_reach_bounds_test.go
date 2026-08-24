@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Sandwich-bounds prefilter for the reach queries (plans/2026-07-17-db3-cpu-reach-sql-
@@ -193,6 +194,26 @@ func TestClipReachForRejectedGroupNullsInnerBound(t *testing.T) {
 	insertReachPolygon(mid, coversViewerWkt)
 	setBounds(mid, bigCoversViewerWkt, &inner)
 
+	// Seed the dedup state (plans/2026-08-23-rippling-reach-polygon-dedup.md): a
+	// shared geom row for this exact polygon, and this row's hash pointed at it.
+	// Skipped when the migration has not run in this test DB.
+	var geomTableExists int
+	db.Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'rippling_reach_geom'").Scan(&geomTableExists)
+	// A hard requirement, not a skip: setup-test-database.sh always runs the
+	// Laravel migrations, so a missing table means a broken test environment,
+	// and silently skipping would let the clip corruption guard rot unnoticed.
+	require.Equal(t, 1, geomTableExists, "rippling_reach_geom must exist - run scripts/setup-test-database.sh")
+	sharingMigrated := geomTableExists > 0
+	var originalHash, originalWKB string
+	if sharingMigrated {
+		db.Exec("INSERT INTO rippling_reach_geom (hash, geom) "+
+			"SELECT UNHEX(MD5(ST_AsBinary(polygon))), polygon FROM rippling_reach WHERE msgid = ? "+
+			"ON DUPLICATE KEY UPDATE hash = hash", mid)
+		db.Exec("UPDATE rippling_reach SET polygon_hash = UNHEX(MD5(ST_AsBinary(polygon))) WHERE msgid = ?", mid)
+		db.Raw("SELECT HEX(polygon_hash) FROM rippling_reach WHERE msgid = ?", mid).Scan(&originalHash)
+		db.Raw("SELECT HEX(ST_AsBinary(polygon)) FROM rippling_reach WHERE msgid = ?", mid).Scan(&originalWKB)
+	}
+
 	message.ClipReachForRejectedGroup(db, mid, group)
 
 	// The polygon shrank (partial clip, row retained)...
@@ -209,4 +230,21 @@ func TestClipReachForRejectedGroupNullsInnerBound(t *testing.T) {
 	var outerType string
 	db.Raw("SELECT ST_GeometryType(outer_bound) FROM rippling_reach WHERE msgid = ?", mid).Scan(&outerType)
 	assert.Equal(t, "POLYGON", outerType, "outer bound is left as-is on clip")
+
+	if sharingMigrated {
+		// The hash must be re-pointed alongside the polygon shrink and inner_bound
+		// clear (same statement group), self-consistent with the clipped bytes,
+		// and the shared geom row for the ORIGINAL hash must be untouched.
+		var newHash string
+		db.Raw("SELECT HEX(polygon_hash) FROM rippling_reach WHERE msgid = ?", mid).Scan(&newHash)
+		assert.NotEmpty(t, newHash, "polygon_hash must be re-pointed, not left NULL, after a successful clip")
+		assert.NotEqual(t, originalHash, newHash, "the clip changed the bytes, so the hash must change too")
+		var selfConsistent int
+		db.Raw("SELECT (polygon_hash = UNHEX(MD5(ST_AsBinary(polygon)))) FROM rippling_reach WHERE msgid = ?", mid).Scan(&selfConsistent)
+		assert.Equal(t, 1, selfConsistent, "polygon_hash must match MD5(WKB) of the row's own (clipped) polygon")
+
+		var oldGeomWKB string
+		db.Raw("SELECT HEX(ST_AsBinary(geom)) FROM rippling_reach_geom WHERE hash = UNHEX(?)", originalHash).Scan(&oldGeomWKB)
+		assert.Equal(t, originalWKB, oldGeomWKB, "the shared geom row for the ORIGINAL hash must still hold the ORIGINAL bytes")
+	}
 }

@@ -2695,23 +2695,47 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 	// `groups` needs its own backticks: GORM only quotes identifiers it
 	// constructs itself, not identifiers inside a raw Table()/Where() string,
 	// and "groups" is a MySQL reserved word.
+	// The reach geometry may live in rippling_reach_geom (content-addressed dedup).
+	// This clip mutates the blob in place, and the hash may be SHARED: rewriting the
+	// shared geom row instead would silently clip every other post pointing at it
+	// (261 in the worst case measured), so the hash is NULLed in the SAME statement
+	// (detach) and re-pointed at the clipped bytes below. A crash between leaves the
+	// hash NULL, which every reader treats as "use the blob". COALESCE reads the
+	// shared geometry as the difference source so a drained row clips correctly,
+	// materialising the clipped bytes back into its own blob. Alias gsh, not g:
+	// `groups g` already owns that alias here.
+	share := rippling.GeomShareReady(db)
+	clipTable := "rippling_reach mr JOIN `groups` g ON g.id = ?" +
+		rippling.GeomJoin(share, "mr", "polygon", "gsh")
+	poly := rippling.GeomExpr(share, "mr", "polygon", "gsh")
 	set := clause.Set{
-		{Column: clause.Column{Table: "mr", Name: "polygon"}, Value: gorm.Expr("ST_Difference(mr.polygon, g.polyindex)")},
+		{Column: clause.Column{Table: "mr", Name: "polygon"}, Value: gorm.Expr("ST_Difference(" + poly + ", g.polyindex)")},
+	}
+	if share {
+		set = append(set, clause.Assignment{
+			Column: clause.Column{Table: "mr", Name: "polygon_hash"}, Value: gorm.Expr("NULL"),
+		})
 	}
 	if rippling.ReachBoundsReady(db) {
 		set = append(set, clause.Assignment{
 			Column: clause.Column{Table: "mr", Name: "inner_bound"}, Value: gorm.Expr("NULL"),
 		})
 	}
-	db.Table("rippling_reach mr JOIN `groups` g ON g.id = ?", gid).
+	clip := db.Table(clipTable, gid).
 		Clauses(set).
 		Where("mr.msgid = ? AND g.polyindex IS NOT NULL "+
 			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
-			"AND ST_Intersects(mr.polygon, g.polyindex) "+
-			"AND NOT ST_Within(mr.polygon, g.polyindex)", msgid).
+			"AND ST_Intersects("+poly+", g.polyindex) "+
+			"AND NOT ST_Within("+poly+", g.polyindex)", msgid).
 		Updates(map[string]interface{}{})
+	if share && clip.Error == nil && clip.RowsAffected > 0 {
+		rippling.GeomUpsertFromRow(db, msgid, "polygon")
+		rippling.GeomRehashFromRow(db, msgid, "polygon")
+	}
 
 	// Reach wholly inside the rejected group → no area remains: drop the reach row.
+	// (Only the reach row: the shared geom row may serve other posts, and
+	// ripple:gc-reach-geometry reclaims it once nothing references it.)
 	// GORM's Delete
 	// callback (callbacks/delete.go) only calls AddClauseIfNotExists(clause.From{})
 	// - it never reads Statement.Joins the way the SELECT query callback does -
@@ -2723,14 +2747,20 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 	// clause.Delete{Modifier: "mr"} supplies the "DELETE mr" alias prefix;
 	// .Table("rippling_reach mr") keeps the base table's own alias unquoted,
 	// the same TableExpr mechanism join_test.go pins for "users u".
+	deleteJoins := []clause.Join{{Expression: gorm.Expr("JOIN `groups` g ON g.id = ?", gid)}}
+	if share {
+		deleteJoins = append(deleteJoins, clause.Join{
+			Expression: gorm.Expr("LEFT JOIN rippling_reach_geom gsh ON gsh.hash = mr.polygon_hash"),
+		})
+	}
 	db.Table("rippling_reach mr").
 		Clauses(
 			clause.Delete{Modifier: "mr"},
-			clause.From{Joins: []clause.Join{{Expression: gorm.Expr("JOIN `groups` g ON g.id = ?", gid)}}},
+			clause.From{Joins: deleteJoins},
 		).
 		Where("mr.msgid = ? AND g.polyindex IS NOT NULL "+
 			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
-			"AND ST_Within(mr.polygon, g.polyindex)", msgid).
+			"AND ST_Within("+poly+", g.polyindex)", msgid).
 		Delete(nil)
 }
 

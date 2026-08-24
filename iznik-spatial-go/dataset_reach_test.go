@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,83 @@ func wkbOf(t *testing.T, wkt string) []byte {
 		t.Fatalf("parse: %v", err)
 	}
 	return g.AsBinary()
+}
+
+// The shared-geometry read (plans/2026-08-23-rippling-reach-polygon-dedup.md)
+// must COALESCE the deduped row over the local blob, via a LEFT JOIN keyed on
+// polygon_hash — never an INNER JOIN (that would drop every row whose hash is
+// still NULL, i.e. every row before the backfill reaches it) and never bare
+// `polygon` alone (that would keep serving pre-drain bytes forever once a row
+// is drained to the sentinel). This is a text-shape check, the same kind
+// TestOverflowSelect_BindsLanesInOrder uses for the dynamically built overflow
+// SELECT: this module has no MySQL-backed test harness (dataset_drift_test.go
+// stands MySQL's DDL/DML in with sqlite for portable SQL only — ST_AsWKB and a
+// spatial JOIN are not portable, so Load/ApplyDelta/reconcile cannot be
+// exercised against a fake DB here).
+func TestReachGeomExpr_CoalescesSharedOverLocal(t *testing.T) {
+	if !strings.Contains(reachGeomExpr, "COALESCE(g.geom, rr.polygon)") {
+		t.Fatalf("reachGeomExpr must COALESCE the shared geometry over the local blob: %s", reachGeomExpr)
+	}
+	if !strings.HasPrefix(reachGeomExpr, "ST_AsWKB(") {
+		t.Fatalf("reachGeomExpr must still hand WKB to buildReachItem: %s", reachGeomExpr)
+	}
+	if !strings.Contains(reachGeomJoin, "LEFT JOIN rippling_reach_geom g") {
+		t.Fatalf("reachGeomJoin must be a LEFT JOIN (rows pre-backfill have no hash yet): %s", reachGeomJoin)
+	}
+	if !strings.Contains(reachGeomJoin, "g.hash = rr.polygon_hash") {
+		t.Fatalf("reachGeomJoin must key on rr.polygon_hash: %s", reachGeomJoin)
+	}
+}
+
+// buildReachItem operates on WKB bytes only — it has no idea whether they came
+// from rippling_reach.polygon directly or from rippling_reach_geom via the
+// COALESCE above. That is the point of putting the dedup entirely in the SQL
+// layer: once reachGeomExpr resolves the right bytes, everything downstream
+// (rasterising, envelope, area) is provably unaffected by where they came
+// from. This test pins that: a "deduped" row (shared geometry bytes) and a
+// "drained" row (the SAME bytes, standing in for what COALESCE returns once
+// the local blob has been replaced by the sentinel and only the shared row
+// carries the real geometry) both build byte-identical rasters to the
+// undeduped case. It does not exercise reachGeomExpr's SQL itself — see the
+// text-shape test above for that half of the guarantee.
+func TestBuildReachItem_IdenticalAcrossDedupAndDrainedSources(t *testing.T) {
+	wkt := "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"
+	wkb := wkbOf(t, wkt)
+
+	undeduped, ok := buildReachItem(2001, "expanding", wkb)
+	if !ok {
+		t.Fatal("undeduped item did not build")
+	}
+
+	// "Deduped": rr.polygon still holds the blob, but COALESCE would have
+	// resolved to the identical shared row's bytes (content-addressed dedup
+	// only ever stores an exact byte-for-byte copy — plan's own measurement:
+	// polygon = f(origin, tick) byte-for-byte).
+	deduped, ok := buildReachItem(2002, "expanding", wkb)
+	if !ok {
+		t.Fatal("deduped item did not build")
+	}
+
+	// "Drained": rr.polygon has been replaced by the sentinel POINT(0 0), so
+	// COALESCE resolves to the shared row's bytes instead — again identical to
+	// the undeduped case, since it is the same geometry.
+	drained, ok := buildReachItem(2003, "expanding", wkb)
+	if !ok {
+		t.Fatal("drained-source item did not build")
+	}
+
+	for _, pair := range [][2]Item{{undeduped, deduped}, {undeduped, drained}} {
+		a, b := pair[0], pair[1]
+		if a.MinLng != b.MinLng || a.MaxLng != b.MaxLng || a.MinLat != b.MinLat || a.MaxLat != b.MaxLat {
+			t.Fatalf("envelope diverged: %+v vs %+v", a, b)
+		}
+		if a.Area != b.Area {
+			t.Fatalf("area diverged: %v vs %v", a.Area, b.Area)
+		}
+		if string(a.WKB) != string(b.WKB) {
+			t.Fatalf("raster diverged for identical source geometry")
+		}
+	}
 }
 
 // TestMetaTimeRoundTrip: the persisted sync point must round-trip, and read

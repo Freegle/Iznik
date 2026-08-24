@@ -51,6 +51,11 @@ class ReachQueryService
         try {
             if ($this->boundsAvailable()) {
                 $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
+                // The exact geometry may live in rippling_reach_geom (content-addressed
+                // dedup): primary-key join + COALESCE keeps this the same lazy-BLOB
+                // correlated EXISTS whether the row is deduped, drained or untouched.
+                $join = GeomShareService::joinSql('r2', 'polygon', 'g2');
+                $poly = GeomShareService::sourceExpr('r2', 'polygon', 'g2');
                 $row = DB::selectOne(
                     "SELECT EXISTS(
                         SELECT 1 FROM rippling_reach rr
@@ -58,20 +63,22 @@ class ReachQueryService
                           AND ((ST_GeometryType(rr.outer_bound) <> 'POINT'
                                 AND ST_Contains(rr.outer_bound, $point)
                                 AND (COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 1
-                                     OR EXISTS (SELECT 1 FROM rippling_reach r2
-                                         WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, $point))))
+                                     OR EXISTS (SELECT 1 FROM rippling_reach r2$join
+                                         WHERE r2.msgid = rr.msgid AND ST_Contains($poly, $point))))
                                OR (ST_GeometryType(rr.outer_bound) = 'POINT'
-                                   AND EXISTS (SELECT 1 FROM rippling_reach r2
-                                       WHERE r2.msgid = rr.msgid AND ST_Contains(r2.polygon, $point))))
+                                   AND EXISTS (SELECT 1 FROM rippling_reach r2$join
+                                       WHERE r2.msgid = rr.msgid AND ST_Contains($poly, $point))))
                      ) AS within",
                     [$msgid, $lng, $lat, $lng, $lat, $lng, $lat, $lng, $lat]
                 );
             } else {
+                $join = GeomShareService::joinSql('rippling_reach', 'polygon', 'g');
+                $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g');
                 $row = DB::selectOne(
                     'SELECT EXISTS(
-                        SELECT 1 FROM rippling_reach
+                        SELECT 1 FROM rippling_reach' . $join . '
                         WHERE msgid = ?
-                          AND ST_Contains(polygon, ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
+                          AND ST_Contains(' . $poly . ', ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
                      ) AS within',
                     [$msgid, $lng, $lat]
                 );

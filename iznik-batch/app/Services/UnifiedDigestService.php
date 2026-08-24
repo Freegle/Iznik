@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\Ripple\DigestPostScorer;
 use App\Services\Ripple\DistancePreferenceFilter;
+use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\RingIndex;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -927,10 +928,16 @@ class UnifiedDigestService
             // and the index needs their band to know which rural ring may admit
             // them. NOTE: these sit before the WHERE in the SQL text, so their
             // parameters come FIRST in the array below.
+            // The reach geometry may live in rippling_reach_geom (content-addressed
+            // dedup): PK join + COALESCE reads the shared row when the hash points at
+            // one, the blob otherwise.
+            $mrJoin = GeomShareService::joinSql('mr', 'polygon', 'gmr');
+            $mrPoly = GeomShareService::sourceExpr('mr', 'polygon', 'gmr');
+
             $primaryFlag = '';
             $primaryParams = [];
             if ($overflowSql !== '') {
-                $primaryFlag = ", ST_Contains(mr.polygon, $point) AS in_primary"
+                $primaryFlag = ", ST_Contains($mrPoly, $point) AS in_primary"
                     . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band";
                 $primaryParams[] = $srid;
             }
@@ -950,7 +957,7 @@ class UnifiedDigestService
                        $latExpr AS resolved_lat,
                        $lngExpr AS resolved_lng$primaryFlag
                  FROM messages_groups mg
-                 JOIN rippling_reach mr ON mr.msgid = mg.msgid
+                 JOIN rippling_reach mr ON mr.msgid = mg.msgid$mrJoin
                  JOIN memberships m ON m.groupid = mg.groupid
                       AND m.emailfrequency = ? AND m.collection = 'Approved'
                  JOIN users u ON u.id = m.userid
@@ -962,7 +969,7 @@ class UnifiedDigestService
                          WHERE mo.msgid = mg.msgid AND mo.outcome IN ('Taken', 'Received', 'Withdrawn')
                        )
                    AND u.deleted IS NULL AND (u.lastaccess IS NULL OR u.lastaccess > ?)
-                   AND (ST_Contains(mr.polygon, $point)$overflowSql)
+                   AND (ST_Contains($mrPoly, $point)$overflowSql)
                    AND NOT EXISTS (
                          SELECT 1 FROM rippling_reach_notified n WHERE n.msgid = mg.msgid AND n.userid = u.id
                        )",
@@ -2073,6 +2080,12 @@ class UnifiedDigestService
                 // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText,
                 // ST_GeometryType) and the correlated-EXISTS sandwich-bounds shape have no
                 // query-builder equivalent.
+                // The exact geometry may live in rippling_reach_geom (content-addressed
+                // dedup): PK join + COALESCE keeps this the same lazy-BLOB correlated
+                // EXISTS whether the row is deduped, drained or untouched.
+                $r2Join = GeomShareService::joinSql('r2', 'polygon', 'g2');
+                $r2Poly = GeomShareService::sourceExpr('r2', 'polygon', 'g2');
+                // keep-raw: spatial predicates and the correlated-EXISTS sandwich-bounds shape have no query-builder equivalent
                 $query->whereRaw(
                     "NOT EXISTS (SELECT 1 FROM rippling_reach rr
                         WHERE rr.msgid = messages.id
@@ -2080,9 +2093,9 @@ class UnifiedDigestService
                                 AND NOT ST_Contains(rr.outer_bound, $point))
                                OR ((ST_GeometryType(rr.outer_bound) = 'POINT'
                                     OR COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 0)
-                                   AND NOT EXISTS (SELECT 1 FROM rippling_reach r2
+                                   AND NOT EXISTS (SELECT 1 FROM rippling_reach r2$r2Join
                                        WHERE r2.msgid = rr.msgid
-                                         AND ST_Contains(r2.polygon, $point))))
+                                         AND ST_Contains($r2Poly, $point))))
                           $ringRescue))",
                     array_merge(
                         [$latlng[1], $latlng[0], $latlng[1], $latlng[0], $latlng[1], $latlng[0]], // POINT(lng, lat) x3
@@ -2097,9 +2110,12 @@ class UnifiedDigestService
                 [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
                 // keep-raw: spatial predicates (ST_Contains, ST_SRID) have no query-builder
                 // equivalent.
+                $rrJoin = GeomShareService::joinSql('rr', 'polygon', 'g');
+                $rrPoly = GeomShareService::sourceExpr('rr', 'polygon', 'g');
+                // keep-raw: spatial predicates (ST_Contains, ST_SRID) have no query-builder equivalent
                 $query->whereRaw(
-                    "NOT EXISTS (SELECT 1 FROM rippling_reach rr WHERE rr.msgid = messages.id
-                        AND ST_Contains(rr.polygon, $point) = 0$ringRescue)",
+                    "NOT EXISTS (SELECT 1 FROM rippling_reach rr$rrJoin WHERE rr.msgid = messages.id
+                        AND ST_Contains($rrPoly, $point) = 0$ringRescue)",
                     array_merge([$latlng[1], $latlng[0]], $ringParams) // POINT(lng, lat)
                 );
             }
@@ -2328,9 +2344,12 @@ class UnifiedDigestService
 
         $default = (float) config('freegle.ripple.score.default_reach_metres', 30000);
 
+        // keep-raw: ST_AsText over the deduped-or-local geometry - the builder cannot render this
         $row = DB::selectOne(
-            'SELECT rr.lng AS ox, rr.lat AS oy, ST_AsText(rr.polygon) AS poly_wkt
-               FROM rippling_reach rr WHERE rr.msgid = ?',
+            'SELECT rr.lng AS ox, rr.lat AS oy, ST_AsText('
+            . GeomShareService::sourceExpr('rr', 'polygon', 'g') . ') AS poly_wkt
+               FROM rippling_reach rr' . GeomShareService::joinSql('rr', 'polygon', 'g')
+            . ' WHERE rr.msgid = ?',
             [$msgid]
         );
 
@@ -2370,9 +2389,12 @@ class UnifiedDigestService
 
         foreach (array_chunk($ids, 500) as $chunk) {
             $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            // keep-raw: ST_AsText over the deduped-or-local geometry - the builder cannot render this
             $rows = DB::select(
-                "SELECT rr.msgid, rr.lng AS ox, rr.lat AS oy, ST_AsText(rr.polygon) AS poly_wkt
-                   FROM rippling_reach rr WHERE rr.msgid IN ($placeholders)",
+                'SELECT rr.msgid, rr.lng AS ox, rr.lat AS oy, ST_AsText('
+                . GeomShareService::sourceExpr('rr', 'polygon', 'g') . ') AS poly_wkt
+                   FROM rippling_reach rr' . GeomShareService::joinSql('rr', 'polygon', 'g')
+                . " WHERE rr.msgid IN ($placeholders)",
                 $chunk
             );
             foreach ($rows as $row) {

@@ -8,6 +8,7 @@ import (
 	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -156,6 +157,13 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// give that extent (a small, uniform over-estimate) for ~100 bytes instead of megabytes.
 	// Visibility is unaffected: the WHERE still tests containment on the FULL polygon
 	// (via the sandwich-bounds prefilter — see reachContainmentSQL).
+	// The reach geometry may live in rippling_reach_geom (content-addressed dedup,
+	// plans/2026-08-23-rippling-reach-polygon-dedup.md): COALESCE reads the shared
+	// row when rr.polygon_hash points at one, the local blob otherwise. The join is
+	// added by reachCandidateQuery's own JOIN chain, shared with reachCandidatePoints
+	// (which does not select reach_wkt, so the extra LEFT JOIN there costs a
+	// primary-key lookup and nothing more).
+	share := rippling.GeomShareReady(db)
 	var candidates []reachCandidateRow
 	reachCandidateQuery(db, myid, latlng, unseenOnly).
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
@@ -167,7 +175,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			" THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope(rr.polygon)) AS reach_wkt",
+			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope("+rippling.GeomExpr(share, "rr", "polygon", "g")+")) AS reach_wkt",
 			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 		Scan(&candidates)
 
@@ -301,15 +309,23 @@ func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOn
 	whereArgs := append([]interface{}{}, pointArgs...)
 	whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
 
-	return db.Table("messages_spatial ms").
+	query := db.Table("messages_spatial ms").
 		// JOIN messages for the ORIGINAL post arrival (m.arrival). ms.arrival is
 		// the ripple-bumped spatial arrival, so it can't stand in for "posted".
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").
 		// users au = the post AUTHOR, for the outbound distance cap below.
 		Joins("INNER JOIN users au ON au.id = m.fromuser").
 		Joins("INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid").
-		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-		Where(whereSQL, whereArgs...)
+		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW)
+
+	// The reach geometry may live in rippling_reach_geom (content-addressed dedup);
+	// see fetchReachCandidates. A primary-key LEFT JOIN, harmless for the callers
+	// that never select reach_wkt (reachCandidatePoints, nearbyCount).
+	if rippling.GeomShareReady(db) {
+		query = query.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
+	}
+
+	return query.Where(whereSQL, whereArgs...)
 }
 
 // markPinned flags any summary in res whose msgid has a messages_pinned row (a paid
@@ -436,7 +452,10 @@ func Messages(c *fiber.Ctx) error {
 		// (myid, MESSAGE_LIKES_VIEW), then Where (myid, start,
 		// COLLECTION_PENDING) - the same order the original literal string
 		// passed its args in.
-		db.Table("messages m").
+		// The reach geometry may live in rippling_reach_geom (content-addressed
+		// dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md).
+		ownShare := rippling.GeomShareReady(db)
+		ownQuery := db.Table("messages m").
 			Select("m.lat, m.lng, m.id, "+
 				"ANY_VALUE(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
 				"ANY_VALUE(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
@@ -449,14 +468,18 @@ func Messages(c *fiber.Ctx) error {
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
 				"ANY_VALUE(COALESCE(rr.lat, 0)) AS reach_lat, ANY_VALUE(COALESCE(rr.lng, 0)) AS reach_lng, "+
-				"ANY_VALUE(COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '')) AS reach_wkt",
+				"ANY_VALUE(COALESCE(ST_AsText(ST_Envelope("+rippling.GeomExpr(ownShare, "rr", "polygon", "g")+")), '')) AS reach_wkt",
 				utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
 				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id").
 			Joins("LEFT JOIN messages_outcomes mo ON mo.msgid = m.id").
 			Joins("LEFT JOIN messages_promises mp ON mp.msgid = m.id").
 			Joins("LEFT JOIN messages_likes ml ON ml.msgid = m.id AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = m.id").
+			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = m.id")
+		if ownShare {
+			ownQuery = ownQuery.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
+		}
+		ownQuery.
 			// Match My Posts' active-set exactly (message.go's HAVING clause): an
 			// Approved own post only counts as live while it is still in
 			// messages_spatial. Once it is pruned from spatial - expired, withdrawn,
@@ -633,7 +656,10 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		// itself), so this needed only the native GORM IN-list form, not a
 		// behaviour change.
 		var candidates []reachCandidateRow
-		db.Table("messages_spatial ms").
+		// The reach geometry may live in rippling_reach_geom (content-addressed
+		// dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md).
+		mgShare := rippling.GeomShareReady(db)
+		mgQuery := db.Table("messages_spatial ms").
 			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
 				"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
@@ -643,13 +669,17 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 				" THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope(rr.polygon)), '') AS reach_wkt",
+				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope("+rippling.GeomExpr(mgShare, "rr", "polygon", "g")+")), '') AS reach_wkt",
 				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 			// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across
 			// rippling — see the reach arm above.
 			Joins("INNER JOIN messages m ON m.id = ms.msgid").
 			Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
-			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid").
+			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid")
+		if mgShare {
+			mgQuery = mgQuery.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
+		}
+		mgQuery.
 			Where("ms.msgid IN ?", msgIDs).
 			Scan(&candidates)
 
