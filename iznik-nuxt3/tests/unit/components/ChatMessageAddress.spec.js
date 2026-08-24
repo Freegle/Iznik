@@ -52,6 +52,7 @@ vi.mock('~/composables/usePAF', () => ({
 vi.mock('~/composables/useMap', () => ({
   attribution: () => '© OpenStreetMap',
   osmtile: () => 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  INLINE_MAP_OPTIONS: { scrollWheelZoom: false, bounceAtZoomLimits: true },
 }))
 
 vi.mock('~/constants', () => ({
@@ -113,8 +114,9 @@ describe('ChatMessageAddress', () => {
             props: ['variant'],
           },
           'l-map': {
-            template: '<div class="l-map" :data-zoom="zoom"><slot /></div>',
-            props: ['zoom', 'maxZoom', 'center', 'style'],
+            template:
+              '<div class="l-map" :data-zoom="zoom" :data-scrollwheelzoom="String(options && options.scrollWheelZoom)"><slot /></div>',
+            props: ['zoom', 'maxZoom', 'center', 'style', 'options'],
           },
           'l-tile-layer': {
             template: '<div class="l-tile-layer" />',
@@ -208,6 +210,39 @@ describe('ChatMessageAddress', () => {
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain(
         'Your address book lets you easily send addresses'
+      )
+    })
+  })
+
+  describe('map', () => {
+    // Leaflet grabs the wheel event by default, so without scrollWheelZoom
+    // disabled, scrolling the conversation with the pointer over the map zooms
+    // the map out instead of scrolling it, leaving it stuck at world view.
+    it('disables wheel zoom on a received address', async () => {
+      mockChatmessage.value.userid = 2
+      mockMe.value = { id: 1 }
+      const wrapper = createWrapper()
+      // The map renders only once the mocked address fetch has resolved AND
+      // Vue has re-rendered the v-if="address?.postcode" block. A single
+      // flushPromises() raced that chain under CI worker load, so wait for
+      // the element itself rather than counting ticks.
+      await vi.waitFor(() => {
+        expect(wrapper.find('.l-map').exists()).toBe(true)
+      })
+      expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
+        'false'
+      )
+    })
+
+    it('disables wheel zoom on a sent address', async () => {
+      mockChatmessage.value.userid = 1
+      mockMe.value = { id: 1 }
+      const wrapper = createWrapper()
+      await vi.waitFor(() => {
+        expect(wrapper.find('.l-map').exists()).toBe(true)
+      })
+      expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
+        'false'
       )
     })
   })

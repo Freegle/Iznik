@@ -39,6 +39,14 @@ class WelcomeMail extends MjmlMailable
     }
 
     /**
+     * Transactional - a one-off welcome when they join - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
+    /**
      * Get the recipient's user ID for common header tracking.
      */
     protected function getRecipientUserId(): ?int
@@ -84,7 +92,8 @@ class WelcomeMail extends MjmlMailable
                 'firstName' => $firstName,
                 'userSite' => $userSite,
                 'giveUrl' => $this->trackedUrl("{$userSite}/give", 'cta_give', 'cta'),
-                'findUrl' => $this->trackedUrl("{$userSite}/find", 'cta_find', 'cta'),
+                'browseUrl' => $this->trackedUrl("{$userSite}/browse", 'cta_browse', 'cta'),
+                'askUrl' => $this->trackedUrl("{$userSite}/ask", 'cta_find', 'cta'),
                 'termsUrl' => $this->trackedUrl("{$userSite}/terms", 'rule_free', 'info'),
                 'helpUrl' => $this->trackedUrl("{$userSite}/help", 'rule_nice', 'info'),
                 'safetyUrl' => $this->trackedUrl("{$userSite}/safety", 'rule_safe', 'info'),

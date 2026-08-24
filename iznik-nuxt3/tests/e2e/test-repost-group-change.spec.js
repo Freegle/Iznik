@@ -1,12 +1,10 @@
 /**
- * Repost Group Change Test
+ * Repost Group (read-only) Test
  *
- * Tests that when a rejected post is edited and resent, the user can
- * change the group via the dropdown and the selection persists through
- * the posting flow.
- *
- * Bug: Previously, selecting a different group during repost kept
- * reverting to the original group.
+ * Rippling-out (#10) removed the composer group picker. A rejected post can still be
+ * reposted, but its origin group is now shown READ-ONLY and can no longer be changed by
+ * hand - the group follows the post's location. This test verifies the repost flow shows
+ * the original group read-only and offers no group dropdown.
  *
  * Isolation: Creates a fresh message within the test (no pre-created
  * testEnv.rejected.offer) to avoid stale state between CI runs.
@@ -19,7 +17,7 @@ const { loginViaHomepage } = require('./utils/user')
 const API_V2 = environment.apiV2BaseUrl
 
 test.describe('Repost Group Change', () => {
-  test('changing group dropdown during repost of rejected message should persist', async ({
+  test('repost of a rejected message shows the origin group read-only, with no picker', async ({
     page,
     testEnv,
     postMessage,
@@ -52,7 +50,9 @@ test.describe('Repost Group Change', () => {
         },
         headers: { Authorization: modJwt },
       })
-      console.log(`Set user MODERATED on group ${gid}: ${moderateResp.status()}`)
+      console.log(
+        `Set user MODERATED on group ${gid}: ${moderateResp.status()}`
+      )
       expect(moderateResp.ok()).toBeTruthy()
     }
 
@@ -81,9 +81,12 @@ test.describe('Repost Group Change', () => {
     await expect
       .poll(
         async () => {
-          const resp = await page.request.get(`${API_V2}/message/${posted.id}`, {
-            headers: { Authorization: modJwt },
-          })
+          const resp = await page.request.get(
+            `${API_V2}/message/${posted.id}`,
+            {
+              headers: { Authorization: modJwt },
+            }
+          )
           msgData = await resp.json()
           return msgData?.groups?.length > 0
         },
@@ -146,71 +149,28 @@ test.describe('Repost Group Change', () => {
     })
     await nextToWhereami.click()
 
-    // Step 5: On whereami page — verify group dropdown.
+    // Step 5: On whereami page, the origin group is shown read-only (no picker).
     await expect(page).toHaveURL(/whereami/, {
       timeout: timeouts.navigation.default,
     })
     console.log('On whereami page')
 
-    // Wait for the group dropdown to appear.
-    const groupDropdown = page.locator('select').first()
-    await expect(groupDropdown).toBeVisible({ timeout: timeouts.ui.appearance })
+    // Rippling-out (#10): the composer group picker has been removed. A rejected message still
+    // reposts, but the origin group is now shown READ-ONLY and can no longer be changed by hand
+    // (the group follows the post's location). So we verify the read-only display rather than
+    // selecting a different group.
+    const groupDisplay = page.locator('[data-test="compose-group"]')
+    await expect(groupDisplay).toBeVisible({ timeout: timeouts.ui.appearance })
 
-    // Get the initial selected value and all options.
-    const initialGroupId = await groupDropdown.inputValue()
-    const optionElements = groupDropdown.locator('option')
-    const optionCount = await optionElements.count()
-    console.log(
-      `Group dropdown: ${optionCount} options, initial selection: ${initialGroupId}`
-    )
+    // It shows the message's original group (the location-derived community), read-only.
+    await expect(groupDisplay).toContainText(testEnv.group.name)
+    console.log(`Origin group shown read-only: ${testEnv.group.name}`)
 
-    // The repost should pre-select the message's original group (actualGroupId).
-    expect(initialGroupId).toBe(String(actualGroupId))
-    console.log('Correct initial group pre-selected from rejected message')
+    // There is no group picker any more.
+    await expect(page.locator('select')).toHaveCount(0)
+    console.log('No group dropdown present (picker removed)')
 
-    // We need at least 2 groups to test changing. testEnv.user is a member
-    // of both testEnv groups, so both appear in the dropdown when logged in.
-    expect(optionCount).toBeGreaterThanOrEqual(2)
-
-    // Get all option values.
-    const allValues = await optionElements.evaluateAll((opts) =>
-      opts.map((o) => ({ value: o.value, text: o.textContent }))
-    )
-    console.log('Available groups:', JSON.stringify(allValues))
-
-    // Step 6: Select a different group.
-    const targetGroup = allValues.find((v) => v.value !== initialGroupId)
-    expect(targetGroup).toBeTruthy()
-    console.log(
-      `Changing from ${initialGroupId} to ${targetGroup.value} (${targetGroup.text})`
-    )
-
-    await groupDropdown.selectOption(targetGroup.value)
-
-    // Verify the change took effect immediately.
-    await expect(groupDropdown).toHaveValue(targetGroup.value)
-    console.log('Group changed successfully')
-
-    // Step 7: Wait for any async operations (ComposeGroup.onMounted refetches
-    // postcode and user, PostCode.onMounted re-resolves the postcode) that
-    // could reset the group. Poll the dropdown value to catch any revert.
-    await expect
-      .poll(
-        async () => {
-          return await groupDropdown.inputValue()
-        },
-        {
-          message:
-            'Group dropdown reverted to original — the bug is reproduced',
-          intervals: [200, 200, 200, 200, 200, 500, 500, 500],
-          timeout: 3000,
-        }
-      )
-      .toBe(targetGroup.value)
-
-    console.log('Group selection persisted after async operations')
-
-    // Step 8: Navigate forward to options page and back to verify persistence.
+    // Step 6: Navigate forward to options and back; the read-only group persists.
     const nextToOptions = page.locator('.next-btn:has-text("Next")').first()
     await expect(nextToOptions).toBeVisible({ timeout: timeouts.ui.appearance })
     await nextToOptions.click()
@@ -226,12 +186,9 @@ test.describe('Repost Group Change', () => {
       timeout: timeouts.navigation.default,
     })
 
-    // Verify the group is still the one we selected.
-    const groupAfterNav = page.locator('select').first()
-    await expect(groupAfterNav).toBeVisible({
-      timeout: timeouts.ui.appearance,
-    })
-    await expect(groupAfterNav).toHaveValue(targetGroup.value)
-    console.log('Group selection persisted after navigation')
+    // The origin group is still shown read-only after navigation.
+    await expect(groupDisplay).toBeVisible({ timeout: timeouts.ui.appearance })
+    await expect(groupDisplay).toContainText(testEnv.group.name)
+    console.log('Origin group still shown read-only after navigation')
   })
 })

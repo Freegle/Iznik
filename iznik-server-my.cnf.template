@@ -1,5 +1,0 @@
-[client]
-host=percona
-port=3306  
-user=root
-password=MYSQL_PRODUCTION_ROOT_PASSWORD_PLACEHOLDER

@@ -10,6 +10,7 @@ import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { useLoggingContextStore } from '~/stores/loggingContext'
 import { getTraceHeaders } from '~/composables/useTrace'
+import { warn } from '~/composables/useClientLog'
 
 export { APIError, MaintenanceError, LoginError, SignUpError }
 
@@ -100,9 +101,18 @@ export default class BaseAPI {
       // Store may not be initialized on server-side.
     }
 
+    // Capture store references once, synchronously, while the caller's pinia
+    // context is still active. The catch/finally blocks below run after
+    // awaits, where server-side (especially prerender) there may be no active
+    // pinia any more — a fresh useMiscStore() there throws, surfacing as an
+    // unhandledRejection or, from finally, failing an otherwise-successful
+    // request (seen as prerendered pages 500ing in Netlify builds).
+    let authStore
+    let miscStore = null
+
     try {
-      const authStore = useAuthStore()
-      const miscStore = useMiscStore()
+      authStore = useAuthStore()
+      miscStore = useMiscStore()
 
       if (authStore?.auth?.jwt) {
         // Use the JWT to authenticate the request if possible.
@@ -200,16 +210,39 @@ export default class BaseAPI {
       }
 
       if (status === 401) {
-        // Not authorised - our JWT and/or persistent token must be wrong.  Clear them.  This may force a login, or
-        // not, depending on whether the page requires it.
-        console.log('Not authorised - force logged out')
-        authStore.setAuth(null, null)
-        authStore.setUser(null)
+        // A 401 on THIS request doesn't prove the whole session is dead - only
+        // GET/PATCH/DELETE /session, the authoritative "am I logged in" check,
+        // does (fetchUser() in stores/auth.js already handles that case on its
+        // own 401/404).  Clearing auth here unconditionally, for every one of
+        // the many background calls a page fires (chat polls, notification
+        // counts, ModTools work-count refresh, newsfeed, etc.), meant a single
+        // transient/edge-case 401 on any of them force-logged the user out even
+        // though the session was still good - the cause of moderators being
+        // asked to log in to ModTools unexpectedly often (Discourse #9893).
+        const isSessionCheck =
+          path === '/session' || path.startsWith('/session?')
+
+        if (isSessionCheck) {
+          console.log('Not authorised on /session - force logged out')
+          authStore.setAuth(null, null)
+          authStore.setUser(null)
+        } else {
+          console.log('Not authorised for this request - session left intact')
+        }
 
         // For specific paths, we want to silently allow 401 errors and swallow them.
         // This can happen if a login token is invalid, and we don't want to show errors to the user.
         if (path.startsWith('/chat?includeClosed=true')) {
           console.log('Silently handling 401 for includeClosed chat request')
+          // Deliberately never settles, to keep this out of Sentry.  That is
+          // only safe because nothing downstream is gated on the result; if
+          // that ever stops being true it becomes the same class of bug as the
+          // stranded give-flow photo, so make it visible rather than silent.
+          warn('API request abandoned without settling', {
+            event_type: 'api_abandoned',
+            reason: 'chat_401',
+            api_path: path,
+          })
           return new Promise(function (resolve) {})
         }
       }
@@ -228,13 +261,27 @@ export default class BaseAPI {
         // when you're leaving a page.  No point in rippling those errors up to result in Sentry errors.
         // Swallow these by returning a problem that never resolves.  Possible memory leak but it's a rare case.
         console.log('Aborted - ignore')
+        // An abort during logout or unload is expected and the page is going
+        // away, so nothing is left waiting.  An abort at any other time leaves
+        // the caller's await hanging for the life of the page with no error to
+        // catch, which is how a give-flow photo got stranded at uploading:true.
+        // We cannot tell the two apart here, so record it: one of these in Loki
+        // beside a stuck UI is the answer straight away, rather than a day of
+        // working backwards from what is missing.
+        warn('API request abandoned without settling', {
+          event_type: 'api_abandoned',
+          reason: 'aborted',
+          api_path: path,
+          api_method: method,
+          detail: e?.message,
+        })
         return new Promise(function (resolve) {})
       }
 
       if (
         status === null &&
         !e.message.match(/.*unload.*/i) &&
-        useMiscStore().online
+        miscStore?.online
       ) {
         // Network failure with no HTTP response (e.g. retries exhausted) while the online
         // check believes we have connectivity.  This suggests a server-side or routing
@@ -252,7 +299,7 @@ export default class BaseAPI {
         }
       }
     } finally {
-      useMiscStore().api(-1)
+      miscStore?.api(-1)
     }
 
     // Accept all 2xx status codes as successful (200, 201, 204, etc.)

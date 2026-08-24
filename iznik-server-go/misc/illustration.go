@@ -50,6 +50,9 @@ func GetIllustration(c *fiber.Ctx) error {
 	// Remove location suffix in parentheses if present.
 	itemName = suffixPattern.ReplaceAllString(itemName, "")
 
+	// Remove courtesy words ("iron please"), so the lookup matches the cached clean name.
+	itemName = StripCourtesy(itemName)
+
 	itemName = strings.TrimSpace(itemName)
 
 	if itemName == "" {
@@ -63,7 +66,7 @@ func GetIllustration(c *fiber.Ctx) error {
 	db := database.DBConn
 	var externalUID sql.NullString
 
-	err := db.Raw("SELECT externaluid FROM ai_images WHERE name = ?", itemName).Scan(&externalUID).Error
+	err := db.Table("ai_images").Select("externaluid").Where("name = ?", itemName).Scan(&externalUID).Error
 
 	if err != nil || !externalUID.Valid || externalUID.String == "" {
 		// Not cached - frontend should fall back to image generation.

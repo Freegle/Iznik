@@ -7,17 +7,48 @@
  * fact queries from the browser to get user data (privacy-preserving).
  */
 
+// Loki addresses a user's logs in two ways, and a query window can straddle both.
+// Entries written before 2026-08-23 carry user_id as a stream label. Later ones
+// carry a coarse user_bucket label plus the exact user_id as structured metadata,
+// because user_id had far too many values to be a label (it was silently
+// discarding entries) but structured metadata alone is not indexed and made the
+// lookup ~356x more expensive. Readers therefore ask for both and merge.
+//
+// USER_BUCKET_COUNT must match misc.userBucketCount in iznik-server-go.
+const USER_BUCKET_COUNT = 32
+const userBucket = (userid) => Number(userid) % USER_BUCKET_COUNT
+
 const express = require('express')
 const cors = require('cors')
 const { v4: uuidv4 } = require('uuid')
 const { execSync } = require('child_process')
 const fs = require('fs')
+const { preferSubscriptionToken } = require('./auth')
 // agent.js kept for searchCodebase utility but runAgent/warmupSession no longer used
 
 const app = express()
 app.use(express.json())
+
+// CORS: allow ModTools origins only. Dev uses *.localhost (traefik); prod/edge
+// lists its ModTools origin in ALLOWED_ORIGINS (comma-separated). Requests with
+// no Origin header (non-browser / same-origin) are allowed — the real access
+// control is the Support/Admin JWT gate on /api/log-analysis, not CORS.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+function corsOrigin(origin, cb) {
+  if (!origin) return cb(null, true)
+  try {
+    const host = new URL(origin).hostname
+    if (host === 'localhost' || host.endsWith('.localhost')) return cb(null, true)
+  } catch (_) {
+    /* malformed origin -> fall through to deny */
+  }
+  return cb(null, ALLOWED_ORIGINS.includes(origin))
+}
 app.use(cors({
-  origin: true,
+  origin: corsOrigin,
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'sentry-trace', 'baggage'],
@@ -34,19 +65,18 @@ let lastCodeUpdate = null
  * Check if Anthropic API key is configured.
  */
 function checkAuth() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    authStatus = {
-      valid: false,
-      checked: true,
-      message: 'ANTHROPIC_API_KEY not set. Add it to your .env file.',
-    }
+  if (process.env.ANTHROPIC_API_KEY) {
+    authStatus = { valid: true, checked: true, message: 'Anthropic API key configured (api mode).' }
     return
   }
-
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    authStatus = { valid: true, checked: true, message: 'Claude subscription token configured (claude setup-token).' }
+    return
+  }
   authStatus = {
-    valid: true,
+    valid: false,
     checked: true,
-    message: 'Anthropic API key configured.',
+    message: 'No ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN set (or mount a ~/.claude session).',
   }
 }
 
@@ -54,11 +84,8 @@ function checkAuth() {
  * Update codebase from git.
  */
 function updateCodebase() {
-  const repos = [
-    '/app/codebase/iznik-nuxt3',
-    '/app/codebase/iznik-server',
-    '/app/codebase/iznik-server-go',
-  ]
+  // One monorepo clone (its subdirs are iznik-nuxt3/, iznik-server-go/, ...).
+  const repos = ['/app/codebase']
 
   for (const repo of repos) {
     if (fs.existsSync(repo)) {
@@ -73,6 +100,13 @@ function updateCodebase() {
 
   lastCodeUpdate = new Date().toISOString()
   console.log(`Codebase update completed at ${lastCodeUpdate}`)
+}
+
+// Make the subscription token win over a stray ANTHROPIC_API_KEY, so query() authenticates
+// with the Claude subscription (from `claude setup-token`) rather than metered API billing.
+// The SDK/CLI bills the API whenever the key is set, so we remove it here (see auth.js).
+if (preferSubscriptionToken()) {
+  console.log('Claude auth: CLAUDE_CODE_OAUTH_TOKEN present - ignoring ANTHROPIC_API_KEY so the subscription is used.')
 }
 
 // Check auth on startup
@@ -101,19 +135,37 @@ app.get('/health', (req, res) => {
  * Body: { query: string, userId?: number, claudeSessionId?: string, sanitizerSessionId?: string }
  * Returns: { analysis: string, costUsd: number, usage: object, claudeSessionId: string, isNewSession: boolean }
  */
-const { runLogAnalysis } = require('./log-analysis')
+const { runSupportQuery, driverMode } = require('./support-agent')
+const { verifyModerator } = require('./auth')
 
 app.post('/api/log-analysis', async (req, res) => {
+  // Authenticate the caller as a Freegle moderator/support/admin. This endpoint
+  // analyses production logs and incurs Anthropic API cost, so it must not be
+  // open to unauthenticated callers — having ANTHROPIC_API_KEY set on the
+  // server is not authorisation. Identity + role are resolved by the Go API.
+  const mod = await verifyModerator(req)
+  if (!mod) {
+    return res.status(403).json({
+      error: 'FORBIDDEN',
+      message: 'Support or Admin authentication required.',
+    })
+  }
+
   checkAuth()
 
-  if (!authStatus.valid) {
+  // Auth for Claude: 'api' mode needs ANTHROPIC_API_KEY; 'session' mode uses a
+  // mounted ~/.claude (Max subscription) and needs no key.
+  if (driverMode() === 'api' && !authStatus.valid) {
     return res.status(503).json({
       error: 'AUTH_NOT_CONFIGURED',
       message: authStatus.message,
     })
   }
 
-  const { query, claudeSessionId, sanitizerSessionId } = req.body
+  const { query, userId, claudeSessionId } = req.body
+  // The caller's JWT is used for get_user_dump against the Go API. Header only —
+  // never accept it as a URL query param (which would leak into access logs).
+  const jwt = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim()
 
   if (!query) {
     return res.status(400).json({ error: 'Query is required' })
@@ -131,11 +183,17 @@ app.post('/api/log-analysis', async (req, res) => {
     res.flushHeaders()
 
     try {
-      const result = await runLogAnalysis(query, sanitizerSessionId, claudeSessionId,
-        (type, message) => {
+      const result = await runSupportQuery({
+        query,
+        userId: userId || 0,
+        jwt,
+        agentSessionId: claudeSessionId,
+        modId: mod.id,
+        modEmail: mod.email,
+        onProgress: (type, message) => {
           res.write(`data: ${JSON.stringify({ type, message })}\n\n`)
-        }
-      )
+        },
+      })
       res.write(`data: ${JSON.stringify({ type: 'result', ...result })}\n\n`)
       res.end()
     } catch (error) {
@@ -148,7 +206,7 @@ app.post('/api/log-analysis', async (req, res) => {
 
   // Non-streaming fallback
   try {
-    const result = await runLogAnalysis(query, sanitizerSessionId, claudeSessionId)
+    const result = await runSupportQuery({ query, userId: userId || 0, jwt, agentSessionId: claudeSessionId, modId: mod.id, modEmail: mod.email })
     res.json(result)
   } catch (error) {
     console.error('[LogAnalysis] Error:', error)
@@ -163,6 +221,194 @@ app.post('/api/log-analysis', async (req, res) => {
     return res.status(500).json({
       error: 'ANALYSIS_FAILED',
       message: error.message || 'Unknown error',
+    })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Device summary — a deterministic (no-AI) view of the member's recent devices,
+// shown as soon as a user is selected. Reads `session_start` events (viewport/
+// screen/DPR/user-agent) straight from PRODUCTION Loki over the tunnel (see
+// SUPPORT_LOKI_URL). user_id is an indexed Loki label, so this is one cheap,
+// targeted query — NOT the full user dump, whose email/session passes do
+// full-text scans that time out against prod. No Anthropic cost; Support/Admin-
+// gated and audited.
+// ---------------------------------------------------------------------------
+const { lokiQuery, audit } = require('./tools')
+const { parseSessionStart, dedupeSessions, buildDeviceSummary } = require('./device-summary')
+
+// The deployed web/app version to compare a member's loaded version against, so
+// we can flag "needs a refresh". Read from the cloned frontend config (kept
+// current by updateCodebase). Best-effort — null just leaves freshness unknown.
+function currentMobileVersion() {
+  try {
+    const cfg = fs.readFileSync('/app/codebase/iznik-nuxt3/config.js', 'utf8')
+    const m = /MOBILE_VERSION:\s*['"]([^'"]+)['"]/.exec(cfg)
+    return m ? m[1] : null
+  } catch (_) {
+    return null
+  }
+}
+
+app.get('/api/device-summary', async (req, res) => {
+  const mod = await verifyModerator(req)
+  if (!mod) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Support or Admin authentication required.' })
+  }
+  const userId = parseInt(req.query.userId, 10)
+  if (!userId || userId < 1) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'userId is required' })
+  }
+  // Accessing a member's device/usage data — record who looked at whom.
+  audit({ mod: mod.id, modEmail: mod.email, target: userId, tool: 'device_summary' })
+  const window = '7d'
+  try {
+    // Client session_start events for this member, straight from prod Loki.
+    // Both addressing schemes, merged - see userBucket. userId is a validated
+    // positive integer, so it is safe to interpolate into the selector (no
+    // injection surface).
+    const rows = [
+      ...(await lokiQuery({
+        query: `{app="freegle", source="client", user_id="${userId}"} |= "session_start"`,
+        start: window,
+        limit: 500,
+      })),
+      ...(await lokiQuery({
+        query: `{app="freegle", source="client", user_bucket="${userBucket(userId)}"} |= "session_start" | user_id="${userId}"`,
+        start: window,
+        limit: 500,
+      })),
+    ]
+
+    // The app logs session_start twice per session (the second one carries the
+    // native app version and Capacitor device info), so merge duplicates rather
+    // than keeping whichever Loki happened to return first.
+    const records = dedupeSessions(rows.map((r) => parseSessionStart(r.line)))
+    const currentVersion = currentMobileVersion()
+    const devices = buildDeviceSummary(records, currentVersion)
+
+    // A member can be fully active with NO client telemetry at all: ad/tracker
+    // blockers eat the unauthenticated /clientlog POST, and app builds from
+    // before client logging never send it. Fall back to their newest api-source
+    // line (also a cheap indexed-label lookup) so "no sessions" can't read as
+    // "not active" when the member was on the site hours ago.
+    let lastApiActivity = null
+    if (!devices.length) {
+      try {
+        const apiRows = [
+          ...(await lokiQuery({
+            query: `{app="freegle", source="api", user_id="${userId}"}`,
+            start: window,
+            limit: 1,
+          })),
+          ...(await lokiQuery({
+            query: `{app="freegle", source="api", user_bucket="${userBucket(userId)}"} | user_id="${userId}"`,
+            start: window,
+            limit: 1,
+          })),
+        ]
+        if (apiRows.length) {
+          lastApiActivity = new Date(Number(BigInt(apiRows[0].ts) / 1000000n)).toISOString()
+        }
+      } catch (e) {
+        console.error('[DeviceSummary] api-activity fallback failed:', e.message)
+      }
+    }
+
+    res.json({
+      userId,
+      window,
+      generatedAt: new Date().toISOString(),
+      // Newest device sighting doubles as "last active on a device"; if the
+      // device never reports, fall back to server-side API activity.
+      lastaccess: devices[0]?.lastSeen || lastApiActivity,
+      lastApiActivity,
+      currentVersion,
+      deviceCount: devices.length,
+      devices,
+      // freshness needs app_version (app) / build_date (web) in session_start,
+      // which the frontend only just started logging — so sessions from before
+      // that deploy show freshness 'unknown' (no up-to-date badge) until revisit.
+      note: 'freshness comes from app_version/build_date in session_start going forward; older sessions show unknown.',
+    })
+  } catch (error) {
+    console.error('[DeviceSummary] Error:', error)
+    res.status(500).json({ error: 'DEVICE_SUMMARY_FAILED', message: error.message })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Refer to geeks — hand a whole investigation over by email.
+//
+// A support volunteer gets as far as they can in the helper and then refers it
+// on. The email has to carry everything that was on their screen (which member,
+// what devices, every question and every answer) so the geeks don't have to ask
+// them to repeat it, plus the volunteer's own words about why they are passing
+// it over. Every referral gets a short reference (SR-YYMMDD-XXXX) which goes in
+// the subject, the body, a header and the audit trail, so it can be tracked and
+// quoted.
+// ---------------------------------------------------------------------------
+const { sendReferral, newReferralRef, GEEKS_EMAIL } = require('./referral-email')
+
+// A referral is a transcript, not a document upload — big enough to need its
+// own limit, small enough that this is a real bound.
+const REFERRAL_BODY_LIMIT = '4mb'
+
+app.post('/api/refer-to-geeks', express.json({ limit: REFERRAL_BODY_LIMIT }), async (req, res) => {
+  const mod = await verifyModerator(req)
+  if (!mod) {
+    return res.status(403).json({ error: 'FORBIDDEN', message: 'Support or Admin authentication required.' })
+  }
+
+  const { member, note, deviceSummary, messages, totals, modToolsUrl } = req.body || {}
+
+  if (!Array.isArray(messages) || !messages.length) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'There is no investigation to refer yet.' })
+  }
+  if (!note || !String(note).trim()) {
+    return res.status(400).json({
+      error: 'BAD_REQUEST',
+      message: 'Please say why you are referring this so the geeks know what to look at.',
+    })
+  }
+
+  const ref = newReferralRef()
+  const referral = {
+    ref,
+    member: member || {},
+    // Identity comes from the verified JWT, never from the body: the referral
+    // says who sent it and the reply goes back to them.
+    referredBy: { id: mod.id, email: mod.email, name: (member && member.referredByName) || mod.email },
+    note: String(note).trim().slice(0, 5000),
+    deviceSummary: deviceSummary || null,
+    messages,
+    totals: totals || {},
+    generatedAt: new Date().toISOString(),
+    modToolsUrl,
+  }
+
+  // Record the referral itself: who handed what over, and under which reference.
+  audit({
+    mod: mod.id,
+    modEmail: mod.email,
+    target: (member && member.id) || 0,
+    tool: 'refer_to_geeks',
+    ref,
+    messages: messages.length,
+  })
+
+  try {
+    const sent = await sendReferral(referral)
+    console.log(`[Referral] ${ref} -> ${sent.to} (${messages.length} messages) by ${mod.email}`)
+    res.json({ ok: true, ref, to: sent.to })
+  } catch (error) {
+    console.error(`[Referral] ${ref} FAILED:`, error.message)
+    res.status(502).json({
+      error: 'REFERRAL_FAILED',
+      // The volunteer needs to know it did NOT go, and still has the reference
+      // if they want to chase it.
+      message: `Could not send the referral to ${GEEKS_EMAIL}: ${error.message}`,
+      ref,
     })
   }
 })

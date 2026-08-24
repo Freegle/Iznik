@@ -10,13 +10,23 @@ use Illuminate\Support\Facades\Log;
 class SyncWhatJobsCommand extends Command
 {
     protected $signature = 'integrations:sync-whatjobs
-                            {--dry-run : Parse feeds and count jobs without writing to database}';
+                            {--dry-run : Parse feeds and count jobs without writing to database}
+                            {--force : Rebuild even if the feeds are unchanged since the last run}
+                            {--refresh-geocode : Ignore the jobs-table geocode cache so every tuple re-geocodes fresh (one-time, to retro-correct mis-cached locations)}';
 
     protected $description = 'Sync WhatJobs job listings from XML feeds into the jobs table';
 
     public function handle(WhatJobsService $service): int
     {
         $dryRun = (bool) $this->option('dry-run');
+        $service->forceRegeocode = (bool) $this->option('refresh-geocode');
+        $service->forceFullSync = (bool) $this->option('force');
+        if ($service->forceRegeocode) {
+            $this->info('--refresh-geocode: bypassing jobs-table geocode cache (one-time full re-geocode).');
+        }
+        if ($service->forceFullSync) {
+            $this->info('--force: rebuilding even if the feeds are unchanged.');
+        }
 
         // The WhatJobs XML feed currently parses ~180k jobs into memory
         // before insertJobs() flushes them in chunks (parseFeed builds the
@@ -46,8 +56,12 @@ class SyncWhatJobsCommand extends Command
 
             $result = $service->sync($dryRun);
 
-            $prefix = $dryRun ? '[DRY RUN] Would insert' : 'Inserted';
-            $this->info("$prefix {$result['inserted']} of {$result['total']} parsed jobs.");
+            if (!empty($result['skipped_unchanged'])) {
+                $this->info('Feeds unchanged since the last rebuild - nothing to do. Use --force to rebuild anyway.');
+            } else {
+                $prefix = $dryRun ? '[DRY RUN] Would insert' : 'Inserted';
+                $this->info("$prefix {$result['inserted']} of {$result['total']} parsed jobs.");
+            }
 
             Log::info('WhatJobs sync command complete', $result);
         } finally {

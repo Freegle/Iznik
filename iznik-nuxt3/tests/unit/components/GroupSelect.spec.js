@@ -26,6 +26,7 @@ const mockGroupStore = {
   },
   summaryList: {},
   fetch: vi.fn().mockResolvedValue(undefined),
+  fetchBatch: vi.fn().mockResolvedValue(undefined),
 }
 
 vi.mock('~/stores/misc', () => ({
@@ -260,6 +261,31 @@ describe('GroupSelect', () => {
       expect(
         wrapper.findComponent({ name: 'b-form-select' }).props('size')
       ).toBe('lg')
+    })
+  })
+
+  describe('group names missing from the store', () => {
+    it('fetches the names for the member own communities', async () => {
+      // A membership carries only the group id - the name comes from the group store.
+      // Opened directly (Add event, the unsubscribe page) that store is empty, so every
+      // community renders as an option with no text and the list looks unusable
+      // (Discourse 10046).
+      mockMyGroups.value = [
+        { id: 11, namedisplay: '', role: 'Member' },
+        { id: 12, namedisplay: '', role: 'Member' },
+      ]
+
+      createWrapper()
+      await flushPromises()
+
+      expect(mockGroupStore.fetchBatch).toHaveBeenCalledWith([11, 12])
+    })
+
+    it('does not fetch when the names are already there', async () => {
+      createWrapper()
+      await flushPromises()
+
+      expect(mockGroupStore.fetchBatch).not.toHaveBeenCalled()
     })
   })
 })

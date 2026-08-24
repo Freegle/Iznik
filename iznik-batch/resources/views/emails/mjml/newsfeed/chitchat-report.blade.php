@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'ChitChat post reported'])
+  @include('emails.mjml.partials.head', ['preview' => 'Reported by ' . $reporterName . ': ' . \Illuminate\Support\Str::limit($reason, 70)])
 
   <mj-body>
     @include('emails.mjml.partials.header', ['title' => 'ChitChat Report'])

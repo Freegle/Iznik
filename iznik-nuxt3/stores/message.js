@@ -4,14 +4,17 @@ import api from '~/api'
 import { APIError } from '~/api/APIErrors'
 import { useAuthStore } from '~/stores/auth'
 import { useUserStore } from '~/stores/user'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
+import { useGroupStore } from '~/stores/group'
 import { useMiscStore } from '~/stores/misc'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
 
-export const useMessageStore = defineStore({
-  id: 'message',
+// Refetch a cached message after this long, in case its state has changed.
+const CACHE_TTL_SECONDS = 600
+
+export const useMessageStore = defineStore('message', {
   state: () => ({
     list: {},
     byUserList: {},
@@ -23,8 +26,17 @@ export const useMessageStore = defineStore({
     bounds: {},
     activePostsCounter: 0,
 
+    // The most recent "all my communities" (mygroups) feed, kept so the distance slider can
+    // scale its range to these posts' distances - the nearby store is empty on this view, so
+    // without this the slider max collapsed to its floor and mis-scaled on mygroups.
+    myGroupsList: [],
+
     // The context from the last fetch, used for fetchMore (ModTools)
     context: null,
+
+    // Freegle Helper (AI concierge) state per bulk-offer msgid:
+    // { batch, repliers, proposals, sent }. Loaded by the clearance management page.
+    helper: {},
   }),
   actions: {
     init(config) {
@@ -39,19 +51,27 @@ export const useMessageStore = defineStore({
       // ModTools context
       this.context = null
     },
-    async fetchCount(browseView, log = true) {
-      const ret = await api(this.config).message.count(browseView, log)
+    async fetchCount(browseView, maxDistance, log = true) {
+      const ret = await api(this.config).message.count(
+        browseView,
+        maxDistance,
+        log
+      )
       this.count = ret?.count || 0
       return this.count
+    },
+    // Whether a cached entry is old enough to be refetched. Every "do we need to
+    // go to the API" decision must use this - fetch(), processMessageBatch() and
+    // fetchMultiple() each make that call independently, and if they disagree an
+    // id can be routed into a batch by one and silently dropped by the next.
+    expired(id, now = Math.round(Date.now() / 1000)) {
+      const addedToCache = this.list[id]?.addedToCache
+      return addedToCache ? now - addedToCache > CACHE_TTL_SECONDS : false
     },
     async fetch(id, force) {
       id = parseInt(id)
 
-      // Refetch after 10 minutes in case the state has changed.
-      const now = Math.round(Date.now() / 1000)
-      const expired = this.list[id]?.addedToCache
-        ? now - this.list[id].addedToCache > 600
-        : false
+      const expired = this.expired(id)
 
       // If already cached and not forcing/expired, return immediately
       if (!force && this.list[id] && !expired) {
@@ -116,11 +136,10 @@ export const useMessageStore = defineStore({
       const now = Math.round(Date.now() / 1000)
 
       for (const { id, force } of pending) {
-        const expired = this.list[id]?.addedToCache
-          ? now - this.list[id].addedToCache > 600
-          : false
-
-        if ((force || !this.list[id] || expired) && !this.fetching[id]) {
+        if (
+          (force || !this.list[id] || this.expired(id, now)) &&
+          !this.fetching[id]
+        ) {
           if (!idsToFetch.includes(id)) {
             idsToFetch.push(id)
           }
@@ -147,11 +166,15 @@ export const useMessageStore = defineStore({
     },
     async fetchMultiple(ids, force) {
       const left = []
+      const now = Math.round(Date.now() / 1000)
 
       ids.forEach((id) => {
         id = parseInt(id)
 
-        if ((force || !this.list[id]) && !this.fetching[id]) {
+        if (
+          (force || !this.list[id] || this.expired(id, now)) &&
+          !this.fetching[id]
+        ) {
           left.push(id)
         }
       })
@@ -213,10 +236,30 @@ export const useMessageStore = defineStore({
             })
           }
         }
+
+        // Batch-fetch the groups these messages belong to in one request, so the per-post
+        // MessageTag components find their group cached instead of each firing its own
+        // /group/{id} call. Done here (rather than only in the list component) so it covers
+        // every fetch path uniformly - initial render AND lazy pagination. It matters most
+        // for heavy-membership users on the nearby/reach and "all my communities" feeds,
+        // where a post can be in a group the viewer isn't a member of (so it isn't in the
+        // membership cache loaded at login). fetchBatch de-dupes against the cache and
+        // no-ops when everything is already present.
+        const groupIds = [
+          ...new Set(
+            left
+              .flatMap((id) => this.list[id]?.groups ?? [])
+              .map((g) => g.groupid)
+              .filter(Boolean)
+          ),
+        ]
+        if (groupIds.length) {
+          useGroupStore().fetchBatch(groupIds)
+        }
       }
     },
     async fetchInBounds(swlat, swlng, nelat, nelng, groupid, limit, cache) {
-      let ret = []
+      let ret
       const key =
         swlat + ':' + swlng + ':' + nelat + ':' + nelng + ':' + groupid
 
@@ -243,8 +286,19 @@ export const useMessageStore = defineStore({
       const ret = await api(this.config).message.search(params)
       return ret
     },
+    // Semantically similar posts for the "more like this" recommendation strip.
+    // Returns [{id, groupid, score, lat, lng}] (or [] when the feature is off or
+    // there's nothing to compare).
+    async similar(id, limit) {
+      return await api(this.config).message.similar(id, limit)
+    },
+    // Existing offers near a location matching a free-text query, for the
+    // wanted→offer "people are offering these near you" panel.
+    async matches(query, lat, lng, limit) {
+      return await api(this.config).message.matches(query, lat, lng, limit)
+    },
     async fetchMyGroups(gid) {
-      let ret = null
+      let ret
 
       if (this.fetchingMyGroups) {
         ret = await this.fetchingMyGroups
@@ -253,6 +307,11 @@ export const useMessageStore = defineStore({
         this.fetchingMyGroups = api(this.config).message.mygroups(gid)
         ret = await this.fetchingMyGroups
         this.fetchingMyGroups = null
+      }
+      // Keep the combined ("all my communities", gid falsy) feed so the distance slider can
+      // scale to it. Skip single-group fetches, which aren't the slider's universe.
+      if (!gid && Array.isArray(ret)) {
+        this.myGroupsList = ret
       }
       return ret
     },
@@ -297,8 +356,64 @@ export const useMessageStore = defineStore({
 
       return messages || []
     },
-    async view(id) {
-      await api(this.config).message.view(id)
+    async view(id, source) {
+      await api(this.config).message.view(id, source)
+    },
+    // Register the current user's interest in bulk-offer items, then refetch so
+    // the per-item interest summary and yourinterest are up to date.
+    async bulkInterest(id, items, interestuserid, comment) {
+      const data = await api(this.config).message.bulkInterest(
+        id,
+        items,
+        interestuserid,
+        comment
+      )
+      const message = await this.fetch(id, true)
+      this.list[id] = message
+      return data
+    },
+    // Offerer/mod: change the state of one interest row, then refetch.
+    async bulkInterestState(id, bulkitemid, userid, state) {
+      const data = await api(this.config).message.bulkInterestState(
+        id,
+        bulkitemid,
+        userid,
+        state
+      )
+      const message = await this.fetch(id, true)
+      this.list[id] = message
+      return data
+    },
+    // Load Freegle Helper state for a bulk offer (offerer/mod only). Stores it
+    // keyed by msgid; returns it. Never throws for "no batch yet" — the API
+    // returns batch:null, which the page renders as "Helper not started".
+    async fetchHelper(msgid) {
+      const ret = await api(this.config).message.getHelper(msgid, false)
+      this.helper[msgid] = ret
+      return ret
+    },
+    // Offerer: pause/resume/stop the Helper and (optionally) set the send mode
+    // (automatic/approve), then refresh helper state.
+    async helperSetStatus(msgid, status, automode = null) {
+      const params = { action: 'SetStatus', msgid, status }
+      if (automode) {
+        params.automode = automode
+      }
+      await api(this.config).message.helper(params)
+      return await this.fetchHelper(msgid)
+    },
+    // Offerer: confirm/edit/send or dismiss a proposed decision, then refresh both
+    // the helper state and the message (an allocation changes interest states too).
+    async helperResolveProposal(msgid, proposalid, decision, text) {
+      await api(this.config).message.helper({
+        action: 'ResolveProposal',
+        proposalid,
+        decision,
+        ...(text != null ? { text } : {}),
+      })
+      const message = await this.fetch(msgid, true)
+      this.list[msgid] = message
+      return await this.fetchHelper(msgid)
     },
     async update(params) {
       const authStore = useAuthStore()
@@ -437,9 +552,15 @@ export const useMessageStore = defineStore({
         ? activeMessages.length
         : 0
     },
-    async markSeen(ids) {
+    // Clears the whole browse count server-side. No ids: see MessageAPI.clearCount.
+    async clearCount() {
+      await api(this.config).message.clearCount()
+      this.count = 0
+    },
+
+    async markSeen(ids, source) {
       try {
-        await api(this.config).message.markSeen(ids)
+        await api(this.config).message.markSeen(ids, source)
       } catch (e) {
         if (e?.response?.status === 401) {
           // Session expired while scrolling — not critical, silently ignore.
@@ -449,76 +570,104 @@ export const useMessageStore = defineStore({
         throw e
       }
 
-      const isochroneStore = useIsochroneStore()
-      isochroneStore.markSeen(ids)
+      const nearbyStore = useNearbyStore()
+      nearbyStore.markSeen(ids)
 
-      // Also update local cache to prevent watcher loop in MessageList.vue
-      const idSet = new Set(ids)
-      Object.keys(this.list).forEach((key) => {
-        const id = parseInt(key)
-        if (idSet.has(id) && this.list[id]) {
-          this.list[id].unseen = false
+      // Also update local cache to prevent watcher loop in MessageList.vue. Index the
+      // ids directly rather than scanning the whole message cache, which grows for the
+      // lifetime of the session (a long infinite-scroll made this an O(cache) scan per
+      // mark-seen, i.e. trending to O(total^2) over a session).
+      ids.forEach((id) => {
+        const cached = this.list[id]
+        if (cached) {
+          cached.unseen = false
         }
       })
 
-      await this.fetchCount()
+      // Refresh the badge for the member's ACTUAL browse view and distance limit. Calling
+      // fetchCount() with no arguments recomputed the count for the default view (nearby,
+      // unlimited), so a 'mygroups' member - or anyone with the distance slider set - saw
+      // the badge repaint with a different view's number right after marking seen, i.e. it
+      // didn't drop to zero. Mirror nearbyStore.fetchMessages and read the settings here.
+      const settings = useAuthStore().user?.settings
+      await this.fetchCount(settings?.browseView, settings?.browseMaxDistance)
+    },
+    // Mark the hidden crosspost/repost copies of an already-shown post as seen. The browse
+    // feed collapses a poster's duplicate copies to one card (useMessageDedup), but the server
+    // counts each copy as its own unseen post, so viewing the shown card leaves the hidden
+    // copies unseen and the unread badge can never drain to zero through normal browsing.
+    // Marking them here keeps the count in step with what the member has actually seen.
+    //
+    // Deliberately lighter than markSeen(): only writes the copies that are still unseen (so a
+    // re-view is a no-op, not a repeated API call) and does NOT refetch the count - like a
+    // normal per-card view, the badge refreshes on the next scroll/poll.
+    async markSeenSiblings(ids) {
+      if (!ids?.length) {
+        return
+      }
+
+      const nearbyStore = useNearbyStore()
+      const unseen = new Set(
+        (nearbyStore.messageList || []).filter((m) => m.unseen).map((m) => m.id)
+      )
+      const toMark = ids.filter((id) => unseen.has(id))
+
+      if (!toMark.length) {
+        return
+      }
+
+      try {
+        await api(this.config).message.markSeen(toMark)
+      } catch (e) {
+        if (e?.response?.status === 401) {
+          return
+        }
+
+        throw e
+      }
+
+      nearbyStore.markSeen(toMark)
+      toMark.forEach((id) => {
+        const cached = this.list[id]
+        if (cached) {
+          cached.unseen = false
+        }
+      })
     },
     // ModTools-specific methods below
     async searchMT(params) {
-      if (params.searchmode === 'vector') {
-        // Use V2 vector search endpoint directly
-        const results = await api(this.config).message.search({
-          search: params.term,
-          messagetype: 'All',
-          groupids: params.groupid ? String(params.groupid) : undefined,
-          searchmode: 'vector',
-        })
-
-        if (!results || results.length === 0) return []
-
-        // Fetch in parallel but preserve API score order via Promise.all index stability
-        const fetched = await Promise.all(
-          results.map(async (r) => {
-            try {
-              const message = await this.fetchMT({ id: r.id || r.msgid })
-              if (message) {
-                // Carry matchedon from search result onto the fetched message
-                if (r.matchedon) {
-                  message.matchedon = r.matchedon
-                }
-                this.list[message.id] = message
-                return message.id
-              }
-            } catch (e) {
-              console.log('Failed to fetch message', r.id, e?.message)
-            }
-            return null
-          })
-        )
-        return fetched.filter((id) => id !== null)
-      }
-
-      // Existing keyword search path
-      const data = await api(this.config).message.fetchMessages({
-        subaction: 'searchall',
+      // Message search is always semantic now (the keyword toggle has been
+      // retired). We call the V2 vector search endpoint directly and pass
+      // searchmode explicitly so this does not depend on the server default.
+      const results = await api(this.config).message.search({
         search: params.term,
-        exactonly: true,
-        groupid: params.groupid,
+        messagetype: 'All',
+        groupids: params.groupid ? String(params.groupid) : undefined,
+        searchmode: 'vector',
       })
-      if (!data.messages || data.messages.length === 0) return
-      // Response is IDs only — fetch full details for each.
-      await Promise.all(
-        data.messages.map(async (id) => {
+
+      if (!results || results.length === 0) return []
+
+      // Fetch in parallel but preserve API score order via Promise.all index stability
+      const fetched = await Promise.all(
+        results.map(async (r) => {
           try {
-            const message = await this.fetchMT({ id })
+            const message = await this.fetchMT({ id: r.id || r.msgid })
             if (message) {
+              // Carry matchedon from search result onto the fetched message
+              if (r.matchedon) {
+                message.matchedon = r.matchedon
+              }
               this.list[message.id] = message
+              return message.id
             }
           } catch (e) {
-            console.log('Failed to fetch message', id, e?.message)
+            console.log('Failed to fetch message', r.id, e?.message)
           }
+          return null
         })
       )
+      return fetched.filter((id) => id !== null)
     },
     async fetchMessagesMT(params) {
       if (params.context) {
@@ -564,17 +713,23 @@ export const useMessageStore = defineStore({
       if (message && !message.subject) message.subject = ''
       return message
     },
+    // Actual rippling-out progress of a post, for the moderation reach map.
+    async fetchReach(id, logError = true) {
+      return await api(this.config).message.reach(id, logError)
+    },
     async updateMT(params) {
       // Rely on refresh elsewhere
       return await api(this.config).message.update(params)
     },
     async delete(params) {
-      await api(this.config).message.delete(
-        params.id,
-        params.groupid,
-        params.subject,
-        params.stdmsgid,
-        params.body
+      await this.runHoldAware(params.id, () =>
+        api(this.config).message.delete(
+          params.id,
+          params.groupid,
+          params.subject,
+          params.stdmsgid,
+          params.body
+        )
       )
 
       delete this.list[params.id]
@@ -589,25 +744,69 @@ export const useMessageStore = defineStore({
 
       this.remove({ id: params.id })
     },
-    async backToPending(id) {
+    async backToPending(id, groupid) {
       await api(this.config).message.update({
         id,
+        groupid,
         action: 'BackToPending',
       })
       this.remove({ id })
+    },
+    // After a PER-GROUP mod action (approve/reject) on a post that may be pending on several of
+    // the mod's groups, re-fetch it and KEEP it in the review list if any group copy is still in
+    // the review queue - so the next group's copy is immediately actionable without reloading the
+    // pending page (Discourse 9862). Only drop it once nothing's left. The review-queue states
+    // match ModMessage's own predicate; mirrors hold()/release()'s re-fetch, but conditional.
+    async refreshOrRemoveFromMTList(id) {
+      let message
+      try {
+        message = await this.fetchMT({ id }, false)
+      } catch (e) {
+        message = null
+      }
+      const stillInReviewQueue = !!message?.groups?.some((g) =>
+        ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
+      )
+      if (stillInReviewQueue) {
+        this.list[message.id] = message
+      } else {
+        this.remove({ id })
+      }
+    },
+    // The server refuses a moderation action with 409 when a DIFFERENT moderator
+    // holds the post (see dispatchPostMessageAction). That normally means our copy
+    // of the message is stale - the hold happened after we last fetched it - so
+    // re-fetch, which makes the "Held by X" banner appear and hides the action
+    // buttons, and hand the caller a message naming the holder (Discourse #9946).
+    async runHoldAware(id, fn) {
+      try {
+        return await fn()
+      } catch (e) {
+        if (e?.response?.status !== 409 || !e?.response?.data?.heldby) throw e
+
+        try {
+          const message = await api(this.config).message.fetchMT({ id }, false)
+          if (message) this.list[message.id] = message
+        } catch (fetchError) {
+          // Leave the stale copy in place; the thrown error still explains why.
+        }
+
+        const who = e.response.data.heldbyname || 'Another moderator'
+        const held = new Error(
+          `${who} is holding this post. Check with them, or release it first.`
+        )
+        held.heldByOtherMod = true
+        throw held
+      }
     },
     async approve(id, groupid, subject, stdmsgid, body) {
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
 
-      await api(this.config).message.approve(
-        id,
-        groupid,
-        subject,
-        stdmsgid,
-        body
+      await this.runHoldAware(id, () =>
+        api(this.config).message.approve(id, groupid, subject, stdmsgid, body)
       )
-      this.remove({ id })
+      await this.refreshOrRemoveFromMTList(id)
 
       // Re-fetch the sender so posting status changes from stdmsg take effect.
       if (fromuser) {
@@ -621,14 +820,10 @@ export const useMessageStore = defineStore({
       const msg = this.byId(id)
       const fromuser = msg?.fromuser
 
-      await api(this.config).message.reject(
-        id,
-        groupid,
-        subject,
-        stdmsgid,
-        body
+      await this.runHoldAware(id, () =>
+        api(this.config).message.reject(id, groupid, subject, stdmsgid, body)
       )
-      this.remove({ id })
+      await this.refreshOrRemoveFromMTList(id)
 
       if (fromuser) {
         const uid = typeof fromuser === 'number' ? fromuser : fromuser.id
@@ -648,21 +843,25 @@ export const useMessageStore = defineStore({
       // Do not remove from list
     },
     async hold(params) {
-      await api(this.config).message.hold(params.id)
+      await this.runHoldAware(params.id, () =>
+        api(this.config).message.hold(params.id, params.groupid)
+      )
       const message = await api(this.config).message.fetchMT({
         id: params.id,
       })
       this.list[message.id] = message
     },
     async release(params) {
-      await api(this.config).message.release(params.id)
+      await api(this.config).message.release(params.id, params.groupid)
       const message = await api(this.config).message.fetchMT({
         id: params.id,
       })
       this.list[message.id] = message
     },
     async spam(params) {
-      await api(this.config).message.spam(params.id, params.groupid)
+      await this.runHoldAware(params.id, () =>
+        api(this.config).message.spam(params.id, params.groupid)
+      )
 
       this.remove({ id: params.id })
     },
@@ -705,11 +904,14 @@ export const useMessageStore = defineStore({
     byId: (state) => {
       return (id) => state.list[id]
     },
+    helperById: (state) => {
+      return (id) => state.helper[id]
+    },
     inBounds: (state) => (swlat, swlng, nelat, nelng, groupid) => {
       const key =
         swlat + ':' + swlng + ':' + nelat + ':' + nelng + ':' + groupid
 
-      return key in this.bounds ? this.bounds[key] : []
+      return key in state.bounds ? state.bounds[key] : []
     },
     all: (state) => Object.values(state.list),
     byUser: (state) => (userid) => {
@@ -719,9 +921,7 @@ export const useMessageStore = defineStore({
       // ModTools — match any group in the message's groups array (multi-group support).
       const gid = parseInt(groupid)
       const ret = Object.values(state.list).filter((message) => {
-        return message.groups.some(
-          (g) => parseInt(g.groupid) === gid
-        )
+        return message.groups.some((g) => parseInt(g.groupid) === gid)
       })
       return ret
     },

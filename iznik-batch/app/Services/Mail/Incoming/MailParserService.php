@@ -341,7 +341,7 @@ class MailParserService
     /**
      * Check if subject matches bounce patterns (legacy compatibility).
      *
-     * Ported from iznik-server/include/message/Message.php bounce_subjects
+     * Ported from the legacy V1 PHP Message::bounce_subjects
      */
     private function isBounceSubject(string $subject): bool
     {

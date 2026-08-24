@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { ref } from 'vue'
+import { ref, reactive } from 'vue'
 
 import ChitchatPage from '~/pages/chitchat/[[id]].vue'
 
@@ -32,7 +32,11 @@ vi.mock('~/components/InfiniteLoading', () => ({
   },
 }))
 vi.mock('~/components/NewsThread.vue', () => ({
-  default: { template: '<div />', props: ['id', 'scrollTo', 'duplicateCount'] },
+  default: {
+    name: 'NewsThread',
+    template: '<div class="news-thread" />',
+    props: ['id', 'scrollTo', 'duplicateCount', 'context'],
+  },
 }))
 vi.mock('~/components/MessageListUpToDate.vue', () => ({
   default: { template: '<div />' },
@@ -53,6 +57,7 @@ const mockNewsfeedStore = {
   send: vi.fn(),
   byId: vi.fn(),
   snapshotSeenBeforeVisit: vi.fn(),
+  ensureSeenBaselineForThreadView: vi.fn(),
   startDelayedSeen: vi.fn(),
   markAllSeen: vi.fn(),
 }
@@ -61,11 +66,28 @@ vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => mockNewsfeedStore,
 }))
 
-vi.mock('~/stores/misc', () => ({
-  useMiscStore: () => ({
-    get: vi.fn(),
-    set: vi.fn(),
+// Stateful AND reactive, because the newsletter review filter round-trips
+// through it: the real store is a Pinia getter over reactive state, so a plain
+// object here would leave the computed with nothing to track.
+const mockMiscState = reactive({})
+const mockMiscStore = {
+  get: vi.fn((key) => mockMiscState[key]),
+  set: vi.fn(({ key, value }) => {
+    mockMiscState[key] = value
   }),
+}
+
+vi.mock('~/stores/misc', () => ({
+  useMiscStore: () => mockMiscStore,
+}))
+
+const mockTeamStore = {
+  fetch: vi.fn().mockResolvedValue({}),
+  getTeam: vi.fn(),
+}
+
+vi.mock('~/stores/team', () => ({
+  useTeamStore: () => mockTeamStore,
 }))
 
 vi.mock('~/stores/location', () => ({
@@ -76,16 +98,19 @@ vi.mock('~/stores/location', () => ({
 
 // Mock useMe
 const mockMe = ref({ id: 1, displayname: 'Test User', settings: {} })
+const mockChitChatMod = ref(false)
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: mockMe,
     myGroups: ref([]),
+    chitChatMod: mockChitChatMod,
   }),
 }))
 
-vi.hoisted(() => {
+const routeState = vi.hoisted(() => {
   vi.resetModules()
+  return { params: {} }
 })
 
 vi.mock('#imports', async () => {
@@ -93,7 +118,7 @@ vi.mock('#imports', async () => {
   return {
     ...actual,
     useRoute: () => ({
-      params: {},
+      params: routeState.params,
       query: {},
       path: '/',
       name: 'chitchat',
@@ -146,6 +171,12 @@ describe('chitchat/[[id]].vue loadMore', () => {
             template: '<select />',
             props: ['modelValue', 'options'],
           },
+          'b-form-checkbox': {
+            template:
+              '<label class="form-check"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)"><slot /></label>',
+            props: ['modelValue'],
+            emits: ['update:modelValue'],
+          },
           'b-spinner': { template: '<span />' },
           'v-icon': { template: '<i />' },
           OurUploader: { template: '<div />' },
@@ -164,7 +195,10 @@ describe('chitchat/[[id]].vue loadMore', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     mockMe.value = { id: 1, displayname: 'Test User', settings: {} }
+    mockChitChatMod.value = false
+    Object.keys(mockMiscState).forEach((k) => delete mockMiscState[k])
     mockNewsfeedStore.feed = []
+    routeState.params = {}
   })
 
   afterEach(() => {
@@ -219,6 +253,122 @@ describe('chitchat/[[id]].vue loadMore', () => {
     expect(mockState.complete).toHaveBeenCalled()
   })
 
+  it('does not refetch feed when selectedArea changes because of logout', async () => {
+    // Regression: logout resets the auth store, nulling me.  For users with a
+    // newsfeedarea set that flips selectedArea to 0, and the watcher refetched
+    // the feed without a JWT → 401 → fatal "Oh dear" error page.
+    mockMe.value = {
+      id: 1,
+      displayname: 'Test User',
+      settings: { newsfeedarea: 12345 },
+    }
+    mountComponent()
+    await flushPromises()
+    vi.clearAllMocks()
+
+    mockMe.value = null
+    await flushPromises()
+
+    expect(mockNewsfeedStore.reset).not.toHaveBeenCalled()
+    expect(mockNewsfeedStore.fetchFeed).not.toHaveBeenCalled()
+  })
+
+  it('refetches feed when a logged-in user changes area', async () => {
+    mockMe.value = {
+      id: 1,
+      displayname: 'Test User',
+      settings: { newsfeedarea: 0 },
+    }
+    mountComponent()
+    await flushPromises()
+    vi.clearAllMocks()
+
+    mockMe.value.settings.newsfeedarea = 12345
+    await flushPromises()
+
+    expect(mockNewsfeedStore.reset).toHaveBeenCalled()
+    expect(mockNewsfeedStore.fetchFeed).toHaveBeenCalledWith(12345, false)
+  })
+
+  describe('newsletter review filter', () => {
+    // Community News drips posts to one area at a time and the feed caps them,
+    // so support and the ChitChat Moderation team had no way to see what was
+    // going out nationally.
+    const checkbox = () => wrapper.find('.filter-newsletters input')
+
+    it('is not offered to an ordinary member', async () => {
+      mockChitChatMod.value = false
+      mountComponent()
+      await flushPromises()
+
+      expect(checkbox().exists()).toBe(false)
+    })
+
+    it('is offered to a ChitChat moderator', async () => {
+      mockChitChatMod.value = true
+      mountComponent()
+      await flushPromises()
+
+      expect(checkbox().exists()).toBe(true)
+    })
+
+    it('rebuilds the feed with the flag when switched on', async () => {
+      mockChitChatMod.value = true
+      mockMe.value = {
+        id: 1,
+        displayname: 'Test User',
+        settings: { newsfeedarea: 8046 },
+      }
+      mountComponent()
+      await flushPromises()
+      vi.clearAllMocks()
+
+      await checkbox().setValue(true)
+      await flushPromises()
+
+      expect(mockNewsfeedStore.reset).toHaveBeenCalled()
+      expect(mockNewsfeedStore.fetchFeed).toHaveBeenCalledWith(8046, true)
+    })
+
+    it('starts from the remembered setting on the next visit', async () => {
+      mockChitChatMod.value = true
+      mockMiscState.chitchatallnewsletters = true
+      mountComponent()
+      await flushPromises()
+
+      expect(mockNewsfeedStore.fetchFeed).toHaveBeenCalledWith(
+        expect.anything(),
+        true
+      )
+    })
+
+    it('fetches the moderation team so the filter can appear for a plain member of it', async () => {
+      mockMe.value = {
+        id: 1,
+        displayname: 'Test User',
+        settings: {},
+        teams: ['ChitChat Moderation'],
+      }
+      mountComponent()
+      await flushPromises()
+
+      expect(mockTeamStore.fetch).toHaveBeenCalledWith('ChitChat Moderation')
+    })
+
+    it('does not fetch the moderation team for an ordinary member', async () => {
+      mockMe.value = {
+        id: 1,
+        displayname: 'Test User',
+        settings: {},
+        teams: [],
+      }
+      mountComponent()
+      await flushPromises()
+
+      expect(mockTeamStore.fetch).not.toHaveBeenCalled()
+    })
+  })
+
   it('does not hide consecutive posts from same user when message field is missing', () => {
     // Feed summary objects from the API only have id/userid/hidden — no message field.
     // Regression: undefined === undefined was true, so all consecutive same-user posts
@@ -265,5 +415,68 @@ describe('chitchat/[[id]].vue loadMore', () => {
     const shown = wrapper.vm.newsfeedToShow
     expect(shown).toHaveLength(3)
     expect(shown.map((s) => s.id)).toEqual([3, 2, 1])
+  })
+
+  describe('thread rendering context', () => {
+    it('renders feed cards in feed context', async () => {
+      mockNewsfeedStore.feed = [{ id: 7, userid: 100, message: 'Hi' }]
+      mountComponent()
+      wrapper.vm.show = 1
+      await flushPromises()
+
+      const thread = wrapper.findComponent('.news-thread')
+      expect(thread.exists()).toBe(true)
+      expect(thread.props('context')).toBe('feed')
+    })
+
+    it('renders a deep-linked thread in thread context', async () => {
+      routeState.params = { id: '456' }
+      mockNewsfeedStore.fetch.mockResolvedValue({ id: 456, threadhead: 456 })
+      mockNewsfeedStore.byId.mockReturnValue({ id: 456, userid: 100 })
+      mountComponent()
+      await flushPromises()
+
+      const thread = wrapper.findComponent('.news-thread')
+      expect(thread.exists()).toBe(true)
+      expect(thread.props('context')).toBe('thread')
+    })
+  })
+
+  describe('seen baseline', () => {
+    it('secures the baseline before dispatching the thread fetch on a deep link', async () => {
+      routeState.params = { id: '456' }
+      mountComponent()
+      await flushPromises()
+
+      expect(
+        mockNewsfeedStore.ensureSeenBaselineForThreadView
+      ).toHaveBeenCalled()
+      expect(mockNewsfeedStore.fetch).toHaveBeenCalled()
+      // Order matters: delayedSeenMode must be on before the fetch's addItems
+      // could fire an instant Seen POST for everything in the thread.
+      expect(
+        mockNewsfeedStore.ensureSeenBaselineForThreadView.mock
+          .invocationCallOrder[0]
+      ).toBeLessThan(mockNewsfeedStore.fetch.mock.invocationCallOrder[0])
+      // The feed's own per-visit re-snapshot must NOT run here: it would wipe
+      // the baseline a feed-to-thread navigation is relying on.
+      expect(mockNewsfeedStore.snapshotSeenBeforeVisit).not.toHaveBeenCalled()
+    })
+
+    it('starts the delayed seen timer on a thread deep link', async () => {
+      routeState.params = { id: '456' }
+      mountComponent()
+      await flushPromises()
+
+      expect(mockNewsfeedStore.startDelayedSeen).toHaveBeenCalledWith(30000)
+    })
+
+    it('still snapshots and delays on the feed view', async () => {
+      mountComponent()
+      await flushPromises()
+
+      expect(mockNewsfeedStore.snapshotSeenBeforeVisit).toHaveBeenCalled()
+      expect(mockNewsfeedStore.startDelayedSeen).toHaveBeenCalledWith(30000)
+    })
   })
 })

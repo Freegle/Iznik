@@ -32,7 +32,6 @@ const config: CapacitorConfig = {
   appId: 'org.ilovefreegle.direct',  // Fix back to .direct
   appName: 'Freegle',
   webDir: '.output/public',
-  bundledWebRuntime: false,
   zoomEnabled: true,
   cordova: {
     "preferences": { // Get from iznik-nuxt/mobile/freegle/android/config.xml and package.json
@@ -56,13 +55,14 @@ const config: CapacitorConfig = {
       "@capacitor/device", // C7 OK
       "@capacitor/network",
       // "@capacitor/push-notifications",
-      "@freegle/capacitor-push-notifications-cap7", // C7 2025-03
+      "@freegle/capacitor-push-notifications-cap8", // C7 2025-03
       "@capawesome/capacitor-badge",
       "@capgo/capacitor-social-login", // C7
       "@capacitor/status-bar", // C7 OK
       "@capacitor/camera", // C7 OK
       "@capacitor/share",
       "@capacitor/app",
+      "@capacitor/text-zoom", // C7 - apply system accessibility text size to the WebView
       "@capacitor/screen-orientation",
     ],
     buildOptions: { // new creds which are not used. unsigned version needs signed with FREEGLE_KEYSTORE and FREEGLE_KEYSTORE_PASSWORD
@@ -84,7 +84,7 @@ const config: CapacitorConfig = {
       "@capacitor/device",
       "@capacitor/network",
       //"@capacitor/push-notifications",
-      "@freegle/capacitor-push-notifications-cap7", // 2025-03
+      "@freegle/capacitor-push-notifications-cap8", // 2025-03
       "@capawesome/capacitor-badge",
       "@capacitor-community/apple-sign-in", // C7 OK
       // "@codetrix-studio/capacitor-google-auth", // C6 on github repo OK
@@ -93,6 +93,7 @@ const config: CapacitorConfig = {
       "@capacitor/camera",
       "@capacitor/share",
       "@capacitor/app",
+      "@capacitor/text-zoom", // C7 - apply system accessibility text size to the WebView
       "@capacitor/screen-orientation",
     ]
   },

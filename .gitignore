@@ -14,11 +14,16 @@
 /ssl/
 /.env
 /.env.background
+# Timestamped backups of the secret env files (created before prod deploys) are
+# themselves PRODUCTION SECRETS - keep every variant untrackable so a stray
+# `git add -A` can never stage them into this public repo.
+/.env.bak*
+/.env.background.bak*
+/.env.*.bak*
 /firebase.json
 /rebuild-monitor.log
 yesterday/.env
 yesterday/data/
-iznik-server-my.cnf
 docker-compose.override.yml
 
 # Vim swap files
@@ -33,7 +38,6 @@ nohup.out
 *.deb
 
 # Temporary scripts
-apiv1-entrypoint.sh
 
 # Node modules
 node_modules/
@@ -44,16 +48,11 @@ yesterday/api/node_modules/
 # Capacitor plugins (local development copies)
 capacitor-push-notifications-cap7/
 
-# Sentry integration database (SQLite)
-sentry-issues.db
-sentry-issues.db-shm
-sentry-issues.db-wal
-sentry-issues.db
 /plans/exploratory-testing-state.json
 /iznik-batch/coverage/
 
 # Ralph working directories (session-specific)
-ralph/
+/ralph/
 
 # Local Netlify folder
 .netlify
@@ -78,4 +77,5 @@ freegle-mobile/
 monitor.db
 
 # freegle switch: runtime state for the worktree-escape guard
-.claude/active-worktree
+# (legacy single file + per-session active-worktree.<session-id> files)
+.claude/active-worktree*

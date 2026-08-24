@@ -26,11 +26,51 @@
     >
       <!-- Profile header for desktop (md+) - mobile uses ChatMobileNavbar -->
       <VisibleWhen :at="['md', 'lg', 'xl', 'xxl']">
-        <div
-          v-if="chat && otheruser && otheruser.info && !otheruser?.deleted"
-          class="desktop-profile-header"
-        >
-          <div class="profile-header-main">
+        <div v-if="chat" class="desktop-profile-header">
+          <!-- Freegle's own chat. Deliberately not the usual header: almost
+               nothing in here is a conversation, so rating, blocking or
+               reporting it makes no sense, and there is no "last seen" or
+               "replies in" worth showing for an account that is not a person.
+               The "these are automated" note lives here once rather than on
+               every single message, and Hide is offered plainly for anyone who
+               would rather not see them. -->
+          <div v-if="chat.systemchat" class="profile-header-main">
+            <ProfileImage
+              :image="chat.icon"
+              :name="chat.name"
+              class="profile-header-avatar"
+              is-thumbnail
+              size="lg"
+            />
+            <div class="profile-header-info">
+              <div class="profile-header-name">
+                <span>{{ chat.name }}</span>
+              </div>
+              <div class="profile-header-stats systemchat-note">
+                Automated messages about your posts. Freegle doesn't read
+                replies here.
+              </div>
+            </div>
+            <div class="profile-header-actions">
+              <b-button
+                v-if="unseen"
+                variant="white"
+                class="action-btn btn-mark-read"
+                @click="markRead"
+              >
+                Mark read
+                <b-badge variant="danger" class="ms-1">{{ unseen }}</b-badge>
+              </b-button>
+              <b-button
+                variant="white"
+                class="action-btn"
+                @click="chat.status === 'Closed' ? unhide() : showhide()"
+              >
+                {{ chat.status === 'Closed' ? 'Unhide' : 'Hide' }}
+              </b-button>
+            </div>
+          </div>
+          <div v-else class="profile-header-main">
             <ProfileImage
               :image="chat.icon"
               :name="chat.name"
@@ -43,27 +83,42 @@
               <div class="profile-header-name">
                 <span class="clickme" @click="showInfo">{{ chat.name }}</span>
                 <SupporterInfo
-                  v-if="otheruser.supporter"
+                  v-if="otheruser?.supporter"
                   class="supporter-badge"
                 />
               </div>
-              <div class="profile-header-stats">
+              <div
+                v-if="otheruser && otheruser.info"
+                class="profile-header-stats"
+              >
                 <UserRatings
                   :id="chat.otheruid"
                   :key="'otheruser-' + chat.otheruid"
                   size="sm"
                 />
-                <span v-if="otheruser.lastaccess" class="stat-chip">
+                <span
+                  v-if="otheruser.lastaccess"
+                  v-b-tooltip.bottom="LAST_SEEN_TOOLTIP"
+                  class="stat-chip"
+                >
                   <v-icon icon="clock" class="stat-icon" />
-                  {{ otheraccessFull }}
+                  Last seen {{ lastSeenAgo }}
                 </span>
-                <span v-if="replytimeFull" class="stat-chip">
+                <span
+                  v-if="replytimeFull"
+                  v-b-tooltip.bottom="REPLY_TIME_TOOLTIP"
+                  class="stat-chip"
+                >
                   <v-icon icon="reply" class="stat-icon" />
-                  {{ replytimeFull }}
+                  Replies in {{ replytimeFull }}
                 </span>
-                <span v-if="milesaway" class="stat-chip">
+                <span
+                  v-if="milesaway"
+                  v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+                  class="stat-chip"
+                >
                   <v-icon icon="map-marker-alt" class="stat-icon" />
-                  {{ milesaway }} miles
+                  {{ milesaway }} miles away
                 </span>
               </div>
             </div>
@@ -71,17 +126,22 @@
               <b-button
                 v-if="unseen"
                 variant="white"
-                class="action-btn action-btn--mark-read"
+                class="action-btn btn-mark-read"
                 @click="markRead"
               >
                 Mark read
                 <b-badge variant="danger" class="ms-1">{{ unseen }}</b-badge>
               </b-button>
-              <b-button variant="white" class="action-btn" @click="showInfo">
+              <b-button
+                v-if="otheruser && !otheruser?.deleted"
+                variant="white"
+                class="action-btn"
+                @click="showInfo"
+              >
                 Profile
               </b-button>
               <b-button
-                v-if="chat.chattype === 'User2User'"
+                v-if="chat.chattype === 'User2User' && otheruser"
                 variant="white"
                 class="action-btn"
                 @click="chat.status === 'Blocked' ? unhide() : showblock()"
@@ -89,6 +149,7 @@
                 {{ chat.status === 'Blocked' ? 'Unblock' : 'Block' }}
               </b-button>
               <b-button
+                v-if="chat.chattype !== 'User2Mod' || chat.status === 'Closed'"
                 variant="white"
                 class="action-btn"
                 @click="chat.status === 'Closed' ? unhide() : showhide()"
@@ -96,7 +157,7 @@
                 {{ chat.status === 'Closed' ? 'Unhide' : 'Hide' }}
               </b-button>
               <b-button
-                v-if="chat.chattype === 'User2User'"
+                v-if="chat.chattype === 'User2User' && !otheruser?.deleted"
                 variant="white"
                 class="action-btn"
                 @click="showreport()"
@@ -177,6 +238,13 @@
       <div v-else-if="chatBusy" class="text-center">
         <Spinner :size="50" class="float-end" />
       </div>
+      <!-- Empty chat with no messages yet (e.g. first contact with a group's
+           volunteers). Keep a growing area here so the compose footer stays pinned
+           to the bottom of the pane. Without it the footer becomes the only child of
+           the column (the profile header is desktop-only and the message list is not
+           rendered when empty), so it jumps up under the mobile navbar leaving a large
+           blank space below - Discourse 9918. -->
+      <div v-else class="chatContentEmpty" />
       <ChatFooter
         v-bind="$props"
         class="chatFooter"
@@ -198,6 +266,11 @@ import { useUserStore } from '~/stores/user'
 import { useChatStore } from '~/stores/chat'
 import { setupChat } from '~/composables/useChat'
 import { timeago } from '~/composables/useTimeFormat'
+import {
+  LAST_SEEN_TOOLTIP,
+  REPLY_TIME_TOOLTIP,
+  DISTANCE_TOOLTIP,
+} from '~/constants'
 
 // Don't use dynamic imports because it stops us being able to scroll to the bottom after render.
 import ChatMessage from '~/components/ChatMessage.vue'
@@ -205,14 +278,14 @@ import { useRouter } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
-const ChatBlockModal = defineAsyncComponent(() =>
-  import('~/components/ChatBlockModal')
+const ChatBlockModal = defineAsyncComponent(
+  () => import('~/components/ChatBlockModal')
 )
-const ChatHideModal = defineAsyncComponent(() =>
-  import('~/components/ChatHideModal')
+const ChatHideModal = defineAsyncComponent(
+  () => import('~/components/ChatHideModal')
 )
-const ChatReportModal = defineAsyncComponent(() =>
-  import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(
+  () => import('~/components/ChatReportModal')
 )
 
 const chatStore = useChatStore()
@@ -233,8 +306,8 @@ function resize() {
 // Pre-reserve sticky-ad height for non-donors so chatHolder doesn't shrink when the ad renders.
 const allowAd = computed(() => !recentDonor.value)
 
-const ChatNotVisible = defineAsyncComponent(() =>
-  import('~/components/ChatNotVisible.vue')
+const ChatNotVisible = defineAsyncComponent(
+  () => import('~/components/ChatNotVisible.vue')
 )
 
 const { chat, otheruser, milesaway, unseen } = await setupChat(props.id)
@@ -247,10 +320,11 @@ watch(unseen, () => {
   }
 })
 
-const otheraccessFull = computed(() => {
+// Keeps the "ago" so the chip reads "Last seen 2 hours ago", and copes with
+// timeago's non-numeric forms like "a few seconds ago".
+const lastSeenAgo = computed(() => {
   if (!otheruser.value?.lastaccess) return null
-  const full = timeago(otheruser.value.lastaccess)
-  return full.replace(/ ago$/, '')
+  return timeago(otheruser.value.lastaccess)
 })
 
 const replytimeFull = computed(() => {
@@ -288,7 +362,9 @@ const showChatReport = ref(false)
 const router = useRouter()
 
 function showInfo() {
-  showProfileModal.value = true
+  if (otheruser.value?.id && !otheruser.value?.deleted) {
+    showProfileModal.value = true
+  }
 }
 
 function showblock() {
@@ -570,6 +646,19 @@ function typing() {
   order: 4;
 }
 
+/* Placeholder that fills the space of an empty chat (no messages yet) so the
+   compose footer stays pinned to the bottom rather than jumping up under the
+   header. Mirrors .chatContent's background so an empty chat still looks like a
+   chat, not a blank white void (Discourse 9918). */
+.chatContentEmpty {
+  order: 3;
+  flex-grow: 1;
+  background-color: $color-gray--lighter;
+  background-image: url('/chat-pattern.svg');
+  background-repeat: repeat;
+  background-size: 200px 200px;
+}
+
 .itemwrapper {
   display: flex;
   flex-direction: column-reverse;
@@ -660,6 +749,12 @@ function typing() {
   gap: 8px;
 }
 
+/* Said once, in the header, instead of on every message. */
+.systemchat-note {
+  font-size: 0.875rem;
+  color: $color-gray--dark;
+}
+
 .stat-chip {
   display: inline-flex;
   align-items: center;
@@ -670,11 +765,22 @@ function typing() {
   color: $color-gray--darker;
   font-weight: 500;
   border-radius: var(--radius-sm, 0.375rem);
+
+  /* Spelling the labels out costs width, so shrink rather than wrap on phones. */
+  @include media-breakpoint-down(sm) {
+    gap: 3px;
+    padding: 2px 6px;
+    font-size: 0.65rem;
+  }
 }
 
 .stat-icon {
   font-size: 0.7rem;
-  color: $color-green--dark;
+  color: $color-green--darker;
+
+  @include media-breakpoint-down(sm) {
+    font-size: 0.6rem;
+  }
 }
 
 .supporter-badge {
@@ -698,10 +804,5 @@ function typing() {
 .action-btn {
   font-size: 0.7rem;
   padding: 2px 8px;
-}
-
-.action-btn--mark-read {
-  border: 1px solid $color-red !important;
-  color: $color-red !important;
 }
 </style>

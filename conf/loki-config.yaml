@@ -3,6 +3,16 @@ auth_enabled: false
 server:
   http_listen_port: 3100
   grpc_listen_port: 9096
+  # Defaults (30s) killed any query slower than 30s with an empty reply
+  # (curl exit 52) even when the querier would have finished it.
+  http_server_read_timeout: 5m
+  http_server_write_timeout: 5m
+
+querier:
+  # Default 4 left a ~2.5-core ceiling on this 8-core host; scans roughly 2x
+  # with 8. All requests share these in-process workers - client-side window
+  # splitting does NOT bypass this pool.
+  max_concurrent: 8
 
 common:
   instance_addr: 127.0.0.1
@@ -17,11 +27,20 @@ common:
       store: inmemory
 
 query_range:
+  # Note: in this Loki version the results cache only stores EMPTY log-query
+  # results, so raising it does nothing for our queries - the repeat-run win
+  # is the chunk cache below.
   results_cache:
     cache:
       embedded_cache:
         enabled: true
         max_size_mb: 100
+
+chunk_store_config:
+  chunk_cache_config:
+    embedded_cache:
+      enabled: true
+      max_size_mb: 2048
 
 schema_config:
   configs:
@@ -34,11 +53,16 @@ schema_config:
         period: 24h
 
 ingester:
-  # Faster flushing for dev environment (data queryable sooner)
-  chunk_idle_period: 1m       # Flush after 1 min of no writes (default: 30m)
-  max_chunk_age: 5m           # Max age before flush (default: 2h)
-  chunk_retain_period: 30s    # Keep in memory after flush (default: 0)
-  flush_check_period: 10s     # Check frequency (default: 30s)
+  # The old "dev environment" 1m/5m flushing wrote pathologically tiny chunks
+  # on high-cardinality streams - source="client" accumulated ~878k chunks of
+  # ~14KB per 7d, which is why anonymous session scans crawled. Recent data
+  # stays queryable from ingester memory (query_ingesters_within default 3h
+  # covers max_chunk_age 2h), so freshness is unaffected. Existing tiny
+  # chunks age out with retention (7-31d) - improvement is gradual.
+  chunk_idle_period: 30m
+  max_chunk_age: 2h
+  chunk_retain_period: 30s
+  flush_check_period: 30s
 
 ruler:
   alertmanager_url: http://localhost:9093
@@ -46,6 +70,21 @@ ruler:
 limits_config:
   # Enable volume for Grafana Logs Drilldown
   volume_enabled: true
+
+  # An entry longer than max_line_size (256KB) is REJECTED, and with truncate off
+  # Loki discards the whole entry - so an oversized line loses the endpoint,
+  # status, duration and user_id too, not just the oversized field. Measured
+  # 2026-08-23: loki_discarded_samples_total{reason="line_too_long"} = 1,727
+  # entries / 1.10GB in two days, all apiv2 lines whose response_body ran to
+  # megabytes. apiv2 now bounds its own lines (misc/loki.go capLogLine); this is
+  # the backstop for every other producer, and clipping beats losing the entry.
+  max_line_size_truncate: true
+
+  # Default 1m produced the exact-60s query kills; single-node TSDB
+  # parallelism trimmed from the 128 default to something the 8 workers can
+  # actually service.
+  query_timeout: 5m
+  tsdb_max_query_parallelism: 32
 
   # Default retention: 31 days (744h)
   retention_period: 744h

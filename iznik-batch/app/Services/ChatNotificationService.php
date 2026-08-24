@@ -8,7 +8,9 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
 use App\Models\User;
+use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -123,15 +125,41 @@ class ChatNotificationService
         $startTime = now()->subHours($sinceHours);
         $endTime = now()->subSeconds($delay);
 
+        // Rippling-out held replies (#3): a reply held while a post hadn't yet rippled to
+        // the replier's area is delivered when the hold is RELEASED (status→'released'),
+        // which typically happens hours/days after the reply was written — well outside the
+        // notification look-back window keyed on chat_messages.date. Keying delivery on
+        // chat_messages.date alone therefore never picks a released reply up: by release time
+        // it has aged out and the poster is never notified. So also admit any message whose
+        // rippling hold was released within the look-back window, keyed on releasedat. The
+        // set is small (one row per held reply) and matched by primary key below.
+        $releasedRecently = DB::table('rippling_held_replies')
+            ->where('status', 'released')
+            ->where('releasedat', '>=', $startTime)
+            ->pluck('chatmsgid')
+            ->all();
+
         $query = ChatMessage::query()
             ->join('chat_rooms', 'chat_messages.chatid', '=', 'chat_rooms.id')
             ->join('users', 'chat_messages.userid', '=', 'users.id')
             ->where('chat_rooms.chattype', $chatType)
-            ->where('chat_messages.date', '>=', $startTime)
             ->where('chat_messages.date', '<=', $endTime)
+            ->where(function ($q) use ($startTime, $releasedRecently) {
+                $q->where('chat_messages.date', '>=', $startTime);
+                if (! empty($releasedRecently)) {
+                    $q->orWhereIn('chat_messages.id', $releasedRecently);
+                }
+            })
             ->where('chat_messages.deleted', 0)
             ->whereNull('users.deleted')
             ->select('chat_messages.*');
+
+        // Rippling-out held replies (#3): an external reply held because the post hasn't
+        // yet rippled to the replier's area must not be emailed to the poster. Enforced via
+        // the rippling_held_replies delivery gate — NOT chat_messages.reviewrequired (that
+        // bit is shared with the spam/mod hold). Until any reply is held the table is empty,
+        // so the gate is always true and nothing changes.
+        $query->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'));
 
         // For User2User chats, only include reviewed messages.
         if ($chatType === ChatRoom::TYPE_USER2USER) {
@@ -152,7 +180,28 @@ class ChatNotificationService
 
         return $query->orderBy('chat_messages.id', 'asc')
             ->with(['chatRoom', 'user', 'refMessage'])
-            ->get();
+            ->get()
+            // Collapse duplicate rows created for a single send. A single chat
+            // send occasionally inserts two (or more) identical chat_messages
+            // rows ~1s apart (double-submit / retry with no dedup guard at
+            // insert). Because we email once per row, each duplicate would send
+            // its own notification — the "two copies of one message, seconds
+            // apart" reports. V1's chatdups cron (now cleanup:chat-duplicates)
+            // deletes them keyed on chatid+message+refmsgid, but it runs only
+            // every 2h whereas this notifier runs within ~30s of a send, so it
+            // always loses the race. Dedup here on the same key, keeping the
+            // lowest id (the query is ordered id asc, so unique keeps the first
+            // occurrence — the row whose notification advances the roster).
+            ->unique(function (ChatMessage $message) {
+                return implode('|', [
+                    $message->chatid,
+                    $message->userid,
+                    $message->type,
+                    md5((string) $message->message),
+                    $message->refmsgid ?? '',
+                ]);
+            })
+            ->values();
     }
 
     /**
@@ -179,6 +228,28 @@ class ChatNotificationService
 
                 // Check if we should notify this user about this message.
                 if (! $this->shouldNotifyUser($sendingTo, $message, $chatRoom, $chatType, $roster->isModerator ?? false)) {
+                    continue;
+                }
+
+                // The member's provider is refusing our mail. Deliberately
+                // AFTER the preference check: someone who has chat
+                // notifications turned off was never going to get this email,
+                // so recording it as owed would earn them a "you have unread
+                // messages" catch-up they never asked for.
+                //
+                // Skips without touching chat_roster.lastmsgemailed, so the
+                // watermark stays where it is and the catch-up can still see
+                // there are unread messages. These are never replayed
+                // individually - a stack of days-old notifications arriving
+                // at once is its own harm - they become one summary instead.
+                //
+                // The message id is passed as the per-mail identity. Because this
+                // path deliberately does not advance the watermark, the same unread
+                // messages come round again on every run; without an identity the
+                // counter recorded each pass as another held mail and reached 10,777
+                // for one member in 106 minutes on 2026-08-20.
+                if (app(\App\Services\Mail\MailSuppressionService::class)
+                    ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat', (int) $message->id)) {
                     continue;
                 }
 
@@ -325,7 +396,7 @@ class ChatNotificationService
 
         // User2User: Use standard roster-based logic.
         // Only notify the actual chat participants (user1/user2), not mods who may have
-        // added mod notes to the chat. See original iznik-server getMembersStatus().
+        // added mod notes to the chat. See the legacy V1 PHP getMembersStatus().
         $query = ChatRoster::where('chatid', $chatRoom->id)
             ->whereIn('userid', [$chatRoom->user1, $chatRoom->user2])
             ->notBlocked()
@@ -472,6 +543,57 @@ class ChatNotificationService
         // tests. Resolve from the app to keep that path safe too.
         $spooler = $this->spooler ?? app(EmailSpoolerService::class);
         $spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
+    }
+
+    /**
+     * Send a "waiting for reply" chase-up email to a user who is expected to
+     * reply in a User2User chat. Reuses the standard chat-notification email
+     * (same template, previous-message context and threading) with the subject
+     * prefixed "WAITING FOR REPLY:".
+     *
+     * Mirrors the legacy V1 PHP ChatRoom::chaseupExpected() behaviour,
+     * which constructs the ordinary user2user notification but prefixes the
+     * subject. Used by ChatChaseupExpectedService / chats:chaseup-expected.
+     */
+    public function sendChaseupExpected(
+        User $sendingTo,
+        ?User $sendingFrom,
+        ChatRoom $chatRoom,
+        ChatMessage $message
+    ): void {
+        $previousMessages = $this->getPreviousMessages($chatRoom, $message);
+
+        $mailable = new ChatNotification(
+            $sendingTo,
+            $sendingFrom,
+            $chatRoom,
+            $message,
+            ChatRoom::TYPE_USER2USER,
+            $previousMessages,
+            waitingForReply: true
+        );
+
+        $spooler = $this->spooler ?? app(EmailSpoolerService::class);
+        $spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
+    }
+
+    /**
+     * Whether a chase-up should be held back because the recipient's provider
+     * is refusing our mail.
+     *
+     * Asked by the caller rather than swallowed here, because
+     * ChatChaseupExpectedService marks the expectation as chased once this
+     * returns - and a chase-up we never sent must not count as one we did, or
+     * the member is recorded as having been reminded when they were not.
+     */
+    public function chaseupSuppressed(User $sendingTo, ?int $mailKey = null): bool
+    {
+        // $mailKey is the chat message being chased. Like the notification path
+        // above, this skips WITHOUT marking the expectation as chased, so the
+        // same expectation comes round on every run; without an identity the
+        // held-mail counter recorded each pass as another withheld mail.
+        return app(\App\Services\Mail\MailSuppressionService::class)
+            ->shouldSkip($sendingTo->email_preferred, (int) $sendingTo->id, 'chat', $mailKey);
     }
 
     /**

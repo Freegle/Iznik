@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { SocialLogin } from '@capgo/capacitor-social-login'
 import { LoginError, SignUpError } from '~/api/APIErrors'
+import { isBannedFailure } from '~/api/bannedFailure'
 import {
   abortAllPendingRequests,
   enterLogoutMode,
@@ -11,9 +12,15 @@ import { useGroupStore } from '~/stores/group'
 import api from '~/api'
 import { useMobileStore } from '@/stores/mobile'
 import { useMiscStore } from '~/stores/misc'
+import { useDebugStore } from '~/stores/debug'
+import { trackConversion } from '~/composables/useTrackConversion'
 
-export const useAuthStore = defineStore({
-  id: 'auth',
+// A login that lands on an account created this recently is treated as the
+// registration itself (social logins create the account server-side, so the
+// client only finds out here).
+const NEW_ACCOUNT_WINDOW_MS = 5 * 60 * 1000
+
+export const useAuthStore = defineStore('auth', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
     // We don't persist much about the user, to avoid data getting 'stuck'.  All we need is enough to log us
@@ -31,6 +38,9 @@ export const useAuthStore = defineStore({
 
     loginStateKnown: false,
     forceLogin: false,
+    // When the session was last successfully fetched (ms epoch, not
+    // persisted). Lets boot code skip redundant refetches on layout swaps.
+    userFetchedAt: 0,
     user: null,
     groups: [],
     loggedInEver: false,
@@ -71,6 +81,7 @@ export const useAuthStore = defineStore({
             push: true,
             facebook: true,
             app: true,
+            dailypostspush: true,
           }
         }
 
@@ -96,8 +107,11 @@ export const useAuthStore = defineStore({
     },
     async addRelatedUser(id) {
       if (id) {
-        // Keep track of which users we log in as.
-        if (!this.userlist) {
+        // Keep track of which users we log in as. Guard against a non-array
+        // value: userlist is persisted to localStorage, and state shape drift
+        // (older app versions, or a serialization quirk) can rehydrate it as an
+        // object rather than an array, which would make .includes() throw.
+        if (!Array.isArray(this.userlist)) {
           this.userlist = []
         }
 
@@ -230,6 +244,16 @@ export const useAuthStore = defineStore({
         const { persistent, jwt } = res
         this.setAuth(jwt, persistent)
         await this.fetchUser()
+
+        // Social logins create the account server-side on first use, so a
+        // brand-new account here means this login WAS the registration.
+        if (params.fblogin || params.googlelogin || params.applelogin) {
+          const added = Date.parse(this.user?.added)
+
+          if (added && Date.now() - added < NEW_ACCOUNT_WINDOW_MS) {
+            trackConversion('Register with Website')
+          }
+        }
       } catch (e) {
         if (e instanceof LoginError) {
           throw e
@@ -291,6 +315,9 @@ export const useAuthStore = defineStore({
         this.forceLogin = false
         this.setAuth(jwt, persistent)
         await this.fetchUser()
+
+        // Signup confirmed by the server - this is the conversion point.
+        trackConversion('Register with Website')
       } catch (e) {
         console.log('exception', e?.response?.data)
 
@@ -329,6 +356,18 @@ export const useAuthStore = defineStore({
             false
           )
 
+          if (sessionData?.ret === 123) {
+            // Server kill switch: GET /session returns HTTP 200 with ret:123 when
+            // this client build is older than app_min_webversion and is therefore
+            // too old to function. The auth tokens are still valid, so we must NOT
+            // clear them - doing so would silently log the user out and bounce them
+            // to the login screen, which looks like a generic failure. Instead
+            // surface a clear "app is out of date" message and stop here.
+            useMiscStore().setAppOutOfDate(sessionData.status)
+            this.loginStateKnown = true
+            return this.user
+          }
+
           if (sessionData && sessionData.me && sessionData.me.id) {
             me = sessionData.me
 
@@ -343,7 +382,14 @@ export const useAuthStore = defineStore({
             if (groups.length > 0) {
               const groupStore = useGroupStore()
 
-              await groupStore.fetchBatch(groups.map((g) => g.groupid))
+              // Deliberately not awaited: session resolution (and therefore
+              // first paint, which the layouts gate on fetchUser) must not
+              // wait for full group details - they fill in reactively.
+              Promise.resolve(
+                groupStore.fetchBatch(groups.map((g) => g.groupid))
+              ).catch((e) => {
+                console.log('Group batch fetch failed', e?.message)
+              })
             }
 
             // Update JWT/persistent if returned (session refresh).
@@ -384,6 +430,7 @@ export const useAuthStore = defineStore({
 
         // Set the user, which will trigger various re-rendering if we were required to be logged in.
         this.setUser(me)
+        this.userFetchedAt = Date.now()
 
         await this.savePushId() // Tell server our mobile push notification id, if available
 
@@ -396,7 +443,7 @@ export const useAuthStore = defineStore({
           composeStore.email = me.email
         }
 
-        if (process.client) {
+        if (import.meta.client) {
           // Sync marketing consent from local storage to user profile if needed
           const miscStore = useMiscStore()
 
@@ -489,38 +536,94 @@ export const useAuthStore = defineStore({
       return this.user
     },
     async joinGroup(userid, groupid, manual) {
-      await this.$api.memberships.joinGroup({
-        userid,
-        groupid,
-        manual,
-      })
+      try {
+        await this.$api.memberships.joinGroup({
+          userid,
+          groupid,
+          manual,
+        })
+      } catch (e) {
+        // A banned member's own join is refused server-side (403 "Failed - banned").
+        // Swallow it silently: we don't reveal the ban to them, we just don't join.
+        // Anything else is a real error and must propagate.
+        if (isBannedFailure(e)) {
+          return this.user
+        }
+        throw e
+      }
       await this.fetchUser()
       return this.user
     },
     async savePushId() {
       const mobileStore = useMobileStore()
-      if (mobileStore.mobilePushId === null)
-        console.log('******************* mobileStore.mobilePushId===null')
-      // Tell server our push notification id if logged in
+      let dbg = null
+      try {
+        dbg = useDebugStore()
+      } catch (e) {}
+      // Detailed instrumentation: we had iOS devices obtain an FCM token but no
+      // FCMIOS row ever appear server-side. Log every guard decision, the
+      // outgoing PATCH, and any thrown error (the save() call below was
+      // previously un-try/catch'd, so on the un-awaited registration-listener
+      // path a rejection was swallowed silently).
+      dbg?.info('savePushId called', {
+        userPresent: this.user !== null,
+        userId: this.user?.id ?? null,
+        mobilePushIdType: typeof mobileStore.mobilePushId,
+        mobilePushIdLen:
+          typeof mobileStore.mobilePushId === 'string'
+            ? mobileStore.mobilePushId.length
+            : 0,
+        isiOS: mobileStore.isiOS,
+        alreadyAccepted:
+          mobileStore.acceptedMobilePushId === mobileStore.mobilePushId,
+      })
+      // Tell server our push notification id if logged in.
+      //
+      // We deliberately do NOT suppress on acceptedMobilePushId any more. The old
+      // optimisation only sent the token to the server the first time it saw a
+      // given token, then never again. That left no way to recover if the row
+      // never persisted, or was later deleted server-side (e.g. a push send hit a
+      // transiently-invalid token and pruned the subscription): the client kept
+      // thinking it was registered and never re-asserted it. Re-sending on every
+      // launch/resume is a cheap idempotent upsert (INSERT ... ON DUPLICATE KEY
+      // UPDATE keyed on subscription) and makes registration self-healing — which
+      // is also the behaviour reRegisterPush-on-resume was added to provide.
       if (
         this.user !== null &&
         typeof mobileStore.mobilePushId === 'string' &&
         mobileStore.mobilePushId.length > 0
       ) {
-        if (mobileStore.acceptedMobilePushId !== mobileStore.mobilePushId) {
-          const params = {
-            notifications: {
-              push: {
-                type: mobileStore.isiOS ? 'FCMIOS' : 'FCMAndroid',
-                subscription: mobileStore.mobilePushId,
-                deviceuserinfo: mobileStore.deviceuserinfo,
-              },
+        const params = {
+          notifications: {
+            push: {
+              type: mobileStore.isiOS ? 'FCMIOS' : 'FCMAndroid',
+              subscription: mobileStore.mobilePushId,
+              deviceuserinfo: mobileStore.deviceuserinfo,
             },
-          }
-          await this.$api.session.save(params)
-          mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
-          console.log('savePushId: saved OK')
+          },
         }
+        dbg?.info('savePushId: sending PATCH /session', {
+          type: params.notifications.push.type,
+          subLen: params.notifications.push.subscription.length,
+        })
+        try {
+          const resp = await this.$api.session.save(params)
+          mobileStore.acceptedMobilePushId = mobileStore.mobilePushId
+          dbg?.info('savePushId: saved OK', {
+            resp:
+              typeof resp === 'object'
+                ? JSON.stringify(resp).slice(0, 200)
+                : String(resp),
+          })
+          console.log('savePushId: saved OK', resp)
+        } catch (e) {
+          dbg?.info('savePushId: save FAILED', {
+            error: e?.message ?? String(e),
+          })
+          console.log('savePushId: save FAILED', e)
+        }
+      } else {
+        dbg?.info('savePushId: skipped — not logged in or no token')
       }
     },
     // Remember that we've logged out

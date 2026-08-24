@@ -13,7 +13,6 @@ const config = {
   appId: 'org.ilovefreegle.dev', // Different ID so both apps can be installed
   appName: 'Freegle Dev',
   webDir: 'dev-app', // Minimal connection screen, not full Nuxt build
-  bundledWebRuntime: false,
   zoomEnabled: true,
 
   // Server URL uses localhost - adb reverse forwards to dev machine
@@ -45,13 +44,14 @@ const config = {
       '@capacitor/browser',
       '@capacitor/device',
       '@capacitor/network',
-      '@freegle/capacitor-push-notifications-cap7',
+      '@freegle/capacitor-push-notifications-cap8',
       '@capawesome/capacitor-badge',
       '@capgo/capacitor-social-login',
       '@capacitor/status-bar',
       '@capacitor/camera',
       '@capacitor/share',
       '@capacitor/app',
+      '@capacitor/text-zoom', // C7 - apply system accessibility text size to the WebView
       '@capacitor/screen-orientation',
     ],
     // Debug build - no signing required
@@ -70,7 +70,7 @@ const config = {
       '@capacitor/browser',
       '@capacitor/device',
       '@capacitor/network',
-      '@freegle/capacitor-push-notifications-cap7',
+      '@freegle/capacitor-push-notifications-cap8',
       '@capawesome/capacitor-badge',
       '@capacitor-community/apple-sign-in',
       '@capgo/capacitor-social-login',
@@ -78,6 +78,7 @@ const config = {
       '@capacitor/camera',
       '@capacitor/share',
       '@capacitor/app',
+      '@capacitor/text-zoom', // C7 - apply system accessibility text size to the WebView
       '@capacitor/screen-orientation',
     ],
   },

@@ -77,7 +77,21 @@
           This freegler recently active on groups
           {{ user.activedistance }} miles apart.
         </NoticeMessage>
+        <NoticeMessage
+          v-if="user.locationchanges >= 3"
+          variant="warning"
+          class="mb-2"
+        >
+          This freegler has changed location
+          {{ user.locationchanges }} times in the last 90 days.
+        </NoticeMessage>
         <ModBouncing v-if="user.bouncing" :userid="member.userid" />
+        <ModMailDelayed
+          v-if="member.maildelayedsince"
+          :since="member.maildelayedsince"
+          :provider="member.maildelayedprovider"
+          :count="member.maildelayedcount || 0"
+        />
         <NoticeMessage v-if="member.bandate">
           Banned
           <span :title="datetime(member.bandate)">{{
@@ -515,8 +529,14 @@ function settingsChange(param, groupidArg, val) {
   memberStore.update(params)
 }
 
+// OurToggle emits its `change` event with the new value directly (emit('change',
+// newVal)), NOT wrapped as { value }. Reading e.value gave `undefined`, which
+// JSON.stringify strips from the request body, so the one field being toggled was
+// the one key missing from the PATCH - JSON_MERGE_PATCH then left it unchanged and
+// the toggle silently "didn't stick" (Discourse 9923). Use the emitted value `e`,
+// matching the member-facing settings sections (EmailSettingsSection, etc.).
 async function changeNotification(e, notifType) {
-  const notificationsObj = { ...notifications.value, [notifType]: e.value }
+  const notificationsObj = { ...notifications.value, [notifType]: e }
 
   await userStore.edit({
     id: user.value.id,
@@ -527,28 +547,28 @@ async function changeNotification(e, notifType) {
 async function changeRelevant(e) {
   await userStore.edit({
     id: user.value.id,
-    relevantallowed: e.value,
+    relevantallowed: e,
   })
 }
 
 async function changeNotifChitchat(e) {
   await userStore.edit({
     id: user.value.id,
-    settings: { notificationmails: e.value },
+    settings: { notificationmails: e },
   })
 }
 
 async function changeNewsletter(e) {
   await userStore.edit({
     id: user.value.id,
-    newslettersallowed: e.value,
+    newslettersallowed: e,
   })
 }
 
 async function changeAutorepost(e) {
   await userStore.edit({
     id: member.value?.userid,
-    settings: { autorepostsdisable: !e.value },
+    settings: { autorepostsdisable: !e },
   })
 }
 

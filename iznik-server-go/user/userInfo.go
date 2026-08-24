@@ -70,11 +70,12 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 			Msgtype string
 		}
 		var counts []replyCount
-		db.Raw("SELECT COUNT(DISTINCT cm.refmsgid) AS count, m.type AS msgtype "+
-			"FROM chat_messages cm "+
-			"INNER JOIN messages m ON m.id = cm.refmsgid "+
-			"WHERE cm.userid = ? AND cm.date > ? AND cm.refmsgid IS NOT NULL AND cm.type = ? "+
-			"GROUP BY m.type", id, start, utils.CHAT_MESSAGE_INTERESTED).Scan(&counts)
+		db.Table("chat_messages cm").
+			Select("COUNT(DISTINCT cm.refmsgid) AS count, m.type AS msgtype").
+			Joins("INNER JOIN messages m ON m.id = cm.refmsgid").
+			Where("cm.userid = ? AND cm.date > ? AND cm.refmsgid IS NOT NULL AND cm.type = ?", id, start, utils.CHAT_MESSAGE_INTERESTED).
+			Group("m.type").
+			Scan(&counts)
 		mu.Lock()
 		defer mu.Unlock()
 		for _, c := range counts {
@@ -91,7 +92,7 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		res := db.Raw("SELECT COUNT(DISTINCT(messages_reneged.msgid)) AS reneged FROM messages_reneged WHERE userid = ? AND timestamp > ?", id, start)
+		res := db.Table("messages_reneged").Select("COUNT(DISTINCT(messages_reneged.msgid)) AS reneged").Where("userid = ? AND timestamp > ?", id, start)
 		var info2 UserInfo
 		res.Scan(&info2)
 		mu.Lock()
@@ -102,15 +103,14 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		res := db.Raw("SELECT COUNT(DISTINCT messages_by.msgid) AS collected FROM messages_by "+
-			"INNER JOIN messages ON messages.id = messages_by.msgid "+
-			"INNER JOIN chat_messages ON chat_messages.refmsgid = messages.id AND messages.type = ? AND chat_messages.type = ? "+
-			"INNER JOIN messages_groups ON messages_groups.msgid = messages.id WHERE chat_messages.userid = ? AND messages_by.userid = ? AND messages_by.userid != messages.fromuser AND messages_groups.arrival >= ?",
-			utils.OFFER,
-			utils.CHAT_MESSAGE_INTERESTED,
-			id,
-			id,
-			start)
+		res := db.Table("messages_by").
+			Select("COUNT(DISTINCT messages_by.msgid) AS collected").
+			Joins("INNER JOIN messages ON messages.id = messages_by.msgid").
+			Joins("INNER JOIN chat_messages ON chat_messages.refmsgid = messages.id AND messages.type = ? AND chat_messages.type = ?",
+				utils.OFFER, utils.CHAT_MESSAGE_INTERESTED).
+			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+			Where("chat_messages.userid = ? AND messages_by.userid = ? AND messages_by.userid != messages.fromuser AND messages_groups.arrival >= ?",
+				id, id, start)
 		var info2 UserInfo
 		res.Scan(&info2)
 		mu.Lock()
@@ -122,14 +122,20 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	go func() {
 		defer wg.Done()
 
-		rows, _ := db.Raw("SELECT COUNT(*) AS count, messages.type, messages_outcomes.outcome FROM messages "+
-			"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-			"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
-			"WHERE fromuser = ? AND messages.arrival > ? AND collection = ? AND messages_groups.deleted = 0 "+
-			"GROUP BY messages.type, messages_outcomes.outcome",
-			id,
-			start,
-			utils.COLLECTION_APPROVED).Rows()
+		// COUNT(DISTINCT messages.id), not COUNT(*): rippling-out adds a messages_groups
+		// row (rippled_in = 1) per group a post ripples into, and genuine cross-posting
+		// adds one origin row (rippled_in = 0) per group posted to directly - either way
+		// the join fans out to multiple rows per message. Without the DISTINCT a single
+		// post reaching N groups inflated the Offers/Wanteds (and Openoffers/Openwanteds)
+		// counts by a factor of N. Same rippling pattern as the dashboard Popular Posts
+		// and mygroups counts (0e639acdf, 9fda94a29).
+		rows, _ := db.Table("messages").
+			Select("COUNT(DISTINCT messages.id) AS count, messages.type, messages_outcomes.outcome").
+			Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+			Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
+			Where("fromuser = ? AND messages.arrival > ? AND collection = ? AND messages_groups.deleted = 0", id, start, utils.COLLECTION_APPROVED).
+			Group("messages.type, messages_outcomes.outcome").
+			Rows()
 
 		if rows != nil {
 			defer rows.Close()
@@ -171,7 +177,7 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 	go func() {
 		defer wg.Done()
 		// No need to check on the chat room type as we can only get messages of type Interested in a User2User chat.
-		res := db.Raw("SELECT replytime FROM users_replytime WHERE userid = ?", id)
+		res := db.Table("users_replytime").Select("replytime").Where("userid = ?", id)
 		var info2 UserInfo
 		res.Scan(&info2)
 		mu.Lock()
@@ -185,11 +191,12 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 		// No need to check on the chat room type as we can only get messages of type Interested in a User2User chat.
 		start := time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
 
-		res := db.Raw("SELECT COUNT(*) AS expectedreply FROM users_expected "+
-			"INNER JOIN users ON users.id = users_expected.expectee "+
-			"INNER JOIN chat_messages ON chat_messages.id = users_expected.chatmsgid "+
-			"WHERE expectee = ? AND chat_messages.date >= ? AND replyexpected = 1 AND "+
-			"replyreceived = 0 AND TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?", id, start, utils.CHAT_REPLY_GRACE)
+		res := db.Table("users_expected").
+			Select("COUNT(*) AS expectedreply").
+			Joins("INNER JOIN users ON users.id = users_expected.expectee").
+			Joins("INNER JOIN chat_messages ON chat_messages.id = users_expected.chatmsgid").
+			Where("expectee = ? AND chat_messages.date >= ? AND replyexpected = 1 AND replyreceived = 0 AND TIMESTAMPDIFF(MINUTE, chat_messages.date, users.lastaccess) >= ?",
+				id, start, utils.CHAT_REPLY_GRACE)
 		var info2 UserInfo
 		res.Scan(&info2)
 		mu.Lock()
@@ -211,8 +218,9 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 		var counts []Count
 
 		start := time.Now().AddDate(0, 0, -utils.RATINGS_PERIOD).Format("2006-01-02")
-		res := db.Raw("SELECT COUNT(*) AS count, rating FROM ratings WHERE ratee = ?"+
-			" AND timestamp >= ? AND (tn_rating_id IS NOT NULL OR rater = ? OR visible = 1) GROUP BY rating;", id, start, myid)
+		res := db.Table("ratings").Select("COUNT(*) AS count, rating").
+			Where("ratee = ? AND timestamp >= ? AND (tn_rating_id IS NOT NULL OR rater = ? OR visible = 1)", id, start, myid).
+			Group("rating")
 		res.Scan(&counts)
 
 		mu.Lock()
@@ -241,8 +249,7 @@ func GetUserInfo(id uint64, myid uint64) UserInfo {
 			var counts []Count
 
 			start := time.Now().AddDate(0, 0, -utils.RATINGS_PERIOD).Format("2006-01-02")
-			res := db.Raw("SELECT rating FROM ratings WHERE rater = ? AND ratee = ?"+
-				" AND timestamp >= ?", myid, id, start)
+			res := db.Table("ratings").Select("rating").Where("rater = ? AND ratee = ? AND timestamp >= ?", myid, id, start)
 			res.Scan(&counts)
 
 			mu.Lock()
@@ -266,8 +273,8 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 
 	// Use settings.mylocation.area.name first for the public location display.
 	var areaName *string
-	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.area'), '$.name')) "+
-		"FROM users WHERE id = ? AND settings IS NOT NULL", userid).Scan(&areaName)
+	db.Table("users").Select("JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.area'), '$.name'))").
+		Where("id = ? AND settings IS NOT NULL", userid).Scan(&areaName)
 
 	if areaName != nil && *areaName != "" && *areaName != "null" {
 		return &Publiclocation{
@@ -278,12 +285,13 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 
 	// Fall back to lastlocation area name (find the parent area of the postcode).
 	var locName string
-	db.Raw("SELECT l2.name "+
-		"FROM users u "+
-		"INNER JOIN locations l1 ON l1.id = u.lastlocation "+
-		"INNER JOIN locations l2 ON l2.id = l1.areaid "+
-		"WHERE u.id = ? AND u.lastlocation IS NOT NULL "+
-		"LIMIT 1", userid).Scan(&locName)
+	db.Table("users u").
+		Select("l2.name").
+		Joins("INNER JOIN locations l1 ON l1.id = u.lastlocation").
+		Joins("INNER JOIN locations l2 ON l2.id = l1.areaid").
+		Where("u.id = ? AND u.lastlocation IS NOT NULL", userid).
+		Limit(1).
+		Scan(&locName)
 
 	if locName != "" {
 		return &Publiclocation{
@@ -297,12 +305,13 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 		Groupid   uint64
 		Groupname string
 	}
-	db.Raw("SELECT m.groupid, COALESCE(g.namefull, g.nameshort) AS groupname "+
-		"FROM memberships m "+
-		"INNER JOIN `groups` g ON g.id = m.groupid "+
-		"WHERE m.userid = ? AND m.collection = ? "+
-		"ORDER BY m.added DESC LIMIT 1",
-		userid, utils.COLLECTION_APPROVED).Scan(&groupLoc)
+	db.Table("memberships m").
+		Select("m.groupid, COALESCE(g.namefull, g.nameshort) AS groupname").
+		Joins("INNER JOIN `groups` g ON g.id = m.groupid").
+		Where("m.userid = ? AND m.collection = ?", userid, utils.COLLECTION_APPROVED).
+		Order("m.added DESC").
+		Limit(1).
+		Scan(&groupLoc)
 
 	if groupLoc.Groupid > 0 {
 		return &Publiclocation{

@@ -104,7 +104,7 @@
       <b-button
         v-if="unseen"
         variant="white"
-        class="ms-1 d-block d-md-none"
+        class="ms-1 d-block d-md-none btn-mark-read"
         @click="markRead"
       >
         Mark read
@@ -120,7 +120,7 @@
           <b-button
             v-if="unseen"
             variant="white"
-            class="d-none d-md-block me-2"
+            class="d-none d-md-block me-2 btn-mark-read"
             @click="markRead"
           >
             Mark read
@@ -346,17 +346,17 @@ import { useMiscStore } from '~/stores/misc'
 import SupporterInfo from '~/components/SupporterInfo'
 import { timeago } from '~/composables/useTimeFormat'
 
-const ChatBlockModal = defineAsyncComponent(() =>
-  import('~/components/ChatBlockModal')
+const ChatBlockModal = defineAsyncComponent(
+  () => import('~/components/ChatBlockModal')
 )
-const ChatHideModal = defineAsyncComponent(() =>
-  import('~/components/ChatHideModal')
+const ChatHideModal = defineAsyncComponent(
+  () => import('~/components/ChatHideModal')
 )
-const UserRatings = defineAsyncComponent(() =>
-  import('~/components/UserRatings')
+const UserRatings = defineAsyncComponent(
+  () => import('~/components/UserRatings')
 )
-const ChatReportModal = defineAsyncComponent(() =>
-  import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(
+  () => import('~/components/ChatReportModal')
 )
 
 const props = defineProps({

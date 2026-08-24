@@ -77,6 +77,10 @@ describe('ChatMessage', () => {
             props: ['variant'],
             emits: ['click'],
           },
+          'b-badge': {
+            template: '<span class="b-badge"><slot /></span>',
+            props: ['variant'],
+          },
           ChatMessageText: {
             template: '<div class="chat-message-text" />',
             props: ['id', 'chatid', 'pov', 'highlightEmails'],
@@ -120,6 +124,10 @@ describe('ChatMessage', () => {
           },
           ChatMessageReminder: {
             template: '<div class="chat-message-reminder" />',
+            props: ['id', 'chatid', 'pov'],
+          },
+          ChatMessagePrompt: {
+            template: '<div class="chat-message-prompt" />',
             props: ['id', 'chatid', 'pov'],
           },
           ChatMessageDateRead: {
@@ -253,6 +261,59 @@ describe('ChatMessage', () => {
       })
       const wrapper = await createWrapper()
       expect(wrapper.find('.chat-message-reminder').exists()).toBe(true)
+    })
+
+    // A Freegle prompt - a question with tappable answers. Without its own arm
+    // here it fell through to the raw "Unknown chat message type" debug dump.
+    it('renders Prompt type correctly', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, type: 'Prompt' }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-prompt').exists()).toBe(true)
+    })
+
+    // System notices (e.g. "the item you replied about has now been taken") must
+    // render their text, NOT fall through to the raw "Unknown chat message type"
+    // debug dump that members were seeing.
+    it('renders a System message as its text, not the unknown-type fallback', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      const message =
+        "Sorry — the item you replied about has now been taken, so it's no longer available."
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, type: 'System', message }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.system-message').exists()).toBe(true)
+      expect(wrapper.text()).toContain('has now been taken')
+      expect(wrapper.text()).not.toContain('Unknown chat message type')
+    })
+
+    // The case this build cannot see: a type added AFTER it shipped. An app in
+    // the wild cannot be upgraded in arrears, so the catch-all has to be safe
+    // rather than diagnostic - it used to dump the type and two raw objects into
+    // the member's conversation, which is what happened with System.
+    it('renders an unknown future type as its text rather than a debug dump', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      const message = 'Could you deliver? Tap below to let people know.'
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({
+          ...mockChatMessage,
+          type: 'SomethingInventedLater',
+          message,
+        }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Could you deliver?')
+      expect(wrapper.text()).not.toContain('Unknown chat message type')
+      expect(wrapper.text()).not.toContain('SomethingInventedLater')
     })
   })
 
@@ -416,6 +477,95 @@ describe('ChatMessage', () => {
       })
       const wrapper = await createWrapper()
       expect(wrapper.find('.chat-message-warning').exists()).toBe(false)
+    })
+  })
+
+  // ripplinghold is only ever sent to moderators, so these badges are inherently mod-only.
+  // Without the ended states, a reply that was delayed for days - or binned undelivered -
+  // looks identical to an ordinary one when a mod reads the thread.
+  describe('rippling hold badges', () => {
+    async function withHold(hold, extra = {}) {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({ ...mockChatMessage, ...extra, ripplinghold: hold }),
+      })
+      return await createWrapper()
+    }
+
+    it('shows how long a live hold has been waiting', async () => {
+      const wrapper = await withHold(
+        { status: 'held', heldminutes: 180, delivered: false },
+        { heldbyrippling: true }
+      )
+      const badge = wrapper.find('[data-testid="rippling-held-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('Held: rippling out')
+      expect(badge.text()).toContain('3 hours')
+    })
+
+    it('still hides the live-hold badge from the sender themselves', async () => {
+      // myid is 1 in this spec, so a message from userid 1 is the viewer's own.
+      const wrapper = await withHold(
+        { status: 'held', heldminutes: 180, delivered: false },
+        { heldbyrippling: true, userid: 1 }
+      )
+      expect(wrapper.find('[data-testid="rippling-held-badge"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('reports a delay that already happened', async () => {
+      const wrapper = await withHold({
+        status: 'released',
+        heldminutes: 2812,
+        delivered: true,
+      })
+      const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('Held as too far for: 46 hours')
+      // Not still waiting.
+      expect(wrapper.find('[data-testid="rippling-held-badge"]').exists()).toBe(
+        false
+      )
+    })
+
+    it('says never delivered when the item went while held', async () => {
+      const wrapper = await withHold({
+        status: 'taken-gone',
+        heldminutes: 2812,
+        delivered: false,
+      })
+      const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('Never delivered')
+      expect(badge.text()).toContain('held as too far for 46 hours')
+      expect(badge.text()).toContain('item went')
+    })
+
+    // Safety net only - nothing writes 'dropped'. See the note in ModChatReview.vue.
+    it('an unexpected terminal status still shows a badge, without inventing a reason', async () => {
+      const wrapper = await withHold({
+        status: 'dropped',
+        heldminutes: 300,
+        delivered: false,
+      })
+      const badge = wrapper.find('[data-testid="rippling-ended-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toContain('Never delivered')
+      expect(badge.text()).toContain('held as too far for 5 hours')
+      expect(badge.text()).not.toContain('item went')
+    })
+
+    it('shows no hold badge at all on an ordinary message', async () => {
+      const wrapper = await createWrapper()
+      expect(wrapper.find('[data-testid="rippling-held-badge"]').exists()).toBe(
+        false
+      )
+      expect(
+        wrapper.find('[data-testid="rippling-ended-badge"]').exists()
+      ).toBe(false)
     })
   })
 })

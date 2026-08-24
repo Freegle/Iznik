@@ -6,19 +6,31 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // saveProfileImage inserts a profile picture URL for a user.
 // GetProfileRecord uses ORDER BY id DESC LIMIT 1, so the latest INSERT is always shown.
 // Only called when a real (non-silhouette) picture URL is available.
+//
+// Golden column order (userid, url,
+// default, contenttype) is not alphabetical, but normaliseColumnOrder sorted
+// both sides' columns together with their values before comparing
+// (the retired ormharness's normalise_test.go
+// TestNormaliseColumnOrder_Insert, removed in d22ba1d6c); the two
+// literal values (0, 'image/jpeg') go through gorm.Expr so they render inline
+// rather than as binds.
 func saveProfileImage(userID uint64, pictureURL string) {
 	if pictureURL == "" {
 		return
 	}
-	database.DBConn.Exec(
-		"INSERT INTO users_images (userid, url, `default`, contenttype) VALUES (?, ?, 0, 'image/jpeg')",
-		userID, pictureURL,
-	)
+	database.DBConn.Table("users_images").Create(map[string]interface{}{
+		"userid":      userID,
+		"url":         pictureURL,
+		"default":     gorm.Expr("0"),
+		"contenttype": gorm.Expr("'image/jpeg'"),
+	})
 }
 
 // socialMatchOrCreate finds an existing user by email or social login UID,
@@ -32,15 +44,17 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 
 	// Find existing user by email.
 	if email != "" {
-		db.Raw("SELECT u.id FROM users u "+
-			"JOIN users_emails ue ON ue.userid = u.id "+
-			"WHERE ue.email = ? "+
-			"LIMIT 1", email).Scan(&emailUserID)
+		db.Table("users u").
+			Select("u.id").
+			Joins("JOIN users_emails ue ON ue.userid = u.id").
+			Where("ue.email = ?", email).
+			Limit(1).
+			Scan(&emailUserID)
 	}
 
 	// Find existing user by social login UID.
-	db.Raw("SELECT userid FROM users_logins WHERE type = ? AND uid = ? LIMIT 1",
-		loginType, uid).Scan(&loginUserID)
+	db.Table("users_logins").Select("userid").Where("type = ? AND uid = ?", loginType, uid).
+		Limit(1).Scan(&loginUserID)
 
 	// If both found and different, log it but pick the email user (PHP parity).
 	if emailUserID > 0 && loginUserID > 0 && emailUserID != loginUserID {
@@ -57,7 +71,7 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 	// If we found a user by email but not by social login, check for TN user.
 	if userID > 0 && loginUserID == 0 {
 		var tnUserID *uint64
-		db.Raw("SELECT tnuserid FROM users WHERE id = ?", userID).Scan(&tnUserID)
+		db.Table("users").Select("tnuserid").Where("id = ?", userID).Scan(&tnUserID)
 		if tnUserID != nil && *tnUserID > 0 {
 			return 0, fmt.Errorf("user %d is a TN user and cannot use %s login", userID, loginType)
 		}
@@ -68,57 +82,98 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		// directly from the MySQL protocol response — never issue a separate
 		// SELECT LAST_INSERT_ID() as it's unsafe under parallel load (GORM's
 		// connection pool may assign a different connection).
-		sqlDB, err := db.DB()
-		if err != nil {
-			return 0, fmt.Errorf("failed to get sql.DB: %w", err)
+		//
+		// Table()+map
+		// Create reads the generated id back from the SAME sql.Result the
+		// INSERT returned (gorm.io/gorm/callbacks/create.go), writing it
+		// into the map under "@id" - no separate connection-scoped query,
+		// so no connection to lose. Proven against the real database in
+		// test/insertid_gorm_writeback_test.go. Column order in the map
+		// doesn't matter
+		// either way: the retired ormharness's normaliseColumnOrder (removed
+		// in d22ba1d6c) paired each column
+		// with its value before comparing against the golden.
+		row := map[string]interface{}{
+			"fullname":  fullname,
+			"firstname": firstname,
+			"lastname":  lastname,
+			"added":     gorm.Expr("NOW()"),
 		}
-
-		sqlResult, err := sqlDB.Exec("INSERT INTO users (fullname, firstname, lastname, added) VALUES (?, ?, ?, NOW())",
-			fullname, firstname, lastname)
-		if err != nil {
+		if err := db.Table("users").Create(row).Error; err != nil {
 			return 0, fmt.Errorf("failed to create user: %w", err)
 		}
 
-		lastID, err := sqlResult.LastInsertId()
-		if err != nil || lastID == 0 {
+		lastID, _ := row["@id"].(int64)
+		if lastID == 0 {
 			return 0, fmt.Errorf("failed to get new user ID")
 		}
 		userID = uint64(lastID)
 
 		// Add email if provided.
+		// Golden column order not
+		// alphabetical, but normaliseColumnOrder handled the map-Create
+		// reorder; see the retired ormharness's normalise_test.go
+		// TestNormaliseColumnOrder_Insert (removed in d22ba1d6c).
 		if email != "" {
 			canon := user.CanonicalizeEmail(email)
-			db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 0, NOW(), ?, ?)",
-				userID, email, canon, user.ReverseString(canon))
+			db.Table("users_emails").Create(map[string]interface{}{
+				"userid":    userID,
+				"email":     email,
+				"preferred": gorm.Expr("0"),
+				"validated": gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": user.ReverseString(canon),
+			})
 		}
 
 		// Add social login record.
-		db.Exec("INSERT IGNORE INTO users_logins (userid, type, uid) VALUES (?, ?, ?)",
-			userID, loginType, uid)
+		db.Table("users_logins").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"userid": userID,
+			"type":   loginType,
+			"uid":    uid,
+		})
 	} else {
 		// User exists. Ensure they have the email and social login records.
 		if email != "" && emailUserID == 0 {
 			// They logged in via social UID but we don't have this email yet.
 			canon := user.CanonicalizeEmail(email)
-			db.Exec("INSERT IGNORE INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 0, NOW(), ?, ?)",
-				userID, email, canon, user.ReverseString(canon))
+			db.Table("users_emails").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"userid":    userID,
+				"email":     email,
+				"preferred": gorm.Expr("0"),
+				"validated": gorm.Expr("NOW()"),
+				"canon":     canon,
+				"backwards": user.ReverseString(canon),
+			})
 		}
 
 		if loginUserID == 0 {
 			// They were found by email but don't have a social login record yet.
-			db.Exec("INSERT IGNORE INTO users_logins (userid, type, uid) VALUES (?, ?, ?)",
-				userID, loginType, uid)
+			db.Table("users_logins").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"userid": userID,
+				"type":   loginType,
+				"uid":    uid,
+			})
 		}
 	}
 
 	// Update last access on the social login record.
-	db.Exec("UPDATE users_logins SET lastaccess = NOW() WHERE userid = ? AND type = ?",
-		userID, loginType)
+	db.Table("users_logins").Where("userid = ? AND type = ?", userID, loginType).
+		Update("lastaccess", gorm.Expr("NOW()"))
 
 	// Update name if missing.
+	// None of these three assignments
+	// reference another assigned column (all plain binds), so the SET order is
+	// not load-bearing and GORM's alphabetical Updates(map) order is safe;
+	// see the retired check-set-order.sh / setOrderIsLoadBearing (removed in
+	// d22ba1d6c).
 	if fullname != "" {
-		db.Exec("UPDATE users SET firstname = ?, lastname = ?, fullname = ? WHERE id = ? AND (fullname IS NULL OR fullname = '')",
-			firstname, lastname, fullname, userID)
+		db.Table("users").Where("id = ? AND (fullname IS NULL OR fullname = '')", userID).
+			Updates(map[string]interface{}{
+				"firstname": firstname,
+				"lastname":  lastname,
+				"fullname":  fullname,
+			})
 	}
 
 	return userID, nil

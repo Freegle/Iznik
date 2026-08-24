@@ -260,13 +260,14 @@ describe('VolunteerOpportunity', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('shows NuxtPicture when externaluid present', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockVolunteeringStore.byId.mockReturnValue({
         ...mockVolunteering,
         image: { externaluid: 'external-uid', externalmods: {} },
       })
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('shows b-img when path present', async () => {

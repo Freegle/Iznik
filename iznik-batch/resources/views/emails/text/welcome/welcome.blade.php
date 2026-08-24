@@ -12,7 +12,8 @@ Save this password - you'll need it to log in.
 Ready to start freegling?
 
 Give stuff away: {{ $giveUrl }}
-Find what you need: {{ $findUrl }}
+Browse what's on offer: {{ $browseUrl }}
+Ask for what you need: {{ $askUrl }}
 
 
 THREE SIMPLE RULES

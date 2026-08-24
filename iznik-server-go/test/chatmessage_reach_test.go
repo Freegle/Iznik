@@ -1,0 +1,474 @@
+package test
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/freegle/iznik-server-go/chat"
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/utils"
+	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/assert"
+)
+
+// TestCreateChatMessage_ReachBlockedReplyHeld verifies the rippling reply HOLD on the WRITE path:
+// an in-app reply to a post whose reach has not yet reached the replier is ACCEPTED (200) but HELD
+// — a rippling_held_replies row (source='web', status='held') is recorded and the poster does not
+// see the reply until it is released. This replaced the old 403 reject: rather than turning the
+// member away, we hold their reply and deliver it when the post ripples to them (matching the
+// email/TN path). Once the reach covers the replier, the reply is delivered normally (no hold row).
+func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("reachreply")
+
+	// Self-sufficient: rippling_reach belongs to PR A (merges before PR E). Use the SAME
+	// stand-in schema as the other reach tests (isochrone_reach_test, message_reply_eligible_test)
+	// — Go tests share one DB with CREATE TABLE IF NOT EXISTS, so a narrower schema here would
+	// break their lat/lng/status inserts (whichever test runs first wins the table).
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	// The hold target table (source column matches the 2026_07_08 migration and the other
+	// rippling_held_replies stand-ins; first CREATE wins, so all must agree).
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_held_replies (
+		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		chatid BIGINT UNSIGNED NOT NULL, chatmsgid BIGINT UNSIGNED NOT NULL,
+		msgid BIGINT UNSIGNED NOT NULL, replieruserid BIGINT UNSIGNED NOT NULL,
+		source ENUM('email','tn','web') NOT NULL DEFAULT 'email',
+		lat DOUBLE, lng DOUBLE,
+		status ENUM('held','released','dropped','taken-gone') NOT NULL DEFAULT 'held',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, releasedat TIMESTAMP NULL,
+		INDEX (msgid), INDEX (chatid), INDEX (status)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, replierID, groupID, "Member")
+	// GetLatLng reads settings.mylocation first — put the replier at (51.5, -0.1).
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, replierID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach reply test item", 51.5, -0.1)
+
+	// Reach exists but does NOT cover the replier (far to the east). lat/lng are NOT NULL.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857), ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857)))", msgID)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM rippling_held_replies WHERE msgid = ?", msgID)
+
+	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	_, token := CreateTestSession(t, replierID)
+
+	post := func() int {
+		var payload chat.ChatMessage
+		payload.Message = "I'd like this please"
+		payload.Refmsgid = &msgID
+		s, _ := json.Marshal(payload)
+		req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, token), bytes.NewBuffer(s))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		return resp.StatusCode
+	}
+
+	// Out of reach: the reply is ACCEPTED (not rejected) and HELD.
+	assert.Equal(t, fiber.StatusOK, post(), "in-app reply is accepted (not rejected) when outside the post's reach")
+
+	var held struct {
+		Chatmsgid uint64 `gorm:"column:chatmsgid"`
+		Source    string `gorm:"column:source"`
+		Status    string `gorm:"column:status"`
+	}
+	db.Raw("SELECT chatmsgid, source, status FROM rippling_held_replies "+
+		"WHERE msgid = ? AND replieruserid = ? ORDER BY id DESC LIMIT 1", msgID, replierID).Scan(&held)
+	assert.NotZero(t, held.Chatmsgid, "an out-of-reach in-app reply records a rippling_held_replies row")
+	assert.Equal(t, "web", held.Source, "the held row is tagged source='web'")
+	assert.Equal(t, "held", held.Status, "the held row starts held")
+
+	// Delivery gate: the poster must NOT see the held reply yet.
+	_, posterToken := CreateTestSession(t, posterID)
+	greq := httptest.NewRequest("GET", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, posterToken), nil)
+	gresp, _ := getApp().Test(greq)
+	var posterMsgs []chat.ChatMessage
+	json.Unmarshal(rsp(gresp), &posterMsgs)
+	for _, m := range posterMsgs {
+		assert.NotEqual(t, held.Chatmsgid, m.ID, "the poster must not see the held reply until it is released")
+	}
+
+	// Reach grows to cover the replier → the reply is delivered normally (no new hold row).
+	db.Exec("UPDATE rippling_reach SET polygon = ST_GeomFromText("+
+		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857), "+
+		"outer_bound = ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
+		"inner_bound = NULL WHERE msgid = ?", msgID)
+	assert.Equal(t, fiber.StatusOK, post(), "in-app reply accepted once the reach covers the replier")
+	var heldCount int
+	db.Raw("SELECT COUNT(*) FROM rippling_held_replies WHERE msgid = ? AND replieruserid = ?",
+		msgID, replierID).Scan(&heldCount)
+	assert.Equal(t, 1, heldCount, "the in-reach reply is delivered normally — only the earlier out-of-reach reply is held")
+}
+
+// TestCreateChatMessage_ReportToModsNotReachGated verifies the reach gate does NOT apply to a
+// report. A report goes to the group's mods (User2Mod) and carries refmsgid (to link the reported
+// post), so CreateChatMessage types it CHAT_MESSAGE_INTERESTED — the same type as an Interested
+// reply. But reporting must work regardless of the reporter's location, even for a rippled post
+// whose reach hasn't reached them (Discourse #9852: a report of a rippled South-London post 403'd
+// because the reporter was outside its reach polygon). The gate is scoped to User2User, so the
+// identical setup that rejects a reply (above) must ACCEPT a report.
+func TestCreateChatMessage_ReportToModsNotReachGated(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("reachreport")
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	reporterID := CreateTestUser(t, prefix+"_reporter", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	// Reporter is at (51.5, -0.1) and — like Neville in #9852 — is NOT a member of the post's group.
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, reporterID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reach report test item", 51.5, -0.1)
+
+	// Reach exists but does NOT cover the reporter (far to the east) — this is exactly the polygon
+	// that 403s a User2User reply in the test above.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857), ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))', 3857)))", msgID)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	// Report chat: reporter -> the group's mods (User2Mod), reporter is user1 so is authorised.
+	chatID := CreateTestChatRoom(t, reporterID, nil, &groupID, "User2Mod")
+	_, token := CreateTestSession(t, reporterID)
+
+	var payload chat.ChatMessage
+	payload.Message = "I'm reporting this post as inappropriate: it's written as a sale."
+	payload.Refmsgid = &msgID
+	s, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, token), bytes.NewBuffer(s))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode,
+		"a report to mods (User2Mod) must NOT be reach-gated even when the reporter is outside the post's reach")
+
+	// A report is not a reply: it must not pollute the reply-source metric with an
+	// attribution row (the capture is scoped to User2User).
+	var reportRows int
+	db.Raw("SELECT COUNT(*) FROM rippling_reply_attribution WHERE msgid = ? AND userid = ?",
+		msgID, reporterID).Scan(&reportRows)
+	assert.Equal(t, 0, reportRows, "no reply-attribution row is recorded for a report")
+}
+
+// attributionRow is the full evidence snapshot the graded capture writes; shared by the
+// attribution tests below.
+type attributionRow struct {
+	WasHomeMember  int     `gorm:"column:was_home_member"`
+	WasNotified    *int    `gorm:"column:was_notified"`
+	WasRippleGroup *int    `gorm:"column:was_ripple_group_member"`
+	WasRippleJoin  *int    `gorm:"column:was_ripple_join"`
+	InOrigin       *int    `gorm:"column:in_origin_catchment"`
+	InReach        *int    `gorm:"column:in_reach"`
+	PostHadRippled *int    `gorm:"column:post_had_rippled"`
+	Attribution    *string `gorm:"column:attribution"`
+	ClientSource   *string `gorm:"column:client_source"`
+}
+
+func fetchAttribution(t *testing.T, msgID, uid uint64) (attributionRow, bool) {
+	var rows []attributionRow
+	database.DBConn.Raw("SELECT was_home_member, was_notified, was_ripple_group_member, "+
+		"was_ripple_join, in_origin_catchment, in_reach, post_had_rippled, attribution, client_source "+
+		"FROM rippling_reply_attribution WHERE msgid = ? AND userid = ?", msgID, uid).Scan(&rows)
+	if len(rows) == 0 {
+		return attributionRow{}, false
+	}
+	return rows[0], true
+}
+
+// postInterestedReply posts an Interested User2User reply to msgID as replierID, optionally
+// carrying the client-reported surface, and returns the HTTP status.
+func postInterestedReply(t *testing.T, replierID, posterID, msgID uint64, replysource string) int {
+	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	_, token := CreateTestSession(t, replierID)
+	var payload chat.ChatMessage
+	payload.Message = "I'd like this please"
+	payload.Refmsgid = &msgID
+	if replysource != "" {
+		payload.Replysource = &replysource
+	}
+	s, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/chat/%d/message?jwt=%s", chatID, token), bytes.NewBuffer(s))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	return resp.StatusCode
+}
+
+// TestCreateChatMessage_RecordsReplyAttribution verifies the graded reply-source capture on a
+// post that never rippled: an ESTABLISHED origin-group member -> home; a non-member -> unknown
+// (the hard guard: with no ripple the reply can never be ripple-attributed - under the old
+// single-bit scheme this non-member would have been silently credited to rippling).
+func TestCreateChatMessage_RecordsReplyAttribution(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("replyattr")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: reply attribution test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
+
+	// Established member: approved membership added an hour ago -> home.
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 1 HOUR, collection = 'Approved' WHERE userid = ? AND groupid = ?", memberID, groupID)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, memberID, posterID, msgID, ""))
+	row, ok := fetchAttribution(t, msgID, memberID)
+	assert.True(t, ok, "attribution row recorded for the established-member reply")
+	assert.Equal(t, 1, row.WasHomeMember, "established member reply recorded as home-group")
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "home", *row.Attribution)
+	}
+
+	// Non-member on a NEVER-RIPPLED post: not home, but not rippling either - unknown, with
+	// the hard-guard evidence bit post_had_rippled = 0 frozen in the row.
+	nonMemberID := CreateTestUser(t, prefix+"_nonmember", "User")
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, nonMemberID, posterID, msgID, ""))
+	row, ok = fetchAttribution(t, msgID, nonMemberID)
+	assert.True(t, ok, "attribution row recorded for the non-member reply")
+	assert.Equal(t, 0, row.WasHomeMember)
+	if assert.NotNil(t, row.PostHadRippled) {
+		assert.Equal(t, 0, *row.PostHadRippled, "post never rippled -> hard guard bit is 0")
+	}
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "unknown", *row.Attribution,
+			"a reply to a never-rippled post is never credited to rippling")
+	}
+}
+
+// TestCreateChatMessage_AttributionLadder walks the graded ladder end-to-end on a rippled post:
+// notified-ledger hit -> ripple_notified; established member of the rippled-into group ->
+// ripple_group; non-member inside the origin catchment -> organic_local (would have seen it in
+// Browse anyway - outranks ripple_reach because the reach polygon always covers the origin area);
+// non-member outside the catchment but inside the reach -> ripple_reach. Also verifies the
+// client-reported surface: a well-formed value is stored, an ill-formed one is dropped.
+func TestCreateChatMessage_AttributionLadder(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("attrladder")
+
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
+		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
+		polygon GEOMETRY NOT NULL SRID 3857,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
+		SPATIAL INDEX msgreach_poly (polygon)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach_notified (
+		msgid BIGINT UNSIGNED NOT NULL, userid BIGINT UNSIGNED NOT NULL,
+		notified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (msgid, userid), KEY rrn_userid (userid))`)
+
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, originGroup, "Member")
+	msgID := CreateTestMessage(t, posterID, originGroup, "OFFER: attribution ladder test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM rippling_reach_notified WHERE msgid = ?", msgID)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	// Origin group's catchment covers (-0.1, 51.5) only; the reach polygon covers both that
+	// and (0.5, 51.5) - reach always covers the origin area, which is exactly why
+	// organic_local must outrank ripple_reach.
+	db.Exec(fmt.Sprintf("UPDATE `groups` SET polyindex = ST_GeomFromText("+
+		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', %d) WHERE id = ?", utils.SRID),
+		originGroup)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound) VALUES (?, 51.5, -0.1, ST_GeomFromText("+
+		"'POLYGON((-0.3 51.3,0.7 51.3,0.7 51.7,-0.3 51.7,-0.3 51.3))', 3857), ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((-0.3 51.3,0.7 51.3,0.7 51.7,-0.3 51.7,-0.3 51.3))', 3857)))", msgID)
+	// The post rippled into a second group just now.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
+
+	// CreateTestUser defaults every user's settings.mylocation to Edinburgh, which is
+	// OUTSIDE this post's reach polygon - the write-path reach gate would 403 the reply
+	// before the capture ever ran. Repliers below are placed inside the reach (or have
+	// their location removed entirely for the no-location case).
+
+	// 1. Notified-ledger hit -> ripple_notified. Inside the reach, outside the origin
+	//    catchment - the notified rung must outrank the location rungs.
+	notifiedID := CreateTestUser(t, prefix+"_notified", "User")
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":0.5}}' WHERE id = ?`, notifiedID)
+	db.Exec("INSERT INTO rippling_reach_notified (msgid, userid, notified_at) VALUES (?, ?, NOW() - INTERVAL 1 HOUR)",
+		msgID, notifiedID)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, notifiedID, posterID, msgID, ""))
+	row, ok := fetchAttribution(t, msgID, notifiedID)
+	assert.True(t, ok)
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "ripple_notified", *row.Attribution,
+			"notified outranks the location rungs")
+	}
+	if assert.NotNil(t, row.WasNotified) {
+		assert.Equal(t, 1, *row.WasNotified)
+	}
+	if assert.NotNil(t, row.InReach) {
+		assert.Equal(t, 1, *row.InReach)
+	}
+
+	// 2. Established member of the group the post rippled INTO -> ripple_group (also
+	//    outranks the location rungs).
+	rippleMemberID := CreateTestUser(t, prefix+"_rgmember", "User")
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":0.5}}' WHERE id = ?`, rippleMemberID)
+	CreateTestMembership(t, rippleMemberID, rippledGroup, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 1 HOUR, collection = 'Approved' WHERE userid = ? AND groupid = ?",
+		rippleMemberID, rippledGroup)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, rippleMemberID, posterID, msgID, ""))
+	row, ok = fetchAttribution(t, msgID, rippleMemberID)
+	assert.True(t, ok)
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "ripple_group", *row.Attribution)
+	}
+
+	// 2b. No location on file at all: the reach gate fails open, and the location
+	//     evidence is NULL (unknown), not a definite 0 -> unknown attribution.
+	nolocID := CreateTestUser(t, prefix+"_noloc", "User")
+	db.Exec("UPDATE users SET settings = NULL WHERE id = ?", nolocID)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, nolocID, posterID, msgID, ""))
+	row, ok = fetchAttribution(t, msgID, nolocID)
+	assert.True(t, ok)
+	assert.Nil(t, row.InOrigin, "no location on file -> location evidence is NULL, not 0")
+	assert.Nil(t, row.InReach, "no location on file -> location evidence is NULL, not 0")
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "unknown", *row.Attribution)
+	}
+
+	// 3. Non-member INSIDE the origin catchment (and inside the reach) -> organic_local, with
+	//    a well-formed client surface stored verbatim.
+	localID := CreateTestUser(t, prefix+"_local", "User")
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":-0.1}}' WHERE id = ?`, localID)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, localID, posterID, msgID, "browse"))
+	row, ok = fetchAttribution(t, msgID, localID)
+	assert.True(t, ok)
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "organic_local", *row.Attribution,
+			"inside the origin catchment outranks inside the reach")
+	}
+	if assert.NotNil(t, row.InOrigin) {
+		assert.Equal(t, 1, *row.InOrigin)
+	}
+	if assert.NotNil(t, row.InReach) {
+		assert.Equal(t, 1, *row.InReach)
+	}
+	if assert.NotNil(t, row.ClientSource) {
+		assert.Equal(t, "browse", *row.ClientSource)
+	}
+
+	// 4. Non-member OUTSIDE the origin catchment but inside the reach -> ripple_reach: their
+	//    Browse exposure existed only because the ripple extended to them. An ill-formed
+	//    client surface is dropped, not stored.
+	reachID := CreateTestUser(t, prefix+"_reach", "User")
+	db.Exec(`UPDATE users SET settings = '{"mylocation":{"lat":51.5,"lng":0.5}}' WHERE id = ?`, reachID)
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, reachID, posterID, msgID, "Bad Source!"))
+	row, ok = fetchAttribution(t, msgID, reachID)
+	assert.True(t, ok)
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "ripple_reach", *row.Attribution)
+	}
+	if assert.NotNil(t, row.InOrigin) {
+		assert.Equal(t, 0, *row.InOrigin)
+	}
+	assert.Nil(t, row.ClientSource, "an ill-formed client surface is dropped")
+}
+
+// Rippling auto-joins a poster to every group their post rippled into (memberships.rippled = 1).
+// When one of those groups later hosts a post of its own and that member replies, the reply is NOT
+// home: the member is only in that group because of an earlier ripple, so without rippling they
+// would never have seen it. Counting them as an established local member - which is what every
+// "was already a member" test did before this - hands rippling's own downstream effect to the
+// home column and makes rippling read as less effective than it is.
+func TestCreateChatMessage_RippleJoinedMemberIsNotHome(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("ripplejoin")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	// A post that never rippled anywhere: proves the ripple-join rung stands on the membership's
+	// own provenance and needs no ripple on THIS post.
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: ripple-join attribution test item", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reply_attribution WHERE msgid = ?", msgID)
+
+	// Ripple-created membership: long-established, but rippling put them there.
+	joinedID := CreateTestUser(t, prefix+"_ripplejoined", "User")
+	CreateTestMembership(t, joinedID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 1 "+
+		"WHERE userid = ? AND groupid = ?", joinedID, groupID)
+
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, joinedID, posterID, msgID, ""))
+	row, ok := fetchAttribution(t, msgID, joinedID)
+	assert.True(t, ok, "attribution row recorded for the ripple-joined member's reply")
+	assert.Equal(t, 0, row.WasHomeMember,
+		"a ripple-created auto-join is not evidence of established local membership")
+	if assert.NotNil(t, row.WasRippleJoin) {
+		assert.Equal(t, 1, *row.WasRippleJoin, "the ripple-join evidence bit is frozen in the row")
+	}
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "ripple_join", *row.Attribution,
+			"credited to rippling: the membership itself is a ripple side-effect")
+	}
+
+	// Control: an ordinary member of the SAME group, equally established, still reads as home.
+	// Only the provenance of the membership differs, so this pins the fix to memberships.rippled
+	// rather than to anything about the post or the group.
+	ordinaryID := CreateTestUser(t, prefix+"_ordinary", "User")
+	CreateTestMembership(t, ordinaryID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0 "+
+		"WHERE userid = ? AND groupid = ?", ordinaryID, groupID)
+
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, ordinaryID, posterID, msgID, ""))
+	row, ok = fetchAttribution(t, msgID, ordinaryID)
+	assert.True(t, ok)
+	assert.Equal(t, 1, row.WasHomeMember, "an ordinary membership is still home")
+	if assert.NotNil(t, row.WasRippleJoin) {
+		assert.Equal(t, 0, *row.WasRippleJoin)
+	}
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "home", *row.Attribution)
+	}
+
+	// A member holding BOTH kinds of membership of origin groups of one post is home: the
+	// ordinary one alone would have shown them the post, so rippling gets no credit. (Cross-posts
+	// are the real-world case - one origin group joined normally, another via a ripple.)
+	secondGroupID := CreateTestGroup(t, prefix+"_second")
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0, 0)", msgID, secondGroupID)
+	bothID := CreateTestUser(t, prefix+"_both", "User")
+	CreateTestMembership(t, bothID, groupID, "Member")
+	CreateTestMembership(t, bothID, secondGroupID, "Member")
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 1 "+
+		"WHERE userid = ? AND groupid = ?", bothID, groupID)
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY, collection = 'Approved', rippled = 0 "+
+		"WHERE userid = ? AND groupid = ?", bothID, secondGroupID)
+
+	assert.Equal(t, fiber.StatusOK, postInterestedReply(t, bothID, posterID, msgID, ""))
+	row, ok = fetchAttribution(t, msgID, bothID)
+	assert.True(t, ok)
+	assert.Equal(t, 1, row.WasHomeMember)
+	if assert.NotNil(t, row.Attribution) {
+		assert.Equal(t, "home", *row.Attribution,
+			"one ordinary origin membership is enough for home, whatever else they hold")
+	}
+}

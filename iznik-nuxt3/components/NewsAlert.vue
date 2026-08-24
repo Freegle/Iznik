@@ -12,6 +12,11 @@
         <br />
         <span class="text-muted small ps-2">
           {{ addedago }}
+          <!-- Community News posts are targeted at one area. Reviewing them from
+               all over the country is meaningless without knowing which. -->
+          <span v-if="chitChatMod && newsfeed.location">
+            · {{ newsfeed.location }}
+          </span>
         </span>
       </div>
     </div>
@@ -60,15 +65,16 @@ import { defineAsyncComponent, ref, computed } from 'vue'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { twem } from '~/composables/useTwem'
 import { timeago } from '~/composables/useTimeFormat'
+import { useMe } from '~/composables/useMe'
 import { URL_REGEX } from '~/constants'
 import NewsLoveComment from '~/components/NewsLoveComment'
 import ProfileImage from '~/components/ProfileImage'
 
-const NewsShareModal = defineAsyncComponent(() =>
-  import('~/components/NewsShareModal')
+const NewsShareModal = defineAsyncComponent(
+  () => import('~/components/NewsShareModal')
 )
-const NewsPhotoModal = defineAsyncComponent(() =>
-  import('~/components/NewsPhotoModal.vue')
+const NewsPhotoModal = defineAsyncComponent(
+  () => import('~/components/NewsPhotoModal.vue')
 )
 
 const props = defineProps({
@@ -81,6 +87,7 @@ const props = defineProps({
 const emit = defineEmits(['focus-comment'])
 
 const newsfeedStore = useNewsfeedStore()
+const { chitChatMod } = useMe()
 
 // Data properties
 const showNewsPhotoModal = ref(false)

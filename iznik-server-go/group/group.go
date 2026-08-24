@@ -2,7 +2,6 @@ package group
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,54 +28,53 @@ func (Group) TableName() string { return "groups" }
 
 // Full group details.
 type Group struct {
-	ID                   uint64           `json:"id" gorm:"primary_key"`
-	Nameshort            string           `json:"nameshort"`
-	Namefull             string           `json:"namefull"`
-	Namedisplay          string           `json:"namedisplay" gorm:"-"`
-	Settings             json.RawMessage  `json:"settings"` // This is JSON stored in the DB as a string.
-	Rules                json.RawMessage  `json:"rules"`    // Group rules, nullable JSON.
-	Region               string           `json:"region"`
-	Logo                 string           `json:"logo"`
-	Publish              int              `json:"publish"`
-	Ontn                 int              `json:"ontn"`
-	Membercount          int              `json:"membercount"`
-	Modcount             int              `json:"modcount"`
-	Lat                  float32          `json:"lat"`
-	Lng                  float32          `json:"lng"`
-	Altlat               float32          `json:"altlat"`
-	Altlng               float32          `json:"altlng"`
-	GroupProfile         GroupProfile     `gorm:"-" json:"-"`
-	Profile              uint64           `gorm:"column:profile" json:"-"`
-	GroupProfileStr      string           `json:"profile" gorm:"-"`
-	Onmap                int              `json:"onmap"`
-	Tagline              string           `json:"tagline"`
-	Description          string           `json:"description"`
-	Contactmail          string           `json:"-"`
-	Modsemail            string           `json:"modsemail"`
-	Fundingtarget        int              `json:"fundingtarget"`
-	Affiliationconfirmed *time.Time       `json:"affiliationconfirmed,omitempty"`
-	Founded              *time.Time       `json:"founded,omitempty"`
-	GroupSponsors        []GroupSponsor   `gorm:"ForeignKey:groupid" json:"sponsors"`
-	GroupVolunteers      []GroupVolunteer `gorm:"-" json:"showmods"`
-	Showjoin               int              `json:"showjoin"`
-	Bbox                   string           `json:"bbox,omitempty" gorm:"column:bbox"`
-	Type                   string           `json:"type"`
-	Overridemoderation     string           `json:"overridemoderation"`
-	Autofunctionoverride   int              `json:"autofunctionoverride"`
-	Microvolunteering      int              `json:"microvolunteering"`
-	Microvolunteeringoptions json.RawMessage `json:"microvolunteeringoptions"`
-	Mentored               int              `json:"mentored" gorm:"column:mentored"`
-	Onhere                 int              `json:"onhere" gorm:"column:onhere"`
-	Onlovejunk             int              `json:"onlovejunk" gorm:"column:onlovejunk"`
-	Welcomemail            string           `json:"welcomemail,omitempty"`
-	Myrole                 string           `json:"myrole,omitempty" gorm:"-"`
+	ID                       uint64           `json:"id" gorm:"primary_key"`
+	Nameshort                string           `json:"nameshort"`
+	Namefull                 string           `json:"namefull"`
+	Namedisplay              string           `json:"namedisplay" gorm:"-"`
+	Settings                 json.RawMessage  `json:"settings"` // This is JSON stored in the DB as a string.
+	Rules                    json.RawMessage  `json:"rules"`    // Group rules, nullable JSON.
+	Region                   string           `json:"region"`
+	Logo                     string           `json:"logo"`
+	Publish                  int              `json:"publish"`
+	Ontn                     int              `json:"ontn"`
+	Membercount              int              `json:"membercount"`
+	Modcount                 int              `json:"modcount"`
+	Lat                      float32          `json:"lat"`
+	Lng                      float32          `json:"lng"`
+	Altlat                   float32          `json:"altlat"`
+	Altlng                   float32          `json:"altlng"`
+	GroupProfile             GroupProfile     `gorm:"-" json:"-"`
+	Profile                  uint64           `gorm:"column:profile" json:"-"`
+	GroupProfileStr          string           `json:"profile" gorm:"-"`
+	Onmap                    int              `json:"onmap"`
+	Tagline                  string           `json:"tagline"`
+	Description              string           `json:"description"`
+	Contactmail              string           `json:"-"`
+	Modsemail                string           `json:"modsemail"`
+	Fundingtarget            int              `json:"fundingtarget"`
+	Affiliationconfirmed     *time.Time       `json:"affiliationconfirmed,omitempty"`
+	Founded                  *time.Time       `json:"founded,omitempty"`
+	GroupSponsors            []GroupSponsor   `gorm:"ForeignKey:groupid" json:"sponsors"`
+	GroupVolunteers          []GroupVolunteer `gorm:"-" json:"showmods"`
+	Showjoin                 int              `json:"showjoin"`
+	Bbox                     string           `json:"bbox,omitempty" gorm:"column:bbox"`
+	Type                     string           `json:"type"`
+	Overridemoderation       string           `json:"overridemoderation"`
+	Autofunctionoverride     int              `json:"autofunctionoverride"`
+	Microvolunteering        int              `json:"microvolunteering"`
+	Microvolunteeringoptions json.RawMessage  `json:"microvolunteeringoptions"`
+	Mentored                 int              `json:"mentored" gorm:"column:mentored"`
+	Onhere                   int              `json:"onhere" gorm:"column:onhere"`
+	Onlovejunk               int              `json:"onlovejunk" gorm:"column:onlovejunk"`
+	Welcomemail              string           `json:"welcomemail,omitempty"`
+	Myrole                   string           `json:"myrole,omitempty" gorm:"-"`
 
 	// Polygon fields (only populated when polygon=true query param)
-	Poly           *string `json:"poly,omitempty" gorm:"-"`
-	Polyofficial   *string `json:"polyofficial,omitempty" gorm:"-"`
-	Postvisibility *string `json:"postvisibility,omitempty" gorm:"-"`
-	Cga            *string `json:"cga,omitempty" gorm:"-"`
-	Dpa            *string `json:"dpa,omitempty" gorm:"-"`
+	Poly         *string `json:"poly,omitempty" gorm:"-"`
+	Polyofficial *string `json:"polyofficial,omitempty" gorm:"-"`
+	Cga          *string `json:"cga,omitempty" gorm:"-"`
+	Dpa          *string `json:"dpa,omitempty" gorm:"-"`
 
 	// TN key fields (only populated when tnkey=true and user is moderator)
 	Tnkey *TnKeyInfo `json:"tnkey,omitempty" gorm:"-"`
@@ -142,6 +140,13 @@ type RepostSettings struct {
 	Chaseups int `json:"chaseups"`
 }
 
+// DefaultRepostSettings is what a group with no `reposts` entry in its settings
+// falls back to. Mirrors V1's Message::getPublic()/canRepost() default of
+// ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5].
+func DefaultRepostSettings() RepostSettings {
+	return RepostSettings{Offer: 3, Wanted: 7, Max: 5, Chaseups: 5}
+}
+
 func GetGroup(c *fiber.Ctx) error {
 	idParam := c.Params("id")
 
@@ -188,7 +193,10 @@ func GetGroup(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT * FROM groups_sponsorship WHERE groupid = ? AND startdate <= NOW() AND enddate >= DATE(NOW()) AND visible = 1 ORDER BY amount DESC", id).Scan(&filteredSponsors)
+			db.Table("groups_sponsorship").
+				Where("groupid = ? AND startdate <= NOW() AND enddate >= DATE(NOW()) AND visible = 1", id).
+				Order("amount DESC").
+				Scan(&filteredSponsors)
 		}()
 	}
 
@@ -206,8 +214,26 @@ func GetGroup(c *fiber.Ctx) error {
 			q = q.Preload("GroupSponsors")
 		}
 
-		err := q.Raw("SELECT `groups`.*, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM `groups` WHERE id = ?", id).First(&group).Error
-		found = !errors.Is(err, gorm.ErrRecordNotFound)
+		// Converted from
+		// Raw(...).First(&group) to Table()/Select()/Where().Find(&group).
+		// First() unconditionally adds an ORDER BY + LIMIT 1 clause and sets
+		// RaiseErrorOnNotFound - but on a Raw()-based statement those clauses
+		// were silently dropped (BuildQuerySQL skips clause-building entirely
+		// once Statement.SQL is already populated by Raw()), so the golden's
+		// lack of ORDER BY/LIMIT was always the real executed SQL. A straight
+		// swap to Table()+First() would have started emitting a real
+		// "ORDER BY id LIMIT 1", since that short-circuit no longer applies -
+		// a genuine behaviour change, not a harmless rewrite. Find() never
+		// adds those clauses and never raises ErrRecordNotFound, so the
+		// caller now checks RowsAffected directly instead of comparing the
+		// returned error against ErrRecordNotFound - which is also a small
+		// correctness improvement: the old check treated ANY error other
+		// than "not found" (e.g. a genuine connection failure) as found=true.
+		tx := q.Table("groups").
+			Select("`groups`.*, CAST(JSON_EXTRACT(`groups`.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+			Where("id = ?", id).
+			Find(&group)
+		found = tx.RowsAffected > 0
 
 		if found {
 			if group.Profile > 0 {
@@ -248,9 +274,8 @@ func GetGroup(c *fiber.Ctx) error {
 		wantTnkey := c.Query("tnkey") == "true" && myid > 0 && auth.IsModOfGroup(myid, id)
 
 		type PolyResult struct {
-			Poly           *string `gorm:"column:poly"`
-			Polyofficial   *string `gorm:"column:polyofficial"`
-			Postvisibility *string `gorm:"column:postvisibility"`
+			Poly         *string `gorm:"column:poly"`
+			Polyofficial *string `gorm:"column:polyofficial"`
 		}
 		var polyResult PolyResult
 		var myrole string
@@ -262,7 +287,7 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT poly, polyofficial, ST_AsText(postvisibility) as postvisibility FROM `groups` WHERE id = ?", id).Scan(&polyResult)
+				db.Table("groups").Select("poly, polyofficial").Where("id = ?", id).Scan(&polyResult)
 			}()
 		}
 
@@ -270,7 +295,9 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, id, utils.COLLECTION_APPROVED).Scan(&myrole)
+				db.Table("memberships").Select("role").
+					Where("userid = ? AND groupid = ? AND collection = ?", myid, id, utils.COLLECTION_APPROVED).
+					Scan(&myrole)
 			}()
 		}
 
@@ -278,7 +305,11 @@ func GetGroup(c *fiber.Ctx) error {
 			wg2.Add(1)
 			go func() {
 				defer wg2.Done()
-				db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC, id ASC LIMIT 1", myid).Scan(&email)
+				db.Table("users_emails").Select("email").
+					Where("userid = ?", myid).
+					Order("preferred DESC, id ASC").
+					Limit(1).
+					Scan(&email)
 			}()
 		}
 
@@ -288,7 +319,6 @@ func GetGroup(c *fiber.Ctx) error {
 		if wantPolygon {
 			group.Poly = polyResult.Poly
 			group.Polyofficial = polyResult.Polyofficial
-			group.Postvisibility = polyResult.Postvisibility
 			group.Cga = polyResult.Polyofficial
 			group.Dpa = polyResult.Poly
 		}
@@ -327,6 +357,17 @@ func GetGroup(c *fiber.Ctx) error {
 		// Strip modtools-only fields when not requested via modtools flag.
 		if c.Query("modtools") != "true" {
 			group.Welcomemail = ""
+		}
+
+		// Default nil JSON fields to empty objects so the frontend never sees null,
+		// which would crash group.settings.X access and trigger an infinite store
+		// re-fetch loop (the store uses !group.settings as "not yet loaded"). Mirrors
+		// the same nil-guard in user/user.go.
+		if group.Settings == nil {
+			group.Settings = json.RawMessage("{}")
+		}
+		if group.Microvolunteeringoptions == nil {
+			group.Microvolunteeringoptions = json.RawMessage("{}")
 		}
 
 		return c.JSON(group)
@@ -373,12 +414,17 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 		go func(idx int, gid uint64) {
 			defer wg.Done()
 
+			// Same First()->Find()
+			// conversion as GetGroup (2811b4d3acf7) above, for the same
+			// reason: see that site's comment.
 			var g Group
-			err := db.Preload("GroupSponsors").
-				Raw("SELECT `groups`.*, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM `groups` WHERE id = ?", gid).
-				First(&g).Error
+			tx := db.Preload("GroupSponsors").
+				Table("groups").
+				Select("`groups`.*, CAST(JSON_EXTRACT(`groups`.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox").
+				Where("id = ?", gid).
+				Find(&g)
 
-			if err != nil {
+			if tx.Error != nil || tx.RowsAffected == 0 {
 				return
 			}
 
@@ -403,7 +449,9 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 
 			if myid > 0 {
 				var myrole string
-				db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, gid, utils.COLLECTION_APPROVED).Scan(&myrole)
+				db.Table("memberships").Select("role").
+					Where("userid = ? AND groupid = ? AND collection = ?", myid, gid, utils.COLLECTION_APPROVED).
+					Scan(&myrole)
 				if myrole != "" {
 					g.Myrole = myrole
 				} else {
@@ -413,6 +461,15 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 
 			if !modtools {
 				g.Welcomemail = ""
+			}
+
+			// Default nil JSON fields to empty objects (same nil-guard as single
+			// GetGroup path and user/user.go) so the frontend never receives null.
+			if g.Settings == nil {
+				g.Settings = json.RawMessage("{}")
+			}
+			if g.Microvolunteeringoptions == nil {
+				g.Microvolunteeringoptions = json.RawMessage("{}")
 			}
 
 			mu.Lock()
@@ -447,7 +504,7 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 		}
 
 		var polyRows []PolyRow
-		db.Raw("SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?", polyIDs).Scan(&polyRows)
+		db.Table("groups").Select("id, poly, polyofficial").Where("id IN ?", polyIDs).Scan(&polyRows)
 
 		polyMap := make(map[uint64]*PolyRow, len(polyRows))
 		for i := range polyRows {
@@ -485,13 +542,18 @@ func ListGroups(c *fiber.Ctx) error {
 
 	if isAdminOrSupport {
 		// Support mode: return all groups (not just published/onhere) with extra fields.
-		db.Raw("SELECT id, nameshort, namefull, lat, lng, altlat, altlng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, "+
-			"CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, "+
-			"founded, lastmoderated, lastmodactive, lastautoapprove, activeownercount, activemodcount, "+
-			"backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby "+
-			"FROM `groups` WHERE type = ?", FREEGLE).Scan(&groups)
+		db.Table("groups").
+			Select("id, nameshort, namefull, lat, lng, altlat, altlng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, "+
+				"CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, "+
+				"founded, lastmoderated, lastmodactive, lastautoapprove, activeownercount, activemodcount, "+
+				"backupmodsactive, backupownersactive, affiliationconfirmed, affiliationconfirmedby").
+			Where("type = ?", FREEGLE).
+			Scan(&groups)
 	} else {
-		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
+		db.Table("groups").
+			Select("id, nameshort, namefull, lat, lng, onmap, onhere, ontn, onlovejunk, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin").
+			Where("publish = 1 AND onhere = 1 AND type = ?", FREEGLE).
+			Scan(&groups)
 	}
 
 	// For support mode, fetch recent auto-approve, manual-approve, and moderation counts in parallel.
@@ -518,14 +580,18 @@ func ListGroups(c *fiber.Ctx) error {
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start31, "Message", "Autoapproved").Scan(&autoApproves)
+			db.Table("logs").Select("COUNT(*) AS count, groupid").
+				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Autoapproved").
+				Group("groupid").
+				Scan(&autoApproves)
 		}()
 
 		go func() {
 			defer wg.Done()
-			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start31, "Message", "Approved").Scan(&manualApproves)
+			db.Table("logs").Select("COUNT(*) AS count, groupid").
+				Where("timestamp >= ? AND type = ? AND subtype = ?", start31, "Message", "Approved").
+				Group("groupid").
+				Scan(&manualApproves)
 		}()
 
 		go func() {
@@ -533,12 +599,11 @@ func ListGroups(c *fiber.Ctx) error {
 			// Count messages where a moderator manually approved (approvedby IS NOT NULL)
 			// vs total messages arriving in the past 30 days, grouped by community.
 			// Uses arrival rather than approvedat so the denominator is consistent.
-			db.Raw(`SELECT groupid,
-				SUM(approvedby IS NOT NULL) AS moderated_count,
-				COUNT(*) AS total_count
-				FROM messages_groups
-				WHERE arrival >= ?
-				GROUP BY groupid`, start30).Scan(&moderatedCounts)
+			db.Table("messages_groups").
+				Select("groupid, SUM(approvedby IS NOT NULL) AS moderated_count, COUNT(*) AS total_count").
+				Where("arrival >= ?", start30).
+				Group("groupid").
+				Scan(&moderatedCounts)
 		}()
 
 		wg.Wait()
@@ -601,7 +666,10 @@ func ListGroups(c *fiber.Ctx) error {
 		}
 
 		var polyRows []PolyRow
-		db.Raw("SELECT id, poly, polyofficial FROM `groups` WHERE id IN ?", ids).Scan(&polyRows)
+		// Converted together with its
+		// identical sibling above: leaving one of two textually identical
+		// statements raw is the configuration that renumbers site IDs.
+		db.Table("groups").Select("id, poly, polyofficial").Where("id IN ?", ids).Scan(&polyRows)
 
 		polyMap := make(map[uint64]*PolyRow, len(polyRows))
 		for i := range polyRows {
@@ -650,7 +718,18 @@ func validateGeometry(wkt string) bool {
 	db := database.DBConn
 
 	var valid *int
-	result := db.Raw("SELECT ST_IsValid(ST_GeomFromText(?))", wkt).Scan(&valid)
+	// Bare scalar
+	// SELECT with no FROM at all - same BuildClauses={"SELECT"} mechanism as
+	// amp.go's bare-EXISTS conversions (see the comment there and the retired
+	// ormharness's bareexists_test.go (removed in d22ba1d6c)). .Table(...) is
+	// still required even
+	// though it never renders: without it GORM's schema-parse-failure branch
+	// rejects the statement for having no table set. "groups" is used purely
+	// to satisfy that check - it never appears in the rendered SQL, since
+	// FROM is excluded from BuildClauses.
+	tx := db.Table("groups").Select("ST_IsValid(ST_GeomFromText(?))", wkt)
+	tx.Statement.BuildClauses = []string{"SELECT"}
+	result := tx.Scan(&valid)
 
 	if result.Error != nil || valid == nil {
 		return false
@@ -662,37 +741,44 @@ func validateGeometry(wkt string) bool {
 // logGroupEdit inserts an audit log entry for group edit operations.
 func logGroupEdit(groupid uint64, byuser uint64, text string) {
 	db := database.DBConn
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, byuser, text) VALUES (NOW(), ?, ?, ?, ?, ?)",
-		log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_EDIT, groupid, byuser, text)
+	db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"),
+		"type":      log.LOG_TYPE_GROUP,
+		"subtype":   log.LOG_SUBTYPE_EDIT,
+		"groupid":   groupid,
+		"byuser":    byuser,
+		"text":      text,
+	})
 }
 
 type PatchGroupRequest struct {
-	ID                    uint64   `json:"id"`
-	Tagline               *string  `json:"tagline"`
-	Namefull              *string  `json:"namefull"`
-	Welcomemail           *string  `json:"welcomemail"`
-	Description           *string  `json:"description"`
-	Region                *string  `json:"region"`
-	AffiliationConfirmed  *string  `json:"affiliationconfirmed"`
-	Onhere                *int     `json:"onhere"`
-	Publish               *int     `json:"publish"`
-	Microvolunteering     *int     `json:"microvolunteering"`
-	Mentored              *int     `json:"mentored"`
-	Ontn                  *int     `json:"ontn"`
-	Onlovejunk            *int              `json:"onlovejunk"`
-	Profile               *uint64           `json:"profile"`
-	Settings              *json.RawMessage  `json:"settings"`
-	Rules                 *json.RawMessage  `json:"rules"`
+	ID                       uint64           `json:"id"`
+	Tagline                  *string          `json:"tagline"`
+	Namefull                 *string          `json:"namefull"`
+	Welcomemail              *string          `json:"welcomemail"`
+	Description              *string          `json:"description"`
+	Region                   *string          `json:"region"`
+	AffiliationConfirmed     *string          `json:"affiliationconfirmed"`
+	Onhere                   *int             `json:"onhere"`
+	Publish                  *int             `json:"publish"`
+	Microvolunteering        *int             `json:"microvolunteering"`
+	Microvolunteeringoptions *json.RawMessage `json:"microvolunteeringoptions"`
+	Mentored                 *int             `json:"mentored"`
+	Ontn                     *int             `json:"ontn"`
+	Onlovejunk               *int             `json:"onlovejunk"`
+	Profile                  *uint64          `json:"profile"`
+	Settings                 *json.RawMessage `json:"settings"`
+	Rules                    *json.RawMessage `json:"rules"`
 	// Admin/Support only fields
-	Lat                   *float64 `json:"lat"`
-	Lng                   *float64 `json:"lng"`
-	Altlat                *float64 `json:"altlat"`
-	Altlng                *float64 `json:"altlng"`
-	Nameshort             *string  `json:"nameshort"`
-	Licenserequired       *int     `json:"licenserequired"`
-	Poly                  *string  `json:"poly"`
-	Polyofficial          *string  `json:"polyofficial"`
-	Showonyahoo           *int     `json:"showonyahoo"`
+	Lat             *float64 `json:"lat"`
+	Lng             *float64 `json:"lng"`
+	Altlat          *float64 `json:"altlat"`
+	Altlng          *float64 `json:"altlng"`
+	Nameshort       *string  `json:"nameshort"`
+	Licenserequired *int     `json:"licenserequired"`
+	Poly            *string  `json:"poly"`
+	Polyofficial    *string  `json:"polyofficial"`
+	Showonyahoo     *int     `json:"showonyahoo"`
 }
 
 func PatchGroup(c *fiber.Ctx) error {
@@ -714,7 +800,7 @@ func PatchGroup(c *fiber.Ctx) error {
 
 	// Verify group exists
 	var groupCount int64
-	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", req.ID).Scan(&groupCount)
+	db.Table("groups").Where("id = ?", req.ID).Count(&groupCount)
 	if groupCount == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Group not found")
 	}
@@ -728,19 +814,19 @@ func PatchGroup(c *fiber.Ctx) error {
 
 	// Apply mod/owner settable fields
 	if req.Tagline != nil {
-		db.Exec("UPDATE `groups` SET tagline = ? WHERE id = ?", *req.Tagline, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("tagline", *req.Tagline)
 	}
 	if req.Namefull != nil {
-		db.Exec("UPDATE `groups` SET namefull = ? WHERE id = ?", *req.Namefull, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("namefull", *req.Namefull)
 	}
 	if req.Welcomemail != nil {
-		db.Exec("UPDATE `groups` SET welcomemail = ? WHERE id = ?", *req.Welcomemail, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("welcomemail", *req.Welcomemail)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE `groups` SET description = ? WHERE id = ?", *req.Description, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Region != nil {
-		db.Exec("UPDATE `groups` SET region = ? WHERE id = ?", *req.Region, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("region", *req.Region)
 	}
 	if req.AffiliationConfirmed != nil {
 		affConfirmed := *req.AffiliationConfirmed
@@ -750,74 +836,108 @@ func PatchGroup(c *fiber.Ctx) error {
 				break
 			}
 		}
-		db.Exec("UPDATE `groups` SET affiliationconfirmed = ?, affiliationconfirmedby = ? WHERE id = ?",
-			affConfirmed, myid, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"affiliationconfirmed": affConfirmed, "affiliationconfirmedby": myid})
 	}
 	if req.Onhere != nil {
-		db.Exec("UPDATE `groups` SET onhere = ? WHERE id = ?", *req.Onhere, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("onhere", *req.Onhere)
 	}
 	if req.Publish != nil {
-		db.Exec("UPDATE `groups` SET publish = ? WHERE id = ?", *req.Publish, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("publish", *req.Publish)
 	}
 	if req.Microvolunteering != nil {
-		db.Exec("UPDATE `groups` SET microvolunteering = ? WHERE id = ?", *req.Microvolunteering, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("microvolunteering", *req.Microvolunteering)
+	}
+	if req.Microvolunteeringoptions != nil {
+		db.Table("groups").Where("id = ?", req.ID).Update("microvolunteeringoptions", string(*req.Microvolunteeringoptions))
 	}
 	if req.Mentored != nil {
-		db.Exec("UPDATE `groups` SET mentored = ? WHERE id = ?", *req.Mentored, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("mentored", *req.Mentored)
 	}
 	if req.Ontn != nil {
-		db.Exec("UPDATE `groups` SET ontn = ? WHERE id = ?", *req.Ontn, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("ontn", *req.Ontn)
 	}
 	if req.Onlovejunk != nil {
-		db.Exec("UPDATE `groups` SET onlovejunk = ? WHERE id = ?", *req.Onlovejunk, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("onlovejunk", *req.Onlovejunk)
 	}
 	if req.Profile != nil {
-		db.Exec("UPDATE `groups` SET profile = ? WHERE id = ?", *req.Profile, req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("profile", *req.Profile)
 		logGroupEdit(req.ID, myid, "Profile")
 	}
 	if req.Settings != nil {
-		db.Exec("UPDATE `groups` SET settings = ? WHERE id = ?", string(*req.Settings), req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("settings", string(*req.Settings))
 		logGroupEdit(req.ID, myid, "Settings")
 	}
 	if req.Rules != nil {
-		db.Exec("UPDATE `groups` SET rules = ? WHERE id = ?", string(*req.Rules), req.ID)
+		db.Table("groups").Where("id = ?", req.ID).Update("rules", string(*req.Rules))
 		logGroupEdit(req.ID, myid, "Rules")
 	}
 
 	// Admin/Support only fields
 	if isAdmin {
 		if req.Lat != nil {
-			db.Exec("UPDATE `groups` SET lat = ? WHERE id = ?", *req.Lat, req.ID)
+			// Converted together with
+			// its identical twin in CreateGroup: a half-converted pair renumbers
+			// the survivor's site ID, so gate (h) refuses the split state.
+			db.Table("groups").Where("id = ?", req.ID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
-			db.Exec("UPDATE `groups` SET lng = ? WHERE id = ?", *req.Lng, req.ID)
+			// Converted together with
+			// its identical twin in CreateGroup (adbbb9dadd0c): a half-converted
+			// pair renumbers the survivor's site ID, so gate (h) refuses the
+			// split state.
+			db.Table("groups").Where("id = ?", req.ID).Update("lng", *req.Lng)
 		}
 		if req.Altlat != nil {
-			db.Exec("UPDATE `groups` SET altlat = ? WHERE id = ?", *req.Altlat, req.ID)
+			db.Table("groups").Where("id = ?", req.ID).Update("altlat", *req.Altlat)
 		}
 		if req.Altlng != nil {
-			db.Exec("UPDATE `groups` SET altlng = ? WHERE id = ?", *req.Altlng, req.ID)
+			db.Table("groups").Where("id = ?", req.ID).Update("altlng", *req.Altlng)
 		}
 		if req.Nameshort != nil {
-			db.Exec("UPDATE `groups` SET nameshort = ? WHERE id = ?", *req.Nameshort, req.ID)
+			db.Table("groups").Where("id = ?", req.ID).Update("nameshort", *req.Nameshort)
 		}
 		if req.Licenserequired != nil {
-			db.Exec("UPDATE `groups` SET licenserequired = ? WHERE id = ?", *req.Licenserequired, req.ID)
+			db.Table("groups").Where("id = ?", req.ID).Update("licenserequired", *req.Licenserequired)
 		}
+		// poly (DPA) / polyofficial (CGA). An empty string means "clear this area" - it must be
+		// allowed (a moderator removing the DPA), so skip geometry validation and store NULL rather
+		// than feeding "" to validateGeometry (which returns 400). Matches V1 PHP Group::setPrivate.
+		polyChanged := false
 		if req.Poly != nil {
-			if !validateGeometry(*req.Poly) {
-				return fiber.NewError(fiber.StatusBadRequest, "Invalid poly geometry")
+			if *req.Poly == "" {
+				db.Table("groups").Where("id = ?", req.ID).Update("poly", gorm.Expr("NULL"))
+			} else {
+				if !validateGeometry(*req.Poly) {
+					return fiber.NewError(fiber.StatusBadRequest, "Invalid poly geometry")
+				}
+				db.Table("groups").Where("id = ?", req.ID).Update("poly", *req.Poly)
 			}
-			db.Exec("UPDATE `groups` SET poly = ? WHERE id = ?", *req.Poly, req.ID)
+			polyChanged = true
 		}
 		if req.Polyofficial != nil {
-			if !validateGeometry(*req.Polyofficial) {
-				return fiber.NewError(fiber.StatusBadRequest, "Invalid polyofficial geometry")
+			if *req.Polyofficial == "" {
+				db.Table("groups").Where("id = ?", req.ID).Update("polyofficial", gorm.Expr("NULL"))
+			} else {
+				if !validateGeometry(*req.Polyofficial) {
+					return fiber.NewError(fiber.StatusBadRequest, "Invalid polyofficial geometry")
+				}
+				db.Table("groups").Where("id = ?", req.ID).Update("polyofficial", *req.Polyofficial)
 			}
-			db.Exec("UPDATE `groups` SET polyofficial = ? WHERE id = ?", *req.Polyofficial, req.ID)
+			polyChanged = true
+		}
+		if polyChanged {
+			// Recompute the spatial index so the poly/polyofficial change takes effect. When the DPA
+			// (poly) is cleared the group falls back to the CGA (polyofficial), then to POINT(0 0).
+			// SRID is folded into the gorm.Expr string via fmt.Sprintf, the
+			// same shipped idiom location.go's locations_spatial REPLACE
+			// sites use (25b7b92e33fd/6f1d6543e5c0).
+			db.Table("groups").
+				Where("id = ?", req.ID).
+				Update("polyindex", gorm.Expr(fmt.Sprintf("ST_GeomFromText(COALESCE(poly, polyofficial, 'POINT(0 0)'), %d)", utils.SRID)))
 		}
 		if req.Showonyahoo != nil {
-			db.Exec("UPDATE `groups` SET showonyahoo = ? WHERE id = ?", *req.Showonyahoo, req.ID)
+			db.Table("groups").Where("id = ?", req.ID).Update("showonyahoo", *req.Showonyahoo)
 		}
 	}
 
@@ -864,44 +984,57 @@ func CreateGroup(c *fiber.Ctx) error {
 
 	if !isAdmin {
 		var modCount int64
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modCount)
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Count(&modCount)
 		if modCount == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Must be a moderator to create groups")
 		}
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// GORM's map-Create
+	// reads the id back from the same sql.Result the INSERT returned (under
+	// the map key "@id"), the same write-connection guarantee the old
+	// sqlDB.Exec()+LastInsertId() call had. SRID folded into the gorm.Expr
+	// string via fmt.Sprintf, the shipped idiom this file's PatchGroup
+	// (site 548090e97d00) and location.go's locations_spatial REPLACE sites
+	// already use.
+	row := map[string]interface{}{
+		"nameshort": req.Name,
+		"namefull":  req.Name,
+		"type":      req.GroupType,
+		"publish":   gorm.Expr("1"),
+		"onhere":    gorm.Expr("1"),
+		"polyindex": gorm.Expr(fmt.Sprintf("ST_GeomFromText('POINT(0 0)', %d)", utils.SRID)),
 	}
-	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, publish, onhere, polyindex) VALUES (?, ?, ?, 1, 1, ST_GeomFromText('POINT(0 0)', %d))", utils.SRID),
-		req.Name, req.Name, req.GroupType)
-	if err != nil {
+	if err := db.Table("groups").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create group")
 	}
 
 	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
+	if idInt64, ok := row["@id"].(int64); ok && idInt64 > 0 {
+		newID = uint64(idInt64)
 	}
 
 	// Admin/support can set lat/lng.
 	if isAdmin {
 		if req.Lat != nil {
-			db.Exec("UPDATE `groups` SET lat = ? WHERE id = ?", *req.Lat, newID)
+			db.Table("groups").Where("id = ?", newID).Update("lat", *req.Lat)
 		}
 		if req.Lng != nil {
-			db.Exec("UPDATE `groups` SET lng = ? WHERE id = ?", *req.Lng, newID)
+			// Converted together with
+			// its identical twin in PatchGroup (6a4f5b776c87): a half-converted
+			// pair renumbers the survivor's site ID, so gate (h) refuses the
+			// split state.
+			db.Table("groups").Where("id = ?", newID).Update("lng", *req.Lng)
 		}
 	}
 
 	// Creator becomes Owner.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)", myid, newID, utils.ROLE_OWNER, utils.COLLECTION_APPROVED)
+	db.Table("memberships").Create(map[string]interface{}{
+		"userid":     myid,
+		"groupid":    newID,
+		"role":       utils.ROLE_OWNER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }
-

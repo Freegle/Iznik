@@ -1097,3 +1097,204 @@ Using Claude for text-only is cheap (text tokens only, ~1/10th of vision cost) a
 - `eee:export-training` command (design above; implement once Phase 1 data is collected)
 - Ollama fine-tuning (Ollama is installed on Windows host, accessible at `host.docker.internal:11434`; usable for inference now, fine-tuning via separate tooling)
 - Chat data (designed in, enabled by `EEE_USE_CHAT_DATA=true` when privacy reviewed)
+
+---
+
+## Phase 2: Human ground truth + production volunteer labelling (2026-05-13 → 2026-06-05)
+
+After the three-model image comparison stabilised (2026-05-03), the project moved from **cross-model agreement** as a quality signal to **real human ground truth**. Three streams of work:
+
+1. **Material-Focus text-only filter** — separate but related project that derived an "is electrical" filter from historical Freegle CSV exports, validated against the same human labels. Lives in the `Freegle/material-focus` repo, documented in `material-focus-methodology.md` there.
+2. **Eee-browser human review interface** — Natalie used the web app on Fly.io to blind-label items, producing the canonical 200-row EEE truth set.
+3. **`EEELabel` micro-volunteering task** — production deployment that lets ordinary Freegle members label Condition / Weight bucket / Size bucket on items the classifier has already seen, so the dashboard can score every model field-by-field.
+
+### Stream 1 — Material-Focus text filter (sister project)
+
+The Material-Focus charity wanted historical electrical-only data from Freegle going back to 2012. The image classifier above only works on items with photos; for the historical CSV (7.3M rows, many text-only) a text-only pipeline was built:
+
+| Stage | Tool | Output |
+|---|---|---|
+| 1. Regex exclusion | `scripts/filter_electrical.py` (23 successive passes) | 7.3M → 2.17M rows (~29.7%) |
+| 2. LLM annotation of a 100K sample | Claude Haiku via `claude` CLI (~2.5h batch) | `data/llm_checkpoint.jsonl` |
+| 3. TF-IDF + logistic regression | `scripts/train_classifier.py` (sklearn) | `data/classifier.pkl` + final `freegle_electrical_v2.csv.gz` (1.21M rows) |
+
+Two model layers because the LLM is expensive at scale but the TF-IDF generalises its labels to the full dataset for free (~25× cheaper, runs in seconds).
+
+**Validation against Natalie's 200 labels** (see stream 2):
+- End-to-end (regex + TF-IDF @ threshold 0.4): **0% contamination, 93% recall**.
+- Haiku alone vs human (on overlapping items): **99.4% agreement** — confirms the LLM labels were reliable training data.
+- TF-IDF alone fed raw items: 31.6% contamination — *but* this is misleading: it's the result of asking the classifier to handle items the regex had already excluded ("TV stand", "Computer Desk"). In the actual pipeline it never sees them.
+
+The validation also exposed three regex bugs (Light bulbs / Sky Box / Set-top box wrongly excluded), fixed in `material-focus@a46210f`. End-to-end recall went 87.7% → 93.0%.
+
+### Stream 2 — Eee-browser human review (Natalie's labels)
+
+Standalone Nuxt 3 app deployed to Fly.io (`freegle-eee-browser.fly.dev`). Lets named reviewers blind-label one field at a time across the canonical sample set. EEE field was the focus:
+
+- **200 labels total** from Natalie over a few sessions
+- **193 reached quorum** (7 were "unsure")
+- Distribution: 57 EEE / 136 not-EEE / 7 unsure → 29.5% EEE in the sample
+
+Same labels also used as ground truth for Material-Focus (stream 1) — committed as `material-focus/data/human_labels_natalie_200.json`.
+
+**Vision model accuracy vs Natalie (unchanged today):**
+
+| Model | Accuracy |
+|---|---:|
+| Claude Sonnet 4.6 | **97.7%** |
+| Qwen 2.5 VL 72B | 96.7% |
+| Gemini 2.0 Flash Lite | 96.3% |
+| GPT-4o | 89.8% |
+
+The earlier "cross-model agreement" composite-score table was directionally right but underestimated Gemini's true accuracy — it scored ~96% against the human, much closer to Claude's 98% than its 71.9% cross-model composite suggested. Confirms Gemini as the production choice on cost.
+
+**Submit-flag bug caught in real use** (`74530e16d`): after submitting a label the next item loaded but the buttons stayed disabled because `submitting.value` was only reset in the catch branch, not on success. One-line fix.
+
+**Home-page accuracy column switched** (`9161c94ff`): previously the home page ranked models by "% agreement with Sonnet", with Sonnet shown as `reference`. After 50+ quorum labels we switched to real human accuracy as the source — Sonnet itself now gets scored (97.9%) and is no longer special.
+
+### Stream 3 — `EEELabel` micro-volunteering task
+
+Built so ordinary volunteers can extend the labelled set well beyond what one reviewer can hand-label, and to cover the three fields the models disagree on most: **Condition, Weight bucket, Size bucket**. (EEE binary was Natalie's; photo quality / value / material / brand are deliberately not asked — see PR #496 description for rationale.)
+
+Each challenge shows one item (photo + cleaned title) and asks for all three labels in one submission.
+
+#### Pieces shipped (PR #496 + master follow-ups)
+
+| Piece | Path |
+|---|---|
+| Vue component | `iznik-nuxt3/components/MicroVolunteeringEeeLabel.vue` |
+| Dispatch wiring | `iznik-nuxt3/components/MicroVolunteering.vue` |
+| Go challenge selector + POST handler | `iznik-server-go/microvolunteering/microvolunteering.go` |
+| Production schema migration | `iznik-batch/database/migrations/2026_05_26_000001_add_eee_label_to_microactions.php` |
+| Labels sync command (prod MySQL → Fly SQLite) | `iznik-batch/app/Console/Commands/Eee/EeeSyncMvLabelsCommand.php` |
+| Labels sync endpoint on eee-browser | `eee-browser/server/api/review/sync-mv-labels.post.ts` |
+
+The migration appends `EEELabel` to the `microactions.actiontype` enum and adds four nullable columns (`eee_attachment_id`, `eee_condition`, `eee_weight`, `eee_size`) via `ALGORITHM=INSTANT` (no row rewrite). Cron pushes new labels to the eee-browser SQLite every 10 minutes; idempotent upsert on `(messageid, attid, field, labeller)`. Labeller name on the dashboard is `mv-<userid>` per Freegle user, so the existing per-reviewer quorum logic handles multi-user voting naturally.
+
+#### Bugs caught from production telemetry
+
+Three follow-on fixes after first volunteers used the task:
+
+- **Query perf** (master `dcdb5af2b`) — `getEEELabelChallenge` was full-scanning `messages_attachments` (8.6M rows, 20.7s on prod) and tripping the API's 5s timeout. Rewrote to drive off `messages.arrival` index with a 30-day window: **~18 ms (~1100× faster)**.
+- **Multi-photo dedup** (master `40cdaa9a7`) — an item with multiple attachments was getting one challenge per photo (the Cookology fridge labelled twice by one volunteer). Now picks one attachment per message via `ORDER BY \`primary\` DESC, id ASC` — same canonical-primary rule used by `message_list.go:255` for thumbnails.
+- **Restrict to classified set** (PR #577 + bundle-CSV in master `4e48fae7c`) — early labels landed on items the classifier had never run on, so they couldn't be scored. Added `eee_classified_attachments` MySQL pointer table (5,371 rows seeded from a checked-in CSV snapshot); `getEEELabelChallenge` joins against it so volunteers only label items the model has classified.
+
+#### Classification sync — closing the dashboard-scoring loop
+
+The eee-browser dashboard joins MV labels × model classifications in its own SQLite. That snapshot was older (1,979 msgids, max 120,133,840) than the iznik-batch dev SQLite (~5,400 msgids, max 120,191,864). After PR #577 restricted MV to the larger classified set, volunteers were labelling items the dashboard had no model output for — labels accumulated with no accuracy scoring.
+
+Fix (master `9f6bb3dc1`): a second sync command in the same shape as the labels sync, pushing the other direction.
+
+- `iznik-batch/app/Console/Commands/Eee/EeeSyncClassificationsCommand.php` reads rows from the dev `eee_classifications` SQLite at prompt versions 1.4.1/1.4.2, POSTs in 200-row batches.
+- `eee-browser/server/api/admin/sync-classifications.post.ts` receives the batch and `DELETE-then-INSERT` keyed on `(messageid, attid, model, prompt_version)`. Idempotent; safe to re-run.
+
+Pushed 11,706 rows in one manual run. Dashboard immediately started showing per-field accuracy for Condition / Weight / Size.
+
+#### Live results (2026-06-04 snapshot)
+
+| Metric | Value |
+|---|---|
+| EEELabel microactions on prod | **433** |
+| Distinct volunteers | **56** |
+| Distinct attachments labelled | 268 |
+| Quorum-reached items: Condition / Weight / Size | 218 / 215 / 215 |
+| Labels in last 24h on items in classified set | **100%** (PR #577 working) |
+
+Power users emerged immediately: one volunteer labelled 5 items in 67 seconds the first day after the task went live.
+
+**Vision-model accuracy vs volunteer quorum (Gemini Flash Lite — the only model with classifications across the newer items):**
+
+| Field | Quorum | Gemini accuracy |
+|---|---:|---:|
+| Condition | 218 | **94%** |
+| Weight (kg) | 215 | 58% |
+| Size | 215 | 76% |
+
+EEE itself (Natalie's labels) is unchanged: Sonnet 98 / Qwen 97 / Gemini 96 / GPT-4o 90.
+
+To get Sonnet / Qwen / GPT-4o scored on Condition / Weight / Size as well, those three models need to be re-run against the newer items (post-2026-05-07). That's straightforward — `php artisan eee:classify-new` — but was blocked at the time by a separate `EeeClassificationService::getItemType` signature regression (fixed in `3ef0121ea`) and by the dev container running out of direct-API credit (workaround: use a model with credit, or set up the `claude-bridge` worker).
+
+### Summary of the validation cascade
+
+```
+text + image classifications  ───┐
+                                  │  →  validated against
+Natalie's 200 EEE labels      ───┤        (= ground truth, 2026-05-13)
+                                  │
+volunteer MV Condition/Weight/Size ── extends to 215+ quorum items, 56 reviewers (live)
+```
+
+Three independent signals now line up:
+
+- **Cross-model agreement** (early; 2026-05-03 composite scores)
+- **Per-field accuracy vs Natalie** (2026-05-13; Sonnet 98 / Gemini 96 etc.)
+- **Per-field accuracy vs MV quorum** (live; Gemini 94 on Condition, 76 on Size)
+
+Each new signal has confirmed the previous one's direction without overturning it. The remaining work to make the dashboard tell a complete model-by-model story is mechanical: re-run the slower models against the newer item set.
+
+#### Live results (2026-06-11, 14d after launch)
+
+Live tunnel into prod `microactions`:
+
+| Metric | Value |
+|---|---:|
+| EEELabel microactions | **832** |
+| Distinct volunteers | **97** |
+| Distinct items labelled | 399 |
+| Items at quorum (≥3 labels) | **211 (53%)** |
+| Daily rate | 30–80 labels/day |
+
+Label distributions (n=832):
+
+- **Condition**: reusable 78%, unsure 18%, damaged 4%
+- **Weight**: under_1kg 25%, 1–5kg 25%, 5–20kg 19%, unsure 14%, 20–100kg 10%, over_100kg 6%
+- **Size**: large 29%, medium 25%, small 25%, unsure 14%, tiny 7%
+
+Volunteer "unsure" rate on Condition is 18% — notably higher than Weight (14%) and Size (14%), suggesting the condition prompt could be clearer.
+
+#### Model vs human agreement (current dashboard)
+
+| Field | n (ground truth) | Model | Agree |
+|---|---:|---|---:|
+| EEE (is-electrical) | 193 (Natalie) | Claude Sonnet 4.6 | **98%** |
+| EEE | 193 | Qwen2.5-VL-72B | 97% |
+| EEE | 193 | Gemini 2.0 Flash-Lite | 96% |
+| EEE | 193 | GPT-4o | 90% |
+| Condition | 232 (MV plurality) | Gemini 2.0 Flash-Lite | **93%** |
+| Size | 228 (MV) | Gemini 2.0 Flash-Lite | 72% |
+| Weight | 227 (MV) | Gemini 2.0 Flash-Lite | **65%** |
+
+Verdict:
+
+- **Is-electrical** is solved. Sonnet 4.6 (98%) and the much cheaper Gemini Flash-Lite (96%) are both well past prod-usable; pick on cost.
+- **Condition** at 93% matches the human prior (4% damaged) without over-flagging.
+- **Size** (72%) is mediocre; most disagreement is off-by-one in the 5-bucket scale. Acceptable for gross filtering.
+- **Weight** (65%) is the weak link. Image-only weight estimation is hard for humans too — volunteer "unsure" is highest on this field. The model may already be near the human ceiling; worth measuring inter-human agreement before chasing this further.
+
+#### Dataset dedupe finding (2026-07-01)
+
+Investigating the raw 7.3M-row `freegle_date.csv` (Offers + Wanteds since 2015) turned up material duplication that inflates the headline count:
+
+- **Same-day exact-subject collisions**: 632k groups covering 1.76M rows (24%).
+- **After stripping `[Group]` prefix + normalising**: 688k groups covering 1.90M rows.
+- **`Re:` reply captures**: only 1,664 rows (0.02%) — safe to drop; sample confirmed all are Yahoo-Groups reply-to-list captures, not real listings.
+- **Rippling contribution**: none — rippling went live June 2026, so pre-2026 dupes are all manual cross-post + relist + Yahoo Groups mail duplication.
+
+The correct dedupe key is `(fromuser, day, normalised subject)`. Measured live via V2 tunnel over all `messages` since 2015-01-01:
+
+| Method | Rows | Distinct listings | Removed |
+|---|---:|---:|---:|
+| Raw messages rows | 7,523,746 | — | — |
+| `(fromuser, day, full-subject)` | | 6,336,401 | **1,187,345 (15.8%)** |
+| `(fromuser, day, `[Group]`-stripped subject)` | | **6,266,134** | **1,257,612 (16.7%)** |
+
+The extra ~70k rows dropped between rows 2 and 3 are the cross-post pattern (same user + same second, N group-prefixed copies).
+
+Diagnostic anchors from the live DB:
+
+- **"OFFER Digital Camera Liberton" ×3** (2015-12-31): all `fromuser=2178238`, posted at 15:55/15:58/16:00. Same physical camera, three duplicate submissions (retry). Later same-day `TAKEN` for `Ricoh digital camera` confirmed.
+- **"OFFER: chest freezer" ×3** (2015-12-31, three neighbouring groups): all `fromuser=142567`, posted at exactly the same second across Letchworth / WGC / Stevenage. Classic manual cross-post.
+
+Both collapse cleanly under the user-aware key.
+
+For the impact report, the honest headline is **~6.3M distinct listings** (from 7.5M raw post rows), 2015 to date. The material-focus 7.3M → 2.17M → 1.21M cascade still holds directionally, but each of those numbers should be re-derived from the user-aware deduped base (2026-07-01 fresh dump: `freegle_electrical_v3.csv.gz` in `~/Downloads`, same 3-column format).

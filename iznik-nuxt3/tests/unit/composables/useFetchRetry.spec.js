@@ -168,6 +168,129 @@ describe('useFetchRetry', () => {
       vi.useRealTimers()
     })
 
+    it('should retry a 504 Gateway Timeout once, after a 10s delay', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 504,
+          statusText: 'Gateway Timeout',
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+
+      // The 504 backoff is 10s, much longer than the usual attempt * 1000ms.
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const result = await promise
+      expect(result).toEqual([200, responseData])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it('should give up after a second 504 rather than stacking more retries', async () => {
+      mockFetch.mockResolvedValue({
+        status: 504,
+        statusText: 'Gateway Timeout',
+        json: vi.fn().mockRejectedValue(new Error('no body')),
+      })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+      promise.catch(() => {}) // Avoid unhandled rejection noise before we assert.
+
+      await vi.advanceTimersByTimeAsync(30000)
+
+      await expect(promise).rejects.toThrow('Request failed with 504')
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it('should retry a 429 with backoff and succeed once the burst clears', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 429,
+          statusText: 'Too Many Requests',
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+
+      // The 429 backoff is 2000 * (attempt + 1) = 2s on the first retry.
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(500)
+
+      const result = await promise
+      expect(result).toEqual([200, responseData])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it('should honour Retry-After on a 429', async () => {
+      const responseData = { success: true }
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 429,
+          statusText: 'Too Many Requests',
+          headers: { get: vi.fn().mockReturnValue('5') },
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce(responseData),
+        })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+
+      await vi.advanceTimersByTimeAsync(4000)
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1000)
+
+      const result = await promise
+      expect(result).toEqual([200, responseData])
+      expect(mockFetch).toHaveBeenCalledTimes(2)
+      vi.useRealTimers()
+    })
+
+    it('should reject a persistent 429 via the overall attempt cap', async () => {
+      mockFetch.mockResolvedValue({
+        status: 429,
+        statusText: 'Too Many Requests',
+        json: vi.fn().mockRejectedValue(new Error('no body')),
+      })
+
+      vi.useFakeTimers()
+      const retryFetch = fetchRetry(mockFetch)
+      const promise = retryFetch('http://test.com')
+      promise.catch(() => {}) // Avoid unhandled rejection noise before we assert.
+
+      // Backoff is 2000 * (attempt + 1); 10 retries total ~= 110s.
+      await vi.advanceTimersByTimeAsync(150000)
+
+      await expect(promise).rejects.toThrow('Too many retries, give up')
+      expect(mockFetch).toHaveBeenCalledTimes(11)
+      vi.useRealTimers()
+    })
+
     it('should retry on "load failed" error message', async () => {
       const responseData = { success: true }
 
@@ -329,7 +452,6 @@ describe('useFetchRetry', () => {
   describe('retry delay calculation', () => {
     it('should use exponential delay: attempt * 1000', async () => {
       const responseData = { success: true }
-      const delayCalls = []
 
       mockFetch
         .mockRejectedValueOnce(new Error('Network error'))
@@ -363,10 +485,143 @@ describe('useFetchRetry', () => {
       })
 
       const retryFetch = fetchRetry(mockFetch)
-      const init = { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+      const init = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }
       await retryFetch('http://test.com/api', init)
 
       expect(mockFetch).toHaveBeenCalledWith('http://test.com/api', init)
+    })
+  })
+
+  describe('SSR safety', () => {
+    // The retry decision callback runs on a later tick, where server-side
+    // (especially Netlify prerender) there is no active pinia any more:
+    // useMiscStore() itself throws, the wrapper promise never settles, and
+    // the throw surfaces as an unhandledRejection (seen as 12 rejections per
+    // Netlify build). The store access must therefore stay gated behind
+    // import.meta.client. This can't be asserted behaviourally here because
+    // the vitest import-meta pre-transform compiles import.meta.client to
+    // `true` in composables, so we assert the source shape instead (same
+    // pattern as tests/unit/config/modernPolyfills.spec.js).
+    it('only touches the misc store behind an import.meta.client gate', async () => {
+      const { readFileSync } = await import('fs')
+      const { fileURLToPath } = await import('url')
+      const { dirname, resolve } = await import('path')
+      const src = readFileSync(
+        resolve(
+          dirname(fileURLToPath(import.meta.url)),
+          '../../../composables/useFetchRetry.js'
+        ),
+        'utf-8'
+      )
+      const gate = src.indexOf('if (import.meta.client)')
+      const storeCall = src.indexOf('useMiscStore()')
+      expect(gate).toBeGreaterThan(-1)
+      expect(storeCall).toBeGreaterThan(gate)
+    })
+  })
+
+  // retryOn() used to await waitForOnline() as its very first act, before it
+  // had even looked at what came back.  A member whose connection dropped in
+  // the moment between sending a request and its reply arriving therefore had
+  // a perfectly good response thrown away: the online check never resolved, so
+  // the success branch was never reached and the promise never settled.
+  //
+  // Live case (2026-08-10, user 3512849): POST /apiv2/image returned 200 with
+  // image id 45508630, the app flipped offline, and PhotoUploader's
+  // `await imageStore.post()` never returned.  The photo stayed uploading:true
+  // at 100%, compose persisted it, and because the give flow gates Next on
+  // anyUploading she could not post at all until the app's storage was
+  // cleared.  Waiting for the connection is only meaningful before we make
+  // another attempt, never before reading a reply we already hold.
+  describe('connection loss while a response is in flight', () => {
+    it('delivers a response that has already arrived even if the connection check never resolves', async () => {
+      miscStore.waitForOnline = vi.fn(() => new Promise(() => {}))
+
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        json: vi.fn().mockResolvedValueOnce({ id: 45508630 }),
+      })
+
+      const retryFetch = fetchRetry(mockFetch)
+
+      let settled = null
+      retryFetch('http://test.com/image').then(
+        (r) => {
+          settled = r
+        },
+        (e) => {
+          settled = e
+        }
+      )
+
+      await vi.waitFor(() => expect(settled).not.toBeNull(), { timeout: 2000 })
+
+      expect(settled).toEqual([200, { id: 45508630 }])
+    })
+
+    it('reports a client error that has already arrived even if the connection check never resolves', async () => {
+      miscStore.waitForOnline = vi.fn(() => new Promise(() => {}))
+
+      mockFetch.mockResolvedValueOnce({
+        status: 404,
+        json: vi.fn().mockResolvedValueOnce({ error: 'nope' }),
+      })
+
+      const retryFetch = fetchRetry(mockFetch)
+
+      let settled = null
+      retryFetch('http://test.com/image').then(
+        () => {
+          settled = 'resolved'
+        },
+        (e) => {
+          settled = e
+        }
+      )
+
+      await vi.waitFor(() => expect(settled).not.toBeNull(), { timeout: 2000 })
+
+      expect(settled).toBeInstanceOf(Error)
+      expect(settled).not.toBe('resolved')
+    })
+
+    it('still waits for the connection before making another attempt', async () => {
+      let releaseOnline
+      const onlineGate = new Promise((resolve) => {
+        releaseOnline = resolve
+      })
+      miscStore.waitForOnline = vi.fn(() => onlineGate)
+
+      mockFetch
+        .mockRejectedValueOnce(new Error('Failed to fetch'))
+        .mockResolvedValueOnce({
+          status: 200,
+          json: vi.fn().mockResolvedValueOnce({ ok: true }),
+        })
+
+      const retryFetch = fetchRetry(mockFetch)
+
+      let settled = null
+      retryFetch('http://test.com/image').then((r) => {
+        settled = r
+      })
+
+      // First attempt failed, so we are about to retry - and must not until we
+      // believe we have a connection again.
+      await vi.waitFor(
+        () => expect(miscStore.waitForOnline).toHaveBeenCalled(),
+        { timeout: 2000 }
+      )
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      expect(settled).toBeNull()
+
+      releaseOnline()
+
+      await vi.waitFor(() => expect(settled).not.toBeNull(), { timeout: 5000 })
+      expect(settled).toEqual([200, { ok: true }])
     })
   })
 })

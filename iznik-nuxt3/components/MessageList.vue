@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div ref="feedRoot">
     <h2 v-if="group && showGroupHeader" class="visually-hidden">
       Community Information
     </h2>
@@ -7,21 +7,76 @@
       v-if="group && showGroupHeader"
       :group="group"
       show-join
-      :show-give-find="showGiveFind"
+      :show-give-ask="showGiveAsk"
     />
     <h2 class="visually-hidden">List of wanteds and offers</h2>
     <div id="visobserver" v-observe-visibility="visibilityChanged" />
 
-    <div
-      v-if="
-        initialFetchDone &&
-        selectedSort === 'Unseen' &&
-        showCountsUnseen &&
-        me
-      "
-    >
+    <!-- The viewer's own posts, collapsed. They are still first in the feed order; this just
+         stops several of your own cards standing between you and everything new. -->
+    <div v-if="ownPostsRowLabel" class="ownposts">
+      <button
+        type="button"
+        class="ownposts__toggle"
+        :aria-expanded="ownPostsExpanded"
+        aria-controls="ownposts-list"
+        @click="ownPostsExpanded = !ownPostsExpanded"
+      >
+        <v-icon :icon="ownPostsExpanded ? 'chevron-down' : 'chevron-right'" />
+        {{ ownPostsRowLabel }}
+      </button>
+      <!-- Through ScrollGrid, not a plain v-for: the grid is what gives the cards the feed's
+           two-column tile layout (and one column in landscape/on desktop). Rendered directly
+           they came out full-width and stacked, twice the height of the cards below them.
+           initial-count is the whole set, since expanding is an explicit request to see them
+           all and there are only ever a handful. -->
+      <ScrollGrid
+        v-if="ownPostsExpanded"
+        id="ownposts-list"
+        :items="ownPosts"
+        key-field="id"
+        :loading="loading"
+        :distance="distance"
+        :initial-count="ownPosts.length"
+      >
+        <template #item="{ item: m, index: ix }">
+          <div
+            :id="'messagewrapper-' + m.id"
+            :ref="'messagewrapper-' + m.id"
+            class="messagewrapper"
+          >
+            <Suspense>
+              <OurMessage
+                :id="m.id"
+                :matchedon="m.matchedon"
+                :preload="ix < 2"
+                record-view
+                @view="onCardView(m.id)"
+                @not-found="messageNotFound(m.id)"
+              />
+              <template #fallback>
+                <MessageSkeleton />
+              </template>
+            </Suspense>
+          </div>
+        </template>
+      </ScrollGrid>
+    </div>
+
+    <!-- Deliberately NOT gated on selectedSort. The unseen/seen SPLIT below only makes
+         sense in Unseen sort, but "Mark seen" is the only way to clear the count without
+         scrolling every post into view, and the count is shown in the nav whatever the
+         sort. Gating both together left the 5,719 members whose saved browseSort is
+         Newest or Nearby with a count they could never clear (Discourse 10055). -->
+    <div v-if="initialFetchDone && showCountsUnseen && me">
+      <!-- Only announce new posts we can actually show. The count comes from the server
+           and is polled independently of the feed, so it can run ahead of the loaded list
+           (a post arriving after this page was fetched). Announcing it then puts "N new
+           post" directly above "YOU'RE UP TO DATE" with nothing in between - a promise the
+           page cannot keep. useFeedCountSync pulls the feed on a rise, so the usual case is
+           that the posts arrive a moment later and the banner appears with them. -->
       <MessageListCounts
-        v-if="browseCount && !search"
+        v-if="browseCount && unseenMessages.length && !search"
         :count="browseCount"
         @mark-seen="markSeen"
       />
@@ -34,10 +89,7 @@
          must not hide once shown, as toggling it on re-fetch causes CLS. -->
     <template
       v-if="
-        initialFetchDone &&
-        selectedSort === 'Unseen' &&
-        showCountsUnseen &&
-        me
+        initialFetchDone && selectedSort === 'Unseen' && showCountsUnseen && me
       "
     >
       <!-- Unseen messages grid -->
@@ -62,6 +114,7 @@
                 :matchedon="m.matchedon"
                 :preload="ix < 2"
                 record-view
+                @view="onCardView(m.id)"
                 @not-found="messageNotFound(m.id)"
               />
               <template #fallback>
@@ -97,6 +150,7 @@
                 :matchedon="m.matchedon"
                 :preload="ix < 2"
                 record-view
+                @view="onCardView(m.id)"
                 @not-found="messageNotFound(m.id)"
               />
               <template #fallback>
@@ -130,6 +184,7 @@
               :matchedon="m.matchedon"
               :preload="ix < 2"
               record-view
+              @view="onCardView(m.id)"
               @not-found="messageNotFound(m.id)"
             />
             <template #fallback>
@@ -147,24 +202,36 @@ import {
   computed,
   watch,
   defineAsyncComponent,
+  onMounted,
   onBeforeUnmount,
 } from 'vue'
-import dayjs from 'dayjs'
 import MessageListUpToDate from './MessageListUpToDate'
 import ScrollGrid from '~/components/ScrollGrid'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
+import { useNearbyStore } from '~/stores/nearby'
 import { throttleFetches } from '~/composables/useThrottle'
 import { useMe } from '~/composables/useMe'
+import { useScrollDepth } from '~/composables/useScrollDepth'
+import { useFeedCountSync } from '~/composables/useFeedCountSync'
+import {
+  partitionOwnPosts,
+  ownPostsLabel,
+} from '~/composables/useOwnPostsGroup'
+import {
+  deduplicateMessages,
+  findDuplicates,
+  dedupKey,
+} from '~/composables/useMessageDedup'
 
-const OurMessage = defineAsyncComponent(() =>
-  import('~/components/OurMessage.vue')
+const OurMessage = defineAsyncComponent(
+  () => import('~/components/OurMessage.vue')
 )
-const GroupHeader = defineAsyncComponent(() =>
-  import('~/components/GroupHeader.vue')
+const GroupHeader = defineAsyncComponent(
+  () => import('~/components/GroupHeader.vue')
 )
-const MessageSkeleton = defineAsyncComponent(() =>
-  import('~/components/MessageSkeleton.vue')
+const MessageSkeleton = defineAsyncComponent(
+  () => import('~/components/MessageSkeleton.vue')
 )
 
 const MIN_TO_SHOW = 10
@@ -219,7 +286,7 @@ const props = defineProps({
     required: false,
     default: true,
   },
-  showGiveFind: {
+  showGiveAsk: {
     type: Boolean,
     required: false,
     default: false,
@@ -250,7 +317,65 @@ const emit = defineEmits(['update:none', 'update:visible'])
 
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()
-const { me, myid } = useMe()
+const nearbyStore = useNearbyStore()
+const { me, myid, myGroups: myMemberships } = useMe()
+
+// Browse-feed scroll-depth instrumentation: record how far down the feed this
+// session scrolls. 'search' vs 'browse' so the sysadmin "Scrolling" tab can tell
+// the two feeds apart. The composable debounces the send and upserts one row per
+// session (keyed on its session id), so repeat sends never double-count.
+const runtimeConfig = useRuntimeConfig()
+const { record: recordScrollDepth } = useScrollDepth(
+  runtimeConfig?.public?.APIv2,
+  () => (props.search ? 'search' : 'browse')
+)
+
+// Record the furthest feed position actually reached as the member scrolls -
+// not just at infinite-scroll batch boundaries (handleLoadMore), so even small
+// scrolls register. The message wrappers are in feed order, so the furthest one
+// whose top has entered the viewport is the deepest position reached; binary
+// search keeps this to O(log n) layout reads. The composable debounces the send.
+const feedRoot = ref(null)
+let scrollDepthTimer = null
+function captureScrollDepth() {
+  const root = feedRoot.value
+  if (!root || typeof window === 'undefined') return
+  const wrappers = root.querySelectorAll('.messagewrapper')
+  if (!wrappers.length) return
+  const vh = window.innerHeight || 0
+  let lo = 0
+  let hi = wrappers.length - 1
+  let furthest = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (wrappers[mid].getBoundingClientRect().top < vh) {
+      furthest = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  if (furthest >= 0) {
+    recordScrollDepth(furthest, wrappers.length)
+  }
+}
+function onFeedScroll() {
+  if (scrollDepthTimer) clearTimeout(scrollDepthTimer)
+  scrollDepthTimer = setTimeout(captureScrollDepth, 200)
+}
+onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('scroll', onFeedScroll, { passive: true })
+    // Count what's already on screen at landing (reached without scrolling).
+    captureScrollDepth()
+  }
+})
+onBeforeUnmount(() => {
+  if (scrollDepthTimer) clearTimeout(scrollDepthTimer)
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('scroll', onFeedScroll)
+  }
+})
 
 // Get the initial messages to show in a single call.
 // Wait for fetch to complete before enabling the split view (unseen/seen),
@@ -267,6 +392,23 @@ if (initialIds?.length) {
   })
 } else {
   initialFetchDone.value = true
+}
+
+// Batch-fetch the groups referenced by the whole list in one request, so the per-post
+// MessageTag components find their group cached instead of each firing its own
+// /group/{id} call. This matters most for the nearby/reach feed: a post can be in a group
+// the viewer isn't a member of, so it won't already be in the membership cache loaded at
+// login - without this, a heavy-membership user saw dozens of separate group fetches. The
+// feed summaries carry a groupid, so we can batch them upfront without waiting for the
+// per-message detail. fetchBatch de-dupes against what's already cached and no-ops if all
+// are present.
+const listGroupIds = [
+  ...new Set(
+    (props.messagesForList ?? []).map((m) => m.groupid).filter(Boolean)
+  ),
+]
+if (listGroupIds.length) {
+  groupStore.fetchBatch(listGroupIds)
 }
 
 // Data
@@ -323,6 +465,13 @@ const reduceSuccessful = computed(() => {
 const filteredMessagesToShow = computed(() => {
   const ret = []
 
+  // Precompute the "older than a week" cutoff ONCE instead of calling dayjs() (which
+  // re-creates "now") and parsing each message's arrival inside the loop. On a large
+  // feed - a heavy-membership user's "all my communities" can be thousands of posts -
+  // the per-item dayjs was a multi-hundred-millisecond main-thread block (seen in a CPU
+  // profile). Date.parse on the ISO arrival string is a cheap native number compare.
+  const weekAgoTs = Date.now() - 7 * 24 * 60 * 60 * 1000
+
   // ScrollGrid handles visibility limits, so we provide all filtered messages
   for (let i = 0; i < reduceSuccessful.value?.length; i++) {
     const m = reduceSuccessful.value[i]
@@ -333,14 +482,10 @@ const filteredMessagesToShow = computed(() => {
       if (m.successful) {
         if (myid.value === m.fromuser) {
           addIt = true
-        } else {
-          const daysago = dayjs().diff(dayjs(m.arrival), 'day')
-
-          if (props.selectedType !== 'All') {
-            addIt = false
-          } else if (daysago > 7) {
-            addIt = false
-          }
+        } else if (props.selectedType !== 'All') {
+          addIt = false
+        } else if (Date.parse(m.arrival) < weekAgoTs) {
+          addIt = false
         }
       }
 
@@ -363,52 +508,98 @@ const filteredMessagesInStore = computed(() => {
   return ret
 })
 
-const deDuplicatedMessages = computed(() => {
-  let ret = []
-  const dups = []
-  const ids = {}
-  const seen = new Set()
+// Group ids the logged-in user is a member of, for duplicate-preference below.
+const myGroupIdSet = computed(
+  () => new Set((myMemberships?.value || []).map((g) => parseInt(g.id)))
+)
 
-  filteredMessagesToShow.value
-    .filter((m) => !failedIds.value.has(m.id))
-    .forEach((m) => {
-      if (seen.has(m.id)) {
-        return
-      }
+// True if a message is posted to a group the user already belongs to.
+function isOnMyGroup(message) {
+  if (!message?.groups || !myGroupIdSet.value.size) {
+    return false
+  }
+  return message.groups.some((g) => myGroupIdSet.value.has(parseInt(g.groupid)))
+}
 
-      const message = filteredMessagesInStore.value[m.id]
+// Collapse a poster's crosspost/repost of the same item to one entry, preferring the copy
+// on a group the viewer belongs to (Discourse 9733 / 9729); firstSeenMessage always wins.
+// Delegates to the pure deduplicateMessages, whose member-group swap is O(1) (id->index
+// Map) rather than the previous ret.findIndex() scan.
+const allDeDuplicatedMessages = computed(() =>
+  deduplicateMessages(filteredMessagesToShow.value, {
+    getMessage: (id) => filteredMessagesInStore.value[id],
+    exclude: props.exclude,
+    firstSeenMessage: props.firstSeenMessage,
+    isOnMyGroup,
+    failedIds: failedIds.value,
+  })
+)
 
-      if (!message) {
-        seen.add(m.id)
-        ret.push(m)
-      } else if (m.id in ids) {
-        // Already got this id
-      } else if (m.id !== props.exclude) {
-        ids[m.id] = true
-        let key = message.fromuser + '|' + message.subject
-        const p = message.subject.indexOf(':')
+// The viewer's own posts come out of the feed and into one collapsed row above it. They are
+// still pinned first by sortBrowseMessages (Discourse 9933) - that is what makes them the
+// leading run here - but shown in full they meant anyone with a few live posts scrolled past
+// their own before reaching anything new.
+//
+// Taking them out of the split below is deliberate, not incidental: your own post is not "new
+// to you", so counting it as unseen put it above the YOU'RE UP TO DATE divider and into the
+// new-post tally.
+const ownPosts = computed(
+  () => partitionOwnPosts(allDeDuplicatedMessages.value).own
+)
+const deDuplicatedMessages = computed(
+  () => partitionOwnPosts(allDeDuplicatedMessages.value).others
+)
 
-        if (p !== -1) {
-          key =
-            message.fromuser + '|' + message.type + message.subject.substring(p)
-        }
+const ownPostsExpanded = ref(false)
+const ownPostsRowLabel = computed(() =>
+  ownPostsLabel(ownPosts.value.length, ownPostsExpanded.value)
+)
 
-        const already = key in dups
+// For each rendered card, the ids of the crosspost/repost copies that deduplicateMessages
+// collapsed under it (same dedupKey, i.e. same poster + item). The server counts every copy
+// as its own unseen post, but only the one kept card is shown - so viewing that card marks
+// only its copy seen and the hidden copies keep the unread count above zero forever. Mapping
+// id -> siblings here lets a view of the shown card also mark the hidden copies seen, so the
+// badge drains in step with what the member has actually seen. Uses the SAME dedupKey and
+// message detail as deDuplicatedMessages so the grouping matches the feed exactly.
+const siblingIdsById = computed(() => {
+  const byKey = new Map()
+  for (const m of reduceSuccessful.value || []) {
+    const detail = messageStore?.byId(m.id)
+    if (!detail) {
+      continue
+    }
+    const key = dedupKey(detail)
+    const arr = byKey.get(key)
+    if (arr) {
+      arr.push(m.id)
+    } else {
+      byKey.set(key, [m.id])
+    }
+  }
 
-        if (m.id === props.firstSeenMessage) {
-          if (already) {
-            ret = ret.filter((m) => m.id !== dups[key])
-          }
-          ret.push(m)
-        } else if (!already) {
-          ret.push(m)
-          dups[key] = m.id
-        }
-      }
-    })
-
-  return ret
+  const map = new Map()
+  for (const ids of byKey.values()) {
+    if (ids.length < 2) {
+      continue
+    }
+    for (const id of ids) {
+      map.set(
+        id,
+        ids.filter((other) => other !== id)
+      )
+    }
+  }
+  return map
 })
+
+// When a de-duped card registers a view, mark the hidden copies it stands in for as seen too.
+function onCardView(id) {
+  const siblings = siblingIdsById.value.get(id)
+  if (siblings?.length) {
+    messageStore.markSeenSiblings(siblings)
+  }
+}
 
 const unseenMessages = computed(() => {
   return deDuplicatedMessages.value.filter((m) => m.unseen)
@@ -418,17 +609,11 @@ const seenMessages = computed(() => {
   return deDuplicatedMessages.value.filter((m) => !m.unseen)
 })
 
-const duplicates = computed(() => {
-  const ret = []
-
-  filteredMessagesToShow.value.forEach((m) => {
-    if (!deDuplicatedMessages.value.find((d) => d.id === m.id)) {
-      ret.push(m)
-    }
-  })
-
-  return ret
-})
+const duplicates = computed(() =>
+  // The items dropped by deduplication. O(n) via a Set of kept ids rather than the
+  // previous O(n^2) find()-per-item scan over deDuplicatedMessages.
+  findDuplicates(filteredMessagesToShow.value, deDuplicatedMessages.value)
+)
 
 const noneFound = computed(() => {
   return !props.loading && !deDuplicatedMessages.value?.length
@@ -458,24 +643,41 @@ function visibilityChanged(visible) {
   }
 }
 
-function markSeen() {
-  // Collect all unseen message IDs
-  const ids = []
+// The count is polled every 60s; the feed is not. When the count RISES, pull the feed so the
+// posts behind it actually load - otherwise the page announces "1 new post" while the list it
+// is showing predates that post, and the member sees a count with nothing to open.
+useFeedCountSync(browseCount, async () => {
+  if (me.value?.settings?.browseView === 'mygroups') {
+    await messageStore.fetchMyGroups()
+  } else {
+    await nearbyStore.fetchMessages(true)
+  }
+})
 
-  props.messagesForList.forEach((m) => {
-    if (m.unseen) {
-      ids.push(m.id)
-    }
-  })
+async function markSeen() {
+  // One call, no ids. The browser only ever holds the posts it has loaded, and the ordinary
+  // backlog is around a thousand, so no list the client can assemble clears the count - that
+  // is exactly why members were scrolling weeks back to shift it (Discourse 10055). The
+  // server clears its own count.
+  //
+  // This does NOT record the posts as viewed. Pressing a button is not reading a thousand
+  // posts, and a "seen" row is an impression that feeds the view count posters see, so
+  // clearing moves a watermark instead (see browse_cleared).
+  await messageStore.clearCount()
+
+  // Local only, and never sent anywhere: drop the loaded cards below the "You're up to date"
+  // divider at once, rather than leaving them above it until the count poll refreshes.
+  const source = nearbyStore.messageList?.length
+    ? nearbyStore.messageList
+    : props.messagesForList
+  const ids = source.filter((m) => m.unseen).map((m) => m.id)
 
   if (ids.length) {
-    // Send markSeen once
-    messageStore.markSeen(ids)
-
-    // Start polling the count - the server processes this in the background
-    pollCount = 0
-    pollUntilZero()
+    nearbyStore.markSeen(ids)
   }
+
+  pollCount = 0
+  pollUntilZero()
 }
 
 function pollUntilZero() {
@@ -484,17 +686,33 @@ function pollUntilZero() {
   }
 
   markSeenTimer = setTimeout(async () => {
-    const count = await messageStore.fetchCount(me?.settings?.browseView, false)
+    const count = await messageStore.fetchCount(
+      me.value?.settings?.browseView,
+      me.value?.settings?.browseMaxDistance,
+      false
+    )
     pollCount++
 
     if (count > 0 && pollCount < MAX_POLL_COUNT) {
       // Keep polling until count reaches 0 or we hit the limit
       pollUntilZero()
+    } else {
+      // The server has finished processing the mark-seen (count cleared, or we hit the
+      // poll limit): refresh the cached feed so its `unseen` flags come from the server
+      // rather than stale local state. This keeps the posts shown above the divider in
+      // step with the badge - including on a second device, whose feed cache is otherwise
+      // stale after the first device marked everything seen.
+      await nearbyStore.fetchMessages(true)
     }
   }, 1000) // Poll once per second
 }
 
 async function handleLoadMore(currentIndex) {
+  // Record the furthest feed position this session has reached (the infinite-scroll
+  // index grows as the member scrolls down). The composable keeps the max and reports
+  // it once on leave/hide.
+  recordScrollDepth(currentIndex, reduceSuccessful.value?.length || 0)
+
   // Prefetch upcoming messages when scrolling.
   // ScrollGrid loads 10 items at a time, so we need to fetch at least 10 ahead.
   const batchSize = 15
@@ -557,9 +775,39 @@ onBeforeUnmount(() => {
 })
 </script>
 <style scoped lang="scss">
+@import 'bootstrap/scss/functions';
+@import 'bootstrap/scss/variables';
+@import 'assets/css/_color-vars.scss';
+
 .messagewrapper {
   flex: 1;
   display: flex;
   flex-direction: column;
+}
+
+.ownposts {
+  margin-bottom: 0.5rem;
+}
+
+/* A full-width row rather than a link: the whole thing is the target, which matters most on
+   a phone, and a button carries the expanded state for a screen reader without extra ARIA. */
+.ownposts__toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid $gray-300;
+  background: $gray-200;
+  color: $gray-700;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: left;
+
+  &:hover,
+  &:focus-visible {
+    background: $gray-300;
+    color: $gray-800;
+  }
 }
 </style>

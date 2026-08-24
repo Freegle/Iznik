@@ -288,6 +288,85 @@ func TestGroupChatIconUsesNewestImage(t *testing.T) {
 	db.Exec("DELETE FROM groups_images WHERE id IN (?, ?)", img1ID, img2ID)
 }
 
+// TestModToolsChatNameUsesFirstLastWhenFullnameNull verifies that when a member has
+// firstname/lastname but no fullname, the ModTools chat list shows "Firstname Lastname (Group)"
+// instead of "GroupName Volunteers". This is the scenario that occurs after a volunteer
+// edits a member's post to move it to a new group and sends a standard welcome message.
+func TestModToolsChatNameUsesFirstLastWhenFullnameNull(t *testing.T) {
+	prefix := uniquePrefix("chatName9719")
+	db := database.DBConn
+
+	// Create a member with firstname/lastname but explicitly NULL fullname.
+	// This mirrors accounts that have only partial name data.
+	var memberID uint64
+	db.Exec(
+		"INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+			"VALUES (?, ?, NULL, 'User', NULL, ?)",
+		prefix+"First", prefix+"Last",
+		`{"mylocation":{"lat":51.5,"lng":-0.1}}`,
+	)
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&memberID)
+	if memberID == 0 {
+		t.Fatal("failed to create member user")
+	}
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", memberID, prefix+"@test.com")
+
+	// Create a mod with a full name and token.
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	groupID := CreateTestGroup(t, prefix+"_grp")
+	CreateTestMembership(t, memberID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	// Create a User2Mod chat (member → group mods).
+	chatID, err := chat.GetOrCreateUser2ModChat(db, memberID, groupID)
+	assert.NoError(t, err)
+
+	db.Exec(
+		"INSERT INTO chat_messages (chatid, userid, message, type, date, reviewrequired, processingrequired, processingsuccessful) "+
+			"VALUES (?, ?, 'welcome message', 'ModMail', NOW(), 0, 0, 1)",
+		chatID, modID,
+	)
+
+	// ModTools endpoint (/api/chat/rooms) — the mod should see this chat.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat/rooms?chattypes[]=User2Mod&jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var wrapper struct {
+		Chatrooms []chat.ChatRoomListEntry `json:"chatrooms"`
+	}
+	json2.Unmarshal(rsp(resp), &wrapper)
+
+	var found *chat.ChatRoomListEntry
+	for i := range wrapper.Chatrooms {
+		if wrapper.Chatrooms[i].ID == chatID {
+			found = &wrapper.Chatrooms[i]
+			break
+		}
+	}
+
+	assert.NotNil(t, found, "ModTools /api/chat/rooms should show User2Mod chat %d to mod %d", chatID, modID)
+	if found != nil {
+		expectedFirst := prefix + "First"
+		expectedLast := prefix + "Last"
+		assert.Contains(t, found.Name, expectedFirst,
+			"Chat name should contain member's firstname when fullname is NULL, got %q", found.Name)
+		assert.Contains(t, found.Name, expectedLast,
+			"Chat name should contain member's lastname when fullname is NULL, got %q", found.Name)
+		assert.NotContains(t, found.Name, "Volunteers",
+			"Chat name should NOT be 'GroupName Volunteers' when member has firstname/lastname, got %q", found.Name)
+	}
+
+	// Clean up.
+	db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_roster WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", memberID)
+	db.Exec("DELETE FROM memberships WHERE userid = ?", memberID)
+	db.Exec("DELETE FROM users WHERE id = ?", memberID)
+}
+
 func TestCreateChatMessage(t *testing.T) {
 	// Invalid chat id
 	resp, _ := getApp().Test(httptest.NewRequest("POST", "/api/chat/-1/message", nil))
@@ -1546,6 +1625,98 @@ func TestAllSeenNoChats(t *testing.T) {
 	json2.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
+}
+
+func TestAllSeenModtoolsScopedToModChats(t *testing.T) {
+	prefix := uniquePrefix("allseen_mt")
+	db := database.DBConn
+
+	// A moderator with a group, an unread User2Mod chat, an unread Mod2Mod chat
+	// (no roster row), and an unread personal User2User chat.
+	modID, _, groupID, u2mChatID, token := setupModChatData(t, prefix)
+
+	mod2ID := CreateTestUser(t, prefix+"_mod2", "Moderator")
+	CreateTestMembership(t, mod2ID, groupID, "Moderator")
+	m2mChatID := CreateTestChatRoom(t, mod2ID, &modID, &groupID, "Mod2Mod")
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'Mod chat msg', NOW(), 1, 0, 0)",
+		m2mChatID, mod2ID)
+
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	personalChatID := CreateTestChatRoom(t, modID, &otherID, nil, "User2User")
+	personalMsgID := CreateTestChatMessage(t, personalChatID, otherID, "Unread personal message")
+
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", personalChatID, modID)
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", u2mChatID, modID)
+
+	// ModTools "Mark all read".
+	payload := map[string]interface{}{"action": "AllSeen", "modtools": true}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Moderator chats are cleared: existing roster row updated...
+	var u2mSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", u2mChatID, modID).Scan(&u2mSeen)
+	assert.NotEqual(t, uint64(0), u2mSeen, "User2Mod chat should be marked seen")
+
+	// ...and a roster row inserted where none existed.
+	var m2mSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", m2mChatID, modID).Scan(&m2mSeen)
+	assert.NotEqual(t, uint64(0), m2mSeen, "Mod2Mod chat should get a seen pointer")
+
+	// The personal member chat is untouched - its message is still unread, so the
+	// FD badge can still show it.
+	var personalSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", personalChatID, modID).Scan(&personalSeen)
+	assert.Equal(t, uint64(0), personalSeen, "ModTools Mark all read must not mark personal member chats seen")
+	assert.Less(t, personalSeen, personalMsgID)
+}
+
+func TestAllSeenFDDoesNotTouchModChats(t *testing.T) {
+	prefix := uniquePrefix("allseen_fd")
+	db := database.DBConn
+
+	// A moderator with an unread User2Mod chat (mod side) and an unread personal
+	// User2User chat, including one with no roster row yet.
+	modID, _, _, u2mChatID, token := setupModChatData(t, prefix)
+
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	personalChatID := CreateTestChatRoom(t, modID, &otherID, nil, "User2User")
+	CreateTestChatMessage(t, personalChatID, otherID, "Unread personal message")
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", personalChatID, modID)
+
+	// A second personal chat where the recipient has no roster row at all (the
+	// state a brand-new incoming conversation is in).
+	other2ID := CreateTestUser(t, prefix+"_other2", "User")
+	noRosterChatID := CreateTestChatRoom(t, modID, &other2ID, nil, "User2User")
+	CreateTestChatMessage(t, noRosterChatID, other2ID, "Unread in rosterless chat")
+	db.Exec("DELETE FROM chat_roster WHERE chatid = ? AND userid = ?", noRosterChatID, modID)
+
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0", u2mChatID, modID)
+
+	// FD "Mark all read".
+	payload := map[string]interface{}{"action": "AllSeen", "modtools": false}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Personal chats are cleared, including the one with no roster row.
+	var personalSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", personalChatID, modID).Scan(&personalSeen)
+	assert.NotEqual(t, uint64(0), personalSeen, "FD Mark all read should mark personal chats seen")
+
+	var noRosterSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", noRosterChatID, modID).Scan(&noRosterSeen)
+	assert.NotEqual(t, uint64(0), noRosterSeen, "FD Mark all read should insert a seen pointer for rosterless chats")
+
+	// The mod-side User2Mod roster row is untouched.
+	var u2mSeen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", u2mChatID, modID).Scan(&u2mSeen)
+	assert.Equal(t, uint64(0), u2mSeen, "FD Mark all read must not touch moderator-side chats")
 }
 
 // =============================================================================
@@ -3133,7 +3304,7 @@ func TestChatIconUsesProfileSetPath(t *testing.T) {
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
-	// Give user2 a profile image with a freegletusd- externaluid (simulates Uploadcare).
+	// Give user2 a profile image with a freegletusd- externaluid (the only kind now).
 	// This triggers the delivery-service URL path in ProfileSetPath.
 	fakeExternalUID := "freegletusd-abc123testimage"
 	fakeMods := `{"rotate":90}`
@@ -3174,9 +3345,10 @@ func TestChatIconUsesProfileSetPath(t *testing.T) {
 		"Chat icon should NOT use raw uimg_ URL; should use ProfileSetPath delivery URL")
 
 	// The icon should contain the delivery service pattern.
-	// ProfileSetPath for freegletusd- UIDs calls GetImageDeliveryUrl which produces a URL like:
-	//   https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123testimage&ro=90
-	// (or uses IMAGE_DELIVERY / UPLOADS env vars if set)
+	// ProfileSetPath for freegletusd- UIDs calls GetImageDeliveryUrl, which builds
+	// a URL from the IMAGE_DELIVERY / UPLOADS env vars, e.g.:
+	//   <IMAGE_DELIVERY>?url=<UPLOADS>/abc123testimage&ro=90
+	// The test only asserts the embedded UID, so it's independent of those values.
 	assert.Contains(t, foundChat.Icon, "abc123testimage",
 		"Chat icon should contain the external UID (minus freegletusd- prefix)")
 
@@ -4368,8 +4540,9 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 	assert.GreaterOrEqual(t, countBefore, int64(numChats),
 		"should have at least %d unread messages before markAllRead", numChats)
 
-	// Call mark-all-read (POST /chatrooms with action=AllSeen).
-	payload := map[string]interface{}{"action": "AllSeen"}
+	// Call mark-all-read (POST /chatrooms with action=AllSeen). The ModTools client
+	// sends modtools:true, which scopes AllSeen to moderator chats (User2Mod/Mod2Mod).
+	payload := map[string]interface{}{"action": "AllSeen", "modtools": true}
 	s, _ := json2.Marshal(payload)
 	req2 := httptest.NewRequest("POST", "/api/chatrooms?jwt="+modToken, bytes.NewBuffer(s))
 	req2.Header.Set("Content-Type", "application/json")
@@ -4390,4 +4563,162 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 
 	assert.Equal(t, int64(0), countAfter,
 		"after markAllRead, unread count must be 0 (got %d: handleAllSeen skips chats with no roster entry)", countAfter)
+}
+
+// =============================================================================
+// CommonGroups tests
+// =============================================================================
+
+func TestCommonGroupsShared(t *testing.T) {
+	prefix := uniquePrefix("commongroups")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix+"_g")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/"+fmt.Sprint(chatid)+"/commongroups?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var groups []chat.CommonGroup
+	json2.Unmarshal(rsp(resp), &groups)
+	assert.Equal(t, 1, len(groups))
+	assert.Equal(t, groupID, groups[0].ID)
+}
+
+func TestCommonGroupsNone(t *testing.T) {
+	prefix := uniquePrefix("commongroupsnone")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	g1 := CreateTestGroup(t, prefix+"_g1")
+	g2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, user1ID, g1, "Member")
+	CreateTestMembership(t, user2ID, g2, "Member")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/"+fmt.Sprint(chatid)+"/commongroups?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var groups []chat.CommonGroup
+	json2.Unmarshal(rsp(resp), &groups)
+	assert.Equal(t, 0, len(groups))
+}
+
+func TestCommonGroupsNotMember(t *testing.T) {
+	prefix := uniquePrefix("commongroupsnm")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	outsiderID := CreateTestUser(t, prefix+"_out", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, outsiderID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/"+fmt.Sprint(chatid)+"/commongroups?jwt="+token, nil))
+	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// =============================================================================
+// ReportNoGroup tests
+// =============================================================================
+
+func TestReportNoGroup(t *testing.T) {
+	prefix := uniquePrefix("reportnogroup")
+	db := database.DBConn
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	CreateTestChatMessage(t, chatid, user2ID, "Want a girlfriend?")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{
+		"id": chatid, "action": "ReportNoGroup", "reason": "Spam", "comment": "creepy",
+	}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_chat_spam_report' AND JSON_EXTRACT(data, '$.chatid') = ?", chatid).Scan(&taskCount)
+	assert.Greater(t, taskCount, int64(0))
+}
+
+func TestReportNoGroupRejectedWhenCommonGroup(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupcg")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	groupID := CreateTestGroup(t, prefix+"_g")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReportNoGroup", "reason": "Spam"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestReportNoGroupNotMember(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupnm")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	outsiderID := CreateTestUser(t, prefix+"_out", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, outsiderID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReportNoGroup", "reason": "Spam"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+func TestCommonGroupsNotLoggedIn(t *testing.T) {
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat/1/commongroups", nil))
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
+func TestCommonGroupsChatNotFound(t *testing.T) {
+	prefix := uniquePrefix("commongroupsnf")
+	uid := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, uid)
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/chat/999999999/commongroups?jwt="+token, nil))
+	assert.Equal(t, 404, resp.StatusCode)
+}
+
+func TestReportNoGroupMissingReason(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupmr")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	chatid := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	_, token := CreateTestSession(t, user1ID)
+
+	payload := map[string]interface{}{"id": chatid, "action": "ReportNoGroup"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestReportNoGroupChatNotFound(t *testing.T) {
+	prefix := uniquePrefix("reportnogroupnf")
+	uid := CreateTestUser(t, prefix+"_u", "User")
+	_, token := CreateTestSession(t, uid)
+
+	payload := map[string]interface{}{"id": 999999999, "action": "ReportNoGroup", "reason": "Spam"}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/chatrooms?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusNotFound, resp.StatusCode)
 }

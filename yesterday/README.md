@@ -23,6 +23,64 @@ The Yesterday environment:
 - Reuses all existing containers (Freegle, ModTools, API v1/v2, Mailhog)
 - Backup selection via web UI with progress tracking
 
+## Fast Switching with LVM-Thin Snapshots
+
+A full restore (download → extract → decompress → `xtrabackup --prepare`) takes
+30–90 minutes, so flipping between backup days used to mean a long wait each
+time. The **LVM-thin fast-switch** system makes switching between recently-loaded
+days take **~1 minute** instead, while keeping disk use small.
+
+**How it works (no production-side backup change):**
+- Backups remain nightly **full** Percona XtraBackup hot backups.
+- The MySQL datadir lives on an **XFS filesystem on an LVM-thin logical volume**
+  (`/mnt/iznik-active`), on a dedicated disk separate from the OS disk.
+- Each day's prepared backup is applied onto the live datadir with
+  `rsync --inplace --no-whole-file`, so the thin pool only copies-on-write the
+  blocks that actually changed.
+- A **read-only thin snapshot per day** (`snap_YYYYMMDD`) is the "datestamped
+  database". Because consecutive days share unchanged blocks, total disk use ≈
+  base (~120 GB) + the sum of daily deltas — *not* N × full size. (Measured:
+  a 50 MB real change costs ~50 MB of snapshot, not a 120 GB copy.)
+- **Switching** creates a fresh writable thin clone of the chosen snapshot,
+  remounts it (with `nouuid` — clones share the origin's XFS UUID), and restarts
+  percona. Browsing writes to the clone are discarded on the next switch.
+
+**Scripts** (in `yesterday/scripts/`):
+
+| Script | When | What it does |
+|--------|------|--------------|
+| `setup-lvm-thin.sh /dev/sdX` | once | Creates the VG, thin pool, `active` + `stage` LVs (XFS), mounts them, fstab. |
+| `prime-backups.sh [N]` | once (background) | Primes the last N daily backups into snapshots, oldest→newest. Runs while percona still serves the old volume — zero downtime. |
+| `cutover-to-lvm.sh` | once | Points percona at `/mnt/iznik-active` (rebinds the `freegle_db` volume) and restarts. Brief downtime. |
+| `switch-backup.sh <YYYYMMDD>` | any time | Fast switch to a snapshotted day (~1 min). `--list` shows available days. |
+| `lib-yesterday-lvm.sh` | — | Shared helpers (sourced by the above). |
+
+**Sizing:** the dedicated pool disk must hold `active` (~140 GB) + `stage`
+(~140 GB) + daily snapshot deltas. In practice the *prepared* datadir is ~140 GB
+and each day's snapshot delta is ~10–20 GB (xtrabackup rewrites page LSNs, so it
+exceeds pure logical churn). Budget **~600 GB** for 7 days with comfortable
+headroom. **Staging must be mounted with `discard`** (setup does this) so its
+freed blocks return to the pool each refresh — otherwise it accumulates and
+exhausts the pool. The pool disk can be grown live if needed:
+`gcloud compute disks resize … && pvresize /dev/sdb && lvextend -l +100%FREE yesterday_vg/thinpool`.
+
+**Deploy runbook:**
+```bash
+# 1. Attach a dedicated empty disk (e.g. 400GB) to the VM, then on the VM:
+sudo /var/www/FreegleDocker/yesterday/scripts/setup-lvm-thin.sh /dev/sdb
+# 2. Prime the last 7 days (background; percona keeps serving the old DB):
+sudo /var/www/FreegleDocker/yesterday/scripts/prime-backups.sh 7
+# 3. Cut percona over to the LVM datadir (brief restart):
+sudo /var/www/FreegleDocker/yesterday/scripts/cutover-to-lvm.sh
+# 4. Switch between days in ~1 minute:
+sudo /var/www/FreegleDocker/yesterday/scripts/switch-backup.sh --list
+sudo /var/www/FreegleDocker/yesterday/scripts/switch-backup.sh 20260529
+```
+
+> After cutover, the nightly auto-restore should refresh `/mnt/iznik-active` via
+> the same `rsync --inplace` + snapshot path (see `lib-yesterday-lvm.sh`) rather
+> than the old wipe-and-extract in `restore-backup.sh`.
+
 ## Domain Structure
 
 - `yesterday.ilovefreegle.org` - Backup browser and index page
@@ -80,8 +138,8 @@ gcloud compute addresses describe yesterday-static-ip --project=freegle-yesterda
 
 2. **Assign static IP to VM:**
 ```bash
-gcloud compute instances delete-access-config yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a --access-config-name="external-nat"
-gcloud compute instances add-access-config yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a --access-config-name="external-nat" --address=<STATIC_IP>
+gcloud compute instances delete-access-config yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a --access-config-name="external-nat"
+gcloud compute instances add-access-config yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a --access-config-name="external-nat" --address=<STATIC_IP>
 ```
 
 3. **Set up DNS A record:**
@@ -244,7 +302,6 @@ All services use **pure port-based routing** through a single 2FA gateway. Each 
 | **8446** | ModTools Dev | Any authenticated | freegle-modtools-dev:3000 | ModTools application (dev mode) |
 | **8447** | PHPMyAdmin | Admin only | freegle-phpmyadmin:80 | Database management |
 | **8448** | Mailhog | Admin only | freegle-mailhog:8025 | Email testing interface |
-| **8181** | Iznik API v1 | Any authenticated | freegle-apiv1:80 | PHP/MySQL API endpoints |
 | **8193** | Iznik API v2 | Any authenticated | freegle-apiv2:8192 | Go API endpoints |
 | **8095** | Image Delivery | Public (no auth) | freegle-delivery:80 | Image resizing service |
 
@@ -539,7 +596,9 @@ The Yesterday system is secured with multiple layers:
 - Read-only access to production backups via GCP IAM
 - All services isolated in dedicated `freegle-yesterday` GCP project
 - Preemptible VM to minimize costs
-- Firewall rules allow only required ports (22, 80, 443, 8082-8084)
+- Firewall rules open 22, 8095, 8181, 8193 and 8444-8448 to `0.0.0.0/0`
+  (80/443 are NOT open; Let's Encrypt uses DNS-01). Of these only 8095 is
+  unauthenticated, by design. See `Security.md` for the full reachable-port table
 - 2FA gateway protects access to backup management UI
 - Optional HTTP Basic Auth adds defense-in-depth (configured via `BACKUP_BASIC_AUTH`)
 - All outbound email captured in Mailhog (no external sending)
@@ -563,19 +622,19 @@ The system runs automatically:
 Start the Yesterday VM:
 
 ```bash
-gcloud compute instances start yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a
+gcloud compute instances start yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a
 ```
 
 Stop the Yesterday VM:
 
 ```bash
-gcloud compute instances stop yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a
+gcloud compute instances stop yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a
 ```
 
 SSH into the VM:
 
 ```bash
-gcloud compute ssh yesterday-freegle --project=freegle-yesterday --zone=europe-west2-a
+gcloud compute ssh yesterday-freegle-new --project=freegle-yesterday --zone=europe-west2-a
 ```
 
 ## Monitoring
@@ -623,7 +682,7 @@ tail -f /var/log/yesterday-restore-YYYYMMDD.log
 4. **Partial upload** - Auto-restore skips backups less than 2 hours old:
    ```bash
    # Check backup timestamp
-   gsutil ls -l gs://freegle_backup_uk/iznik-*.xbstream | tail -5
+   gcloud storage ls -l gs://freegle_backup_uk/iznik-*.xbstream | tail -5
    ```
 
 ### API won't start

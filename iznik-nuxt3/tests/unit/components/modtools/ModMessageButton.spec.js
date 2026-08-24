@@ -57,6 +57,7 @@ describe('ModMessageButton', () => {
 
   // Common stubs for child components
   const commonStubs = {
+    NoticeMessage: { template: '<div><slot /></div>', props: ['variant'] },
     SpinButton: {
       template:
         '<button class="spin-button" :disabled="disabled" @click="$emit(\'handle\', () => {})"><slot />{{ label }}</button>',
@@ -186,23 +187,52 @@ describe('ModMessageButton', () => {
   })
 
   describe('confirmButton computed', () => {
+    // heldby lives per-group (messages_groups.heldby); confirmButton must look at
+    // the row for the group being administered (groupid, falling back to
+    // groups[0]), not a message-wide flag (Discourse 9970/2).
+    const heldGroup = {
+      groups: [{ groupid: 456, collection: 'Pending', heldby: { id: 1 } }],
+    }
+
     it('returns true when message is held and action is not spam or delete', () => {
-      const wrapper = mountComponent({ approve: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent({ approve: true }, heldGroup)
       expect(wrapper.vm.confirmButton).toBe(true)
     })
 
     it('returns false when message is held but action is spam', () => {
-      const wrapper = mountComponent({ spam: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent({ spam: true }, heldGroup)
       expect(wrapper.vm.confirmButton).toBe(false)
     })
 
     it('returns false when message is held but action is delete', () => {
-      const wrapper = mountComponent({ delete: true }, { heldby: { id: 1 } })
+      const wrapper = mountComponent({ delete: true }, heldGroup)
       expect(wrapper.vm.confirmButton).toBe(false)
     })
 
     it('returns falsy when message is not held', () => {
-      const wrapper = mountComponent({ approve: true }, { heldby: null })
+      const wrapper = mountComponent(
+        { approve: true },
+        { groups: [{ groupid: 456, collection: 'Pending', heldby: null }] }
+      )
+      expect(wrapper.vm.confirmButton).toBeFalsy()
+    })
+
+    // Discourse 9970/2: a hold on a DIFFERENT group this rippled post is also on
+    // must not force a confirm on the copy actually being administered.
+    it('returns falsy when a DIFFERENT group on the same rippled post is held', () => {
+      const wrapper = mountComponent(
+        { approve: true, groupid: 456 },
+        {
+          // The server ORs any held group into this message-wide flag, so the
+          // pre-fix code (which read message.heldby directly) would still see
+          // this as held even though group 456 itself is not.
+          heldby: { id: 1 },
+          groups: [
+            { groupid: 456, collection: 'Pending', heldby: null },
+            { groupid: 457, collection: 'Pending', heldby: { id: 1 } },
+          ],
+        }
+      )
       expect(wrapper.vm.confirmButton).toBeFalsy()
     })
   })
@@ -254,7 +284,10 @@ describe('ModMessageButton', () => {
     it('calls messageStore.hold when hold prop is true', async () => {
       const wrapper = mountComponent({ hold: true }, { id: 555 })
       await wrapper.vm.click()
-      expect(mockMessageStore.hold).toHaveBeenCalledWith({ id: 555, groupid: 456 })
+      expect(mockMessageStore.hold).toHaveBeenCalledWith({
+        id: 555,
+        groupid: 456,
+      })
     })
 
     it('calls checkWorkDeferGetMessages after hold', async () => {
@@ -268,7 +301,10 @@ describe('ModMessageButton', () => {
     it('calls messageStore.release when release prop is true', async () => {
       const wrapper = mountComponent({ release: true }, { id: 666 })
       await wrapper.vm.click()
-      expect(mockMessageStore.release).toHaveBeenCalledWith({ id: 666, groupid: 456 })
+      expect(mockMessageStore.release).toHaveBeenCalledWith({
+        id: 666,
+        groupid: 456,
+      })
     })
 
     it('calls checkWorkDeferGetMessages after release', async () => {
@@ -362,23 +398,65 @@ describe('ModMessageButton', () => {
 
   describe('stdmsgid action (fetch standard message)', () => {
     it('fetches standard message when stdmsgid prop is set', async () => {
-      const wrapper = mountComponent({ stdmsgid: 42 })
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
       await wrapper.vm.click()
       await flushPromises()
       expect(mockStdmsgStore.fetch).toHaveBeenCalledWith(42)
     })
 
     it('sets stdmsgId from prop after fetch', async () => {
-      const wrapper = mountComponent({ stdmsgid: 42 })
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
       await wrapper.vm.click()
       await flushPromises()
       expect(wrapper.vm.stdmsgId).toBe(42)
     })
 
     it('shows stdmsg modal when stdmsgid is set', async () => {
-      const wrapper = mountComponent({ stdmsgid: 42 })
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
       await wrapper.vm.click()
       await flushPromises()
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+    })
+  })
+
+  describe('stdmsg reject on a rippled-in copy (Discourse 9862/16-17)', () => {
+    it('routes a Reject standard message on a rippled-in copy to the scoped no-message removal', async () => {
+      // action:'Reject' from the default mock; isHomeGroup:false = rippled-in copy.
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+      // Same scoped confirmation as the Reject button - NOT the compose modal.
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(true)
+      expect(wrapper.vm.showStdMsgModal).toBe(false)
+    })
+
+    it('still opens the compose modal for a Reject standard message on the HOME group', async () => {
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: true })
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+    })
+
+    it('opens the compose modal (does NOT scope-delete) for a non-Reject standard message on a rippled-in copy', async () => {
+      mockStdmsgStore.fetch.mockResolvedValueOnce({
+        id: 42,
+        action: 'Leave Member',
+      })
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showStdMsgModal).toBe(true)
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
+    })
+
+    it('fails closed: opens the compose modal (does NOT scope-delete) when the action cannot be resolved', async () => {
+      // fetch returns no usable object → action undefined → must not treat as Reject.
+      mockStdmsgStore.fetch.mockResolvedValueOnce(null)
+      const wrapper = mountComponent({ stdmsgid: 42, isHomeGroup: false })
+      await wrapper.vm.click()
+      await flushPromises()
+      expect(wrapper.vm.showRejectNoMsgModal).toBe(false)
       expect(wrapper.vm.showStdMsgModal).toBe(true)
     })
   })

@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Reminder: Your Freegle group is currently closed'])
+  @include('emails.mjml.partials.head', ['preview' => $groupName . ' is currently closed - re-open it from ModTools'])
 
   <mj-body background-color="#f4f4f4">
 
@@ -21,7 +21,7 @@
 
     <mj-section background-color="#ffffff" padding="0 20px 20px">
       <mj-column>
-        <mj-button href="{{ $modSite }}/modtools" mj-class="btn-modtools" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $modSite }}" mj-class="btn-modtools" border-radius="3px" font-size="16px">
           Go to ModTools
         </mj-button>
         <mj-divider border-color="#eeeeee" border-width="1px" />

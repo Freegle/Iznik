@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
 import dayjs from 'dayjs'
 import { nextTick } from 'vue'
+import { runHoldAware } from '~/api/heldConflict'
 import api from '~/api'
 import { earliestDate, addStrings } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 
-export const useCommunityEventStore = defineStore({
-  id: 'communityevent',
+export const useCommunityEventStore = defineStore('communityevent', {
   state: () => ({
     list: {},
     forUser: [],
@@ -118,7 +118,10 @@ export const useCommunityEventStore = defineStore({
       return id
     },
     async save(data) {
-      await api(this.config).communityevent.save(data)
+      await runHoldAware(
+        () => api(this.config).communityevent.save(data),
+        () => this.fetch(data.id, true)
+      )
       await this.fetch(data.id, true)
     },
     async renew(id) {

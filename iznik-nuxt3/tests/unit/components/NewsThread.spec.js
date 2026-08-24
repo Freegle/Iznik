@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import NewsThread from '~/components/NewsThread.vue'
@@ -79,6 +79,9 @@ const mockNewsfeedStore = {
   convertToStory: mockConvertToStory,
   hide: mockHide,
   unhide: mockUnhide,
+  // Advisory duplicate-of-their-own-post lookup, moderators only. Defaults to
+  // "no duplicate" so existing cases render the thread unchanged.
+  duplicate: vi.fn().mockResolvedValue(null),
 }
 
 const mockMiscStore = {
@@ -92,6 +95,13 @@ const mockAuthStore = {
     return mockMe.value
   },
   saveAndGet: vi.fn(),
+}
+
+let mockIsApp = false
+const mockMobileStore = {
+  get isApp() {
+    return mockIsApp
+  },
 }
 
 const mockTeamStore = {
@@ -109,6 +119,10 @@ vi.mock('~/stores/newsfeed', () => ({
 
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
+}))
+
+vi.mock('~/stores/mobile', () => ({
+  useMobileStore: () => mockMobileStore,
 }))
 
 vi.mock('~/stores/auth', () => ({
@@ -138,6 +152,15 @@ vi.mock('~/composables/useTwem', () => ({
   untwem: vi.fn((text) => text),
 }))
 
+const mockScrollToAndPin = vi.fn(() => vi.fn())
+vi.mock('~/composables/useScrollAnchor', () => ({
+  scrollToAndPin: (...args) => mockScrollToAndPin(...args),
+  fixedHeaderOffset: () => 74,
+  imagesComplete: () => true,
+  whenImagesComplete: () => Promise.resolve(),
+  whenAllSettled: () => Promise.resolve(),
+}))
+
 // Mock child components
 vi.mock('~/components/AutoHeightTextarea', () => ({
   default: {
@@ -162,8 +185,8 @@ vi.mock('~/components/NewsReplies', () => ({
   default: {
     name: 'NewsReplies',
     template: '<div class="news-replies"></div>',
-    props: ['id', 'threadhead', 'scrollTo', 'replyTo', 'depth'],
-    emits: ['rendered'],
+    props: ['id', 'threadhead', 'scrollTo', 'replyTo', 'depth', 'context'],
+    emits: ['rendered', 'subtree-rendered'],
   },
 }))
 
@@ -280,6 +303,7 @@ vi.mock('vue', async (importOriginal) => {
 describe('NewsThread', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockIsApp = false
     mockNewsfeed.value = {
       id: 1,
       threadhead: 1,
@@ -513,6 +537,16 @@ describe('NewsThread', () => {
     it('shows "Open in new window" option', async () => {
       const wrapper = await createWrapper()
       expect(wrapper.text()).toContain('Open in new window')
+    })
+
+    it('hides "Open in new window" in the app', async () => {
+      // target="_blank" has no browser to land in inside the app - the OS
+      // routes the URL straight back and just reopens the app.
+      mockIsApp = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain('Open in new window')
+      // The rest of the menu is unaffected.
+      expect(wrapper.text()).toContain('Unfollow this thread')
     })
 
     it('shows "Unfollow this thread" option', async () => {
@@ -1012,6 +1046,219 @@ describe('NewsThread', () => {
       await comp.vm.sendComment()
       expect(mockSend).not.toHaveBeenCalled()
     })
+
+    it('anchors the freshly sent reply with a centered pin', async () => {
+      // The post-send refetch re-orders the thread, so the new reply can
+      // land off-screen. sendComment must pin it, re-resolving by
+      // data-reply-id so it finds the row once the refetch renders it.
+      mockSend.mockResolvedValue(9876)
+      const wrapper = await createWrapper()
+      const textarea = wrapper.find('.auto-height-textarea')
+      await textarea.setValue('Anchor me')
+      await textarea.trigger('focus')
+
+      const comp = wrapper.findComponent(NewsThread)
+      await comp.vm.sendComment()
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl, opts] = mockScrollToAndPin.mock.calls[0]
+      expect(opts.block).toBe('center')
+      // Released by the content-complete signal, not a timer.
+      expect(typeof opts.done?.then).toBe('function')
+
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '9876')
+      document.body.appendChild(row)
+      expect(getEl()).toBe(row)
+      row.remove()
+    })
+
+    it('does not pin when send returns no id', async () => {
+      mockSend.mockResolvedValue(null)
+      const wrapper = await createWrapper()
+      const textarea = wrapper.find('.auto-height-textarea')
+      await textarea.setValue('No id back')
+      await textarea.trigger('focus')
+
+      const comp = wrapper.findComponent(NewsThread)
+      await comp.vm.sendComment()
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('deep-link pin', () => {
+    it('pins the target centred when the scrolled-to reply reports rendered', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      expect(replies.exists()).toBe(true)
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl, opts] = mockScrollToAndPin.mock.calls[0]
+      expect(opts.block).toBe('center')
+      expect(opts.offset).toBe(74)
+      expect(typeof opts.done?.then).toBe('function')
+
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '456')
+      document.body.appendChild(row)
+      expect(getEl()).toBe(row)
+      row.remove()
+    })
+
+    it('pins only once even if the target re-reports', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 456)
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not pin for renders of other replies', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 999)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+
+    it('forwards the rendering context to the reply list', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ context: 'feed' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      expect(replies.props('context')).toBe('feed')
+    })
+
+    it('finds a combined row that carries the target id', async () => {
+      // A combined block renders one row keyed by its FIRST id, advertising
+      // the rest via data-combined-ids. The pin selector must match both.
+      mockNewsfeed.value.replies = [455]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl] = mockScrollToAndPin.mock.calls[0]
+
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '455')
+      row.setAttribute('data-combined-ids', '455 456')
+      document.body.appendChild(row)
+      expect(getEl()).toBe(row)
+      row.remove()
+    })
+  })
+
+  describe('jump to new replies', () => {
+    it('pins the unread divider when the caller asked for the new replies', async () => {
+      // Declared intent (the feed's "#new" link), not inferred from the route.
+      const divider = document.createElement('div')
+      divider.setAttribute('data-unread-divider', '')
+      document.body.appendChild(divider)
+
+      mockNewsfeed.value.replies = [456]
+      await createWrapper({ scrollTo: '1', jumpToNew: true })
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      const [getEl, opts] = mockScrollToAndPin.mock.calls[0]
+      expect(opts.block).toBe('start')
+      expect(getEl()).toBe(divider)
+      divider.remove()
+    })
+
+    it('does not scroll when simply opening the thread', async () => {
+      // No "#new" in the URL: opening a thread is not a request to skip to
+      // the end of it, so it opens at the top like any other page.
+      const divider = document.createElement('div')
+      divider.setAttribute('data-unread-divider', '')
+      document.body.appendChild(divider)
+
+      mockNewsfeed.value.replies = [456]
+      await createWrapper({ scrollTo: '1' })
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+      divider.remove()
+    })
+
+    it('does not scroll when asked for new replies but there is no divider', async () => {
+      mockNewsfeed.value.replies = [456]
+      await createWrapper({ scrollTo: '1', jumpToNew: true })
+      await flushPromises()
+
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+
+    it('never fires the divider pin when a specific reply pin already ran', async () => {
+      const divider = document.createElement('div')
+      divider.setAttribute('data-unread-divider', '')
+      document.body.appendChild(divider)
+
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456', jumpToNew: true })
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(mockScrollToAndPin).toHaveBeenCalledTimes(1)
+      expect(mockScrollToAndPin.mock.calls[0][1].block).toBe('center')
+      divider.remove()
+    })
+  })
+
+  describe('removed deep-link target', () => {
+    it('explains when the target reply never renders', async () => {
+      // Deleted replies are filtered out for non-mods, so a stale notification
+      // can point at a row that will never mount. Say so instead of silently
+      // landing at the top.
+      mockNewsfeed.value.replies = [455]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('That reply has been removed')
+    })
+
+    it('shows no notice when the target renders normally', async () => {
+      // The component's authority is the DOM: the target's row being present
+      // (as it is on any live reply) suppresses the notice.
+      const row = document.createElement('div')
+      row.setAttribute('data-reply-id', '456')
+      document.body.appendChild(row)
+
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '456' })
+      const replies = wrapper.findComponent('.news-replies')
+      replies.vm.$emit('rendered', 456)
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('That reply has been removed')
+      row.remove()
+    })
+
+    it('shows no notice on a general thread landing', async () => {
+      mockNewsfeed.value.replies = [456]
+      const wrapper = await createWrapper({ scrollTo: '1' })
+      await flushPromises()
+
+      expect(wrapper.text()).not.toContain('That reply has been removed')
+    })
   })
 
   describe('computed properties', () => {
@@ -1178,19 +1425,14 @@ describe('NewsThread', () => {
     })
   })
 
-  describe('rendered event', () => {
-    it('updates scrollDownTo when rendered id matches scrollTo prop', async () => {
+  describe('scrollTo pass-through', () => {
+    it('hands the deep-link target to NewsReplies from mount, not after render', async () => {
+      // The collapse logic must know the target up front: a target hidden
+      // behind "Show older replies" can never mount to announce itself.
+      mockNewsfeed.value.replies = [5]
       const wrapper = await createWrapper({ scrollTo: '5' })
-      const comp = wrapper.findComponent(NewsThread)
-      comp.vm.rendered(5)
-      expect(comp.vm.scrollDownTo).toBe('5')
-    })
-
-    it('does not update scrollDownTo when ids do not match', async () => {
-      const wrapper = await createWrapper({ scrollTo: '5' })
-      const comp = wrapper.findComponent(NewsThread)
-      comp.vm.rendered(10)
-      expect(comp.vm.scrollDownTo).toBe(null)
+      const replies = wrapper.findComponent('.news-replies')
+      expect(replies.props('scrollTo')).toBe('5')
     })
   })
 
@@ -1212,6 +1454,84 @@ describe('NewsThread', () => {
       mockMe.value.settings = undefined
       const wrapper = await createWrapper()
       expect(wrapper.find('.auto-height-textarea').exists()).toBe(true)
+    })
+  })
+
+  describe('duplicate-of-their-own-post notice (ChitChat moderators)', () => {
+    const dup = {
+      id: 42,
+      type: 'Offer',
+      subject: 'OFFER: dining chairs (Hove BN3)',
+      cosine: 0.91,
+    }
+
+    beforeEach(() => {
+      mockNewsfeed.value.hidden = false
+      mockNewsfeedStore.duplicate.mockResolvedValue(null)
+    })
+
+    afterEach(() => {
+      mockChitChatMod.value = false
+      mockNewsfeedStore.duplicate.mockResolvedValue(null)
+    })
+
+    it('names the post it repeats, for a moderator', async () => {
+      mockChitChatMod.value = true
+      mockNewsfeedStore.duplicate.mockResolvedValue(dup)
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).toContain('OFFER: dining chairs (Hove BN3)')
+      expect(wrapper.text()).toContain('Volunteers only')
+    })
+
+    // The notice names one of the poster's OTHER posts, so it must never reach
+    // an ordinary member. The server refuses the request for them too.
+    it('is never shown to a member, even if a duplicate exists', async () => {
+      mockChitChatMod.value = false
+      mockNewsfeedStore.duplicate.mockResolvedValue(dup)
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('Volunteers only')
+      expect(wrapper.text()).not.toContain('OFFER: dining chairs (Hove BN3)')
+    })
+
+    it('is not looked up at all for a member', async () => {
+      mockChitChatMod.value = false
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.exists()).toBe(true)
+      expect(mockNewsfeedStore.duplicate).not.toHaveBeenCalled()
+    })
+
+    it('says nothing when there is no duplicate', async () => {
+      mockChitChatMod.value = true
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('Volunteers only')
+    })
+
+    // Advisory information: losing it must not cost the moderator the thread.
+    it('still renders the thread when the lookup fails', async () => {
+      mockChitChatMod.value = true
+      mockNewsfeedStore.duplicate.mockRejectedValue(new Error('nope'))
+      const wrapper = await createWrapper()
+      await flushPromises()
+      expect(wrapper.find('.b-card').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('Volunteers only')
+    })
+
+    it('offers converting the post for them', async () => {
+      mockChitChatMod.value = true
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Post this as an OFFER/WANTED for them')
+    })
+
+    it('does not offer converting to a member', async () => {
+      mockChitChatMod.value = false
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).not.toContain(
+        'Post this as an OFFER/WANTED for them'
+      )
     })
   })
 })

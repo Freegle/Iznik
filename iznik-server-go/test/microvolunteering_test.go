@@ -362,6 +362,101 @@ func TestMicroVolunteeringResponseCheckMessage(t *testing.T) {
 	assert.Equal(t, "Approve", actionResult)
 }
 
+// TestMicroVolunteeringResponseCheckMessageNotEligible verifies that a logged-in
+// user who is NOT a member of the message's group cannot cast a moderation verdict
+// on it. Without the eligibility gate, any two throwaway accounts could reject
+// arbitrary live posts and, at quorum, force them back to Pending site-wide.
+func TestMicroVolunteeringResponseCheckMessageNotEligible(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_noteligible")
+
+	// The message lives on a group the voter does NOT belong to.
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, senderID, groupID, "Member")
+	msgID := CreateTestMessage(t, senderID, groupID, "Test MV NotEligible "+prefix, 55.9533, -3.1883)
+
+	// Outsider: logged in, but no membership of the group.
+	outsiderID := CreateTestUser(t, prefix+"_outsider", "User")
+	_, token := CreateTestSession(t, outsiderID)
+
+	body := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"takedown","msgcategory":"ShouldntBeHere"}`, msgID)
+	req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	// No microaction should have been recorded for the outsider.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM microactions WHERE userid = ? AND msgid = ?", outsiderID, msgID).Scan(&count)
+	assert.Equal(t, int64(0), count)
+}
+
+// TestMicroVolunteeringResponseCheckMessageOwnMessageDenied verifies that even a
+// group member cannot cast a verdict on their OWN post (fromuser != voter).
+func TestMicroVolunteeringResponseCheckMessageOwnMessageDenied(t *testing.T) {
+	prefix := uniquePrefix("mv_ownmsg")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+	msgID := CreateTestMessage(t, userID, groupID, "Test MV Own "+prefix, 55.9533, -3.1883)
+
+	body := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"self","msgcategory":"ShouldntBeHere"}`, msgID)
+	req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// TestMicroVolunteeringResponsePhotoRotateNotEligible verifies the PhotoRotate
+// branch's eligibility gate: a logged-in non-member cannot vote to rotate a photo
+// on a message they have no relationship to.
+func TestMicroVolunteeringResponsePhotoRotateNotEligible(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_photo_ne")
+
+	// Photo on a message in a group the voter does NOT belong to.
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, senderID, groupID, "Member")
+	msgID := CreateTestMessage(t, senderID, groupID, "Test MV Photo NE "+prefix, 55.9533, -3.1883)
+	photoID := CreateTestAttachment(t, msgID)
+
+	outsiderID := CreateTestUser(t, prefix+"_outsider", "User")
+	_, token := CreateTestSession(t, outsiderID)
+
+	body := fmt.Sprintf(`{"photoid":%d,"response":"Reject","deg":90}`, photoID)
+	req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM microactions WHERE userid = ? AND rotatedimage = ?", outsiderID, photoID).Scan(&count)
+	assert.Equal(t, int64(0), count)
+}
+
+// TestMicroVolunteeringResponsePhotoRotateOwnPhotoAllowed verifies that, unlike
+// CheckMessage, the PhotoRotate branch does NOT exclude the author:
+// getPhotoRotateChallenge can legitimately serve a user their own freshly-posted
+// photo, so responding to it must succeed (not be a false-positive 403).
+func TestMicroVolunteeringResponsePhotoRotateOwnPhotoAllowed(t *testing.T) {
+	prefix := uniquePrefix("mv_photo_own")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+	msgID := CreateTestMessage(t, userID, groupID, "Test MV Photo Own "+prefix, 55.9533, -3.1883)
+	photoID := CreateTestAttachment(t, msgID)
+
+	body := fmt.Sprintf(`{"photoid":%d,"response":"Approve","deg":90}`, photoID)
+	req := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
 func TestMicroVolunteeringResponseSearchTerm(t *testing.T) {
 	db := database.DBConn
 
@@ -550,9 +645,10 @@ func TestMicroVolunteeringRejectQuorumSendsForReview(t *testing.T) {
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Scan(&startCollection)
 	assert.Equal(t, "Approved", startCollection)
 
-	// First reviewer rejects — not yet at quorum (needs 2).
+	// First reviewer rejects — not yet at quorum (needs 2). The vote carries
+	// the group context the volunteer is acting in (per-group sendForReview).
 	_, token1 := CreateTestSession(t, reviewer1ID)
-	body1 := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"Bad post","msgcategory":"ShouldntBeHere"}`, msgID)
+	body1 := fmt.Sprintf(`{"msgid":%d,"groupid":%d,"response":"Reject","comments":"Bad post","msgcategory":"ShouldntBeHere"}`, msgID, groupID)
 	req1 := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token1, strings.NewReader(body1))
 	req1.Header.Set("Content-Type", "application/json")
 	resp1, _ := getApp().Test(req1)
@@ -565,20 +661,20 @@ func TestMicroVolunteeringRejectQuorumSendsForReview(t *testing.T) {
 
 	// Second reviewer rejects — now at quorum (2 >= ApprovalQuorum).
 	_, token2 := CreateTestSession(t, reviewer2ID)
-	body2 := fmt.Sprintf(`{"msgid":%d,"response":"Reject","comments":"Spam post","msgcategory":"ShouldntBeHere"}`, msgID)
+	body2 := fmt.Sprintf(`{"msgid":%d,"groupid":%d,"response":"Reject","comments":"Spam post","msgcategory":"ShouldntBeHere"}`, msgID, groupID)
 	req2 := httptest.NewRequest("POST", "/api/microvolunteering?jwt="+token2, strings.NewReader(body2))
 	req2.Header.Set("Content-Type", "application/json")
 	resp2, _ := getApp().Test(req2)
 	assert.Equal(t, 200, resp2.StatusCode)
 
-	// After quorum reached, message should be moved to Pending for review.
+	// After quorum reached, the message should be moved to Pending for review
+	// on that group only, with spamreason recorded on the per-group row.
 	var endCollection string
-	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Scan(&endCollection)
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&endCollection)
 	assert.Equal(t, "Pending", endCollection)
 
-	// Verify spamreason was set.
 	var spamreason string
-	db.Raw("SELECT COALESCE(spamreason, '') FROM messages WHERE id = ?", msgID).Scan(&spamreason)
+	db.Raw("SELECT COALESCE(spamreason, '') FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&spamreason)
 	assert.Equal(t, "Members think there is something wrong with this message.", spamreason)
 }
 

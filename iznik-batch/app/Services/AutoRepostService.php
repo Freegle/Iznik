@@ -40,15 +40,20 @@ class AutoRepostService
      *
      * Matches V1 autorepost.php → Message::autoRepostGroup().
      *
-     * Multi-group fix: V1 autoRepost() updates ALL messages_groups rows
-     * (WHERE msgid = ?). We update only the specific group's row
-     * (WHERE msgid = ? AND groupid = ?).
+     * Multi-group fix: the REPOST itself stays per-group — V1 autoRepost() updates ALL
+     * messages_groups rows (WHERE msgid = ?), we update only the specific group's row
+     * (WHERE msgid = ? AND groupid = ?), so a rippled item is kept fresh in each
+     * community independently.
+     *
+     * Rippling-out fix: the WARNING email is anchored to the home posting
+     * (rippled_in = 0) and stamped across every group of the message, so a widely-rippled
+     * post reminds the poster once per cycle, not once per group. See processGroup().
      *
      * V1 side effects included:
      *   - UPDATE messages_groups SET arrival=NOW(), autoreposts=autoreposts+1 (per-group)
      *   - Log AUTOREPOSTED entry per group
      *   - INSERT messages_postings per group
-     *   - UPDATE lastautopostwarning for warning emails
+     *   - UPDATE lastautopostwarning for warning emails (home posting only; stamped on all groups)
      *   - Warning email: "Will Repost: {subject}" with completed/withdraw/promise buttons
      *
      * V1 side effects NOT included:
@@ -115,7 +120,7 @@ class AutoRepostService
         // V1 query: approved messages with no outcome, no promise, source=Platform,
         // not deleted, poster still a member (not PROHIBITED), poster not deleted,
         // no deadline or future deadline.
-        $messages = $this->getCandidates($group->id, $mindate);
+        $messages = $this->getCandidates($group->id, $mindate, $reposts);
 
         $now = time();
 
@@ -131,15 +136,18 @@ class AutoRepostService
                 continue;
             }
 
+            // Cast the same way applyDueWindow does. The database is asked for candidates
+            // using a window built from whole numbers, and this decides what to do with
+            // them; if the two rounded a fraction differently, a post could pass the test
+            // here that the window had already excluded, and it would never be reposted.
+            // Every community stores whole numbers today, so this changes nothing now -
+            // it just stops the two halves being able to disagree.
             $interval = $msg->type === Message::TYPE_OFFER
-                ? ($reposts['offer'] ?? 3)
-                : ($reposts['wanted'] ?? 7);
-
-            // V1: check for recent replies in chat about this message.
-            $recentReply = $this->hasRecentReply($msg->msgid, $interval);
+                ? (int) ($reposts['offer'] ?? 3)
+                : (int) ($reposts['wanted'] ?? 7);
 
             // V1: max age check — messages older than interval * (max + 1) days.
-            $maxAge = $interval * (($reposts['max'] ?? 5) + 1);
+            $maxAge = $interval * ((int) ($reposts['max'] ?? 5) + 1);
             if ($msg->hoursago >= $maxAge * 24) {
                 $stats['skipped']++;
                 continue;
@@ -153,7 +161,14 @@ class AutoRepostService
                 continue;
             }
 
-            if ($recentReply) {
+            // V1: check for recent replies in chat about this message.
+            //
+            // This asks chat_messages about one message, and it used to be asked before
+            // the two checks above - so every open post on every group paid for it,
+            // around 2.4M lookups a day, the overwhelming majority for posts that were
+            // then discarded. It decides nothing that those checks do not already
+            // decide first, so asking it here instead changes cost, not behaviour.
+            if ($this->hasRecentReply($msg->msgid, $interval)) {
                 $stats['skipped']++;
                 continue;
             }
@@ -190,15 +205,26 @@ class AutoRepostService
                 && $msg->hoursago > ($interval - 1) * 24
                 && (is_null($lastwarnago) || $lastwarnago > 24 * 60 * 60)
             ) {
-                if (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {
+                // Rippling-out fix: the repost reminder is anchored to the message's HOME
+                // posting (rippled_in = 0). A post that rippled INTO this group must never
+                // generate its own "Will Repost" reminder — otherwise a widely-rippled item
+                // would email the poster once per group, which is burdensome. The reminder's
+                // buttons (mark taken / withdraw / promise) act on the whole item, so one
+                // email from the home group governs the post on every group. Rippled rows are
+                // still reposted (the elseif below) to keep the item fresh in each community;
+                // they just stay silent.
+                if ($msg->rippled_in) {
+                    $stats['skipped']++;
+                } elseif (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {
                     if ($dryRun) {
                         Log::info("Dry run: would send repost warning for message #{$msg->msgid} on group #{$group->id}");
                     } elseif ($warningEmailEnabled) {
-                        // Multi-group fix: update per-group, not global.
-                        // V1: UPDATE messages_groups SET lastautopostwarning = NOW() WHERE msgid = ?
+                        // Stamp lastautopostwarning on EVERY group of the message (V1's
+                        // WHERE msgid = ?), so a message cross-posted to several home groups
+                        // (and all its rippled-in rows) is reminded once per cycle, not once
+                        // per group. Mirrors ChaseUpService's cross-group lastchaseup stamp.
                         DB::table('messages_groups')
                             ->where('msgid', $msg->msgid)
-                            ->where('groupid', $group->id)
                             ->update(['lastautopostwarning' => now()]);
 
                         // V1: "Will Repost: {subject}" with links to mark completed/withdraw/promise.
@@ -238,9 +264,67 @@ class AutoRepostService
      *
      * V1 query from autoRepostGroup().
      */
-    protected function getCandidates(int $groupid, string $mindate)
+    /**
+     * Narrow the candidates to those that could actually be warned about or reposted.
+     *
+     * When a post is due is arithmetic on its arrival and the group's settings, so the
+     * database can do it. It used to return every open post on the group - about 109.5k
+     * an hour across the estate - and PHP then discarded the ~98% that were not due yet,
+     * having already run a chat lookup for each one.
+     *
+     * The band that does anything is:
+     *
+     *   arrival older than (interval - 1) days   - below that, neither branch fires
+     *   arrival newer than interval * (max + 1)  - past that, the post has aged out
+     *
+     * The bounds are expressed against arrival rather than TIMESTAMPDIFF so the arrival
+     * index can be used. That also makes the lower bound very slightly WIDER than the
+     * PHP test, because TIMESTAMPDIFF truncates to whole hours: a post 71 hours 30
+     * minutes old reports 71. The extra rows are simply handed to the same PHP checks
+     * as before, so this can only admit more than it should, never fewer - which is the
+     * direction that cannot lose a repost. AutoRepostDueWindowTest pins that.
+     */
+    protected function applyDueWindow($query, array $reposts)
     {
-        return DB::table('messages_groups')
+        $max = (int) ($reposts['max'] ?? 5);
+
+        $bands = [];
+        foreach ([Message::TYPE_OFFER => 'offer', Message::TYPE_WANTED => 'wanted'] as $type => $key) {
+            $interval = (int) ($reposts[$key] ?? ($type === Message::TYPE_OFFER ? 3 : 7));
+
+            // Reposting off for this type: PHP skips every one of them anyway.
+            if ($interval <= 0 || $max <= 0) {
+                continue;
+            }
+
+            $bands[$type] = [
+                'earliest' => max(0, ($interval - 1) * 24),
+                'latest' => $interval * ($max + 1) * 24,
+            ];
+        }
+
+        if (empty($bands)) {
+            // Nothing on this group can be reposted; return a query that matches nothing
+            // rather than scanning for rows PHP would discard one by one.
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->where(function ($outer) use ($bands) {
+            foreach ($bands as $type => $band) {
+                $outer->orWhere(function ($q) use ($type, $band) {
+                    $q->where('messages.type', $type)
+                        // keep-raw: an interval expression against NOW() with a bound
+                        // parameter; the query builder has no interval helper.
+                        ->whereRaw('messages_groups.arrival <= DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['earliest']])
+                        ->whereRaw('messages_groups.arrival > DATE_SUB(NOW(), INTERVAL ? HOUR)', [$band['latest']]);
+                });
+            }
+        });
+    }
+
+    protected function getCandidates(int $groupid, string $mindate, ?array $reposts = null)
+    {
+        $query = DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->join('users', 'messages.fromuser', '=', 'users.id')
             ->join('memberships', function ($join) {
@@ -254,6 +338,7 @@ class AutoRepostService
                 'messages_groups.groupid',
                 'messages_groups.autoreposts',
                 'messages_groups.lastautopostwarning',
+                'messages_groups.rippled_in',
                 'messages.type',
                 'messages.subject',
                 'messages.fromaddr',
@@ -264,6 +349,14 @@ class AutoRepostService
             ->where('messages_groups.arrival', '>', $mindate)
             ->where('messages_groups.groupid', $groupid)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            // The membership itself must be live. Rippling's "removed on origin removal" (and
+            // group-leave retraction) soft-deletes a rippled-in messages_groups row with
+            // deleted=1 while leaving collection=Approved and the parent messages.deleted NULL.
+            // Without this filter autorepost reposts that dead membership, stamping arrival=NOW()
+            // and resurrecting a copy rippling had already pulled — which then leaks back into
+            // browse and the spatial index (and races purge:messages there). messages.deleted
+            // below only covers the parent message, not the per-group membership.
+            ->where('messages_groups.deleted', 0)
             ->whereNull('messages_outcomes.msgid')
             ->whereNull('messages_promises.msgid')
             ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
@@ -277,8 +370,13 @@ class AutoRepostService
             ->where(function ($q) {
                 $q->whereNull('messages.deadline')
                     ->orWhereRaw('messages.deadline > DATE(NOW())');
-            })
-            ->get();
+            });
+
+        if ($reposts !== null) {
+            $query = $this->applyDueWindow($query, $reposts);
+        }
+
+        return $query->get();
     }
 
     /**

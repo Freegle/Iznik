@@ -6,6 +6,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Membership;
 use App\Models\User;
+use App\Models\UserDeletion;
 use App\Models\UserEmail;
 use App\Services\LokiService;
 use App\Services\UserManagementService;
@@ -61,6 +62,7 @@ class UserManagementServiceTest extends TestCase
         $this->assertArrayHasKey('inactive_users_forgotten', $stats);
         $this->assertArrayHasKey('gdpr_forgets_processed', $stats);
         $this->assertArrayHasKey('forgotten_users_deleted', $stats);
+        $this->assertArrayHasKey('deletion_records_pruned', $stats);
     }
 
     public function test_merge_duplicates_with_no_duplicates(): void
@@ -98,14 +100,6 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(0, $stats['duplicates_found']);
     }
 
-    public function test_update_kudos_returns_count(): void
-    {
-        // This test verifies the method runs without error.
-        $count = $this->service->updateKudos();
-
-        $this->assertIsInt($count);
-    }
-
     public function test_cleanup_users_dry_run_does_not_modify(): void
     {
         // Create a user with a Yahoo Groups email.
@@ -130,31 +124,6 @@ class UserManagementServiceTest extends TestCase
 
         // User should still exist.
         $this->assertDatabaseHas('users', ['id' => $user->id]);
-    }
-
-    public function test_update_kudos_with_active_user(): void
-    {
-        $group = $this->createTestGroup();
-        $user = $this->createTestUser();
-        $this->createMembership($user, $group);
-
-        // Set lastaccess to recent so user is selected.
-        $user->update(['lastaccess' => now()]);
-
-        // Create a message from the user (gives 1 distinct month of posts).
-        $this->createTestMessage($user, $group);
-
-        $count = $this->service->updateKudos();
-
-        // The method should run and return an integer.
-        $this->assertIsInt($count);
-        $this->assertGreaterThanOrEqual(1, $count);
-
-        // Check users_kudos table was populated.
-        $kudosRow = DB::table('users_kudos')->where('userid', $user->id)->first();
-        $this->assertNotNull($kudosRow);
-        $this->assertGreaterThanOrEqual(1, $kudosRow->posts);
-        $this->assertEquals($kudosRow->posts, $kudosRow->kudos);
     }
 
     public function test_process_bounced_emails_with_no_bounced(): void
@@ -340,6 +309,21 @@ class UserManagementServiceTest extends TestCase
         ]);
     }
 
+    public function test_forget_user_records_deletion_for_partners(): void
+    {
+        // Partners mirror our users and only learn about changes by polling, so a
+        // forget has to leave a tombstone they can see.
+        $user = $this->createTestUser();
+
+        $this->service->forgetUser($user->id, 'Test reason');
+
+        $this->assertDatabaseHas('users_deletions', [
+            'userid' => $user->id,
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+            'reason' => 'Test reason',
+        ]);
+    }
+
     public function test_delete_fully_forgotten_users(): void
     {
         // Create a forgotten user with no messages.
@@ -379,76 +363,102 @@ class UserManagementServiceTest extends TestCase
         $this->assertDatabaseHas('users', ['id' => $user->id]);
     }
 
-    public function test_calculate_kudos_via_reflection(): void
+    public function test_delete_fully_forgotten_users_records_purge(): void
     {
-        $user = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
-
-        // Create a message from the user (gives 1 distinct month of posts).
-        $this->createTestMessage($user, $group);
-
-        // Create a chat message (gives 1 distinct month of chats).
-        // First create a chat room.
-        $chatId = DB::table('chat_rooms')->insertGetId([
-            'chattype' => 'User2User',
+        // The users row goes for good here, so the tombstone is the only trace
+        // left for a partner to act on.
+        $user = User::create([
+            'firstname' => NULL,
+            'lastname' => NULL,
+            'fullname' => 'Deleted User #997',
+            'added' => now()->subYears(2),
+            'lastaccess' => now()->subYears(1),
+            'forgotten' => now()->subDays(30),
         ]);
-        DB::table('chat_messages')->insert([
-            'chatid' => $chatId,
+
+        $this->service->deleteFullyForgottenUsers();
+
+        $this->assertDatabaseMissing('users', ['id' => $user->id]);
+        $this->assertDatabaseHas('users_deletions', [
             'userid' => $user->id,
-            'date' => now(),
-            'message' => 'Test chat message',
-            'type' => 'Default',
+            'type' => UserDeletion::TYPE_PURGED,
         ]);
-
-        // Use reflection to test protected method.
-        $reflection = new \ReflectionClass($this->service);
-        $method = $reflection->getMethod('calculateKudos');
-        $method->setAccessible(true);
-
-        $kudos = $method->invoke($this->service, $user->id);
-
-        // Returns array with V1-style components.
-        $this->assertIsArray($kudos);
-        $this->assertArrayHasKey('posts', $kudos);
-        $this->assertArrayHasKey('chats', $kudos);
-        $this->assertArrayHasKey('newsfeed', $kudos);
-        $this->assertArrayHasKey('events', $kudos);
-        $this->assertArrayHasKey('vols', $kudos);
-        $this->assertArrayHasKey('facebook', $kudos);
-        $this->assertArrayHasKey('platform', $kudos);
-
-        // Should have 1 month of posts and 1 month of chats.
-        $this->assertEquals(1, $kudos['posts']);
-        $this->assertEquals(1, $kudos['chats']);
     }
 
-    public function test_calculate_kudos_with_no_activity(): void
+    public function test_delete_fully_forgotten_users_dry_run_records_nothing(): void
     {
-        // Create user with no activity.
         $user = User::create([
-            'firstname' => 'New',
-            'lastname' => 'User',
-            'fullname' => 'New User',
-            'added' => now(),
+            'firstname' => NULL,
+            'lastname' => NULL,
+            'fullname' => 'Deleted User #996',
+            'added' => now()->subYears(2),
+            'lastaccess' => now()->subYears(1),
+            'forgotten' => now()->subDays(30),
         ]);
 
-        // Use reflection to test protected method.
-        $reflection = new \ReflectionClass($this->service);
-        $method = $reflection->getMethod('calculateKudos');
-        $method->setAccessible(true);
+        $this->service->deleteFullyForgottenUsers(TRUE);
 
-        $kudos = $method->invoke($this->service, $user->id);
+        $this->assertDatabaseHas('users', ['id' => $user->id]);
+        $this->assertDatabaseMissing('users_deletions', ['userid' => $user->id]);
+    }
 
-        // New user with no activity should have all zeros.
-        $this->assertIsArray($kudos);
-        $this->assertEquals(0, $kudos['posts']);
-        $this->assertEquals(0, $kudos['chats']);
-        $this->assertEquals(0, $kudos['newsfeed']);
-        $this->assertEquals(0, $kudos['events']);
-        $this->assertEquals(0, $kudos['vols']);
-        $this->assertFalse($kudos['facebook']);
-        $this->assertFalse($kudos['platform']);
+    public function test_delete_yahoo_groups_users_records_purge(): void
+    {
+        $user = User::create([
+            'firstname' => 'Yahoo',
+            'lastname' => 'Purged',
+            'fullname' => 'Yahoo Purged',
+            'added' => now()->subYears(2),
+            'lastaccess' => now()->subYears(1),
+        ]);
+
+        DB::table('users_emails')->insert([
+            'userid' => $user->id,
+            'email' => 'purgedgroup@yahoogroups.com',
+            'added' => now()->subYears(2),
+        ]);
+
+        $this->service->deleteYahooGroupsUsers();
+
+        $this->assertDatabaseMissing('users', ['id' => $user->id]);
+        $this->assertDatabaseHas('users_deletions', [
+            'userid' => $user->id,
+            'type' => UserDeletion::TYPE_PURGED,
+        ]);
+    }
+
+    public function test_prune_deletions_removes_records_older_than_retention(): void
+    {
+        $stale = UserDeletion::create([
+            'userid' => 999001,
+            'timestamp' => now()->subDays(UserManagementService::DELETION_RETENTION_DAYS + 1),
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+        ]);
+
+        $fresh = UserDeletion::create([
+            'userid' => 999002,
+            'timestamp' => now()->subDays(1),
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+        ]);
+
+        $pruned = $this->service->pruneDeletions();
+
+        $this->assertGreaterThanOrEqual(1, $pruned);
+        $this->assertDatabaseMissing('users_deletions', ['id' => $stale->id]);
+        $this->assertDatabaseHas('users_deletions', ['id' => $fresh->id]);
+    }
+
+    public function test_prune_deletions_dry_run_keeps_records(): void
+    {
+        $stale = UserDeletion::create([
+            'userid' => 999003,
+            'timestamp' => now()->subDays(UserManagementService::DELETION_RETENTION_DAYS + 1),
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+        ]);
+
+        $this->service->pruneDeletions(TRUE);
+
+        $this->assertDatabaseHas('users_deletions', ['id' => $stale->id]);
     }
 
     public function test_merge_users_for_email_with_single_user(): void
@@ -553,6 +563,59 @@ class UserManagementServiceTest extends TestCase
         $stats = $this->service->updateLastAccess();
 
         $this->assertGreaterThanOrEqual(1, $stats['updated']);
+    }
+
+    /**
+     * The point of the window: activity older than it is left to the nightly pass, so
+     * the hourly one stops joining users against the whole history of chat_messages
+     * and memberships.
+     */
+    public function test_hourly_pass_ignores_activity_older_than_the_window(): void
+    {
+        $user = $this->createTestUser();
+        $user2 = $this->createTestUser();
+
+        DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()->subDays(60)]);
+
+        $room = $this->createTestChatRoom($user, $user2);
+        $this->createTestChatMessage($room, $user, ['date' => now()->subDays(30)]);
+
+        // Pretend the last run was an hour ago, so the window starts three hours back.
+        DB::table('config')->upsert(
+            [['key' => 'users.lastaccess_cursor', 'value' => now()->subHour()->toDateTimeString()]],
+            ['key'],
+            ['value'],
+        );
+
+        $windowed = $this->service->updateLastAccess();
+        $this->assertSame(0, $windowed['updated'], 'a 30-day-old message is outside the window');
+
+        $user->refresh();
+        $this->assertLessThan(now()->subDays(50)->timestamp, strtotime($user->lastaccess));
+
+        // The nightly unbounded pass is what catches it.
+        $full = $this->service->updateLastAccess(false, true);
+        $this->assertTrue($full['full']);
+        $this->assertGreaterThanOrEqual(1, $full['updated']);
+
+        $user->refresh();
+        $this->assertGreaterThan(now()->subDays(31)->timestamp, strtotime($user->lastaccess));
+    }
+
+    public function test_a_run_records_where_it_got_to(): void
+    {
+        $this->assertNull(DB::table('config')->where('key', 'users.lastaccess_cursor')->value('value'));
+
+        $this->service->updateLastAccess();
+
+        $this->assertNotNull(DB::table('config')->where('key', 'users.lastaccess_cursor')->value('value'));
+    }
+
+    public function test_a_dry_run_does_not_record_where_it_got_to(): void
+    {
+        $this->service->updateLastAccess(true);
+
+        $this->assertNull(DB::table('config')->where('key', 'users.lastaccess_cursor')->value('value'));
     }
 
     public function test_update_lastaccess_ignores_small_differences(): void
@@ -837,5 +900,63 @@ class UserManagementServiceTest extends TestCase
         $this->assertEquals(0, $stats['processed']);
         $this->assertEquals(0, $stats['made_visible']);
         $this->assertEquals(0, $stats['made_hidden']);
+    }
+
+    public function test_backfill_demotes_stale_moderator(): void
+    {
+        // systemrole Moderator but no Owner/Moderator membership anywhere.
+        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+
+        $stats = $this->service->backfillModeratorSystemRoles();
+
+        $user->refresh();
+        $this->assertEquals('User', $user->systemrole);
+        $this->assertGreaterThanOrEqual(1, $stats['demoted']);
+    }
+
+    public function test_backfill_keeps_moderator_with_mod_membership(): void
+    {
+        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['role' => 'Moderator']);
+
+        $this->service->backfillModeratorSystemRoles();
+
+        $user->refresh();
+        $this->assertEquals('Moderator', $user->systemrole);
+    }
+
+    public function test_backfill_keeps_moderator_with_owner_membership(): void
+    {
+        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, ['role' => 'Owner']);
+
+        $this->service->backfillModeratorSystemRoles();
+
+        $user->refresh();
+        $this->assertEquals('Moderator', $user->systemrole);
+    }
+
+    public function test_backfill_leaves_support_untouched(): void
+    {
+        // Support outranks Moderator and is set deliberately — never auto-demoted.
+        $user = $this->createTestUser(['systemrole' => 'Support']);
+
+        $this->service->backfillModeratorSystemRoles();
+
+        $user->refresh();
+        $this->assertEquals('Support', $user->systemrole);
+    }
+
+    public function test_backfill_dry_run_does_not_change(): void
+    {
+        $user = $this->createTestUser(['systemrole' => 'Moderator']);
+
+        $stats = $this->service->backfillModeratorSystemRoles(true);
+
+        $user->refresh();
+        $this->assertEquals('Moderator', $user->systemrole);
+        $this->assertGreaterThanOrEqual(1, $stats['demoted']);
     }
 }

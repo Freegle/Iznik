@@ -176,22 +176,29 @@ func TestTypeConfigsContainsKnownTypes(t *testing.T) {
 	}
 }
 
-func TestTypeConfigsMessageHasNoContentType(t *testing.T) {
-	// messages_attachments is the only table without a contenttype column —
-	// the INSERT path in doCreate branches on this flag.
+func TestTypeConfigsMessageDoesNotTrustStoredContentType(t *testing.T) {
+	// messages_attachments has the same NOT NULL, no-default contenttype
+	// column as every other image table (doCreate now always writes it), but
+	// Get() must not trust a stored value for Message: rows created before
+	// this field existed - when doCreate wrongly omitted contenttype for
+	// Message - may have an empty string there.
 	cfg := typeConfigs["Message"]
 	assert.Equal(t, "messages_attachments", cfg.Table)
 	assert.Equal(t, "msgid", cfg.IDColumn)
-	assert.False(t, cfg.HasContentType)
+	// Message alone cannot trust a stored contenttype: rows written before the
+	// INSERT always set it carry '', which must not be served as a Content-Type.
+	// This says nothing about whether the column exists - it does, on all ten.
+	assert.False(t, cfg.TrustStoredContentType)
 }
 
-func TestTypeConfigsOtherTablesHaveContentType(t *testing.T) {
-	// All tables except messages_attachments must set HasContentType=true so the
-	// INSERT statement includes the NOT NULL contenttype column.
+func TestTypeConfigsOtherTablesTrustStoredContentType(t *testing.T) {
+	// Every table except messages_attachments has always had contenttype written
+	// on insert, so the stored value is meaningful and the legacy blob-read path
+	// can use it rather than assuming JPEG.
 	for name, cfg := range typeConfigs {
 		if name == "Message" {
 			continue
 		}
-		assert.True(t, cfg.HasContentType, "%s should have HasContentType=true", name)
+		assert.True(t, cfg.TrustStoredContentType, "%s should trust its stored contenttype", name)
 	}
 }

@@ -11,7 +11,7 @@
         icon-class="pe-1"
         :disabled="disabled"
         :confirm="confirmButton"
-        @handle="click"
+        @handle="(callback) => guardHold(() => click(callback))"
       />
       <v-icon
         v-if="autosend"
@@ -20,18 +20,21 @@
         class="autosend"
       />
     </div>
+    <NoticeMessage v-if="heldError" variant="warning" class="mt-1 mb-1">
+      {{ heldError }}
+    </NoticeMessage>
     <ConfirmModal
       v-if="showDeleteModal"
       ref="deleteConfirm"
       :title="'Delete: ' + message?.subject"
-      @confirm="deleteConfirmed"
+      @confirm="() => guardHold(deleteConfirmed)"
       @hidden="showDeleteModal = false"
     />
     <ConfirmModal
       v-if="showSpamModal"
       ref="spamConfirm"
       :title="'Mark as Spam: ' + message?.subject"
-      @confirm="spamConfirmed"
+      @confirm="() => guardHold(spamConfirmed)"
       @hidden="showSpamModal = false"
     />
     <ModStdMessageModal
@@ -40,9 +43,30 @@
       :stdmsgid="stdmsgId"
       :stdmsgaction="stdmsgAction"
       :messageid="message?.id"
+      :groupid="groupid"
       :autosend="autosend"
       @hidden="showStdMsgModal = false"
     />
+    <ConfirmModal
+      v-if="showRejectNoMsgModal"
+      ref="rejectNoMsgConfirm"
+      title="Stop this post appearing on your community"
+      @confirm="() => guardHold(rejectFromGroupConfirmed)"
+      @hidden="showRejectNoMsgModal = false"
+    >
+      <template #default>
+        <p>
+          This post first appeared on another community and rippled in to yours.
+          Rejecting here just stops it appearing on
+          <strong>{{ groupName || 'your community' }}</strong> - it stays on the
+          community where it was first posted.
+        </p>
+        <p class="mb-0">
+          The freegler won't be told, because they don't need to know unless
+          it's rejected on their home community. So there's no message to send.
+        </p>
+      </template>
+    </ConfirmModal>
   </div>
 </template>
 <script setup>
@@ -141,6 +165,14 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Whether the group being moderated is the post's home/origin group. On a
+  // rippled-in (non-home) group a Reject just removes the post from this group
+  // and sends no message to the freegler, so we skip the compose modal.
+  isHomeGroup: {
+    type: Boolean,
+    required: false,
+    default: true,
+  },
 })
 
 const messageStore = useMessageStore()
@@ -177,6 +209,8 @@ const stdmodal = ref(null)
 const showDeleteModal = ref(false)
 const showStdMsgModal = ref(false)
 const showSpamModal = ref(false)
+const showRejectNoMsgModal = ref(false)
+const heldError = ref(null)
 const stdmsgId = ref(null)
 const stdmsgAction = ref(null)
 
@@ -191,6 +225,13 @@ const groupid = computed(() => {
   return null
 })
 
+const groupName = computed(() => {
+  const g = message.value?.groups?.find(
+    (grp) => parseInt(grp.groupid) === parseInt(groupid.value)
+  )
+  return g?.namedisplay || null
+})
+
 const spinclass = computed(() => {
   if (props.variant === 'primary') {
     // Primary buttons have "success" (green) class.
@@ -200,9 +241,19 @@ const spinclass = computed(() => {
   return null
 })
 
+// heldby is per-group (messages_groups.heldby); a hold on a DIFFERENT group this
+// post also rippled to must not force a confirm on the copy being administered
+// here (Discourse 9970/2).
+const heldByOnThisGroup = computed(() => {
+  const g = message.value?.groups?.find(
+    (grp) => parseInt(grp.groupid) === parseInt(groupid.value)
+  )
+  return g?.heldby || null
+})
+
 const confirmButton = computed(() => {
   // We confirm any actions on held messages, except where we have a separate confirm.
-  return message.value?.heldby && !props.spam && !props.delete
+  return heldByOnThisGroup.value && !props.spam && !props.delete
 })
 
 async function approveIt() {
@@ -229,6 +280,15 @@ async function spamConfirmed() {
     id: message.value.id,
     groupid: groupid.value,
   })
+  refreshFromUser()
+  checkWorkDeferGetMessages()
+}
+
+async function rejectFromGroupConfirmed() {
+  // Rippled-in (non-home) reject: just remove the post from this group, with no
+  // message to the freegler (the server suppresses it anyway - they only need to
+  // hear about a rejection on their home community).
+  await messageStore.reject(message.value.id, groupid.value, '', null, '')
   refreshFromUser()
   checkWorkDeferGetMessages()
 }
@@ -263,6 +323,21 @@ async function revertEdits() {
   checkWorkDeferGetMessages()
 }
 
+// The server refuses moderation actions on a post another moderator holds
+// (Discourse #9946). The store has already re-fetched the message by the time we
+// get here, so the "Held by X" banner is on screen - but the moderator still
+// clicked a button and must be told plainly that it did not happen.
+async function guardHold(fn) {
+  heldError.value = null
+
+  try {
+    return await fn()
+  } catch (e) {
+    if (!e?.heldByOtherMod) throw e
+    heldError.value = e.message
+  }
+}
+
 async function click(callback) {
   if (props.approve) {
     // Standard approve button - no modal.
@@ -287,6 +362,29 @@ async function click(callback) {
     // We want to show a modal.
     stdmsgId.value = null
     stdmsgAction.value = null
+
+    if (props.reject && !props.isHomeGroup) {
+      // Rippled-in reject: confirm a no-message removal instead of composing one.
+      showRejectNoMsgModal.value = true
+      if (callback) callback()
+      return
+    }
+
+    if (props.stdmsgid && !props.isHomeGroup) {
+      // A standard message whose action is Reject, applied to a rippled-in copy,
+      // must behave exactly like the Reject button above: scope the removal to
+      // this group with NO message to the member, and show the same "stop
+      // appearing on your community" confirmation (Discourse 9862/16-17). We only
+      // take this DESTRUCTIVE scoped path when the action is DEFINITIVELY 'Reject':
+      // if the standard message can't be resolved we fall through to the normal
+      // compose modal (fail closed; cf. the fail-open flaw that closed PR #1071).
+      const stdmsg = await stdmsgStore.fetch(props.stdmsgid)
+      if (stdmsg?.action === 'Reject') {
+        showRejectNoMsgModal.value = true
+        if (callback) callback()
+        return
+      }
+    }
 
     if (props.reject) {
       stdmsgAction.value = 'Reject'

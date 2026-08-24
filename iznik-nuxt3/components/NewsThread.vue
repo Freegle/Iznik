@@ -13,6 +13,30 @@
             <span v-else>the system</span>
             and is only visible to volunteers and the person who posted it.
           </div>
+          <!-- Volunteers only. Names one of the poster's own live posts, so it
+               must never render for other members; the server also refuses the
+               request for them. -->
+          <NoticeMessage
+            v-if="chitChatMod && duplicateOf && !newsfeed.hidden"
+            variant="warning"
+            class="mb-2"
+          >
+            <p class="mb-1">
+              <strong>Volunteers only.</strong> This looks like the same thing
+              as a post they already have live:
+            </p>
+            <p class="mb-1">
+              <strong>{{ duplicateOf.type.toUpperCase() }}:</strong>
+              {{ duplicateOf.subject }}
+            </p>
+            <p class="mb-2">
+              If it's a repeat, hide this - their real post is already doing the
+              work, and it reaches more people than ChitChat does.
+            </p>
+            <b-button variant="secondary" size="sm" @click="hide">
+              Hide this post
+            </b-button>
+          </NoticeMessage>
           <div v-if="isNewsComponent">
             <b-dropdown
               lazy
@@ -31,6 +55,7 @@
                 Show {{ duplicateCount }} combined posts separately
               </b-dropdown-item>
               <b-dropdown-item
+                v-if="!isApp"
                 :href="'/chitchat/' + newsfeed?.id"
                 target="_blank"
               >
@@ -48,6 +73,15 @@
               </b-dropdown-item>
               <b-dropdown-item @click="report">
                 Report this thread or one of its replies
+              </b-dropdown-item>
+              <!-- Says what it leaves behind. This posts in the member's name
+                   and adds a note to this public thread, so the menu shouldn't
+                   read like a private mod action. -->
+              <b-dropdown-item v-if="chitChatMod" @click="showConvert = true">
+                Post this as an OFFER/WANTED for them
+                <div class="small text-muted convert-hint">
+                  Posts as them, and adds a note to this thread
+                </div>
               </b-dropdown-item>
               <b-dropdown-item v-if="canRefer" @click="referToOffer">
                 Refer to OFFER
@@ -117,17 +151,22 @@
         </b-card-text>
       </b-card-body>
       <template #footer>
+        <NoticeMessage v-if="targetGone" variant="info" class="mb-2">
+          That reply has been removed. Here's the rest of the conversation.
+        </NoticeMessage>
         <NewsReplies
           v-if="newsfeed?.replies?.length"
           :id="id"
           :threadhead="newsfeed.id"
-          :scroll-to="scrollDownTo"
+          :scroll-to="scrollTo"
           :reply-to="replyingTo"
           :depth="1"
+          :context="context"
           :class="newsfeed.deleted ? 'strike me-1' : 'me-1'"
           @rendered="rendered"
+          @subtree-rendered="repliesRendered = true"
         />
-        <span v-if="!newsfeed?.closed">
+        <span v-if="!newsfeed?.closed" class="comment-box">
           <div v-if="enterNewLine">
             <OurAtTa
               v-if="!newsfeed.deleted"
@@ -198,7 +237,7 @@
                   spellcheck="true"
                   :placeholder="commentPlaceholder"
                   class="p-0 ps-2 pt-2 entersend"
-                  autocapitalize="none"
+                  :autocapitalize="autocapitalizeMode"
                   @keydown.enter.shift.exact.prevent="newlineComment"
                   @keydown.alt.shift.enter.exact.prevent="newlineComment"
                   @focus="focusedComment"
@@ -229,16 +268,6 @@
             width="100"
             class="mt-1 ms-4 image__uploaded"
           />
-          <NuxtPicture
-            v-else-if="imageuid"
-            format="webp"
-            provider="uploadcare"
-            :src="imageuid"
-            :modifiers="imagemods"
-            alt="ChitChat Photo"
-            width="100"
-            class="mt-1 ms-4 image__uploaded"
-          />
           <OurUploader
             v-if="uploading"
             v-model="currentAtts"
@@ -261,6 +290,13 @@
       :id="newsfeed.id"
       @hidden="showReportModal = false"
     />
+    <NewsConvertModal
+      v-if="showConvert"
+      :newsfeed="newsfeed"
+      :poster-name="newsfeed?.displayname || 'them'"
+      @posted="onConverted"
+      @hidden="showConvert = false"
+    />
     <ConfirmModal
       v-if="showDeleteModal"
       :title="'Delete thread started by ' + starter"
@@ -276,15 +312,25 @@ import {
   defineAsyncComponent,
   watch,
   onMounted,
+  onBeforeUnmount,
   nextTick,
 } from 'vue'
 import AutoHeightTextarea from './AutoHeightTextarea'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMiscStore } from '~/stores/misc'
+import { useMobileStore } from '~/stores/mobile'
 import NewsReplies from '~/components/NewsReplies'
 import { untwem } from '~/composables/useTwem'
+import {
+  scrollToAndPin,
+  fixedHeaderOffset,
+  imagesComplete,
+  whenImagesComplete,
+  whenAllSettled,
+} from '~/composables/useScrollAnchor'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
+import { isIOS } from '~/composables/useIsIOS'
 
 // Use standard import to avoid screen-flicker
 import NewsRefer from '~/components/NewsRefer'
@@ -311,6 +357,20 @@ const props = defineProps({
     required: false,
     default: '',
   },
+  // 'thread' = the full conversation page; 'feed' = a short card in the
+  // ChitChat feed. Forwarded to NewsReplies, which does the shortening.
+  context: {
+    type: String,
+    required: false,
+    default: 'thread',
+  },
+  // The reader asked to be taken to the new replies (the feed's "#new"
+  // link), rather than just opening the thread.
+  jumpToNew: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
   duplicateCount: {
     type: Number,
     required: false,
@@ -320,12 +380,21 @@ const props = defineProps({
 
 const emit = defineEmits(['rendered', 'expand-duplicates'])
 
+// iOS auto-capitalise engages the virtual Shift key, so Return at a sentence
+// start arrives as shift+enter and the keydown.enter.exact send never fires
+// (angular/angular#32963 - iOS keyboard design, not a fixed bug). Keep the
+// autocapitalize="none" workaround on iOS only.
+const autocapitalizeMode = isIOS() ? 'none' : 'sentences'
+
 const NewsReportModal = defineAsyncComponent(() => import('./NewsReportModal'))
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const NewsConvertModal = defineAsyncComponent(
+  () => import('./NewsConvertModal')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
+)
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const OurAtTa = defineAsyncComponent(() => import('~/components/OurAtTa'))
 
@@ -335,7 +404,13 @@ const teamStore = useTeamStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
 const miscStore = useMiscStore()
+const mobileStore = useMobileStore()
 const { chitChatMod, supportOrAdmin } = useMe()
+
+// In the app there is no browser to open a new window in - target="_blank"
+// bounces through the OS back into the app, which just reopens it. Hide the
+// option there.
+const isApp = computed(() => mobileStore.isApp)
 
 const isMobile = computed(() => {
   return miscStore.breakpoint === 'xs' || miscStore.breakpoint === 'sm'
@@ -354,9 +429,11 @@ const threadcommentref = ref(null)
 const threadcommentautoheight = ref(null)
 
 // Reactive state
-const scrollDownTo = ref(null)
 const replyingTo = ref(null)
 const uploading = ref(false)
+// Guards sendComment against double-submit (Enter binds keydown here; a stray double-fire or
+// double-click would otherwise post twice before threadcomment is cleared). See NewsReply.vue.
+const sending = ref(false)
 const imageid = ref(null)
 const ouruid = ref(null)
 const imageuid = ref(null)
@@ -364,6 +441,7 @@ const imagemods = ref(null)
 const showDeleteModal = ref(false)
 const showEditModal = ref(false)
 const showReportModal = ref(false)
+const showConvert = ref(false)
 const showThis = ref(true)
 const currentAtts = ref([])
 
@@ -478,15 +556,143 @@ if (
 await newsfeedStore.fetch(props.id)
 
 // Lifecycle hooks
-onMounted(() => {
+// One of the poster's own live posts saying the same thing, or null. Only
+// fetched for ChitChat moderators - the server refuses it for anyone else, so
+// a member's browser never holds it.
+const duplicateOf = ref(null)
+
+onMounted(async () => {
   // Scroll down now that the child components are rendered.
   emit('rendered')
+
+  if (chitChatMod.value && isNewsComponent.value && !newsfeed.value?.hidden) {
+    try {
+      duplicateOf.value = await newsfeedStore.duplicate(props.id)
+    } catch (e) {
+      // Advisory only. If we can't work out whether this repeats one of their
+      // own posts, the moderator still gets the thread and every control on it.
+      duplicateOf.value = null
+    }
+  }
 })
+
+// True once the whole reply tree has reported mounting (or there was
+// nothing to mount). Feeds the deep-link pin's completion signal.
+const repliesRendered = ref(!newsfeed.value?.replies?.length)
+
+// The pin this component started, if any, so unmount can stop it.
+let ownPin = null
+let deepLinkPinned = false
+
+// A deep link whose target row never mounted: the reply was deleted (and is
+// filtered out for non-mods) or otherwise gone. Explains the silent landing.
+const targetGone = ref(false)
+
+// scrollTo naming the thread itself means "open this thread", not "find this
+// reply", so there is no target row to hunt for.
+const isGeneralLanding = computed(() => {
+  return !!props.scrollTo && parseInt(props.scrollTo) === parseInt(props.id)
+})
+
+onMounted(() => {
+  if (!props.scrollTo) return
+
+  threadContentSettled().then(() => {
+    if (deepLinkPinned) return
+
+    if (isGeneralLanding.value) {
+      // Only jump to the new replies if the reader actually asked for them
+      // (the feed's "N new" link, which says so via #new). Opening a thread
+      // any other way should start at the top, like any other page.
+      const divider = props.jumpToNew
+        ? document.querySelector('[data-unread-divider]')
+        : null
+
+      if (divider) {
+        deepLinkPinned = true
+        ownPin = scrollToAndPin(
+          () => document.querySelector('[data-unread-divider]'),
+          {
+            block: 'start',
+            offset: fixedHeaderOffset(),
+            done: threadContentSettled(),
+          }
+        )
+      }
+    } else {
+      // Specific reply requested and everything has settled. If the target's
+      // row is not in the DOM by now it never will be - deleted and filtered
+      // out for non-mods, typically from a stale notification.
+      const row = document.querySelector(
+        `[data-reply-id="${props.scrollTo}"], [data-combined-ids~="${props.scrollTo}"]`
+      )
+      if (!row) {
+        targetGone.value = true
+      }
+    }
+  })
+})
+
+onBeforeUnmount(() => {
+  if (ownPin) ownPin()
+})
+
+// An {ok, wait} condition from any reactive getter, for whenAllSettled.
+function condition(get) {
+  return {
+    ok: () => !!get(),
+    wait: () =>
+      new Promise((resolve) => {
+        const stop = watch(get, (v) => {
+          if (v) {
+            stop()
+            resolve()
+          }
+        })
+      }),
+  }
+}
+
+// Resolves when nothing that could still move the layout is outstanding:
+// the reply tree has fully mounted, no API requests are in flight and no
+// images are still loading. Entirely event-driven - component rendered
+// events, store reactivity and image load/error events. No timers: if a
+// chunk takes ten seconds, the pin simply holds for ten seconds.
+function threadContentSettled() {
+  return whenAllSettled([
+    condition(() => repliesRendered.value),
+    condition(() => !miscStore.apiCount),
+    {
+      ok: () => imagesComplete(),
+      wait: () => whenImagesComplete(),
+    },
+  ])
+}
 
 // Methods
 function rendered(id) {
-  if (parseInt(id) === parseInt(props.scrollTo)) {
-    scrollDownTo.value = props.scrollTo
+  // Deep link (/chitchat/<replyid>): hold the reply centred while the
+  // rest of the thread streams in around it, releasing only when the
+  // content is provably complete. The scrollTo prop flows down from mount
+  // (NOT set after the target renders - the collapse must know the target
+  // up front, or a target hidden behind "Show older replies" could never
+  // mount to tell us). Once per page - re-mounts of the same target must
+  // not restart a released pin.
+  if (parseInt(id) === parseInt(props.scrollTo) && !deepLinkPinned) {
+    deepLinkPinned = true
+    // Compound selector: a combined block renders one row keyed by its FIRST
+    // id and advertises the rest via data-combined-ids.
+    ownPin = scrollToAndPin(
+      () =>
+        document.querySelector(
+          `[data-reply-id="${props.scrollTo}"], [data-combined-ids~="${props.scrollTo}"]`
+        ),
+      {
+        block: 'center',
+        offset: fixedHeaderOffset(),
+        done: threadContentSettled(),
+      }
+    )
   }
 }
 
@@ -506,21 +712,63 @@ function focusedComment() {
 }
 
 async function sendComment(callback) {
+  // Re-entrancy guard against double-submit (see the sending ref above).
+  if (sending.value) {
+    return
+  }
   if (threadcomment.value && threadcomment.value.trim()) {
-    // Encode up any emojis.
-    const msg = untwem(threadcomment.value)
-    await newsfeedStore.send(msg, replyingTo.value, props.id, imageid.value)
+    sending.value = true
+    try {
+      // Encode up any emojis.
+      const msg = untwem(threadcomment.value)
+      const newid = await newsfeedStore.send(
+        msg,
+        replyingTo.value,
+        props.id,
+        imageid.value
+      )
 
-    // New message will be shown because it's in the store and we have a computed property.
+      // New message will be shown because it's in the store and we have a computed
+      // property. Keep the poster anchored to their reply: the post-send refetch
+      // re-renders in the server's new order (replied-to parents get bumped), so
+      // without this the viewport content swaps and the reply lands off-screen.
+      // The pin re-resolves the selector on every correction, so it waits for
+      // the refetch to render the new reply and holds it through the shuffle,
+      // releasing when the refetch and image loads are complete.
+      if (newid) {
+        nextTick(() => {
+          // Compound selector: the fresh reply may have combined into the
+          // poster's previous block, whose row is keyed by the OLDER id.
+          ownPin = scrollToAndPin(
+            () =>
+              document.querySelector(
+                `[data-reply-id="${newid}"], [data-combined-ids~="${newid}"]`
+              ),
+            {
+              block: 'center',
+              done: whenAllSettled([
+                condition(() => !miscStore.apiCount),
+                {
+                  ok: () => imagesComplete(),
+                  wait: () => whenImagesComplete(),
+                },
+              ]),
+            }
+          )
+        })
+      }
 
-    // Clear the textarea now it's sent.
-    threadcomment.value = null
+      // Clear the textarea now it's sent.
+      threadcomment.value = null
 
-    // And any image id
-    imageid.value = null
-    imageuid.value = null
-    ouruid.value = null
-    imagemods.value = null
+      // And any image id
+      imageid.value = null
+      imageuid.value = null
+      ouruid.value = null
+      imagemods.value = null
+    } finally {
+      sending.value = false
+    }
   }
 
   if (typeof callback === 'function') {
@@ -598,6 +846,14 @@ async function hide() {
   await newsfeedStore.hide(props.id)
 }
 
+// A volunteer has just posted this properly for the member. The thread now
+// carries the note telling them, and the duplicate warning would be stale
+// (their new post IS the thing this repeats), so drop it.
+async function onConverted() {
+  duplicateOf.value = null
+  await newsfeedStore.fetch(props.id, true)
+}
+
 async function referTo(type) {
   await newsfeedStore.referTo(props.id, type)
 }
@@ -648,6 +904,13 @@ async function unmute() {
   border-radius: var(--radius-md, 0.375rem);
 }
 
+/* The comment box sat flush against the last reply, so the two ran together.
+   A span is inline by default, hence display: block for the margin to apply. */
+.comment-box {
+  display: block;
+  margin-top: 0.75rem;
+}
+
 .card__default {
   background-color: $color-white;
   border-radius: var(--radius-md, 0.375rem);
@@ -664,6 +927,15 @@ async function unmute() {
 
 :deep(.dropdown-menu) {
   z-index: 10000;
+}
+
+.thread-menu {
+  /* The "..." menu is floated to the end; the post text wraps beside it on the
+     first line (and reclaims full width below, so no space is wasted). Give it a
+     clear gap so it does not sit right up against the text — 0.5rem (the first
+     attempt) was too small on inline name+body replies at narrow/iPad widths
+     (Discourse #9749 - chitchat niggle). */
+  margin-left: 1.5rem;
 }
 
 :deep(.strike) {
@@ -713,5 +985,12 @@ async function unmute() {
   @include media-breakpoint-down(sm) {
     display: none;
   }
+}
+
+/* Wraps rather than stretching the dropdown to the width of the sentence. */
+.convert-hint {
+  white-space: normal;
+  line-height: 1.2;
+  max-width: 16rem;
 }
 </style>

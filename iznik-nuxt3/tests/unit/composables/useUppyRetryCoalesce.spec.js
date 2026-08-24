@@ -3,11 +3,9 @@ import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
 
 describe('createRetryCoalescer', () => {
   let microtasks
-  let originalQueueMicrotask
 
   beforeEach(() => {
     microtasks = []
-    originalQueueMicrotask = global.queueMicrotask
     vi.stubGlobal('queueMicrotask', (fn) => microtasks.push(fn))
   })
 
@@ -116,7 +114,9 @@ describe('createRetryCoalescer', () => {
         throw error
       })
       const scheduleRetry = createRetryCoalescer(() => ({ retryAll }))
-      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
 
       scheduleRetry()
       flushMicrotasks()
@@ -125,6 +125,29 @@ describe('createRetryCoalescer', () => {
       expect(consoleError).toHaveBeenCalledWith(
         'retryAll() failed (Uppy state corruption)',
         error
+      )
+    })
+
+    it('handles a rejected promise returned by retryAll (async Uppy corruption)', async () => {
+      const rejection = new TypeError(
+        "Cannot use 'in' operator to search for 'error' in undefined"
+      )
+      const retryAll = vi.fn().mockRejectedValue(rejection)
+      const scheduleRetry = createRetryCoalescer(() => ({ retryAll }))
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      scheduleRetry()
+      // The synchronous flush kicks off retryAll(); its rejection settles on a
+      // later microtask, so let the event loop drain before asserting.
+      flushMicrotasks()
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(consoleError).toHaveBeenCalledWith(
+        'retryAll() rejected (Uppy state corruption)',
+        rejection
       )
     })
 
@@ -179,8 +202,12 @@ describe('createRetryCoalescer', () => {
     it('two separate coalescer instances do not interfere', () => {
       const retryAll1 = vi.fn()
       const retryAll2 = vi.fn()
-      const scheduleRetry1 = createRetryCoalescer(() => ({ retryAll: retryAll1 }))
-      const scheduleRetry2 = createRetryCoalescer(() => ({ retryAll: retryAll2 }))
+      const scheduleRetry1 = createRetryCoalescer(() => ({
+        retryAll: retryAll1,
+      }))
+      const scheduleRetry2 = createRetryCoalescer(() => ({
+        retryAll: retryAll2,
+      }))
 
       scheduleRetry1()
       scheduleRetry1()

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -117,7 +118,9 @@ func TestPutMembershipsGoBannedCannotRejoin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	// Discourse #9961: a banned join must be a real failure, not a fake "Success"
+	// that silently drops the request with nothing for a moderator to find.
+	assert.Equal(t, 403, resp.StatusCode, "Banned member rejoin should fail, not fake-succeed")
 
 	// Verify user is NOT added to Approved membership.
 	var approvedCount int64
@@ -159,7 +162,8 @@ func TestPutMembershipsV1BannedCannotRejoin(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
-	assert.Equal(t, 200, resp.StatusCode)
+	// Discourse #9961: banned rejoin is a real failure, not a fake "Success".
+	assert.Equal(t, 403, resp.StatusCode, "V1-banned member rejoin should fail, not fake-succeed")
 
 	// Verify user is NOT added to Approved membership.
 	var approvedCount int64
@@ -377,10 +381,11 @@ func TestDeleteMembershipsModRemovesMember(t *testing.T) {
 // the row is written at all.
 //
 // AssertFlip protocol (fix already in master via 0d342ced6):
-//   Step 1 — Assert CORRECT behaviour (passes on fixed master):
-//     Group/Left log exists AND byuser is non-nil AND byuser equals the acting user.
-//   Step 2 — Invert (would fail on fixed master, proves assertion is meaningful):
-//     assert byuser IS nil — fails because fix sets it.
+//
+//	Step 1 — Assert CORRECT behaviour (passes on fixed master):
+//	  Group/Left log exists AND byuser is non-nil AND byuser equals the acting user.
+//	Step 2 — Invert (would fail on fixed master, proves assertion is meaningful):
+//	  assert byuser IS nil — fails because fix sets it.
 //
 // Self-leave: byuser must equal the leaving user's own ID.
 // Mod-removes: byuser must equal the moderator's ID (not the removed member's).
@@ -820,6 +825,13 @@ func getActualRole(groupID, userID uint64) string {
 	return role
 }
 
+func getActualSystemrole(userID uint64) string {
+	db := database.DBConn
+	var systemrole string
+	db.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
+	return systemrole
+}
+
 func TestPatchMembershipsOwnerPromotesMemberToModerator(t *testing.T) {
 	prefix := uniquePrefix("role_own2mod")
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
@@ -839,6 +851,118 @@ func TestPatchMembershipsOwnerPromotesMemberToModerator(t *testing.T) {
 	// Verify log entry.
 	db := database.DBConn
 	assert.NotNil(t, findLog(db, "User", "RoleChange", memberID), "Role change should create a RoleChange log entry")
+}
+
+/*
+V1 parity (User::updateSystemRole, legacy V1 PHP implementation).
+A per-group Member→Moderator/Owner promotion must propagate to users.systemrole
+so the frontend crown gate (ModLogUser.vue's `systemrole !== 'User'`) renders
+correctly. Without this, a Trainee mod showed the crown on the members page
+(per-group role read) but the plain User icon in the group logs (global
+systemrole read) — Discourse #9481 post 545.
+*/
+
+func TestPatchMembershipsPromoteSetsSystemroleModerator(t *testing.T) {
+	prefix := uniquePrefix("role_sysmod_pm")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	assert.Equal(t, "User", getActualSystemrole(memberID), "baseline")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Moderator")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Moderator", getActualSystemrole(memberID),
+		"Member→Moderator must flip users.systemrole to Moderator (V1 parity)")
+}
+
+func TestPatchMembershipsPromoteToOwnerSetsSystemroleModerator(t *testing.T) {
+	// V1 set systemrole='Moderator' for both ROLE_MODERATOR and ROLE_OWNER promotions.
+	prefix := uniquePrefix("role_sysmod_po")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, memberID, "Owner")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Moderator", getActualSystemrole(memberID),
+		"Member→Owner must still flip users.systemrole to Moderator (V1 parity)")
+}
+
+func TestPatchMembershipsPromoteDoesNotDemoteSupportOrAdmin(t *testing.T) {
+	// V1 guards the promote UPDATE with `WHERE systemrole = 'User'` so Support
+	// and Admin are never silently downgraded to Moderator on a per-group role change.
+	prefix := uniquePrefix("role_sysmod_admin")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, adminID, groupID, "Member")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, adminID, "Moderator")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Admin", getActualSystemrole(adminID),
+		"Admin systemrole must NOT be overwritten by a per-group promotion (V1 guard)")
+}
+
+func TestPatchMembershipsDemoteToMemberClearsSystemroleWhenLastModGroup(t *testing.T) {
+	prefix := uniquePrefix("role_sysmod_dm1")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, modID, "Member")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "User", getActualSystemrole(modID),
+		"demoting the user's last Mod/Owner group must revert systemrole to User (V1 parity)")
+}
+
+func TestPatchMembershipsDemoteKeepsSystemroleWhenStillModElsewhere(t *testing.T) {
+	prefix := uniquePrefix("role_sysmod_dm2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	groupID1 := CreateTestGroup(t, prefix+"_g1")
+	groupID2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, ownerID, groupID1, "Owner")
+	CreateTestMembership(t, ownerID, groupID2, "Owner")
+	CreateTestMembership(t, modID, groupID1, "Moderator")
+	CreateTestMembership(t, modID, groupID2, "Moderator")
+
+	// Demote on group 1 only — user is still a Moderator on group 2.
+	resp := patchMembershipRole(t, ownerToken, groupID1, modID, "Member")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Moderator", getActualSystemrole(modID),
+		"systemrole must stay Moderator while the user still holds Mod/Owner on another group (V1 parity)")
+}
+
+func TestPatchMembershipsDemoteDoesNotTouchSupportSystemrole(t *testing.T) {
+	// Symmetric to the promote-guard test: a per-group demote must never
+	// rewrite Support/Admin systemrole down to User. V1's demote UPDATE only
+	// triggers when the user's CURRENT systemrole is exactly 'Moderator'.
+	prefix := uniquePrefix("role_sysmod_dm_admin")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, ownerToken := CreateTestSession(t, ownerID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Owner")
+	CreateTestMembership(t, adminID, groupID, "Moderator")
+
+	resp := patchMembershipRole(t, ownerToken, groupID, adminID, "Member")
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "Admin", getActualSystemrole(adminID),
+		"Admin systemrole must survive a per-group demote (V1 demote runs only when current=Moderator)")
 }
 
 func TestPatchMembershipsOwnerPromotesMemberToOwner(t *testing.T) {
@@ -1849,6 +1973,51 @@ func TestGetMembershipsSearch(t *testing.T) {
 	assert.True(t, found, "searched member should be in results")
 }
 
+// A LoveJunk member is created with fullname=NULL and a name only in firstname/lastname.
+// Name search must still find them (Discourse 9518/371) - previously the WHERE clause only
+// matched u.fullname, so NULL LIKE '%term%' silently excluded them while ID search worked.
+func TestGetMembershipsSearchNullFullname(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("lj_search")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Simulate a LoveJunk member: fullname NULL, name in firstname/lastname only.
+	lastname := prefix + "_findme"
+	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
+	res := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+		"VALUES ('Lj', ?, NULL, 'User', NULL, ?)", lastname, settings)
+	assert.NoError(t, res.Error)
+	var targetID uint64
+	db.Raw("SELECT id FROM users WHERE lastname = ? AND fullname IS NULL ORDER BY id DESC LIMIT 1", lastname).Scan(&targetID)
+	assert.NotZero(t, targetID, "LoveJunk-style user should have been created")
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%s&jwt=%s", groupID, prefix+"_findme", token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+
+	found := false
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
+		uid := uint64(m["userid"].(float64))
+		if uid == targetID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "member with NULL fullname should be found by lastname search")
+}
+
 func TestGetMembershipsPendingCollection(t *testing.T) {
 	prefix := uniquePrefix("mod_getpend")
 	groupID := CreateTestGroup(t, prefix)
@@ -1956,6 +2125,112 @@ func TestGetMembershipsPagination(t *testing.T) {
 	}
 }
 
+// GetMemberships hands the caller a context cursor whenever it returns a full page,
+// including for searches. The search branches must therefore honour that cursor the same
+// way the non-search branch does (TestGetMembershipsPagination above) - otherwise a client
+// paging through search results sends the cursor back and is served the same top-N rows
+// forever, so the list never advances past page one.
+func TestGetMembershipsSearchPagination(t *testing.T) {
+	prefix := uniquePrefix("mod_srchpage")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create 5 members that all match the same search term, so we can paginate with limit=3.
+	memberIDs := make([]uint64, 5)
+	for i := 0; i < 5; i++ {
+		memberIDs[i] = CreateTestUser(t, fmt.Sprintf("%s_findme_%d", prefix, i), "User")
+		CreateTestMembership(t, memberIDs[i], groupID, "Member")
+	}
+
+	// Fetch first page (limit=3).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%s_findme&limit=3&jwt=%s", groupID, prefix, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&page1)
+	page1Members, _ := page1["members"].([]interface{})
+	assert.Equal(t, 3, len(page1Members), "first page should return exactly limit members")
+
+	cursor, hasCursor := page1["context"]
+	assert.True(t, hasCursor, "response should include context cursor")
+	assert.NotNil(t, cursor, "context should not be nil when a full page is returned")
+
+	// Fetch second page using the cursor, same search term.
+	cursorID := uint64(cursor.(float64))
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&search=%s_findme&limit=3&context=%d&jwt=%s", groupID, prefix, cursorID, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+	page2Members, _ := page2["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(page2Members), 1, "second page should return at least one member")
+
+	// No member may appear on both pages - if this fails, the search branch is ignoring
+	// the context cursor and just re-returning the first page.
+	page1IDs := map[uint64]bool{}
+	for _, raw := range page1Members {
+		m := raw.(map[string]interface{})
+		page1IDs[uint64(m["id"].(float64))] = true
+	}
+	for _, raw := range page2Members {
+		m := raw.(map[string]interface{})
+		id := uint64(m["id"].(float64))
+		assert.False(t, page1IDs[id], "member id %d should not appear on both search pages", id)
+	}
+}
+
+// The numeric branch of the search - where the term is a bare userid - honours the cursor
+// too. It matches a single membership, so asking for the page after that member's own id
+// must come back empty rather than handing the same row out again.
+func TestGetMembershipsNumericSearchPagination(t *testing.T) {
+	prefix := uniquePrefix("mod_numsrch")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	// Searching the bare userid finds that one membership.
+	url := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&limit=10&jwt=%s", groupID, memberID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&page1)
+	page1Members, _ := page1["members"].([]interface{})
+	assert.Equal(t, 1, len(page1Members), "the numeric search finds the one membership")
+
+	found := page1Members[0].(map[string]interface{})
+	membershipID := uint64(found["id"].(float64))
+
+	// Ask for what comes after it. m.id < membershipID excludes the only match, so there
+	// is nothing left - without the cursor the same row would be returned again.
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&limit=10&context=%d&jwt=%s", groupID, memberID, membershipID, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+	page2Members, _ := page2["members"].([]interface{})
+	assert.Equal(t, 0, len(page2Members), "nothing follows the only match")
+}
+
 // --- GET /memberships?collection=Happiness ---
 
 // parseHappinessResponse decodes the happiness response wrapper and returns the members and ratings arrays.
@@ -2042,6 +2317,65 @@ func TestGetHappinessBasic(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "happiness outcome should be in results")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
+}
+
+// A post that rippled INTO a group must NOT appear in that group's Feedback
+// (Happiness) list — only the group where it ORIGINATED should show it. The
+// rippled-in copy has an Approved messages_groups row with rippled_in = 1, and
+// getHappinessMembers filters those out. Discourse 9808/633 (Neville).
+func TestGetHappinessExcludesRippledInCopies(t *testing.T) {
+	prefix := uniquePrefix("happy_ripple")
+	db := database.DBConn
+
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, originGroup, "Member")
+
+	// Native post on originGroup (origin messages_groups row, rippled_in = 0).
+	msgID := CreateTestMessage(t, posterID, originGroup, prefix+" offer item", 55.95, -3.19)
+	outcomeID := createHappinessOutcome(t, msgID, "Happy", "Great experience!")
+
+	// The SAME post ripples INTO rippledGroup: an Approved copy, rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 1)", msgID, rippledGroup)
+
+	// A moderator of the RIPPLED-INTO group must NOT see the item in Feedback.
+	rippledModID := CreateTestUser(t, prefix+"_rmod", "User")
+	CreateTestMembership(t, rippledModID, rippledGroup, "Moderator")
+	_, rippledToken := CreateTestSession(t, rippledModID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/memberships?groupid=%d&collection=Happiness&jwt=%s", rippledGroup, rippledToken), nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	rippledResults, _ := parseHappinessResponse(t, resp)
+	for _, r := range rippledResults {
+		assert.NotEqual(t, float64(outcomeID), r["id"], "rippled-in item must not show in the rippled-into group's Feedback")
+	}
+
+	// The ORIGIN group's moderator still sees it.
+	originModID := CreateTestUser(t, prefix+"_omod", "User")
+	CreateTestMembership(t, originModID, originGroup, "Moderator")
+	_, originToken := CreateTestSession(t, originModID)
+
+	resp2, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/memberships?groupid=%d&collection=Happiness&jwt=%s", originGroup, originToken), nil), -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+	originResults, _ := parseHappinessResponse(t, resp2)
+	foundInOrigin := false
+	for _, r := range originResults {
+		if uint64(r["id"].(float64)) == outcomeID {
+			foundInOrigin = true
+			break
+		}
+	}
+	assert.True(t, foundInOrigin, "origin group's Feedback should still include the item")
 
 	// Cleanup.
 	db.Exec("DELETE FROM messages_outcomes WHERE id = ?", outcomeID)
@@ -3521,7 +3855,9 @@ func TestPutMembershipsPartnerSubscribe(t *testing.T) {
 	email := prefix + "@test.com"
 	userID := CreateTestUser(t, prefix+"_user", "User")
 
-	// Set tnuserid on the user.
+	// Set tnuserid on the user. It is UNIQUE in production, so release it from
+	// any user left by an earlier run first.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 12345)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 12345, userID)
 
 	key := insertTestPartnerKey(t, prefix, "test.com")
@@ -3553,7 +3889,12 @@ func TestPutMembershipsPartnerAutoCreate(t *testing.T) {
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	email := prefix + "-gtest@test.com"
 
-	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=99999&email=%s&groupid=%d", key, email, groupID)
+	// tnuserid is UNIQUE in production. 99998 keeps this distinct from
+	// apple_login_test, which claims 99999. Release it from any user left by an
+	// earlier run so the auto-create below can take it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 99998)
+
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=99998&email=%s&groupid=%d", key, email, groupID)
 	req := httptest.NewRequest("PUT", url, nil)
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
@@ -3568,7 +3909,7 @@ func TestPutMembershipsPartnerAutoCreate(t *testing.T) {
 	// Verify user was created with tnuserid.
 	var tnuserid uint64
 	db.Raw("SELECT COALESCE(tnuserid, 0) FROM users WHERE id = ?", uint64(fduserid.(float64))).Scan(&tnuserid)
-	assert.Equal(t, uint64(99999), tnuserid)
+	assert.Equal(t, uint64(99998), tnuserid)
 
 	// Verify membership.
 	var count int64
@@ -3609,6 +3950,61 @@ func TestPutMembershipsPartnerInvalidKey(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
+// Discourse #9961: TrashNothing reported a member's join request as stuck
+// "pending" because it never reached a Freegle moderator. V1 parity check
+// (User::addMembership/isBanned via the legacy PHP partner handler) shows the
+// original behaviour: a banned member's partner join returned ret=4 "Failed -
+// likely ban", a genuine failure the partner could act on. The V2 Go port
+// (putMembershipsPartner) dropped that and unconditionally returns ret=0
+// "Success" for a banned member instead - no membership row, no
+// memberships_history row, no log entry, nothing anywhere for a moderator to
+// find, while telling the partner the join worked. Production data confirms
+// this path is reachable: thousands of TN-linked (userid, groupid) pairs are
+// currently banned with no corresponding membership row.
+func TestPutMembershipsPartnerBannedNotFakeSuccess(t *testing.T) {
+	prefix := uniquePrefix("mem_partbanned")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	email := prefix + "@test.com"
+	tnuserid := uint64(7654322)
+
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+
+	key := insertTestPartnerKey(t, prefix, "test.com")
+
+	// First request auto-creates the TN-linked user via the normal partner join.
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d", key, tnuserid, email, groupID)
+	req := httptest.NewRequest("PUT", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var userID uint64
+	db.Raw("SELECT id FROM users WHERE tnuserid = ?", tnuserid).Scan(&userID)
+	assert.NotZero(t, userID)
+
+	// Simulate a member who was previously banned from this group (e.g. by a
+	// moderator, independently of TN) then has TN retry the join on their
+	// behalf - TN has no visibility into Freegle-side bans.
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID)
+	db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)", userID, groupID, userID)
+
+	req2 := httptest.NewRequest("PUT", url, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+
+	// Inverted (correct) assertion: a banned member's join attempt must be
+	// reported as a failure, not a fake Success, so the partner and the member
+	// both know it did not happen.
+	assert.Equal(t, fiber.StatusForbidden, resp2.StatusCode,
+		"a banned member's join attempt must not be reported as Success to the partner")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&count)
+	assert.Equal(t, int64(0), count, "a banned member must not gain a membership row via the partner path")
+}
+
 func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
 	prefix := uniquePrefix("mem_partunsub")
 	db := database.DBConn
@@ -3616,12 +4012,19 @@ func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	CreateTestMembership(t, userID, groupID, "Member")
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 54321, userID)
+
+	// tnuserid is UNIQUE in production. Release it from any user left by an
+	// earlier run before claiming it here (same pattern as
+	// TestPutMembershipsPartnerSubscribe/AutoCreate) - without this, a stale row
+	// left by a prior run of this test collides on this fixed value.
+	tnuserid := 54321
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", tnuserid)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", tnuserid, userID)
 
 	key := insertTestPartnerKey(t, prefix, "test.com")
 	email := prefix + "_user@test.com"
 
-	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=54321&email=%s&groupid=%d", key, email, groupID)
+	url := fmt.Sprintf("/api/memberships?partner=%s&tnuserid=%d&email=%s&groupid=%d", key, tnuserid, email, groupID)
 	req := httptest.NewRequest("DELETE", url, nil)
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
@@ -4028,4 +4431,147 @@ func TestNotesFilterAllCommunitiesPagination(t *testing.T) {
 
 	members2, _ := page2["members"].([]interface{})
 	assert.Equal(t, 2, len(members2), "second page must have the remaining 2 members")
+}
+
+// TestDeleteMembershipsDemotesStaleModeratorSystemRole covers the systemrole
+// reconciliation wired into DeleteMemberships: when a user leaves their only
+// Owner/Moderator group, their now-stale Moderator systemrole must drop to User
+// (user.SyncSystemRole, V1 updateSystemRole parity). Regression guard for the
+// gap that left ~800 ex-mods with elevated systemrole.
+func TestDeleteMembershipsDemotesStaleModeratorSystemRole(t *testing.T) {
+	prefix := uniquePrefix("del_demote")
+	userID := CreateTestUser(t, prefix, "Moderator")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Moderator") // their only mod role
+	token := getToken(t, userID)
+
+	body, _ := json.Marshal(map[string]interface{}{"groupid": groupID})
+	req := httptest.NewRequest("DELETE", "/api/memberships?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var systemrole string
+	database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
+	assert.Equal(t, "User", systemrole, "leaving the only mod group must demote systemrole to User")
+}
+
+// TestGetMembershipsMailDelayed covers the deferral-aware suppression fields.
+//
+// These exist because "email delayed" and "bouncing" mean different things and
+// moderators act on them differently: bouncing means the member's address is
+// bad, whereas delayed means a provider has stopped accepting mail from OUR
+// servers and there is nothing anyone can do but wait.
+func TestGetMembershipsMailDelayed(t *testing.T) {
+	prefix := uniquePrefix("mf_delay")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	delayedID := CreateTestUser(t, prefix+"_delayed", "User")
+	CreateTestMembership(t, delayedID, groupID, "Member")
+
+	normalID := CreateTestUser(t, prefix+"_normal", "User")
+	CreateTestMembership(t, normalID, groupID, "Member")
+
+	var suppressionID uint64
+	db.Exec("INSERT INTO mail_suppressions (scope, value, provider, reason, deferred_since, first_seen, last_seen) "+
+		"VALUES ('domain', ?, 'Yahoo', '421 4.7.0 [TSS04] temporarily deferred', ?, NOW(), NOW())",
+		prefix+".example", "2026-08-15 16:38:00")
+	db.Raw("SELECT id FROM mail_suppressions WHERE value = ?", prefix+".example").Scan(&suppressionID)
+
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, count, firstat, lastat) "+
+		"VALUES (?, 'digest_immediate', ?, 7, ?, NOW())",
+		delayedID, suppressionID, "2026-08-15 16:38:00")
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, suppressionid, count, firstat, lastat) "+
+		"VALUES (?, 'chat', ?, 2, ?, NOW())",
+		delayedID, suppressionID, "2026-08-16 09:00:00")
+
+	defer func() {
+		db.Exec("DELETE FROM mail_suppressed_counts WHERE userid IN (?, ?)", delayedID, normalID)
+		db.Exec("DELETE FROM mail_suppressions WHERE value = ?", prefix+".example")
+	}()
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	membersRaw, ok := result["members"]
+	assert.True(t, ok, "response should include members")
+	members := membersRaw.([]interface{})
+
+	var sawDelayed, sawNormal bool
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
+		uid := uint64(m["userid"].(float64))
+
+		if uid == delayedID {
+			sawDelayed = true
+			assert.NotNil(t, m["maildelayedsince"], "delayed member should carry a since date")
+			assert.Contains(t, m["maildelayedsince"], "2026-08-15",
+				"since must be when we first held mail, not when we noticed")
+			assert.Equal(t, "Yahoo", m["maildelayedprovider"],
+				"moderators should read the provider's name, not a piece of DNS")
+			// 7 digests plus 2 chat notifications, summed across types.
+			assert.Equal(t, float64(9), m["maildelayedcount"])
+			// Delayed is NOT bouncing - their address is fine.
+			assert.Equal(t, false, m["bouncing"])
+		}
+
+		if uid == normalID {
+			sawNormal = true
+			assert.Nil(t, m["maildelayedsince"], "an unaffected member must not look delayed")
+			assert.Nil(t, m["maildelayedcount"])
+		}
+	}
+
+	assert.True(t, sawDelayed, "the delayed member should be in the list")
+	assert.True(t, sawNormal, "the unaffected member should be in the list")
+}
+
+// TestGetMembershipsMailDelayedClearedOnCatchUp proves the notice goes away
+// once the catch-up has been sent, rather than sticking around for ever the
+// way the legacy bouncing flag did.
+func TestGetMembershipsMailDelayedClearedOnCatchUp(t *testing.T) {
+	prefix := uniquePrefix("mf_dlyclr")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_m", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	db.Exec("INSERT INTO mail_suppressed_counts (userid, emailtype, count, firstat, lastat, caughtup_at) "+
+		"VALUES (?, 'chat', 3, NOW(), NOW(), NOW())", memberID)
+
+	defer db.Exec("DELETE FROM mail_suppressed_counts WHERE userid = ?", memberID)
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	for _, raw := range result["members"].([]interface{}) {
+		m := raw.(map[string]interface{})
+		if uint64(m["userid"].(float64)) == memberID {
+			assert.Nil(t, m["maildelayedsince"], "a caught-up member is no longer delayed")
+			return
+		}
+	}
+
+	t.Fatal("member not found in list")
 }

@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
-import { postcodeSelect, makeCanSubmit } from '~/composables/useCompose.js'
+import {
+  postcodeSelect,
+  makeCanSubmit,
+  loadOwnActivePosts,
+} from '~/composables/useCompose.js'
 
 let mockGroup = null
 let mockPostcode = null
@@ -63,17 +67,17 @@ describe('postcodeSelect', () => {
     expect(mockGroup).toBe(100)
   })
 
-  it('preserves explicitly-set group when not in groupsnear (repost scenario)', () => {
+  it("replaces stale group when stored group is not in new postcode's groupsnear", () => {
     mockGroup = 55
     // New postcode id (different from current) triggers the outer condition
-    const pc = makePC(99, [69615, 200])  // Group 55 not in list
+    const pc = makePC(99, [69615, 200]) // Group 55 not in list
     postcodeSelect(pc)
-    expect(mockGroup).toBe(55)  // Must not be overridden to 69615
+    expect(mockGroup).toBe(69615) // Stale group replaced with closest
   })
 
   it('preserves explicitly-set group when it is in groupsnear', () => {
     mockGroup = 55
-    const pc = makePC(99, [55, 200])  // Group 55 IS in list
+    const pc = makePC(99, [55, 200]) // Group 55 IS in list
     postcodeSelect(pc)
     expect(mockGroup).toBe(55)
   })
@@ -230,5 +234,36 @@ describe('makeCanSubmit', () => {
     expect(canSubmit.value).toBe(false)
     messageValid.value = true
     expect(canSubmit.value).toBe(true)
+  })
+})
+
+describe('loadOwnActivePosts', () => {
+  it('pulls each active post into list as a full message so duplicate detection has item names', async () => {
+    const messageStore = {
+      fetchByUser: vi.fn().mockResolvedValue([{ id: 10 }, { id: 11 }]),
+      fetch: vi.fn(),
+    }
+    await loadOwnActivePosts(messageStore, 123)
+    // active=true so the query returns the member's still-open posts...
+    expect(messageStore.fetchByUser).toHaveBeenCalledWith(123, true)
+    // ...and each is fetched in full (the summary lacks item.name, list has it).
+    expect(messageStore.fetch).toHaveBeenCalledWith(10)
+    expect(messageStore.fetch).toHaveBeenCalledWith(11)
+  })
+
+  it('does nothing when logged out', async () => {
+    const messageStore = { fetchByUser: vi.fn(), fetch: vi.fn() }
+    await loadOwnActivePosts(messageStore, undefined)
+    expect(messageStore.fetchByUser).not.toHaveBeenCalled()
+    expect(messageStore.fetch).not.toHaveBeenCalled()
+  })
+
+  it('tolerates a null result from fetchByUser', async () => {
+    const messageStore = {
+      fetchByUser: vi.fn().mockResolvedValue(null),
+      fetch: vi.fn(),
+    }
+    await loadOwnActivePosts(messageStore, 123)
+    expect(messageStore.fetch).not.toHaveBeenCalled()
   })
 })

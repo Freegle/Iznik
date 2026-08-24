@@ -32,6 +32,14 @@
 				<string>fb134980666550322</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>org.ilovefreegle.iphone.share</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>freegleshare</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
@@ -75,16 +83,29 @@
 	<string>So you can send a photo of an item to offer</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>So you can save a photo of an item to offer</string>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+					<key>UISceneStoryboardFile</key>
+					<string>Main</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 	<key>UILaunchStoryboardName</key>
-	<string>LaunchScreen.storyboard</string>
+	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
-	<key>UIRequiredDeviceCapabilities</key>
-	<array>
-		<string>armv7</string>
-	</array>
-	<key>UIRequiresFullScreen</key>
-	<true/>
 	<key>UIStatusBarHidden</key>
 	<false/>
 	<key>UISupportedInterfaceOrientations</key>
@@ -118,5 +139,38 @@
 	<string>To save Freegle handover appointments to your calendar</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>To save Freegle handover appointments to your calendar</string>
+	<key>UIApplicationShortcutItems</key>
+	<array>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.ilovefreegle.shortcut.give</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Give</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Give something away</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeAdd</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.ilovefreegle.shortcut.ask</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Ask</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>Ask for something</string>
+			<key>UIApplicationShortcutItemIconSymbolName</key>
+			<string>cart</string>
+		</dict>
+		<dict>
+			<key>UIApplicationShortcutItemType</key>
+			<string>org.ilovefreegle.shortcut.chats</string>
+			<key>UIApplicationShortcutItemTitle</key>
+			<string>Chats</string>
+			<key>UIApplicationShortcutItemSubtitle</key>
+			<string>My chats</string>
+			<key>UIApplicationShortcutItemIconType</key>
+			<string>UIApplicationShortcutIconTypeMessage</string>
+		</dict>
+	</array>
 </dict>
 </plist>

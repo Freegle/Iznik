@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"log"
 	"os"
 	"strconv"
@@ -66,24 +67,26 @@ func List(c *fiber.Ctx) error {
 
 		if len(modGroupIDs) > 0 {
 			start := time.Now().Format("2006-01-02")
-			db.Raw("SELECT DISTINCT communityevents.id FROM communityevents "+
-				"INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid "+
-				"INNER JOIN communityevents_dates ON communityevents_dates.eventid = communityevents.id "+
-				"WHERE groupid IN (?) AND communityevents.deleted = 0 AND pending = 1 "+
-				"AND communityevents_dates.end >= ? "+
-				"ORDER BY communityevents_dates.end ASC", modGroupIDs, start).Pluck("id", &ids)
+			db.Table("communityevents").
+				Select("DISTINCT communityevents.id").
+				Joins("INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
+				Joins("INNER JOIN communityevents_dates ON communityevents_dates.eventid = communityevents.id").
+				Where("groupid IN (?) AND communityevents.deleted = 0 AND pending = 1 AND communityevents_dates.end >= ?", modGroupIDs, start).
+				Order("communityevents_dates.end ASC").
+				Pluck("id", &ids)
 		}
 	} else if len(groupids) > 0 {
 		start := time.Now().Format("2006-01-02")
 
-		db.Raw("SELECT DISTINCT communityevents.id FROM communityevents "+
-			"INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid "+
-			"LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid "+
-			"LEFT JOIN users ON communityevents.userid = users.id "+
-			"WHERE groupid IN (?) AND "+
-			"end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND (pending = 0 OR communityevents.userid = ?) "+
-			"AND users.deleted IS NULL "+
-			"ORDER BY end ASC", groupids, start, myid).Pluck("eventid", &ids)
+		db.Table("communityevents").
+			Select("DISTINCT communityevents.id").
+			Joins("INNER JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
+			Joins("LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid").
+			Joins("LEFT JOIN users ON communityevents.userid = users.id").
+			Where("groupid IN (?) AND end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND (pending = 0 OR communityevents.userid = ?) AND users.deleted IS NULL",
+				groupids, start, myid).
+			Order("end ASC").
+			Pluck("id", &ids)
 	}
 
 	if len(ids) > 0 {
@@ -106,14 +109,15 @@ func ListGroup(c *fiber.Ctx) error {
 
 	start := time.Now().Format("2006-01-02")
 
-	db.Raw("SELECT DISTINCT communityevents.id FROM communityevents "+
-		"LEFT JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid "+
-		"LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid "+
-		"LEFT JOIN users ON communityevents.userid = users.id "+
-		"WHERE groupid = ? AND "+
-		"end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND pending = 0 "+
-		"AND users.deleted IS NULL "+
-		"ORDER BY end ASC", id, start).Pluck("eventid", &ids)
+	db.Table("communityevents").
+		Select("DISTINCT communityevents.id").
+		Joins("LEFT JOIN communityevents_groups ON communityevents.id = communityevents_groups.eventid").
+		Joins("LEFT JOIN communityevents_dates ON communityevents.id = communityevents_dates.eventid").
+		Joins("LEFT JOIN users ON communityevents.userid = users.id").
+		Where("groupid = ? AND end IS NOT NULL AND end >= ? AND communityevents.deleted = 0 AND pending = 0 AND users.deleted IS NULL",
+			id, start).
+		Order("end ASC").
+		Pluck("id", &ids)
 
 	if len(ids) > 0 {
 		return c.JSON(ids)
@@ -154,11 +158,11 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT id, archived, externaluid, externalmods FROM communityevents_images WHERE eventid = ? ORDER BY id DESC LIMIT 1", id).Scan(&image)
+			db.Table("communityevents_images").Select("id, archived, externaluid, externalmods").
+				Where("eventid = ?", id).Order("id DESC").Limit(1).Scan(&image)
 
 			if image.ID > 0 {
 				if image.Externaluid != "" {
-					image.Externalmods = image.Externalmods
 					image.Ouruid = image.Externaluid
 					image.Path = misc.GetImageDeliveryUrl(image.Externaluid, string(image.Externalmods))
 					image.Paththumb = misc.GetImageDeliveryUrl(image.Externaluid, string(image.Externalmods))
@@ -178,7 +182,7 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT groupid FROM communityevents_groups WHERE eventid = ?", id).Pluck("groupid", &groups)
+			db.Table("communityevents_groups").Where("eventid = ?", id).Pluck("groupid", &groups)
 		}()
 
 		wg.Add(1)
@@ -186,7 +190,7 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT * FROM communityevents_dates WHERE eventid = ?", id).Scan(&dates)
+			db.Table("communityevents_dates").Where("eventid = ?", id).Scan(&dates)
 		}()
 
 		wg.Wait()
@@ -222,7 +226,7 @@ func canModify(myid uint64, eventID uint64) bool {
 	db := database.DBConn
 
 	var ownerID *uint64
-	db.Raw("SELECT userid FROM communityevents WHERE id = ?", eventID).Scan(&ownerID)
+	db.Table("communityevents").Select("userid").Where("id = ?", eventID).Scan(&ownerID)
 
 	if ownerID != nil && *ownerID == myid {
 		return true
@@ -239,10 +243,11 @@ func isModerator(myid uint64, eventID uint64) bool {
 	// Single query to check if user is moderator/owner of any linked group.
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships m "+
-		"INNER JOIN communityevents_groups ceg ON ceg.groupid = m.groupid "+
-		"WHERE ceg.eventid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
-		eventID, myid, utils.COLLECTION_APPROVED, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	db.Table("memberships m").
+		Joins("INNER JOIN communityevents_groups ceg ON ceg.groupid = m.groupid").
+		Where("ceg.eventid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
+			eventID, myid, utils.COLLECTION_APPROVED, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&count)
 
 	return count > 0
 }
@@ -251,7 +256,7 @@ func isModerator(myid uint64, eventID uint64) bool {
 func isMemberOfGroup(myid uint64, groupid uint64) bool {
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Scan(&count)
+	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Count(&count)
 	return count > 0
 }
 
@@ -298,28 +303,31 @@ func Create(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// Plain, isolated, literal single-row
+	// INSERT (the "1" for pending is a fixed literal); id read back via GORM's
+	// map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"userid":       myid,
+		"pending":      gorm.Expr("1"),
+		"title":        req.Title,
+		"location":     req.Location,
+		"contactname":  req.Contactname,
+		"contactphone": req.Contactphone,
+		"contactemail": req.Contactemail,
+		"contacturl":   req.Contacturl,
+		"description":  req.Description,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO communityevents (userid, pending, title, location, contactname, contactphone, contactemail, contacturl, description) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?)",
-		myid, req.Title, req.Location, req.Contactname, req.Contactphone, req.Contactemail, req.Contacturl, req.Description)
-
-	if err != nil {
+	if err := db.Table("communityevents").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create community event")
 	}
-
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	if id > 0 && req.GroupID > 0 {
-		db.Exec("INSERT IGNORE INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", id, req.GroupID)
+		db.Table("communityevents_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"eventid": id,
+			"groupid": req.GroupID,
+		})
 	}
 
 	return c.JSON(fiber.Map{"id": id})
@@ -351,6 +359,30 @@ type PatchRequest struct {
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /communityevent [patch]
+// eventHeldByAnother returns the id and name of a DIFFERENT moderator holding this
+// event, or 0 if it is free to act on.
+func eventHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
+	var holder uint64
+	db.Table("communityevents").Select("COALESCE(heldby, 0)").Where("id = ?", id).Scan(&holder)
+	if holder == 0 || holder == myid {
+		return 0, ""
+	}
+	var name string
+	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&name)
+	return holder, name
+}
+
+// heldByAnotherResponse is the 409 a moderation action gets when someone else holds
+// the item, carrying who so the UI can name them rather than just failing.
+func heldByAnotherResponse(c *fiber.Ctx, holder uint64, name string) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"ret":        1,
+		"status":     "Held by another moderator",
+		"heldby":     holder,
+		"heldbyname": name,
+	})
+}
+
 func Update(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -368,7 +400,7 @@ func Update(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	db.Raw("SELECT id FROM communityevents WHERE id = ?", req.ID).Scan(&exists)
+	db.Table("communityevents").Select("id").Where("id = ?", req.ID).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Community event not found")
 	}
@@ -377,30 +409,46 @@ func Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not authorized to modify this community event")
 	}
 
+	// A moderator holding this event has an exclusive claim on it. Only block other
+	// MODERATORS: canModify also passes the event's owner, and a mod hold must not
+	// stop an owner editing their own event. Release remains available below.
+	if req.Action != "Release" && isModerator(myid, req.ID) {
+		if holder, name := eventHeldByAnother(db, req.ID, myid); holder != 0 {
+			return heldByAnotherResponse(c, holder, name)
+		}
+	}
+
 	// Update settable attributes
 	if req.Title != nil {
-		db.Exec("UPDATE communityevents SET title = ? WHERE id = ?", *req.Title, req.ID)
+		db.Table("communityevents").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Location != nil {
-		db.Exec("UPDATE communityevents SET location = ? WHERE id = ?", *req.Location, req.ID)
+		db.Table("communityevents").Where("id = ?", req.ID).Update("location", *req.Location)
 	}
 	if req.Pending != nil {
-		db.Exec("UPDATE communityevents SET pending = ? WHERE id = ?", *req.Pending, req.ID)
+		// Approving out of moderation is terminal, so clear the hold with it rather
+		// than leaving the event pinned as "Held" forever.
+		if *req.Pending {
+			db.Table("communityevents").Where("id = ?", req.ID).Update("pending", *req.Pending)
+		} else {
+			db.Table("communityevents").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"pending": *req.Pending, "heldby": gorm.Expr("NULL")})
+		}
 	}
 	if req.Contactname != nil {
-		db.Exec("UPDATE communityevents SET contactname = ? WHERE id = ?", *req.Contactname, req.ID)
+		db.Table("communityevents").Where("id = ?", req.ID).Update("contactname", *req.Contactname)
 	}
 	if req.Contactphone != nil {
-		db.Exec("UPDATE communityevents SET contactphone = ? WHERE id = ?", *req.Contactphone, req.ID)
+		db.Table("communityevents").Where("id = ?", req.ID).Update("contactphone", *req.Contactphone)
 	}
 	if req.Contactemail != nil {
-		db.Exec("UPDATE communityevents SET contactemail = ? WHERE id = ?", *req.Contactemail, req.ID)
+		db.Table("communityevents").Where("id = ?", req.ID).Update("contactemail", *req.Contactemail)
 	}
 	if req.Contacturl != nil {
-		db.Exec("UPDATE communityevents SET contacturl = ? WHERE id = ?", *req.Contacturl, req.ID)
+		db.Table("communityevents").Where("id = ?", req.ID).Update("contacturl", *req.Contacturl)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE communityevents SET description = ? WHERE id = ?", *req.Description, req.ID)
+		db.Table("communityevents").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 
 	// Process action
@@ -412,12 +460,15 @@ func Update(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusForbidden, "Not a member of the specified group")
 			}
 
-			db.Exec("INSERT IGNORE INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", req.ID, req.GroupID)
+			db.Table("communityevents_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"eventid": req.ID,
+				"groupid": req.GroupID,
+			})
 
 			// Side effects: create newsfeed entry and notify group moderators.
 			// 1. Create newsfeed entry for this community event.
 			var ownerID *uint64
-			db.Raw("SELECT userid FROM communityevents WHERE id = ?", req.ID).Scan(&ownerID)
+			db.Table("communityevents").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 			if ownerID != nil && *ownerID > 0 {
 				eventID := req.ID
 				newsfeed.CreateNewsfeedEntry(newsfeed.TypeCommunityEvent, *ownerID, req.GroupID, &eventID, nil)
@@ -432,26 +483,33 @@ func Update(c *fiber.Ctx) error {
 		}
 	case "RemoveGroup":
 		if req.GroupID > 0 {
-			db.Exec("DELETE FROM communityevents_groups WHERE eventid = ? AND groupid = ?", req.ID, req.GroupID)
+			db.Table("communityevents_groups").Where("eventid = ? AND groupid = ?", req.ID, req.GroupID).Delete(nil)
 		}
 	case "AddDate":
-		db.Exec("INSERT INTO communityevents_dates (eventid, start, end) VALUES (?, ?, ?)",
-			req.ID, utils.NilIfEmpty(req.Start), utils.NilIfEmpty(req.End))
+		db.Table("communityevents_dates").Create(map[string]interface{}{
+			"eventid": req.ID,
+			"start":   utils.NilIfEmpty(req.Start),
+			"end":     utils.NilIfEmpty(req.End),
+		})
 	case "RemoveDate":
 		if req.DateID > 0 {
-			db.Exec("DELETE FROM communityevents_dates WHERE id = ?", req.DateID)
+			db.Table("communityevents_dates").Where("id = ?", req.DateID).Delete(nil)
 		}
 	case "SetPhoto":
 		if req.PhotoID > 0 {
-			db.Exec("UPDATE communityevents_images SET eventid = ? WHERE id = ?", req.ID, req.PhotoID)
+			db.Table("communityevents_images").Where("id = ?", req.PhotoID).Update("eventid", req.ID)
 		}
 	case "Hold":
 		if isModerator(myid, req.ID) {
-			db.Exec("UPDATE communityevents SET heldby = ? WHERE id = ?", myid, req.ID)
+			// Don't take a hold off another mod - Release is how you do that.
+			if holder, name := eventHeldByAnother(db, req.ID, myid); holder != 0 {
+				return heldByAnotherResponse(c, holder, name)
+			}
+			db.Table("communityevents").Where("id = ?", req.ID).Update("heldby", myid)
 		}
 	case "Release":
 		if isModerator(myid, req.ID) {
-			db.Exec("UPDATE communityevents SET heldby = NULL WHERE id = ?", req.ID)
+			db.Table("communityevents").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		}
 	}
 
@@ -479,7 +537,7 @@ func Delete(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	db.Raw("SELECT id FROM communityevents WHERE id = ?", id).Scan(&exists)
+	db.Table("communityevents").Select("id").Where("id = ?", id).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Community event not found")
 	}
@@ -489,7 +547,7 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	// Soft delete.
-	db.Exec("UPDATE communityevents SET deleted = 1 WHERE id = ?", id)
+	db.Table("communityevents").Where("id = ?", id).Update("deleted", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"success": true})
 }

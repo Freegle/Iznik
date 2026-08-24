@@ -26,7 +26,7 @@ export function constructAddress(
   let processed = false
   let processingError = false
   const addressLines = []
-  let nextLinePrefix = null
+  let nextLinePrefix
 
   if (buildingNumber === 0) {
     buildingNumber = null
@@ -51,10 +51,15 @@ export function constructAddress(
     'Units',
   ]
 
+  // Note the pattern carries no delimiting slashes: the RegExp constructor takes the
+  // pattern on its own. They used to be in the string, which compiled to a regex
+  // looking for literal "/" characters, so this guard never matched anything and
+  // names like "Block 1A" were split into "Block" + "1A" instead of being kept
+  // whole, which is exactly what Exception 4 exists to prevent.
   const ex4Regex = new RegExp(
-    '/^(' +
+    '^(' +
       specialPrefixes.join('|') +
-      ')\\s([0-9]+[a-zA-Z]+|[0-9]+\\-[0-9]+|[a-zA-Z])$/'
+      ')\\s([0-9]+[a-zA-Z]+|[0-9]+\\-[0-9]+|[a-zA-Z])$'
   )
 
   // Do we need to split the building name - see Table 27c / 27d
@@ -224,7 +229,18 @@ export function constructAddress(
     processed = true
     nextLinePrefix = subBuildingName
   }
-  if (nextLinePrefix && nextLinePrefix.charAt(nextLinePrefix.length !== ' ')) {
+  // Separate the prefix from whatever line follows it, unless it already ends in a
+  // space. This read `charAt(nextLinePrefix.length !== ' ')`, comparing a number to
+  // a string: always true, which coerces to charAt(1) - the SECOND character, not
+  // the last. Two things fell out of that. Rules 2, 4 and 5 set the prefix to
+  // `buildingNumber + ' '`, so the second character was usually a digit (truthy) and
+  // a second space got appended: "42  Oxford Street". Rule 7 sets it with no
+  // trailing space, so for a single-digit number charAt(1) was '' (falsy) and no
+  // space was added at all: "8King Road".
+  if (
+    nextLinePrefix &&
+    nextLinePrefix.charAt(nextLinePrefix.length - 1) !== ' '
+  ) {
     nextLinePrefix += ' '
   }
   // Dependent Thoroughfare
@@ -250,7 +266,9 @@ export function constructAddress(
   // Yup, apparently there's addresses in the database with no locality / thoroughfare. Just a number.
   // UDPRNs affected as of 2014-02-06: 2431986 and 328392
   if (nextLinePrefix !== null) {
-    addressLines.push(nextLinePrefix)
+    // Nothing followed it, so it stands alone as its own line and the separating
+    // space added above is just trailing whitespace on the address.
+    addressLines.push(nextLinePrefix.trim())
   }
   // Send a notification to developers if an address was not processed by any of the above rules
   // (and should have been) or if we think there was an error in processing the address correctly

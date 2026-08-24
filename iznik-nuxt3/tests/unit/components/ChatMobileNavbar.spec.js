@@ -1,9 +1,71 @@
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import { describe, it, expect } from 'vitest'
 
 /*
  * ChatMobileNavbar component uses top-level await for setupChat which causes
  * test timeout issues. We test component structure and prop definitions.
  */
+
+// ChatMobileNavbar awaits setupChat() in <script setup>, so it can't be cleanly
+// mounted here; assert on the source (as ChatPane.spec.js does).
+const navbarSource = readFileSync(
+  resolve(__dirname, '../../../components/ChatMobileNavbar.vue'),
+  'utf-8'
+)
+
+describe('profile popover hidden for User2Mod (Discourse 9918)', () => {
+  it('gates the profile popover on User2User only', () => {
+    // A User2Mod (contact-the-volunteers) chat has no other-user profile, so the
+    // popover must not enable for it - it rendered as an empty white box.
+    expect(navbarSource).toMatch(
+      /<b-popover\s+v-if="cssReady && chat\.chattype === 'User2User'"/
+    )
+  })
+
+  it('makes the header avatar toggle the profile card only for User2User', () => {
+    expect(navbarSource).toMatch(
+      /@click="chat\.chattype === 'User2User' \? toggleProfileCard\(\) : null"/
+    )
+  })
+})
+
+// The profile card could only be dismissed by tapping the avatar again, taking
+// one of its actions, or scrolling the thread. None of those look like a way
+// out, so the card read as stuck open on a phone - and this navbar is the only
+// chat header below md, so there was no other affordance.
+describe('profile card close button', () => {
+  it('has a close control that collapses the card', () => {
+    expect(navbarSource).toMatch(/class="profile-card-close"/)
+    expect(navbarSource).toMatch(
+      /class="profile-card-close"[\s\S]*?@click="profileCardExpanded = false"/
+    )
+  })
+
+  it('gives the close control an accessible name', () => {
+    expect(navbarSource).toMatch(
+      /class="profile-card-close"[\s\S]*?aria-label="Close profile info"/
+    )
+  })
+
+  it('hides the close control while the first-visit hint is showing', () => {
+    // dismissHint() already sets profileCardExpanded = false, so "Got it"
+    // closes the whole card; a second control there would only overlap it.
+    expect(navbarSource).toMatch(
+      /<button\s+v-if="!showProfileHint"\s+class="profile-card-close"/
+    )
+    expect(navbarSource).toMatch(
+      /function dismissHint\(\)[\s\S]*?profileCardExpanded\.value = false/
+    )
+  })
+
+  it('sizes the close control as a comfortable touch target', () => {
+    // This popover only exists below md, so it is always touched, never clicked.
+    expect(navbarSource).toMatch(
+      /\.profile-card-close\s*\{[\s\S]*?width:\s*44px[\s\S]*?height:\s*44px/
+    )
+  })
+})
 
 describe('ChatMobileNavbar', () => {
   describe('component structure', () => {
@@ -342,7 +404,7 @@ describe('ChatMobileNavbar', () => {
     })
 
     it('uses useTimeFormat', () => {
-      // timeago for otheraccessFull
+      // timeago for lastSeenAgo
       expect(true).toBe(true)
     })
   })
@@ -379,5 +441,31 @@ describe('ChatMobileNavbar', () => {
       // max-width: calc(100vw - 24px), width: 400px
       expect(true).toBe(true)
     })
+  })
+})
+
+describe('ChatMobileNavbar Freegle system chat', () => {
+  it('replaces the rating and stats with the automated-messages note', () => {
+    // The same reasoning as the desktop header: no rating, no "last seen", no
+    // distance for an account that is not a person.
+    expect(navbarSource).toMatch(
+      /v-if="chat\.systemchat"[\s\S]{0,200}Automated messages about your posts/
+    )
+    expect(navbarSource).toMatch(
+      /v-if="!chat\.systemchat" class="profile-card-stats"/
+    )
+  })
+
+  it('drops Profile, Block and Report but keeps Hide', () => {
+    const actions = navbarSource.slice(
+      navbarSource.indexOf('profile-card-actions'),
+      navbarSource.indexOf('</b-popover>')
+    )
+
+    // Each of the three is gated on it not being the Freegle chat...
+    expect(actions.match(/!chat\.systemchat/g) || []).toHaveLength(3)
+
+    // ...while Hide stays available to anyone who would rather not see them.
+    expect(actions).toMatch(/Show' : 'Hide'/)
   })
 })

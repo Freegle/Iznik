@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
+use App\Services\Ripple\RippleReplyService;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -26,17 +28,38 @@ class ChatExpectedService
     /** Days back to look when computing reply-time statistics. */
     private const REPLY_TIME_LOOKBACK_DAYS = 90;
 
+    /** Where the incremental run remembers how far it has read. */
+    private const CURSOR_KEY = 'chat.expected_cursor';
+
+    /**
+     * How far back before the last run's start time to look for released replies.
+     *
+     * The other half of this job works from a message id, and an id is safe however late a
+     * row shows up: it is still higher than the last one we handled, so it is still picked
+     * up. A release has no such id - it is a time stamped on an existing row when it is
+     * updated - so it can only be found by looking back over a period. Anything that does
+     * not appear within that period is not late, it is missed, because the window has moved
+     * on by the next run.
+     *
+     * Hence hours rather than minutes. The job runs every five minutes, so this re-checks
+     * the same handful of chats many times over, which is cheap and settles on the same
+     * answer each time. What it buys is that a row would have to be delayed by three hours
+     * before anyone noticed the poster still being told nobody had replied, and the
+     * overnight pass rechecks everything outstanding regardless.
+     */
+    private const RELEASE_OVERLAP_MINUTES = 180;
+
     /**
      * Orchestrates the full expected-reply update cycle.
      * Mirrors V1 cron/chat_expected.php top-level flow.
      *
-     * @return array{deleted_cleared: int, spam_cleared: int, waiting: int, received: int}
+     * @return array{deleted_cleared: int, spam_cleared: int, waiting: int, received: int, checked: int, full: bool}
      */
-    public function updateChatExpected(bool $dryRun = false): array
+    public function updateChatExpected(bool $dryRun = false, bool $full = false): array
     {
         $deleted = $this->tidyDeletedUsersReplies($dryRun);
         $spam = $this->tidySpamUsersReplies($dryRun);
-        $stats = $this->updateExpected($dryRun);
+        $stats = $this->updateExpected($dryRun, $full);
 
         return array_merge(['deleted_cleared' => $deleted, 'spam_cleared' => $spam], $stats);
     }
@@ -122,23 +145,67 @@ class ChatExpectedService
      *
      * Mirrors V1 ChatRoom::updateExpected().
      *
-     * @return array{waiting: int, received: int}
+     * Every five minutes this used to re-ask the same question about all ~1,925 messages
+     * still waiting for a reply - a chat_messages count per message - and then write the
+     * same value=-1 row back for every one of them that was still waiting, which is where
+     * the ~550k no-op writes a day came from. Both are avoidable:
+     *
+     *   - A waiting message can only stop waiting when a reply becomes deliverable, so only
+     *     chats that have had something happen need re-checking.
+     *   - A row whose value is already what we are about to write does not need writing.
+     *
+     * "Something happened" means a new chat message, OR a rippling-held reply being
+     * released: a held reply is already in chat_messages but does not count until release,
+     * so releasing one makes a reply deliverable without any new message arriving. Every
+     * release path stamps rippling_held_replies.releasedat, so both are covered by a
+     * bounded query and no release path has to remember to tell us.
+     *
+     * $full re-checks every waiting message. That is what the nightly run does, and it is
+     * the backstop for anything the two triggers above cannot see.
+     *
+     * @return array{waiting: int, received: int, checked: int, full: bool}
      */
-    public function updateExpected(bool $dryRun = false): array
+    public function updateExpected(bool $dryRun = false, bool $full = false): array
     {
-        $oldest = now()->subDays(self::LOOKBACK_DAYS)->startOfDay()->toDateTimeString();
+        // Both watermarks are taken BEFORE any work, so anything that arrives while we run
+        // is left for the next run rather than being skipped by a cursor that moved past it.
+        $startedAt = now();
+        $highWater = (int) DB::table('chat_messages')->max('id');
 
-        $pending = DB::select(
-            "SELECT cm.id, cm.userid, cm.chatid, cm.date,
-                    cr.user1, cr.user2
-             FROM chat_messages cm
-             INNER JOIN chat_rooms cr ON cr.id = cm.chatid
-             WHERE cm.date >= ?
-               AND cm.replyexpected = 1
-               AND cm.replyreceived = 0
-               AND cr.chattype = ?",
-            [$oldest, ChatRoom::TYPE_USER2USER]
-        );
+        $oldest = now()->subDays(self::LOOKBACK_DAYS)->startOfDay()->toDateTimeString();
+        $cursor = $this->readCursor();
+
+        // No cursor yet means we have never run incrementally, so there is no safe delta to
+        // take - do the whole thing and establish one.
+        $doFull = $full || $cursor === null;
+
+        $query = DB::table('chat_messages as cm')
+            ->join('chat_rooms as cr', 'cr.id', '=', 'cm.chatid')
+            ->where('cm.date', '>=', $oldest)
+            ->where('cm.replyexpected', 1)
+            ->where('cm.replyreceived', 0)
+            ->where('cr.chattype', ChatRoom::TYPE_USER2USER)
+            ->select('cm.id', 'cm.userid', 'cm.chatid', 'cm.date', 'cr.user1', 'cr.user2');
+
+        if (!$doFull) {
+            $chatids = $this->chatsWithActivitySince($cursor);
+
+            if (empty($chatids)) {
+                if (!$dryRun) {
+                    $this->writeCursor($startedAt, $highWater);
+                }
+
+                return ['waiting' => 0, 'received' => 0, 'checked' => 0, 'full' => false];
+            }
+
+            $query->whereIn('cm.chatid', $chatids);
+        }
+
+        $pending = $query->get();
+
+        // What users_expected already says about these messages, so we only write where the
+        // answer has actually changed.
+        $existing = $this->existingExpectedValues($pending->pluck('id')->all());
 
         $waiting = 0;
         $received = 0;
@@ -150,36 +217,120 @@ class ChatExpectedService
                 ->where('chatid', $msg->chatid)
                 ->where('id', '>', $msg->id)
                 ->where('userid', $other)
+                // A rippling-held reply hasn't reached the expecter yet, so it must not count as
+                // "reply received" (that would prematurely stop chase-up). Once released it counts.
+                ->whereRaw(RippleReplyService::deliveryGateSql('chat_messages.id'))
                 ->count();
 
-            if ($replyCount > 0) {
-                if (!$dryRun) {
-                    DB::update('UPDATE chat_messages SET replyreceived = 1 WHERE id = ?', [$msg->id]);
+            $value = $replyCount > 0 ? 1 : -1;
 
-                    DB::statement(
-                        'INSERT IGNORE INTO users_expected (expecter, expectee, chatmsgid, value)
-                         VALUES (?, ?, ?, 1)
-                         ON DUPLICATE KEY UPDATE value = 1',
-                        [$msg->userid, $other, $msg->id]
-                    );
+            if (!$dryRun) {
+                if ($value === 1) {
+                    DB::update('UPDATE chat_messages SET replyreceived = 1 WHERE id = ?', [$msg->id]);
                 }
 
+                if (($existing[$msg->id] ?? null) !== $value) {
+                    // keep-raw: INSERT ... ON DUPLICATE KEY UPDATE against the chatmsgid
+                    // unique key. upsert() would name every column in the update clause;
+                    // this must only ever touch value.
+                    DB::statement(
+                        'INSERT INTO users_expected (expecter, expectee, chatmsgid, value)
+                         VALUES (?, ?, ?, ?)
+                         ON DUPLICATE KEY UPDATE value = VALUES(value)',
+                        [$msg->userid, $other, $msg->id, $value]
+                    );
+                }
+            }
+
+            if ($value === 1) {
                 $received++;
             } else {
-                if (!$dryRun) {
-                    DB::statement(
-                        'INSERT IGNORE INTO users_expected (expecter, expectee, chatmsgid, value)
-                         VALUES (?, ?, ?, -1)
-                         ON DUPLICATE KEY UPDATE value = -1',
-                        [$msg->userid, $other, $msg->id]
-                    );
-                }
-
                 $waiting++;
             }
         }
 
-        return compact('waiting', 'received');
+        if (!$dryRun) {
+            $this->writeCursor($startedAt, $highWater);
+        }
+
+        return ['waiting' => $waiting, 'received' => $received, 'checked' => $pending->count(), 'full' => $doFull];
+    }
+
+    /**
+     * Chats where a reply could have become deliverable since the last run: one that had a
+     * new message, and one whose held reply was released.
+     *
+     * @return int[]
+     */
+    private function chatsWithActivitySince(array $cursor): array
+    {
+        $chatids = DB::table('chat_messages')
+            ->where('id', '>', $cursor['chatmsgid'])
+            ->distinct()
+            ->pluck('chatid')
+            ->all();
+
+        $releasedSince = Carbon::parse($cursor['at'])->subMinutes(self::RELEASE_OVERLAP_MINUTES)->toDateTimeString();
+
+        $released = DB::table('rippling_held_replies')
+            ->where('status', 'released')
+            ->where('releasedat', '>=', $releasedSince)
+            ->distinct()
+            ->pluck('chatid')
+            ->all();
+
+        return array_values(array_unique(array_merge($chatids, $released)));
+    }
+
+    /**
+     * Current users_expected values for these chat message ids, keyed by chatmsgid.
+     *
+     * @param  int[]  $chatmsgids
+     * @return array<int, int>
+     */
+    private function existingExpectedValues(array $chatmsgids): array
+    {
+        $values = [];
+
+        foreach (array_chunk($chatmsgids, 1000) as $chunk) {
+            foreach (DB::table('users_expected')->whereIn('chatmsgid', $chunk)->select('chatmsgid', 'value')->get() as $row) {
+                $values[(int) $row->chatmsgid] = (int) $row->value;
+            }
+        }
+
+        return $values;
+    }
+
+    /**
+     * @return array{chatmsgid: int, at: string}|null
+     */
+    private function readCursor(): ?array
+    {
+        $raw = DB::table('config')->where('key', self::CURSOR_KEY)->value('value');
+        $decoded = $raw ? json_decode($raw, true) : null;
+
+        if (!is_array($decoded) || !isset($decoded['chatmsgid'], $decoded['at'])) {
+            return null;
+        }
+
+        return ['chatmsgid' => (int) $decoded['chatmsgid'], 'at' => (string) $decoded['at']];
+    }
+
+    /**
+     * Store where this run got to, using the watermarks taken before the work started.
+     */
+    private function writeCursor(Carbon $startedAt, int $highWater): void
+    {
+        $value = json_encode([
+            'chatmsgid' => $highWater,
+            'at' => $startedAt->toDateTimeString(),
+        ]);
+
+        DB::table('config')->upsert(
+            [['key' => self::CURSOR_KEY, 'value' => $value]],
+            ['key'],
+            ['value'],
+        );
     }
 
     /**

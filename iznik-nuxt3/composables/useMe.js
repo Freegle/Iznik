@@ -5,8 +5,12 @@ import { useGroupStore } from '~/stores/group'
 import { useTeamStore } from '~/stores/team'
 
 let fetchingPromise = null
+// A single coalesced "trailing" fetch for forceServer callers that arrive while a fetch is
+// already in flight (see the forceServer branch below). Shared so N such callers trigger ONE
+// extra fetch, not one each.
+let trailingRefetch = null
 
-export async function fetchMe(hitServer) {
+export async function fetchMe(hitServer, forceServer = false) {
   const authStore = useAuthStore()
 
   // We can be called in several ways.
@@ -14,6 +18,12 @@ export async function fetchMe(hitServer) {
   // - hitServer = true.  We must query the server, and wait for the response before returning.  This is used
   //   mostly when we really care about the data being tightly in sync, and occasionally when we want to
   //   ensure that the server call has completed (e.g. in timers).  You would always call this with await.
+  //   - forceServer = true additionally means "the result must reflect state as of NOW".  If a fetch is
+  //     already in flight it may have STARTED before the caller's action (e.g. a moderator holds then
+  //     releases a message, and Release's checkWork() fires while the periodic refresh is mid-flight), so
+  //     piggybacking on it returns stale counts (Discourse #9951).  We therefore do a fresh fetch AFTER the
+  //     in-flight one - but coalesced, so a burst of actions triggers a single trailing refetch, not a
+  //     flood of /session calls (the dedup added in 53d04927d exists precisely to avoid that flood).
   //
   // - hitServer = false
   //   - with await.  We must have the user info, but it's ok for them to be a little out of
@@ -38,15 +48,36 @@ export async function fetchMe(hitServer) {
 
     // We always need to fetch to do the background update.
     needToFetch = true
-  } else {
-    // We have been asked to hit the server.
-    // eslint-disable-next-line no-lonely-if
-    if (fetchingPromise) {
-      // We are in the process of fetching the user, so we need to wait until that completes.
-      await fetchingPromise
-    } else {
-      needToFetch = true
+  } else if (fetchingPromise && forceServer) {
+    // A fetch is in flight but we need data as of now. Coalesce every forceServer caller that
+    // arrives during it onto ONE trailing fetch that starts once the in-flight one completes.
+    if (!trailingRefetch) {
+      const inFlight = fetchingPromise
+      trailingRefetch = (async () => {
+        try {
+          await inFlight
+        } catch {
+          // The in-flight fetch's own caller handles its rejection; we just need to fetch after it.
+        }
+        const p = authStore.fetchUser()
+        fetchingPromise = p
+        trailingRefetch = null
+        try {
+          await p
+        } finally {
+          if (fetchingPromise === p) {
+            fetchingPromise = null
+          }
+        }
+      })()
     }
+    await trailingRefetch
+  } else if (fetchingPromise) {
+    // A fetch is in flight and stale-by-a-moment is fine (boot, timers) - piggyback on it so
+    // concurrent callers share a single /session request.
+    await fetchingPromise
+  } else {
+    needToFetch = true
   }
 
   if (needToFetch) {

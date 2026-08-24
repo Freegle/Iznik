@@ -213,7 +213,7 @@ describe('group store', () => {
       const result = await store.fetch('testgroup')
 
       expect(mockGroupList).toHaveBeenCalled()
-      expect(store.allGroups['testgroup']).toBeDefined()
+      expect(store.allGroups.testgroup).toBeDefined()
       expect(store.summaryList[1]).toBeDefined()
       expect(result.id).toBe(1)
     })
@@ -338,8 +338,8 @@ describe('group store', () => {
 
       await store.fetch()
 
-      expect(store.allGroups['group1']).toBeDefined()
-      expect(store.allGroups['group2']).toBeDefined()
+      expect(store.allGroups.group1).toBeDefined()
+      expect(store.allGroups.group2).toBeDefined()
       expect(store.summaryList[1]).toBeDefined()
       expect(store.summaryList[2]).toBeDefined()
     })
@@ -509,7 +509,10 @@ describe('group store', () => {
       },
       {
         name: 'returns group from list by numeric string id',
-        state: { list: { 42: { id: 42, nameshort: 'mygroup' } }, summaryList: {} },
+        state: {
+          list: { 42: { id: 42, nameshort: 'mygroup' } },
+          summaryList: {},
+        },
         input: '42',
         expected: { id: 42, nameshort: 'mygroup' },
       },

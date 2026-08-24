@@ -272,17 +272,27 @@ class StatsGenerationServiceTest extends TestCase
         $this->assertEquals(1, $breakdown[Message::TYPE_WANTED]);
     }
 
-    public function test_searches_count_matches_when_groupid_appears_in_csv(): void
+    public function test_searches_count_tallies_rows_for_the_group(): void
     {
+        // search_history.groups is an INT on production and holds a single group
+        // id, so a row can never carry a comma-separated list. This test used to
+        // insert one, which was only possible while the migrations declared the
+        // column as TEXT.
+        //
+        // StatsGenerationService still explodes the value on commas, described in
+        // its own comment as V1 behaviour. That branch is unreachable against
+        // production's schema. See the PR that brought the migrations into parity:
+        // if searches really should record several groups, the column needs to
+        // change on live rather than the code keep pretending it already has.
         $group = $this->createTestGroup();
         $otherGroup = $this->createTestGroup();
 
         DB::table('search_history')->insert([
-            ['date' => $this->date.' 10:00:00', 'term' => 'sofa', 'groups' => (string) $group->id],
-            ['date' => $this->date.' 11:00:00', 'term' => 'chair', 'groups' => $otherGroup->id.','.$group->id.',999'],
-            ['date' => $this->date.' 12:00:00', 'term' => 'table', 'groups' => (string) $otherGroup->id],
+            ['date' => $this->date.' 10:00:00', 'term' => 'sofa', 'groups' => $group->id],
+            ['date' => $this->date.' 11:00:00', 'term' => 'chair', 'groups' => $group->id],
+            ['date' => $this->date.' 12:00:00', 'term' => 'table', 'groups' => $otherGroup->id],
             // Wrong date — ignored.
-            ['date' => '2026-04-02 10:00:00', 'term' => 'desk', 'groups' => (string) $group->id],
+            ['date' => '2026-04-02 10:00:00', 'term' => 'desk', 'groups' => $group->id],
         ]);
 
         $this->service->generate($group->id, $this->date);
@@ -343,5 +353,370 @@ class StatsGenerationServiceTest extends TestCase
         $rowsAfter = DB::table('stats')->where('date', $this->date)->where('groupid', $group->id)->count();
 
         $this->assertEquals($rowsBefore, $rowsAfter, 'dry-run must not write');
+    }
+
+    // ── Rippling-out: rippled-in copies must not inflate a group's stats ──────
+    //
+    // Rippling inserts an extra messages_groups row (rippled_in=1, collection
+    // 'Approved') for each group a post is spread into. Those copies are not
+    // native activity for the receiving group, and when the dashboard SUMs the
+    // per-group rows for a systemwide figure one post is otherwise counted once
+    // per group it reached (avg fan-out ~7). Every count/breakdown that joins
+    // messages_groups must therefore exclude rippled_in=1 rows.
+
+    /**
+     * Add a rippled-in messages_groups copy of an existing message to a group.
+     */
+    private function rippleMessageInto(int $msgId, int $groupId, string $arrival): void
+    {
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $groupId,
+            'collection' => Membership::COLLECTION_APPROVED,
+            'arrival' => $arrival,
+            'rippled_in' => 1,
+        ]);
+    }
+
+    public function test_approved_message_count_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        // One native post on B (counts) plus a post native on A rippled into B (must not count).
+        $this->createTestMessage($user, $groupB, ['arrival' => $this->date.' 09:00:00']);
+        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 10:00:00']);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 10:00:00');
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertStat($groupB->id, StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 1);
+    }
+
+    public function test_outcomes_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        $native = $this->createTestMessage($user, $groupB);
+        $rippled = $this->createTestMessage($user, $groupA);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+
+        DB::table('messages_outcomes')->insert([
+            ['msgid' => $native->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 10:00:00'],
+            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 11:00:00'],
+        ]);
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertStat($groupB->id, StatsGenerationService::TYPE_OUTCOMES, 1);
+    }
+
+    public function test_replies_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $u1 = $this->createTestUser();
+        $u2 = $this->createTestUser();
+
+        $native = $this->createTestMessage($u1, $groupB);
+        $rippled = $this->createTestMessage($u1, $groupA);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+
+        $room = $this->createTestChatRoom($u1, $u2);
+        $this->createTestChatMessage($room, $u2, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $native->id,
+            'date' => $this->date.' 10:00:00',
+        ]);
+        $this->createTestChatMessage($room, $u2, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $rippled->id,
+            'date' => $this->date.' 11:00:00',
+        ]);
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertStat($groupB->id, StatsGenerationService::TYPE_REPLIES, 1);
+    }
+
+    public function test_feedback_happiness_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        // Only a rippled-in copy with happy feedback — B has no native feedback.
+        $rippled = $this->createTestMessage($user, $groupA);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+        DB::table('messages_outcomes')->insert([
+            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'happiness' => 'Happy', 'timestamp' => $this->date.' 10:00:00'],
+        ]);
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertNoStat($groupB->id, StatsGenerationService::TYPE_FEEDBACK_HAPPY);
+    }
+
+    public function test_weight_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        // A taken item native on A, rippled into B. Its weight must not be attributed to B.
+        $rippled = $this->createTestMessage($user, $groupA);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+        $itemId = DB::table('items')->insertGetId(['name' => 'TestItem_'.uniqid(), 'weight' => 25.0, 'popularity' => 1.0]);
+        DB::table('messages_items')->insert(['msgid' => $rippled->id, 'itemid' => $itemId]);
+        DB::table('messages_outcomes')->insert([
+            ['msgid' => $rippled->id, 'userid' => $user->id, 'outcome' => Message::OUTCOME_TAKEN, 'timestamp' => $this->date.' 10:00:00'],
+        ]);
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertNoStat($groupB->id, StatsGenerationService::TYPE_WEIGHT);
+    }
+
+    public function test_message_breakdown_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 09:00:00', 'type' => Message::TYPE_OFFER]);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+
+        $this->service->generate($groupB->id, $this->date);
+
+        // The rippled-in copy must not appear in B's type histogram.
+        $this->assertBreakdown($groupB->id, StatsGenerationService::TYPE_MESSAGE_BREAKDOWN, []);
+    }
+
+    public function test_post_method_breakdown_excludes_rippled_in_copies(): void
+    {
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+        $user = $this->createTestUser();
+
+        $rippled = $this->createTestMessage($user, $groupA, ['arrival' => $this->date.' 09:00:00', 'sourceheader' => 'Web']);
+        $this->rippleMessageInto($rippled->id, $groupB->id, $this->date.' 09:00:00');
+
+        $this->service->generate($groupB->id, $this->date);
+
+        $this->assertBreakdown($groupB->id, StatsGenerationService::TYPE_POST_METHOD_BREAKDOWN, []);
+    }
+
+    // ── Bulk-offer per-item counting ──────────────────────────────────────────
+    //
+    // A "bulk offer" message has rows in messages_bulk_items. Each stat type must
+    // count by item quantity rather than by message count:
+    //
+    //   ApprovedMessageCount — SUM(quantity) over all bulk items (not 1 per message)
+    //   Outcomes             — SUM(quantity) for items flipped available=0 on $date
+    //   Weight               — SUM(weight * quantity) matched by items.name
+    //   Replies              — interest rows + free-text Interested with no interest row
+    //
+    // A normal (non-bulk) control message must be unaffected.
+
+    public function test_bulk_offer_per_item_counting(): void
+    {
+        $group = $this->createTestGroup();
+        $owner = $this->createTestUser();
+        $replier1 = $this->createTestUser();
+        $freeTextReplier = $this->createTestUser();
+
+        // ── Control: one normal message with one Interested reply ──────────────
+        $control = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 08:00:00']);
+        $controlRoom = $this->createTestChatRoom($owner, $replier1);
+        $this->createTestChatMessage($controlRoom, $replier1, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $control->id,
+            'date' => $this->date.' 08:30:00',
+        ]);
+
+        // ── Bulk offer message: availableinitially=6 (item1 qty=3 + item2 qty=3). ──────
+        // 1 unit of item1 was collected in-app (quantity decremented to 2), then
+        // the offerer flipped the remainder to available=0 on $date. Item2 is still
+        // available.
+        $bulk = $this->createTestMessage($owner, $group, [
+            'arrival' => $this->date.' 10:00:00',
+            'availableinitially' => 6,
+        ]);
+
+        // Item 1 (qty=2 remaining after 1 collected): flipped available=0 on $date;
+        // matched by name in the items table with weight=10.
+        $item1Name = 'BulkItemA_'.uniqid();
+        $item1Id = DB::table('messages_bulk_items')->insertGetId([
+            'msgid' => $bulk->id,
+            'name' => $item1Name,
+            'quantity' => 2,
+            'available' => 0,
+            'updated_at' => $this->date.' 11:00:00',
+            'created_at' => $this->date.' 09:00:00',
+        ]);
+
+        // Item 2 (qty=3): still available; no items-table row.
+        $item2Id = DB::table('messages_bulk_items')->insertGetId([
+            'msgid' => $bulk->id,
+            'name' => 'BulkItemB_'.uniqid(),
+            'quantity' => 3,
+            'available' => 1,
+            'updated_at' => $this->date.' 09:00:00',
+            'created_at' => $this->date.' 09:00:00',
+        ]);
+
+        // Items-table row for item1 with known weight=10.
+        DB::table('items')->insert(['name' => $item1Name, 'weight' => 10.0, 'popularity' => 1.0]);
+
+        // ── Collected interest row for item1: 1 unit collected in-app on $date ──
+        // state=Collected, updated_at in day, qty=1 (the 1 unit that was collected).
+        // created_at in day so it also counts in the Replies part-1 arm.
+        DB::table('messages_bulk_items_interest')->insert([
+            'bulkitemid' => $item1Id,
+            'msgid' => $bulk->id,
+            'userid' => $replier1->id,
+            'quantity' => 1,
+            'state' => 'Collected',
+            'created_at' => $this->date.' 10:30:00',
+            'updated_at' => $this->date.' 10:30:00',
+        ]);
+
+        // ── Structured interest for item2 (Interested, not yet collected) ────
+        DB::table('messages_bulk_items_interest')->insert([
+            'bulkitemid' => $item2Id,
+            'msgid' => $bulk->id,
+            'userid' => $replier1->id,
+            'quantity' => 1,
+            'state' => 'Interested',
+            'created_at' => $this->date.' 10:30:00',
+            'updated_at' => $this->date.' 10:30:00',
+        ]);
+
+        // ── Free-text reply: freeTextReplier sends an Interested chat message
+        //    but has no interest row for the bulk message ──────────────────────
+        $bulkRoom = $this->createTestChatRoom($owner, $freeTextReplier);
+        $this->createTestChatMessage($bulkRoom, $freeTextReplier, [
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $bulk->id,
+            'date' => $this->date.' 10:45:00',
+        ]);
+
+        $this->service->generate($group->id, $this->date);
+
+        // ApprovedMessageCount uses availableinitially (not current quantity):
+        //   base = 2 (control + bulk message), top-up = availableinitially(6) - 1 = 5
+        //   total = 2 + 5 = 7.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_APPROVED_MESSAGE_COUNT, 7);
+
+        // Outcomes = 2 (flip arm: item1 qty=2 remaining) + 1 (collected arm: interest qty=1) = 3.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_OUTCOMES, 3);
+
+        // Weight = 10*2 (flip arm) + 10*1 (collected arm) = 30.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_WEIGHT, 30);
+
+        // Replies = 1 (control) + 2 (interest rows: item1 Collected + item2 Interested,
+        //   both counted by created_at) + 1 (free-text bulk) = 4.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_REPLIES, 4);
+
+        // Activity = approvedMessages + replies = 7 + 4 = 11.
+        $this->assertStat($group->id, StatsGenerationService::TYPE_ACTIVITY, 11);
+    }
+
+    // ── Collation guard ───────────────────────────────────────────────────────
+    //
+    // items.name is utf8mb4_unicode_ci but messages_bulk_items was created on
+    // production with the MySQL 8 server default (utf8mb4_0900_ai_ci). The bulk
+    // weight queries join `items i ON i.name = bi.name`, so without an explicit
+    // COLLATE that join throws SQLSTATE[HY000] 1267 "Illegal mix of collations"
+    // and stats generation aborts for the whole day.
+    //
+    // This can't be reproduced by ALTERing the test table: DatabaseTransactions
+    // wraps each test in a transaction, and an ALTER forces an implicit commit
+    // that breaks isolation. Instead we assert the guard is present in the emitted
+    // SQL for BOTH code paths (buildDailyContext and regenerateWeightForRange),
+    // which is exactly what a regression here would remove.
+
+    /**
+     * Capture every SQL statement a callback runs, then return only those that
+     * join the items table by name (the collation-sensitive join).
+     *
+     * @return list<string>
+     */
+    private function captureItemNameJoins(callable $fn): array
+    {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $fn();
+        } finally {
+            $log = DB::getQueryLog();
+            DB::disableQueryLog();
+        }
+
+        return array_values(array_filter(
+            array_map(fn ($q) => $q['query'], $log),
+            fn ($sql) => str_contains($sql, 'items i ON i.name = bi.name')
+        ));
+    }
+
+    public function test_bulk_item_name_join_forces_unicode_collation_in_daily_context(): void
+    {
+        $group = $this->createTestGroup();
+        $owner = $this->createTestUser();
+        $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
+        $itemName = 'CollationItem_'.uniqid();
+        DB::table('messages_bulk_items')->insert([
+            'msgid' => $bulk->id,
+            'name' => $itemName,
+            'quantity' => 1,
+            'available' => 0,
+            'updated_at' => $this->date.' 11:00:00',
+            'created_at' => $this->date.' 09:00:00',
+        ]);
+        DB::table('items')->insert(['name' => $itemName, 'weight' => 10.0, 'popularity' => 1.0]);
+
+        $joins = $this->captureItemNameJoins(fn () => $this->service->generateForAllGroups($this->date));
+
+        $this->assertNotEmpty($joins, 'Expected the daily context to run the items-by-name join');
+        foreach ($joins as $sql) {
+            $this->assertStringContainsString(
+                'i.name = bi.name COLLATE utf8mb4_unicode_ci',
+                $sql,
+                'items-by-name join must force utf8mb4_unicode_ci to match items.name'
+            );
+        }
+    }
+
+    public function test_bulk_item_name_join_forces_unicode_collation_in_weight_regen(): void
+    {
+        $group = $this->createTestGroup();
+        $owner = $this->createTestUser();
+        $bulk = $this->createTestMessage($owner, $group, ['arrival' => $this->date.' 10:00:00']);
+        $itemName = 'CollationItem_'.uniqid();
+        DB::table('messages_bulk_items')->insert([
+            'msgid' => $bulk->id,
+            'name' => $itemName,
+            'quantity' => 1,
+            'available' => 0,
+            'updated_at' => $this->date.' 11:00:00',
+            'created_at' => $this->date.' 09:00:00',
+        ]);
+        DB::table('items')->insert(['name' => $itemName, 'weight' => 10.0, 'popularity' => 1.0]);
+
+        $joins = $this->captureItemNameJoins(
+            fn () => $this->service->regenerateWeightForRange($this->date, $this->date)
+        );
+
+        $this->assertNotEmpty($joins, 'Expected weight regeneration to run the items-by-name join');
+        foreach ($joins as $sql) {
+            $this->assertStringContainsString(
+                'i.name = bi.name COLLATE utf8mb4_unicode_ci',
+                $sql,
+                'items-by-name join must force utf8mb4_unicode_ci to match items.name'
+            );
+        }
     }
 }

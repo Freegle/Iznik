@@ -6,6 +6,8 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/getsentry/sentry-go"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/plugin/dbresolver"
 	"sync"
 	"time"
 )
@@ -41,8 +43,33 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 
 				// We have a uid.  Check if the user is still present in the DB.
 				// Also fetch systemrole for HAProxy rate limit exemption.
-				result := db.Raw("SELECT users.id, users.lastaccess, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1;", sessionIdInJWT, userIdInJWT).Scan(&userIdInDB)
+				//
+				// ORM migration sites 4853849663f1 and e04bf70e7bee (Tier 3
+				// keep-raw review). Both call sites render the same fixed
+				// text - the extractor just could not fold it across the two
+				// call sites - so each has exactly one rendered form, proven
+				// by the retired ormharness (shapes.json /
+				// TestTier3Shapes_4853849663f1 /
+				// TestTier3Shapes_e04bf70e7bee, removed in d22ba1d6c).
+				sessionQuery := func(tx *gorm.DB) *gorm.DB {
+					return tx.Table("sessions").
+						Select("users.id, users.lastaccess, users.systemrole").
+						Joins("INNER JOIN users ON users.id = sessions.userid").
+						Where("sessions.id = ? AND users.id = ?", sessionIdInJWT, userIdInJWT).
+						Limit(1)
+				}
+				result := sessionQuery(db).Scan(&userIdInDB)
 				dbQueryErr = result.Error
+
+				// Read/write split: the session row is INSERTed on the write host at login, so a
+				// read replica can momentarily return zero rows right after login (Galera apply
+				// lag). That would make the check below wrongly 401 a valid session. On a miss,
+				// confirm against the write host before treating the session as invalid.
+				// .Clauses(dbresolver.Write) is a no-op when no replica is configured.
+				if dbQueryErr == nil && userIdInDB.Id == 0 {
+					result = sessionQuery(db.Clauses(dbresolver.Write)).Scan(&userIdInDB)
+					dbQueryErr = result.Error
+				}
 			}()
 		}
 
@@ -72,9 +99,18 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		}
 
 		// Update the last access time for the user if it is null or older than ten minutes.
+		// The throttle MUST live in the SQL guard (matching sessions.lastactive below), not
+		// only in the app-side check: N parallel requests all read the same stale value, all
+		// pass the check, and all UPDATE the same row — and with writes sprayed across the
+		// Galera hosts those same-row writes cause certification conflicts (387ms avg,
+		// ~197 DB-hours/10d — plans/2026-07-17-db3-cpu-reach-sql-prefilter.md, adjacent
+		// fix 1). With the guard, the racers match zero rows and are cheap no-ops. The
+		// app-side staleness check is kept as a fast path only: it skips issuing the
+		// statement at all when the auth SELECT already saw a fresh value.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 && (userIdInDB.Lastaccess.IsZero() || userIdInDB.Lastaccess.Before(time.Now().Add(-10*time.Minute))) {
 			db := database.DBConn
-			db.Exec("UPDATE users SET lastaccess = NOW() WHERE id = ?", userIdInDB.Id)
+			db.Table("users").Where("id = ? AND (lastaccess IS NULL OR lastaccess < DATE_SUB(NOW(), INTERVAL 10 MINUTE))", userIdInDB.Id).
+				Update("lastaccess", gorm.Expr("NOW()"))
 		}
 
 		// Refresh sessions.lastactive if older than 10 minutes — this gives the session
@@ -83,7 +119,8 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 		// active sessions 31 days after login regardless of recent use.
 		if userIdInJWT > 0 && userIdInDB.Id > 0 {
 			db := database.DBConn
-			db.Exec("UPDATE sessions SET lastactive = NOW() WHERE id = ? AND lastactive < DATE_SUB(NOW(), INTERVAL 10 MINUTE)", sessionIdInJWT)
+			db.Table("sessions").Where("id = ? AND lastactive < DATE_SUB(NOW(), INTERVAL 10 MINUTE)", sessionIdInJWT).
+				Update("lastactive", gorm.Expr("NOW()"))
 		}
 
 		return ret

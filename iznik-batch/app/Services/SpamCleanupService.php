@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Removes spam members and their content from Freegle groups.
  *
- * Mirrors V1 Spam::removeSpamMembers() from iznik-server/include/spam/Spam.php.
+ * Mirrors the legacy V1 PHP Spam::removeSpamMembers().
  *
  * Actions taken for each known spammer (spam_users.collection = 'Spammer'):
  *   1. Member-role memberships are removed and the user is banned from those groups.
@@ -135,7 +135,12 @@ class SpamCleanupService
         if (!empty($msgs)) {
             $msgIds = array_unique(array_column($msgs, 'id'));
             foreach ($msgIds as $msgId) {
+                // useWritePdo: this count gates the parent-message soft-delete below,
+                // and it reads the rows we just UPDATEd to deleted=1 above. Under the
+                // read/write split a plain read could hit a lagging replica that still
+                // shows those rows as deleted=0, leaving the spam message live.
                 $remainingGroups = DB::table('messages_groups')
+                    ->useWritePdo()
                     ->where('msgid', $msgId)
                     ->where('deleted', 0)
                     ->count();

@@ -1,18 +1,20 @@
 package job
 
 import (
-	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/spatial"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
-	geo "github.com/kellydunn/golang-geo"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"regexp"
 	"strconv"
-	"sync"
-	"time"
+	"strings"
 )
 
 // categorySanitizer removes non-letter/space/slash characters from category queries.
@@ -37,199 +39,171 @@ type Job struct {
 
 const JOBS_LIMIT = 50
 const JOBS_DISTANCE = 64
-const JOBS_MINIMUM_CPC = 0.10
+// Lowered 0.10 -> 0.08 on 2026-07-09 after WhatJobs compressed their bids to
+// ~£0.084 (below the old £0.10 floor), which had collapsed the billable feed.
+// Keep in lockstep with iznik-batch WhatJobsService::MINIMUM_CPC (ingest) and
+// Job::MINIMUM_CPC (eligibility). See the note in WhatJobsService.
+const JOBS_MINIMUM_CPC = 0.08
 
 func GetJobs(c *fiber.Ctx) error {
-	// To make efficient use of the spatial index we construct a box around our lat/lng, and search for jobs
-	// where the geometry overlaps it.  We keep expanding our box until we find enough.
-	//
-	// We used to double the ambit each time, but that led to long queries, probably because we would suddenly
-	// include a couple of cities or something.
-	//
-	// Because this is Go we can fire off these requests in parallel and just stop when we get enough results.
-	// This reduces latency significantly, even though it's a bit mean to the database server.  To cancel the queries
-	// properly we need to use the Pool.
-	ret := []Job{}
-	best := []Job{}
+	lat, _ := strconv.ParseFloat(c.Query("lat"), 64)
+	lng, _ := strconv.ParseFloat(c.Query("lng"), 64)
+	category := categorySanitizer.ReplaceAllString(c.Query("category", ""), "")
 
-	lat, _ := strconv.ParseFloat(c.Query("lat"), 32)
-	lng, _ := strconv.ParseFloat(c.Query("lng"), 32)
-	category := c.Query("category", "")
-
-	// Remove any characters other than letters, space and forward slash.
-	category = categorySanitizer.ReplaceAllString(category, "")
-
-	categoryq := "IS NOT NULL"
-
-	if len(category) > 0 {
-		categoryq = "REGEXP '(^|;)" + category + ".*'"
+	if lat == 0 && lng == 0 {
+		return c.JSON(make([]Job, 0))
 	}
 
-	if lat != 0 || lng != 0 {
-		step := float64(10)
-		ambit := step
-
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		done := false
-		count := 0
-
-		for {
-			ambit = ambit * 2
-			count++
-
-			if ambit > JOBS_DISTANCE {
-				break
-			}
-		}
-
-		var cancels []context.CancelFunc
-
-		ambit = step
-
-		wg.Add(1)
-
-		for {
-			// Use a timeout context - partly so that we don't wait for too long, and partly so that we can
-			// cancel queries if we get enough results.
-			timeoutContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			cancels = append(cancels, cancel)
-
-			go func(ambit float64) {
-				var nelat, nelng, swlat, swlng float64
-				var these []Job
-
-				// Get an exclusive connection.
-				db, err := database.Pool.Conn(timeoutContext)
-
-				if err != nil {
-					return
-				}
-
-				p := geo.NewPoint(float64(lat), float64(lng))
-				ne := p.PointAtDistanceAndBearing(ambit, 45)
-				nelat = ne.Lat()
-				nelng = ne.Lng()
-				sw := p.PointAtDistanceAndBearing(ambit, 225)
-				swlat = sw.Lat()
-				swlng = sw.Lng()
-
-				lats := fmt.Sprint(lat)
-				lngs := fmt.Sprint(lng)
-				nelats := fmt.Sprint(nelat)
-				nelngs := fmt.Sprint(nelng)
-				swlats := fmt.Sprint(swlat)
-				swlngs := fmt.Sprint(swlng)
-				srids := fmt.Sprint(utils.SRID)
-
-				ambitStr := strconv.FormatFloat(ambit, 'f', 0, 64)
-
-				// We sort by cpc/dist, so that we will tend to show better paying jobs a bit further away.
-				query := "SELECT " + ambitStr + " AS ambit, " +
-					"ST_Distance(geometry, ST_SRID(POINT(" + lngs + ", " + lats + "), " + srids + ")) AS dist, " +
-					"CASE WHEN ST_Dimension(geometry) < 2 THEN 0 ELSE ST_Area(geometry) END AS area, " +
-					"jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, jobs.cpc * jobs.clickability AS expectation, " +
-					"ai_images.externaluid " +
-					"FROM `jobs` " +
-					"LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title " +
-					"WHERE ST_Within(geometry, ST_SRID(POLYGON(LINESTRING(" +
-					"POINT(" + swlngs + ", " + swlats + "), " +
-					"POINT(" + swlngs + ", " + nelats + "), " +
-					"POINT(" + nelngs + ", " + nelats + "), " +
-					"POINT(" + nelngs + ", " + swlats + "), " +
-					"POINT(" + swlngs + ", " + swlats + "))), " +
-					srids + ")) " +
-					"AND (ST_Dimension(geometry) < 2 OR ST_Area(geometry) / ST_Area(ST_SRID(POLYGON(LINESTRING(" +
-					"POINT(" + swlngs + ", " + swlats + "), " +
-					"POINT(" + swlngs + ", " + nelats + "), " +
-					"POINT(" + nelngs + ", " + nelats + "), " +
-					"POINT(" + nelngs + ", " + swlats + "), " +
-					"POINT(" + swlngs + ", " + swlats + "))), " +
-					srids + ")) < 2) " +
-					"AND cpc >= " + fmt.Sprint(JOBS_MINIMUM_CPC) + " " +
-					"AND visible = 1 " +
-					"AND category " + categoryq + " " +
-					"ORDER BY expectation DESC, dist ASC, posted_at DESC LIMIT " + fmt.Sprint(JOBS_LIMIT) + ";"
-
-				rows, err := db.QueryContext(timeoutContext, query)
-
-				// Return the connection to the pool.
-				defer db.Close()
-
-				// We might be cancelled/timed out, in which case we have no rows to process.
-				if err == nil {
-					defer rows.Close()
-
-					for rows.Next() {
-						var job Job
-						var externaluid sql.NullString
-						err = rows.Scan(
-							&job.Ambit,
-							&job.Dist,
-							&job.Area,
-							&job.ID,
-							&job.Url,
-							&job.Title,
-							&job.Location,
-							&job.Body,
-							&job.Reference,
-							&job.Category,
-							&job.CPC,
-							&job.Clickability,
-							&job.Expectation,
-							&externaluid)
-
-						if externaluid.Valid && len(externaluid.String) > 0 {
-							job.Image = misc.GetImageDeliveryUrl(externaluid.String, "")
-						}
-
-						these = append(these, job)
-					}
-				}
-
-				mu.Lock()
-				defer mu.Unlock()
-
-				if !done {
-					if len(these) >= len(best) {
-						best = these
-					}
-
-					count--
-
-					if len(best) >= JOBS_LIMIT || count == 0 {
-						// Either we found enough or we have finished looking.  Either way, stop and take the best we
-						// have found.
-						ret = best
-						done = true
-						defer wg.Done()
-					}
-				}
-			}(ambit)
-
-			ambit = ambit * 2
-
-			if ambit > JOBS_DISTANCE {
-				break
-			}
-		}
-
-		wg.Wait()
-
-		// Cancel any outstanding ops.
-		for _, cancel := range cancels {
-			defer func() {
-				go cancel()
-			}()
-		}
+	// Ask spatial server for nearest job IDs.
+	knnResults, err := spatial.KNN("jobs", lng, lat, JOBS_LIMIT, "")
+	if err != nil || len(knnResults) == 0 {
+		return c.JSON(make([]Job, 0))
 	}
 
-	if len(ret) == 0 {
-		// Force [] rather than null to be returned.
-		return c.JSON(make([]string, 0))
-	} else {
-		return c.JSON(ret)
+	// Build id list + id→distance map for the enrichment query.
+	distByID := make(map[int64]float64, len(knnResults))
+	ids := make([]int64, 0, len(knnResults))
+	for _, r := range knnResults {
+		distByID[r.ID] = r.Distance
+		ids = append(ids, r.ID)
 	}
+
+	return c.JSON(JobsForIDs(ids, distByID, lat, lng, category))
+}
+
+// JobsForIDs enriches the given nearby job IDs from MySQL and returns them as
+// Jobs, applying the category filter and — restored from the pre-spatial query
+// — an area constraint that drops jobs whose service-area polygon dwarfs the
+// local search extent (e.g. nation-wide listings), so they don't surface as
+// "nearby". The search box is derived from the KNN extent (the distance to the
+// farthest nearby job), mirroring the old expanding-box ST_Area ratio test.
+func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, category string) []Job {
+	if len(ids) == 0 {
+		return make([]Job, 0)
+	}
+
+	categoryClause := "category IS NOT NULL"
+	var categoryArgs []any
+	if category != "" {
+		categoryClause = "category REGEXP ?"
+		categoryArgs = []any{"(^|;)" + category + ".*"}
+	}
+
+	// Search-box half-extent in decimal degrees, from the farthest nearby job,
+	// with a floor so the box is never degenerate (avoids divide-by-tiny-area).
+	maxDist := 0.0
+	for _, d := range distByID {
+		if d > maxDist {
+			maxDist = d
+		}
+	}
+	if maxDist < 0.01 {
+		maxDist = 0.01 // ~1.1km
+	}
+	swLng, swLat := lng-maxDist, lat-maxDist
+	neLng, neLat := lng+maxDist, lat+maxDist
+	box := fmt.Sprintf(
+		"ST_SRID(POLYGON(LINESTRING("+
+			"POINT(%[1]f, %[2]f), POINT(%[1]f, %[4]f), POINT(%[3]f, %[4]f), "+
+			"POINT(%[3]f, %[2]f), POINT(%[1]f, %[2]f))), %[5]d)",
+		swLng, swLat, neLng, neLat, utils.SRID,
+	)
+	areaClause := "(ST_Dimension(jobs.geometry) < 2 OR ST_Area(jobs.geometry) / ST_Area(" + box + ") < 2)"
+
+	db := database.DBConn
+	var rows []struct {
+		ID           uint64         `gorm:"column:id"`
+		Url          string         `gorm:"column:url"`
+		Title        string         `gorm:"column:title"`
+		Location     string         `gorm:"column:location"`
+		Body         string         `gorm:"column:body"`
+		Reference    string         `gorm:"column:job_reference"`
+		Category     string         `gorm:"column:category"`
+		CPC          float64        `gorm:"column:cpc"`
+		Clickability float64        `gorm:"column:clickability"`
+		Externaluid  sql.NullString `gorm:"column:externaluid"`
+		DistKm       float64        `gorm:"column:dist_km"`
+	}
+
+	// The KNN distance is a planar degree value (the geometry stores lat/lng tagged
+	// SRID 3857), which the client mis-reads as km and shows as "Nearby" for
+	// everything. Return the real great-circle km via ST_Distance_Sphere on the
+	// geometry centroid so the distance / "Nearby" label is honest. Dedup of the
+	// duplicate WhatJobs postings (one recruitment ad spammed to thousands of towns
+	// as separate rows — Discourse 9363) is done upstream in the spatial KNN server,
+	// which returns the nearest distinct (company, title), so the ids arriving here
+	// are already distinct and we just enrich them.
+	distExpr := "ST_Distance_Sphere(POINT(?, ?), POINT(ST_X(ST_Centroid(jobs.geometry)), ST_Y(ST_Centroid(jobs.geometry))))"
+
+	// Only the id-list changes:
+	// ids is now bound as a native []int64 "IN ?" slice instead of the
+	// hand-built comma-joined placeholders string. categoryClause and
+	// areaClause (the search-box polygon, %f-formatted) are unchanged -
+	// still literal text built exactly as before, still passed as one
+	// combined WHERE string to a single Where() call (see the reachWhere
+	// sites in isochrone/message.go for why: splitting a fragment that
+	// contains "AND"/"OR" into its own Where() call trips GORM's paren-
+	// wrapping once more than one Where expression is combined). No
+	// precision change: the box's float formatting is untouched, so this
+	// is a pure mechanism swap, not the code-change-plus-precision-decision
+	// the keep-raw reason flagged as the harder version of this fix.
+	whereSQL := "jobs.id IN ? AND " + categoryClause + " AND " + areaClause
+	whereArgs := append([]any{ids}, categoryArgs...)
+
+	db.Table("jobs").
+		Select("jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, "+
+			"jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid, "+
+			distExpr+" / 1000 AS dist_km",
+			lng, lat).
+		Joins("LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title").
+		Where(whereSQL, whereArgs...).
+		// Rank by expected value (cpc * clickability) discounted by a mild
+		// freshness factor: older WhatJobs postings are likelier already
+		// filled/closed, so a click redirects to a different job and doesn't
+		// convert. Decay the score with posting age (floored at 0.5 by ~7
+		// days); posted_at NULL -> treated as fresh. Kept identical to the
+		// digest ordering in iznik-batch Job::nearLocation.
+		Order("jobs.cpc * jobs.clickability * GREATEST(0.5, 1 - COALESCE(DATEDIFF(NOW(), jobs.posted_at), 0) * 0.07) DESC, jobs.id ASC").
+		Limit(JOBS_LIMIT).
+		Scan(&rows)
+
+	// Collapse near-identical cards that survive the spatial KNN dedup. KNN keys
+	// primarily on bodyhash (right for WhatJobs' cross-town spam, whose copies
+	// share an identical body), but advertisers also repost the *same* role in
+	// the *same* town many times with slightly varied body text — e.g. Deliveroo
+	// posts "Deliveroo Rider / preston" a dozen times, each a different bodyhash —
+	// so they arrive here as distinct ids and render as duplicate cards. To the
+	// user, same title + same location is one job. Rows arrive ordered by expected
+	// value (cpc*clickability*freshness), so keeping the first occurrence keeps the
+	// best-ranked copy. Different locations stay distinct (genuine local variety).
+	ret := make([]Job, 0, len(rows))
+	seen := make(map[string]struct{}, len(rows))
+	for _, r := range rows {
+		key := strings.ToLower(strings.TrimSpace(r.Title)) + "\x00" + strings.ToLower(strings.TrimSpace(r.Location))
+		if _, dup := seen[key]; dup {
+			continue
+		}
+		seen[key] = struct{}{}
+		job := Job{
+			ID:           r.ID,
+			Dist:         r.DistKm,
+			Url:          r.Url,
+			Title:        r.Title,
+			Location:     r.Location,
+			Body:         r.Body,
+			Reference:    r.Reference,
+			Category:     r.Category,
+			CPC:          r.CPC,
+			Clickability: r.Clickability,
+			Expectation:  r.CPC * r.Clickability,
+		}
+		if r.Externaluid.Valid && r.Externaluid.String != "" {
+			job.Image = misc.GetImageDeliveryUrl(r.Externaluid.String, "")
+		}
+		ret = append(ret, job)
+	}
+
+	return ret
 }
 
 func GetJob(c *fiber.Ctx) error {
@@ -242,12 +216,11 @@ func GetJob(c *fiber.Ctx) error {
 		if err == nil {
 			db := database.DBConn
 
-			db.Raw("SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid "+
-				"FROM `jobs` "+
-				"LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title "+
-				"WHERE jobs.id = ? "+
-				"AND visible = 1;",
-				id).Row().Scan(&job.ID, &job.Url, &job.Title, &job.Location, &job.Body, &job.Reference, &job.Category, &job.CPC, &job.Clickability, &externaluid)
+			db.Table("`jobs`").
+				Select("jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid").
+				Joins("LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title").
+				Where("jobs.id = ? AND visible = 1", id).
+				Row().Scan(&job.ID, &job.Url, &job.Title, &job.Location, &job.Body, &job.Reference, &job.Category, &job.CPC, &job.Clickability, &externaluid)
 
 			if job.ID != 0 {
 				if externaluid.Valid && len(externaluid.String) > 0 {
@@ -263,7 +236,10 @@ func GetJob(c *fiber.Ctx) error {
 
 // RecordJobClick records a job click for analytics
 func RecordJobClick(c *fiber.Ctx) error {
-	// Check query params first, then form body.
+	// Accept the click parameters from any of the transports our clients use:
+	// query string and form body (the digest email links), and a JSON body
+	// (the web app posts Content-Type: application/json, which FormValue does
+	// not parse - so without this branch every web click logged id=0/link='').
 	jobID := c.Query("id")
 	if jobID == "" {
 		jobID = c.FormValue("id")
@@ -274,29 +250,105 @@ func RecordJobClick(c *fiber.Ctx) error {
 		link = c.FormValue("link")
 	}
 
-	// Get user ID from context if authenticated (optional)
-	var userID *uint64
-	if c.Locals("session") != nil {
-		if session, ok := c.Locals("session").(map[string]interface{}); ok {
-			if id, exists := session["id"]; exists {
-				if idUint, ok := id.(uint64); ok {
-					userID = &idUint
-				}
+	// placement = which ad slot the click came from (sticky_footer_mobile/desktop,
+	// sidebar_left/right, jobs_page, email_redirect, modal_more_jobs); source =
+	// website|email. Both optional and nullable, so legacy callers still work.
+	placement := c.Query("placement")
+	if placement == "" {
+		placement = c.FormValue("placement")
+	}
+	source := c.Query("source")
+	if source == "" {
+		source = c.FormValue("source")
+	}
+	// page = the Nuxt route name the click came from (jobs, browse-term, message-id, ...),
+	// orthogonal to placement: the same slot appears on every page, so this is what lets
+	// us tell which page earns the most. Optional/nullable like placement and source.
+	page := c.Query("page")
+	if page == "" {
+		page = c.FormValue("page")
+	}
+
+	if jobID == "" && link == "" {
+		var body struct {
+			ID        json.Number `json:"id"`
+			Link      string      `json:"link"`
+			Placement string      `json:"placement"`
+			Source    string      `json:"source"`
+			Page      string      `json:"page"`
+		}
+		if err := c.BodyParser(&body); err == nil {
+			jobID = body.ID.String()
+			link = body.Link
+			if placement == "" {
+				placement = body.Placement
+			}
+			if source == "" {
+				source = body.Source
+			}
+			if page == "" {
+				page = body.Page
 			}
 		}
+	}
+
+	// Drop content-free hits. Bots/scanners POST /job with neither an id nor a link, which
+	// otherwise floods logs_jobs with jobid=0/link='' rows that bury the genuine clicks. A real
+	// click always carries at least a job id (web app) or a link (digest email link), so record
+	// nothing when both are absent - but still return success so the caller sees no error.
+	if (jobID == "" || jobID == "0") && link == "" {
+		return c.JSON(fiber.Map{
+			"ret":    0,
+			"status": "Success",
+		})
+	}
+
+	// Get the user ID from the JWT / persistent token if the caller is logged in (optional).
+	// The web app and digest-email links both authenticate via the standard Authorization
+	// headers, so user.WhoAmI resolves the click to a user, returning 0 when anonymous.
+	// The previous c.Locals("session") lookup read a context key that nothing in this
+	// codebase ever sets, so every click was silently logged with userid=NULL.
+	var userID *uint64
+	if myid := user.WhoAmI(c); myid > 0 {
+		userID = &myid
 	}
 
 	// Don't require ID, just record what we have.
 	// The INSERT IGNORE handles missing/invalid IDs gracefully
 	db := database.DBConn
 
+	// Store NULL (not '') for an absent placement/source/page so legacy rows and bot
+	// hits stay distinguishable from genuinely-tagged clicks.
+	var placementVal, sourceVal, pageVal interface{}
+	if placement != "" {
+		placementVal = placement
+	}
+	if source != "" {
+		sourceVal = source
+	}
+	if page != "" {
+		pageVal = page
+	}
+
 	// Use IGNORE to handle clicks for purged jobs gracefully
 	if userID != nil {
-		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link) VALUES (?, ?, ?)",
-			*userID, jobID, link)
+		db.Table("logs_jobs").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"userid":    *userID,
+			"jobid":     jobID,
+			"link":      link,
+			"placement": placementVal,
+			"source":    sourceVal,
+			"page":      pageVal,
+		})
 	} else {
-		db.Exec("INSERT IGNORE INTO logs_jobs (userid, jobid, link) VALUES (NULL, ?, ?)",
-			jobID, link)
+		db.Table("logs_jobs").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"userid":    gorm.Expr("NULL"),
+			"jobid":     jobID,
+			"link":      link,
+			"placement": placementVal,
+			"source":    sourceVal,
+			"page":      pageVal,
+		})
 	}
 
 	return c.JSON(fiber.Map{

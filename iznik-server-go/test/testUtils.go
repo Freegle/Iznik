@@ -37,8 +37,6 @@ func GetToken(id uint64, sessionid uint64) string {
 	return tokenString
 }
 
-
-
 // =============================================================================
 // LOG HELPERS
 // =============================================================================
@@ -98,7 +96,6 @@ func CreateTestGroup(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
 	name := fmt.Sprintf("TestGroup_%s", prefix)
 
-
 	result := db.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, onhere, polyindex, lat, lng) "+
 		"VALUES (?, ?, 'Freegle', 1, ST_GeomFromText('POINT(-3.1883 55.9533)', %d), 55.9533, -3.1883)", utils.SRID),
 		name, "Test Group "+prefix)
@@ -122,7 +119,6 @@ func CreateTestUser(t *testing.T, prefix string, role string) uint64 {
 	db := database.DBConn
 	email := fmt.Sprintf("%s@test.com", prefix)
 	fullname := fmt.Sprintf("Test User %s", prefix)
-
 
 	// Create user - use NULL for lastlocation to avoid foreign key issues
 	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
@@ -152,7 +148,6 @@ func CreateDeletedTestUser(t *testing.T, prefix string) uint64 {
 	db := database.DBConn
 	fullname := fmt.Sprintf("Deleted User %s", prefix)
 
-
 	result := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, deleted) "+
 		"VALUES ('Deleted', ?, ?, 'User', NOW())",
 		prefix, fullname)
@@ -175,7 +170,6 @@ func CreateDeletedTestUser(t *testing.T, prefix string) uint64 {
 func CreateTestUserWithEmail(t *testing.T, prefix string, email string) uint64 {
 	db := database.DBConn
 	fullname := fmt.Sprintf("Test User %s", prefix)
-
 
 	result := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole) "+
 		"VALUES ('Test', ?, ?, 'User')",
@@ -202,7 +196,6 @@ func CreateTestUserWithEmail(t *testing.T, prefix string, email string) uint64 {
 func CreateTestMembership(t *testing.T, userID uint64, groupID uint64, role string) uint64 {
 	db := database.DBConn
 
-
 	result := db.Exec("INSERT INTO memberships (userid, groupid, role) VALUES (?, ?, ?)",
 		userID, groupID, role)
 
@@ -220,7 +213,6 @@ func CreateTestMembership(t *testing.T, userID uint64, groupID uint64, role stri
 // CreateTestSession creates a session for a user and returns (sessionID, token)
 func CreateTestSession(t *testing.T, userID uint64) (uint64, string) {
 	db := database.DBConn
-
 
 	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())",
 		userID, userID)
@@ -300,7 +292,6 @@ func CreateTestJob(t *testing.T, lat float64, lng float64) uint64 {
 func CreateTestAddress(t *testing.T, userID uint64) uint64 {
 	db := database.DBConn
 
-
 	// Get an existing paf_addresses ID
 	var pafID uint64
 	db.Raw("SELECT id FROM paf_addresses LIMIT 1").Scan(&pafID)
@@ -324,7 +315,6 @@ func CreateTestAddress(t *testing.T, userID uint64) uint64 {
 // CreateTestIsochrone creates an isochrone entry for a user
 func CreateTestIsochrone(t *testing.T, userID uint64, lat float64, lng float64) uint64 {
 	db := database.DBConn
-
 
 	// Create a test isochrone with a simple polygon around the test location
 	// The polygon is a small square around the given coordinates
@@ -358,52 +348,63 @@ func CreateTestIsochrone(t *testing.T, userID uint64, lat float64, lng float64) 
 	return isochroneID
 }
 
-// CreateTestChatRoom creates a chat room and returns its ID
-// chatType should be "User2User" or "User2Mod"
+// CreateTestChatRoom creates a chat room and returns its ID.
+// chatType is "User2User", "User2Mod" or "Mod2Mod".
+//
+// user1ID/user2ID are the DM columns and apply to User2User (both) and
+// User2Mod (user1 only). A Mod2Mod room is scoped by GROUP alone and ignores
+// both: the production read path joins chat_rooms.groupid to groups to
+// memberships and grants access on the viewer moderating that group, never
+// referencing user1 or user2, and nothing in the Go API creates a Mod2Mod room
+// at all. Writing a user onto one would seed a row that cannot occur in
+// production. The previous version defaulted a missing Mod2Mod user2 to 0,
+// which chat_rooms_user2_foreign rejected outright because no users row has
+// id 0.
+//
+// The new id comes from the write result rather than a follow-up SELECT. The
+// old lookup was "SELECT id FROM chat_rooms WHERE user1 = ? ORDER BY id DESC",
+// which is both the read-back pattern this migration exists to remove (a
+// replica can serve a stale row under the read/write split) and unable to find
+// a Mod2Mod room at all once user1 is correctly NULL.
 func CreateTestChatRoom(t *testing.T, user1ID uint64, user2ID *uint64, groupID *uint64, chatType string) uint64 {
 	db := database.DBConn
 
+	row := map[string]interface{}{"latestmessage": gorm.Expr("NOW()")}
 
-	if chatType == "User2User" && user2ID != nil {
-		result := db.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW())",
-			user1ID, *user2ID, utils.CHAT_TYPE_USER2USER)
-		if result.Error != nil {
-			t.Fatalf("ERROR: Failed to create chat room: %v", result.Error)
-		}
-	} else if chatType == "User2Mod" && groupID != nil {
-		result := db.Exec("INSERT INTO chat_rooms (user1, groupid, chattype, latestmessage) VALUES (?, ?, ?, NOW())",
-			user1ID, *groupID, utils.CHAT_TYPE_USER2MOD)
-		if result.Error != nil {
-			t.Fatalf("ERROR: Failed to create chat room: %v", result.Error)
-		}
-	} else if chatType == "Mod2Mod" && groupID != nil {
-		user2 := uint64(0)
-		if user2ID != nil {
-			user2 = *user2ID
-		}
-		result := db.Exec("INSERT INTO chat_rooms (user1, user2, groupid, chattype, latestmessage) VALUES (?, ?, ?, ?, NOW())",
-			user1ID, user2, *groupID, utils.CHAT_TYPE_MOD2MOD)
-		if result.Error != nil {
-			t.Fatalf("ERROR: Failed to create Mod2Mod chat room: %v", result.Error)
-		}
-	} else {
+	switch {
+	case chatType == "User2User" && user2ID != nil:
+		row["chattype"] = utils.CHAT_TYPE_USER2USER
+		row["user1"] = user1ID
+		row["user2"] = *user2ID
+	case chatType == "User2Mod" && groupID != nil:
+		row["chattype"] = utils.CHAT_TYPE_USER2MOD
+		row["user1"] = user1ID
+		row["groupid"] = *groupID
+	case chatType == "Mod2Mod" && groupID != nil:
+		row["chattype"] = utils.CHAT_TYPE_MOD2MOD
+		row["groupid"] = *groupID
+	default:
 		t.Fatalf("ERROR: Invalid chat room configuration - User2User needs user2ID, User2Mod/Mod2Mod needs groupID")
 	}
 
-	var chatID uint64
-	db.Raw("SELECT id FROM chat_rooms WHERE user1 = ? ORDER BY id DESC LIMIT 1", user1ID).Scan(&chatID)
-
-	if chatID == 0 {
-		t.Fatalf("ERROR: Chat room was created but ID not found")
+	res := gorm.WithResult()
+	if err := db.Table("chat_rooms").Clauses(res).Create(row).Error; err != nil {
+		t.Fatalf("ERROR: Failed to create %s chat room: %v", chatType, err)
+	}
+	if res.Result == nil {
+		t.Fatalf("ERROR: %s chat room insert returned no result to read the id from", chatType)
+	}
+	chatID, err := res.Result.LastInsertId()
+	if err != nil || chatID == 0 {
+		t.Fatalf("ERROR: %s chat room was created but its id could not be read back: %v", chatType, err)
 	}
 
-	return chatID
+	return uint64(chatID)
 }
 
 // CreateTestChatMessage creates a message in a chat room
 func CreateTestChatMessage(t *testing.T, chatID uint64, userID uint64, message string) uint64 {
 	db := database.DBConn
-
 
 	result := db.Exec("INSERT INTO chat_messages (chatid, userid, message, date) VALUES (?, ?, ?, NOW())",
 		chatID, userID, message)
@@ -503,7 +504,6 @@ func CreateTestCommunityEvent(t *testing.T, userID uint64, groupID uint64) uint6
 func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject string, lat float64, lng float64) uint64 {
 	db := database.DBConn
 
-
 	// Get a location ID
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
@@ -579,7 +579,6 @@ func indexMessageWords(t *testing.T, db *gorm.DB, messageID uint64, groupID uint
 // CreateTestNewsfeed creates a newsfeed entry for a user
 func CreateTestNewsfeed(t *testing.T, userID uint64, lat float64, lng float64, message string) uint64 {
 	db := database.DBConn
-
 
 	result := db.Exec(fmt.Sprintf("INSERT INTO newsfeed (userid, message, type, timestamp, deleted, reviewrequired, position, hidden, pinned) "+
 		"VALUES (?, ?, 'Message', NOW(), NULL, 0, ST_GeomFromText(?, %d), NULL, 0)", utils.SRID),

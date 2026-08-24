@@ -526,8 +526,15 @@ class PurgeService
      *
      * Deletes tracking records older than the specified retention period.
      * Associated clicks and images are deleted via cascade.
+     *
+     * Retention is 30 days: the only consumer of historical email_tracking is the
+     * ModTools outgoing-mail stats dashboard (which itself defaults to <=30-day
+     * windows); bounce/open/click/AMP-reply processing all operate on recently-sent
+     * emails. Left unpurged the table grows unbounded (it had reached ~6.65M rows /
+     * 6 months) and the stats endpoints full-scan it and time out (504). Run daily
+     * from purgeAllLogs() (purge:logs).
      */
-    public function purgeEmailTracking(int $daysOld = 90, bool $dryRun = false): int
+    public function purgeEmailTracking(int $daysOld = 30, bool $dryRun = false): int
     {
         $cutoff = now()->subDays($daysOld);
 
@@ -994,7 +1001,7 @@ class PurgeService
     /**
      * Run all log purge operations.
      *
-     * Migrated from iznik-server/scripts/cron/purge_logs.php
+     * Migrated from the legacy V1 PHP purge_logs cron script.
      */
     public function purgeAllLogs(bool $dryRun = false): array
     {
@@ -1008,6 +1015,9 @@ class PurgeService
         $results['bounce_logs'] = $this->purgeBounceLogs(dryRun: $dryRun);
         $results['old_bounce_emails'] = $this->purgeOldBounceEmails(dryRun: $dryRun);
         $results['email_logs'] = $this->purgeEmailLogs(dryRun: $dryRun);
+        // email_tracking is log-like and was previously only purged by the
+        // unscheduled purge:all, so it grew unbounded. Purge it daily here.
+        $results['email_tracking'] = $this->purgeEmailTracking(dryRun: $dryRun);
         $results['non_freegle_group_logs'] = $this->purgeNonFreegleGroupLogs(dryRun: $dryRun);
         $results['orphaned_message_logs'] = $this->purgeOrphanedMessageLogs(dryRun: $dryRun);
         $results['src_logs'] = $this->purgeSrcLogs(dryRun: $dryRun);

@@ -47,9 +47,15 @@ test.describe('ModTools move message', () => {
         .catch(() => {})
     }
 
-    // Step 3: Try both groups — the message may be on either one from a previous run.
-    // Navigate to the group that has the approved message.
+    // Step 3: Try both groups — the message may be on either one from a
+    // previous run, since this very test moves it from whichever group it
+    // starts on to the other and never moves it back. Check for THIS
+    // specific message's card, not just any card on the page - a previous
+    // run can easily leave an unrelated approved message (e.g. the WANTED
+    // fixture message) on the first group we check, which would otherwise
+    // make the loop stop one group too early.
     let foundGroup = null
+    const messageCard = page.locator(`#msg-${msgId}`)
 
     for (const gid of [group1Id, group2Id]) {
       await page.goto(`${MODTOOLS_URL}/messages/approved/${gid}`, {
@@ -61,35 +67,39 @@ test.describe('ModTools move message', () => {
         timeout: timeouts.navigation.slowPage,
       })
 
-      // Check if messages are visible (short timeout)
+      // Check if this specific message is visible (short timeout)
       try {
-        await expect(page.locator('.card').first()).toBeVisible({
+        await expect(messageCard).toBeVisible({
           timeout: 15000,
         })
         foundGroup = gid
-        console.log(`Found approved messages on group ${gid}`)
+        console.log(`Found message ${msgId} on group ${gid}`)
         break
       } catch {
-        console.log(`No approved messages on group ${gid}, trying next...`)
+        console.log(`Message ${msgId} not on group ${gid}, trying next...`)
       }
     }
 
     expect(foundGroup).toBeTruthy()
 
-    // Step 4: Click on the first message to expand it
-    const messageCards = page.locator('.card')
-    await messageCards.first().click()
+    // Step 4: Cards render fully expanded by default (ModMessage's `summary`
+    // prop defaults to false), so there is nothing to click to "expand" it -
+    // a blind click on the whole card is unsafe, since depending on the
+    // card's content height it can land on any of the card's own interactive
+    // elements (e.g. the "View rippling reach" button), opening an unrelated
+    // fullscreen modal that then blocks every other click on the page.
 
-    // Step 5: Click the Edit button
-    const editButton = page.locator('button:has-text("Edit")').first()
+    // Step 5: Click the Edit button, scoped to this message's card so it
+    // can't resolve to a different (already-visible) message in the queue.
+    const editButton = messageCard.locator('button:has-text("Edit")').first()
     await expect(editButton).toBeVisible({
       timeout: timeouts.ui.appearance,
     })
     await editButton.click()
 
     // Step 6: Find the group select inside the message card and change group
-    const editGroupSelect = page
-      .locator('[id^="msg-"] select#communitieslist')
+    const editGroupSelect = messageCard
+      .locator('select#communitieslist')
       .first()
     await expect(editGroupSelect).toBeVisible({
       timeout: timeouts.ui.appearance,
@@ -119,7 +129,7 @@ test.describe('ModTools move message', () => {
     })
 
     // Click Save
-    const saveButton = page.locator('button:has-text("Save")').first()
+    const saveButton = messageCard.locator('button:has-text("Save")').first()
     await expect(saveButton).toBeVisible({
       timeout: timeouts.ui.appearance,
     })

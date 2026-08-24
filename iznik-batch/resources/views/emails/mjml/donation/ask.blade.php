@@ -1,5 +1,5 @@
 <mjml>
-    @include('emails.mjml.partials.head', ['preview' => 'Thanks for freegling!'])
+    @include('emails.mjml.partials.head', ['preview' => $itemSubject ? 'Did you just get this from Freegle? ' . \Illuminate\Support\Str::limit(strip_tags($itemSubject), 65) : 'Thanks for freegling!'])
 
     <mj-body background-color="#f4f4f4">
         @include('emails.mjml.components.header')
@@ -31,18 +31,17 @@
             </mj-column>
         </mj-section>
 
-        <mj-section background-color="#f9f9f9" padding="20px">
+        @include('emails.mjml.components.donate-ask', [
+            'donateHeading' => 'Can you chip in?',
+            'donateBlurb' => "Freegle is free to use, but it's not free to run. This month we're trying to raise <strong>&pound;" . number_format($target) . '</strong> to keep us going.',
+            'donateLinks' => $donateLinks ?? null,
+            'donateUrl' => $donateUrl ?? null,
+            'donateMarksUrl' => $donateMarksUrl ?? null,
+        ])
+
+        <mj-section background-color="#f9f9f9" padding="0 20px 16px 20px">
             <mj-column>
-                <mj-text>
-                    Freegle is free to use, but it's not free to run. This month we're trying to raise <strong>&pound;{{ number_format($target) }}</strong> to keep us going.
-                </mj-text>
-                <mj-text>
-                    If you can, please consider donating &pound;1 to help support Freegle:
-                </mj-text>
-                <mj-button href="{{ $donateUrl }}" mj-class="btn-warning" border-radius="3px">
-                    Donate &pound;1 via PayPal
-                </mj-button>
-                <mj-text font-size="12px" color="#666666" align="center">
+                <mj-text font-size="12px" color="#666666" align="center" padding="0">
                     We realise not everyone is able to do this - and that's fine.
                 </mj-text>
             </mj-column>
@@ -67,6 +66,6 @@
         </mj-section>
         @endif
 
-        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl])
+        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl, 'unsubscribeUrl' => $unsubscribeUrl ?? null])
     </mj-body>
 </mjml>

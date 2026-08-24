@@ -33,7 +33,7 @@
         >
           <span class="stat-full">{{ openwanted }}</span>
           <span class="stat-compact">
-            <v-icon icon="search" class="stat-icon" />{{
+            <v-icon icon="shopping-cart" class="stat-icon" />{{
               newsfeed.userinfo.openwanteds
             }}
           </span>

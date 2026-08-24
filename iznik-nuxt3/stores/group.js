@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
 
-export const useGroupStore = defineStore({
-  id: 'group',
+export const useGroupStore = defineStore('group', {
   state: () => ({
     list: {},
     summaryList: {},
@@ -27,32 +26,53 @@ export const useGroupStore = defineStore({
       // Fetch multiple groups in one API call, chunked to avoid URL length
       // limits and the Go API's 50-ID cap.
       const CHUNK_SIZE = 25
+      // Skip ids already cached with settings, or already in flight (from a per-id
+      // fetch or a concurrent batch). The in-flight check is what stops duplicate
+      // requests when a per-post MessageTag calls fetch(id) at the same moment.
       const needFetch = ids.filter(
-        (id) => !this.list[id] || !this.list[id].settings
+        (id) =>
+          (!this.list[id] || !this.list[id].settings) && !this.fetching[id]
       )
       if (needFetch.length === 0) return
 
-      try {
-        const chunks = []
-        for (let i = 0; i < needFetch.length; i += CHUNK_SIZE) {
-          chunks.push(needFetch.slice(i, i + CHUNK_SIZE))
-        }
-
-        const results = await Promise.all(
-          chunks.map((chunk) => api(this.config).group.fetchBatch(chunk))
-        )
-
-        for (const groups of results) {
-          if (groups && Array.isArray(groups)) {
-            for (const group of groups) {
-              this.list[group.id] = group
-            }
-          }
-        }
-      } catch {
-        // Batch endpoint not available yet — fall back to individual fetches.
-        await Promise.all(needFetch.map((id) => this.fetch(id)))
+      const chunks = []
+      for (let i = 0; i < needFetch.length; i += CHUNK_SIZE) {
+        chunks.push(needFetch.slice(i, i + CHUNK_SIZE))
       }
+
+      await Promise.all(
+        chunks.map(async (chunk) => {
+          const promise = api(this.config).group.fetchBatch(chunk)
+          // Mark every id in the chunk as fetching so a concurrent per-id fetch()
+          // awaits this batch instead of firing its own /group/{id} request - the
+          // race that otherwise left a heavy-membership feed with per-post group
+          // calls even after we batched. fetch() already awaits this.fetching[id].
+          chunk.forEach((id) => {
+            this.fetching[id] = promise
+          })
+
+          try {
+            const groups = await promise
+            if (Array.isArray(groups)) {
+              for (const group of groups) {
+                this.list[group.id] = group
+              }
+            }
+          } catch {
+            // Batch endpoint failed for this chunk — fall back to individual
+            // fetches. Clear the flags first so fetch() actually issues them.
+            chunk.forEach((id) => {
+              this.fetching[id] = null
+            })
+            await Promise.all(chunk.map((id) => this.fetch(id)))
+            return
+          }
+
+          chunk.forEach((id) => {
+            this.fetching[id] = null
+          })
+        })
+      )
     },
     async fetch(id, force) {
       if (id) {

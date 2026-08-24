@@ -3,6 +3,7 @@ package changes
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -51,6 +52,77 @@ func TestFormatISO_AlreadyISO8601ReturnedAsIs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// resolveSince
+// ---------------------------------------------------------------------------
+
+// clampRef is a fixed reference point so the clamp arithmetic is exact.
+var clampRef = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+
+func TestResolveSince_EmptyDefaultsToAnHourAgo(t *testing.T) {
+	got, err := resolveSince("", clampRef)
+	assert.NoError(t, err)
+	assert.Equal(t, clampRef.Add(-1*time.Hour), got)
+}
+
+func TestResolveSince_RecentValueIsUsedUnchanged(t *testing.T) {
+	// Inside the window, the partner gets exactly what they asked for.
+	asked := clampRef.Add(-48 * time.Hour)
+	got, err := resolveSince(asked.Format(time.RFC3339), clampRef)
+	assert.NoError(t, err)
+	assert.True(t, got.Equal(asked))
+}
+
+func TestResolveSince_MySQLDatetimeAccepted(t *testing.T) {
+	got, err := resolveSince("2026-08-16 09:30:00", clampRef)
+	assert.NoError(t, err)
+	assert.True(t, got.Equal(time.Date(2026, 8, 16, 9, 30, 0, 0, time.UTC)))
+}
+
+func TestResolveSince_AncientValueIsClamped(t *testing.T) {
+	// The 2026-08-17 outage: a since of 1947 scanned 17.9M rows and OOM-killed
+	// the node. It must come back as exactly MaxSinceLookback ago.
+	got, err := resolveSince("1947-10-11T22:41:56Z", clampRef)
+	assert.NoError(t, err)
+	assert.True(t, got.Equal(clampRef.Add(-MaxSinceLookback)),
+		"an ancient since must be clamped to the maximum look-back")
+}
+
+func TestResolveSince_JustOutsideWindowIsClamped(t *testing.T) {
+	// One second beyond the boundary is still beyond it.
+	got, err := resolveSince(clampRef.Add(-MaxSinceLookback-time.Second).Format(time.RFC3339), clampRef)
+	assert.NoError(t, err)
+	assert.True(t, got.Equal(clampRef.Add(-MaxSinceLookback)))
+}
+
+func TestResolveSince_AtBoundaryIsNotClamped(t *testing.T) {
+	// Exactly on the boundary is inside the window, so it survives untouched.
+	asked := clampRef.Add(-MaxSinceLookback)
+	got, err := resolveSince(asked.Format(time.RFC3339), clampRef)
+	assert.NoError(t, err)
+	assert.True(t, got.Equal(asked))
+}
+
+func TestResolveSince_FutureValueIsLeftAlone(t *testing.T) {
+	// A future since yields no rows, which is harmless - don't rewrite it.
+	asked := clampRef.Add(24 * time.Hour)
+	got, err := resolveSince(asked.Format(time.RFC3339), clampRef)
+	assert.NoError(t, err)
+	assert.True(t, got.Equal(asked))
+}
+
+func TestResolveSince_GarbageIsAnError(t *testing.T) {
+	// The handler turns this into a 400 rather than silently defaulting.
+	_, err := resolveSince("not-a-date", clampRef)
+	assert.Error(t, err)
+}
+
+func TestMaxSinceLookbackIsNinetyDays(t *testing.T) {
+	// Widening this widens the worst-case memory of a single request, which is
+	// what took the node down - change it deliberately, with the numbers.
+	assert.Equal(t, 90*24*time.Hour, MaxSinceLookback)
+}
+
+// ---------------------------------------------------------------------------
 // UserChange JSON marshaling
 // ---------------------------------------------------------------------------
 
@@ -76,6 +148,36 @@ func TestUserChange_NonNilLastUpdatedMarshal(t *testing.T) {
 	var m map[string]interface{}
 	assert.NoError(t, json.Unmarshal(b, &m))
 	assert.Equal(t, val, m["lastupdated"])
+}
+
+func TestUserChange_TypeIsAlwaysPresent(t *testing.T) {
+	// Partners branch on type, so the key must be in the JSON even if we ever
+	// forget to set it.
+	b, err := json.Marshal(UserChange{ID: 7})
+	assert.NoError(t, err)
+
+	var m map[string]interface{}
+	assert.NoError(t, json.Unmarshal(b, &m))
+	_, present := m["type"]
+	assert.True(t, present, "type key must always be present in the JSON object")
+}
+
+func TestUserChange_DeletedTypeMarshal(t *testing.T) {
+	ts := "2026-03-15T14:30:00Z"
+	b, err := json.Marshal(UserChange{ID: 8, LastUpdated: &ts, Type: UserChangeDeleted})
+	assert.NoError(t, err)
+
+	var m map[string]interface{}
+	assert.NoError(t, json.Unmarshal(b, &m))
+	assert.Equal(t, float64(8), m["id"], "the id is all a partner needs to remove their copy")
+	assert.Equal(t, "Deleted", m["type"])
+}
+
+func TestUserChangeTypeValues(t *testing.T) {
+	// These strings are part of the partner API contract — changing them breaks
+	// TrashNothing's handling silently.
+	assert.Equal(t, "Modified", UserChangeModified)
+	assert.Equal(t, "Deleted", UserChangeDeleted)
 }
 
 // ---------------------------------------------------------------------------

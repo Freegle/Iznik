@@ -176,5 +176,94 @@ describe('AutoHeightTextarea', () => {
       const textarea = wrapper.find('textarea')
       expect(textarea.attributes('rows')).toBe('3')
     })
+
+    // The growth check only ran off the currentValue watcher, which never fires
+    // for the value we were mounted with - so a box arriving pre-filled (a
+    // standard message template) sat at its minimum rows with a scrollbar, and
+    // moderators reported the wording looking like it wasn't there at all.
+    it('grows to fit content it was mounted with', async () => {
+      const wrapper = createWrapper({
+        rows: 3,
+        maxRows: 10,
+        modelValue: 'A standard message that wraps over rather a lot of lines.',
+      })
+
+      const el = wrapper.find('textarea').element
+      Object.defineProperty(el, 'scrollHeight', {
+        value: 500,
+        configurable: true,
+      })
+      Object.defineProperty(el, 'clientHeight', {
+        value: 20,
+        configurable: true,
+      })
+
+      await flushPromises()
+
+      expect(Number(wrapper.find('textarea').attributes('rows'))).toBe(10)
+    })
+
+    it('leaves a pre-filled box alone when it already fits', async () => {
+      const wrapper = createWrapper({
+        rows: 3,
+        maxRows: 10,
+        modelValue: 'Short.',
+      })
+
+      const el = wrapper.find('textarea').element
+      Object.defineProperty(el, 'scrollHeight', {
+        value: 20,
+        configurable: true,
+      })
+      Object.defineProperty(el, 'clientHeight', {
+        value: 60,
+        configurable: true,
+      })
+
+      await flushPromises()
+
+      expect(wrapper.find('textarea').attributes('rows')).toBe('3')
+    })
+
+    // The box grows as you type but only ever grew. Sending a comment clears
+    // the text, so an empty box kept the height it had reached - on mobile that
+    // left an 8-row box with nothing in it, pushed up against the last reply.
+    it('shrinks back to its starting height when emptied', async () => {
+      // modelValue must start as '' rather than be omitted: the prop declares
+      // `default: null`, so setting it to null later would be no change at all
+      // and the watcher would never fire.
+      const wrapper = createWrapper({ rows: 1, maxRows: 8, modelValue: '' })
+      const textarea = wrapper.find('textarea')
+
+      // Grow it: the component checks on a timer while there is content, and
+      // the stub reports a scrollHeight taller than its clientHeight.
+      const el = textarea.element
+      Object.defineProperty(el, 'scrollHeight', {
+        value: 500,
+        configurable: true,
+      })
+      Object.defineProperty(el, 'clientHeight', {
+        value: 20,
+        configurable: true,
+      })
+
+      await textarea.setValue('a long comment that wraps over several lines')
+      await flushPromises()
+      vi.advanceTimersByTime(400)
+      await flushPromises()
+
+      expect(
+        Number(wrapper.find('textarea').attributes('rows'))
+      ).toBeGreaterThan(1)
+
+      // Now send it - the parent sets the model to null. Two flushes: the
+      // modelValue watcher assigns currentValue, and the currentValue watcher
+      // (which does the shrinking) runs on the tick after that.
+      await wrapper.setProps({ modelValue: null })
+      await flushPromises()
+      await flushPromises()
+
+      expect(wrapper.find('textarea').attributes('rows')).toBe('1')
+    })
   })
 })

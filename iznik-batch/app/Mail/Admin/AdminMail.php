@@ -91,6 +91,14 @@ class AdminMail extends MjmlMailable
     }
 
     /**
+     * Transactional - a moderator or admin message, not bulk mail - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
+    /**
      * Get the recipient's user ID for common header tracking.
      */
     protected function getRecipientUserId(): ?int
@@ -131,25 +139,9 @@ class AdminMail extends MjmlMailable
             'volunteers' => $this->volunteers,
         ], $this->getTrackingData());
 
-        // Marketing template gets additional data.
-        if ($this->isMarketing) {
-            $imageSource = config('freegle.sites.user') . '/landingpage/little-free-shop-2026.jpg';
-            $data['heroImageUrl'] = config('freegle.delivery.base_url') . '/?url=' . urlencode($imageSource) . '&w=600&output=jpg&v=' . time();
-            $data['heroHeading'] = 'Help us make this happen!';
-            $data['targetAmount'] = '£5,000';
-            $data['bulletPoints'] = [
-                'Less waste — good stuff stays out of landfill',
-                'Saves money — free things for people who need them',
-                'Brings people together — neighbours helping neighbours',
-                'Cleaner streets — less fly tipping, tidier neighbourhoods',
-                'Cuts carbon — reuse beats recycling every time',
-            ];
-            $data['spendingPlan'] = 'Your donation supports Freegle\'s work to increase reuse in communities across the UK. '
-                . 'We plan to use funds raised through this appeal to develop and pilot the Little Free Shop. '
-                . 'If the target is exceeded, or if for any reason the pilot cannot proceed as planned, '
-                . 'your donation will support Freegle\'s wider charitable work to reduce waste and help communities.';
-        }
-
+        // A marketing/template email renders emails.mjml.admin.<template>, which supplies its own
+        // hero data. (The one-off "Little Free Shop 2026" appeal template and its hardcoded hero
+        // block were removed once the campaign was over; the generic template mechanism remains.)
         $mjmlView = $this->isMarketing ? "emails.mjml.admin.{$this->template}" : 'emails.mjml.admin.admin';
 
         $result = $this->to($this->user->email_preferred, $this->user->displayname)

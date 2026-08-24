@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process'
+import { spawn, execSync, exec } from 'child_process'
 import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
 import { clearTestEnvCache } from '../../utils/testEnvCache'
@@ -62,7 +62,143 @@ export default defineEventHandler(async (event) => {
   return { status: 'started', message: 'Playwright tests started successfully' }
 })
 
+/**
+ * Drop, migrate and re-seed the iznik test database.
+ *
+ * CI builds a fresh database for every run, so specs there always start from the
+ * captured fixtures. Locally the database persists between runs, and tests mutate
+ * it: they approve pending posts, and the content-check job auto-approves any
+ * clean pending post from an unmoderated member. Left alone, the pending queue
+ * the ModTools specs rely on drains away and those specs fail locally while
+ * passing in CI - which sends you hunting for a bug in the code under test. Reset
+ * before every run so local matches CI.
+ *
+ * `settleMs` gives MySQL a moment to flush after a heavy parallel run before we
+ * issue DDL; without it the DROP can sit on the DDL lock for minutes.
+ */
+async function resetTestDatabase(pfx: string, label: string, settleMs = 0) {
+  appendTestLogs('playwright', `${label}Resetting test database to clean state...\n`)
+
+  if (settleMs > 0) {
+    await new Promise((r) => setTimeout(r, settleMs))
+  }
+
+  // Kill active connections to iznik before dropping — avoids waiting for InnoDB
+  // to flush dirty pages. Best-effort: the DROP succeeds even if connections have
+  // already closed between the SELECT and the KILL.
+  try {
+    execSync(
+      `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -u root -piznik"`,
+      { encoding: 'utf8', timeout: 10000 }
+    )
+  } catch {}
+
+  execSync(
+    `docker exec ${pfx}-percona sh -c "mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
+    { encoding: 'utf8', timeout: 300000 }
+  )
+  execSync(
+    `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
+    { encoding: 'utf8', timeout: 300000 }
+  )
+  // Reload captured fixtures (replaces the retired V1 install/testenv.php seeding).
+  execSync(
+    `docker cp /project/scripts/test-fixtures.sql ${pfx}-percona:/tmp/test-fixtures.sql && docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik < /tmp/test-fixtures.sql"`,
+    { encoding: 'utf8', timeout: 120000 }
+  )
+  // Roll the fixture post dates forward, exactly as scripts/setup-test-database.sh
+  // does after ITS fixture load.
+  //
+  // The fixtures carry absolute dates (2026-07-08..2026-07-16). The browse and
+  // explore feeds only return posts from the last 31 days
+  // (group/groupMessages.go), so as wall-clock time moves past that window the
+  // seeded posts age out and every feed-dependent spec fails on an empty feed —
+  // on a date, not on a change. Reloading the fixtures here without re-applying
+  // the roll-forward silently undid the setup script's work, so a run that had
+  // been reseeded by hand beforehand still got stale dates.
+  //
+  // Shifting by a whole number of days preserves the relative ages and ordering
+  // the fixtures encode and lands the newest post a day old; it is self-limiting,
+  // since the delta is 0 once the newest post is already a day old. `deadline` is
+  // deliberately not shifted - some fixtures carry a deliberately expired one.
+  //
+  // messages_spatial has to move too, and it is the one that actually matters:
+  // browse and explore read the feed from THAT table, not from messages_groups.
+  // Rolling only the other two left the spatial rows at their fixture date, so
+  // the feed went empty and the batch container's spatial prune then deleted
+  // them outright - browse photo sizing and all four reply-flow specs failed on
+  // an empty feed while the assertion below, which only looked at
+  // messages_groups, reported everything was fine.
+  execSync(
+    `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -e \\"` +
+      `SET @delta := (SELECT GREATEST(DATEDIFF(NOW(), MAX(arrival)) - 1, 0) FROM messages_groups WHERE arrival <= NOW()); ` +
+      `UPDATE messages_groups SET arrival = arrival + INTERVAL @delta DAY, approvedat = approvedat + INTERVAL @delta DAY, rejectedat = rejectedat + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW(); ` +
+      `UPDATE messages SET arrival = arrival + INTERVAL @delta DAY, date = date + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW(); ` +
+      `UPDATE messages_spatial SET arrival = arrival + INTERVAL @delta DAY WHERE @delta > 0 AND arrival <= NOW();\\""`,
+    { encoding: 'utf8', timeout: 120000 }
+  )
+
+  // Assert it worked, here rather than 20 minutes later in a spec: an empty feed
+  // is invisible in the test output and reads as a bug in whatever branch is
+  // running.
+  // Assert per table, because messages_groups being fine says nothing about the
+  // one the feed reads.
+  const FEED_WINDOW_DAYS = 31
+  const ages: Record<string, number> = {}
+  for (const table of ['messages_groups', 'messages_spatial']) {
+    const age = parseInt(
+      execSync(
+        `docker exec ${pfx}-percona sh -c "mysql -u root -piznik iznik -N -B -e 'SELECT DATEDIFF(NOW(), MAX(arrival)) FROM ${table} WHERE arrival <= NOW()'"`,
+        { encoding: 'utf8', timeout: 30000 }
+      ).trim(),
+      10
+    )
+    if (Number.isFinite(age) && age >= FEED_WINDOW_DAYS) {
+      throw new Error(
+        `Newest seeded ${table} row is ${age} days old, outside the ${FEED_WINDOW_DAYS}-day feed window ` +
+          `(group/groupMessages.go). Browse and explore would return nothing.`
+      )
+    }
+    ages[table] = age
+  }
+  appendTestLogs(
+    'playwright',
+    `${label}Fixture dates rolled forward (newest post ${ages.messages_groups} day(s) old, ` +
+      `spatial ${ages.messages_spatial} day(s) old)\n`
+  )
+
+  // The Go V2 API maintains a MySQL connection pool. Dropping and recreating the
+  // database invalidates those connections. Restart the container so it starts
+  // fresh — otherwise the location typeahead (used by postcode validation in the
+  // /give flow) returns empty results and Playwright tests time out.
+  execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 60000 })
+
+  const apiv2Start = Date.now()
+  let apiv2Ready = false
+  while (Date.now() - apiv2Start < 60000) {
+    try {
+      const health = execSync(
+        `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
+        { encoding: 'utf8', timeout: 5000 }
+      ).trim()
+      if (health === 'healthy') { apiv2Ready = true; break }
+    } catch {}
+    await new Promise((r) => setTimeout(r, 2000))
+  }
+  if (!apiv2Ready) {
+    throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
+  }
+
+  // Clear the in-memory testEnv cache so the run re-reads the seeded postcode/ID
+  // data. The fixture reload restores the same ids, so cached values remain valid,
+  // but clearing keeps the cache honest after a DB reset.
+  clearTestEnvCache()
+  appendTestLogs('playwright', `${label}Test database reset complete (apiv2 healthy)\n`)
+}
+
 async function runPlaywrightTests(testFile: string | null, testName: string | null) {
+  // Drives periodic background-task processing during the run (started/stopped below).
+  let bgTasksInterval: ReturnType<typeof setInterval> | null = null
   try {
     // Check both prod containers are running
     const pfx = process.env.COMPOSE_PROJECT_NAME || 'freegle'
@@ -195,6 +331,52 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       )
     } catch {}
 
+    // Process incoming chat messages throughout the run. apiv2 (Go) creates a reply chat message
+    // with processingrequired=1; chats:process-incoming flips it to processingsuccessful=1, which
+    // makes the ChatListEntry visible (see iznik-server-go chatmessage.go). The retired V1 apiv1
+    // cron used to run this every minute; with apiv1 gone and batch's scheduler disabled in CI,
+    // nothing else processes it while Playwright runs, so chat-dependent specs (post-flow reply,
+    // user-ratings) hang. We drive short run-once invocations from the (stable) status container
+    // event loop rather than a long-lived detached process, which the batch PID 1 can reap. The
+    // stale command-lock is cleared each tick (flock isn't reliably released on the bind mount).
+    let bgTasksBusy = false
+    bgTasksInterval = setInterval(() => {
+      if (bgTasksBusy) return
+      bgTasksBusy = true
+      exec(
+        `docker exec ${pfx}-batch sh -c "rm -f storage/framework/command-locks/App-Console-Commands-Chat-ProcessIncomingChatCommand.lock; php artisan chats:process-incoming"`,
+        { timeout: 60000 },
+        () => { bgTasksBusy = false }
+      )
+    }, 5000)
+    appendTestLogs('playwright', 'Started chats:process-incoming processor for the run\n')
+
+    // Start from the same clean database CI does. Without this the local database
+    // drifts run by run and specs fail here that pass in CI.
+    //
+    // Not on CI, which has just built the database from scratch for this run.
+    // Repeating the migrate there is pure duplicated work, and it is slow enough
+    // that the run timed out before a single spec executed.
+    if (process.env.CI) {
+      appendTestLogs('playwright', 'CI: database already built fresh for this run, skipping reset\n')
+    } else {
+      setTestState('playwright', { message: 'Resetting test database...' })
+      try {
+        await resetTestDatabase(pfx, '')
+      } catch (dbResetError: any) {
+        // Running against a half-reset database would produce results nobody can
+        // trust, so stop rather than report failures caused by the reset.
+        appendTestLogs('playwright', `Database reset FAILED: ${(dbResetError as Error).message}\n`)
+        setTestState('playwright', {
+          status: 'failed',
+          message: `Database reset failed: ${(dbResetError as Error).message}`,
+          endTime: Date.now(),
+        })
+        if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
+        return
+      }
+    }
+
     setTestState('playwright', { message: 'Running Playwright tests...' })
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
@@ -270,70 +452,13 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         appendTestLogs('playwright', `\n${retryMsg}: ${retryFiles}\n`)
         setTestState('playwright', { message: retryMsg })
 
-        // Reset the test database before retry. Tests that ran in the main suite
-        // have already modified the iznik database (created posts, replies, users).
-        // Re-running those spec files against a dirty database causes failures unrelated
-        // to the actual code under test. Drop + recreate + migrate + testenv restores
-        // the same clean state that the main run started from.
-        appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
-        // Brief pause to let MySQL connections from the completed test run settle
-        // before issuing DDL. After 11 parallel workers finish, InnoDB dirty pages
-        // and open transactions need a moment to flush; without this the DROP DATABASE
-        // can hold the DDL lock for > 2 minutes and timeout.
-        await new Promise((r) => setTimeout(r, 10000))
+        // The main suite has already modified the database by this point (created
+        // posts, replies, users), so re-running specs against it would produce
+        // failures unrelated to the code under test. Same reset the main run does -
+        // see resetTestDatabase. The pause lets MySQL settle after 11 parallel
+        // workers finish before we issue DDL.
         try {
-          // Kill all active connections to iznik before dropping — avoids waiting
-          // for InnoDB to flush dirty pages (DDL lock) after a heavy parallel run.
-          // KILL is best-effort; the DROP succeeds even if some connections have
-          // already closed between the SELECT and the KILL.
-          try {
-            execSync(
-              `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -h percona -u root -piznik"`,
-              { encoding: 'utf8', timeout: 10000 }
-            )
-          } catch {}
-          execSync(
-            `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
-            { encoding: 'utf8', timeout: 300000 }
-          )
-          execSync(
-            `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
-            { encoding: 'utf8', timeout: 300000 }
-          )
-          execSync(
-            `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
-            { encoding: 'utf8', timeout: 60000 }
-          )
-          // The Go V2 API maintains a MySQL connection pool. Dropping and recreating
-          // the database invalidates those connections. Restart the container so it
-          // starts fresh — otherwise the location typeahead (used by postcode validation
-          // in the /give flow) returns empty results and Playwright tests time out.
-          execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 60000 })
-          // Wait up to 60s for the Go API to be healthy before running tests.
-          const apiv2Start = Date.now()
-          let apiv2Ready = false
-          while (Date.now() - apiv2Start < 60000) {
-            try {
-              const health = execSync(
-                `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
-                { encoding: 'utf8', timeout: 5000 }
-              ).trim()
-              if (health === 'healthy') { apiv2Ready = true; break }
-            } catch {}
-            await new Promise((r) => setTimeout(r, 2000))
-          }
-          if (!apiv2Ready) {
-            throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
-          }
-          // Clear the in-memory testEnv cache so the retry receives fresh
-          // postcode/ID data from the reset DB. Without this, the cache serves
-          // stale data (e.g. postcode 'NR1 3JD') that no longer exists in the
-          // recreated DB (only 'EH3 6SS' is seeded by testenv.php), causing the
-          // location typeahead to return empty results and the validation-tick
-          // to never appear in postMessage flows.
-          clearTestEnvCache()
-          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test environment cache cleared\n`)
-          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)
+          await resetTestDatabase(pfx, `[Freeze-retry ${freezeRound + 1}/2] `, 10000)
         } catch (dbResetError: any) {
           // Database reset failure means the retry would run against dirty data — any
           // result would be unreliable. Fail the run so the root cause can be investigated.
@@ -386,6 +511,9 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       }
     }
 
+    // Stop the background-task processor started for this run.
+    if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
+
     const state = getTestState('playwright')
     const p = state.progress
     setTestState('playwright', {
@@ -398,6 +526,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     })
     console.log(`Playwright tests completed with code ${finalCode}`)
   } catch (error: any) {
+    if (bgTasksInterval) { clearInterval(bgTasksInterval); bgTasksInterval = null }
     setTestState('playwright', {
       status: 'failed',
       message: `Error: ${error.message}`,
@@ -407,8 +536,27 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
   }
 }
 
+// Once Playwright prints its final summary line ("N passed (12.3m)") the result
+// is known and every test has finished. If the process then doesn't exit within
+// this window we stop waiting for a clean teardown and kill it: a hung teardown
+// (lingering browser context / webServer / coverage write) otherwise leaves the
+// process alive but idle, which idles the whole CI VM until Katapult reaps the
+// job as `infrastructure_fail`. 90s comfortably covers a normal teardown +
+// monocart coverage write, so clean runs are never affected.
+const TEARDOWN_GRACE_MS = 90_000
+
 function spawnPlaywrightProcess(cmd: string, pfx: string): Promise<number> {
   return new Promise((resolve) => {
+    let settled = false
+    let graceTimer: NodeJS.Timeout | null = null
+
+    const finish = (code: number) => {
+      if (settled) return
+      settled = true
+      if (graceTimer) clearTimeout(graceTimer)
+      resolve(code ?? 1)
+    }
+
     const proc = spawn('sh', ['-c', `
       docker exec ${pfx}-playwright sh -c "cd /app && export NODE_PATH=/usr/lib/node_modules && ${cmd} 2>&1"
     `], { stdio: 'pipe' })
@@ -417,6 +565,23 @@ function spawnPlaywrightProcess(cmd: string, pfx: string): Promise<number> {
       const text = data.toString()
       appendTestLogs('playwright', text)
       parsePlaywrightOutput(text)
+
+      // Tests are done once the summary line appears ("N passed (time)" /
+      // "N failed (time)"). Arm a one-shot timer; if Playwright doesn't exit
+      // cleanly within the grace window, record the parsed result and kill it.
+      if (!graceTimer && /\b\d+\s+(passed|failed|flaky|skipped)\b[^\n]*\(/.test(getTestState('playwright').logs || '')) {
+        graceTimer = setTimeout(() => {
+          appendTestLogs('playwright', `\n[force-exit] Tests finished but Playwright did not exit within ${TEARDOWN_GRACE_MS / 1000}s — recording the result and killing it (avoids idling the CI VM into infrastructure_fail).\n`)
+          // Best-effort kill of the hung process inside the container; the next
+          // run restarts the container anyway, so a lingering pid is harmless.
+          try {
+            execSync(`docker exec ${pfx}-playwright sh -c "pkill -9 -f playwright || true"`, { timeout: 10000 })
+          } catch {}
+          try { proc.kill('SIGKILL') } catch {}
+          const st = getTestState('playwright')
+          finish(st.progress.failed > 0 ? 1 : 0)
+        }, TEARDOWN_GRACE_MS)
+      }
     })
 
     proc.stderr.on('data', (data) => {
@@ -424,12 +589,12 @@ function spawnPlaywrightProcess(cmd: string, pfx: string): Promise<number> {
     })
 
     proc.on('close', (code) => {
-      resolve(code ?? 1)
+      finish(code ?? 1)
     })
 
     proc.on('error', (error) => {
       appendTestLogs('playwright', `Spawn error: ${error.message}\n`)
-      resolve(1)
+      finish(1)
     })
   })
 }

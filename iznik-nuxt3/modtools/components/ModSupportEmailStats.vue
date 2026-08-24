@@ -248,9 +248,10 @@
         <!-- Show note when filtering by a type that doesn't use AMP -->
         <div v-if="!isAmpCapableType" class="alert alert-info">
           AMP comparison is not available for "{{ emailTypeLabel }}" emails
-          because they are not sent using AMP. Only Chat Notification and
-          Digest (Immediate) emails currently use AMP. Select "All Types",
-          "Chat Notification", or "Digest (Immediate)" to see AMP statistics.
+          because they are not sent using AMP. Only Chat Notification and Digest
+          (Immediate / Daily) emails currently use AMP. Select "All Types",
+          "Chat Notification", "Digest (Immediate)", or "Digest (Daily)" to see
+          AMP statistics.
         </div>
 
         <!-- Show note when AMP type selected but no data in period -->
@@ -711,11 +712,9 @@ const emailTypeOptions = [
     value: 'ChatNotificationMod2Mod',
   },
   { text: 'Welcome', value: 'WelcomeMail' },
-  // UnifiedDigest emails are tagged per mode: immediate vs daily. The
-  // 'UnifiedDigest' (legacy) value covers rows written before the split.
+  // UnifiedDigest emails are tagged per mode: immediate vs daily.
   { text: 'Digest (Immediate)', value: 'UnifiedDigestImmediate' },
   { text: 'Digest (Daily)', value: 'UnifiedDigestDaily' },
-  { text: 'Digest (legacy)', value: 'UnifiedDigest' },
   { text: 'Donation Thank You', value: 'DonationThank' },
   { text: 'Donation Ask', value: 'DonationAsk' },
 ]
@@ -752,15 +751,13 @@ const formattedStats = computed(() => {
   }
 })
 
-// Email types that are sent using AMP. UnifiedDigestImmediate uses the same
-// AMP code path as ChatNotification (both go through the AmpEmail trait).
-// 'UnifiedDigest' (legacy) is included so historical rows still surface AMP
-// stats. Daily-mode digests are not currently Laravel-sent.
+// Email types that are sent using AMP. The unified digest (both immediate and
+// daily) and ChatNotification all go through the AmpEmail trait.
 const ampCapableTypes = [
   '',
   'ChatNotification',
-  'UnifiedDigest',
   'UnifiedDigestImmediate',
+  'UnifiedDigestDaily',
 ]
 
 const isAmpCapableType = computed(() => {

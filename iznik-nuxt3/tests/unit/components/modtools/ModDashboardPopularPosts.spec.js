@@ -25,8 +25,8 @@ vi.mock('~/composables/usePlural', () => ({
         return include
           ? `${count} ${count === 1 ? singular : plural}`
           : count === 1
-          ? singular
-          : plural
+            ? singular
+            : plural
       }
       return include
         ? `${count} ${word}${count !== 1 ? 's' : ''}`
@@ -111,8 +111,8 @@ describe('ModDashboardPopularPosts', () => {
               return include
                 ? `${count} ${count === 1 ? singular : plural}`
                 : count === 1
-                ? singular
-                : plural
+                  ? singular
+                  : plural
             }
             return include
               ? `${count} ${word}${count !== 1 ? 's' : ''}`

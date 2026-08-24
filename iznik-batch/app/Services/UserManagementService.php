@@ -5,8 +5,10 @@ namespace App\Services;
 use App\Helpers\MailHelper;
 use App\Models\Message;
 use App\Models\User;
+use App\Models\UserDeletion;
 use App\Models\UserEmail;
 use App\Traits\ChunkedProcessing;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -18,6 +20,25 @@ class UserManagementService
      * Chunk size for batch operations.
      */
     protected int $chunkSize = 1000;
+
+    /**
+     * How long we keep a users_deletions tombstone.
+     *
+     * Partners poll /api/changes for what has moved since a timestamp, typically
+     * every few minutes. Three months is far longer than any sane catch-up window
+     * after an outage, and keeps the table small enough to stay uninteresting.
+     */
+    public const DELETION_RETENTION_DAYS = 90;
+
+    /** Where the hourly lastaccess pass remembers how far it has looked. */
+    private const LASTACCESS_CURSOR_KEY = 'users.lastaccess_cursor';
+
+    /**
+     * How far before the last run the hourly pass still looks. Covers a run that
+     * overlapped the previous one, a clock adjustment, and rows written slightly out
+     * of order, at the cost of re-examining an hour already known to be up to date.
+     */
+    private const LASTACCESS_OVERLAP_HOURS = 2;
 
     private LokiService $lokiService;
 
@@ -161,160 +182,6 @@ class UserManagementService
     }
 
     /**
-     * Update user kudos based on their activity.
-     *
-     * Selects users with lastaccess > 2 days ago, calculates kudos per user,
-     * and writes to users_kudos table via REPLACE INTO.
-     */
-    public function updateKudos(bool $dryRun = FALSE): int
-    {
-        $updated = 0;
-
-        $mysqltime = now()->subDays(2)->startOfDay()->toDateString();
-
-        $users = DB::table('users')
-            ->select('id')
-            ->where('lastaccess', '>', $mysqltime)
-            ->get();
-
-        $total = $users->count();
-
-        foreach ($users as $userData) {
-            $this->updateKudosForUser($userData->id, $dryRun);
-            $updated++;
-
-            if ($updated % 10 === 0) {
-                Log::info("Kudos update progress: {$updated} / {$total}");
-            }
-        }
-
-        return $updated;
-    }
-
-    /**
-     * Update kudos for a single user.
-     *
-     * - No existing kudos record, OR
-     * - Existing record is more than 24 hours old.
-     *
-     * Writes to users_kudos table with columns: userid, kudos, posts, chats,
-     * newsfeed, events, vols, facebook, platform.
-     */
-    public function updateKudosForUser(int $userId, bool $dryRun = FALSE): void
-    {
-        // Check throttle: only update if no existing record or record is older than 24h.
-        $current = DB::table('users_kudos')->where('userid', $userId)->first();
-
-        if ($current && $current->timestamp) {
-            $age = now()->diffInSeconds(\Carbon\Carbon::parse($current->timestamp));
-            if ($age <= 24 * 60 * 60) {
-                return;
-            }
-        }
-
-        $kudosData = $this->calculateKudos($userId);
-
-        $kudos = $kudosData['posts'] + $kudosData['chats'] + $kudosData['newsfeed']
-            + $kudosData['events'] + $kudosData['vols'];
-
-        if ($kudos > 0) {
-            // No sense in creating entries which are blank or the same.
-            $currentKudos = $current ? $current->kudos : 0;
-
-            if ($currentKudos != $kudos) {
-                if (!$dryRun) {
-                    DB::statement(
-                        'REPLACE INTO users_kudos (userid, kudos, posts, chats, newsfeed, events, vols, facebook, platform) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                        [
-                            $userId,
-                            $kudos,
-                            $kudosData['posts'],
-                            $kudosData['chats'],
-                            $kudosData['newsfeed'],
-                            $kudosData['events'],
-                            $kudosData['vols'],
-                            $kudosData['facebook'] ? 1 : 0,
-                            $kudosData['platform'] ? 1 : 0,
-                        ]
-                    );
-                }
-            }
-        }
-    }
-
-    /**
-     * Calculate kudos components for a user.
-     *
-     * - Distinct months with posts (messages table, last 365 days)
-     * - Distinct months with chats (chat_messages table, last 365 days)
-     * - Distinct months with newsfeed posts (newsfeed table, last 365 days)
-     * - Community events count (last 365 days)
-     * - Volunteering count (last 365 days)
-     * - Facebook login (boolean)
-     * - Platform posting (boolean, sourceheader = 'Platform', last 365 days)
-     */
-    protected function calculateKudos(int $userId): array
-    {
-        $start = now()->subDays(365)->toDateString();
-
-        // Distinct months with posts.
-        $posts = (int) DB::table('messages')
-            ->where('fromuser', $userId)
-            ->where('date', '>=', $start)
-            ->selectRaw("COUNT(DISTINCT CONCAT(YEAR(date), '-', MONTH(date))) AS count")
-            ->value('count');
-
-        // Distinct months with chat messages.
-        $chats = (int) DB::table('chat_messages')
-            ->where('userid', $userId)
-            ->where('date', '>=', $start)
-            ->selectRaw("COUNT(DISTINCT CONCAT(YEAR(date), '-', MONTH(date))) AS count")
-            ->value('count');
-
-        // Distinct months with newsfeed posts.
-        $newsfeed = (int) DB::table('newsfeed')
-            ->where('userid', $userId)
-            ->where('added', '>=', $start)
-            ->selectRaw("COUNT(DISTINCT CONCAT(YEAR(timestamp), '-', MONTH(timestamp))) AS count")
-            ->value('count');
-
-        // Community events count.
-        $events = (int) DB::table('communityevents')
-            ->where('userid', $userId)
-            ->where('added', '>=', $start)
-            ->count();
-
-        // Volunteering count.
-        $vols = (int) DB::table('volunteering')
-            ->where('userid', $userId)
-            ->where('added', '>=', $start)
-            ->count();
-
-        // Facebook login.
-        $facebook = DB::table('users_logins')
-            ->where('userid', $userId)
-            ->where('type', 'Facebook')
-            ->count() > 0;
-
-        // Posted from the platform (vs email/TN).
-        $platform = DB::table('messages')
-            ->where('fromuser', $userId)
-            ->where('arrival', '>=', $start)
-            ->where('sourceheader', 'Platform')
-            ->count() > 0;
-
-        return [
-            'posts' => $posts,
-            'chats' => $chats,
-            'newsfeed' => $newsfeed,
-            'events' => $events,
-            'vols' => $vols,
-            'facebook' => $facebook,
-            'platform' => $platform,
-        ];
-    }
-
-    /**
      * Clean up inactive and deleted users.
      *
      * Steps:
@@ -322,22 +189,28 @@ class UserManagementService
      *   2. Forget inactive users (no memberships, no activity in 6 months, no logs in 90 days)
      *   3. Process GDPR forgets (users deleted > 14 days ago)
      *   4. Hard-delete fully forgotten users with no remaining messages
+     *   5. Prune deletion tombstones older than any partner would poll for
      *
      * @param  bool  $dryRun  If true, count what would be affected but don't modify data.
+     * @param  int|null  $limit  Max users to process per phase. Each forget is ~20 DB
+     *                           statements, so an unbounded run against a large backlog
+     *                           can hammer the database. NULL uses the per-phase defaults.
      */
-    public function cleanupUsers(bool $dryRun = FALSE): array
+    public function cleanupUsers(bool $dryRun = FALSE, ?int $limit = NULL): array
     {
         $stats = [
             'yahoo_users_deleted' => 0,
             'inactive_users_forgotten' => 0,
             'gdpr_forgets_processed' => 0,
             'forgotten_users_deleted' => 0,
+            'deletion_records_pruned' => 0,
         ];
 
         $stats['yahoo_users_deleted'] = $this->deleteYahooGroupsUsers($dryRun);
-        $stats['inactive_users_forgotten'] = $this->forgetInactiveUsers($dryRun);
-        $stats['gdpr_forgets_processed'] = $this->processForgets($dryRun);
-        $stats['forgotten_users_deleted'] = $this->deleteFullyForgottenUsers($dryRun);
+        $stats['inactive_users_forgotten'] = $this->forgetInactiveUsers($dryRun, $limit);
+        $stats['gdpr_forgets_processed'] = $this->processForgets($dryRun, $limit);
+        $stats['forgotten_users_deleted'] = $this->deleteFullyForgottenUsers($dryRun, $limit);
+        $stats['deletion_records_pruned'] = $this->pruneDeletions($dryRun);
 
         Log::info('User cleanup completed', $stats);
 
@@ -369,6 +242,8 @@ class UserManagementService
 
                 // Hard delete the user.
                 DB::table('users')->where('id', $userId)->delete();
+
+                UserDeletion::record($userId, UserDeletion::TYPE_PURGED, 'Yahoo Groups user');
             }
         }
 
@@ -386,9 +261,10 @@ class UserManagementService
      * - Not already deleted
      *
      */
-    public function forgetInactiveUsers(bool $dryRun = FALSE): int
+    public function forgetInactiveUsers(bool $dryRun = FALSE, ?int $limit = NULL): int
     {
         $sixMonthsAgo = now()->subMonths(6)->format('Y-m-d');
+        $limit = $limit ?? 50000;
 
         // Find candidates: no memberships, no spammer record, no mod notes,
         // last access > 6 months, systemrole = User, not deleted.
@@ -405,7 +281,7 @@ class UserManagementService
               AND users.systemrole = ?
               AND users.deleted IS NULL
               AND users.forgotten IS NULL
-            LIMIT 50000
+            LIMIT {$limit}
         ", [$sixMonthsAgo, 'User']);
 
         $count = 0;
@@ -439,15 +315,17 @@ class UserManagementService
      * who haven't been forgotten yet.
      *
      */
-    public function processForgets(bool $dryRun = FALSE): int
+    public function processForgets(bool $dryRun = FALSE, ?int $limit = NULL): int
     {
+        $limit = $limit ?? 50000;
+
         $users = DB::select("
             SELECT id
             FROM users
             WHERE deleted IS NOT NULL
               AND DATEDIFF(NOW(), deleted) > 14
               AND forgotten IS NULL
-            LIMIT 50000
+            LIMIT {$limit}
         ");
 
         $count = count($users);
@@ -573,6 +451,9 @@ class UserManagementService
             'text' => $reason,
             'timestamp' => now(),
         ]);
+
+        // Tell partners, who mirror our users and can only find out by polling.
+        UserDeletion::record($userId, UserDeletion::TYPE_FORGOTTEN, $reason);
     }
 
     /**
@@ -582,9 +463,10 @@ class UserManagementService
      * left as a placeholder — they can be safely hard-deleted.
      *
      */
-    public function deleteFullyForgottenUsers(bool $dryRun = FALSE): int
+    public function deleteFullyForgottenUsers(bool $dryRun = FALSE, ?int $limit = NULL): int
     {
         $sixMonthsAgo = now()->subMonths(6)->format('Y-m-d');
+        $limit = $limit ?? 100000;
 
         $users = DB::select("
             SELECT users.id
@@ -593,7 +475,7 @@ class UserManagementService
             WHERE users.forgotten IS NOT NULL
               AND users.lastaccess < ?
               AND messages.id IS NULL
-            LIMIT 100000
+            LIMIT {$limit}
         ", [$sixMonthsAgo]);
 
         $count = count($users);
@@ -607,6 +489,8 @@ class UserManagementService
                 // Hard delete the user.
                 DB::table('users')->where('id', $user->id)->delete();
 
+                UserDeletion::record($user->id, UserDeletion::TYPE_PURGED, 'Fully forgotten');
+
                 $processed++;
                 if ($processed % 1000 === 0) {
                     Log::info("Deleted {$processed} / {$count} fully forgotten users");
@@ -618,33 +502,78 @@ class UserManagementService
     }
 
     /**
+     * Drop deletion tombstones that no partner could still be asking about.
+     *
+     * @return int Rows removed (or that would be removed, on a dry run).
+     */
+    public function pruneDeletions(bool $dryRun = FALSE): int
+    {
+        $cutoff = now()->subDays(self::DELETION_RETENTION_DAYS);
+
+        $query = UserDeletion::where('timestamp', '<', $cutoff);
+
+        if ($dryRun) {
+            return $query->count();
+        }
+
+        return $query->delete();
+    }
+
+    /**
      * Fallback update of user lastaccess timestamps.
      *
      * Finds users whose lastaccess is more than 10 minutes behind their latest
      * chat message or membership join, and updates accordingly.
      *
      */
-    public function updateLastAccess(bool $dryRun = false): array
+    public function updateLastAccess(bool $dryRun = false, bool $full = false): array
     {
+        // Taken before any work, so activity arriving while this runs is left for the
+        // next run rather than being skipped by a cursor that moved past it.
+        $startedAt = now();
+
         $stats = [
             'candidates' => 0,
             'updated' => 0,
         ];
 
-        // Find users whose lastaccess is > 600 seconds behind their latest chat message or membership join.
+        // Find users whose lastaccess is > 600 seconds behind their latest chat message
+        // or membership join.
+        //
+        // Hourly, this only looks at activity since the last run. Unbounded, both arms
+        // join users against the whole history of chat_messages and of the 4.96M-row
+        // memberships table with a non-sargable TIMESTAMPDIFF, which cost about 4,145
+        // seconds of database time a day to find roughly 37 users. Nothing older than
+        // the window can newly qualify: a user only falls behind when fresh activity
+        // arrives, and this job is a top-up over the lastaccess the API writes anyway.
+        //
+        // The nightly unbounded pass is what covers the one case the window cannot: a
+        // writer inserting rows with timestamps older than the window. It is not
+        // optional - it is the whole correctness argument for narrowing the hourly one.
+        $since = $full ? null : $this->lastAccessWindowStart();
+
+        // keep-raw: both arms compare one table's column against another's with an
+        // interval, and union two DISTINCT sets. The query builder cannot express the
+        // correlated column-to-column comparison without raw fragments anyway, and the
+        // shape is unchanged from the version this replaces bar the window.
         $users = DB::select("
             SELECT DISTINCT(userid) FROM (
                 SELECT DISTINCT(userid) FROM users
                 INNER JOIN chat_messages ON chat_messages.userid = users.id
                 WHERE users.lastaccess < chat_messages.date
                     AND TIMESTAMPDIFF(SECOND, users.lastaccess, chat_messages.date) > 600
+                    AND (? IS NULL OR chat_messages.date >= ?)
                 UNION
                 SELECT DISTINCT(userid) FROM memberships
                 INNER JOIN users ON users.id = memberships.userid
                 WHERE TIMESTAMPDIFF(SECOND, users.lastaccess, memberships.added) > 600
+                    AND (? IS NULL OR memberships.added >= ?)
             ) t
             LIMIT 50000
-        ");
+        ", [$since, $since, $since, $since]);
+
+        $stats['full'] = $full;
+        $stats['since'] = $since;
 
         $stats['candidates'] = count($users);
         $processed = 0;
@@ -683,7 +612,42 @@ class UserManagementService
             }
         }
 
+        if (!$dryRun) {
+            $this->writeLastAccessCursor($startedAt);
+        }
+
         return $stats;
+    }
+
+    /**
+     * How far back the hourly pass looks: the last run, less a safety margin.
+     *
+     * The margin covers a run that overlapped the previous one, a clock adjustment,
+     * and rows written slightly out of order. Two hours against an hourly job is
+     * generous, and the cost of it is re-examining an hour of activity that was
+     * already up to date - which the per-user check below discards immediately.
+     *
+     * With nothing stored, returns a window wide enough to behave like a first full
+     * pass rather than silently examining nothing.
+     */
+    private function lastAccessWindowStart(): string
+    {
+        $raw = DB::table('config')->where('key', self::LASTACCESS_CURSOR_KEY)->value('value');
+
+        if (!$raw) {
+            return now()->subDays(7)->toDateTimeString();
+        }
+
+        return Carbon::parse($raw)->subHours(self::LASTACCESS_OVERLAP_HOURS)->toDateTimeString();
+    }
+
+    private function writeLastAccessCursor(Carbon $startedAt): void
+    {
+        DB::table('config')->upsert(
+            [['key' => self::LASTACCESS_CURSOR_KEY, 'value' => $startedAt->toDateTimeString()]],
+            ['key'],
+            ['value'],
+        );
     }
 
     /**
@@ -751,6 +715,52 @@ class UserManagementService
 
                 $stats['removed']++;
             }
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Demote stale Moderator systemroles. A user whose users.systemrole is
+     * 'Moderator' but who no longer holds an Owner/Moderator membership on any
+     * group is set back to 'User'. Support and Admin are never touched — they
+     * are granted deliberately and outrank Moderator.
+     *
+     * This backfills the historical gap where the Go membership-removal path
+     * (leave/ban) did not reconcile systemrole the way V1 User::updateSystemRole
+     * did, leaving ex-moderators carrying a Moderator systemrole and the
+     * elevated access it implies. The ongoing fix lives in the Go API
+     * (user.SyncSystemRole on membership deletion); this one-off cleans up the
+     * accumulated rows. Each user is updated individually (Galera-safe) and the
+     * UPDATE is guarded on systemrole = 'Moderator' so a concurrent change is
+     * never clobbered.
+     */
+    public function backfillModeratorSystemRoles(bool $dryRun = false): array
+    {
+        $stats = ['demoted' => 0];
+
+        $staleMods = DB::table('users')
+            ->where('systemrole', 'Moderator')
+            ->whereNotExists(function ($q) {
+                $q->select(DB::raw(1))
+                    ->from('memberships')
+                    ->whereColumn('memberships.userid', 'users.id')
+                    ->whereIn('memberships.role', ['Moderator', 'Owner']);
+            })
+            ->pluck('id')
+            ->all();
+
+        foreach ($staleMods as $userId) {
+            if (!$dryRun) {
+                DB::table('users')
+                    ->where('id', $userId)
+                    ->where('systemrole', 'Moderator')
+                    ->update(['systemrole' => 'User']);
+
+                Log::info("Demoted stale Moderator systemrole to User for user #{$userId}");
+            }
+
+            $stats['demoted']++;
         }
 
         return $stats;

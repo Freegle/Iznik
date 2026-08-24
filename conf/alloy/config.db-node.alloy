@@ -1,0 +1,122 @@
+// Grafana Alloy config for the PRODUCTION DATABASE NODES (db1/db2/db3).
+//
+// This is a TEMPLATE, not a live file. The running copy is /etc/alloy/config.alloy
+// on each node and the ONLY per-node difference is the hostname in
+// stage.static_labels. Until 2026-08-23 these files existed only on the hosts, so
+// changes to them were unreviewable and undiffable - hence this copy. Deploy with:
+//
+//   sed 's/__HOSTNAME__/db-1/' conf/alloy/config.db-node.alloy > /etc/alloy/config.alloy
+//   systemctl reload alloy      # or restart; alloy keeps positions in /data-alloy
+//
+// NOT the same as conf/alloy/config.alloy, which is the docker-compose dev stack.
+//
+// ORDERING, IMPORTANT: apiv2 must be deployed with the user_bucket change BEFORE
+// this config is rolled out. Readers query the pre-bucket form AND the bucketed
+// form, so deploying the code early is harmless, but rolling this out early makes
+// new entries invisible to the subject-access dump until the code catches up.
+
+// Discovery for local JSON log files
+local.file_match "freegle_logs" {
+  path_targets = [{
+    __path__ = "/var/log/freegle/*.log",
+  }]
+}
+
+// JSON log file source
+loki.source.file "freegle_json_logs" {
+  targets    = local.file_match.freegle_logs.targets
+  forward_to = [loki.process.freegle_process.receiver]
+  tail_from_end = true
+
+  file_watch {
+    min_poll_frequency = "1s"
+    max_poll_frequency = "5s"
+  }
+}
+
+// Process logs - extract JSON and add labels
+loki.process "freegle_process" {
+  forward_to = [loki.write.loki_remote.receiver]
+
+  stage.json {
+    expressions = {
+      timestamp = "timestamp",
+      labels    = "labels",
+      message   = "message",
+    }
+  }
+
+  stage.json {
+    source     = "labels"
+    expressions = {
+      app        = "app",
+      source     = "source",
+      level      = "level",
+      event_type = "event_type",
+      api_version = "api_version",
+      method     = "method",
+      status_code = "status_code",
+      type       = "type",
+      subtype    = "subtype",
+      job_name   = "job_name",
+      email_type = "email_type",
+      groupid    = "groupid",
+      user_id    = "user_id",
+      user_bucket = "user_bucket",
+    }
+  }
+
+  // Add static hostname label to identify which server logs come from
+  stage.static_labels {
+    values = {
+      hostname = "__HOSTNAME__",
+    }
+  }
+
+  // user_id is DELIBERATELY ABSENT here. It had 11,565 distinct values in 24h
+  // against Loki's 5,000-stream ceiling, and the overflow was discarded silently
+  // - 535,859 entries in two days. It is attached as structured metadata below
+  // instead, with user_bucket as the coarse indexed label that keeps lookups off
+  // a full scan. See misc.UserBucket in iznik-server-go for the whole reasoning.
+  stage.labels {
+    values = {
+      app        = "app",
+      source     = "source",
+      level      = "level",
+      event_type = "event_type",
+      api_version = "api_version",
+      method     = "method",
+      status_code = "status_code",
+      type       = "type",
+      subtype    = "subtype",
+      job_name   = "job_name",
+      email_type = "email_type",
+      groupid    = "groupid",
+      user_bucket = "user_bucket",
+    }
+  }
+
+  // Exact value, attached per entry without creating a stream. Queried as
+  // `| user_id="123"` rather than `{user_id="123"}`.
+  stage.structured_metadata {
+    values = {
+      user_id = "user_id",
+    }
+  }
+
+  stage.timestamp {
+    source = "timestamp"
+    format = "RFC3339"
+  }
+
+  stage.output {
+    source = "message"
+  }
+}
+
+// Write to remote Loki server
+loki.write "loki_remote" {
+  endpoint {
+    url = "http://docker-internal:3100/loki/api/v1/push"
+  }
+}

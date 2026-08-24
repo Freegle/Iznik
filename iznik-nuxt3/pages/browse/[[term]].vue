@@ -43,8 +43,18 @@
                 further away.
               </div>
             </NoticeMessage>
+            <NoticeMessage v-if="placeSuggestion" variant="info" class="mb-2">
+              <p class="mb-2">
+                <strong>{{ searchTerm }}</strong> looks like a place. Would you
+                like to see items being given away near
+                {{ placeSuggestion.name }}?
+              </p>
+              <b-button variant="primary" @click="searchNearPlace">
+                Show items near {{ placeSuggestion.name }}
+              </b-button>
+            </NoticeMessage>
             <NoticeMessage
-              v-if="browseView === 'nearby' && !isochrones.length"
+              v-if="browseView === 'nearby' && !hasLocation"
               variant="warning"
             >
               <p class="fw-bold">
@@ -57,6 +67,7 @@
               v-model:selected-group="selectedGroup"
               v-model:selected-type="selectedType"
               v-model:selected-sort="selectedSort"
+              v-model:selected-max-distance="selectedMaxDistance"
               v-model:search="searchTerm"
               class="mt-2 mt-md-0"
             />
@@ -67,11 +78,13 @@
               v-model:selected-group="selectedGroup"
               v-model:selected-type="selectedType"
               v-model:selected-sort="selectedSort"
+              :selected-max-distance="selectedMaxDistance"
               :initial-bounds="initialBounds"
               force-messages
               group-info
               :show-many="false"
               can-hide
+              browse-search
             />
           </div>
           <about-me-modal
@@ -117,6 +130,7 @@ import dayjs from 'dayjs'
 import { defineAsyncComponent } from 'vue'
 import Wkt from 'wicket'
 import { useMessageStore } from '~/stores/message'
+import { useLocationStore } from '~/stores/location'
 import NoticeMessage from '~/components/NoticeMessage'
 import { loadLeaflet } from '~/composables/useMap'
 import { buildHead } from '~/composables/useBuildHead'
@@ -126,7 +140,8 @@ import { useMobileStore } from '~/stores/mobile'
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
+import { BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import PostFilters from '~/components/PostFilters'
 import SidebarLeft from '~/components/SidebarLeft'
 import PostCode from '~/components/PostCode'
@@ -143,23 +158,23 @@ import {
 } from '#imports'
 
 // Async components
-const MicroVolunteering = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteering.vue')
+const MicroVolunteering = defineAsyncComponent(
+  () => import('~/components/MicroVolunteering.vue')
 )
-const PostMapAndList = defineAsyncComponent(() =>
-  import('~/components/PostMapAndList')
+const PostMapAndList = defineAsyncComponent(
+  () => import('~/components/PostMapAndList')
 )
-const GlobalMessage = defineAsyncComponent(() =>
-  import('~/components/GlobalMessage')
+const GlobalMessage = defineAsyncComponent(
+  () => import('~/components/GlobalMessage')
 )
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
-const ExpectedRepliesWarning = defineAsyncComponent(() =>
-  import('~/components/ExpectedRepliesWarning')
+const ExpectedRepliesWarning = defineAsyncComponent(
+  () => import('~/components/ExpectedRepliesWarning')
 )
-const BirthdayModal = defineAsyncComponent(() =>
-  import('~/components/BirthdayModal')
+const BirthdayModal = defineAsyncComponent(
+  () => import('~/components/BirthdayModal')
 )
 
 // Page meta
@@ -176,8 +191,9 @@ const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const authStore = useAuthStore()
 const groupStore = useGroupStore()
-const isochroneStore = useIsochroneStore()
+const nearbyStore = useNearbyStore()
 const messageStore = useMessageStore()
+const locationStore = useLocationStore()
 const api = Api(runtimeConfig)
 
 // State
@@ -186,9 +202,16 @@ const bump = ref(1)
 const showAboutMeModal = ref(false)
 const reviewAboutMe = ref(false)
 const messagesOnMapCount = ref(null)
+
+// When an item search finds nothing but the term is actually a place (e.g.
+// "Hertfordshire", "London", a postcode), offer to browse items near there
+// instead of a dead-end. Resolved via /location/resolve; only ever set when the
+// search returned zero, so item-words-that-are-also-places never false-trigger.
+const placeSuggestion = ref(null)
 const selectedGroup = ref(0)
 const selectedType = ref('All')
 const selectedSort = ref('Unseen')
+const selectedMaxDistance = ref(BROWSE_DISTANCE_UNLIMITED)
 const forceShowFilters = ref(false)
 const lastCountUpdate = ref(0)
 const updatingCount = ref(false)
@@ -204,6 +227,41 @@ const debugBirthdayModal = computed(() => {
 // Use me and myGroups computed properties from useMe composable for consistency
 const { me, myGroups } = useMe()
 
+// Rippling-out relevance ordering + distance slider (#D/#E): unlike selectedSort/
+// selectedType (which only get updated via PostFilters' emit, so a persisted
+// non-default value doesn't apply until the member touches the control), we
+// initialise this from settings straight away so a saved distance preference is
+// honoured on the very first render of the feed.
+watch(
+  () => me.value?.settings?.browseMaxDistance,
+  (newVal) => {
+    selectedMaxDistance.value = newVal ?? BROWSE_DISTANCE_UNLIMITED
+  },
+  { immediate: true }
+)
+
+// Same fix for sort and post-type: initialise them from the saved settings straight
+// away (mirroring PostFilters' own getters, which read settings.browseSort/browseType).
+// Without this they sat at their 'Unseen'/'All' defaults until PostFilters emitted on a
+// manual change, so a member whose saved sort is e.g. "Closest" (browseSort='Nearby')
+// saw the default Unseen/relevance order on first load and the feed ignored their sort
+// preference until they re-picked it. PostFilters is also lazily mounted inside the
+// collapsed Map & Filters panel, so its getter didn't even run until the panel was opened.
+watch(
+  () => me.value?.settings?.browseSort,
+  (newVal) => {
+    selectedSort.value = newVal || 'Unseen'
+  },
+  { immediate: true }
+)
+watch(
+  () => me.value?.settings?.browseType,
+  (newVal) => {
+    selectedType.value = newVal || 'All'
+  },
+  { immediate: true }
+)
+
 const browseView = computed(() => {
   return me.value?.settings?.browseView
     ? me.value.settings.browseView
@@ -214,8 +272,10 @@ const noMessagesNoLocation = computed(() => {
   return messagesOnMapCount.value === 0 && !me.value?.settings?.mylocation
 })
 
-const isochrones = computed(() => {
-  return isochroneStore?.list || []
+// Do we know where the member is? There's no per-user isochrone/reach polygon on
+// the client any more to use as a proxy for this, so check their location directly.
+const hasLocation = computed(() => {
+  return !!(me.value && (me.value.lat || me.value.lng))
 })
 
 // Methods
@@ -224,31 +284,25 @@ function myGroup(id) {
 }
 
 async function calculateInitialMapBounds() {
-  if (process.client) {
+  if (import.meta.client) {
     if (browseView.value === 'nearby') {
       if (me.value) {
-        // The initial bounds for the map are determined from the isochrones if possible.
-        const promises = []
-        promises.push(isochroneStore.fetch())
-
-        // By default we'll be showing the isochrone view in PostMap, so start the fetch of the messages now.
-        // That way we can display the list rapidly. Fetching this and the isochrones in parallel reduces latency.
-        promises.push(isochroneStore.fetchMessages(true))
-
+        // The initial bounds for the map are determined from the nearby messages once
+        // we've fetched them, so start that fetch now to display the list rapidly.
         try {
-          await Promise.all(promises)
-          initialBounds.value = isochroneStore.bounds
+          await nearbyStore.fetchMessages(true)
+          initialBounds.value = nearbyStore.bounds
         } catch (e) {
           // If this fails revert to a default view.
         }
       }
     } else {
-      initialBounds.value = isochroneStore.bounds
+      initialBounds.value = nearbyStore.bounds
     }
 
     if (!initialBounds.value) {
-      // Either we have no isochrones, or we're showing our groups. Use the bounding box of the group that
-      // our own location is within.
+      // Either we have no nearby messages yet, or we're showing our groups. Use the bounding
+      // box of the group that our own location is within.
       let mylat = null
       let mylng = null
 
@@ -358,14 +412,58 @@ async function savePostcode(pc) {
       settings,
     })
 
-    // Now get an isochrone at this location.
-    await isochroneStore.fetch()
+    // Now that we know a new location, refresh the nearby feed and re-fit the map to it.
+    await nearbyStore.fetchMessages(true)
+    initialBounds.value = nearbyStore.bounds
+    incBump()
   }
 }
 
 function incBump() {
   bump.value++
 }
+
+// If the current search returned no posts, check whether the term is really a
+// place name and, if so, offer to browse items near it.
+async function checkPlaceSuggestion() {
+  placeSuggestion.value = null
+  const term = (searchTerm.value || '').toString().trim()
+  if (!term || messagesOnMapCount.value !== 0) {
+    return
+  }
+  const loc = await locationStore.resolve(term)
+  // Guard against a race: only apply if the search state hasn't changed since.
+  if (
+    loc &&
+    messagesOnMapCount.value === 0 &&
+    (searchTerm.value || '').toString().trim() === term
+  ) {
+    placeSuggestion.value = { name: loc.name, lat: loc.lat, lng: loc.lng }
+  }
+}
+
+// Re-centre the browse on the suggested place and drop the text search, so the
+// member sees items being given away in that area.
+async function searchNearPlace() {
+  const p = placeSuggestion.value
+  if (!p) {
+    return
+  }
+  await loadLeaflet()
+  const d = 0.15 // ~10 miles either side of the place centre
+  initialBounds.value = [
+    [p.lat - d, p.lng - d],
+    [p.lat + d, p.lng + d],
+  ]
+  placeSuggestion.value = null
+  searchTerm.value = ''
+  incBump()
+}
+
+// Re-check whenever the result count or the search term changes.
+watch([messagesOnMapCount, searchTerm], () => {
+  checkPlaceSuggestion()
+})
 
 async function handleScroll() {
   // If we are scrolling down the browse window then we want to update our count, but only every few seconds.
@@ -376,7 +474,11 @@ async function handleScroll() {
   ) {
     lastCountUpdate.value = new Date().getTime()
     updatingCount.value = true
-    await messageStore.fetchCount(me.value.settings?.browseView, false)
+    await messageStore.fetchCount(
+      me.value.settings?.browseView,
+      me.value.settings?.browseMaxDistance,
+      false
+    )
     updatingCount.value = false
   }
 }
@@ -501,7 +603,7 @@ async function onBirthdayDonationClick(amount) {
 watch(
   me,
   async (newVal, oldVal) => {
-    if (newVal && !oldVal && process.client) {
+    if (newVal && !oldVal && import.meta.client) {
       await loadLeaflet()
       calculateInitialMapBounds()
       bump.value++
@@ -517,7 +619,7 @@ watch(noMessagesNoLocation, (newVal) => {
   }
 })
 
-// When the isochrones or filters change, just re-render the whole map and list.
+// When the filters change, just re-render the whole map and list.
 watch(searchTerm, () => {
   incBump()
 })
@@ -557,12 +659,6 @@ watch(selectedType, () => {
 
 watch(browseView, () => {
   calculateInitialMapBounds()
-  incBump()
-})
-
-watch(isochrones, async () => {
-  initialBounds.value = isochroneStore.bounds
-  await isochroneStore.fetchMessages(true)
   incBump()
 })
 

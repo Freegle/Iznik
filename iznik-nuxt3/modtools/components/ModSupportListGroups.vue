@@ -122,7 +122,10 @@ import dayjs from 'dayjs'
 import { HotTable, HotColumn } from '@handsontable/vue3'
 import { registerAllModules } from 'handsontable/registry'
 import { useModGroupStore } from '@/stores/modgroup'
-import 'handsontable/dist/handsontable.full.css'
+// Handsontable 15+ split the old dist/handsontable.full.css into a base
+// stylesheet plus themes; classic reproduces the pre-15 appearance.
+import 'handsontable/styles/handsontable.min.css'
+import 'handsontable/styles/ht-theme-classic.min.css'
 
 registerAllModules()
 // https://handsontable.com/docs/javascript-data-grid/vue3-custom-renderer-example/

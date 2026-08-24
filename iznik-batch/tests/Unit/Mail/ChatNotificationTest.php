@@ -218,9 +218,63 @@ class ChatNotificationTest extends TestCase
         );
 
         // Subject should be based on the "interested in" message's referenced item.
-        $this->assertStringStartsWith('Regarding:', $mail->replySubject);
-        $this->assertStringContainsString('[' . $group->namefull . ']', $mail->replySubject);
-        $this->assertStringContainsString('OFFER: Double Bed Frame (London)', $mail->replySubject);
+        // NO group name: with rippling a post sits on many groups and any pick can
+        // mislead (support case: a Bristol post's replies arrived as [Bath Freegle],
+        // [Dursley], [North Cotswolds] as the poster's rippled memberships changed).
+        // The item's own location suffix already says where it is.
+        $this->assertEquals(
+            'Regarding: OFFER: Double Bed Frame (London)',
+            $mail->replySubject
+        );
+        $this->assertStringNotContainsString('[', $mail->replySubject);
+    }
+
+    public function test_chat_notification_text_keeps_apostrophe_in_ref_subject(): void
+    {
+        // Blade {{ }} in the text/plain template runs htmlspecialchars, turning a
+        // real apostrophe in the referenced item subject into &#039; — which trips
+        // rspamd's default rules on the recipient side (e.g. TrashNothing) and can
+        // spam-bin the email. The refMessage subject must render via {!! !!} so the
+        // text/plain part carries the literal character (reported 2026-07-26).
+        $user1 = $this->createTestUser(['fullname' => 'Coralie']);
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user1, $group);
+
+        $refMessage = $this->createTestMessage($user1, $group, [
+            'subject' => "OFFER: Lavazza A Modo Mio 'Jolie' Coffee Pod Machine (Oxford OX1)",
+        ]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id,
+            'user2' => $user2->id,
+            'created' => now(),
+        ]);
+
+        // A message referencing the item — this renders the referenced subject in
+        // the body (matches the reported "promised this to you" email).
+        $message = ChatMessage::create([
+            'chatid' => $room->id,
+            'userid' => $user1->id,
+            'message' => 'Coralie promised this to you',
+            'type' => ChatMessage::TYPE_DEFAULT,
+            'date' => now(),
+            'refmsgid' => $refMessage->id,
+            'reviewrequired' => 0,
+            'processingrequired' => 0,
+            'processingsuccessful' => 1,
+            'mailedtoall' => 0,
+            'seenbyall' => 0,
+            'reviewrejected' => 0,
+            'platform' => 1,
+        ]);
+
+        $mail = new ChatNotification($user2, $user1, $room, $message, ChatRoom::TYPE_USER2USER);
+
+        // The text/plain part must carry the literal apostrophe, never &#039;.
+        $mail->assertDontSeeInText('&#039;', false);
+        $mail->assertSeeInText("A Modo Mio 'Jolie'", false);
     }
 
     public function test_chat_notification_user2mod_subject(): void
@@ -412,9 +466,9 @@ class ChatNotificationTest extends TestCase
             ChatRoom::TYPE_USER2USER
         );
 
-        // Subject should be based on the interested message.
+        // Subject should be based on the interested message - no group name.
         $this->assertStringContainsString('Regarding:', $mail->replySubject);
-        $this->assertStringContainsString('[' . $group->namefull . ']', $mail->replySubject);
+        $this->assertStringNotContainsString($group->namefull, $mail->replySubject);
         $this->assertStringContainsString('OFFER: Test Item', $mail->replySubject);
 
         $mail->build();
@@ -638,8 +692,12 @@ class ChatNotificationTest extends TestCase
         // Verify "Regarding:" is used instead of "Re:".
         $this->assertStringStartsWith('Regarding:', $mail->replySubject);
         $this->assertStringNotContainsString('Re:', $mail->replySubject);
-        // Also verify group name is included.
-        $this->assertStringContainsString('[' . $group->namefull . ']', $mail->replySubject);
+        // And no group name - the subject is just "Regarding: <item subject>".
+        $this->assertStringNotContainsString($group->namefull, $mail->replySubject);
+        $this->assertEquals(
+            'Regarding: OFFER: Test Item (Location)',
+            $mail->replySubject
+        );
     }
 
     public function test_chat_notification_chat_url_contains_room_id(): void
@@ -1138,7 +1196,7 @@ class ChatNotificationTest extends TestCase
      * Test User2Mod: when member receives mod reply, FROM name should be "GroupName Volunteers"
      * not the individual moderator's name.
      *
-     * This matches iznik-server behavior in processUnmailedMessage() lines 3009-3013:
+     * This matches the legacy V1 PHP behavior in processUnmailedMessage():
      * For User2Mod when notifying member, fromname is always "{group.namedisplay} volunteers"
      */
     public function test_user2mod_member_receives_mod_reply_from_name_is_volunteers(): void
@@ -1190,7 +1248,7 @@ class ChatNotificationTest extends TestCase
      * Test User2Mod: when member receives mod reply, the message content should NOT
      * show the moderator's individual name - it should show "Volunteers" or similar.
      *
-     * This matches iznik-server prepareForTwig() lines 1971-1980 which uses group profile
+     * This matches the legacy V1 PHP prepareForTwig() which uses group profile
      * instead of individual mod profile when notifying member.
      */
     public function test_user2mod_member_receives_mod_reply_hides_mod_identity_in_message(): void
@@ -1987,5 +2045,130 @@ class ChatNotificationTest extends TestCase
         // The address was sent by Kate (not the recipient), so for John it should say
         // "Kate Offerer sent you an address."
         $this->assertStringContainsString('Kate Offerer sent you an address', $html);
+    }
+
+    // ---------------------------------------------------------------------------
+    // Preheader (mj-preview) tests for chat/notification.blade.php
+    // ---------------------------------------------------------------------------
+
+    /**
+     * User2User: preheader carries sender name and message snippet.
+     */
+    public function test_chat_notification_preheader_user2user_shows_sender_and_snippet(): void
+    {
+        ['mail' => $mail] = $this->createUser2UserChatSetup([
+            'user1_attrs'  => ['fullname' => 'Alice Sender'],
+            'message_text' => 'I am still interested in the sofa, is it available?',
+        ]);
+
+        $mail->build();
+        $html = $mail->render();
+
+        $this->assertStringContainsString('Alice Sender: I am still interested in the sofa', $html);
+    }
+
+    /**
+     * User2Mod (moderator recipient): preheader shows member name and message text.
+     */
+    public function test_chat_notification_preheader_user2mod_moderator_shows_member_name(): void
+    {
+        $member    = $this->createTestUser(['fullname' => 'Bob Member']);
+        $moderator = $this->createTestUser();
+        $group     = $this->createTestGroup();
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1'    => $member->id,
+            'groupid'  => $group->id,
+            'created'  => now(),
+        ]);
+
+        $message = $this->createTestChatMessage($room, $member, [
+            'message' => 'Please can you help me with my account?',
+        ]);
+
+        $mail = new ChatNotification(
+            $moderator,
+            $member,
+            $room,
+            $message,
+            ChatRoom::TYPE_USER2MOD
+        );
+
+        $mail->build();
+        $html = $mail->render();
+
+        // Moderator branch: memberName + ': ' + snippet
+        $this->assertStringContainsString('Bob Member: Please can you help me', $html);
+    }
+
+    /**
+     * Copy-to-self (isOwnMessage): preheader says "Your message to <otherUser>".
+     */
+    public function test_chat_notification_preheader_own_message_copy_shows_other_user_name(): void
+    {
+        $user1 = $this->createTestUser(['fullname' => 'Carol Owner']);
+        $user2 = $this->createTestUser(['fullname' => 'Dave Recipient']);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1'    => $user1->id,
+            'user2'    => $user2->id,
+            'created'  => now(),
+        ]);
+
+        // Message sent BY user1 and notification sent TO user1 (copy to self)
+        $message = $this->createTestChatMessage($room, $user1, [
+            'message' => 'Here is my address for collection.',
+        ]);
+
+        $mail = new ChatNotification(
+            $user1,   // recipient = sender themselves (copy to self)
+            $user2,
+            $room,
+            $message,
+            ChatRoom::TYPE_USER2USER
+        );
+
+        $mail->build();
+        $html = $mail->render();
+
+        // isOwnMessage branch: "Your message to <otherUser>: <snippet>"
+        $this->assertStringContainsString('Your message to Dave Recipient:', $html);
+    }
+
+    /**
+     * Mod2Mod: preheader shows the sender name and message snippet.
+     */
+    public function test_chat_notification_preheader_mod2mod_shows_sender_and_snippet(): void
+    {
+        $mod1  = $this->createTestUser(['fullname' => 'Eve Moderator']);
+        $mod2  = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_MOD2MOD,
+            'user1'    => $mod1->id,
+            'groupid'  => $group->id,
+            'created'  => now(),
+        ]);
+
+        $message = $this->createTestChatMessage($room, $mod1, [
+            'message' => 'Can you cover moderation this weekend?',
+        ]);
+
+        $mail = new ChatNotification(
+            $mod2,
+            $mod1,
+            $room,
+            $message,
+            ChatRoom::TYPE_MOD2MOD
+        );
+
+        $mail->build();
+        $html = $mail->render();
+
+        // Mod2Mod branch: senderName + ': ' + snippet
+        $this->assertStringContainsString('Eve Moderator: Can you cover moderation', $html);
     }
 }

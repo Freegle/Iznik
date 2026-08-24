@@ -13,13 +13,16 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // AIImageReview is the data returned for each image needing regeneration.
@@ -59,184 +62,184 @@ var ImageUploader = uploadToTUS
 // under the job title (ai_images.name = canonical_title), so we look up the object here
 // to avoid generating images of people.
 var canonicalJobs = map[string]string{
-	"Accountant":                      "calculator",
-	"Account Manager":                 "briefcase",
-	"Activities Coordinator":          "clipboard",
-	"Administrator":                   "filing cabinet",
-	"Architect":                       "blueprint",
-	"Area Manager":                    "map with pins",
-	"Assistant Manager":               "name badge",
-	"Bartender":                       "cocktail shaker",
-	"Bid Manager":                     "sealed envelope",
-	"Bookkeeper":                      "ledger book",
-	"Branch Manager":                  "desk nameplate",
-	"Bricklayer":                      "brick trowel",
-	"Building Inspector":              "spirit level",
-	"Building Surveyor":               "theodolite",
-	"Bus Driver":                      "steering wheel",
-	"Business Analyst":                "flowchart diagram",
-	"Business Development Manager":    "handshake icon",
-	"Buyer":                           "purchase order",
-	"CAD Technician":                  "technical drawing",
-	"Care Assistant":                  "stethoscope",
-	"Care Coordinator":                "care plan folder",
-	"Care Worker":                     "medical gloves",
-	"Carpenter":                       "wood plane",
-	"Cashier":                         "cash register",
-	"Catering Assistant":              "serving tray",
-	"Chef":                            "chef hat",
-	"Cleaner":                         "mop and bucket",
-	"Clinical Assessor":               "medical clipboard",
-	"CNC Machinist":                   "CNC milling machine",
-	"Communications Engineer":         "satellite dish",
-	"Compliance Officer":              "checklist on clipboard",
-	"Construction Manager":            "hard hat",
-	"Contracts Manager":               "signed contract",
-	"Cook":                            "saucepan",
-	"Counsellor":                      "comfortable armchair",
-	"Credit Controller":               "invoice stamp",
-	"Customer Service Advisor":        "headset",
-	"Data Analyst":                    "bar chart",
-	"Data Architect":                  "database server",
-	"Data Engineer":                   "data pipeline diagram",
-	"Delivery Driver":                 "delivery van",
-	"Dental Nurse":                    "dental mirror",
-	"Deputy Manager":                  "deputy badge",
-	"Design Engineer":                 "engineering compass",
-	"Design Manager":                  "design palette",
-	"Digital Marketing Executive":     "computer screen with analytics",
-	"Document Controller":             "document folder",
-	"Door Canvasser":                  "clipboard with petition",
-	"Ecologist":                       "binoculars",
-	"Electrical Engineer":             "circuit board",
-	"Electrician":                     "wire strippers",
-	"Embedded Software Engineer":      "microchip",
-	"Engineering Apprentice":          "spanner set",
-	"Estimator":                       "measuring tape and calculator",
-	"Factory Operative":               "conveyor belt",
-	"Female Support Worker":           "support badge",
-	"Field Sales Representative":      "sales sample case",
-	"Field Service Engineer":          "tool bag",
-	"Finance Assistant":               "spreadsheet printout",
-	"Finance Business Partner":        "financial report",
-	"Finance Manager":                 "balance sheet",
-	"Financial Controller":            "accounting ledger",
-	"Forklift Driver":                 "forklift",
-	"Fundraiser":                      "collection tin",
-	"Gas Engineer":                    "gas boiler",
-	"General Manager":                 "office desk",
-	"Groundworker":                    "shovel",
-	"Head of Finance":                 "financial dashboard",
-	"Head of Marketing":               "megaphone",
-	"Healthcare Assistant":            "blood pressure monitor",
-	"HGV Class 1 Driver":              "articulated lorry",
-	"HGV Class 2 Driver":              "rigid lorry",
-	"HGV Technician":                  "truck engine",
-	"Home Manager":                    "care home building",
-	"Housekeeper":                     "vacuum cleaner",
-	"HR Advisor":                      "employee handbook",
-	"HR Business Partner":             "HR policy document",
-	"Installer":                       "power drill",
-	"IT Support":                      "computer keyboard",
-	"IT Apprentice":                   "laptop computer",
-	"Kitchen Assistant":               "kitchen knife set",
-	"Kitchen Designer":                "kitchen floor plan",
-	"Labourer":                        "wheelbarrow",
-	"Lecturer":                        "lectern",
-	"Legal Secretary":                 "legal documents",
-	"Lifeguard":                       "lifeguard float",
-	"Machine Learning Engineer":       "neural network diagram",
-	"Machine Operator":                "industrial machine",
-	"Maintenance Electrician":         "multimeter",
-	"Maintenance Engineer":            "wrench and gears",
-	"Maintenance Manager":             "maintenance toolkit",
-	"Maintenance Technician":          "toolbox",
-	"Management Accountant":           "financial spreadsheet",
-	"Manufacturing Engineer":          "factory robot arm",
-	"Marketing Manager":               "marketing campaign board",
-	"Maths Teacher":                   "protractor and compass",
-	"Mechanical Design Engineer":      "mechanical gear drawing",
-	"Mechanical Engineer":             "mechanical gears",
-	"Mechanical Fitter":               "pipe wrench",
-	"Mechanic":                        "car jack",
-	"Mobile Tyre Fitter":              "tyre and wheel",
-	"Mortgage Advisor":                "house keys",
-	"Multi Trade Operative":           "multi-tool",
-	"Nursery Manager":                 "toy building blocks",
-	"Nursery Practitioner":            "childrens storybook",
-	"Nurse":                           "nurses cap",
-	"Operations Manager":              "operations dashboard",
-	"Painter":                         "paint roller",
-	"Parts Advisor":                   "car parts catalogue",
-	"Passenger Assistant":             "bus ticket machine",
-	"Payroll Administrator":           "payslip",
-	"Payroll Specialist":              "payroll software screen",
-	"Personal Advisor":                "advisory notepad",
-	"Planning Officer":                "town plan",
-	"Plasterer":                       "plastering trowel",
-	"Plumber":                         "pipe wrench and pipes",
-	"Primary Teacher":                 "school bell",
-	"Production Manager":              "production line",
-	"Production Operative":            "assembly line component",
-	"Production Supervisor":           "quality control gauge",
-	"Project Engineer":                "project gantt chart",
-	"Project Manager":                 "project plan board",
-	"Property Manager":                "set of property keys",
-	"Quality Engineer":                "caliper gauge",
-	"Quality Inspector":               "magnifying glass",
-	"Quality Manager":                 "quality certificate",
-	"Quantity Surveyor":               "measuring tape and blueprints",
-	"Reach Truck Driver":              "reach truck",
-	"Receptionist":                    "reception desk bell",
-	"Recruitment Consultant":          "CV document",
-	"Refrigeration Engineer":          "refrigeration unit",
-	"Regional Sales Manager":          "sales territory map",
-	"Registered Manager":              "care home registration certificate",
-	"Research Associate":              "microscope",
-	"Residential Support Worker":      "house key with lanyard",
-	"Restaurant Team Member":          "restaurant order pad",
-	"Roofer":                          "roofing hammer",
-	"Rough Sleeping Outreach Worker":  "sleeping bag",
-	"Sales Administrator":             "sales order form",
-	"Sales Advisor":                   "price tag",
-	"Sales Consultant":                "sales presentation",
-	"Sales Engineer":                  "technical sales brochure",
-	"Sales Executive":                 "business card",
-	"Sales Manager":                   "sales trophy",
-	"Sales Representative":            "product sample kit",
-	"Scaffolder":                      "scaffolding poles",
-	"School Crossing Patrol":          "lollipop stop sign",
-	"Science Teacher":                 "laboratory flask",
-	"Security Officer":                "security badge",
-	"SEN Teacher":                     "special education resource kit",
-	"Senior Care Assistant":           "medication trolley",
-	"Service Advisor":                 "service desk terminal",
-	"Service Engineer":                "service toolbox",
-	"Service Manager":                 "service level agreement",
-	"Shift Engineer":                  "shift rota board",
-	"Shift Leader":                    "team leader whistle",
-	"Site Manager":                    "site plan",
-	"Social Worker":                   "case file folder",
-	"Software Engineer":               "computer code on screen",
-	"Solution Architect":              "architecture diagram",
-	"Store Manager":                   "retail shop front",
-	"Structural Engineer":             "structural beam drawing",
-	"Supervisor":                      "supervisor clipboard",
-	"Supply Teacher":                  "classroom whiteboard",
-	"Support Worker":                  "support lanyard badge",
-	"Teaching Assistant":              "school exercise book",
-	"Team Leader":                     "team whiteboard",
-	"Technical Author":                "technical manual",
-	"Tiler":                           "tile cutter",
-	"Transport Manager":               "fleet management board",
-	"Transport Planner":               "route map",
-	"Van Driver":                      "white van",
-	"Vehicle Technician":              "car diagnostic tool",
-	"Warehouse Operative":             "pallet of boxes",
-	"Welder":                          "welding mask",
-	"Window Installer":                "window frame",
-	"Workshop Controller":             "workshop job board",
-	"Workshop Technician":             "workshop bench",
+	"Accountant":                     "calculator",
+	"Account Manager":                "briefcase",
+	"Activities Coordinator":         "clipboard",
+	"Administrator":                  "filing cabinet",
+	"Architect":                      "blueprint",
+	"Area Manager":                   "map with pins",
+	"Assistant Manager":              "name badge",
+	"Bartender":                      "cocktail shaker",
+	"Bid Manager":                    "sealed envelope",
+	"Bookkeeper":                     "ledger book",
+	"Branch Manager":                 "desk nameplate",
+	"Bricklayer":                     "brick trowel",
+	"Building Inspector":             "spirit level",
+	"Building Surveyor":              "theodolite",
+	"Bus Driver":                     "steering wheel",
+	"Business Analyst":               "flowchart diagram",
+	"Business Development Manager":   "handshake icon",
+	"Buyer":                          "purchase order",
+	"CAD Technician":                 "technical drawing",
+	"Care Assistant":                 "stethoscope",
+	"Care Coordinator":               "care plan folder",
+	"Care Worker":                    "medical gloves",
+	"Carpenter":                      "wood plane",
+	"Cashier":                        "cash register",
+	"Catering Assistant":             "serving tray",
+	"Chef":                           "chef hat",
+	"Cleaner":                        "mop and bucket",
+	"Clinical Assessor":              "medical clipboard",
+	"CNC Machinist":                  "CNC milling machine",
+	"Communications Engineer":        "satellite dish",
+	"Compliance Officer":             "checklist on clipboard",
+	"Construction Manager":           "hard hat",
+	"Contracts Manager":              "signed contract",
+	"Cook":                           "saucepan",
+	"Counsellor":                     "comfortable armchair",
+	"Credit Controller":              "invoice stamp",
+	"Customer Service Advisor":       "headset",
+	"Data Analyst":                   "bar chart",
+	"Data Architect":                 "database server",
+	"Data Engineer":                  "data pipeline diagram",
+	"Delivery Driver":                "delivery van",
+	"Dental Nurse":                   "dental mirror",
+	"Deputy Manager":                 "deputy badge",
+	"Design Engineer":                "engineering compass",
+	"Design Manager":                 "design palette",
+	"Digital Marketing Executive":    "computer screen with analytics",
+	"Document Controller":            "document folder",
+	"Door Canvasser":                 "clipboard with petition",
+	"Ecologist":                      "binoculars",
+	"Electrical Engineer":            "circuit board",
+	"Electrician":                    "wire strippers",
+	"Embedded Software Engineer":     "microchip",
+	"Engineering Apprentice":         "spanner set",
+	"Estimator":                      "measuring tape and calculator",
+	"Factory Operative":              "conveyor belt",
+	"Female Support Worker":          "support badge",
+	"Field Sales Representative":     "sales sample case",
+	"Field Service Engineer":         "tool bag",
+	"Finance Assistant":              "spreadsheet printout",
+	"Finance Business Partner":       "financial report",
+	"Finance Manager":                "balance sheet",
+	"Financial Controller":           "accounting ledger",
+	"Forklift Driver":                "forklift",
+	"Fundraiser":                     "collection tin",
+	"Gas Engineer":                   "gas boiler",
+	"General Manager":                "office desk",
+	"Groundworker":                   "shovel",
+	"Head of Finance":                "financial dashboard",
+	"Head of Marketing":              "megaphone",
+	"Healthcare Assistant":           "blood pressure monitor",
+	"HGV Class 1 Driver":             "articulated lorry",
+	"HGV Class 2 Driver":             "rigid lorry",
+	"HGV Technician":                 "truck engine",
+	"Home Manager":                   "care home building",
+	"Housekeeper":                    "vacuum cleaner",
+	"HR Advisor":                     "employee handbook",
+	"HR Business Partner":            "HR policy document",
+	"Installer":                      "power drill",
+	"IT Support":                     "computer keyboard",
+	"IT Apprentice":                  "laptop computer",
+	"Kitchen Assistant":              "kitchen knife set",
+	"Kitchen Designer":               "kitchen floor plan",
+	"Labourer":                       "wheelbarrow",
+	"Lecturer":                       "lectern",
+	"Legal Secretary":                "legal documents",
+	"Lifeguard":                      "lifeguard float",
+	"Machine Learning Engineer":      "neural network diagram",
+	"Machine Operator":               "industrial machine",
+	"Maintenance Electrician":        "multimeter",
+	"Maintenance Engineer":           "wrench and gears",
+	"Maintenance Manager":            "maintenance toolkit",
+	"Maintenance Technician":         "toolbox",
+	"Management Accountant":          "financial spreadsheet",
+	"Manufacturing Engineer":         "factory robot arm",
+	"Marketing Manager":              "marketing campaign board",
+	"Maths Teacher":                  "protractor and compass",
+	"Mechanical Design Engineer":     "mechanical gear drawing",
+	"Mechanical Engineer":            "mechanical gears",
+	"Mechanical Fitter":              "pipe wrench",
+	"Mechanic":                       "car jack",
+	"Mobile Tyre Fitter":             "tyre and wheel",
+	"Mortgage Advisor":               "house keys",
+	"Multi Trade Operative":          "multi-tool",
+	"Nursery Manager":                "toy building blocks",
+	"Nursery Practitioner":           "childrens storybook",
+	"Nurse":                          "nurses cap",
+	"Operations Manager":             "operations dashboard",
+	"Painter":                        "paint roller",
+	"Parts Advisor":                  "car parts catalogue",
+	"Passenger Assistant":            "bus ticket machine",
+	"Payroll Administrator":          "payslip",
+	"Payroll Specialist":             "payroll software screen",
+	"Personal Advisor":               "advisory notepad",
+	"Planning Officer":               "town plan",
+	"Plasterer":                      "plastering trowel",
+	"Plumber":                        "pipe wrench and pipes",
+	"Primary Teacher":                "school bell",
+	"Production Manager":             "production line",
+	"Production Operative":           "assembly line component",
+	"Production Supervisor":          "quality control gauge",
+	"Project Engineer":               "project gantt chart",
+	"Project Manager":                "project plan board",
+	"Property Manager":               "set of property keys",
+	"Quality Engineer":               "caliper gauge",
+	"Quality Inspector":              "magnifying glass",
+	"Quality Manager":                "quality certificate",
+	"Quantity Surveyor":              "measuring tape and blueprints",
+	"Reach Truck Driver":             "reach truck",
+	"Receptionist":                   "reception desk bell",
+	"Recruitment Consultant":         "CV document",
+	"Refrigeration Engineer":         "refrigeration unit",
+	"Regional Sales Manager":         "sales territory map",
+	"Registered Manager":             "care home registration certificate",
+	"Research Associate":             "microscope",
+	"Residential Support Worker":     "house key with lanyard",
+	"Restaurant Team Member":         "restaurant order pad",
+	"Roofer":                         "roofing hammer",
+	"Rough Sleeping Outreach Worker": "sleeping bag",
+	"Sales Administrator":            "sales order form",
+	"Sales Advisor":                  "price tag",
+	"Sales Consultant":               "sales presentation",
+	"Sales Engineer":                 "technical sales brochure",
+	"Sales Executive":                "business card",
+	"Sales Manager":                  "sales trophy",
+	"Sales Representative":           "product sample kit",
+	"Scaffolder":                     "scaffolding poles",
+	"School Crossing Patrol":         "lollipop stop sign",
+	"Science Teacher":                "laboratory flask",
+	"Security Officer":               "security badge",
+	"SEN Teacher":                    "special education resource kit",
+	"Senior Care Assistant":          "medication trolley",
+	"Service Advisor":                "service desk terminal",
+	"Service Engineer":               "service toolbox",
+	"Service Manager":                "service level agreement",
+	"Shift Engineer":                 "shift rota board",
+	"Shift Leader":                   "team leader whistle",
+	"Site Manager":                   "site plan",
+	"Social Worker":                  "case file folder",
+	"Software Engineer":              "computer code on screen",
+	"Solution Architect":             "architecture diagram",
+	"Store Manager":                  "retail shop front",
+	"Structural Engineer":            "structural beam drawing",
+	"Supervisor":                     "supervisor clipboard",
+	"Supply Teacher":                 "classroom whiteboard",
+	"Support Worker":                 "support lanyard badge",
+	"Teaching Assistant":             "school exercise book",
+	"Team Leader":                    "team whiteboard",
+	"Technical Author":               "technical manual",
+	"Tiler":                          "tile cutter",
+	"Transport Manager":              "fleet management board",
+	"Transport Planner":              "route map",
+	"Van Driver":                     "white van",
+	"Vehicle Technician":             "car diagnostic tool",
+	"Warehouse Operative":            "pallet of boxes",
+	"Welder":                         "welding mask",
+	"Window Installer":               "window frame",
+	"Workshop Controller":            "workshop job board",
+	"Workshop Technician":            "workshop bench",
 }
 
 // subjectForName resolves the prompt subject for a given ai_images.name.
@@ -249,10 +252,64 @@ func subjectForName(name string) string {
 	return name
 }
 
+// andSplitRe splits a compound item name (e.g. "sofa and a bed") on the word "and". The word
+// boundaries stop it matching inside words like "Android".
+var andSplitRe = regexp.MustCompile(`(?i)\s+and\s+`)
+
+// newItemStartRe matches the start of a new item after an "and": an article/quantifier
+// ("a", "an", "some", "another") or a digit. Go's RE2 has no lookahead, so splitItems()
+// applies this to each piece rather than baking it into andSplitRe.
+var newItemStartRe = regexp.MustCompile(`(?i)^(a|an|some|another|\d)\b`)
+
+// splitItems splits a name into its component items on "and" - but only when every piece
+// after an "and" starts like a new item (article/quantifier/digit). This keeps genuine
+// multi-item posts splitting ("sofa and a bed", "3 chairs and a table") while leaving a
+// single item whose name merely contains "and" intact: "Black and Decker drill", "Pride and
+// Prejudice", "salt and pepper set", "Marks and Spencer jumper". Returns a single-element
+// slice for the common no-"and" case.
+func splitItems(subject string) []string {
+	parts := andSplitRe.Split(subject, -1)
+	if len(parts) < 2 {
+		return []string{subject}
+	}
+	for _, p := range parts[1:] {
+		if !newItemStartRe.MatchString(strings.TrimSpace(p)) {
+			// "and" is inside a single item's name (brand/title/set), not a separator.
+			return []string{subject}
+		}
+	}
+	items := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			items = append(items, p)
+		}
+	}
+	if len(items) == 0 {
+		return []string{subject}
+	}
+	return items
+}
+
 // buildImagePrompt constructs the AI image generation prompt.
 // For job titles, subjectForName() maps them to their canonical object first.
+// Names listing multiple items joined by "and" (e.g. "sofa and a bed") get a prompt that
+// asks for every item to be shown together, instead of the single-object prompt below, which
+// otherwise leads the model to draw only the first item and drop the rest.
 func buildImagePrompt(name string) string {
-	subject := subjectForName(name)
+	// Names are stored as the member typed them, so a regenerate can still be handed
+	// "iron please". Strip the courtesy word before splitting, or the last item keeps it.
+	subject := misc.StripCourtesy(subjectForName(name))
+	items := splitItems(subject)
+
+	if len(items) > 1 {
+		return "Product illustration: " + strings.Join(items, " and ") + " shown together, arranged neatly side by side on plain dark green background. " +
+			"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
+			"Every one of these items must be clearly visible in the illustration, sitting on a simple surface or floating in space. " +
+			"Simple illustration style, clean lines. " +
+			"These are common UK household or everyday items. " +
+			"Use American English terminology."
+	}
+
 	return "Product illustration: single isolated " + subject + " centered on plain dark green background. " +
 		"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
 		"The object sits alone on a simple surface or floats in space. " +
@@ -276,11 +333,13 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 
 	prompt := buildImagePrompt(name)
 
+	// Flux Schnell's input schema is closed (additionalProperties: false) and accepts only
+	// prompt, steps (max 8) and seed. Sending width/height/num_steps — which older Workers AI
+	// image models took — gets the whole request rejected with a 400 "Additional or unevaluated
+	// properties not allowed". The model always returns 1024x1024; there is no size parameter.
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"prompt":    prompt,
-		"num_steps": 8,
-		"width":     640,
-		"height":    480,
+		"prompt": prompt,
+		"steps":  8,
 	})
 
 	apiURL := fmt.Sprintf(
@@ -309,16 +368,27 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	}
 
 	if resp.StatusCode != 200 {
+		// Cloudflare's content filter refuses some item names outright (code 8007,
+		// "Input prompt contains NSFW content" — seen twice on prod 2026-08-19). That is
+		// a moderator-actionable outcome, not an outage: the description has to change
+		// before any retry can work. ModTools shows this message, so say that rather
+		// than dumping the API envelope at them.
+		if bytes.Contains(bytes.ToLower(body), []byte("nsfw")) {
+			return nil, fmt.Errorf("Cloudflare refused this prompt as unsafe content — edit the item description and regenerate")
+		}
 		return nil, fmt.Errorf("Cloudflare AI returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	// Cloudflare Workers AI returns a JSON envelope with a base64-encoded image.
+	// Errors come back as objects ({"message":...,"code":...}), so keep them raw: decoding
+	// them into []string fails, which would send a JSON error body down the "not JSON, assume
+	// raw binary" path below and surface as an unrelated image-decode failure.
 	var envelope struct {
 		Result struct {
 			Image string `json:"image"`
 		} `json:"result"`
-		Success bool     `json:"success"`
-		Errors  []string `json:"errors"`
+		Success bool              `json:"success"`
+		Errors  []json.RawMessage `json:"errors"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		// If not JSON, assume raw binary image data.
@@ -326,7 +396,11 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	}
 
 	if !envelope.Success || envelope.Result.Image == "" {
-		return nil, fmt.Errorf("Cloudflare AI returned no image: %v", envelope.Errors)
+		msgs := make([]string, 0, len(envelope.Errors))
+		for _, e := range envelope.Errors {
+			msgs = append(msgs, string(e))
+		}
+		return nil, fmt.Errorf("Cloudflare AI returned no image: %s", strings.Join(msgs, "; "))
 	}
 
 	imageBytes, err := base64.StdEncoding.DecodeString(envelope.Result.Image)
@@ -497,10 +571,11 @@ func ListReview(c *fiber.Ctx) error {
 	}
 
 	var rows []aiImageRow
-	db.Raw(`SELECT id, name, COALESCE(externaluid, '') AS externaluid, status,
-		regeneration_notes, pending_externaluid
-		FROM ai_images WHERE status IN ('rejected', 'regenerating')
-		ORDER BY id DESC`).Scan(&rows)
+	db.Table("ai_images").
+		Select("id, name, COALESCE(externaluid, '') AS externaluid, status, regeneration_notes, pending_externaluid").
+		Where("status IN ('rejected', 'regenerating')").
+		Order("id DESC").
+		Scan(&rows)
 
 	type voteRow struct {
 		AIImageID      uint64    `gorm:"column:aiimageid"`
@@ -521,13 +596,14 @@ func ListReview(c *fiber.Ctx) error {
 	}
 
 	var votes []voteRow
-	db.Raw(`SELECT ma.aiimageid, ma.userid,
-		CASE WHEN u.fullname IS NOT NULL THEN u.fullname ELSE CONCAT(u.firstname, ' ', u.lastname) END AS displayname,
-		ma.result, ma.containspeople, ma.timestamp
-		FROM microactions ma
-		INNER JOIN users u ON u.id = ma.userid
-		WHERE ma.aiimageid IN (?) AND ma.actiontype = 'AIImageReview'
-		ORDER BY ma.timestamp ASC`, ids).Scan(&votes)
+	db.Table("microactions ma").
+		Select("ma.aiimageid, ma.userid, "+
+			"CASE WHEN u.fullname IS NOT NULL THEN u.fullname ELSE CONCAT(u.firstname, ' ', u.lastname) END AS displayname, "+
+			"ma.result, ma.containspeople, ma.timestamp").
+		Joins("INNER JOIN users u ON u.id = ma.userid").
+		Where("ma.aiimageid IN (?) AND ma.actiontype = 'AIImageReview'", ids).
+		Order("ma.timestamp ASC").
+		Scan(&votes)
 
 	// Group votes by image ID.
 	votesByID := make(map[uint64][]AIImageVote)
@@ -615,18 +691,18 @@ func Regenerate(c *fiber.Ctx) error {
 
 	// Verify image exists and is in a regenerable state.
 	var name string
-	db.Raw("SELECT name FROM ai_images WHERE id = ? AND status IN ('rejected', 'regenerating')", id).Scan(&name)
+	db.Table("ai_images").Select("name").Where("id = ? AND status IN ('rejected', 'regenerating')", id).Scan(&name)
 	if name == "" {
 		return fiber.NewError(fiber.StatusNotFound, "AI image not found or not in rejected/regenerating status")
 	}
 
 	// Save notes.
 	if req.Notes != "" {
-		db.Exec("UPDATE ai_images SET regeneration_notes = ? WHERE id = ?", req.Notes, id)
+		db.Table("ai_images").Where("id = ?", id).Update("regeneration_notes", req.Notes)
 	}
 
 	// Mark as regenerating while we generate.
-	db.Exec("UPDATE ai_images SET status = 'regenerating' WHERE id = ?", id)
+	db.Table("ai_images").Where("id = ?", id).Update("status", gorm.Expr("'regenerating'"))
 
 	// If the moderator supplied an item description override, use it as the prompt
 	// subject instead of the stored name. This lets them steer toward a better image
@@ -639,26 +715,27 @@ func Regenerate(c *fiber.Ctx) error {
 	// Generate image via Cloudflare Workers AI.
 	imageData, err := ImageGenerator(subject)
 	if err != nil {
-		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		db.Table("ai_images").Where("id = ?", id).Update("status", gorm.Expr("'rejected'"))
 		return fiber.NewError(fiber.StatusServiceUnavailable, "Image generation failed: "+err.Error())
 	}
 
 	// Apply Freegle duotone (dark green to white).
 	jpegData, err := applyDuotoneGreen(imageData)
 	if err != nil {
-		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		db.Table("ai_images").Where("id = ?", id).Update("status", gorm.Expr("'rejected'"))
 		return fiber.NewError(fiber.StatusInternalServerError, "Image processing failed: "+err.Error())
 	}
 
 	// Upload to TUS to get a real externaluid.
 	externaluid, err := ImageUploader(jpegData, "image/jpeg")
 	if err != nil {
-		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		db.Table("ai_images").Where("id = ?", id).Update("status", gorm.Expr("'rejected'"))
 		return fiber.NewError(fiber.StatusInternalServerError, "Image upload failed: "+err.Error())
 	}
 
 	// Store the pending externaluid — not applied until admin clicks Accept.
-	db.Exec("UPDATE ai_images SET pending_externaluid = ?, status = 'regenerating' WHERE id = ?", externaluid, id)
+	db.Table("ai_images").Where("id = ?", id).
+		Updates(map[string]interface{}{"pending_externaluid": externaluid, "status": gorm.Expr("'regenerating'")})
 
 	return c.JSON(fiber.Map{
 		"ret":         0,
@@ -707,7 +784,7 @@ func Accept(c *fiber.Ctx) error {
 		PendingExternaluid *string `gorm:"column:pending_externaluid"`
 	}
 	var row aiRow
-	db.Raw("SELECT COALESCE(externaluid, '') AS externaluid, pending_externaluid FROM ai_images WHERE id = ?", id).Scan(&row)
+	db.Table("ai_images").Select("COALESCE(externaluid, '') AS externaluid, pending_externaluid").Where("id = ?", id).Scan(&row)
 	if row.Externaluid == "" && (row.PendingExternaluid == nil || *row.PendingExternaluid == "") {
 		return fiber.NewError(fiber.StatusNotFound, "AI image not found")
 	}
@@ -724,16 +801,19 @@ func Accept(c *fiber.Ctx) error {
 	}
 
 	// Apply the new image: update ai_images, clear pending state, reset to active.
-	db.Exec(`UPDATE ai_images
-		SET externaluid = ?, pending_externaluid = NULL, regeneration_notes = NULL, status = 'active'
-		WHERE id = ?`, newUID, id)
+	db.Table("ai_images").Where("id = ?", id).Updates(map[string]interface{}{
+		"externaluid":         newUID,
+		"pending_externaluid": gorm.Expr("NULL"),
+		"regeneration_notes":  gorm.Expr("NULL"),
+		"status":              gorm.Expr("'active'"),
+	})
 
 	// Delete old votes so the new image can be reviewed fresh.
-	db.Exec(`DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'`, id)
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = 'AIImageReview'", id).Delete(nil)
 
 	// Apply the new externaluid to all message attachments that had the old one.
 	if oldUID != "" && oldUID != newUID {
-		db.Exec(`UPDATE messages_attachments SET externaluid = ? WHERE externaluid = ?`, newUID, oldUID)
+		db.Table("messages_attachments").Where("externaluid = ?", oldUID).Update("externaluid", newUID)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -766,8 +846,60 @@ func KeepCurrent(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Clear pending state and votes so this image stops appearing in the review queue.
-	db.Exec(`UPDATE ai_images SET pending_externaluid = NULL, regeneration_notes = NULL, status = 'active' WHERE id = ?`, id)
-	db.Exec(`DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'`, id)
+	db.Table("ai_images").Where("id = ?", id).Updates(map[string]interface{}{
+		"pending_externaluid": gorm.Expr("NULL"),
+		"regeneration_notes":  gorm.Expr("NULL"),
+		"status":              gorm.Expr("'active'"),
+	})
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = 'AIImageReview'", id).Delete(nil)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// Suppress marks an AI image as 'suppressed' — a TERMINAL state meaning this item name
+// should never have an AI image generated or shown again. It is the moderator equivalent
+// of the volunteer-quorum suppress path (microvolunteering.checkAIImageSuppressQuorum):
+// the Pollinations/illustrations cron skips the name, message serving masks the image
+// (see the ai_images status IN ('rejected','regenerating','suppressed') join), and the
+// regeneration queue ignores it. Clears any pending review state and review votes so the
+// image leaves the queue. Works regardless of the current status (admin override), so a
+// 'regenerating' image can also be suppressed.
+//
+// @Summary Suppress an AI image (never generate one for this item again)
+// @Tags ai-images
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "AI image ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/ai-images/{id}/suppress [post]
+func Suppress(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+	if !user.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Must be Support or Admin")
+	}
+
+	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil || id == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid image ID")
+	}
+
+	db := database.DBConn
+
+	var existing uint64
+	db.Table("ai_images").Select("id").Where("id = ?", id).Scan(&existing)
+	if existing == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "AI image not found")
+	}
+
+	db.Table("ai_images").Where("id = ?", id).Updates(map[string]interface{}{
+		"status":              gorm.Expr("'suppressed'"),
+		"pending_externaluid": gorm.Expr("NULL"),
+		"regeneration_notes":  gorm.Expr("NULL"),
+	})
+	db.Table("microactions").Where("aiimageid = ? AND actiontype = 'AIImageReview'", id).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -791,7 +923,7 @@ func Count(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var count int64
-	db.Raw(`SELECT COUNT(*) FROM ai_images WHERE status IN ('rejected', 'regenerating')`).Scan(&count)
+	db.Table("ai_images").Where("status IN ('rejected', 'regenerating')").Count(&count)
 
 	return c.JSON(fiber.Map{"count": count})
 }

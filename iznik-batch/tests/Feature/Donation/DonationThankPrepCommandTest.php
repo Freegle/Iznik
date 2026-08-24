@@ -1,0 +1,655 @@
+<?php
+
+namespace Tests\Feature\Donation;
+
+use App\Mail\Donation\DonationThankPrepMail;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use Tests\TestCase;
+
+/**
+ * Behaviour of `mail:donations:thank-prep` — the daily rich-card digest for
+ * the person composing thank-you replies. Distinct from the hourly status
+ * mail tested in {@see DonationSummaryCommandTest}; the two have no shared
+ * filtering or templating logic, by design.
+ */
+class DonationThankPrepCommandTest extends TestCase
+{
+    private function insertDonation(array $attributes = []): int
+    {
+        return (int) DB::table('users_donations')->insertGetId([
+            'userid'           => $attributes['userid']           ?? null,
+            'GrossAmount'      => $attributes['GrossAmount']      ?? 10.00,
+            'TransactionType'  => $attributes['TransactionType']  ?? 'Completed',
+            'Payer'            => $attributes['Payer']            ?? 'donor@example.com',
+            'PayerDisplayName' => $attributes['PayerDisplayName'] ?? ($attributes['Payer'] ?? 'donor@example.com'),
+            'type'             => $attributes['type']             ?? 'PayPal',
+            'source'           => $attributes['source']           ?? 'DonateWithPayPal',
+            'giftaidconsent'   => $attributes['giftaidconsent']   ?? 0,
+            'thanked'          => $attributes['thanked']          ?? null,
+            'timestamp'        => $attributes['timestamp']        ?? now(),
+        ]);
+    }
+
+    /**
+     * Seed the high-water mark so the test isn't gated by the lazy first-run
+     * init (which would mark MAX(id) and skip everything we just inserted).
+     * Tests that want a clean slate call this with 0 before inserting.
+     */
+    private function setLastSentId(int $id): void
+    {
+        DB::statement(
+            "INSERT INTO config (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = ?",
+            ['donation_thank_prep_last_id', (string) $id, (string) $id]
+        );
+    }
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Tests assert on a known empty state. Each test starts at id=0 so
+        // the digest will pick up freshly inserted donations.
+        $this->setLastSentId(0);
+    }
+
+    private function insertUser(array $attributes = []): int
+    {
+        $id = $attributes['id'] ?? null;
+        $row = array_merge([
+            'firstname'  => 'Test',
+            'lastname'   => 'Donor',
+            'fullname'   => 'Test Donor',
+            'systemrole' => 'User',
+            'added'      => now()->subYears(2),
+        ], $attributes);
+        if ($id !== null) {
+            $row['id'] = $id;
+        }
+        DB::table('users')->insert($row);
+        return $id ?? (int) DB::getPdo()->lastInsertId();
+    }
+
+    public function test_no_email_when_no_new_donations_since_last_mark(): void
+    {
+        Mail::fake();
+
+        // Insert a donation then advance the high-water mark past it so
+        // nothing is "new" by the time we run.
+        $id = $this->insertDonation(['GrossAmount' => 12.00]);
+        $this->setLastSentId($id);
+
+        $this->artisan('mail:donations:thank-prep')
+            ->expectsOutputToContain('No donations need thanks today')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_sends_digest_for_new_donations_only(): void
+    {
+        Mail::fake();
+
+        // Both one-off and at/above the £20 manual-thanks threshold so both qualify.
+        $this->insertDonation(['GrossAmount' => 25.00, 'Payer' => 'alice@example.com']);
+        $this->insertDonation(['GrossAmount' => 25.50, 'Payer' => 'bob@example.com']);
+
+        $this->artisan('mail:donations:thank-prep')
+            ->expectsOutputToContain('Sent 2 thank-prep email(s) for 2 donor(s) needing thanks (of 2 new donation(s) examined), totalling £50.50')
+            ->assertExitCode(0);
+
+        // One email PER donation, each with the donor's name, email and amount
+        // in the subject line.
+        Mail::assertSentCount(2);
+        $subjects = Mail::sent(DonationThankPrepMail::class)
+            ->map(fn (DonationThankPrepMail $m) => $m->envelope()->subject)
+            ->all();
+        $this->assertContains('Donation thanks: alice@example.com (alice@example.com) - £25.00', $subjects);
+        $this->assertContains('Donation thanks: bob@example.com (bob@example.com) - £25.50', $subjects);
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            return count($mail->cards) === 1;
+        });
+    }
+
+    public function test_card_carries_thank_reason_for_each_eligibility_path(): void
+    {
+        Mail::fake();
+
+        // One-off >= threshold → "large-oneoff" reason with the amount.
+        $this->insertDonation([
+            'GrossAmount'     => 30.00,
+            'Payer'           => 'big-oneoff@example.com',
+            'TransactionType' => 'Completed',
+        ]);
+        // First-ever recurring sign-up → "new-recurring" reason.
+        $this->insertDonation([
+            'GrossAmount'     => 5.00,
+            'Payer'           => 'first-monthly@example.com',
+            'TransactionType' => 'subscr_payment',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        $byPayer = [];
+        foreach (Mail::sent(DonationThankPrepMail::class) as $mail) {
+            foreach ($mail->cards as $card) {
+                $byPayer[$card['donation']['payer']] = $card;
+            }
+        }
+        $oneoff = $byPayer['big-oneoff@example.com']     ?? null;
+        $newrec = $byPayer['first-monthly@example.com']  ?? null;
+
+        $this->assertNotNull($oneoff);
+        $this->assertSame('large-oneoff', $oneoff['thankReasonKey']);
+        $this->assertStringContainsString('£30.00', $oneoff['thankReason']);
+        $this->assertNotNull($newrec);
+        $this->assertSame('new-recurring', $newrec['thankReasonKey']);
+        $this->assertSame('New recurring donation just set up', $newrec['thankReason']);
+    }
+
+    public function test_today_mode_selects_todays_donations_and_leaves_mark_untouched(): void
+    {
+        Mail::fake();
+
+        // Seed an existing high-water mark — --today must NOT touch it, and
+        // must NOT exclude rows by id; today's donations are sent regardless.
+        $todayId = $this->insertDonation([
+            'GrossAmount' => 25.00,
+            'Payer'       => 'today@example.com',
+            'timestamp'   => now(),
+        ]);
+        $this->setLastSentId($todayId + 999);
+        $markBefore = (string) ($todayId + 999);
+
+        $this->artisan('mail:donations:thank-prep', ['--today' => true])
+            ->expectsOutputToContain('TODAY mode')
+            ->expectsOutputToContain('for 1 donor(s) needing thanks')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+
+        $row = DB::table('config')->where('key', 'donation_thank_prep_last_id')->first();
+        $this->assertSame($markBefore, $row->value, '--today must not advance the mark');
+    }
+
+    public function test_today_mode_excludes_yesterdays_donations(): void
+    {
+        Mail::fake();
+
+        DB::table('config')->where('key', 'donation_thank_prep_last_id')->delete();
+        $this->insertDonation([
+            'GrossAmount' => 25.00,
+            'Payer'       => 'yesterday@example.com',
+            'timestamp'   => now()->subDay(),
+        ]);
+
+        $this->artisan('mail:donations:thank-prep', ['--today' => true])
+            ->expectsOutputToContain('No donations need thanks today')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_recipient_override_routes_digest_to_given_address(): void
+    {
+        Mail::fake();
+
+        $this->insertDonation(['GrossAmount' => 25.00, 'Payer' => 'override@example.com']);
+
+        $this->artisan('mail:donations:thank-prep', ['--recipient' => 'ad-hoc@example.org'])
+            ->expectsOutputToContain('Recipient override: ad-hoc@example.org')
+            ->assertExitCode(0);
+
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            return $mail->recipientEmail === 'ad-hoc@example.org';
+        });
+    }
+
+    public function test_dry_run_does_not_send(): void
+    {
+        Mail::fake();
+        $this->insertDonation(['GrossAmount' => 20.00]);
+
+        $this->artisan('mail:donations:thank-prep', ['--dry-run' => true])
+            ->expectsOutputToContain('DRY RUN')
+            ->expectsOutputToContain('Would send 1 thank-prep email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_high_water_mark_prevents_repeats(): void
+    {
+        Mail::fake();
+
+        // First batch (both one-off and >= £20 so both qualify).
+        $this->insertDonation(['GrossAmount' => 20.00, 'Payer' => 'first@example.com']);
+        $this->insertDonation(['GrossAmount' => 20.00, 'Payer' => 'second@example.com']);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+        Mail::assertSentCount(2);
+
+        // Second batch arrives after the first run.
+        $this->insertDonation(['GrossAmount' => 30.00, 'Payer' => 'third@example.com']);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        // Three mails total, and the last one only carries the new donation.
+        Mail::assertSentCount(3);
+        $second = Mail::sent(DonationThankPrepMail::class)->last();
+        $this->assertNotNull($second);
+        $this->assertCount(1, $second->cards);
+        $this->assertSame('third@example.com', $second->cards[0]['donation']['payer']);
+    }
+
+    public function test_first_run_with_unseeded_mark_initialises_to_max_id(): void
+    {
+        Mail::fake();
+
+        // Wipe the seeded mark so the service hits its lazy init path.
+        DB::table('config')->where('key', 'donation_thank_prep_last_id')->delete();
+
+        // Existing donations represent the "historical backlog" the service
+        // must NOT dump on first run.
+        $a = $this->insertDonation(['GrossAmount' => 5.00]);
+        $b = $this->insertDonation(['GrossAmount' => 5.00]);
+
+        $this->artisan('mail:donations:thank-prep')
+            ->expectsOutputToContain('No donations need thanks today')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+
+        // Mark should have been initialised to MAX(id) so the next genuinely
+        // new donation triggers an email.
+        $row = DB::table('config')->where('key', 'donation_thank_prep_last_id')->first();
+        $this->assertNotNull($row);
+        $this->assertSame((string) $b, $row->value);
+
+        $this->insertDonation(['GrossAmount' => 25.00, 'Payer' => 'after@example.com']);
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+        Mail::assertSentCount(1);
+    }
+
+    public function test_dry_run_on_fresh_deploy_does_not_persist_mark(): void
+    {
+        Mail::fake();
+
+        // Fresh deploy: no high-water mark yet.
+        DB::table('config')->where('key', 'donation_thank_prep_last_id')->delete();
+        $this->insertDonation(['GrossAmount' => 9.00]);
+
+        $this->artisan('mail:donations:thank-prep', ['--dry-run' => true])
+            ->expectsOutputToContain('DRY RUN')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+
+        // A dry run must have NO side effects: the lazy first-run init must not
+        // persist the mark, so the row is still absent and a later real run can
+        // initialise it normally.
+        $row = DB::table('config')->where('key', 'donation_thank_prep_last_id')->first();
+        $this->assertNull($row, 'dry run must not create the high-water-mark config row');
+    }
+
+    public function test_unmatched_donor_flagged_for_sleuthing(): void
+    {
+        Mail::fake();
+
+        $this->insertDonation([
+            'GrossAmount' => 50.00,
+            'Payer'       => 'JONES MR P',
+            'source'      => 'BankTransfer',
+            'type'        => 'External',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            $card = $mail->cards[0];
+            return $card['user'] === null
+                && in_array('Unmatched donor — needs sleuthing', $card['flags'], true)
+                && $card['donation']['source'] === 'Bank transfer';
+        });
+    }
+
+    public function test_enriches_matched_donor_with_user_giftaid_and_history(): void
+    {
+        Mail::fake();
+
+        $userId = $this->insertUser([
+            'firstname' => 'Elizabeth',
+            'lastname'  => 'Hibbert-Jones',
+            'fullname'  => 'Elizabeth Hibbert-Jones',
+            'added'     => now()->subYears(3),
+        ]);
+
+        DB::table('users_emails')->insert([
+            ['userid' => $userId, 'email' => 'elizabeth@example.com',                      'preferred' => 1],
+            ['userid' => $userId, 'email' => 'liz.hj@example.com',                         'preferred' => 0],
+            // Synthetic chat-only address — must be filtered out.
+            ['userid' => $userId, 'email' => "elizabeth-{$userId}@users.ilovefreegle.org", 'preferred' => 0],
+        ]);
+
+        DB::table('giftaid')->insert([
+            'userid'            => $userId,
+            'period'            => 'Past4YearsAndFuture',
+            'fullname'          => 'Elizabeth Hibbert-Jones',
+            'firstname'         => 'Elizabeth',
+            'lastname'          => 'Hibbert-Jones',
+            'homeaddress'       => '14 Acacia Avenue, NR1 1JW',
+            'postcode'          => 'NR1 1JW',
+            'housenameornumber' => '14',
+            'reviewed'          => now()->subMonths(2),
+        ]);
+
+        // Historical donation (last month). We advance the high-water mark
+        // past it so it surfaces in the donor's history list within today's
+        // card, NOT as a standalone card in the digest.
+        $oldId = $this->insertDonation([
+            'userid'          => $userId,
+            'GrossAmount'     => 10.00,
+            'Payer'           => 'elizabeth@example.com',
+            'TransactionType' => 'recurring_payment',
+            'timestamp'       => now()->subMonth(),
+            'giftaidconsent'  => 1,
+        ]);
+        $this->setLastSentId($oldId);
+
+        // Today's new donation — a qualifying one-off (>= £20) so a card is
+        // produced; the earlier recurring gift above shows up as history.
+        $this->insertDonation([
+            'userid'          => $userId,
+            'GrossAmount'     => 25.00,
+            'Payer'           => 'elizabeth@example.com',
+            'TransactionType' => 'Completed',
+            'giftaidconsent'  => 1,
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) use ($userId) {
+            $card = $mail->cards[0];
+            return $card['user'] !== null
+                && $card['user']['id'] === $userId
+                && $card['user']['displayName'] === 'Elizabeth Hibbert-Jones'
+                && count($card['aliases']) === 1
+                && $card['aliases'][0] === 'elizabeth@example.com'
+                && $card['giftaid'] !== null
+                && $card['giftaid']['period'] === 'Past4YearsAndFuture'
+                && $card['giftaid']['postcode'] === 'NR1 1JW'
+                && $card['giftaid']['declined'] === false
+                && count($card['donationHistory']) === 1
+                && (float) $card['donationHistory'][0]['amount'] === 10.0;
+        });
+    }
+
+    public function test_subject_carries_matched_donor_name_email_and_amount(): void
+    {
+        Mail::fake();
+
+        $userId = $this->insertUser([
+            'firstname' => 'Elizabeth',
+            'lastname'  => 'Hibbert-Jones',
+            'fullname'  => 'Elizabeth Hibbert-Jones',
+        ]);
+        DB::table('users_emails')->insert([
+            'userid' => $userId, 'email' => 'elizabeth@example.com', 'preferred' => 1,
+        ]);
+        $this->insertDonation([
+            'userid'      => $userId,
+            'GrossAmount' => 25.00,
+            'Payer'       => 'paypal-alias@example.com',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        // Matched donors use their Freegle display name and preferred REAL
+        // email (not the PayPal payer alias) in the subject.
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            return $mail->envelope()->subject
+                === 'Donation thanks: Elizabeth Hibbert-Jones (elizabeth@example.com) - £25.00';
+        });
+    }
+
+    public function test_pgf_donation_excluded_from_digest(): void
+    {
+        Mail::fake();
+
+        // PayPal Giving Fund donations are Gift-Aided by PayPal and must never
+        // generate thank-you work — they are excluded entirely.
+        $this->insertDonation([
+            'GrossAmount' => 5.00,
+            'Payer'       => 'anon@paypal.example',
+            'source'      => 'PayPalGivingFund',
+            'type'        => 'External',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')
+            ->expectsOutputToContain('No donations need thanks today')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_declined_giftaid_distinguished_from_no_row(): void
+    {
+        Mail::fake();
+
+        $userA = $this->insertUser(['firstname' => 'No', 'lastname' => 'GA', 'fullname' => 'No GA']);
+        $this->insertDonation([
+            'userid' => $userA, 'GrossAmount' => 20.00,
+            'Payer'  => 'noga@example.com', 'PayerDisplayName' => 'No GA',
+        ]);
+
+        $userB = $this->insertUser(['firstname' => 'Said', 'lastname' => 'No', 'fullname' => 'Said No']);
+        DB::table('giftaid')->insert([
+            'userid'      => $userB,
+            'period'      => 'Declined',
+            'fullname'    => 'Said No',
+            'homeaddress' => '',
+            'reviewed'    => now()->subYear(),
+        ]);
+        $this->insertDonation([
+            'userid' => $userB, 'GrossAmount' => 20.00,
+            'Payer'  => 'declined@example.com', 'PayerDisplayName' => 'Said No',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        $byId = [];
+        foreach (Mail::sent(DonationThankPrepMail::class) as $mail) {
+            foreach ($mail->cards as $card) {
+                if ($card['user'] !== null) {
+                    $byId[$card['user']['id']] = $card;
+                }
+            }
+        }
+        $a = $byId[$userA] ?? null;
+        $b = $byId[$userB] ?? null;
+        $this->assertNotNull($a);
+        $this->assertNull($a['giftaid']);
+        $this->assertNotNull($b);
+        $this->assertNotNull($b['giftaid']);
+        $this->assertTrue($b['giftaid']['declined']);
+        $this->assertSame('Declined', $b['giftaid']['period']);
+    }
+
+    public function test_clean_snippet_decodes_legacy_emoji_and_html_entities(): void
+    {
+        Mail::fake();
+
+        $userId = $this->insertUser(['firstname' => 'Chat', 'lastname' => 'Donor']);
+        $this->insertDonation(['userid' => $userId, 'GrossAmount' => 25.00, 'Payer' => 'chat@example.com']);
+
+        // Mod note with HTML entity + legacy emoji escape (stored as
+        // \\u<hex>\\u per EmojiUtils). Must round-trip cleanly.
+        DB::table('users_comments')->insert([
+            'userid'   => $userId,
+            'byuserid' => null,
+            'date'     => now()->subWeek(),
+            'user1'    => null,
+            'user2'    => 'Tom &amp; Mary said thanks \\\\u1f600\\\\u — lovely chat.',
+            'flag'     => 0,
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            $note = $mail->cards[0]['modNotes'][0] ?? null;
+            if ($note === null) {
+                return false;
+            }
+            $snip = $note['snippet'];
+            return str_contains($snip, 'Tom & Mary')
+                && !str_contains($snip, '&amp;')
+                && str_contains($snip, "\u{1F600}")
+                && !str_contains($snip, 'u1f600');
+        });
+    }
+
+    public function test_first_recurring_donation_is_thanked(): void
+    {
+        Mail::fake();
+
+        // A brand-new recurring sign-up (no prior donation from this donor) is
+        // thanked regardless of amount.
+        $this->insertDonation([
+            'GrossAmount'     => 3.00,
+            'Payer'           => 'newrecur@example.com',
+            'TransactionType' => 'subscr_payment',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            return count($mail->cards) === 1
+                && $mail->cards[0]['donation']['payer'] === 'newrecur@example.com';
+        });
+    }
+
+    public function test_recurring_continuation_is_not_thanked(): void
+    {
+        Mail::fake();
+
+        // An earlier donation from the same donor exists (below the mark), so
+        // this month's payment is a continuation and must not be re-thanked.
+        $priorId = $this->insertDonation([
+            'GrossAmount'     => 5.00,
+            'Payer'           => 'established@example.com',
+            'TransactionType' => 'subscr_payment',
+            'timestamp'       => now()->subMonth(),
+        ]);
+        $this->setLastSentId($priorId);
+
+        $this->insertDonation([
+            'GrossAmount'     => 5.00,
+            'Payer'           => 'established@example.com',
+            'TransactionType' => 'subscr_payment',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')
+            ->expectsOutputToContain('No donations need thanks today')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_oneoff_below_threshold_is_not_thanked(): void
+    {
+        Mail::fake();
+
+        $this->insertDonation([
+            'GrossAmount'     => 10.00,
+            'Payer'           => 'smalloneoff@example.com',
+            'TransactionType' => 'Completed',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')
+            ->expectsOutputToContain('No donations need thanks today')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_excluded_payer_is_not_thanked(): void
+    {
+        Mail::fake();
+
+        // PayPal Giving Fund's payer address is on the default exclusion list,
+        // so even a large one-off must not generate thank-you work.
+        $this->insertDonation([
+            'GrossAmount'     => 50.00,
+            'Payer'           => 'ppgfukpay@paypalgivingfund.org',
+            'TransactionType' => 'Completed',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')
+            ->expectsOutputToContain('No donations need thanks today')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_unmatched_donor_surfaces_candidate_by_email_prefix(): void
+    {
+        Mail::fake();
+
+        // A user whose registered email shares the payer's local-part but on a
+        // different provider — the manual "search the prefix" technique.
+        $userId = $this->insertUser([
+            'firstname' => 'Lyn', 'lastname' => 'Goswell', 'fullname' => 'Lyn Goswell',
+        ]);
+        DB::table('users_emails')->insert([
+            'userid' => $userId, 'email' => 'lyngoswell@btinternet.com', 'preferred' => 1,
+        ]);
+
+        // Donation from the gmail variant (not registered) → unmatched.
+        $this->insertDonation([
+            'GrossAmount'      => 50.00,
+            'Payer'            => 'lyngoswell@gmail.com',
+            'PayerDisplayName' => 'Lyn Goswell',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) use ($userId) {
+            $card = $mail->cards[0];
+            if ($card['user'] !== null) {
+                return false; // must be the unmatched card
+            }
+            foreach ($card['candidates'] as $cand) {
+                if ($cand['userid'] === $userId) {
+                    return true;
+                }
+            }
+            return false;
+        });
+    }
+
+    public function test_external_bank_donation_is_thanked_regardless_of_amount(): void
+    {
+        Mail::fake();
+
+        // A small manually-recorded bank transfer — below the £20 one-off
+        // threshold, but deliberately recorded, so it must still be thanked.
+        // This replaces the per-donation email the Go AddDonation handler used
+        // to send.
+        $this->insertDonation([
+            'GrossAmount'     => 5.00,
+            'Payer'           => 'banktransfer@example.com',
+            'TransactionType' => 'Completed',
+            'type'            => 'External',
+            'source'          => 'BankTransfer',
+        ]);
+
+        $this->artisan('mail:donations:thank-prep')->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+        Mail::assertSent(DonationThankPrepMail::class, function (DonationThankPrepMail $mail) {
+            return count($mail->cards) === 1
+                && $mail->cards[0]['donation']['payer'] === 'banktransfer@example.com'
+                && $mail->cards[0]['thankReasonKey'] === 'external';
+        });
+    }
+}

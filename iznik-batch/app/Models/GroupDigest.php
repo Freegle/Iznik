@@ -8,28 +8,19 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class GroupDigest extends Model
 {
     protected $table = 'groups_digests';
+
     protected $guarded = ['id'];
-    public $timestamps = FALSE;
+
+    public $timestamps = false;
 
     protected $casts = [
         'msgdate' => 'datetime',
         'started' => 'datetime',
-        'ended' => 'datetime',
+        'ended'   => 'datetime',
     ];
 
-    /**
-     * Get the group.
-     */
     public function group(): BelongsTo
     {
         return $this->belongsTo(Group::class, 'groupid');
-    }
-
-    /**
-     * Get the last message sent.
-     */
-    public function lastMessage(): BelongsTo
-    {
-        return $this->belongsTo(Message::class, 'msgid');
     }
 }

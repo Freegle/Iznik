@@ -37,20 +37,24 @@ These can all start immediately and are independent.
 
 **0c. Monthly contractor reminder emails.** Once Jane provides timing/recipients, add a Laravel scheduled command in `iznik-batch/app/Console/Commands/` that sends a templated email on a cron schedule. *Effort: ~0.5 day after Jane's spec. No dependencies.* (Action 7)
 
-**0d. Consolidated email to Jacky (pre-Xero).** Replace today's per-donation email storm with a daily digest, triggered off the existing CSV-upload flow — no Xero work required. Hook into wherever individual donation emails to Jacky are currently sent (in iznik-server or iznik-batch), buffer instead of sending, and emit one digest per day.
+**0d. Donation mails — two separate paths.** PR #571 conflated two distinct needs into one email; the real shape is two outputs sharing no template or recipient logic:
 
-The digest is shaped around Jacky's thank-you-email workflow ("workflow a" in her notes), so she can compose a thank-you straight from the email without bouncing between Modtools, info@, support@, giftaid@ and the GA register. For each donation:
+- **0d.i — Hourly donation status mail.** `mail:donations:summary`. Already runs hourly 06:00–22:00 (V1 parity with `cron/donations_email.php`); recipient is `freegle.mail.fundraising_addr`. A simple time/amount/payer table — finance-team awareness of what's landed in the bank today. *Status quo; no changes needed beyond keeping it untouched and de-conflated from 0d.ii.*
 
-- Email address and name (with any known aliases — see 0e).
-- Amount, date and method (PayPal / Stripe / bank / CAF / PGF).
-- Other donations from this donor, with dates.
-- Gift Aid status: already have / just requested / declined / CAF — no claim.
-- Membership: groups, member-since, active/inactive.
-- Recent mod-team contact with the member (any chat/messages worth knowing about).
-- Any prior thank-you email sent by Jacky, with content snippet and date.
-- Quick links: Modtools member page, info@/support@/giftaid@ search for this email, GA register entry.
+- **0d.ii — Daily thank-prep digest.** `mail:donations:thank-prep`. New command, daily at 20:30 after the last status mail. Recipient is `freegle.mail.thanks_addr` (defaults to `fundraising_addr` so the routing change is opt-in). Filters to donations where `thanked IS NULL` so the digest only surfaces outstanding work; once a donation is marked thanked it drops out of subsequent digests. Card-per-donation with the data Jacky would otherwise gather by hand:
+  - Donor identity: preferred external email (synthetic `@users.ilovefreegle.org` chat aliases filtered out), name, member-since.
+  - Amount, date, method (PayPal / Stripe / bank / PGF), reference.
+  - Donation history (up to 8 prior), with thanked-or-not on each row.
+  - Gift Aid status — distinguishes Active / Just declared / On file: Declined / Never asked / not on file.
+  - Group memberships with role + member-since.
+  - Most recent mod notes (decoded for legacy `\u<hex>\u` emoji escapes via `EmojiUtils`).
+  - Recent member↔mod chat snippets.
+  - Quick links: `/support/{id}` (real Modtools support page) and `/giftaid` (real Gift Aid review page).
+  - Flags: Recurring, PGF (Gift Aid already claimed by PayPal, don't double-claim), Unmatched donor (sleuthing needed), Birthday? (group birthday hint).
 
-Notes for the Xero rebuild later: the email template/builder is a service that takes a list of donation records — agnostic to whether they came from a CSV upload or a Xero pull — so Phase 1 only swaps the data source. *Effort: ~4–5 days. Depends on Jacky confirming cadence/format.* *(Action 2 — front half)*
+The thank-prep mailable takes a structured `cards` array per donation rather than pre-rendered HTML, so the Xero rebuild (Phase 1) only swaps the data source. *(Action 2 — front half)*
+
+**Dedup**: the service tracks a high-water mark — the last donation id included in any digest — in the existing `config` table (key `donation_thank_prep_last_id`), reusing the same key/value pattern as `GitSummaryService`. Each digest selects `id > last_id`, sends, then advances the mark to `MAX(id)` of the included rows. First run after deploy initialises the mark to current `MAX(users_donations.id)` so the historical backlog (~137k rows) isn't dumped. Late-arriving donations (e.g. after 20:30) appear in the next day's digest by id order, not date. No schema change, no new column.
 
 **0e. Donor lookup view v1 (in ModTools).** A single-page donor record that addresses the three search holes Jacky has flagged and supports her on-demand workflows (b: GA chase-up check; c: bulk thank-you check; d: "why am I still seeing ads"). Built from existing data — no Xero or PayPal API work needed for v1; those sources slot in as Phase 1 and 3 land.
 

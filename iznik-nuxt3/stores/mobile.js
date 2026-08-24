@@ -13,12 +13,21 @@
 // - Handle push notifications
 
 import { defineStore } from 'pinia'
+import { watch } from 'vue'
 import { Capacitor } from '@capacitor/core'
 import { useAuthStore } from '~/stores/auth'
 import { useChatStore } from '~/stores/chat'
 import { useNotificationStore } from '~/stores/notification'
+import { useMiscStore } from '~/stores/misc'
 import { useDebugStore } from '~/stores/debug'
+import { setAppVersion, useClientLog } from '~/composables/useClientLog'
+import { combinedBadgeCount } from '~/composables/useBadgeCount'
 import api from '~/api'
+
+// Ceiling for the OS-preferred text zoom we'll apply to the WebView - the
+// standard Android "Largest" font-size step / non-accessibility Dynamic Type
+// max. See initTextZoom().
+const MAX_TEXT_ZOOM = 1.3
 
 // Helper to get debug store safely (may not be initialized early)
 function dbg() {
@@ -29,12 +38,17 @@ function dbg() {
   }
 }
 
-export const useMobileStore = defineStore({
-  id: 'mobile',
+export const useMobileStore = defineStore('mobile', {
   state: () => ({
     config: null,
     isApp: false,
     mobileVersion: false,
+    // Native app version + build number from Capacitor App.getInfo() — the REAL
+    // installed-app version (unlike mobileVersion, which is the web build
+    // constant). Null on the website. Sent to the server on /session and logged
+    // so support can see which app version a member is actually running.
+    appVersion: null,
+    appBuild: null,
     deviceinfo: null,
     deviceuserinfo: '',
     isiOS: false,
@@ -45,9 +59,13 @@ export const useMobileStore = defineStore({
     inlineReply: false,
     chatid: false,
     pushed: false,
+    pushPlugin: null,
     route: false,
     apprequiredversion: false,
     appupdaterequired: false,
+    // URLs (Capacitor.convertFileSrc) of images shared into the app from another
+    // app, waiting to be attached to a new OFFER by the give-flow photos page.
+    pendingSharedImages: [],
   }),
   actions: {
     init(config) {
@@ -65,7 +83,11 @@ export const useMobileStore = defineStore({
           platform
         )
         this.mobileVersion = config.public.MOBILE_VERSION
-        this.initApp()
+        // Deliberately not awaited, but DO catch: unhandled rejections here are
+        // invisible on device, and this promise covers the whole of app init.
+        this.initApp().catch((e) => {
+          console.log('initApp failed:', e?.message)
+        })
       } else {
         console.log('Mobile store initialized - running in web browser')
       }
@@ -76,17 +98,44 @@ export const useMobileStore = defineStore({
       // Import app-specific modules dynamically to avoid issues in web build
       const { Device } = await import('@capacitor/device')
       const { Badge } = await import('@capawesome/capacitor-badge')
-      const { PushNotifications } = await import(
-        '@freegle/capacitor-push-notifications-cap7'
-      )
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap8')
       const { AppLauncher } = await import('@capacitor/app-launcher')
       const { App } = await import('@capacitor/app')
+
+      // Consume any image shared into the app (Android FreegleShare bridge /
+      // iOS freegleshare:// deep link) and route to the give flow as early as
+      // possible. This used to run after App.getInfo(), the Android
+      // background-push-log read and getDeviceInfo() below - all irrelevant
+      // to the share flow - which delayed the give-flow navigation on a
+      // share-triggered cold start with nothing on screen in the meantime.
+      this.initShareIntent(App)
+
+      // Register the App-plugin listeners FIRST. They need nothing but `App`,
+      // and everything below here can reject: initApp() has no try/catch and
+      // its caller neither awaits nor catches it, so one failed await used to
+      // silently abandon the rest of init. When that happened the back button
+      // was never registered and Capacitor's native default swallowed the back
+      // gesture at the root — trapping the user in the app, the very thing the
+      // handler exists to prevent. Registering up front means a later failure
+      // can cost us a version check, but never the back button.
+      this.initBackButton(App)
+      this.initWakeUpActions(App)
+      this.startBadgeSync()
 
       // Log app and plugin versions for debugging
       const runtimeConfig = useRuntimeConfig()
       const appInfo = await App.getInfo()
+      // Keep the native version/build so the session call and client logs can
+      // report the REAL installed-app version (not the mobileVersion constant).
+      this.appVersion = appInfo.version || null
+      this.appBuild = appInfo.build || null
+      // Make it available to client logs (session_start) so support sees the
+      // real app version a member is running.
+      setAppVersion(this.appVersion)
       dbg()?.info('=== APP STARTUP ===')
       dbg()?.info('App version', runtimeConfig.public.MOBILE_VERSION)
+      dbg()?.info('Native app version', appInfo.version)
       dbg()?.info('App build', appInfo.build)
       dbg()?.info('App bundle', appInfo.id)
       dbg()?.info('Platform', Capacitor.getPlatform())
@@ -112,11 +161,82 @@ export const useMobileStore = defineStore({
       }
 
       await this.getDeviceInfo(Device)
+      this.logAppSession()
+
       this.fixWindowOpen(AppLauncher)
       this.initDeepLinks(App)
+      this.initTextZoom(App)
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
-      this.initWakeUpActions(App)
+    },
+
+    // Log a second session_start now that we know both the real installed app
+    // version (App.getInfo above, pushed into the client logger by
+    // setAppVersion) and the Capacitor device details, so support can see which
+    // app build a member is actually running.
+    //
+    // This has to happen here rather than in the client-logging plugin: the
+    // plugin runs long before Capacitor has answered, so the version simply
+    // does not exist yet at that point. The plugin used to attempt it anyway,
+    // gated on isApp && deviceinfo, which were still false/null - so the log
+    // never fired and every app session_start in production carried
+    // app_version:null.
+    //
+    // getEnvironmentInfo() reads app_version from setAppVersion, so we pass no
+    // app_version override: the previous attempt passed MOBILE_VERSION, which
+    // is a hand-bumped web build constant, not the version on the device.
+    logAppSession() {
+      try {
+        useClientLog().sessionStart({}, this.deviceinfo)
+      } catch (e) {
+        // Logging must never break app startup.
+        dbg()?.debug('session_start app augmentation failed', e?.message)
+      }
+    },
+
+    async initTextZoom(App) {
+      // Respect the OS accessibility text-size setting. WKWebView ignores iOS
+      // Dynamic Type for web content entirely, so without this the app renders
+      // at a fixed text size no matter what the member set in Settings ->
+      // Accessibility. getPreferred() returns the zoom the system wants
+      // (Dynamic Type on iOS, font scale on Android); applying it makes text
+      // grow WITH REFLOW, unlike pinch zoom which scales the whole viewport
+      // including the navbars.
+      //
+      // Clamp to the standard OS font-size slider's max (Android's "Largest" /
+      // iOS's non-accessibility Dynamic Type ceiling). Samsung's separate
+      // Accessibility > Font size setting can push Configuration.fontScale up to
+      // ~3x, which the ModTools/app shell's fixed-width navbar and left menu were
+      // never designed to reflow at - applying it uncapped breaks that chrome
+      // (reported as the screen looking "narrower" after an app update).
+      try {
+        const { TextZoom } = await import('@capacitor/text-zoom')
+
+        const apply = async () => {
+          try {
+            const { value } = await TextZoom.getPreferred()
+            if (value && value > 0) {
+              const clamped = Math.min(value, MAX_TEXT_ZOOM)
+              await TextZoom.set({ value: clamped })
+              dbg()?.info('Applied preferred text zoom', {
+                value,
+                clamped,
+              })
+            }
+          } catch (e) {
+            dbg()?.debug('Text zoom apply failed', e?.message)
+          }
+        }
+
+        await apply()
+
+        // The member can change the OS setting while we're backgrounded, and
+        // getPreferred() only reflects it on next read - re-apply on resume.
+        App.addListener('resume', apply)
+      } catch (e) {
+        // Plugin unavailable (old installed build without it) - nothing to do.
+        dbg()?.debug('Text zoom unavailable', e?.message)
+      }
     },
 
     async getDeviceInfo(Device) {
@@ -191,8 +311,25 @@ export const useMobileStore = defineStore({
       return urlParams
     },
 
+    initBackButton(App) {
+      if (import.meta.client) {
+        // Once any JS listener is registered, Capacitor's native default (which
+        // swallows the back button/gesture once the webview history is empty,
+        // trapping the user in the app) no longer runs. Mirror that default's
+        // history navigation, but at the root background the app, which is the
+        // standard Android response to back on a task's topmost screen.
+        App.addListener('backButton', ({ canGoBack }) => {
+          if (canGoBack) {
+            window.history.back()
+          } else {
+            App.minimizeApp()
+          }
+        })
+      }
+    },
+
     initWakeUpActions(App) {
-      if (process.client) {
+      if (import.meta.client) {
         App.addListener('resume', (event) => {
           try {
             const notificationStore = useNotificationStore()
@@ -200,19 +337,58 @@ export const useMobileStore = defineStore({
 
             const chatStore = useChatStore()
             chatStore.fetchChats(null, false)
+
+            // Re-trigger push registration on resume so that a missed/failed
+            // initial registration or a rotated FCM/APNs token recovers. The
+            // existing 'registration' listener re-fires with the current token
+            // and savePushId() is a no-op unless something actually changed.
+            this.reRegisterPush()
           } catch (e) {}
         })
       }
     },
 
+    // Re-register for push on the native app. Safe to call repeatedly: it only
+    // calls register() (which re-fires the existing 'registration' listener);
+    // it does NOT re-add listeners, re-create channels or re-request
+    // permissions. No-op on web or before push has been initialised.
+    async reRegisterPush() {
+      if (!import.meta.client || !this.isApp || !this.pushPlugin) {
+        return
+      }
+
+      try {
+        const permStatus = await this.pushPlugin.checkPermissions()
+        if (permStatus?.receive === 'granted') {
+          dbg()?.info('Re-registering push on resume')
+          await this.pushPlugin.register()
+        } else {
+          dbg()?.info('Skipping push re-register; permission not granted', {
+            receive: permStatus?.receive,
+          })
+        }
+      } catch (e) {
+        dbg()?.warn('Push re-register on resume failed', e?.message)
+      }
+    },
+
     initDeepLinks(App) {
-      if (process.client) {
+      if (import.meta.client) {
         App.addListener('appUrlOpen', async (event) => {
           console.log('appUrlOpen', event.url)
+          // "Share an image into Freegle" on iOS: the Share Extension opens
+          // freegleshare://shared?p=<path>... — queue the image(s) and route
+          // into the give flow (mirrors the Android FreegleShare bridge).
+          if (event.url && event.url.indexOf('freegleshare://') === 0) {
+            this.handleSharedUrl(event.url)
+            return
+          }
           const lookfor = 'ilovefreegle.org'
           const ilfpos = event.url.indexOf(lookfor)
-          if (ilfpos !== false) {
-            const route = event.url.substring(ilfpos + lookfor.length)
+          if (ilfpos !== -1) {
+            const route = event.url
+              .substring(ilfpos + lookfor.length)
+              .replace('/chat/', '/chats/')
             console.log('appUrlOpen route', route)
             const router = useRouter()
             if (route.includes('src=forgotpass')) {
@@ -225,25 +401,25 @@ export const useMobileStore = defineStore({
                 k: params.k,
               })
             }
+            // An unsubscribe link opened in the app used to delete the account outright,
+            // with nothing asked and nothing confirmed - someone tapping "Unsubscribe" in
+            // an email meant to stop the email, not to lose their account and history.
+            // Send them to the unsubscribe page, which is what the same link does in a
+            // browser, and let them choose.
             if (route.includes('one-click-unsubscribe')) {
+              let target = '/unsubscribe'
               const ustart = route.indexOf('/', 1)
               if (ustart !== -1) {
                 const kstart = route.indexOf('/', ustart + 1)
                 if (kstart !== -1) {
-                  const uid = parseInt(route.substring(ustart + 1, kstart))
-                  const authStore = useAuthStore()
-                  const loggedInAs = authStore.user?.id
-                  if (loggedInAs === uid) {
-                    const ret = await authStore.forget()
-                    if (!ret) {
-                      authStore.forceLogin = false
-                      router.push('/unsubscribe/unsubscribed')
-                      return
-                    }
+                  const uid = route.substring(ustart + 1, kstart)
+                  const key = route.substring(kstart + 1).split(/[?#]/)[0]
+                  if (uid && key) {
+                    target = '/unsubscribe?u=' + uid + '&k=' + key
                   }
                 }
               }
-              router.push('/unsubscribe')
+              router.push(target)
               return
             }
             setTimeout(() => {
@@ -255,8 +431,77 @@ export const useMobileStore = defineStore({
       }
     },
 
+    // "Share an image into Freegle" (Android ACTION_SEND). The native layer
+    // (MainActivity) copies the shared image(s) to its cache and exposes them via
+    // the window.FreegleShare JS bridge. We pull them at startup (cold share) and
+    // on every resume (warm share), then route into the give flow with the photos
+    // pre-attached. No-op unless the native bridge is present.
+    initShareIntent(App) {
+      if (import.meta.client) {
+        this.checkSharedIntent()
+        App.addListener('resume', () => {
+          this.checkSharedIntent()
+        })
+      }
+    },
+
+    checkSharedIntent() {
+      if (!import.meta.client || !this.isApp) return
+      try {
+        const bridge = window.FreegleShare
+        if (!bridge || typeof bridge.consume !== 'function') return
+        const raw = bridge.consume()
+        if (!raw) return
+        let paths
+        try {
+          paths = JSON.parse(raw)
+        } catch (e) {
+          return
+        }
+        if (!Array.isArray(paths) || paths.length === 0) return
+        // Convert native cache-file paths into URLs the WebView can fetch().
+        this.pendingSharedImages = paths.map((p) => Capacitor.convertFileSrc(p))
+        console.log('Shared images received', this.pendingSharedImages.length)
+        const router = useRouter()
+        router.push('/give/mobile/photos')
+      } catch (e) {
+        console.log('checkSharedIntent failed', e?.message)
+      }
+    },
+
+    // iOS share-extension handoff: parse freegleshare://shared?p=<path>&p=<path>,
+    // convert each shared-container path to a URL the WebView can fetch(), queue
+    // it, and route into the give flow. Same destination as checkSharedIntent.
+    handleSharedUrl(url) {
+      try {
+        const qpos = url.indexOf('?')
+        if (qpos === -1) return
+        const paths = url
+          .substring(qpos + 1)
+          .split('&')
+          .filter((kv) => kv.startsWith('p='))
+          .map((kv) => decodeURIComponent(kv.substring(2)))
+          .filter(Boolean)
+        if (!paths.length) return
+        this.pendingSharedImages = paths.map((p) => Capacitor.convertFileSrc(p))
+        console.log(
+          'Shared images received (iOS)',
+          this.pendingSharedImages.length
+        )
+        const router = useRouter()
+        router.push('/give/mobile/photos')
+      } catch (e) {
+        console.log('handleSharedUrl failed', e?.message)
+      }
+    },
+
     async initPushNotifications(PushNotifications, Badge) {
       dbg()?.info('initPushNotifications started', { isiOS: this.isiOS })
+
+      // Keep a reference to the plugin so we can re-register on app resume
+      // (see reRegisterPush()) without re-adding listeners or re-requesting
+      // permissions.
+      this.pushPlugin = PushNotifications
 
       if (!this.isiOS) {
         // Delete old channels
@@ -449,6 +694,42 @@ export const useMobileStore = defineStore({
       }
     },
 
+    // Keep the native app-icon badge in sync with the member's own live
+    // unread state (chats + notifications), independent of which component
+    // happens to be on screen. useNavbar()'s chatCount computed also nudges
+    // the badge, but only as a side effect of NavbarMobile's bottom-nav badge
+    // being rendered - and that badge is hidden in favour of ChatMobileNavbar
+    // while viewing a specific chat on a phone (NavbarMobile.vue
+    // isSpecificChatPage), which is exactly when a chat gets marked read.
+    // ChatMobileNavbar calls useNavbar() too but never reads its chatCount,
+    // so that recompute (and its setBadgeCount call) never fires there. If
+    // the member reads the chat and backgrounds the app before visiting a
+    // screen where the bottom-nav badge re-renders, the icon badge is left
+    // showing a stale non-zero count forever (Discourse 9953). This watch
+    // lives in the store instead, so it fires on every count change
+    // regardless of what's mounted. Uses the same combinedBadgeCount() helper
+    // as chatCount's own write, so the two writers can never drift apart.
+    //
+    // ModTools reuses this same store, but its badge is a different concept
+    // entirely (pending/spam/volunteering work, computed by
+    // modtools/composables/useModMe.js's checkWork() and already pushed to
+    // setBadgeCount() there) - chats+notifications would be meaningless for
+    // it and would race with the real work-count writer. Skip there, the
+    // same way chatStore.unreadCount itself switches to currentCountMT.
+    startBadgeSync() {
+      if (!this.isApp || useMiscStore().modtools) return
+      const chatStore = useChatStore()
+      const notificationStore = useNotificationStore()
+      return watch(
+        () =>
+          combinedBadgeCount(chatStore.unreadCount, notificationStore.count),
+        (total) => {
+          this.setBadgeCount(total)
+        },
+        { immediate: true }
+      )
+    },
+
     async handleNotification(notification, PushNotifications, Badge) {
       const router = useRouter()
       console.log('handleNotification A', notification)
@@ -528,7 +809,12 @@ export const useMobileStore = defineStore({
         // When a push notification is received while the app is in the foreground,
         // immediately refresh chats to update unread counts and trigger message fetching.
         // This ensures new messages appear without waiting for the 30-second poll.
-        if (foreground) {
+        //
+        // NEW_POSTS (daily digest) pushes don't carry chat data, so refreshing the
+        // chat store would be pointless noise.  We just let the badge update (done
+        // above) take effect and let the user tap to browse — no further action needed
+        // in the foreground.
+        if (foreground && data.channel_id !== 'new_posts') {
           console.log('Foreground push received - refreshing chats')
           dbg()?.info('Foreground push - triggering chat refresh')
           const chatStore = useChatStore()
@@ -593,7 +879,7 @@ export const useMobileStore = defineStore({
         if (this.route && okToMove) {
           this.route = this.route.replace('/chat/', '/chats/')
           console.log('router.currentRoute', router.currentRoute)
-          if (router.currentRoute.path !== this.route) {
+          if (router.currentRoute.value.path !== this.route) {
             console.log('GO TO ', this.route)
             router.push(this.route)
           }
@@ -628,6 +914,14 @@ export const useMobileStore = defineStore({
           message: replyText,
         })
         console.log('handleReplyAction: message sent successfully')
+        // Confirm the reply with a success haptic (best-effort; in-app only).
+        try {
+          const { Haptics, NotificationType } =
+            await import('@capacitor/haptics')
+          await Haptics.notification({ type: NotificationType.Success })
+        } catch (he) {
+          dbg()?.debug('haptic not available', he?.message)
+        }
       } catch (e) {
         console.error('handleReplyAction error:', e.message)
       }
@@ -678,16 +972,26 @@ export const useMobileStore = defineStore({
         ? 'app_fd_version_ios_required'
         : 'app_fd_version_android_required'
 
-      const reqdValues = await api(this.config).config.fetchv2(requiredKey)
-      if (reqdValues && reqdValues.length === 1) {
-        const requiredVersion = reqdValues[0].value
-        if (requiredVersion) {
-          this.apprequiredversion = requiredVersion
-          if (this.versionOutOfDate(requiredVersion)) {
-            this.appupdaterequired = true
-            console.log('==========appupdate required!')
+      // Best-effort: this runs partway through initApp(), which has no
+      // try/catch and is called without await or .catch(). An APIError from
+      // this fetch (offline cold start, slow or failing API) used to escape as
+      // a silent unhandled rejection and abandon the REST of app init — which
+      // is where the back button and resume handlers get registered. Never let
+      // a version check cost the app its back button.
+      try {
+        const reqdValues = await api(this.config).config.fetchv2(requiredKey)
+        if (reqdValues && reqdValues.length === 1) {
+          const requiredVersion = reqdValues[0].value
+          if (requiredVersion) {
+            this.apprequiredversion = requiredVersion
+            if (this.versionOutOfDate(requiredVersion)) {
+              this.appupdaterequired = true
+              console.log('==========appupdate required!')
+            }
           }
         }
+      } catch (e) {
+        console.log('Failed to check for app update:', e?.message)
       }
     },
 

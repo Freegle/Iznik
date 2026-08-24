@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => $previewText ?? 'Stories from other freeglers!'])
+  @include('emails.mjml.partials.head', ['preview' => !empty($stories) ? ("\u{201c}" . \Illuminate\Support\Str::limit($stories[0]['headline'], 70) . "\u{201d} and more freegler stories") : 'Stories from other freeglers!'])
 
   <mj-body background-color="#f0f0eb">
 
@@ -37,12 +37,12 @@
       </mj-column>
       <mj-column width="33%">
         <mj-button
-          href="{{ $findUrl }}"
+          href="{{ $askUrl }}"
           mj-class="btn-success"
           font-size="13px"
           border-radius="4px"
           align="center"
-        >Find something</mj-button>
+        >Ask for something</mj-button>
       </mj-column>
     </mj-section>
 
@@ -152,12 +152,12 @@
       </mj-column>
       <mj-column width="33%">
         <mj-button
-          href="{{ $findUrl }}"
+          href="{{ $askUrl }}"
           mj-class="btn-success"
           font-size="13px"
           border-radius="4px"
           align="center"
-        >Find something</mj-button>
+        >Ask for something</mj-button>
       </mj-column>
     </mj-section>
 

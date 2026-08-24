@@ -2,7 +2,7 @@ version: 2.1
 
 description: |
   Shared commands and jobs for Freegle testing and app builds.
-  Used by FreegleDocker (monorepo with inline subtrees for iznik-server, iznik-server-go, iznik-nuxt3).
+  Used by FreegleDocker (monorepo with inline subtrees for iznik-server-go, iznik-nuxt3, iznik-batch).
 
 executors:
   machine-executor:
@@ -15,6 +15,11 @@ executors:
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle
+      # Boot the routing (spatial) container on the small committed Bristol extract —
+      # no 2.5GB UK graph in CI. Must be executor-level (not a per-step export) so it
+      # reaches the `docker-compose up` step, which runs in a different shell.
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
       PW_WORKERS: 4
 
   machine-executor-local:
@@ -32,6 +37,9 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
+      # Boot spatial on the committed Bristol extract (see machine-executor note).
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
       PW_WORKERS: 11
       # Port offsets (+9000) to avoid conflicts with any local dev stack
       PORT_TRAEFIK_HTTP: 9080
@@ -45,9 +53,6 @@ executors:
       PORT_TUSD: 10080
       PORT_STATUS: 17081
       PORT_AI_SUPPORT: 17083
-      PORT_APIV1_SSH: 10023
-      PORT_APIV1_HTTP: 9083
-      PORT_APIV1_HTTP2: 17181
       PORT_APIV2: 17193
       PORT_APIV2_LIVE: 17194
       PORT_FREEGLE_DEV_LOCAL: 12002
@@ -70,7 +75,17 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      PW_WORKERS: 9
+      # Boot spatial on the committed Bristol extract (see machine-executor note).
+      OSM_PBF_PATH: /app/testdata/bristol.osm.pbf
+      DEPRIVATION_CSV: /app/testdata/bristol_lsoa.csv
+      # PW_WORKERS reduced 11 -> 6 (orb 1.1.339) then 6 -> 4 (orb 1.1.340) to
+      # stop build-test-katapult CPU-heartbeat starvation in the parallel test
+      # phase. RAM/swap are fine (20G swapfile), but Chromium workers + Laravel +
+      # Go + Vitest saturated all 16 cores so the CircleCI agent couldn't
+      # heartbeat and the job was killed (infrastructure_fail). nice-demoting the
+      # test runners (orb 1.1.338) did NOT hold alone. 4 matches the stable
+      # machine-executor-large value.
+      PW_WORKERS: 4
       VITEST_MAX_WORKERS: 4
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
@@ -83,9 +98,6 @@ executors:
       PORT_TUSD: 10080
       PORT_STATUS: 17081
       PORT_AI_SUPPORT: 17083
-      PORT_APIV1_SSH: 10023
-      PORT_APIV1_HTTP: 9083
-      PORT_APIV1_HTTP2: 17181
       PORT_APIV2: 17193
       PORT_APIV2_LIVE: 17194
       PORT_FREEGLE_DEV_LOCAL: 12002
@@ -147,6 +159,27 @@ commands:
               docker-compose --version || docker compose version
               jq --version
               curl --version | head -1
+              # Ensure a large swapfile at RUNTIME so it applies to already-provisioned
+              # Katapult VMs too (not just freshly built ones). A big swap lets peak
+              # memory spikes (many Playwright workers + Laravel + Go + the container
+              # stack all at once) swap instead of OOM-killing the runner agent, which
+              # surfaces as build-test-katapult infrastructure_fail. See PW_WORKERS.
+              SWAP_TARGET_GB=20
+              CUR_SWAP_GB=$(( $(awk '/SwapTotal/{print $2}' /proc/meminfo) / 1024 / 1024 ))
+              if [ "$CUR_SWAP_GB" -lt "$SWAP_TARGET_GB" ]; then
+                echo "Swap ${CUR_SWAP_GB}G < ${SWAP_TARGET_GB}G target — resizing /swapfile"
+                sudo swapoff /swapfile 2>/dev/null || true
+                sudo rm -f /swapfile 2>/dev/null || true
+                if sudo fallocate -l ${SWAP_TARGET_GB}G /swapfile 2>/dev/null; then
+                  sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile \
+                    && echo "Swap resized to ${SWAP_TARGET_GB}G" || echo "⚠️ swap enable failed — continuing"
+                else
+                  echo "⚠️ fallocate ${SWAP_TARGET_GB}G failed (insufficient disk?) — keeping existing swap"
+                fi
+                sudo sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+              else
+                echo "Swap already ${CUR_SWAP_GB}G (>= ${SWAP_TARGET_GB}G target)"
+              fi
               echo "Current memory:"
               free -h
               exit 0
@@ -216,6 +249,131 @@ commands:
           background: true
           command: |
             echo "Resource monitor started - logging every 30 seconds"
+
+            # --- CPU priority watchdog (all runner types including Katapult) ---
+            # Root cause of build-test-katapult infrastructure_fail ("This job
+            # appears to have stopped responding"): during the parallel test phase
+            # load runs to ~30 on the 16-CPU VM (the Playwright container alone
+            # peaks at ~700% CPU) and the CircleCI agent can't get CPU to send its
+            # heartbeat, so the control plane declares the VM dead. Memory is fine,
+            # swap stays unused, iowait ~0 — it is purely CPU scheduling, NOT an OOM
+            # or disk problem. Fix by scheduling priority, NOT by dropping workers.
+            #
+            # DEMOTE the load, do NOT boost the agent. An earlier version raised the
+            # agent to nice -15, but a negative nice is INHERITED by every process
+            # the agent spawns — in build 18723 the vitest/Go/Playwright drivers all
+            # ran at nice -15 too (ps STAT "S<l+") and competed with the heartbeat at
+            # the same top priority, so boosting the agent boosted the load with it
+            # and the heartbeat was still starved. Instead: push every Docker
+            # container process hard down (nice +19) and pin the agent at default
+            # priority (0, never negative so nothing inherits a boost). The heartbeat
+            # then reliably out-schedules the +19 test workload. Re-applied every few
+            # seconds because Playwright keeps forking new headless_shell workers.
+            # Must run on ALL runner types (self-hosted and Katapult cloud).
+            (
+              declare -A _pinned 2>/dev/null || true   # pids already cpuset-confined
+              while true; do
+                docker_pids=""
+                for pp in /proc/[0-9]*; do
+                  grep -qa 'docker\|containerd' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
+                done
+                [ -n "$docker_pids" ] && sudo renice -n 19 -p $docker_pids >/dev/null 2>&1 || true
+                # Also demote NATIVE (non-container) test-runner processes. Vitest
+                # runs natively on Katapult and, with the test drivers, are top CPU
+                # consumers at the agent's own priority — during the parallel-phase
+                # ramp (load spikes to ~40 on 16 cores) they starve the agent's
+                # heartbeat and the control plane declares the VM dead. Containerised
+                # runners are already +19; re-applying is harmless.
+                test_pids=$(pgrep -f 'vitest|playwright|go-build|/test/|artisan test' 2>/dev/null | tr '\n' ' ')
+                [ -n "$test_pids" ] && sudo renice -n 19 -p $test_pids >/dev/null 2>&1 || true
+                # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
+                agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
+                [ -n "$agent_pids" ] && sudo renice -n 0 -p $agent_pids >/dev/null 2>&1 || true
+                # Reserve vCPU0 for the runner heartbeat by confining the WHOLE
+                # workload to vCPUs 1..N-1, leaving the circleci agent FAMILY (the
+                # daemon AND the task-agent — the heartbeat goroutine lives in the same
+                # process that drives the tests, so both must keep vCPU0) able to use
+                # vCPU0. This MUST be done from inside the job: a Katapult job can run
+                # on a VM provisioned by a DIFFERENT pipeline, so VM-provision-time
+                # config (cgroup-parent etc.) does not reliably reach the VM the job
+                # lands on — but this watchdog always does. cpuset = hard isolation.
+                NPROC=$(nproc 2>/dev/null || echo 1)
+                if [ "$NPROC" -ge 4 ]; then
+                  WL="1-$((NPROC-1))"
+                  # Containers: set the cpuset at the cgroup level so it covers every
+                  # current AND future process in each container (e.g. the Chromium
+                  # workers Playwright keeps forking). Driver/VM independent; no restart.
+                  for c in $(docker ps -q 2>/dev/null); do
+                    docker update --cpuset-cpus "$WL" "$c" >/dev/null 2>&1 || true
+                  done
+                  # Native: taskset every userspace pid to 1..N-1 EXCEPT the agent
+                  # family ($agent_pids, computed above). Forks inherit affinity, so
+                  # pinning a process pins its future children too; pin each pid once
+                  # (cached in $_pinned) to keep the steady-state exec cost near zero.
+                  # New work each appears as a fresh pid and is pinned on the next pass.
+                  agent_set=" $agent_pids "
+                  for pp in /proc/[0-9]*; do
+                    pid=${pp#/proc/}
+                    [ "$pid" = 1 ] && continue
+                    case "$agent_set" in *" $pid "*) continue ;; esac
+                    [ -n "${_pinned[$pid]:-}" ] && continue
+                    sudo taskset -acp "$WL" "$pid" >/dev/null 2>&1 || true
+                    _pinned[$pid]=1
+                  done
+                fi
+                sleep 2
+              done
+            ) &
+            echo "CPU priority watchdog running: workload nice +19, agent nice 0, and workload cpuset-confined to vCPUs 1..N-1 (vCPU0 reserved for the runner heartbeat)"
+
+            # --- Kernel-level forensics for infrastructure_fail (added 2026-06-13) ---
+            # The `when: on_fail` "Capture VM diagnostics" step CANNOT capture an
+            # infrastructure_fail: that outcome means the runner AGENT stopped
+            # responding (frozen / OOM'd / soft-locked / panicked VM), so no later
+            # step ever runs and its dmesg snapshot is taken too late or never. The
+            # ONLY diagnostics that survive are ones STREAMED into this background
+            # step's captured output BEFORE the freeze. Master #7639 (2026-06-13)
+            # infra_failed mid-Playwright: the 30s sample 4s earlier was fully
+            # healthy (vCPU0 idle, 34Gi free, swap ~0, Docker 27.5.1) then the whole
+            # VM went silent for 5 min — exactly the signature of a sudden OOM
+            # *between* 30s samples, a soft-lockup, or an I/O hung-task, all of which
+            # the coarse loop is blind to. Capture them at the source:
+            #
+            # (1) Stream the kernel ring buffer live. The instant the kernel prints
+            #     "Out of memory: Killed process" (OOM), "BUG: soft lockup" (CPU
+            #     stuck), "task ... blocked for more than" (hung-task / wedged I/O),
+            #     or an RCU stall, the line is flushed to this step's captured log and
+            #     survives the freeze that follows. --follow-new streams only NEW
+            #     messages (no startup dump of the pre-job buffer).
+            ( sudo dmesg --follow-new 2>/dev/null \
+                || sudo dmesg -wT 2>/dev/null \
+                || sudo dmesg -w 2>/dev/null ) | sed 's/^/[kmsg] /' &
+            # (2) Make the kernel maximally chatty about the suspects: dump every
+            #     task's RSS on OOM, and shorten the hung-task detector so a process
+            #     wedged in uninterruptible I/O for >20s prints its stack to dmesg
+            #     (which (1) then streams). Best-effort; ignore if sysctl is locked.
+            sudo sysctl -w vm.oom_dump_tasks=1 kernel.hung_task_timeout_secs=20 \
+                kernel.hung_task_warnings=9999 >/dev/null 2>&1 || true
+            # (3) Fast memory tripwire: the 30s loop below cannot see a spike that
+            #     exhausts RAM in a few seconds. Sample MemAvailable every 1s and, the
+            #     moment it falls below 4Gi OR drops >8Gi in a single second, dump the
+            #     top RSS consumers with a timestamp so the NEXT freeze names its
+            #     culprit (almost certainly a Chromium/node worker) instead of leaving
+            #     us guessing between OOM and a host event.
+            ( prev=0
+              while true; do
+                avail=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo 2>/dev/null)
+                swpu=$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{print int((t-f)/1024)}' /proc/meminfo 2>/dev/null)
+                [ -z "$avail" ] && { sleep 1; continue; }
+                if [ "$avail" -lt 4096 ] || { [ "$prev" -gt 0 ] && [ $((prev - avail)) -gt 8192 ]; }; then
+                  echo "[mem-tripwire $(date '+%H:%M:%S')] MemAvailable=${avail}MB swapUsed=${swpu}MB prev=${prev}MB — top RSS:"
+                  ps -eo pid,ppid,rss,comm --sort=-rss 2>/dev/null | head -8 | sed 's/^/[mem-tripwire]   /'
+                fi
+                prev=$avail
+                sleep 1
+              done ) &
+            echo "Kernel forensics armed: live kmsg stream + hung-task=20s + mem-tripwire (<4Gi or -8Gi/s)"
+
             while true; do
               echo ""
               echo "========================================"
@@ -233,6 +391,24 @@ commands:
               ps aux --sort=-%mem | head -6
               echo "--- Docker Stats ---"
               docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null || echo "No containers running"
+              # --- [cpuset-evidence] proof the real work and the heartbeat are on
+              # different vCPUs: vCPU0 keeps idle headroom while 1..N-1 saturate;
+              # every container + native test runner is on 1..N-1; the agent can use 0.
+              echo "--- [cpuset-evidence] per-vCPU utilisation (vCPU0 should keep %idle while 1..N-1 saturate) ---"
+              mpstat -P ALL 1 1 2>/dev/null | sed 's/^/  /' || { grep -E '^cpu[0-9]' /proc/stat | sed 's/^/  /'; }
+              echo "--- [cpuset-evidence] container effective cpuset (real work; want 1..N-1, MUST NOT contain 0) ---"
+              for f in $(find /sys/fs/cgroup -path '*docker-*' -name cpuset.cpus.effective 2>/dev/null); do
+                p=${f#/sys/fs/cgroup/}; p=${p%/cpuset.cpus.effective}
+                echo "  $p = $(cat "$f" 2>/dev/null)"
+              done | head -40
+              echo "--- [cpuset-evidence] native test-runner affinity (want 1..N-1) ---"
+              for tp in $(pgrep -f 'vitest|playwright|go-build|artisan test' 2>/dev/null | head -20); do
+                echo "  pid $tp $(cat /proc/$tp/comm 2>/dev/null) -> $(taskset -cp $tp 2>/dev/null | sed 's/.*: //')"
+              done
+              echo "--- [cpuset-evidence] runner agent/heartbeat placement (allowed should include 0) ---"
+              for ap in $(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | head -10); do
+                echo "  agent pid $ap on vCPU $(ps -o psr= -p $ap 2>/dev/null | tr -d ' ') allowed $(taskset -cp $ap 2>/dev/null | sed 's/.*: //')"
+              done
               sleep 30
             done
 
@@ -250,8 +426,22 @@ commands:
           command: |
             echo "<< parameters.reason >>"
 
+            # Authenticate to Docker Hub to escape the shared-IP anonymous pull
+            # rate limit (toomanyrequests on redis/traefik/etc). Read-only PAT from
+            # the DOCKERHUB_* CircleCI env vars; safe no-op when they are not set.
+            if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "Logging in to Docker Hub as ${DOCKERHUB_USERNAME:-freeglegeeks}..."
+              echo "$DOCKERHUB_TOKEN" | docker login -u "${DOCKERHUB_USERNAME:-freeglegeeks}" --password-stdin \
+                && echo "Docker Hub login OK" \
+                || echo "Docker Hub login failed - continuing unauthenticated"
+            fi
+
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
+            # Boot the routing (spatial) container on the small committed Bristol
+            # extract — no 2.5GB UK graph in CI — so routing-go tests can run.
+            export OSM_PBF_PATH="${OSM_PBF_PATH:-/app/testdata/bristol.osm.pbf}"
+            export DEPRIVATION_CSV="${DEPRIVATION_CSV:-/app/testdata/bristol_lsoa.csv}"
 
             # Clean up any existing containers first.
             # Do NOT pass --volumes: wiping named volumes forces MySQL to re-initialise
@@ -271,21 +461,40 @@ commands:
                 docker stop $old_containers 2>/dev/null || true
                 docker rm $old_containers 2>/dev/null || true
               fi
-
-              # Ensure local build-layer cache registry (185.44.254.6:5002) is in insecure-registries.
-              # The pull-through mirrors (5000/5001) are configured at VM provision time; 5002 may be
-              # missing on older VMs, so we add it here if absent and reload Docker config.
-              if ! grep -q "5002" /etc/docker/daemon.json 2>/dev/null; then
-                echo "Adding 185.44.254.6:5002 to Docker insecure-registries..."
-                DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
-                echo "$DAEMON_JSON" \
-                  | jq '."insecure-registries" = (."insecure-registries" // [] | . + ["185.44.254.6:5002"])' \
-                  | sudo tee /etc/docker/daemon.json > /dev/null \
-                  && sudo systemctl reload docker 2>/dev/null \
-                  && echo "Done — daemon config updated" \
-                  || echo "⚠️  Could not update daemon.json (non-critical)"
-              fi
             fi
+
+            # Ensure local Docker registry mirrors are in daemon.json.
+            # Must run for ALL runner types (Katapult cloud + self-hosted).
+            # 5002 = build-layer cache (insecure-registries only).
+            # 5000 = Docker Hub pull-through mirror: must be in registry-mirrors so
+            # Docker routes infrastructure image pulls (percona, redis, traefik, etc.)
+            # through the local cache instead of hitting Docker Hub directly.
+            # Without 5000 in registry-mirrors the Katapult VM IP hits Docker Hub's
+            # anonymous pull rate limit (100/6h per IP) and docker-compose up fails.
+            NEEDS_DAEMON_UPDATE=false
+            grep -q "5002" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
+            grep -q '"http://185.44.254.6:5000"' /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
+            if [ "$NEEDS_DAEMON_UPDATE" = "true" ]; then
+              echo "Updating Docker daemon.json for local registry mirrors..."
+              DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+              echo "$DAEMON_JSON" \
+                | jq '."insecure-registries" = (."insecure-registries" // [] | (. + ["185.44.254.6:5000", "185.44.254.6:5002"]) | unique) | ."registry-mirrors" = (."registry-mirrors" // [] | (. + ["http://185.44.254.6:5000"]) | unique)' \
+                | sudo tee /etc/docker/daemon.json > /dev/null \
+                && sudo systemctl reload docker 2>/dev/null \
+                && echo "Done — daemon config updated" \
+                || echo "⚠️  Could not update daemon.json (non-critical)"
+            fi
+            # The mirror may be in daemon.json (from VM provisioning) yet NOT loaded
+            # by the running dockerd (started before the config, or never reloaded),
+            # so pulls bypass the mirror and hit Docker Hub directly (toomanyrequests).
+            # Verify the RUNNING daemon has it; reload (then restart) if not.
+            if ! docker info 2>/dev/null | grep -q "185.44.254.6:5000"; then
+              echo "Mirror absent from running daemon — reloading docker to load registry-mirrors..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 3
+            fi
+            echo "Registry mirrors in running daemon:"
+            docker info 2>/dev/null | grep -A2 "Registry Mirrors" || echo "  (none reported)"
             # Only prune on cloud — self-hosted runner needs layer cache for fast builds
             if [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
               docker system prune -f || true
@@ -321,8 +530,19 @@ commands:
           name: Build containers
           no_output_timeout: 25m
           command: |
+            # Authenticate with Docker Hub to avoid unauthenticated pull rate limits.
+            # DOCKERHUB_USERNAME / DOCKERHUB_TOKEN are set in CircleCI project settings.
+            # Authenticated users get 200 pulls/6h vs 100/6h for unauthenticated.
+            if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin \
+                && echo "✅ Docker Hub authentication successful" \
+                || echo "⚠️  Docker Hub login failed — proceeding with unauthenticated pulls"
+            else
+              echo "ℹ️  DOCKERHUB credentials not set — skipping Docker Hub login"
+            fi
+
             # Pre-pull shared base images once before any parallel builds start.
-            # freegle-base: used by apiv1, freegle-prod-local, modtools-prod-local, etc.
+            # freegle-base: used by freegle-prod-local, modtools-prod-local, etc.
             # freegle-batch-base: used by batch — contains compiled PHP extensions/PECL/MJML.
             #   On Katapult, the cache server GHCR mirror (185.44.254.6:5001) serves both
             #   images locally, so pulls are fast even on ephemeral VMs with no layer cache.
@@ -354,14 +574,6 @@ commands:
               # it saves (7 large images × 300-500MB = 2-3GB of unnecessary downloads).
               {
                 echo 'services:'
-                echo '  apiv1:'
-                echo '    build:'
-                echo '      cache_from:'
-                echo '        - 185.44.254.6:5002/ci/apiv1:latest'
-                echo '  apiv1-phpunit:'
-                echo '    build:'
-                echo '      cache_from:'
-                echo '        - 185.44.254.6:5002/ci/apiv1:latest'
                 echo '  apiv2:'
                 echo '    build:'
                 echo '      cache_from:'
@@ -386,6 +598,14 @@ commands:
                 echo '    build:'
                 echo '      cache_from:'
                 echo '        - 185.44.254.6:5002/ci/status:latest'
+                echo '  spatial-knn:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/spatial-knn:latest'
+                echo '  spatial:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/spatial:latest'
               } > /tmp/docker-compose.cache.yml
 
               export COMPOSE_FILE="${COMPOSE_FILE}:/tmp/docker-compose.cache.yml"
@@ -412,13 +632,9 @@ commands:
               # Build all container groups in parallel — each group is independent.
               # BuildKit's internal scheduler further parallelises steps within each build.
               echo "Katapult: building all container groups in parallel..."
-              PHP_LOG=$(mktemp) GO_LOG=$(mktemp) NUXT_LOG=$(mktemp) OTHER_LOG=$(mktemp)
+              GO_LOG=$(mktemp) NUXT_LOG=$(mktemp) OTHER_LOG=$(mktemp)
 
-              # PHP API containers (share freegle-base PHP layer)
-              docker-compose build $INLINE_CACHE_FLAG apiv1 apiv1-phpunit > "$PHP_LOG" 2>&1 &
-              PHP_PID=$!
-
-              # Go API container (independent — no shared layers with PHP/Nuxt)
+              # Go API container (independent — no shared layers with Nuxt)
               docker-compose build $INLINE_CACHE_FLAG apiv2 > "$GO_LOG" 2>&1 &
               GO_PID=$!
 
@@ -433,9 +649,37 @@ commands:
               ) > "$NUXT_LOG" 2>&1 &
               NUXT_PID=$!
 
-              # Playwright + status (lightweight, finishes quickly)
-              docker-compose build $INLINE_CACHE_FLAG playwright status > "$OTHER_LOG" 2>&1 &
+              # Playwright + status + the two custom Go servers (spatial-knn / spatial).
+              # spatial-knn and spatial are NOT brought up from a registry image — they
+              # build from local source. They must be built explicitly here: otherwise
+              # `docker-compose up` reuses whatever image already exists on a pooled
+              # Katapult VM, which can be a stale build from before a source change (e.g.
+              # missing the admin /v1/:dataset/upsert route → integration-seed tests 404).
+              # The Dockerfile's COPY busts on source change, so cache_from keeps this fast.
+              docker-compose build $INLINE_CACHE_FLAG playwright status spatial-knn spatial > "$OTHER_LOG" 2>&1 &
               OTHER_PID=$!
+
+              # Every group above redirects to a log file, so between "building in
+              # parallel" and the first "build complete" the console says NOTHING.
+              # A group that legitimately runs longer than no_output_timeout (25m)
+              # therefore kills the job with "Too long with no output" while it is
+              # still working - which reads as a hang rather than a slow build.
+              # Heartbeat naming the groups still going, so the timer only ever
+              # fires on a build that has genuinely stopped making progress.
+              (
+                HB_START=$(date +%s)
+                while kill -0 $GO_PID 2>/dev/null || kill -0 $NUXT_PID 2>/dev/null \
+                   || kill -0 $OTHER_PID 2>/dev/null; do
+                  sleep 60
+                  STILL=""
+                  kill -0 $GO_PID    2>/dev/null && STILL="$STILL go"
+                  kill -0 $NUXT_PID  2>/dev/null && STILL="$STILL nuxt"
+                  kill -0 $OTHER_PID 2>/dev/null && STILL="$STILL other"
+                  [ -n "$STILL" ] && \
+                    echo "   ... building for $((($(date +%s) - HB_START) / 60))m, still running:$STILL"
+                done
+              ) &
+              HEARTBEAT_PID=$!
 
               BUILD_FAILED=0
               check_build() {
@@ -449,10 +693,11 @@ commands:
                 fi
               }
 
-              check_build $PHP_PID   "PHP (apiv1/apiv1-phpunit)" "$PHP_LOG"
               check_build $GO_PID    "Go (apiv2)"                "$GO_LOG"
               check_build $NUXT_PID  "Nuxt (freegle/modtools)"   "$NUXT_LOG"
               check_build $OTHER_PID "Playwright + status"       "$OTHER_LOG"
+
+              kill $HEARTBEAT_PID 2>/dev/null || true
 
               if [ $BUILD_FAILED -eq 1 ]; then
                 kill $BATCH_PID 2>/dev/null || true
@@ -466,9 +711,9 @@ commands:
               for attempt in $(seq 1 $MAX_RETRIES); do
                 echo "Build attempt $attempt of $MAX_RETRIES..."
                 if docker-compose build $CACHE_FLAG \
-                  apiv1 apiv1-phpunit apiv2 \
+                  apiv2 \
                   freegle-prod-local modtools-prod-local \
-                  playwright status; then
+                  playwright status spatial-knn spatial; then
                   echo "✅ Build succeeded on attempt $attempt"
                   break
                 else
@@ -504,13 +749,14 @@ commands:
                 echo "Pushing built images to local cache registry (${CACHE_REG})..."
                 # Map: registry name → docker-compose generated image name
                 declare -A SVC_IMAGES=(
-                  ["apiv1"]="${PROJECT}-apiv1"
                   ["apiv2"]="${PROJECT}-apiv2"
                   ["freegle-prod-local"]="${PROJECT}-freegle-prod-local"
                   ["modtools-prod-local"]="${PROJECT}-modtools-prod-local"
                   ["playwright"]="${PROJECT}-playwright"
                   ["batch"]="${PROJECT}-batch"
                   ["status"]="${PROJECT}-status"
+                  ["spatial-knn"]="${PROJECT}-spatial-knn"
+                  ["spatial"]="${PROJECT}-spatial"
                 )
                 for svc in "${!SVC_IMAGES[@]}"; do
                   img="${SVC_IMAGES[$svc]}"
@@ -529,7 +775,7 @@ commands:
             # Two-phase startup: databases must exist before application containers start.
             #
             # Phase 1: Start infrastructure + batch (runs Laravel migrations to create iznik DB)
-            # Then run setup-test-database.sh to clone iznik → iznik_phpunit_test, iznik_go_test
+            # Then run setup-test-database.sh to load fixtures + clone iznik → iznik_go_test
             #
             # Phase 2: Start all remaining containers (all databases already exist)
 
@@ -542,10 +788,28 @@ commands:
             rm -rf ./iznik-batch/vendor/
 
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
-            docker-compose up -d \
-              percona postgres redis beanstalkd mailpit \
-              spamassassin-app reverse-proxy tusd delivery loki mjml \
-              batch status host-scripts
+            # Retry the bringup. On Katapult cloud instances the Docker Hub pull-through
+            # mirror (185.44.254.6:5000) is sometimes not loaded by the running dockerd (see
+            # the mirror setup above), so :latest image pulls (mjml, percona, ...) hit Docker
+            # Hub's anonymous rate limit (toomanyrequests) and this up fails. That is a
+            # transient, per-instance flake — the same commit passes on a healthy instance —
+            # so retry, nudging the mirror back between attempts, rather than failing the
+            # whole run on one 429.
+            for attempt in 1 2 3; do
+              if docker-compose up -d \
+                percona postgres redis beanstalkd mailpit \
+                spamassassin-app reverse-proxy tusd delivery loki mjml \
+                batch status host-scripts; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 1 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the pull-through mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for percona to be healthy..."
             for i in $(seq 1 60); do
@@ -600,7 +864,16 @@ commands:
             fi
 
             echo "=== Phase 2: Starting all remaining containers ==="
-            docker-compose up -d
+            for attempt in 1 2 3; do
+              if docker-compose up -d; then break; fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 2 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for application services to start..."
             sleep 30
@@ -612,7 +885,7 @@ commands:
             echo ""
             echo "=== Verifying container names ==="
             # Containers needed for CI tests (dev containers excluded as they're not used in tests)
-            ALL_CONTAINERS="${COMPOSE_PROJECT_NAME:-freegle}-traefik ${COMPOSE_PROJECT_NAME:-freegle}-percona ${COMPOSE_PROJECT_NAME:-freegle}-postgres ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin ${COMPOSE_PROJECT_NAME:-freegle}-mailpit ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin ${COMPOSE_PROJECT_NAME:-freegle}-redis ${COMPOSE_PROJECT_NAME:-freegle}-delivery ${COMPOSE_PROJECT_NAME:-freegle}-tusd ${COMPOSE_PROJECT_NAME:-freegle}-status ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 ${COMPOSE_PROJECT_NAME:-freegle}-batch ${COMPOSE_PROJECT_NAME:-freegle}-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-playwright"
+            ALL_CONTAINERS="${COMPOSE_PROJECT_NAME:-freegle}-traefik ${COMPOSE_PROJECT_NAME:-freegle}-percona ${COMPOSE_PROJECT_NAME:-freegle}-postgres ${COMPOSE_PROJECT_NAME:-freegle}-phpmyadmin ${COMPOSE_PROJECT_NAME:-freegle}-mailpit ${COMPOSE_PROJECT_NAME:-freegle}-beanstalkd ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin ${COMPOSE_PROJECT_NAME:-freegle}-redis ${COMPOSE_PROJECT_NAME:-freegle}-delivery ${COMPOSE_PROJECT_NAME:-freegle}-tusd ${COMPOSE_PROJECT_NAME:-freegle}-status ${COMPOSE_PROJECT_NAME:-freegle}-host-scripts ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 ${COMPOSE_PROJECT_NAME:-freegle}-batch ${COMPOSE_PROJECT_NAME:-freegle}-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-modtools-prod-local ${COMPOSE_PROJECT_NAME:-freegle}-playwright"
             MISSING=""
             for container in $ALL_CONTAINERS; do
               if docker inspect "$container" >/dev/null 2>&1; then
@@ -634,6 +907,41 @@ commands:
             fi
             echo ""
             echo "✅ All containers verified"
+
+            # === Verify the spatial (routing) container booted on the Bristol extract ===
+            # spatial builds its road graph from OSM_PBF_PATH (set executor-level to the
+            # committed /app/testdata/bristol.osm.pbf). If that env var doesn't reach
+            # docker-compose, spatial exits on the absent /data/uk-latest.osm.pbf. Catch
+            # it HERE with full diagnostics rather than 30+ min later at the routing gate
+            # (where SSH isn't available on the self-hosted runner to investigate live).
+            echo ""
+            echo "=== Verifying spatial (routing) container is serving on the Bristol extract ==="
+            SPATIAL="${COMPOSE_PROJECT_NAME:-freegle}-spatial"
+            spatial_ok=false
+            for i in $(seq 1 40); do
+              status=$(docker inspect --format='{{.State.Status}}' "$SPATIAL" 2>/dev/null || echo "missing")
+              if [ "$status" = "running" ] && docker exec "$SPATIAL" curl -sf http://localhost:8196/health >/dev/null 2>&1; then
+                spatial_ok=true
+                echo "✅ spatial serving /health after $((i*3))s:"
+                docker exec "$SPATIAL" curl -s http://localhost:8196/health 2>/dev/null; echo ""
+                break
+              fi
+              if [ "$status" = "exited" ] || [ "$status" = "dead" ]; then
+                echo "spatial entered '$status' state early — capturing diagnostics."
+                break
+              fi
+              sleep 3
+            done
+            if [ "$spatial_ok" != "true" ]; then
+              echo "❌ spatial container did not come up serving /health — routing-go tests cannot run."
+              echo "--- docker inspect state ---"
+              docker inspect --format='Status={{.State.Status}} Running={{.State.Running}} ExitCode={{.State.ExitCode}} Error={{.State.Error}}' "$SPATIAL" 2>&1 || true
+              echo "--- OSM_PBF_PATH / DEPRIVATION_CSV seen by the container ---"
+              docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' "$SPATIAL" 2>/dev/null | grep -E "OSM_PBF_PATH|DEPRIVATION_CSV" || echo "(those env vars are NOT set on the container — they did not reach docker-compose)"
+              echo "--- spatial logs (last 80) ---"
+              docker logs "$SPATIAL" --tail 80 2>&1 || true
+              exit 1
+            fi
 
   # === Removed Commands (monorepo migration) ===
   # clone-freegle-docker: Removed — no longer needed; monorepo checkout replaces submodule cloning
@@ -672,6 +980,10 @@ commands:
 
             # Ensure COMPOSE_PROFILES is set (may not be in .env if profiles branch not merged yet)
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
+            # Boot the routing (spatial) container on the small committed Bristol
+            # extract — no 2.5GB UK graph in CI — so routing-go tests can run.
+            export OSM_PBF_PATH="${OSM_PBF_PATH:-/app/testdata/bristol.osm.pbf}"
+            export DEPRIVATION_CSV="${DEPRIVATION_CSV:-/app/testdata/bristol_lsoa.csv}"
 
             # Two-phase startup: all databases must exist before application containers start.
             #
@@ -680,10 +992,23 @@ commands:
             # Phase 2: All remaining containers (databases already waiting for them)
 
             echo "=== Phase 1: Infrastructure + migrations ==="
-            docker-compose up -d \
-              percona postgres redis beanstalkd mailpit \
-              spamassassin-app reverse-proxy tusd delivery loki mjml \
-              batch status host-scripts
+            # Retry the bringup — a transient Docker Hub 429 (pull-through mirror not loaded
+            # on this instance) must not fail the whole run. See start-docker-services.
+            for attempt in 1 2 3; do
+              if docker-compose up -d \
+                percona postgres redis beanstalkd mailpit \
+                spamassassin-app reverse-proxy tusd delivery loki mjml \
+                batch status host-scripts; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 1 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for percona to be healthy..."
             for i in $(seq 1 60); do
@@ -735,7 +1060,16 @@ commands:
             fi
 
             echo "=== Phase 2: Starting all remaining containers ==="
-            docker-compose up -d
+            for attempt in 1 2 3; do
+              if docker-compose up -d; then break; fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "❌ Phase 2 stack bringup failed after 3 attempts"
+                exit 1
+              fi
+              echo "⚠️  docker-compose up failed (attempt $attempt/3) — likely a transient Docker Hub 429; reloading docker to (re)load the mirror, then retrying..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 15
+            done
 
             echo "Waiting for application services to start..."
             sleep 30
@@ -773,9 +1107,6 @@ commands:
                 echo "=== Status container logs (last 30) ==="
                 docker logs ${COMPOSE_PROJECT_NAME:-freegle}-status --tail 30 2>&1 || true
                 echo ""
-                echo "=== API v1 container logs (last 30) ==="
-                docker logs ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit --tail 30 2>&1 || true
-                echo ""
                 echo "=== API v2 container logs (last 30) ==="
                 docker logs ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 --tail 30 2>&1 || true
                 echo ""
@@ -791,16 +1122,15 @@ commands:
                 # Get health status from status service
                 health_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/status/all 2>/dev/null || echo '{}')
 
-                # Check if API v1 and v2 are healthy
-                apiv1_status=$(echo "$health_response" | jq -r '.apiv1.status // "unknown"')
+                # Check if the API is healthy
                 apiv2_status=$(echo "$health_response" | jq -r '.apiv2.status // "unknown"')
 
-                if [ "$apiv1_status" = "success" ] && [ "$apiv2_status" = "success" ]; then
-                  echo "✅ API v1 and v2 services are healthy!"
+                if [ "$apiv2_status" = "success" ]; then
+                  echo "✅ API v2 service is healthy!"
                   break
                 else
                   elapsed_min=$((elapsed / 60))
-                  echo "[${elapsed_min}m] API v1: $apiv1_status, API v2: $apiv2_status - waiting..."
+                  echo "[${elapsed_min}m] API v2: $apiv2_status - waiting..."
                 fi
               else
                 echo "Status service not yet responding..."
@@ -1017,186 +1347,6 @@ commands:
             fi
           no_output_timeout: 40m
 
-  run-php-tests:
-    description: "RETIRED — iznik-server PHPUnit tests have been removed. This command is no longer called."
-    parameters:
-      reason:
-        type: string
-        default: "Retired"
-    steps:
-      - restore_cache:
-          keys:
-            - geoip-db-v1
-      - run:
-          name: Run PHPUnit tests
-          command: |
-            # Support both FreegleDocker (~/project) and submodule (~/FreegleDocker) paths
-            if [ -d "$HOME/FreegleDocker" ]; then
-              cd "$HOME/FreegleDocker"
-            fi
-            echo "🐘 << parameters.reason >>..."
-
-            # Restore GeoIP database from cache if available
-            # Copy to the dedicated PHPUnit test container since that's where tests run
-            if [ -f ~/geoip-cache/GeoLite2-Country.mmdb ]; then
-              echo "📍 Restoring GeoIP database from cache..."
-              docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit mkdir -p /var/lib/GeoIP
-              docker cp ~/geoip-cache/GeoLite2-Country.mmdb ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/lib/GeoIP/GeoLite2-Country.mmdb
-              docker cp ~/geoip-cache/GeoLite2-City.mmdb ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/lib/GeoIP/GeoLite2-City.mmdb 2>/dev/null || true
-              echo "✅ GeoIP database restored from cache"
-            else
-              echo "⚠️ No GeoIP cache found - container will attempt download"
-              # Give container time to download GeoIP (it has retry logic)
-              echo "Waiting for GeoIP download attempt..."
-              sleep 30
-            fi
-
-            # Database schema set up by setup-test-database step (Laravel migrations)
-            # Just verify the database is accessible
-            echo "Verifying database connection..."
-            docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'SELECT 1 FROM iznik.groups LIMIT 1'" || {
-              echo "Database not ready after setup-test-database - this should not happen"
-              echo "Check that ${COMPOSE_PROJECT_NAME:-freegle}-batch migrations ran successfully"
-              docker logs ${COMPOSE_PROJECT_NAME:-freegle}-batch --tail 30 2>&1 || true
-              exit 1
-            }
-
-            # Trigger tests via API
-            response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" http://localhost:${PORT_STATUS:-8081}/api/tests/php)
-            http_code="${response: -3}"
-
-            if [ "$http_code" -ne "200" ]; then
-              echo "❌ Failed to trigger PHP tests. HTTP code: $http_code"
-              echo "Response: $response"
-              exit 1
-            fi
-
-            echo "✅ PHP tests triggered successfully"
-
-            # Monitor test progress with timeout
-            echo "📊 Monitoring PHP test progress..."
-            start_time=$(date +%s)
-            timeout_duration=2700  # 45 minutes
-
-            while true; do
-              current_time=$(date +%s)
-              elapsed=$((current_time - start_time))
-
-              if [ $elapsed -gt $timeout_duration ]; then
-                echo "❌ PHP tests timed out after 45 minutes"
-                exit 1
-              fi
-
-              sleep 10
-              status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/php/status || echo '{"status":"error"}')
-              status=$(echo "$status_response" | jq -r '.status // "unknown"')
-              message=$(echo "$status_response" | jq -r '.message // "No message"')
-
-              elapsed_min=$((elapsed / 60))
-              echo "[${elapsed_min}m] Status: $status"
-              echo "Message: $message"
-
-              if [ "$status" = "completed" ]; then
-                echo "🎉 PHP tests completed!"
-                echo "✅ PHPUnit tests passed!"
-                echo "PHP_TESTS_PASSED=true" >> $BASH_ENV
-                break
-              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                echo "❌ PHP tests failed!"
-                echo "Error details:"
-                echo "$status_response" | jq -r '.logs // "No logs available"' | tail -30
-
-                # Show the failure details from the PHPUnit debug log
-                echo ""
-                echo "Extracting failure details from PHPUnit output..."
-                # Use the dedicated PHPUnit test container (${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit)
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit sh -c '
-                  if [ -f /tmp/phpunit-debug.log ]; then
-                    echo "=== TEST FAILURES ==="
-                    grep "##teamcity\[testFailed" /tmp/phpunit-debug.log | head -10 | while read -r line; do
-                      test_name=$(echo "$line" | sed "s/.*name='"'"'\([^'"'"']*\)'"'"'.*/\1/")
-                      message=$(echo "$line" | sed "s/.*message='"'"'\([^'"'"']*\)'"'"'.*/\1/")
-                      details=$(echo "$line" | sed "s/.*details='"'"'\([^'"'"']*\)'"'"'.*/\1/" | sed "s/|n/\n/g")
-                      if [ -n "$test_name" ]; then
-                        echo "❌ $test_name"
-                        [ -n "$message" ] && echo "   Message: $message"
-                        [ -n "$details" ] && echo "   Details: $details"
-                      fi
-                    done
-
-                    echo ""
-                    echo "=== TEST SUMMARY ==="
-                    tail -20 /tmp/phpunit-debug.log | grep -E "Tests:|FAILURES!|Skipped:" || echo "No summary found"
-                  else
-                    echo "Debug log not found"
-                  fi
-                ' || echo "Could not extract failure details"
-
-                echo "PHP_TESTS_PASSED=false" >> $BASH_ENV
-                exit 1
-              fi
-            done
-
-            # Upload PHP coverage immediately after tests complete
-            echo "📤 Uploading PHP coverage..."
-            if [ -z "${COVERALLS_REPO_TOKEN}" ]; then
-              echo "⚠️ COVERALLS_REPO_TOKEN not set - skipping coverage upload"
-              exit 0
-            fi
-
-            # Copy coverage file from container
-            COVERAGE_FOUND=false
-            if docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/www/iznik/test/ut/php/clover.xml /tmp/phpunit-clover.xml 2>/dev/null; then
-              COVERAGE_FOUND=true
-              echo "✅ Found PHP coverage at /var/www/iznik/test/ut/php/clover.xml"
-            elif docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/tmp/phpunit-coverage.xml /tmp/phpunit-clover.xml 2>/dev/null; then
-              COVERAGE_FOUND=true
-              echo "✅ Found PHP coverage at /tmp/phpunit-coverage.xml"
-            fi
-
-            if [ "$COVERAGE_FOUND" = "true" ]; then
-              # Check for Coveralls outage before uploading
-              OUTAGE_JSON=$(curl -sf --max-time 10 "https://status.coveralls.io/api/v2/incidents/unresolved.json" 2>/dev/null || echo '{}')
-              INCIDENT_COUNT=$(echo "$OUTAGE_JSON" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('incidents',[])))" 2>/dev/null || echo "0")
-              if [ "$INCIDENT_COUNT" -gt 0 ]; then
-                echo "⚠️ Coveralls has an active outage (see https://status.coveralls.io) - skipping upload"
-              else
-                npm install -g coveralls
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && php composer.phar require php-coveralls/php-coveralls --dev" || echo "php-coveralls install warning"
-
-                # Copy coverage file to container and upload
-                docker cp /tmp/phpunit-clover.xml ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/www/iznik/clover.xml
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && COVERALLS_REPO_TOKEN=${COVERALLS_REPO_TOKEN} COVERALLS_SERVICE_NAME=circleci COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM} vendor/bin/php-coveralls -v --coverage_clover=clover.xml --json_path=/tmp/coveralls.json"
-
-                if [ $? -eq 0 ]; then
-                  echo "✅ PHP coverage uploaded successfully"
-                else
-                  echo "❌ PHP coverage upload failed"
-                  exit 1
-                fi
-              fi
-            else
-              echo "❌ PHP coverage file not found"
-              exit 1
-            fi
-          no_output_timeout: 50m
-      - run:
-          name: Save GeoIP database for caching
-          when: always
-          command: |
-            # Copy GeoIP database from container for caching (if it exists)
-            mkdir -p ~/geoip-cache
-            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/lib/GeoIP/GeoLite2-Country.mmdb ~/geoip-cache/GeoLite2-Country.mmdb 2>/dev/null && \
-              echo "✅ GeoIP Country database saved for caching" || \
-              echo "⚠️ GeoIP Country database not available to cache"
-            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/lib/GeoIP/GeoLite2-City.mmdb ~/geoip-cache/GeoLite2-City.mmdb 2>/dev/null && \
-              echo "✅ GeoIP City database saved for caching" || \
-              echo "⚠️ GeoIP City database not available to cache"
-      - save_cache:
-          key: geoip-db-v1
-          paths:
-            - ~/geoip-cache
-
   wait-for-batch-container:
     description: "Wait for batch container to be healthy and migrations to complete"
     steps:
@@ -1292,8 +1442,19 @@ commands:
               exit 0
             fi
             echo "📦 Installing Node.js 22..."
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # deb.nodesource.com is Cloudflare-fronted and 403s datacenter/CI IPs; fall back to
+            # nodejs.org's official tarball (a separate CDN) into /usr/local when NodeSource fails.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
             echo "✅ Node.js $(node --version) installed"
       - run:
           name: Run Vitest unit tests
@@ -1331,7 +1492,17 @@ commands:
             fi
 
             echo "📦 Installing npm dependencies..."
-            npm ci --prefer-offline --no-audit
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci --prefer-offline --no-audit; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
 
             echo "🔧 Running nuxi prepare..."
             npx nuxi prepare
@@ -1346,6 +1517,45 @@ commands:
               echo "❌ Vitest unit tests failed with exit code: $VITEST_EXIT_CODE"
               exit $VITEST_EXIT_CODE
             fi
+
+  run-agent-sdk-tests:
+    description: "Run the claude-agent-sdk unit tests (node:test). Fast, no containers."
+    steps:
+      - run:
+          name: Run claude-agent-sdk unit tests
+          command: |
+            set -e
+            # These specs (guard.js SQL guard, auth.js role gate + billing mode,
+            # device-summary.js) had no CI at all - nothing under .circleci
+            # referenced claude-agent-sdk, so they only ever ran on a developer's
+            # machine. They cover the SELECT-only guard and the Support/Admin
+            # gate, which are the security controls on de-anonymised member data,
+            # so they are worth failing the build over.
+            SDK_DIR=""
+            for d in ./claude-agent-sdk "$HOME/FreegleDocker/claude-agent-sdk" "$HOME/project/claude-agent-sdk"; do
+              if [ -d "$d" ]; then SDK_DIR="$d"; break; fi
+            done
+            if [ -z "$SDK_DIR" ]; then
+              echo "Could not find claude-agent-sdk (cwd: $(pwd))"
+              exit 1
+            fi
+            SDK_DIR=$(cd "$SDK_DIR" && pwd)
+            echo "Using $SDK_DIR"
+
+            # The tested modules require nothing outside Node's stdlib, so there is
+            # no npm install here - verified by running with node_modules removed.
+            # Prefer the runner's own Node; Katapult VMs may not have one, so fall
+            # back to a container rather than installing a toolchain.
+            if command -v node >/dev/null 2>&1 && \
+               node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' 2>/dev/null; then
+              echo "Running with host node $(node --version)"
+              cd "$SDK_DIR"
+              node --test
+            else
+              echo "No suitable host Node (need >= 20) - running in node:22-alpine"
+              docker run --rm -v "$SDK_DIR":/app -w /app node:22-alpine node --test
+            fi
+            echo "claude-agent-sdk unit tests passed"
 
   run-playwright-tests:
     description: "Run Playwright tests via the status service API and upload coverage"
@@ -1566,11 +1776,11 @@ commands:
                 echo "⚠️ Coveralls has an active outage (see https://status.coveralls.io) - skipping upload"
               else
                 npm install -g coveralls
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && php composer.phar require php-coveralls/php-coveralls --dev" || echo "php-coveralls install warning"
+                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-batch bash -c "cd /var/www/html && composer require php-coveralls/php-coveralls --dev" || echo "php-coveralls install warning"
 
                 # Copy coverage file to container and upload
-                docker cp /tmp/laravel-clover.xml ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/www/iznik/clover.xml
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && COVERALLS_REPO_TOKEN=${COVERALLS_REPO_TOKEN} COVERALLS_SERVICE_NAME=circleci COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM} vendor/bin/php-coveralls -v --coverage_clover=clover.xml --json_path=/tmp/coveralls.json"
+                docker cp /tmp/laravel-clover.xml ${COMPOSE_PROJECT_NAME:-freegle}-batch:/var/www/html/clover.xml
+                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-batch bash -c "cd /var/www/html && COVERALLS_REPO_TOKEN=${COVERALLS_REPO_TOKEN} COVERALLS_SERVICE_NAME=circleci COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM} vendor/bin/php-coveralls -v --coverage_clover=clover.xml --json_path=/tmp/coveralls.json"
 
                 if [ $? -eq 0 ]; then
                   echo "✅ Laravel coverage uploaded successfully"
@@ -1607,11 +1817,6 @@ commands:
             fi
 
             # Use fixed container names from docker-compose.yml (no dynamic lookup needed)
-
-            # Collect PHPUnit test output files
-            mkdir -p ~/artifacts/phpunit
-            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/tmp/phpunit-output.log ~/artifacts/phpunit/ 2>/dev/null || true
-            docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/tmp/phpunit-debug.log ~/artifacts/phpunit/ 2>/dev/null || true
 
             # Collect Laravel (batch) test output and monitoring logs
             mkdir -p ~/artifacts/laravel
@@ -1677,12 +1882,6 @@ commands:
               echo "=== FAILED TEST SUITES ==="
             } > ~/artifacts/ci-failure-diagnostics.txt
 
-            # PHPUnit failures
-            if [ -f ~/artifacts/phpunit/phpunit-output.log ]; then
-              echo "--- PHPUnit ---" >> ~/artifacts/ci-failure-diagnostics.txt
-              grep -E 'FAIL|Error|ERRORS!|FAILURES!' ~/artifacts/phpunit/phpunit-output.log >> ~/artifacts/ci-failure-diagnostics.txt 2>/dev/null || echo "  (no failure lines found)" >> ~/artifacts/ci-failure-diagnostics.txt
-              echo "" >> ~/artifacts/ci-failure-diagnostics.txt
-            fi
 
             # Go test failures
             if docker ps --format '{{.Names}}' | grep -q ${COMPOSE_PROJECT_NAME:-freegle}-apiv2; then
@@ -1818,66 +2017,6 @@ commands:
               fi
             else
               echo "ℹ️ No Go coverage found (this is OK if Go tests didn't run)"
-            fi
-          when: always
-      - run:
-          name: Upload PHP coverage
-          command: |
-            if [ "$SKIP_COVERAGE" = "true" ]; then exit 0; fi
-            # Support both FreegleDocker main build and submodule paths
-            if [ -d "$HOME/FreegleDocker" ]; then
-              cd "$HOME/FreegleDocker"
-            fi
-            # Use fixed container name from docker-compose.yml
-            COVERAGE_FOUND=false
-
-            # Try the standard test path first (used by PR tests)
-            if docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/www/iznik/test/ut/php/clover.xml /tmp/phpunit-clover.xml 2>/dev/null; then
-              COVERAGE_FOUND=true
-              echo "Found PHP coverage at /var/www/iznik/test/ut/php/clover.xml"
-            # Also try /tmp/phpunit-coverage.xml (used by status service when running via API)
-            elif docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/tmp/phpunit-coverage.xml /tmp/phpunit-clover.xml 2>/dev/null; then
-              COVERAGE_FOUND=true
-              echo "Found PHP coverage at /tmp/phpunit-coverage.xml"
-            fi
-
-            if [ "$COVERAGE_FOUND" = "true" ]; then
-              echo "Processing PHP coverage..."
-
-              # Install php-coveralls in the container using composer.phar
-              docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && php composer.phar require php-coveralls/php-coveralls --dev 2>&1" || true
-
-              # Copy coverage file to container
-              docker cp /tmp/phpunit-clover.xml ${COMPOSE_PROJECT_NAME:-freegle}-apiv1:/var/www/iznik/clover.xml
-
-              # Create coveralls config in container with writable json_path
-              docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "echo 'coverage_clover: clover.xml' > /var/www/iznik/.coveralls.yml && echo 'json_path: /tmp/coveralls-upload.json' >> /var/www/iznik/.coveralls.yml && echo 'service_name: circleci' >> /var/www/iznik/.coveralls.yml"
-
-              # Initialize a minimal git repo in container for php-coveralls (it needs git info)
-              # The submodule's .git file points to a path not mounted in container
-              # Must create an initial commit so there's a branch for collectBranch()
-              docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && rm -f .git && git init && git config user.email 'ci@freegle.org' && git config user.name 'CircleCI' && git remote add origin https://github.com/Freegle/Iznik.git && git commit --allow-empty -m 'CI initial commit' && git branch -M $CIRCLE_BRANCH"
-
-              # Run php-coveralls from within the container (which has PHP)
-              # All coverage now goes to the monorepo Coveralls project
-              # Pass git info via environment variables since container doesn't have access to .git/modules
-              if docker exec \
-                -e COVERALLS_REPO_TOKEN="$COVERALLS_REPO_TOKEN" \
-                -e COVERALLS_RUN_LOCALLY=1 \
-                -e CI_BRANCH="$CIRCLE_BRANCH" \
-                -e CI_COMMIT_ID="$CIRCLE_SHA1" \
-                -e CI_BUILD_NUMBER="$CIRCLE_BUILD_NUM" \
-                -e CI_BUILD_URL="$CIRCLE_BUILD_URL" \
-                -e CI_NAME="circleci" \
-                ${COMPOSE_PROJECT_NAME:-freegle}-apiv1 bash -c "cd /var/www/iznik && php composer/vendor/bin/php-coveralls -v --config .coveralls.yml --exclude-no-stmt 2>&1"; then
-                echo "✅ PHP coverage uploaded"
-                echo "PHP_UPLOADED=true" >> $BASH_ENV
-              else
-                echo "❌ PHP coverage upload failed"
-                exit 1
-              fi
-            else
-              echo "ℹ️ No PHP coverage found at either location"
             fi
           when: always
       - run:
@@ -2079,6 +2218,28 @@ jobs:
             sudo sed -i -E 's/UPTIME_SECONDS" -gt [0-9]+/UPTIME_SECONDS" -gt 9000/' /usr/local/bin/idle-check.sh
             echo "Idle-check: cleared idle marker, patched thresholds (idle=2100s abs-age=9000s)"
 
+            # Ensure swap exists on VMs provisioned before the 9dd88881c bootstrap fix
+            # (2026-05-26). The bootstrap script now creates a 2GB swapfile, but already-
+            # running VMs never re-run bootstrap. Without swap a memory spike during the
+            # parallel Docker build (PHP + Go + Nuxt + Playwright all peaking together)
+            # OOM-kills the runner agent, causing heartbeat-timeout / infrastructure_fail.
+            # Apply the same fix in-job so all Katapult VMs, regardless of age, have swap
+            # before the heavy build starts.
+            if ! swapon --show 2>/dev/null | grep -q '/swapfile'; then
+              if sudo fallocate -l 2G /swapfile 2>/dev/null || \
+                 sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none 2>/dev/null; then
+                sudo chmod 600 /swapfile
+                sudo mkswap /swapfile >/dev/null 2>&1
+                sudo swapon /swapfile 2>/dev/null
+                sudo sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+                echo "Swap: created 2GB swapfile on legacy Katapult VM (no prior swap)"
+              else
+                echo "Swap: swapfile creation failed — build may OOM on memory spike"
+              fi
+            else
+              echo "Swap: already present (new-style VM)"
+            fi
+
       # Fix ownership of root-owned files BEFORE checkout so git can write
       - run:
           name: Fix file ownership before checkout
@@ -2114,9 +2275,12 @@ jobs:
             checkout_code() {
               if [ -d .git ]; then
                 git fetch --prune origin
-                git reset --hard HEAD
-                git clean -fd
-                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                # HEAD may be an orphan if a previous run failed mid-init; ignore the error.
+                git reset --hard HEAD 2>/dev/null || true
+                # -x also removes gitignored files (e.g. .claude/skills/ralph/) that
+                # would otherwise block checkout with "untracked files would be overwritten".
+                git clean -fdx
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
                 # Second clean: removes files from previous branch that git checkout couldn't
                 # delete (e.g., root-owned files created by Docker containers via bind mounts,
                 # or files left by concurrent builds sharing the workspace directory).
@@ -2128,8 +2292,9 @@ jobs:
                 git init
                 git remote add origin "$CIRCLE_REPOSITORY_URL" 2>/dev/null || git remote set-url origin "$CIRCLE_REPOSITORY_URL"
                 git fetch --prune origin
-                git clean -fd
-                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                # -x also removes gitignored files that would block checkout.
+                git clean -fdx
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
                 git clean -fd
               fi
             }
@@ -2164,13 +2329,13 @@ jobs:
             if [ "$CIRCLE_BRANCH" = "master" ]; then
               CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
             else
-              CHANGED_FILES=$(git diff --name-only origin/master...HEAD)
+              CHANGED_FILES=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
             fi
 
             if [ -n "$CHANGED_FILES" ]; then
-              NON_SKIPPABLE_FILES=$(echo "$CHANGED_FILES" | grep -v -E '^(plans/|yesterday/)' || true)
+              NON_SKIPPABLE_FILES=$(echo "$CHANGED_FILES" | grep -v -E '^(plans/|yesterday/|docs/)' || true)
               if [ -z "$NON_SKIPPABLE_FILES" ]; then
-                echo "Only plans/ or yesterday/ files were changed. Skipping build."
+                echo "Only plans/, yesterday/ or docs/ files were changed. Skipping build."
                 circleci-agent step halt
               fi
             fi
@@ -2200,11 +2365,15 @@ jobs:
           name: Verify monorepo subtree directories
           command: |
             echo "=== Verifying subtree directories ==="
-            ls -d iznik-nuxt3/ iznik-server-go/ iznik-server/ iznik-batch/ || { echo "ERROR: subtree directories missing"; exit 1; }
+            ls -d iznik-nuxt3/ iznik-server-go/ iznik-batch/ || { echo "ERROR: subtree directories missing"; exit 1; }
 
             # ModTools is now built from iznik-nuxt3/modtools (same repo, different build)
             echo "=== Verifying modtools directory ==="
             ls -la iznik-nuxt3/modtools/Dockerfile* || echo "WARNING: modtools/Dockerfile files not found"
+
+      # Cheap, container-free, and covers the SQL guard and role gate on the AI
+      # support helper - run before anything expensive starts.
+      - run-agent-sdk-tests
 
       - run:
           name: Determine changed paths
@@ -2424,7 +2593,17 @@ jobs:
                 fi
                 cd "$NUXT_DIR"
                 echo "running" > /tmp/vitest-result
-                npm ci --prefer-offline --no-audit
+                # codeload rate-limits (429) the GitHub tarball dependency in the lock
+                # file, which npm's own --fetch-retries does not cover. Retry the whole
+                # install with backoff; clamp stays an `if` so the loop body's status is
+                # the clamp's, not a failed test (see docker/embedding-sidecar).
+                n=0; delay=15; until npm ci --prefer-offline --no-audit; do
+                  n=$((n+1))
+                  [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+                  echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+                  sleep "$delay"; delay=$((delay*2))
+                  if [ "$delay" -gt 120 ]; then delay=120; fi
+                done
                 npx nuxi prepare
                 npm run test:unit:run -- --reporter=verbose --coverage 2>&1 | tee /tmp/vitest-output.log
                 EXIT_CODE=${PIPESTATUS[0]}
@@ -2645,21 +2824,28 @@ jobs:
             wait $PLAYWRIGHT_PID 2>/dev/null || true
             [ -n "${VITEST_PID:-}" ] && wait $VITEST_PID 2>/dev/null || true
 
-            # For killed tests, fetch final logs from the status API
-            if [ "$TESTS_KILLED_EARLY" = "true" ]; then
-              echo "📋 Capturing final logs for killed tests..."
-              for test_type in laravel go playwright; do
-                outfile=~/test-output/${test_type}.out
-                result=$(cat /tmp/${test_type}-result 2>/dev/null || echo "unknown")
-                if [ "$result" = "running" ] || [ "$result" = "unknown" ]; then
-                  echo "📋 Fetching final logs for $test_type..."
-                  status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/${test_type}/status || echo '{}')
-                  echo "" >> "$outfile"
-                  echo "=== Test killed by fail-fast ===" >> "$outfile"
-                  echo "$status_response" | jq -r '.logs // "No logs available"' >> "$outfile" 2>/dev/null || true
-                fi
-              done
-            fi
+            # Ensure each suite's output file actually has content, then fall
+            # back to the status API otherwise. Playwright runs via a backgrounded
+            # status-API poller whose buffered stdout is torn down (unflushed)
+            # when the monitoring loop breaks — on fail-fast OR when all suites
+            # complete — so on a Playwright failure playwright.out was left EMPTY,
+            # hiding the failing spec (the artifact uploaded 0 bytes). Re-fetch the
+            # logs from the status API for any suite that did not pass or whose
+            # .out file is empty. Runs unconditionally now (was gated on
+            # TESTS_KILLED_EARLY and only captured 'running'/'unknown', which
+            # skipped a Playwright 'fail').
+            echo "📋 Ensuring final test logs are captured..."
+            for test_type in laravel go playwright; do
+              outfile=~/test-output/${test_type}.out
+              result=$(cat /tmp/${test_type}-result 2>/dev/null || echo "unknown")
+              if [ "$result" != "pass" ] || [ ! -s "$outfile" ]; then
+                echo "📋 Fetching final logs for $test_type (result=$result)..."
+                status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/${test_type}/status || echo '{}')
+                echo "" >> "$outfile"
+                echo "=== Final status-API logs (result=$result) ===" >> "$outfile"
+                echo "$status_response" | jq -r '.logs // "No logs available"' >> "$outfile" 2>/dev/null || true
+              fi
+            done
 
             # Check results from files
             LARAVEL_RESULT=$(cat /tmp/laravel-result 2>/dev/null || echo "fail")
@@ -2731,6 +2917,69 @@ jobs:
             fi
           no_output_timeout: 50m
 
+      - run:
+          name: Run spatial-go tests
+          command: |
+            # iznik-spatial-go (KNN) tests run via the status container, which
+            # docker-execs `go test ./...` in the spatial-knn container (frontend
+            # profile, already up). Serial gate that runs AFTER the Go API tests
+            # (the parallel block above); a failure here fails the job.
+            echo "🧪 Spatial-go tests (iznik-spatial-go)..."
+            response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" "http://localhost:${PORT_STATUS:-8081}/api/tests/spatial")
+            http_code="${response: -3}"
+            if [ "$http_code" != "200" ] && [ "$http_code" != "409" ]; then
+              echo "❌ Failed to trigger spatial tests (HTTP $http_code)"
+              exit 1
+            fi
+            while true; do
+              sleep 5
+              status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/spatial/status" || echo '{"status":"error"}')
+              status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              if [ "$status" = "completed" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "✅ Spatial tests passed"; break
+                else
+                  echo "❌ Spatial tests failed"; exit 1
+                fi
+              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                echo "❌ Spatial tests failed"; exit 1
+              fi
+            done
+          no_output_timeout: 10m
+
+      - run:
+          name: Run routing-go tests
+          command: |
+            # iznik-routing-go tests run via the status container, which docker-execs
+            # `go test ./...` in the spatial container (booted on the committed Bristol
+            # extract). Self-contained gate: a failure here fails the job.
+            echo "🧪 Routing-go tests (iznik-routing-go)..."
+            response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" "http://localhost:${PORT_STATUS:-8081}/api/tests/routing")
+            http_code="${response: -3}"
+            if [ "$http_code" != "200" ] && [ "$http_code" != "409" ]; then
+              echo "❌ Failed to trigger routing tests (HTTP $http_code)"
+              exit 1
+            fi
+            while true; do
+              sleep 5
+              status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/routing/status" || echo '{"status":"error"}')
+              status=$(echo "$status_response" | jq -r '.status // "unknown"')
+              if [ "$status" = "completed" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "✅ Routing tests passed"; break
+                else
+                  echo "❌ Routing tests failed"; exit 1
+                fi
+              elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
+                echo "$status_response" | jq -r '.logs // ""' | tail -30
+                echo "❌ Routing tests failed"; exit 1
+              fi
+            done
+          no_output_timeout: 10m
+
       - store_artifacts:
           path: ~/test-output
           destination: test-output
@@ -2786,16 +3035,92 @@ jobs:
               echo "export SKIP_COVERAGE=true" >> $BASH_ENV
               exit 0
             fi
-            npm install -g coveralls 2>/dev/null || sudo npm install -g coveralls 2>/dev/null || true
+            # Install the coveralls CLI to a user-writable prefix and add it to
+            # PATH for the upload steps below. The runner's default global npm
+            # prefix isn't writable, so a plain `npm install -g` silently failed
+            # ("coveralls: command not found") and no coverage was uploaded.
+            export NPM_CONFIG_PREFIX="$HOME/.npm-global"
+            mkdir -p "$NPM_CONFIG_PREFIX"
+            if npm install -g coveralls && [ -x "$HOME/.npm-global/bin/coveralls" ]; then
+              echo "export PATH=$HOME/.npm-global/bin:\$PATH" >> $BASH_ENV
+              echo "✅ coveralls CLI installed at $HOME/.npm-global/bin/coveralls"
+            else
+              echo "⚠️ coveralls CLI install failed - skipping coverage upload"
+              echo "export SKIP_COVERAGE=true" >> $BASH_ENV
+            fi
             if [ -d ./.git ]; then echo "export COV_ROOT=$(pwd)" >> $BASH_ENV
             elif [ -d ~/project/.git ]; then echo "export COV_ROOT=~/project" >> $BASH_ENV
             elif [ -d ~/FreegleDocker/.git ]; then echo "export COV_ROOT=~/FreegleDocker" >> $BASH_ENV
             else echo "export SKIP_COVERAGE=true" >> $BASH_ENV; fi
             echo "export COVERALLS_SERVICE_NAME=circleci" >> $BASH_ENV
-            echo "export COVERALLS_SERVICE_JOB_ID=${CIRCLE_BUILD_NUM}" >> $BASH_ENV
             echo "export COVERALLS_SERVICE_NUMBER=${CIRCLE_BUILD_NUM}" >> $BASH_ENV
             echo "export COVERALLS_PARALLEL=true" >> $BASH_ENV
+            # Deliberately NOT exporting COVERALLS_SERVICE_JOB_ID here. In a
+            # Coveralls parallel build each flag upload is a separate JOB inside
+            # one build: they share service_number and must differ in
+            # service_job_id (node-coveralls getOptions.js reads both from the
+            # environment). Exporting one id for the whole build made all four
+            # uploads claim to be the same job, so the /webhook that finalises
+            # the build answered {"jobs":0} on every run and `carryforward`
+            # never applied.
+            #
+            # The damage lands on PARTIAL uploads. Every suite runs on every
+            # branch (see "Determine changed paths" - path skipping was removed),
+            # so a partial upload means the build FAILED partway: the upload
+            # steps are `when: always`, so they still send whatever completed,
+            # which for an early failure is Go alone. Measured 2026-08-17:
+            #   build 32370 master  failed  -> 1 report  -> aggregate 85.876%
+            #   build 32377 master  failed  -> 1 report  -> aggregate 85.872%
+            #   build 32381 master  success -> 4 reports
+            #   build 32393 branch  success -> 4 reports -> aggregate 75.621%
+            # carryforward exists to fill the missing flags from master so a
+            # partial upload still reports an honest whole-repo figure. With it
+            # dead, the failed build's aggregate was Go's number alone (85.9%
+            # against a true 75.6%), and that wrong number became the baseline -
+            # so the next healthy full build was reported as "coverage decreased
+            # by 10.3%" having changed nothing.
+            #
+            # Each upload below sets its own id from the flag name instead.
+            #
+            # It must also set COVERALLS_SERVICE_JOB_NUMBER. node-coveralls takes
+            # service_job_number from CIRCLE_BUILD_NUM (getOptions.js:58) unless
+            # that env var overrides it (line 153), so with only the job_id made
+            # distinct all four uploads still posted an identical
+            # service_job_number. Dumping a real payload with `coveralls
+            # --stdout` under this exact environment showed parallel:true,
+            # service_number and flag_name all correct and only that field
+            # colliding, which is the remaining way four uploads could still be
+            # read as one job. Distinct job ids alone did NOT restore
+            # carryforward (1.1.380, build 32411, still "jobs":0).
             echo "export COV_UPLOADS=0" >> $BASH_ENV
+
+            # Retry helper for every Coveralls upload below.
+            #
+            # coveralls.io returns 503 "This website is under heavy load (queue
+            # full)" when busy. The uploads used to be a single attempt, and on
+            # failure printed a warning and let the step SUCCEED - so the build
+            # went green with a whole flag missing from the Coveralls build.
+            # Losing the go flag (the highest-covered component) dropped the
+            # aggregate by ~2.5%, and GitHub then reported "coverage decreased"
+            # on a PR that had changed no instrumented code at all. The
+            # misleading symptom was two steps from the cause, so retry the
+            # upload rather than leaving that to be rediscovered.
+            #
+            # Still fails loudly if every attempt fails: this makes the upload
+            # reliable, it does not make coverage optional.
+            printf '%s\n' \
+              'cov_upload() {' \
+              '  _covfile="$1"' \
+              '  for _covtry in 1 2 3 4 5; do' \
+              '    if cat "$_covfile" | coveralls; then return 0; fi' \
+              '    if [ "$_covtry" -lt 5 ]; then' \
+              '      echo "Coveralls upload attempt $_covtry failed; retrying in $((_covtry * 15))s"' \
+              '      sleep $((_covtry * 15))' \
+              '    fi' \
+              '  done' \
+              '  echo "Coveralls upload failed after 5 attempts"' \
+              '  return 1' \
+              '}' >> $BASH_ENV
 
       - run:
           name: Upload Go coverage
@@ -2809,10 +3134,26 @@ jobs:
             docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv2 sh -c 'cd /app && go install github.com/jandelgado/gcov2lcov@latest 2>/dev/null && ~/go/bin/gcov2lcov -infile=coverage.out -outfile=coverage.lcov' 2>&1 || { echo "⚠️ Convert failed"; exit 0; }
             docker cp ${COMPOSE_PROJECT_NAME:-freegle}-apiv2:/app/coverage.lcov "$GO_DIR/coverage.lcov" 2>/dev/null
             sed -i 's|^SF:/app/|SF:iznik-server-go/|' "$GO_DIR/coverage.lcov"
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go"
-            cat "$GO_DIR/coverage.lcov" | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-go" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-go"
+            cov_upload "$GO_DIR/coverage.lcov" && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
             cp "$GO_DIR/coverage.lcov" /tmp/patch-go.lcov 2>/dev/null || true
+            # Retain the profile as a build artefact before clearing it out of the
+            # checkout. Coveralls reports a percentage delta but never says which
+            # statements moved, and this suite's coverage is not reproducible: it
+            # shares iznik_go_test with the concurrently-running Laravel suite, so
+            # load-dependent error and timeout branches are covered on one run and
+            # not the next. That is how a "Coverage decreased (-0.004%)" red lands
+            # on a commit containing no Go changes at all - 0.004% is one statement.
+            # Deleting the profile here left nothing to diff, so the question was
+            # unanswerable after the fact. Keep both: coverage.out carries per-block
+            # statement counts, which is what a build-to-build diff actually needs.
+            mkdir -p ~/coverage-artifacts
+            cp "$GO_DIR/coverage.out" ~/coverage-artifacts/go-coverage.out 2>/dev/null || true
+            cp "$GO_DIR/coverage.lcov" ~/coverage-artifacts/go-coverage.lcov 2>/dev/null || true
             rm -f "$GO_DIR/coverage.out" "$GO_DIR/coverage.lcov"
+
+      - store_artifacts:
+          path: ~/coverage-artifacts
 
       - run:
           name: Upload Laravel coverage
@@ -2833,8 +3174,8 @@ jobs:
             " /tmp/lc.xml > /tmp/lc.lcov 2>&1
             [ -s /tmp/lc.lcov ] || { echo "⚠️ Conversion failed"; exit 0; }
             echo "✅ Converted ($(wc -l < /tmp/lc.lcov) lines)"
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel"
-            cat /tmp/lc.lcov | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="laravel" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-laravel" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-laravel"
+            cov_upload /tmp/lc.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
           name: Upload Vitest coverage
@@ -2849,8 +3190,8 @@ jobs:
             [ -z "$VL" ] && echo "⚠️ Not found" && exit 0
             echo "✅ Found at $VL"
             sed 's|^SF:|SF:iznik-nuxt3/|' "$VL" > /tmp/vl.lcov
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest"
-            cat /tmp/vl.lcov | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="vitest" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-vitest" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-vitest"
+            cov_upload /tmp/vl.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
           name: Upload Playwright coverage
@@ -2863,8 +3204,8 @@ jobs:
             [ -z "$PL" ] && docker cp ${COMPOSE_PROJECT_NAME:-freegle}-playwright:/app/coverage/lcov.info /tmp/pl.lcov 2>/dev/null && PL="/tmp/pl.lcov" && echo "✅ Found"
             [ -z "$PL" ] && echo "⚠️ Not found" && exit 0
             sed 's|^SF:|SF:iznik-nuxt3/|' "$PL" > /tmp/pl-fixed.lcov
-            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright"
-            cat /tmp/pl-fixed.lcov | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="playwright" && export COVERALLS_SERVICE_JOB_ID="${CIRCLE_BUILD_NUM}-playwright" && export COVERALLS_SERVICE_JOB_NUMBER="${CIRCLE_BUILD_NUM}-playwright"
+            cov_upload /tmp/pl-fixed.lcov && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
 
       - run:
           name: Coveralls webhook
@@ -2873,19 +3214,36 @@ jobs:
             [ "${SKIP_COVERAGE:-}" = "true" ] && exit 0
             if [ "${COV_UPLOADS:-0}" -gt 0 ]; then
               # Carry forward master's last-known coverage for any suite flags not
-              # uploaded in this build. Feature branches skip test suites whose
-              # subtree wasn't touched (SKIP_GO/SKIP_LARAVEL/SKIP_VITEST/SKIP_PLAYWRIGHT),
-              # so their Coveralls flag files are absent — without carryforward,
-              # Coveralls compares partial-branch coverage against master's full
-              # coverage and reports a large false "coverage dropped" regression
-              # (seen as a -7.1% drop on Nuxt-only PRs that skip Go+Laravel).
-              # carryforward only fills flags MISSING from this build; uploaded
-              # flags keep their fresh PR coverage.
+              # uploaded in this build, so a partial upload still reports an
+              # honest whole-repo figure. carryforward only fills flags MISSING
+              # from this build; uploaded flags keep their fresh coverage.
+              #
+              # This used to say feature branches skip untouched subtrees via
+              # SKIP_GO/SKIP_LARAVEL/SKIP_VITEST/SKIP_PLAYWRIGHT. That is no
+              # longer true - "Determine changed paths" hardcodes all four to
+              # false, precisely because skipping broke carryforward. Today a
+              # flag is missing because the build FAILED before that suite
+              # produced its artefact, and these steps are `when: always`.
               echo "📊 Uploaded $COV_UPLOADS reports. Sending webhook (carryforward=go,laravel,vitest,playwright)..."
-              curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
+              WEBHOOK_OUT=$(curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
                 -H "Content-Type: application/json" \
-                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":[\"go\",\"laravel\",\"vitest\",\"playwright\"]}}" \
-                && echo "✅ Webhook sent" || echo "⚠️ Webhook failed"
+                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":[\"go\",\"laravel\",\"vitest\",\"playwright\"]}}") \
+                && echo "✅ Webhook sent: $WEBHOOK_OUT" || echo "⚠️ Webhook failed"
+              # The reply carries the number of parallel jobs Coveralls actually
+              # grouped into this build. It must be >= the number we uploaded.
+              # A zero here means the uploads did not register as parallel jobs,
+              # so `carryforward` silently did nothing and the build's coverage
+              # is whatever subset happened to land - which is how the "-10.3%"
+              # phantom regression on full-stack PRs was produced. Say so
+              # loudly rather than letting it rot unnoticed again.
+              WEBHOOK_JOBS=$(echo "$WEBHOOK_OUT" | sed -n 's/.*"jobs":[[:space:]]*\([0-9]*\).*/\1/p')
+              if [ "${WEBHOOK_JOBS:-0}" -lt "${COV_UPLOADS:-0}" ]; then
+                echo "⚠️ Coveralls grouped ${WEBHOOK_JOBS:-0} parallel job(s) but we uploaded ${COV_UPLOADS} report(s)."
+                echo "⚠️ carryforward will not have applied; the aggregate coverage for this build is unreliable."
+                echo "⚠️ Check that each upload sets a distinct COVERALLS_SERVICE_JOB_ID."
+              else
+                echo "✅ Coveralls grouped ${WEBHOOK_JOBS} parallel job(s)"
+              fi
             else echo "⚠️ No coverage uploaded"; fi
 
       - run:
@@ -3141,8 +3499,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3156,7 +3531,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3278,8 +3664,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - restore_cache:
@@ -3288,7 +3691,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3297,7 +3711,19 @@ jobs:
             - node_modules
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3388,6 +3814,21 @@ jobs:
                 sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
               fi
               sed -i 's|</manifest>|    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>\n</manifest>|' "$MANIFEST"
+            fi
+            # ModTools needs no camera or media access: moderators pick existing
+            # images via the permission-free Android Photo Picker
+            # (Camera.pickImages -> PickVisualMedia). Convert the shared base
+            # manifest's CAMERA declaration into a tools:node="remove" override so
+            # the merged ModTools manifest declares ZERO camera/media permissions
+            # (Freegle keeps CAMERA for in-app capture). The restricted
+            # READ_MEDIA_IMAGES / legacy storage perms were already dropped from the
+            # shared base manifest. In-app "take a photo" still works in ModTools
+            # via the system ACTION_IMAGE_CAPTURE intent, which needs no permission.
+            if grep -q 'android.permission.CAMERA' "$MANIFEST"; then
+              if ! grep -q 'xmlns:tools' "$MANIFEST"; then
+                sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              fi
+              sed -i 's|<uses-permission android:name="android.permission.CAMERA"[[:space:]]*/>|<uses-permission android:name="android.permission.CAMERA" tools:node="remove"/>|' "$MANIFEST"
             fi
             echo "✅ ModTools identity configured"
       - run:
@@ -3503,8 +3944,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - restore_cache:
@@ -3513,7 +3971,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3522,7 +3991,19 @@ jobs:
             - node_modules
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3614,6 +4095,21 @@ jobs:
                 sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
               fi
               sed -i 's|</manifest>|    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>\n</manifest>|' "$MANIFEST"
+            fi
+            # ModTools needs no camera or media access: moderators pick existing
+            # images via the permission-free Android Photo Picker
+            # (Camera.pickImages -> PickVisualMedia). Convert the shared base
+            # manifest's CAMERA declaration into a tools:node="remove" override so
+            # the merged ModTools manifest declares ZERO camera/media permissions
+            # (Freegle keeps CAMERA for in-app capture). The restricted
+            # READ_MEDIA_IMAGES / legacy storage perms were already dropped from the
+            # shared base manifest. In-app "take a photo" still works in ModTools
+            # via the system ACTION_IMAGE_CAPTURE intent, which needs no permission.
+            if grep -q 'android.permission.CAMERA' "$MANIFEST"; then
+              if ! grep -q 'xmlns:tools' "$MANIFEST"; then
+                sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              fi
+              sed -i 's|<uses-permission android:name="android.permission.CAMERA"[[:space:]]*/>|<uses-permission android:name="android.permission.CAMERA" tools:node="remove"/>|' "$MANIFEST"
             fi
             echo "✅ ModTools identity configured"
       - run:
@@ -3747,11 +4243,27 @@ jobs:
             curl -X DELETE \
               -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
-            curl -X POST \
+            # Verify the write landed. This used to print a ✅ regardless of what the API
+            # said, so an expired CIRCLECI_API_TOKEN ("Invalid token provided.") left the
+            # variable stuck at an old version while the job stayed green. Every later
+            # release then recomputed the SAME next version, and iOS failed with
+            # "Invalid Pre-Release Train ... is closed for new build submissions" once that
+            # version had been released — silently unshippable on iOS.
+            STATUS=$(curl -s -o /tmp/envvar-resp.json -w '%{http_code}' -X POST \
               -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar")
+            if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+              echo "❌ CRITICAL: could not update CURRENT_MODTOOLS_VERSION (HTTP $STATUS)"
+              cat /tmp/envvar-resp.json 2>/dev/null
+              echo ""
+              echo "The version variable is now STALE. The next ModTools release will rebuild"
+              echo "${NEW_VERSION} instead of moving on, and iOS will be rejected once that"
+              echo "version is released. Fix CIRCLECI_API_TOKEN, then set the variable to"
+              echo "${NEW_VERSION} before the next release."
+              exit 1
+            fi
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - store_artifacts:
           path: android/app/build/outputs/bundle/release/
@@ -3771,8 +4283,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3786,7 +4315,18 @@ jobs:
             - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -3858,6 +4398,35 @@ jobs:
       - run:
           name: Make gradlew executable
           command: chmod +x android/gradlew
+      # Without this the wrapper fetches the whole ~200MB Gradle distribution
+      # from services.gradle.org on every single Android build, so each release
+      # depends on that host holding the connection open for the length of the
+      # download.  Pipeline #10729 (production 4140acbb3) died on
+      # "java.net.SocketException: Connection reset" partway through
+      # gradle-8.11.1-all.zip: bundleRelease failed, and that production commit
+      # got no Play beta artifact at all while its iOS half built fine.
+      #
+      # A distribution is immutable for a given version, so key on the wrapper
+      # properties that name it. Both keys pin that same checksum, so a Gradle
+      # version bump can never restore the previous version's zip - it fetches
+      # fresh, which is what we want.
+      #
+      # The second key matters because the first one is COLD on the release that
+      # follows this change: gradle-dist-v1 is written only by this job's
+      # save_cache below, and this job runs only on the production branch. So on
+      # its own it would leave the next release doing the very 200MB download
+      # this is meant to remove, and would reset the same way on every Gradle
+      # bump. build-android-debug and build-android-dev, however, already save
+      # ~/.gradle/caches + ~/.gradle/wrapper (which holds wrapper/dists) after
+      # running gradlew, on the same android-executor and working directory, on
+      # every branch bar production/modtools - so that cache is kept warm from
+      # master continuously. CircleCI caches are project-scoped and restore
+      # across branches, so falling back to it gives this job an unpacked
+      # distribution on the first release after merge rather than the second.
+      - restore_cache:
+          keys:
+            - gradle-dist-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-
       - restore_cache:
           keys:
             - bundle-v1-{{ checksum "Gemfile.lock" }}
@@ -3870,6 +4439,13 @@ jobs:
       - run:
           name: Build and Deploy to Google Play Beta Track
           command: bundle exec fastlane android beta
+      # After the build, so we only ever cache a distribution Gradle actually
+      # unpacked and ran.  A half-downloaded zip saved from a failed build would
+      # poison every later one.
+      - save_cache:
+          key: gradle-dist-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}
+          paths:
+            - ~/.gradle/wrapper/dists
       - run:
           name: Update CircleCI Version Variable
           command: |
@@ -3918,12 +4494,35 @@ jobs:
           auto_rerun_delay: 10s
       - run:
           name: Install Node.js Dependencies
-          command: npm ci
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
           name: Install ModTools Dependencies
-          command: cd modtools && npm ci --legacy-peer-deps
+          command: |
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            cd modtools
+            n=0; delay=15; until npm ci --legacy-peer-deps; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -4069,10 +4668,21 @@ jobs:
             NEW_VERSION=$(cat .new_version)
             curl -X DELETE -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
-            curl -X POST -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+            # Fail loudly rather than printing a ✅ the API never earned — see the matching
+            # step in build-android-modtools for what a silent failure here costs.
+            STATUS=$(curl -s -o /tmp/envvar-resp.json -w '%{http_code}' -X POST \
+              -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar")
+            if [ "$STATUS" != "200" ] && [ "$STATUS" != "201" ]; then
+              echo "❌ CRITICAL: could not update CURRENT_MODTOOLS_VERSION (HTTP $STATUS)"
+              cat /tmp/envvar-resp.json 2>/dev/null
+              echo ""
+              echo "Fix CIRCLECI_API_TOKEN, then set the variable to ${NEW_VERSION}"
+              echo "before the next release, or iOS will retry a closed version train."
+              exit 1
+            fi
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - run:
           name: Collect Xcode build logs
@@ -4117,7 +4727,17 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
             npm install @rollup/rollup-darwin-arm64 @oxc-parser/binding-darwin-arm64 @oxc-transform/binding-darwin-arm64 @oxc-minify/binding-darwin-arm64 --prefer-offline || true
           max_auto_reruns: 3
           auto_rerun_delay: 10s
@@ -4338,6 +4958,24 @@ jobs:
           name: Auto-release Apps from Pending Developer Release
           command: bundle exec fastlane ios auto_release
 
+  # Cross-platform release-divergence guard: fails (red CI + failure notification) when the
+  # iOS App Store and Google Play live releases have drifted apart for over a week — e.g. an
+  # iOS version stuck in Prepare for Submission / Apple review while Play keeps shipping.
+  check-release-divergence:
+    executor: android-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - restore_cache:
+          keys:
+            - bundle-v1-{{ checksum "Gemfile.lock" }}
+            - bundle-v1-
+      - setup-android-fastlane
+      - run:
+          name: Check iOS App Store vs Google Play release divergence
+          command: bundle exec fastlane ios check_release_divergence
+
   check-hotfix-promote:
     docker:
       - image: cimg/base:stable
@@ -4378,8 +5016,25 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y nodejs
+            # NodeSource fronts deb.nodesource.com with Cloudflare, which 403s datacenter/CI
+            # IPs (both the self-hosted runner and CircleCI cloud machines have been blocked),
+            # breaking the Android builds while the iOS jobs (nvm -> nodejs.org) stayed green.
+            # Try NodeSource first, then fall back to nodejs.org's official linux-x64 tarball
+            # (a separate CDN that is not gated), unpacked into /usr/local so node/npm persist
+            # to the later steps in this job.
+            if curl -fsSL https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+               && sudo -E bash /tmp/nodesource_setup.sh \
+               && sudo apt-get install -y nodejs; then
+              echo "Installed Node.js via NodeSource"
+            else
+              echo "NodeSource unavailable (likely 403) - installing Node 22 from nodejs.org"
+              NODE_TARBALL=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+                | grep -oE 'node-v22\.[0-9]+\.[0-9]+-linux-x64\.tar\.gz' | head -1)
+              curl -fsSLO "https://nodejs.org/dist/latest-v22.x/${NODE_TARBALL}"
+              sudo tar -xzf "${NODE_TARBALL}" -C /usr/local --strip-components=1
+            fi
+            node --version
+            npm --version
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -4394,8 +5049,18 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
-            npm update @freegle/capacitor-push-notifications-cap7
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
+            npm update @freegle/capacitor-push-notifications-cap8
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - save_cache:
@@ -4575,9 +5240,19 @@ jobs:
       - run:
           name: Install Node.js Dependencies
           command: |
-            npm ci
+            # codeload rate-limits (429) the GitHub tarball dependency in the lock
+            # file, which npm's own --fetch-retries does not cover. Retry the whole
+            # install with backoff; clamp stays an `if` so the loop body's status is
+            # the clamp's, not a failed test (see docker/embedding-sidecar).
+            n=0; delay=15; until npm ci; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "npm install failed after $n attempts" >&2; exit 1; }
+              echo "npm attempt $n failed (rate limit or transient network); retrying in ${delay}s..."
+              sleep "$delay"; delay=$((delay*2))
+              if [ "$delay" -gt 120 ]; then delay=120; fi
+            done
             npm install @rollup/rollup-darwin-arm64 @oxc-parser/binding-darwin-arm64 @oxc-transform/binding-darwin-arm64 @oxc-minify/binding-darwin-arm64 --prefer-offline || true
-            npm update @freegle/capacitor-push-notifications-cap7
+            npm update @freegle/capacitor-push-notifications-cap8
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:

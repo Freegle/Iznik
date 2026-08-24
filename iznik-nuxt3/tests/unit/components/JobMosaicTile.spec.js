@@ -5,7 +5,7 @@ import JobMosaicTile from '~/components/JobMosaicTile.vue'
 const mockRouter = {
   push: vi.fn(),
   currentRoute: {
-    value: { path: '/browse' },
+    value: { path: '/browse', name: 'browse-term' },
   },
 }
 
@@ -44,6 +44,7 @@ describe('JobMosaicTile', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockRouter.currentRoute.value.path = '/browse'
+    mockRouter.currentRoute.value.name = 'browse-term'
     mockJobStore.byId.mockReturnValue({
       id: 1,
       title: 'Software Developer',
@@ -301,10 +302,16 @@ describe('JobMosaicTile', () => {
   })
 
   describe('clicked method', () => {
-    it('logs job click', async () => {
+    it('logs job click with full attribution (placement, source, page)', async () => {
       const wrapper = createWrapper()
       await wrapper.find('.mosaic-tile').trigger('click')
-      expect(mockJobStore.log).toHaveBeenCalledWith({ id: 1 })
+      expect(mockJobStore.log).toHaveBeenCalledWith({
+        id: 1,
+        link: 'https://example.com/job/1',
+        placement: 'mosaic',
+        source: 'website',
+        page: 'browse-term',
+      })
     })
 
     it('navigates to /jobs when not already on jobs page', async () => {

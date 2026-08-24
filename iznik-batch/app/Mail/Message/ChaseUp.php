@@ -105,6 +105,14 @@ class ChaseUp extends MjmlMailable
         return 'What happened to: ' . $this->messageSubject;
     }
 
+    /**
+     * Transactional - about the member's own post - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->userId;

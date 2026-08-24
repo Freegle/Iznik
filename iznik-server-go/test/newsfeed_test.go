@@ -161,6 +161,71 @@ func TestNewsfeedSeen(t *testing.T) {
 	assert.Equal(t, nfID, seenID)
 }
 
+func TestNewsfeedSingleReturnsSeenWatermark(t *testing.T) {
+	prefix := uniquePrefix("nfwr_seenwm")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	nfID := CreateTestNewsfeed(t, userID, 52.2, -0.1, "Test seen watermark "+prefix)
+
+	// Add a reply so we can prove the field only appears on the top-level item.
+	replyBody := fmt.Sprintf(`{"message":"Watermark reply %s","replyto":%d}`, prefix, nfID)
+	replyReq := httptest.NewRequest("POST", "/api/newsfeed?jwt="+token, bytes.NewBufferString(replyBody))
+	replyReq.Header.Set("Content-Type", "application/json")
+	replyResp, _ := getApp().Test(replyReq)
+	assert.Equal(t, 200, replyResp.StatusCode)
+
+	var replyID uint64
+	database.DBConn.Raw("SELECT id FROM newsfeed WHERE replyto = ? AND userid = ? ORDER BY id DESC LIMIT 1",
+		nfID, userID).Scan(&replyID)
+	assert.Greater(t, replyID, uint64(0))
+
+	id := strconv.FormatUint(nfID, 10)
+
+	// No newsfeed_users row yet: watermark stays 0/absent, request must not error.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var single struct {
+		ID            uint64 `json:"id"`
+		SeenWatermark uint64 `json:"seenwatermark"`
+		Replies       []struct {
+			ID            uint64 `json:"id"`
+			SeenWatermark uint64 `json:"seenwatermark"`
+		} `json:"replies"`
+	}
+	json2.Unmarshal(rsp(resp), &single)
+	assert.Equal(t, nfID, single.ID)
+	assert.Equal(t, uint64(0), single.SeenWatermark)
+
+	// Mark the reply seen; the watermark must come back on the top-level object
+	// so the client can baseline "new since my last visit" on any entry path.
+	body := fmt.Sprintf(`{"id":%d,"action":"Seen"}`, replyID)
+	req := httptest.NewRequest("POST", "/api/newsfeed?jwt="+token, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id+"?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	json2.Unmarshal(rsp(resp), &single)
+	assert.Equal(t, replyID, single.SeenWatermark)
+
+	// Nested replies never carry the watermark.
+	assert.Greater(t, len(single.Replies), 0)
+	for _, r := range single.Replies {
+		assert.Equal(t, uint64(0), r.SeenWatermark)
+	}
+
+	// Logged out: no watermark, no error.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/newsfeed/"+id, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var loggedOut struct {
+		SeenWatermark uint64 `json:"seenwatermark"`
+	}
+	json2.Unmarshal(rsp(resp), &loggedOut)
+	assert.Equal(t, uint64(0), loggedOut.SeenWatermark)
+}
+
 func TestNewsfeedSeenHigherIDGuard(t *testing.T) {
 	prefix := uniquePrefix("nfwr_seeng")
 	userID := CreateTestUser(t, prefix, "User")

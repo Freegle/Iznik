@@ -110,12 +110,13 @@
   </div>
 </template>
 <script setup>
+import { useNavbarVisibility } from './composables/useNavbarVisibility'
 import { useNoticeboardStore } from './stores/noticeboard'
 import { useAuthStore } from './stores/auth'
 import { useGroupStore } from './stores/group'
 import { useMessageStore } from './stores/message'
 import { useUserStore } from './stores/user'
-import { useIsochroneStore } from './stores/isochrone'
+import { useNearbyStore } from './stores/nearby'
 import { useComposeStore } from './stores/compose'
 import { useChatStore } from './stores/chat'
 import { useAddressStore } from './stores/address'
@@ -137,7 +138,6 @@ import { useStatsStore } from './stores/stats'
 import { useMicroVolunteeringStore } from './stores/microvolunteering'
 import { useImageStore } from './stores/image'
 import { useDomainStore } from './stores/domain'
-import { useLogoStore } from './stores/logo'
 import { useLocationStore } from './stores/location'
 import { useShortlinkStore } from './stores/shortlinks'
 import { useMiscStore } from './stores/misc'
@@ -145,6 +145,7 @@ import { computed, onMounted, useRoute } from '#imports'
 // polyfills
 import 'core-js/actual/array/to-sorted'
 import { useConfigStore } from '~/stores/config'
+import { badgeTitle, useReactiveTabBadge } from '~/composables/useTitleBadge'
 
 const route = useRoute()
 const loadingIndicatorThrottle = ref(5000)
@@ -205,7 +206,7 @@ const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
-const isochroneStore = useIsochroneStore()
+const nearbyStore = useNearbyStore()
 const composeStore = useComposeStore()
 const configStore = useConfigStore()
 const chatStore = useChatStore()
@@ -229,7 +230,6 @@ const statsStore = useStatsStore()
 const microVolunteeringStore = useMicroVolunteeringStore()
 const imageStore = useImageStore()
 const domainStore = useDomainStore()
-const logoStore = useLogoStore()
 const locationStore = useLocationStore()
 const shortlinkStore = useShortlinkStore()
 
@@ -238,7 +238,7 @@ groupStore.init(runtimeConfig)
 messageStore.init(runtimeConfig)
 authStore.init(runtimeConfig)
 userStore.init(runtimeConfig)
-isochroneStore.init(runtimeConfig)
+nearbyStore.init(runtimeConfig)
 composeStore.init(runtimeConfig)
 chatStore.init(runtimeConfig)
 addressStore.init(runtimeConfig)
@@ -262,7 +262,6 @@ statsStore.init(runtimeConfig)
 microVolunteeringStore.init(runtimeConfig)
 imageStore.init(runtimeConfig)
 domainStore.init(runtimeConfig)
-logoStore.init(runtimeConfig)
 locationStore.init(runtimeConfig)
 shortlinkStore.init(runtimeConfig)
 
@@ -270,11 +269,7 @@ const loginCount = computed(() => {
   return authStore.loginCount
 })
 
-const shouldShowNavbar = computed(() => {
-  // Hide navbar for layouts that shouldn't show it
-  const layout = route.meta?.layout || 'default'
-  return layout !== 'no-navbar'
-})
+const shouldShowNavbar = useNavbarVisibility(route)
 
 // watch(loginCount, async () => {
 //   if (!route.query.k) {
@@ -307,7 +302,7 @@ onMounted(async () => {
   }
 })
 
-if (process.client) {
+if (import.meta.client) {
   if (typeof window !== 'undefined') {
     // There's a bug https://github.com/nuxt/framework/issues/3141 which causes route to stop working.
     const messages = [
@@ -368,19 +363,19 @@ if (process.client) {
 
   useHead({
     titleTemplate: (titleChunk) => {
+      // Read the count refs' .value here (inside the reactive titleTemplate) so
+      // the badge updates as chats/notifications arrive. totalCount is a plain
+      // number - the previous code checked totalCount.value (undefined), so the
+      // count was never shown on the Freegle site (Discourse 9806/6).
       const totalCount = notificationCount.value + chatCount.value
-
-      if (titleChunk) {
-        if (titleChunk.charAt(0) !== '(' && totalCount.value > 0) {
-          return '(' + totalCount.value + ') ' + titleChunk
-        } else {
-          return titleChunk
-        }
-      } else {
-        return null
-      }
+      return badgeTitle(titleChunk, totalCount)
     },
   })
+
+  // useHead's titleTemplate above is NOT reactive to the count refs read inside it,
+  // so the badge only refreshed on navigation (Discourse 9806/9). Watch the count
+  // and update document.title directly so it stays live as chats/notifications arrive.
+  useReactiveTabBadge(() => notificationCount.value + chatCount.value)
 }
 ready = true
 </script>

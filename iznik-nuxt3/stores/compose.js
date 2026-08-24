@@ -1,7 +1,12 @@
 import { defineStore } from 'pinia'
+import { action } from '~/composables/useClientLog'
 import { useMessageStore } from '~/stores/message'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
+import {
+  isUnpostableItem,
+  isNumericOnlyBody,
+} from '~/composables/useItemValidation'
 
 const defaultOffer = {
   id: 0,
@@ -16,10 +21,12 @@ const defaultWanted = {
   attachments: [],
 }
 
-export const useComposeStore = defineStore({
-  id: 'compose',
+export const useComposeStore = defineStore('compose', {
   persist: {
     storage: piniaPluginPersistedstate.localStorage(),
+    // Transient upload state must not survive a reload - see
+    // sanitiseRestoredAttachments() for what goes wrong when it does.
+    afterHydrate: (ctx) => ctx.store.sanitiseRestoredAttachments(),
   },
   // We allow composing of multiple posts for the same location/email, so messages and attachments are indexed by
   // id.  The id is a client-only index; it becomes a real id once the items are posted.
@@ -35,11 +42,33 @@ export const useComposeStore = defineStore({
     max: 4,
     uploading: false,
     lastSubmitted: 0,
+    // In-progress bulk "clearance" (pages/give/clearance.vue). Held here so it
+    // survives a refresh via this store's localStorage persistence — a clearance
+    // holds far more (many items + photos) than a normal post, so losing it hurts.
+    clearanceDraft: null,
+    // In-progress story (components/StoryAddModal.vue). Held here for the same
+    // reason: if we have to interrupt them to log in, app.vue rebuilds the whole
+    // app and the modal goes with it, so without this what they typed is gone.
+    storyDraft: null,
   }),
   actions: {
     init(config) {
       this.config = config
       this.$api = api(config)
+    },
+    // Save / clear the in-progress clearance draft (persisted to localStorage).
+    saveClearanceDraft(draft) {
+      this.clearanceDraft = draft
+    },
+    clearClearanceDraft() {
+      this.clearanceDraft = null
+    },
+    // Save / clear the in-progress story draft (persisted to localStorage).
+    saveStoryDraft(draft) {
+      this.storyDraft = draft
+    },
+    clearStoryDraft() {
+      this.storyDraft = null
     },
     calculateSteps(type) {
       let steps = 0
@@ -77,24 +106,38 @@ export const useComposeStore = defineStore({
       // Extract the server attachment id from message.attachments.
       if (message.attachments) {
         const hasRealPhoto = message.attachments.some(
-          (a) => a.id && typeof a.id === 'number' && !(a.externalmods && a.externalmods.ai)
+          (a) =>
+            a.id &&
+            typeof a.id === 'number' &&
+            !(a.externalmods && a.externalmods.ai)
         )
 
         for (const attachment of message.attachments) {
-          // AI illustrations need to be converted to real server-side attachments,
+          // AI illustrations need to be included as real server-side attachments,
           // but are suppressed when the user has uploaded their own real photo.
           if (attachment.externalmods && attachment.externalmods.ai) {
-            if (!hasRealPhoto && attachment.ouruid) {
-              try {
-                const result = await this.$api.image.post({
-                  externaluid: attachment.ouruid,
-                  externalmods: { ai: true },
-                })
-                if (result.id) {
-                  attids.push(result.id)
+            if (!hasRealPhoto) {
+              if (typeof attachment.id === 'number') {
+                // details.vue already called POST /image to get a real numeric id.
+                // Use it directly — don't call image.post() again.
+                attids.push(attachment.id)
+              } else if (attachment.ouruid) {
+                // Fallback: materialise the attachment now (e.g. POST /image failed
+                // earlier, or an older client stored ouruid without a real id).
+                try {
+                  const result = await this.$api.image.post({
+                    externaluid: attachment.ouruid,
+                    externalmods: { ai: true },
+                  })
+                  if (result.id) {
+                    attids.push(result.id)
+                  }
+                } catch (e) {
+                  console.error(
+                    'Failed to create AI illustration attachment:',
+                    e
+                  )
                 }
-              } catch (e) {
-                console.error('Failed to create AI illustration attachment:', e)
               }
             }
             continue
@@ -118,7 +161,47 @@ export const useComposeStore = defineStore({
         email,
       }
 
+      // Bulk offer ("clearance"): a single post carrying many structured items.
+      // The server creates the catalogue and derives availablenow from the total.
+      if (message.bulkitems && message.bulkitems.length) {
+        data.bulkitems = message.bulkitems
+          .filter((i) => i.name && i.name.trim())
+          .map((i) => ({
+            name: i.name.trim(),
+            quantity: parseInt(i.quantity, 10) || 1,
+            condition: i.condition || 'Unknown',
+            dimensions: i.dimensions || null,
+            photourl: i.photourl || null,
+            description: i.description || null,
+            attachments: Array.isArray(i.attachments) ? i.attachments : [],
+          }))
+      }
+      if (Array.isArray(message.bulkslots) && message.bulkslots.length) {
+        data.bulkslots = message.bulkslots
+      }
+      if (message.accessinstructions) {
+        data.accessinstructions = message.accessinstructions
+      }
+
+      if (data.bulkitems || data.bulkslots || data.accessinstructions) {
+        console.log('[compose] createDraft PUT /message (bulk)', {
+          bulkitemCount: data.bulkitems ? data.bulkitems.length : 0,
+          bulkitems: data.bulkitems,
+          bulkslots: data.bulkslots,
+          attachments: data.attachments,
+          hasAccess: !!data.accessinstructions,
+        })
+      }
+
       const ret = await this.$api.message.put(data)
+
+      if (data.bulkitems) {
+        console.log('[compose] createDraft <- response', {
+          id: ret?.id,
+          bulkcount: ret?.bulkcount,
+          ret,
+        })
+      }
 
       // For unauthenticated users, Go creates a user and returns auth tokens.
       // Store them so the subsequent JoinAndPost call is authenticated.
@@ -141,7 +224,11 @@ export const useComposeStore = defineStore({
           return data?.error !== 403
         },
       })
-      console.log('Returned', ret)
+      console.log('[compose] submitDraft joinAndPost <- response', {
+        id,
+        bulkcount: ret?.bulkcount,
+        ret,
+      })
 
       // Fetch the submitted message - if we're on My Posts, for example, we want to update what we see.
       const messageStore = useMessageStore()
@@ -183,7 +270,8 @@ export const useComposeStore = defineStore({
       textbody,
       attachments,
       availablenow,
-      groupid
+      groupid,
+      accessinstructions = null
     ) {
       const data = {
         id,
@@ -194,6 +282,9 @@ export const useComposeStore = defineStore({
         attachments,
         groupid,
         availablenow,
+      }
+      if (accessinstructions) {
+        data.accessinstructions = accessinstructions
       }
 
       const messageStore = useMessageStore()
@@ -306,6 +397,70 @@ export const useComposeStore = defineStore({
       this.messages[id].attachments = attachments
       this.attachmentBump++
     },
+    // PhotoUploader puts a photo into attachments with uploading:true BEFORE
+    // the upload finishes, and this store persists to localStorage - so an
+    // upload interrupted by a reload or a navigation leaves uploading:true on
+    // disk with nothing left running to clear it.  Nothing else ever resets
+    // it, and the give flow hides Skip and the delete control and disables
+    // Next while a photo is uploading, so the member was locked out of posting
+    // on that device until they cleared site data (Discourse SR-B9W2Q).
+    //
+    // Reconcile on hydrate.  An attachment that never reached the server has
+    // only a preview blob: URL, which died with the page that made it, so
+    // there is nothing left to show and it goes.  One that did reach the
+    // server is simply no longer uploading.
+    sanitiseRestoredAttachments() {
+      let changed = false
+      let dropped = 0
+      let cleared = 0
+      let maxProgress = 0
+
+      for (const message of this.messages) {
+        if (!message?.attachments?.length) {
+          continue
+        }
+
+        for (const attachment of message.attachments) {
+          if (attachment?.uploading) {
+            maxProgress = Math.max(maxProgress, attachment.progress ?? 0)
+          }
+        }
+
+        const kept = message.attachments.filter((a) => !a?.uploading || a?.id)
+
+        if (kept.length !== message.attachments.length) {
+          dropped += message.attachments.length - kept.length
+          message.attachments = kept
+          changed = true
+        }
+
+        for (const attachment of kept) {
+          if (attachment?.uploading) {
+            attachment.uploading = false
+            cleared++
+            changed = true
+          }
+        }
+      }
+
+      if (changed) {
+        this.attachmentBump++
+
+        // Reaching here means a photo was left mid-upload on this device, which
+        // is the state that used to lock people out of posting.  Cleaning it up
+        // silently means we cannot tell whether that is now rare or routine, so
+        // say so: `progress` tells us where it died, which distinguishes an
+        // interrupted upload from one that finished and then hung waiting on a
+        // reply (see composables/useFetchRetry.js).
+        action('stranded photo cleaned up on restore', {
+          event_type: 'photo_upload',
+          photo_stage: 'stranded_restore_cleaned',
+          dropped,
+          cleared,
+          max_progress: maxProgress,
+        })
+      }
+    },
     removeAttachment(params) {
       console.log('Remove attachment', JSON.stringify(params))
       let newAtts = []
@@ -322,6 +477,20 @@ export const useComposeStore = defineStore({
     },
     deleteMessage(id) {
       this.messages = this.messages.filter((m) => m.id !== id)
+    },
+    // Reset a message's content to empty while keeping its id and type - used by "Clear
+    // and start over" so the compose form stays mounted (rather than vanishing when the
+    // message is deleted) and the store-bound inputs clear reactively. See
+    // useCompose.clearItem / Discourse 9915.
+    clearMessage(id) {
+      const idx = this.messages.findIndex((m) => m && m.id === id)
+      if (idx !== -1) {
+        this.messages[idx] = {
+          id,
+          type: this.messages[idx].type,
+          savedAt: Date.now(),
+        }
+      }
     },
     async submit(params) {
       // This is the most important bit of code in the client :-).  We have our messages in the compose store.
@@ -360,7 +529,12 @@ export const useComposeStore = defineStore({
           // Build options for submitDraft with deadline/delivery/aiDeclined if set
           const submitOptions = {}
           if (message.deadline) {
-            submitOptions.deadline = new Date(message.deadline).toISOString()
+            // messages.deadline is a DATE column. Under strict sql_mode MySQL
+            // rejects an ISO datetime outright and apiv2 doesn't surface the
+            // error, so the deadline was silently lost (Discourse #9481).
+            // The date input gives YYYY-MM-DD already; a repost draft may
+            // carry a full ISO datetime from the API, so truncate.
+            submitOptions.deadline = String(message.deadline).substring(0, 10)
           }
           if (message.deliveryPossible !== undefined) {
             submitOptions.deliverypossible = message.deliveryPossible
@@ -404,7 +578,31 @@ export const useComposeStore = defineStore({
 
               for (const att in message.attachments) {
                 const attachment = message.attachments[att]
-                if (attachment.externalmods && attachment.externalmods.ai && hasRealPhoto) {
+                if (attachment.externalmods && attachment.externalmods.ai) {
+                  // AI illustrations: include only when there is no real user photo.
+                  if (!hasRealPhoto) {
+                    if (typeof attachment.id === 'number') {
+                      // Already a real server-side id — use it directly.
+                      attids.push(attachment.id)
+                    } else if (attachment.ouruid) {
+                      // Materialise the attachment via POST /image so the PATCH
+                      // receives a valid uint64 id (never a synthetic 'ai-...' string).
+                      try {
+                        const result = await this.$api.image.post({
+                          externaluid: attachment.ouruid,
+                          externalmods: { ai: true },
+                        })
+                        if (result.id) {
+                          attids.push(result.id)
+                        }
+                      } catch (e) {
+                        console.error(
+                          'Failed to create AI illustration attachment:',
+                          e
+                        )
+                      }
+                    }
+                  }
                   continue
                 }
                 if (attachment.id && typeof attachment.id === 'number') {
@@ -421,7 +619,8 @@ export const useComposeStore = defineStore({
               message.description,
               attids,
               'availablenow' in message ? message.availablenow : 1,
-              this.group
+              this.group,
+              message.accessinstructions || null
             )
 
             const { groupid, newuser, newpassword } = await this.submitDraft(
@@ -565,16 +764,27 @@ export const useComposeStore = defineStore({
           const realPhotos = atts.filter(
             (a) => !a.externalmods || a.externalmods.ai !== true
           )
-          const hasDescription =
-            message.description && message.description.trim()
+          // A purely-numeric description ("24") is no more use than a blank one,
+          // so it doesn't count as having a description.
+          const desc = (message.description || '').trim()
+          const hasDescription = desc !== '' && !isNumericOnlyBody(desc)
           const hasRealPhotos = realPhotos.length > 0
 
-          // A message is valid if there is an item, and either a description or real photos.
-          // AI-only photos require a description.
+          // With no real photo the description must actually say something:
+          // require at least 3 characters, so a bare "I"/"hi" no-photo post is
+          // rejected (post 120808114 had a 1-char body "I"). A real photo carries
+          // the post, so no description minimum applies then.
+          const meaningfulDescription = hasDescription && desc.length >= 3
+
+          // A message is valid if there is an item, the item isn't just a number
+          // or a content-free catch-all ("anything"), and there is either a real
+          // photo or a meaningful description. AI-only photos don't count as a
+          // real photo, so they still require the 3-char-min description.
           if (
             !message.item ||
             !message.item.trim() ||
-            (!hasDescription && !hasRealPhotos)
+            isUnpostableItem(message.item) ||
+            (!hasRealPhotos && !meaningfulDescription)
           ) {
             valid = false
           }

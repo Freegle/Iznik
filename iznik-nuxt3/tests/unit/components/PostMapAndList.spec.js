@@ -7,7 +7,7 @@ import PostMapAndList from '~/components/PostMapAndList.vue'
 const {
   mockGroupList,
   mockGroupSummaryList,
-  mockIsochroneMessageList,
+  mockNearbyMessageList,
   mockUser,
   mockMiscGet,
   mockMember,
@@ -37,7 +37,7 @@ const {
       },
     }),
     mockGroupSummaryList: ref({}),
-    mockIsochroneMessageList: ref([
+    mockNearbyMessageList: ref([
       { id: 100, arrival: '2024-01-20T10:00:00Z', unseen: true, groupid: 1 },
       { id: 101, arrival: '2024-01-19T10:00:00Z', unseen: false, groupid: 1 },
     ]),
@@ -71,9 +71,9 @@ const mockMiscStore = {
   get: mockMiscGet,
 }
 
-const mockIsochroneStore = {
+const mockNearbyStore = {
   get messageList() {
-    return mockIsochroneMessageList.value
+    return mockNearbyMessageList.value
   },
 }
 
@@ -89,8 +89,8 @@ vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
 }))
 
-vi.mock('~/stores/isochrone', () => ({
-  useIsochroneStore: () => mockIsochroneStore,
+vi.mock('~/stores/nearby', () => ({
+  useNearbyStore: () => mockNearbyStore,
 }))
 
 vi.mock('~/composables/useMap', () => ({
@@ -99,6 +99,7 @@ vi.mock('~/composables/useMap', () => ({
 
 vi.mock('~/constants', () => ({
   MAX_MAP_ZOOM: 16,
+  BROWSE_DISTANCE_UNLIMITED: Number.MAX_SAFE_INTEGER,
 }))
 
 // Mock defineAsyncComponent to return simple stubs
@@ -141,7 +142,7 @@ describe('PostMapAndList', () => {
         showjoin: 5,
       },
     }
-    mockIsochroneMessageList.value = [
+    mockNearbyMessageList.value = [
       {
         id: 100,
         arrival: '2024-01-20T10:00:00Z',
@@ -180,7 +181,7 @@ describe('PostMapAndList', () => {
         stubs: {
           PostMap: {
             template:
-              '<div class="post-map" :data-show-groups="showGroups" :data-type="type" :data-search="search"><slot /></div>',
+              '<div class="post-map" :data-show-groups="showGroups" :data-type="type" :data-search="search" :data-show-isochrones="showIsochrones"><slot /></div>',
             props: [
               'ready',
               'bounds',
@@ -226,7 +227,7 @@ describe('PostMapAndList', () => {
           },
           MessageList: {
             template:
-              '<div class="message-list" :data-search="search" :data-selected-group="selectedGroup"><slot /></div>',
+              '<div class="message-list" :data-search="search" :data-selected-group="selectedGroup" :data-ids="(messagesForList || []).map((m) => m.id).join(\',\')"><slot /></div>',
             props: [
               'visible',
               'none',
@@ -399,6 +400,11 @@ describe('PostMapAndList', () => {
       expect(props.authorityid.default).toBe(null)
     })
 
+    it('accepts selectedMaxDistance defaulting to unlimited (BROWSE_DISTANCE_UNLIMITED)', () => {
+      const props = PostMapAndList.props
+      expect(props.selectedMaxDistance.default).toBe(Number.MAX_SAFE_INTEGER)
+    })
+
     it('passes props to PostMap', () => {
       const wrapper = createWrapper({
         selectedType: 'Offer',
@@ -544,7 +550,7 @@ describe('PostMapAndList', () => {
 
     it('filters out deleted messages when searching', async () => {
       // Searching filters out deleted messages and those with outcomes
-      mockIsochroneMessageList.value = [
+      mockNearbyMessageList.value = [
         {
           id: 100,
           arrival: '2024-01-20T10:00:00Z',
@@ -572,7 +578,7 @@ describe('PostMapAndList', () => {
   describe('noneFound state', () => {
     it('shows NoticeMessage when no results found', async () => {
       // Need to simulate the noneFound condition
-      mockIsochroneMessageList.value = []
+      mockNearbyMessageList.value = []
       const wrapper = createWrapper({ startOnGroups: false })
       await nextTick()
       // Note: noneFound is controlled by the MessageList component emitting update:none
@@ -581,7 +587,7 @@ describe('PostMapAndList', () => {
     })
 
     it('shows GiveAsk component in noneFound notice', async () => {
-      mockIsochroneMessageList.value = []
+      mockNearbyMessageList.value = []
       const wrapper = createWrapper({ startOnGroups: false })
       // When noneFound is true, shows the GiveAsk suggestion
       await nextTick()
@@ -683,6 +689,136 @@ describe('PostMapAndList', () => {
     })
   })
 
+  describe('distance filter (rippling-out relevance ordering + slider, #E)', () => {
+    it('excludes messages beyond selectedMaxDistance', async () => {
+      mockNearbyMessageList.value = [
+        {
+          id: 100,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          distance: 1,
+        },
+        {
+          id: 101,
+          arrival: '2024-01-19T10:00:00Z',
+          unseen: false,
+          groupid: 1,
+          distance: 5,
+        },
+      ]
+      const wrapper = createWrapper({
+        startOnGroups: false,
+        selectedMaxDistance: 2,
+      })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe('100')
+    })
+
+    it('includes all messages when selectedMaxDistance is the unlimited sentinel (default)', async () => {
+      mockNearbyMessageList.value = [
+        {
+          id: 100,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          distance: 1,
+        },
+        {
+          id: 101,
+          arrival: '2024-01-19T10:00:00Z',
+          unseen: false,
+          groupid: 1,
+          distance: 50,
+        },
+      ]
+      const wrapper = createWrapper({ startOnGroups: false })
+      await nextTick()
+      const ids = wrapper.find('.message-list').attributes('data-ids')
+      expect(ids.split(',').sort()).toEqual(['100', '101'])
+    })
+
+    it('keeps messages with no distance field regardless of the limit', async () => {
+      mockNearbyMessageList.value = [
+        { id: 100, arrival: '2024-01-20T10:00:00Z', unseen: true, groupid: 1 },
+      ]
+      const wrapper = createWrapper({
+        startOnGroups: false,
+        selectedMaxDistance: 1,
+      })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe('100')
+    })
+  })
+
+  describe('bucketed relevance ordering (score desc within unseen/seen buckets, #C)', () => {
+    it('orders unseen messages by score desc rather than arrival', async () => {
+      mockNearbyMessageList.value = [
+        {
+          id: 100,
+          arrival: '2024-01-19T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          score: 1,
+        },
+        {
+          id: 101,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          score: 9,
+        },
+      ]
+      const wrapper = createWrapper({ startOnGroups: false })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe(
+        '101,100'
+      )
+    })
+
+    it('treats a missing score as 0', async () => {
+      mockNearbyMessageList.value = [
+        { id: 100, arrival: '2024-01-19T10:00:00Z', unseen: true, groupid: 1 },
+        {
+          id: 101,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          score: 5,
+        },
+      ]
+      const wrapper = createWrapper({ startOnGroups: false })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe(
+        '101,100'
+      )
+    })
+
+    it('still shows unseen posts before seen posts regardless of score', async () => {
+      mockNearbyMessageList.value = [
+        {
+          id: 100,
+          arrival: '2024-01-19T10:00:00Z',
+          unseen: false,
+          groupid: 1,
+          score: 99,
+        },
+        {
+          id: 101,
+          arrival: '2024-01-20T10:00:00Z',
+          unseen: true,
+          groupid: 1,
+          score: 1,
+        },
+      ]
+      const wrapper = createWrapper({ startOnGroups: false })
+      await nextTick()
+      expect(wrapper.find('.message-list').attributes('data-ids')).toBe(
+        '101,100'
+      )
+    })
+  })
+
   describe('map hidden state', () => {
     it('respects mapHidden from miscStore', async () => {
       mockMiscGet.mockReturnValue(true) // hidepostmap = true
@@ -693,38 +829,45 @@ describe('PostMapAndList', () => {
     })
   })
 
-  describe('isochrone handling', () => {
-    it('shows isochrones when browseView is nearby', async () => {
+  describe('showIsochrones flag (selects the nearby reach feed)', () => {
+    // Rippling-out (nearby-reach flip): showIsochrones is the flag that tells PostMap to
+    // use the server-computed "nearby" reach feed. Its name is historical - there's no
+    // per-user isochrone POLYGON for plain nearby browsing any more (reach is worked out
+    // server-side and the client just gets nearby posts) - but it MUST be true for the
+    // nearby view, because that is how PostMap selects the reach feed rather than falling
+    // through to the member-group/map-bounds path. It is also true for an explicit fixed
+    // polygon override (e.g. the Essex boundary), and false only for non-nearby views.
+    it('is true for plain nearby browsing (no override)', async () => {
       mockUser.value = { id: 1, settings: { browseView: 'nearby' } }
       const wrapper = createWrapper()
       await nextTick()
-      // showIsochrones computed returns true when browseView is 'nearby'
-      expect(wrapper.find('.post-map').exists()).toBe(true)
+      const postMap = wrapper.find('.post-map')
+      expect(postMap.attributes('data-show-isochrones')).toBe('true')
     })
 
-    it('shows isochrones when isochroneOverride is provided', async () => {
+    it('is true when isochroneOverride is provided', async () => {
       const wrapper = createWrapper({
         isochroneOverride: { type: 'custom' },
       })
       await nextTick()
-      // showIsochrones returns true when isochroneOverride is provided
-      expect(wrapper.find('.post-map').exists()).toBe(true)
+      const postMap = wrapper.find('.post-map')
+      expect(postMap.attributes('data-show-isochrones')).toBe('true')
     })
 
-    it('hides isochrones when browseView is not nearby', async () => {
+    it('is false when browseView is not nearby and there is no override', async () => {
       mockUser.value = { id: 1, settings: { browseView: 'list' } }
       const wrapper = createWrapper()
       await nextTick()
-      // showIsochrones returns false when browseView is not 'nearby'
-      expect(wrapper.find('.post-map').exists()).toBe(true)
+      const postMap = wrapper.find('.post-map')
+      expect(postMap.attributes('data-show-isochrones')).toBe('false')
     })
 
-    it('defaults browseView to nearby when not set', async () => {
+    it('is true when browseView defaults to nearby and there is no override', async () => {
       mockUser.value = { id: 1, settings: {} }
       const wrapper = createWrapper()
       await nextTick()
-      // browseView defaults to 'nearby' when not in user settings
-      expect(wrapper.find('.post-map').exists()).toBe(true)
+      const postMap = wrapper.find('.post-map')
+      expect(postMap.attributes('data-show-isochrones')).toBe('true')
     })
   })
 
@@ -953,7 +1096,6 @@ describe('PostMapAndList', () => {
       let lastFilteredIds = JSON.stringify([100, 101])
       const newIds = JSON.stringify([100, 101, 102])
       if (lastFilteredIds !== newIds) {
-        lastFilteredIds = newIds
         infiniteId++
       }
       expect(infiniteId).toBe(2)
@@ -964,7 +1106,6 @@ describe('PostMapAndList', () => {
       let lastFilteredIds = JSON.stringify([100, 101])
       const newIds = JSON.stringify([100, 101])
       if (lastFilteredIds !== newIds) {
-        lastFilteredIds = newIds
         infiniteId++
       }
       expect(infiniteId).toBe(1) // Should not change

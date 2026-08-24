@@ -1,11 +1,16 @@
 package emailtracking
 
 import (
+	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	neturl "net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,7 +40,6 @@ type EmailTracking struct {
 	ClickedAt          *time.Time `json:"clicked_at" gorm:"column:clicked_at"`
 	ClickedLink        *string    `json:"clicked_link" gorm:"column:clicked_link"`
 	ScrollDepthPercent *uint8     `json:"scroll_depth_percent" gorm:"column:scroll_depth_percent"`
-	ImagesLoaded       uint16     `json:"images_loaded" gorm:"column:images_loaded"`
 	LinksClicked       uint16     `json:"links_clicked" gorm:"column:links_clicked"`
 	UnsubscribedAt     *time.Time `json:"unsubscribed_at" gorm:"column:unsubscribed_at"`
 	HasAMP             bool       `json:"has_amp" gorm:"column:has_amp"`
@@ -83,15 +87,15 @@ type EmailStats struct {
 	TotalSent       int64   `json:"total_sent"`
 	Opened          int64   `json:"opened"`
 	Clicked         int64   `json:"clicked"`
-	LinkedBounces   int64   `json:"linked_bounces"`   // Bounces matched to specific tracked emails via bounced_at
+	LinkedBounces   int64   `json:"linked_bounces"` // Bounces matched to specific tracked emails via bounced_at
 	OpenRate        float64 `json:"open_rate"`
 	ClickRate       float64 `json:"click_rate"`
 	ClickToOpenRate float64 `json:"click_to_open_rate"`
 	BounceRate      float64 `json:"bounce_rate"`
 	// Actual bounces from bounces_emails table (includes all bounces, not just tracked ones)
-	TotalBounces     int64   `json:"total_bounces"`
-	PermanentBounces int64   `json:"permanent_bounces"`
-	TemporaryBounces int64   `json:"temporary_bounces"`
+	TotalBounces     int64 `json:"total_bounces"`
+	PermanentBounces int64 `json:"permanent_bounces"`
+	TemporaryBounces int64 `json:"temporary_bounces"`
 }
 
 // AMPStats represents AMP-specific statistics
@@ -103,18 +107,18 @@ type AMPStats struct {
 	AMPRendered   int64   `json:"amp_rendered"`
 	AMPRenderRate float64 `json:"amp_render_rate"`
 	// AMP engagement metrics
-	AMPOpened     int64   `json:"amp_opened"`
-	AMPClicked    int64   `json:"amp_clicked"`
-	AMPLinkedBounces int64 `json:"amp_linked_bounces"` // AMP emails with bounces matched to tracked emails
-	AMPReplied    int64   `json:"amp_replied"`
-	AMPOpenRate   float64 `json:"amp_open_rate"`
-	AMPClickRate  float64 `json:"amp_click_rate"`
-	AMPBounceRate float64 `json:"amp_bounce_rate"`
-	AMPReplyRate  float64 `json:"amp_reply_rate"`
+	AMPOpened        int64   `json:"amp_opened"`
+	AMPClicked       int64   `json:"amp_clicked"`
+	AMPLinkedBounces int64   `json:"amp_linked_bounces"` // AMP emails with bounces matched to tracked emails
+	AMPReplied       int64   `json:"amp_replied"`
+	AMPOpenRate      float64 `json:"amp_open_rate"`
+	AMPClickRate     float64 `json:"amp_click_rate"`
+	AMPBounceRate    float64 `json:"amp_bounce_rate"`
+	AMPReplyRate     float64 `json:"amp_reply_rate"`
 	// Reply breakdown by method for AMP-enabled emails
-	AMPRepliedViaAMP   int64   `json:"amp_replied_via_amp"`   // Replies via AMP form
-	AMPRepliedViaEmail int64   `json:"amp_replied_via_email"` // Replies via email
-	AMPReplyViaAMPRate float64 `json:"amp_reply_via_amp_rate"`
+	AMPRepliedViaAMP     int64   `json:"amp_replied_via_amp"`   // Replies via AMP form
+	AMPRepliedViaEmail   int64   `json:"amp_replied_via_email"` // Replies via email
+	AMPReplyViaAMPRate   float64 `json:"amp_reply_via_amp_rate"`
 	AMPReplyViaEmailRate float64 `json:"amp_reply_via_email_rate"`
 	// Click breakdown: reply clicks (to message/chat pages) vs other clicks
 	AMPReplyClicks    int64   `json:"amp_reply_clicks"`     // Clicks to reply on web
@@ -126,14 +130,14 @@ type AMPStats struct {
 	// Legacy action rate (for backwards compatibility)
 	AMPActionRate float64 `json:"amp_action_rate"`
 	// Non-AMP engagement metrics (for comparison)
-	NonAMPOpened      int64   `json:"non_amp_opened"`
-	NonAMPClicked     int64   `json:"non_amp_clicked"`
-	NonAMPLinkedBounces int64 `json:"non_amp_linked_bounces"` // Non-AMP emails with bounces matched to tracked emails
-	NonAMPReplied     int64   `json:"non_amp_replied"`
-	NonAMPOpenRate    float64 `json:"non_amp_open_rate"`
-	NonAMPClickRate   float64 `json:"non_amp_click_rate"`
-	NonAMPBounceRate  float64 `json:"non_amp_bounce_rate"`
-	NonAMPReplyRate   float64 `json:"non_amp_reply_rate"`
+	NonAMPOpened        int64   `json:"non_amp_opened"`
+	NonAMPClicked       int64   `json:"non_amp_clicked"`
+	NonAMPLinkedBounces int64   `json:"non_amp_linked_bounces"` // Non-AMP emails with bounces matched to tracked emails
+	NonAMPReplied       int64   `json:"non_amp_replied"`
+	NonAMPOpenRate      float64 `json:"non_amp_open_rate"`
+	NonAMPClickRate     float64 `json:"non_amp_click_rate"`
+	NonAMPBounceRate    float64 `json:"non_amp_bounce_rate"`
+	NonAMPReplyRate     float64 `json:"non_amp_reply_rate"`
 	// Click breakdown for non-AMP
 	NonAMPReplyClicks    int64   `json:"non_amp_reply_clicks"`
 	NonAMPOtherClicks    int64   `json:"non_amp_other_clicks"`
@@ -203,10 +207,24 @@ func Click(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Redirect("/")
 	}
-	destinationURL := string(urlBytes)
+	rawURL := string(urlBytes)
+	destinationURL := RepairDoubledSiteURL(rawURL)
 
-	// Validate URL
-	if destinationURL == "" || !isValidRedirectURL(destinationURL) {
+	// Validate URL: either one of our own domains, or carrying a signature the
+	// mailer minted at send time. Community News items link to arbitrary
+	// external sites (parkrun, council pages...), which the allowlist would
+	// bounce to "/" - the signature proves we generated the link, so honouring
+	// it doesn't open the endpoint to open-redirect abuse. The signature is
+	// over the raw destination as the mailer signed it, pre-repair.
+	//
+	// Third chance: an exact match against the curated Community News items.
+	// Emails sent before link signing existed carry no signature, but their
+	// destinations are all URLs we curated into community_news_items, so a
+	// lookup there retro-fixes those links without opening the endpoint up.
+	if destinationURL == "" ||
+		(!isValidRedirectURL(destinationURL) &&
+			!hasValidLinkSignature(rawURL, c.Query("sig")) &&
+			!isCommunityNewsItemURL(db, destinationURL)) {
 		return c.Redirect("/")
 	}
 
@@ -289,16 +307,21 @@ func Image(c *fiber.Ctx) error {
 
 		now := time.Now()
 
-		// If not opened yet, mark as opened via image
+		// If not opened yet, mark as opened via image. Guard the write in SQL,
+		// not just on the stale Go read: an email's images load near-together and
+		// all see OpenedAt==nil, so without "WHERE opened_at IS NULL" every one of
+		// them UPDATEs the same parent row and they serialise on its lock.
 		if tracking.OpenedAt == nil {
 			openedVia := "image"
-			db.Model(&tracking).Updates(map[string]interface{}{
+			db.Model(&tracking).Where("opened_at IS NULL").Updates(map[string]interface{}{
 				"opened_at":  now,
 				"opened_via": openedVia,
 			})
 		}
 
-		// Create image load record
+		// Create image load record. This per-load row (with its position and
+		// estimated scroll percent) is the source of truth for image/scroll-depth
+		// analytics.
 		imageLoad := EmailTrackingImage{
 			EmailTrackingID: tracking.ID,
 			ImagePosition:   position,
@@ -309,7 +332,7 @@ func Image(c *fiber.Ctx) error {
 			sp := uint8(scrollPercent)
 			imageLoad.EstimatedScrollPercent = &sp
 
-			// Update scroll depth if this is deeper
+			// Update scroll depth if this is deeper.
 			if tracking.ScrollDepthPercent == nil || sp > *tracking.ScrollDepthPercent {
 				db.Model(&tracking).Update("scroll_depth_percent", sp)
 			}
@@ -317,8 +340,11 @@ func Image(c *fiber.Ctx) error {
 
 		db.Create(&imageLoad)
 
-		// Increment image count
-		db.Model(&tracking).UpdateColumn("images_loaded", tracking.ImagesLoaded+1)
+		// Deliberately do NOT increment email_tracking.images_loaded. A per-hit
+		// counter UPDATE takes an exclusive lock on the parent row that every
+		// concurrent image load contends for (see ImageCompact) - and the old
+		// read-modify-write form here also lost updates. The count is unread and
+		// derivable as a COUNT over email_tracking_images, so it is not kept.
 	}
 
 	// Redirect to original image
@@ -442,19 +468,21 @@ type BouncesEmailsStats struct {
 }
 
 // getBouncesEmailsStats queries the bounces_emails table for actual bounce counts
+// The date-range
+// clause is only appended when both startDate and endDate are supplied, so
+// this statement has exactly 2 possible rendered forms, both proven by the
+// retired ormharness (shapes.json / TestTier3Shapes_e1daa6fea45a, removed in
+// d22ba1d6c).
 func getBouncesEmailsStats(db *gorm.DB, startDate, endDate string) BouncesEmailsStats {
 	var stats BouncesEmailsStats
 
-	query := `
-		SELECT
-			COUNT(*) as total,
-			SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent,
-			SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary
-		FROM bounces_emails
-		WHERE reset = 0
-	`
-
-	var args []interface{}
+	// The WHERE is built as a single string and passed to ONE Where() call:
+	// GORM's clause.Where wraps any fragment containing "AND"/"OR" in an
+	// extra paren pair once there is more than one Where expression to
+	// combine (clause/where.go buildExprs) - and BETWEEN ... AND ... counts,
+	// so this would diverge from the golden if split into two Where() calls.
+	whereSQL := "reset = 0"
+	var whereArgs []interface{}
 
 	if startDate != "" && endDate != "" {
 		// If endDate doesn't include time, add end of day
@@ -462,11 +490,16 @@ func getBouncesEmailsStats(db *gorm.DB, startDate, endDate string) BouncesEmails
 		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 			endDateTime = endDate + " 23:59:59"
 		}
-		query += " AND date BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
+		whereSQL += " AND date BETWEEN ? AND ?"
+		whereArgs = append(whereArgs, startDate, endDateTime)
 	}
 
-	db.Raw(query, args...).Scan(&stats)
+	db.Table("bounces_emails").
+		Select("COUNT(*) as total, "+
+			"SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent, "+
+			"SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary").
+		Where(whereSQL, whereArgs...).
+		Scan(&stats)
 
 	return stats
 }
@@ -475,29 +508,58 @@ func getBouncesEmailsStats(db *gorm.DB, startDate, endDate string) BouncesEmails
 func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 	var stats AMPStats
 
-	// Build base query conditions - exclude Trash Nothing users from stats
-	conditions := "1=1 AND users.tnuserid IS NULL"
-	var args []interface{}
-
-	if emailType != "" {
-		conditions += " AND email_type = ?"
-		args = append(args, emailType)
-	}
-	if startDate != "" && endDate != "" {
+	// Build the shared date-range window (used by all four queries below).
+	var endDateTime string
+	hasDateRange := startDate != "" && endDate != ""
+	if hasDateRange {
 		// If endDate doesn't include time, add end of day
-		endDateTime := endDate
+		endDateTime = endDate
 		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 			endDateTime = endDate + " 23:59:59"
 		}
-		conditions += " AND sent_at BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
 	}
 
-	// All queries JOIN users to exclude Trash Nothing users
-	tnJoin := "LEFT JOIN users ON email_tracking.userid = users.id"
+	// conditions builds the shared emailType/date-range toggles - up to four
+	// possible shapes - and their flat arg list, for one of the four queries
+	// below, using that query's own alias for the users join and the
+	// sent_at column.
+	conditions := func(userCol, dateCol string) (string, []interface{}) {
+		sql := "1=1 AND " + userCol + " IS NULL"
+		var args []interface{}
+		if emailType != "" {
+			sql += " AND email_type = ?"
+			args = append(args, emailType)
+		}
+		if hasDateRange {
+			sql += " AND " + dateCol + " BETWEEN ? AND ?"
+			args = append(args, startDate, endDateTime)
+		}
+		return sql, args
+	}
 
-	// Query for AMP emails
-	ampConditions := conditions + " AND has_amp = 1"
+	// countsWhere/clickWhere assemble the final WHERE - has_amp sits AFTER
+	// conditions for the counts queries but BEFORE it for the click-breakdown
+	// queries, mirroring the original ampConditions/nonAMPConditions vs
+	// "e.has_amp = 1 AND "+clickConditions string-building. Each returns ONE
+	// combined string for ONE Where() call: GORM's clause.Where wraps any
+	// fragment containing "AND"/"OR" in an extra paren pair once there is
+	// more than one Where expression to combine (clause/where.go
+	// buildExprs), which would diverge from the golden.
+	countsWhere := func(userCol, dateCol, hasAmp string) (string, []interface{}) {
+		cond, args := conditions(userCol, dateCol)
+		return cond + " AND has_amp = " + hasAmp, args
+	}
+	clickWhere := func(userCol, dateCol, hasAmp string) (string, []interface{}) {
+		cond, args := conditions(userCol, dateCol)
+		return hasAmp + " AND " + cond, args
+	}
+
+	// Query for AMP emails.
+	//
+	// The
+	// emailType/date-range toggles give 4 possible rendered forms, all
+	// proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_52ecf7eb71ac, removed in d22ba1d6c).
 	var ampCounts struct {
 		Total           int64
 		Opened          int64
@@ -508,22 +570,25 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 		RepliedViaEmail int64
 		Rendered        int64
 	}
-	db.Raw(`
-		SELECT
-			COUNT(*) as total,
-			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
-			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
-			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces,
-			SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied,
-			SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp,
-			SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email,
-			SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered
-		FROM email_tracking
-		`+tnJoin+`
-		WHERE `+ampConditions, args...).Scan(&ampCounts)
+	ampWhereSQL, ampWhereArgs := countsWhere("users.tnuserid", "sent_at", "1")
+	db.Table("email_tracking").
+		Select("COUNT(*) as total, "+
+			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
+			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
+			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, "+
+			"SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied, "+
+			"SUM(CASE WHEN replied_via = 'amp' THEN 1 ELSE 0 END) as replied_via_amp, "+
+			"SUM(CASE WHEN replied_via = 'email' THEN 1 ELSE 0 END) as replied_via_email, "+
+			"SUM(CASE WHEN opened_via = 'amp' THEN 1 ELSE 0 END) as rendered").
+		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Where(ampWhereSQL, ampWhereArgs...).Scan(&ampCounts)
 
-	// Query for non-AMP emails
-	nonAMPConditions := conditions + " AND has_amp = 0"
+	// Query for non-AMP emails.
+	//
+	// Same toggles
+	// as the AMP query above - 4 possible rendered forms, all proven by the
+	// retired ormharness (shapes.json / TestTier3Shapes_c8a4c6cbcae8, removed
+	// in d22ba1d6c).
 	var nonAMPCounts struct {
 		Total         int64
 		Opened        int64
@@ -531,16 +596,15 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 		LinkedBounces int64
 		Replied       int64
 	}
-	db.Raw(`
-		SELECT
-			COUNT(*) as total,
-			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
-			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
-			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces,
-			SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied
-		FROM email_tracking
-		`+tnJoin+`
-		WHERE `+nonAMPConditions, args...).Scan(&nonAMPCounts)
+	nonAMPWhereSQL, nonAMPWhereArgs := countsWhere("users.tnuserid", "sent_at", "0")
+	db.Table("email_tracking").
+		Select("COUNT(*) as total, "+
+			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
+			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
+			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, "+
+			"SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as replied").
+		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Where(nonAMPWhereSQL, nonAMPWhereArgs...).Scan(&nonAMPCounts)
 
 	// Populate stats
 	stats.TotalWithAMP = ampCounts.Total
@@ -560,35 +624,38 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 	// Query for click breakdown (reply clicks vs other clicks)
 	// Reply clicks are clicks to message/chat pages where users can reply
 	// Exclude Trash Nothing users via JOIN on users table
-	clickConditions := strings.Replace(conditions, "sent_at", "e.sent_at", -1)
-	clickConditions = strings.Replace(clickConditions, "users.tnuserid", "u.tnuserid", -1)
-	clickTNJoin := "LEFT JOIN users u ON e.userid = u.id"
-
+	//
+	// Same toggles,
+	// applied via the e./u. aliases this query uses - 4 possible rendered
+	// forms, all proven by the retired ormharness (shapes.json /
+	// TestTier3Shapes_ef321afa5b7a, removed in d22ba1d6c).
 	var ampClickBreakdown struct {
 		ReplyClicks int64
 		OtherClicks int64
 	}
-	db.Raw(`
-		SELECT
-			COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks,
-			COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' AND c.link_url NOT LIKE 'amp://%' THEN c.email_tracking_id END) as other_clicks
-		FROM email_tracking_clicks c
-		JOIN email_tracking e ON c.email_tracking_id = e.id
-		`+clickTNJoin+`
-		WHERE e.has_amp = 1 AND `+clickConditions, args...).Scan(&ampClickBreakdown)
+	ampClickWhereSQL, ampClickWhereArgs := clickWhere("u.tnuserid", "e.sent_at", "e.has_amp = 1")
+	db.Table("email_tracking_clicks c").
+		Select("COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, "+
+			"COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' AND c.link_url NOT LIKE 'amp://%' THEN c.email_tracking_id END) as other_clicks").
+		Joins("JOIN email_tracking e ON c.email_tracking_id = e.id").
+		Joins("LEFT JOIN users u ON e.userid = u.id").
+		Where(ampClickWhereSQL, ampClickWhereArgs...).Scan(&ampClickBreakdown)
 
+	// Non-AMP twin
+	// of ef321afa5b7a above - 4 possible rendered forms, all proven by the
+	// retired ormharness (shapes.json / TestTier3Shapes_b37a229bfb0b, removed
+	// in d22ba1d6c).
 	var nonAMPClickBreakdown struct {
 		ReplyClicks int64
 		OtherClicks int64
 	}
-	db.Raw(`
-		SELECT
-			COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks,
-			COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' THEN c.email_tracking_id END) as other_clicks
-		FROM email_tracking_clicks c
-		JOIN email_tracking e ON c.email_tracking_id = e.id
-		`+clickTNJoin+`
-		WHERE e.has_amp = 0 AND `+clickConditions, args...).Scan(&nonAMPClickBreakdown)
+	nonAMPClickWhereSQL, nonAMPClickWhereArgs := clickWhere("u.tnuserid", "e.sent_at", "e.has_amp = 0")
+	db.Table("email_tracking_clicks c").
+		Select("COUNT(DISTINCT CASE WHEN c.link_url LIKE '%/message/%' OR c.link_url LIKE '%/chat/%' OR c.link_url LIKE '%/chats/%' THEN c.email_tracking_id END) as reply_clicks, "+
+			"COUNT(DISTINCT CASE WHEN c.link_url NOT LIKE '%/message/%' AND c.link_url NOT LIKE '%/chat/%' AND c.link_url NOT LIKE '%/chats/%' THEN c.email_tracking_id END) as other_clicks").
+		Joins("JOIN email_tracking e ON c.email_tracking_id = e.id").
+		Joins("LEFT JOIN users u ON e.userid = u.id").
+		Where(nonAMPClickWhereSQL, nonAMPClickWhereArgs...).Scan(&nonAMPClickBreakdown)
 
 	stats.AMPReplyClicks = ampClickBreakdown.ReplyClicks
 	stats.AMPOtherClicks = ampClickBreakdown.OtherClicks
@@ -644,18 +711,18 @@ func getAMPStats(db *gorm.DB, emailType, startDate, endDate string) AMPStats {
 
 // UserEmailTrackingResponse represents email tracking data for a user
 type UserEmailTrackingResponse struct {
-	ID            uint64     `json:"id"`
-	EmailType     string     `json:"email_type"`
-	Subject       *string    `json:"subject"`
-	SentAt        *time.Time `json:"sent_at"`
-	OpenedAt      *time.Time `json:"opened_at"`
-	OpenedVia     *string    `json:"opened_via"`
-	ClickedAt     *time.Time `json:"clicked_at"`
-	ClickedLink   *string    `json:"clicked_link"`
-	LinksClicked  uint16     `json:"links_clicked"`
-	BouncedAt     *time.Time `json:"bounced_at"`
+	ID             uint64     `json:"id"`
+	EmailType      string     `json:"email_type"`
+	Subject        *string    `json:"subject"`
+	SentAt         *time.Time `json:"sent_at"`
+	OpenedAt       *time.Time `json:"opened_at"`
+	OpenedVia      *string    `json:"opened_via"`
+	ClickedAt      *time.Time `json:"clicked_at"`
+	ClickedLink    *string    `json:"clicked_link"`
+	LinksClicked   uint16     `json:"links_clicked"`
+	BouncedAt      *time.Time `json:"bounced_at"`
 	UnsubscribedAt *time.Time `json:"unsubscribed_at"`
-	CreatedAt     time.Time  `json:"created_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // UserEmails returns email tracking for a specific user (requires authentication)
@@ -696,13 +763,13 @@ func UserEmails(c *fiber.Ctx) error {
 			UserID uint64 `gorm:"column:userid"`
 		}
 		// First try users_emails table (for users with multiple emails)
-		result := db.Raw("SELECT userid FROM users_emails WHERE email = ? AND backwards IS NULL LIMIT 1", email).Scan(&userLookup)
+		result := db.Table("users_emails").Select("userid").Where("email = ? AND backwards IS NULL", email).Limit(1).Scan(&userLookup)
 		if result.Error != nil || userLookup.UserID == 0 {
 			// Fallback to users table (for new users whose email is only in users.email)
 			var userFallback struct {
 				ID uint64 `gorm:"column:id"`
 			}
-			result = db.Raw("SELECT id FROM users WHERE email = ? LIMIT 1", email).Scan(&userFallback)
+			result = db.Table("users").Select("id").Where("email = ?", email).Limit(1).Scan(&userFallback)
 			if result.Error != nil || userFallback.ID == 0 {
 				// No user found - search by recipient_email in email_tracking table directly
 				searchByRecipientEmail = true
@@ -830,11 +897,11 @@ type DailyStats struct {
 	PermanentBounces int64 `json:"permanent_bounces"`
 	TemporaryBounces int64 `json:"temporary_bounces"`
 	// AMP-specific metrics
-	AMPSent          int64 `json:"amp_sent"`
-	AMPOpened        int64 `json:"amp_opened"`
-	AMPClicked       int64 `json:"amp_clicked"`
-	AMPLinkedBounces int64 `json:"amp_linked_bounces"`
-	AMPReplied       int64 `json:"amp_replied"`
+	AMPSent             int64 `json:"amp_sent"`
+	AMPOpened           int64 `json:"amp_opened"`
+	AMPClicked          int64 `json:"amp_clicked"`
+	AMPLinkedBounces    int64 `json:"amp_linked_bounces"`
+	AMPReplied          int64 `json:"amp_replied"`
 	NonAMPSent          int64 `json:"non_amp_sent"`
 	NonAMPOpened        int64 `json:"non_amp_opened"`
 	NonAMPClicked       int64 `json:"non_amp_clicked"`
@@ -892,62 +959,69 @@ func TimeSeries(c *fiber.Ctx) error {
 
 	// Build query for daily stats including AMP breakdown
 	// Exclude Trash Nothing users from stats
-	query := `
-		SELECT
-			DATE(sent_at) as date,
-			COUNT(*) as sent,
-			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
-			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
-			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces,
-			SUM(CASE WHEN has_amp = 1 THEN 1 ELSE 0 END) as amp_sent,
-			SUM(CASE WHEN has_amp = 1 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as amp_opened,
-			SUM(CASE WHEN has_amp = 1 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as amp_clicked,
-			SUM(CASE WHEN has_amp = 1 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as amp_linked_bounces,
-			SUM(CASE WHEN has_amp = 1 AND replied_at IS NOT NULL THEN 1 ELSE 0 END) as amp_replied,
-			SUM(CASE WHEN has_amp = 0 THEN 1 ELSE 0 END) as non_amp_sent,
-			SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened,
-			SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked,
-			SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces
-		FROM email_tracking
-		LEFT JOIN users ON email_tracking.userid = users.id
-		WHERE users.tnuserid IS NULL AND sent_at BETWEEN ? AND ?
-	`
-
+	//
+	// The email_type
+	// filter is only appended when one was supplied, so this statement has
+	// exactly 2 possible rendered forms, both proven by the retired
+	// ormharness (shapes.json / TestTier3Shapes_69f6acdc5a6b, removed in
+	// d22ba1d6c).
+	//
 	// If endDate doesn't include time, add end of day
 	endDateTime := endDate
 	if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 		endDateTime = endDate + " 23:59:59"
 	}
-	args := []interface{}{startDate, endDateTime}
 
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	tsWhereSQL := "users.tnuserid IS NULL AND sent_at BETWEEN ? AND ?"
+	tsWhereArgs := []interface{}{startDate, endDateTime}
 	if emailType != "" {
-		query += " AND email_type = ?"
-		args = append(args, emailType)
+		tsWhereSQL += " AND email_type = ?"
+		tsWhereArgs = append(tsWhereArgs, emailType)
 	}
 
-	query += " GROUP BY DATE(sent_at) ORDER BY date ASC"
-
 	var dailyStats []DailyStats
-	db.Raw(query, args...).Scan(&dailyStats)
+	db.Table("email_tracking FORCE INDEX (sent_at)").
+		Select("DATE(sent_at) as date, COUNT(*) as sent, "+
+			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
+			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
+			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces, "+
+			"SUM(CASE WHEN has_amp = 1 THEN 1 ELSE 0 END) as amp_sent, "+
+			"SUM(CASE WHEN has_amp = 1 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as amp_opened, "+
+			"SUM(CASE WHEN has_amp = 1 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as amp_clicked, "+
+			"SUM(CASE WHEN has_amp = 1 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as amp_linked_bounces, "+
+			"SUM(CASE WHEN has_amp = 1 AND replied_at IS NOT NULL THEN 1 ELSE 0 END) as amp_replied, "+
+			"SUM(CASE WHEN has_amp = 0 THEN 1 ELSE 0 END) as non_amp_sent, "+
+			"SUM(CASE WHEN has_amp = 0 AND opened_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_opened, "+
+			"SUM(CASE WHEN has_amp = 0 AND clicked_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_clicked, "+
+			"SUM(CASE WHEN has_amp = 0 AND bounced_at IS NOT NULL THEN 1 ELSE 0 END) as non_amp_linked_bounces").
+		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Where(tsWhereSQL, tsWhereArgs...).
+		Group("DATE(sent_at)").Order("date ASC").Scan(&dailyStats)
 
-	// Get daily bounce counts from bounces_emails table
-	bounceQuery := `
-		SELECT
-			DATE(date) as date,
-			COUNT(*) as total_bounces,
-			SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent_bounces,
-			SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary_bounces
-		FROM bounces_emails
-		WHERE reset = 0 AND date BETWEEN ? AND ?
-		GROUP BY DATE(date)
-	`
+	// Get daily bounce counts from bounces_emails table.
+	//
+	// This text is
+	// entirely fixed - the extractor just could not fold the local
+	// `bounceQuery` variable to a static golden. Proven (as a single shape)
+	// by the retired ormharness (shapes.json / TestTier3Shapes_9d115fb3ebcd,
+	// removed in d22ba1d6c).
 	var dailyBounces []struct {
 		Date             string `gorm:"column:date"`
 		TotalBounces     int64  `gorm:"column:total_bounces"`
 		PermanentBounces int64  `gorm:"column:permanent_bounces"`
 		TemporaryBounces int64  `gorm:"column:temporary_bounces"`
 	}
-	db.Raw(bounceQuery, startDate, endDateTime).Scan(&dailyBounces)
+	db.Table("bounces_emails").
+		Select("DATE(date) as date, COUNT(*) as total_bounces, "+
+			"SUM(CASE WHEN permanent = 1 THEN 1 ELSE 0 END) as permanent_bounces, "+
+			"SUM(CASE WHEN permanent = 0 THEN 1 ELSE 0 END) as temporary_bounces").
+		Where("reset = 0 AND date BETWEEN ? AND ?", startDate, endDateTime).
+		Group("DATE(date)").
+		Scan(&dailyBounces)
 
 	// Create a map for quick lookup
 	bounceMap := make(map[string]struct {
@@ -1029,19 +1103,18 @@ func StatsByType(c *fiber.Ctx) error {
 	endDate := c.Query("end", "")
 
 	// Build query for stats by type - exclude Trash Nothing users
-	query := `
-		SELECT
-			email_type,
-			COUNT(*) as total_sent,
-			SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened,
-			SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked,
-			SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces
-		FROM email_tracking
-		LEFT JOIN users ON email_tracking.userid = users.id
-		WHERE users.tnuserid IS NULL
-	`
-
-	var args []interface{}
+	//
+	// The date-range
+	// clause is only appended when both startDate and endDate are supplied, so
+	// this statement has exactly 2 possible rendered forms, both proven by
+	// the retired ormharness (shapes.json / TestTier3Shapes_ecbedcafc048,
+	// removed in d22ba1d6c).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	sbtWhereSQL := "users.tnuserid IS NULL"
+	var sbtWhereArgs []interface{}
 
 	if startDate != "" && endDate != "" {
 		// If endDate doesn't include time, add end of day
@@ -1049,11 +1122,17 @@ func StatsByType(c *fiber.Ctx) error {
 		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 			endDateTime = endDate + " 23:59:59"
 		}
-		query += " AND sent_at BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
+		sbtWhereSQL += " AND sent_at BETWEEN ? AND ?"
+		sbtWhereArgs = append(sbtWhereArgs, startDate, endDateTime)
 	}
 
-	query += " GROUP BY email_type ORDER BY total_sent DESC"
+	tx := db.Table("email_tracking FORCE INDEX (sent_at)").
+		Select("email_type, COUNT(*) as total_sent, "+
+			"SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened, "+
+			"SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked, "+
+			"SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as linked_bounces").
+		Joins("LEFT JOIN users ON email_tracking.userid = users.id").
+		Where(sbtWhereSQL, sbtWhereArgs...)
 
 	var rawStats []struct {
 		EmailType     string `gorm:"column:email_type"`
@@ -1062,7 +1141,7 @@ func StatsByType(c *fiber.Ctx) error {
 		Clicked       int64  `gorm:"column:clicked"`
 		LinkedBounces int64  `gorm:"column:linked_bounces"`
 	}
-	db.Raw(query, args...).Scan(&rawStats)
+	tx.Group("email_type").Order("total_sent DESC").Scan(&rawStats)
 
 	// Calculate rates
 	stats := make([]EmailTypeStats, len(rawStats))
@@ -1174,15 +1253,19 @@ func TopClickedLinks(c *fiber.Ctx) error {
 	// Default to aggregated (true) unless explicitly set to false
 	aggregate := c.Query("aggregate", "true") != "false"
 
-	// Get all clicked links within the date range
-	query := `
-		SELECT c.link_url, COUNT(*) as click_count
-		FROM email_tracking_clicks c
-		JOIN email_tracking e ON c.email_tracking_id = e.id
-		WHERE 1=1
-	`
-
-	var args []interface{}
+	// Get all clicked links within the date range.
+	//
+	// The date-range
+	// clause is only appended when both startDate and endDate are supplied, so
+	// this statement has exactly 2 possible rendered forms, both proven by
+	// the retired ormharness (shapes.json / TestTier3Shapes_f6e4a52a0fb6,
+	// removed in d22ba1d6c).
+	// WHERE built as a single string for ONE Where() call: GORM's
+	// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+	// paren pair once there is more than one Where expression to combine
+	// (clause/where.go buildExprs), which would diverge from the golden.
+	tclWhereSQL := "1=1"
+	var tclWhereArgs []interface{}
 
 	if startDate != "" && endDate != "" {
 		// If endDate doesn't include time, add end of day
@@ -1190,17 +1273,20 @@ func TopClickedLinks(c *fiber.Ctx) error {
 		if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
 			endDateTime = endDate + " 23:59:59"
 		}
-		query += " AND c.clicked_at BETWEEN ? AND ?"
-		args = append(args, startDate, endDateTime)
+		tclWhereSQL += " AND c.clicked_at BETWEEN ? AND ?"
+		tclWhereArgs = append(tclWhereArgs, startDate, endDateTime)
 	}
 
-	query += " GROUP BY c.link_url ORDER BY click_count DESC"
+	tx := db.Table("email_tracking_clicks c").
+		Select("c.link_url, COUNT(*) as click_count").
+		Joins("JOIN email_tracking e ON c.email_tracking_id = e.id").
+		Where(tclWhereSQL, tclWhereArgs...)
 
 	var rawClicks []struct {
 		LinkURL    string `gorm:"column:link_url"`
 		ClickCount int64  `gorm:"column:click_count"`
 	}
-	db.Raw(query, args...).Scan(&rawClicks)
+	tx.Group("c.link_url").Order("click_count DESC").Scan(&rawClicks)
 
 	var results []ClickedLinkStats
 
@@ -1283,6 +1369,65 @@ func containsString(slice []string, s string) bool {
 	return false
 }
 
+// RepairDoubledSiteURL repairs destinations baked into emails sent while
+// ChaseUpMail unconditionally prefixed the user site onto notification URLs
+// that were already absolute, producing e.g.
+// https://www.ilovefreegle.orghttps://www.ilovefreegle.org/stories. The
+// corruption is a bare scheme+host immediately followed by a second absolute
+// URL; a legitimate URL embedded in a query string is always preceded by a
+// path or query separator, so only strip when the prefix contains none.
+func RepairDoubledSiteURL(u string) string {
+	schemeEnd := strings.Index(u, "://")
+	if schemeEnd < 0 {
+		return u
+	}
+	rest := u[schemeEnd+3:]
+	for _, scheme := range []string{"https://", "http://"} {
+		if i := strings.Index(rest, scheme); i > 0 && !strings.ContainsAny(rest[:i], "/?#") {
+			return rest[i:]
+		}
+	}
+	return u
+}
+
+// hasValidLinkSignature reports whether sig is a valid HMAC over the raw
+// destination URL, minted by the mailer (iznik-batch EmailTracking::
+// getTrackedLinkUrl) at send time. A valid signature lets the redirect honour
+// destinations outside our own-domain allowlist - Community News items link
+// to arbitrary external sites - without becoming an open redirect: only URLs
+// we put in an email carry a signature. Reuses the AMP secret, which both
+// sides already share, with a purpose prefix so AMP signatures and link
+// signatures aren't interchangeable.
+func hasValidLinkSignature(rawURL string, sig string) bool {
+	if rawURL == "" || sig == "" {
+		return false
+	}
+
+	secret := os.Getenv("AMP_SECRET")
+	if secret == "" {
+		secret = os.Getenv("FREEGLE_AMP_SECRET")
+	}
+	if secret == "" {
+		return false
+	}
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte("redirect:" + rawURL))
+	expected := hex.EncodeToString(mac.Sum(nil))
+
+	return hmac.Equal([]byte(expected), []byte(sig))
+}
+
+// isCommunityNewsItemURL reports whether url is the exact destination of a
+// curated Community News item. Items are authored by our own team, so
+// redirecting to one is safe; this exists to keep links working in Community
+// News emails sent before tracked links carried a signature.
+func isCommunityNewsItemURL(db *gorm.DB, url string) bool {
+	var count int64
+	db.Table("community_news_items").Where("url = ?", url).Count(&count)
+	return count > 0
+}
+
 // isValidRedirectURL validates URL is safe for redirect
 func isValidRedirectURL(url string) bool {
 	if url == "" {
@@ -1325,12 +1470,533 @@ func isValidRedirectURL(url string) bool {
 	// Allow modtools.org for moderator chat links
 	allowedDomains = append(allowedDomains, "modtools.org")
 
+	// Allow freegle.in for Freegle PayPal short links (e.g. donate CTA)
+	allowedDomains = append(allowedDomains, "freegle.in")
+
+	// Same-origin relative paths (e.g. "/mypost/123") are safe to redirect to.
+	if strings.HasPrefix(url, "/") && !strings.HasPrefix(url, "//") {
+		return true
+	}
+
+	// Match on the exact host, not a naive substring: strings.Contains(url, domain) would
+	// accept "https://evil.com/modtools.org" and "https://modtools.org.evil.com" as valid.
+	parsed, err := neturl.Parse(url)
+	if err != nil {
+		return false
+	}
+	// Only http(s) redirects (blocks javascript:, data:, etc.).
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return false
+	}
 	for _, domain := range allowedDomains {
-		if strings.Contains(url, domain) {
+		d := strings.ToLower(domain)
+		if host == d || strings.HasSuffix(host, "."+d) {
 			return true
 		}
 	}
 
 	// Reject URLs not matching our domains
 	return false
+}
+
+// DigestPositionStat represents the click-through rate for a single post
+// position within unified digest emails.
+type DigestPositionStat struct {
+	// Position is the zero-based ordinal of the post within the digest (0 = top).
+	Position int `json:"position"`
+	// Shown is the number of digest emails that displayed a post at this position.
+	Shown int64 `json:"shown"`
+	// EmailsClicked is the number of distinct digest emails with at least one
+	// click at this position (the click-through numerator).
+	EmailsClicked int64 `json:"emails_clicked"`
+	// Clicks is the total number of clicks recorded at this position.
+	Clicks int64 `json:"clicks"`
+	// CTR is the click-through rate (EmailsClicked / Shown) as a percentage.
+	CTR float64 `json:"ctr"`
+}
+
+// digestChunkDays bounds how much history a single email_tracking statement
+// scans in DigestClickPositions. email_tracking is 6M+ rows with no composite
+// (email_type, sent_at) index, so a FORCE INDEX(sent_at) scan over a wide
+// user-selected range can take minutes and stall Galera cluster-wide commits.
+const digestChunkDays = 1
+
+// digestDateWindow is one [Start, End] sub-range of a chunked date query,
+// pre-formatted for direct use as SQL BETWEEN bounds.
+type digestDateWindow struct {
+	Start string
+	End   string
+}
+
+// chunkDateWindows splits [startDate, endDateTime] into contiguous windows no
+// wider than chunkDays. Every email_tracking row's sent_at falls inside
+// exactly one window, so summing GROUP BY-aggregated counts across these
+// disjoint windows is mathematically identical to running one query over the
+// whole range - just without any single statement scanning more than
+// chunkDays worth of rows.
+func chunkDateWindows(startDate, endDateTime string, chunkDays int) ([]digestDateWindow, error) {
+	if chunkDays <= 0 {
+		chunkDays = 1
+	}
+
+	start, err := parseDigestBound(startDate)
+	if err != nil {
+		return nil, err
+	}
+	end, err := parseDigestBound(endDateTime)
+	if err != nil {
+		return nil, err
+	}
+
+	if !end.After(start) {
+		return []digestDateWindow{{Start: startDate, End: endDateTime}}, nil
+	}
+
+	const layout = "2006-01-02 15:04:05"
+	var windows []digestDateWindow
+	for chunkStart := start; !chunkStart.After(end); {
+		chunkEnd := chunkStart.AddDate(0, 0, chunkDays).Add(-time.Second)
+		if chunkEnd.After(end) {
+			chunkEnd = end
+		}
+		windows = append(windows, digestDateWindow{
+			Start: chunkStart.Format(layout),
+			End:   chunkEnd.Format(layout),
+		})
+		chunkStart = chunkEnd.Add(time.Second)
+	}
+	return windows, nil
+}
+
+// parseDigestBound parses a start/end bound as supplied to
+// DigestClickPositions: either a bare date or a date with a time component
+// (endDateTime always has one by the time it reaches here; startDate may or
+// may not).
+func parseDigestBound(s string) (time.Time, error) {
+	layouts := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+	}
+	var lastErr error
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, nil
+		} else {
+			lastErr = err
+		}
+	}
+	return time.Time{}, lastErr
+}
+
+// DigestClickPositions returns the click-through rate by post position within
+// unified digest emails. This shows how a post's vertical position in the
+// digest affects whether recipients click it.
+//
+// The metric is derived entirely from existing tracking data:
+//   - The denominator ("shown") comes from email_tracking.metadata.post_msgids,
+//     an ordered array of the msgids rendered in each digest. A digest with K
+//     posts shows positions 0..K-1, so position N was shown by every digest with
+//     more than N posts.
+//   - The numerator comes from email_tracking_clicks.link_position labels of the
+//     form "post_N", counting the distinct digest emails that registered a click
+//     at each position.
+//
+// Both sides are restricted to the same cohort (digests sent in the period, with
+// metadata, excluding Trash Nothing recipients) so the CTR never exceeds 100%.
+//
+// @Router /email/stats/digestpositions [get]
+// @Summary Get digest click-through rate by post position
+// @Description Returns click-through rate per post position within unified digests, for analysing how position affects engagement (Support/Admin only)
+// @Tags emailtracking
+// @Produce json
+// @Security BearerAuth
+// @Param start query string false "Start date (YYYY-MM-DD)"
+// @Param end query string false "End date (YYYY-MM-DD)"
+// @Param type query string false "Email type filter (default: all UnifiedDigest* types)"
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} fiber.Error "Unauthorized"
+// @Failure 403 {object} fiber.Error "Forbidden"
+// digestClickPositionsDeadline bounds the whole chunked walk below: each
+// per-window statement is short, but a wide admin-selected range issues many of
+// them, and the fiber request context alone would never fire (fasthttp only
+// cancels it on server shutdown), so an abandoned request would otherwise keep
+// stepping through the remaining windows.
+const digestClickPositionsDeadline = 60 * time.Second
+
+func DigestClickPositions(c *fiber.Ctx) error {
+	ctx, cancel := context.WithTimeout(c.Context(), digestClickPositionsDeadline)
+	defer cancel()
+	db := database.DBConn.WithContext(ctx)
+
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	// Check if user has support/admin role
+	if !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Support or Admin role required")
+	}
+
+	startDate := c.Query("start", "")
+	endDate := c.Query("end", "")
+
+	// Default to the last 7 days when no range is supplied. email_tracking is
+	// large (millions of rows/month), and these queries aggregate JSON metadata
+	// per row, so a wide default window makes the chart hang. Callers can still
+	// pass an explicit start/end for a longer range.
+	if startDate == "" || endDate == "" {
+		now := time.Now()
+		endDate = now.Format("2006-01-02")
+		startDate = now.AddDate(0, 0, -7).Format("2006-01-02")
+	}
+
+	// If endDate doesn't include a time component, extend it to end of day.
+	endDateTime := endDate
+	if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
+		endDateTime = endDate + " 23:59:59"
+	}
+
+	// By default consider all unified digest types; allow an exact-type override.
+	emailType := c.Query("type", "")
+	typeClause := "e.email_type LIKE 'UnifiedDigest%'"
+	var typeArgs []interface{}
+	if emailType != "" {
+		typeClause = "e.email_type = ?"
+		typeArgs = append(typeArgs, emailType)
+	}
+
+	// Conditions shared by both queries to keep the cohort consistent.
+	cohort := typeClause + `
+		AND u.tnuserid IS NULL
+		AND e.metadata IS NOT NULL
+		AND JSON_LENGTH(e.metadata, '$.post_msgids') > 0
+		AND e.sent_at BETWEEN ? AND ?`
+
+	// 1. Denominator: distribution of digest sizes. A digest with `num_posts`
+	//    posts displayed positions 0..num_posts-1.
+	denomQuery := `
+		SELECT JSON_LENGTH(e.metadata, '$.post_msgids') AS num_posts, COUNT(*) AS cnt
+		-- Force the sent_at index: otherwise the optimiser full-scans the whole
+		-- table (millions of rows + per-row JSON) instead of range-scanning the
+		-- date window, which made the chart hang.
+		FROM email_tracking e FORCE INDEX (sent_at)
+		LEFT JOIN users u ON e.userid = u.id
+		WHERE ` + cohort + `
+		GROUP BY num_posts`
+
+	// Run both this query and clickQuery below in short date sub-windows
+	// instead of one scan over the whole requested range - see
+	// chunkDateWindows. Falls back to a single window over the whole range
+	// if the bounds don't parse in an expected format, matching the prior
+	// (unchunked) behaviour.
+	windows, err := chunkDateWindows(startDate, endDateTime, digestChunkDays)
+	if err != nil {
+		windows = []digestDateWindow{{Start: startDate, End: endDateTime}}
+	}
+
+	sizeCounts := make(map[int]int64)
+	for _, w := range windows {
+		denomArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
+		var chunkRows []struct {
+			NumPosts int   `gorm:"column:num_posts"`
+			Cnt      int64 `gorm:"column:cnt"`
+		}
+		if err := db.Raw(denomQuery, denomArgs...).Scan(&chunkRows).Error; err != nil {
+			// Fail the whole distribution (empty chart, like the replaced
+			// single statement did on error) rather than silently returning
+			// totals missing an unknown subset of days.
+			sizeCounts = map[int]int64{}
+			break
+		}
+		for _, r := range chunkRows {
+			sizeCounts[r.NumPosts] += r.Cnt
+		}
+	}
+
+	maxPosts := 0
+	for numPosts := range sizeCounts {
+		if numPosts > maxPosts {
+			maxPosts = numPosts
+		}
+	}
+
+	// shown[n] = number of digests whose size was greater than n (i.e. displayed
+	// a post at position n).
+	shown := make([]int64, maxPosts)
+	for numPosts, cnt := range sizeCounts {
+		for n := 0; n < numPosts && n < maxPosts; n++ {
+			shown[n] += cnt
+		}
+	}
+
+	// 2. Numerator: clicks on a post CARD at position N, grouped by position label.
+	//
+	// Two label schemes coexist:
+	//   - "post_N": the legacy (verbose) digest card link.
+	//   - "pN":     the current compact card link (TrackableEmail compact form,
+	//               UnifiedDigest emits "p{index}" for the per-post Reply CTA).
+	// Both mean "clicked the card for the post shown at vertical position N", so
+	// both must be counted - otherwise this stat only sees old emails and silently
+	// under-reports (compact "pN" clicks dominate live traffic). We deliberately
+	// exclude the summary-index links ("yN") and image links ("iN"): the summary
+	// sits at the top of the email, so a "yN" click is not a signal about the
+	// post's vertical position.
+	clickQuery := `
+		SELECT c.link_position AS link_position,
+		       COUNT(DISTINCT c.email_tracking_id) AS emails_clicked,
+		       COUNT(*) AS clicks
+		FROM email_tracking_clicks c
+		JOIN email_tracking e ON c.email_tracking_id = e.id
+		LEFT JOIN users u ON e.userid = u.id
+		WHERE ` + cohort + `
+		  AND c.link_position REGEXP '^(post_[0-9]+|p[0-9]+)$'
+		GROUP BY c.link_position`
+
+	emailsClickedByPos := make(map[int]int64)
+	clicksByPos := make(map[int]int64)
+	for _, w := range windows {
+		clickArgs := append(append([]interface{}{}, typeArgs...), w.Start, w.End)
+		var chunkRows []struct {
+			LinkPosition  string `gorm:"column:link_position"`
+			EmailsClicked int64  `gorm:"column:emails_clicked"`
+			Clicks        int64  `gorm:"column:clicks"`
+		}
+		if err := db.Raw(clickQuery, clickArgs...).Scan(&chunkRows).Error; err != nil {
+			// As above: all-or-nothing for the click counts.
+			emailsClickedByPos = map[int]int64{}
+			clicksByPos = map[int]int64{}
+			break
+		}
+		for _, r := range chunkRows {
+			// link_position is "post_N" or "pN"; extract the trailing integer
+			// position regardless of the prefix/separator.
+			s := r.LinkPosition
+			i := len(s)
+			for i > 0 && s[i-1] >= '0' && s[i-1] <= '9' {
+				i--
+			}
+			if i == len(s) {
+				// No trailing digits - not a positional label.
+				continue
+			}
+			n, err := strconv.Atoi(s[i:])
+			if err != nil || n < 0 {
+				continue
+			}
+			emailsClickedByPos[n] += r.EmailsClicked
+			clicksByPos[n] += r.Clicks
+		}
+	}
+
+	// 3. Build the per-position result, ascending, skipping positions never shown.
+	data := make([]DigestPositionStat, 0, maxPosts)
+	for n := 0; n < maxPosts; n++ {
+		if shown[n] <= 0 {
+			continue
+		}
+		var ctr float64
+		if shown[n] > 0 {
+			ctr = float64(emailsClickedByPos[n]) / float64(shown[n]) * 100
+		}
+		data = append(data, DigestPositionStat{
+			Position:      n,
+			Shown:         shown[n],
+			EmailsClicked: emailsClickedByPos[n],
+			Clicks:        clicksByPos[n],
+			CTR:           ctr,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"data": data,
+		"period": fiber.Map{
+			"start": startDate,
+			"end":   endDate,
+			"type":  emailType,
+		},
+	})
+}
+
+// ReengageFunnel represents overall funnel counts for the localised
+// re-engagement email sequence within the requested period.
+type ReengageFunnel struct {
+	Sent      int64 `json:"sent"`
+	Opened    int64 `json:"opened"`
+	Clicked   int64 `json:"clicked"`
+	Reengaged int64 `json:"reengaged"`
+}
+
+// ReengageStageStat represents funnel counts for a single stage (day 1-5) of
+// the re-engagement sequence.
+type ReengageStageStat struct {
+	Stage     uint8 `json:"stage"`
+	Sent      int64 `json:"sent"`
+	Opened    int64 `json:"opened"`
+	Clicked   int64 `json:"clicked"`
+	Reengaged int64 `json:"reengaged"`
+}
+
+// ReengageArmStat represents funnel counts for a single experiment arm
+// ('control', 'a', 'b', ...). The control arm is a holdout that receives
+// no mail at all, so its opened/clicked counts are always zero - it still
+// has a sent count and a reengaged count, which together form the baseline
+// used to compute lift for the mailed arms.
+type ReengageArmStat struct {
+	Arm       string `json:"arm"`
+	Sent      int64  `json:"sent"`
+	Opened    int64  `json:"opened"`
+	Clicked   int64  `json:"clicked"`
+	Reengaged int64  `json:"reengaged"`
+}
+
+// ReengageSegmentStat represents send/reengagement counts for a single
+// user-journey segment ('offer', 'wanted', 'replier', 'other') captured at
+// send time.
+type ReengageSegmentStat struct {
+	Segment   string `json:"segment"`
+	Sent      int64  `json:"sent"`
+	Reengaged int64  `json:"reengaged"`
+}
+
+// ReengageSourceStat breaks sends down by how the sign-off volunteer's community
+// was resolved: 'home' (the member's catchment contains where they live - what we
+// want), 'nearest' (no catchment matched, so nearest centre was used), 'unknown'
+// (no location to test) or 'none' (no eligible volunteer; plain Freegle voice).
+// It answers "are we actually signing off from the member's own community?" and
+// whether a genuine local sign-off engages better. Opens/clicks are joined, so
+// this needs email_tracking.
+type ReengageSourceStat struct {
+	Source    string `json:"source"`
+	Sent      int64  `json:"sent"`
+	Opened    int64  `json:"opened"`
+	Clicked   int64  `json:"clicked"`
+	Reengaged int64  `json:"reengaged"`
+}
+
+// ReengageEffectiveness returns funnel/effectiveness statistics for the
+// localised re-engagement email sequence (requires authentication).
+//
+// Sends live in the `reengage` table (one row per stage sent to a user).
+// Opens/clicks come from a LEFT JOIN to email_tracking via
+// reengage.email_tracking_id, which is NULL for the experiment's control
+// arm (a holdout that receives no mail) - the LEFT JOIN keeps those rows
+// counted towards "sent" while their opened/clicked always resolve to
+// zero. Actual re-engagement is reengage.reengaged_at IS NOT NULL, written
+// separately from the mutable email open/click signals by the
+// mail:reengage-outcomes batch job.
+//
+// @Router /modtools/email/stats/reengage [get]
+// @Summary Get re-engagement email effectiveness
+// @Description Returns funnel (sent/opened/clicked/reengaged) counts overall and broken down by stage, experiment arm and journey segment (Support/Admin only)
+// @Tags emailtracking
+// @Produce json
+// @Security BearerAuth
+// @Param start query string false "Start date (YYYY-MM-DD)"
+// @Param end query string false "End date (YYYY-MM-DD)"
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} fiber.Error "Unauthorized"
+// @Failure 403 {object} fiber.Error "Forbidden"
+func ReengageEffectiveness(c *fiber.Ctx) error {
+	db := database.DBConn
+
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	// Check if user has support/admin role
+	if !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Support or Admin role required")
+	}
+
+	startDate := c.Query("start", "")
+	endDate := c.Query("end", "")
+
+	// Default to the last 90 days when no range is supplied.
+	if startDate == "" || endDate == "" {
+		now := time.Now()
+		endDate = now.Format("2006-01-02")
+		startDate = now.AddDate(0, 0, -90).Format("2006-01-02")
+	}
+
+	// If endDate doesn't include a time component, extend it to end of day.
+	endDateTime := endDate
+	if !strings.Contains(endDate, " ") && !strings.Contains(endDate, "T") {
+		endDateTime = endDate + " 23:59:59"
+	}
+
+	// Overall funnel. LEFT JOIN so control-arm rows (email_tracking_id IS
+	// NULL, since no mail was sent) still count towards "sent" - they just
+	// never contribute to opened/clicked.
+	var funnel ReengageFunnel
+	db.Table("reengage r").
+		Select("COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
+		Where("r.sentat BETWEEN ? AND ?", startDate, endDateTime).
+		Scan(&funnel)
+
+	// Funnel broken down by stage (day 1-5).
+	byStage := make([]ReengageStageStat, 0)
+	db.Table("reengage r").
+		Select("r.stage AS stage, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
+		Where("r.sentat BETWEEN ? AND ?", startDate, endDateTime).
+		Group("r.stage").
+		Order("r.stage ASC").
+		Scan(&byStage)
+
+	// Funnel broken down by experiment arm. Rows predating the experiment
+	// (or sent outside of one) have arm = NULL and are excluded here - they
+	// are still reflected in the overall funnel above.
+	byArm := make([]ReengageArmStat, 0)
+	db.Table("reengage r").
+		Select("r.arm AS arm, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
+		Where("r.sentat BETWEEN ? AND ? AND r.arm IS NOT NULL", startDate, endDateTime).
+		Group("r.arm").
+		Order("r.arm ASC").
+		Scan(&byArm)
+
+	// Sent/reengaged broken down by the user-journey segment captured at
+	// send time. Segment has no bearing on opens/clicks so it isn't joined
+	// to email_tracking.
+	bySegment := make([]ReengageSegmentStat, 0)
+	db.Table("reengage r").
+		Select("r.segment AS segment, COUNT(*) AS sent, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Where("r.sentat BETWEEN ? AND ? AND r.segment IS NOT NULL", startDate, endDateTime).
+		Group("r.segment").
+		Order("r.segment ASC").
+		Scan(&bySegment)
+
+	// Sends broken down by how the sign-off community was resolved. Rows
+	// predating this instrumentation have volunteer_source = NULL and are
+	// excluded here (still counted in the overall funnel). Opens/clicks are
+	// joined so a genuine home-group sign-off can be compared against nearest
+	// or no sign-off.
+	bySource := make([]ReengageSourceStat, 0)
+	db.Table("reengage r").
+		Select("r.volunteer_source AS source, COUNT(*) AS sent, SUM(CASE WHEN et.opened_at IS NOT NULL THEN 1 ELSE 0 END) AS opened, SUM(CASE WHEN et.clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked, SUM(CASE WHEN r.reengaged_at IS NOT NULL THEN 1 ELSE 0 END) AS reengaged").
+		Joins("LEFT JOIN email_tracking et ON r.email_tracking_id = et.id").
+		Where("r.sentat BETWEEN ? AND ? AND r.volunteer_source IS NOT NULL", startDate, endDateTime).
+		Group("r.volunteer_source").
+		Order("r.volunteer_source ASC").
+		Scan(&bySource)
+
+	return c.JSON(fiber.Map{
+		"funnel":    funnel,
+		"byStage":   byStage,
+		"byArm":     byArm,
+		"bySegment": bySegment,
+		"bySource":  bySource,
+		"period": fiber.Map{
+			"start": startDate,
+			"end":   endDate,
+		},
+	})
 }

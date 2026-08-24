@@ -20,6 +20,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
+	"gorm.io/gorm"
 )
 
 // PersistentToken represents the old-style session token from the Authorization2 header.
@@ -39,11 +40,17 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 	persistent := c.Get("Authorization2")
 
 	if id == 0 && len(persistent) > 0 {
-		// parse persistent token
-		var persistentToken PersistentToken
-		_ = json2.Unmarshal([]byte(persistent), &persistentToken)
+		// Use a minimal struct so that old-format tokens whose Series field was
+		// serialised as a JSON string ("12345") don't cause json.Unmarshal to
+		// return a type-error that zeroes out the parsed ID.  id+token is a
+		// sufficient authenticator without Series.
+		var minPT struct {
+			ID    uint64 `json:"id"`
+			Token string `json:"token"`
+		}
+		_ = json2.Unmarshal([]byte(persistent), &minPT)
 
-		if (persistentToken.ID > 0) && (persistentToken.Series > 0) && (persistentToken.Token != "") {
+		if minPT.ID > 0 && minPT.Token != "" {
 			// Verify token against sessions table
 			db := database.DBConn
 
@@ -52,7 +59,7 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 			}
 
 			var userids []Userid
-			db.Raw("SELECT userid FROM sessions WHERE id = ? AND series = ? AND token = ? LIMIT 1;", persistentToken.ID, persistentToken.Series, persistentToken.Token).Scan(&userids)
+			db.Table("sessions").Select("userid").Where("id = ? AND token = ?", minPT.ID, minPT.Token).Limit(1).Scan(&userids)
 
 			if len(userids) > 0 {
 				id = userids[0].Userid
@@ -129,7 +136,7 @@ func GetJWTFromRequest(c *fiber.Ctx) (uint64, uint64, float64) {
 func IsAdminOrSupport(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	result := db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+	result := db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	if result.Error != nil {
 		log.Printf("Failed to check admin/support role for user %d: %v", myid, result.Error)
 		return false
@@ -137,11 +144,37 @@ func IsAdminOrSupport(myid uint64) bool {
 	return systemrole == utils.SYSTEMROLE_SUPPORT || systemrole == utils.SYSTEMROLE_ADMIN
 }
 
+// IsChitChatMod reports whether the user may moderate ChitChat: a member of the
+// ChitChat Moderation team, or support/admin.
+//
+// This is the audience for the ChitChat moderation tools — hiding a post, seeing
+// the duplicate-of-their-own-post note, and converting a post into a real
+// OFFER/WANTED on the member's behalf. Group moderators are deliberately NOT
+// included: ChitChat is not group-scoped.
+func IsChitChatMod(myid uint64) bool {
+	if myid == 0 {
+		return false
+	}
+
+	if IsAdminOrSupport(myid) {
+		return true
+	}
+
+	db := database.DBConn
+	var teamMemberCount int64
+	db.Table("teams_members tm").
+		Joins("INNER JOIN teams t ON tm.teamid = t.id").
+		Where("t.name = 'ChitChat Moderation' AND tm.userid = ?", myid).
+		Count(&teamMemberCount)
+
+	return teamMemberCount > 0
+}
+
 // IsAdmin checks if the user has the Admin systemrole.
 func IsAdmin(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+	db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	return systemrole == utils.SYSTEMROLE_ADMIN
 }
 
@@ -153,6 +186,7 @@ const (
 	PERM_SPAM_ADMIN          = "SpamAdmin"
 	PERM_TEAMS               = "Teams"
 	PERM_BUSINESS_CARDS      = "BusinessCardsAdmin"
+	PERM_CLEARANCE           = "Clearance"
 )
 
 // HasPermission checks if a user has a specific permission.
@@ -160,7 +194,7 @@ const (
 func HasPermission(userid uint64, perm string) bool {
 	db := database.DBConn
 	var permissions *string
-	db.Raw("SELECT permissions FROM users WHERE id = ?", userid).Scan(&permissions)
+	db.Table("users").Select("permissions").Where("id = ?", userid).Scan(&permissions)
 	if permissions == nil || *permissions == "" {
 		return false
 	}
@@ -176,7 +210,7 @@ func HasPermission(userid uint64, perm string) bool {
 func IsSystemMod(myid uint64) bool {
 	db := database.DBConn
 	var systemrole string
-	result := db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+	result := db.Table("users").Select("systemrole").Where("id = ?", myid).Scan(&systemrole)
 	if result.Error != nil {
 		log.Printf("Failed to check system mod role for user %d: %v", myid, result.Error)
 		return false
@@ -196,7 +230,7 @@ func IsModOfGroup(myid uint64, groupid uint64) bool {
 
 	db := database.DBConn
 	var role string
-	result := db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&role)
+	result := db.Table("memberships").Select("role").Where("userid = ? AND groupid = ?", myid, groupid).Scan(&role)
 	if result.Error != nil {
 		log.Printf("Failed to check mod role for user %d group %d: %v", myid, groupid, result.Error)
 		return false
@@ -212,10 +246,9 @@ func IsModOfAnyGroup(myid uint64) bool {
 
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	db.Table("memberships").Where("userid = ? AND role IN (?, ?)", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&count)
 	return count > 0
 }
-
 
 // HashPassword computes sha1(password + salt).
 func HashPassword(password, salt string) string {
@@ -242,7 +275,7 @@ func VerifyPassword(userID uint64, password string) bool {
 		Credentials string
 		Salt        string
 	}
-	db.Raw("SELECT credentials, salt FROM users_logins WHERE userid = ? AND type = ? ORDER BY lastaccess DESC", userID, utils.LOGIN_TYPE_NATIVE).Scan(&logins)
+	db.Table("users_logins").Select("credentials, salt").Where("userid = ? AND type = ?", userID, utils.LOGIN_TYPE_NATIVE).Order("lastaccess DESC").Scan(&logins)
 
 	for _, login := range logins {
 		if login.Credentials == "" {
@@ -271,15 +304,31 @@ func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) 
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 
-	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",
-		userID, series, token)
-
-	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&sessionID)
-
-	if sessionID == 0 {
+	// Read the new session id from the INSERT's LastInsertId on the write
+	// connection. A "SELECT id ... WHERE userid ORDER BY id DESC LIMIT 1" here is
+	// routed to a read replica by the read/write split and, under Galera's
+	// cross-node apply window, can return the user's PREVIOUS session - so the
+	// persistent token/JWT would carry the wrong session id (cf. message create,
+	// Discourse 9832). db.DB() returns the source even with dbresolver registered.
+	// Table()+map Create
+	// reads the generated id back from the same sql.Result the INSERT
+	// returned, under the map key "@id" - see
+	// test/insertid_gorm_writeback_test.go.
+	row := map[string]interface{}{
+		"userid":     userID,
+		"series":     series,
+		"token":      token,
+		"date":       gorm.Expr("NOW()"),
+		"lastactive": gorm.Expr("NOW()"),
+	}
+	if err := db.Table("sessions").Create(row).Error; err != nil {
+		return nil, "", fmt.Errorf("failed to create session: %w", err)
+	}
+	lastID, _ := row["@id"].(int64)
+	if lastID <= 0 {
 		return nil, "", fmt.Errorf("failed to create session")
 	}
+	sessionID := uint64(lastID)
 
 	persistent := map[string]interface{}{
 		"id":     sessionID,

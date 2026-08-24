@@ -19,6 +19,8 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 use Symfony\Component\Mime\Email;
+use App\Services\DonateLinkService;
+use App\Services\UnsubscribeService;
 
 class ChatNotification extends MjmlMailable implements RetryableMailable
 {
@@ -48,6 +50,13 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     public Collection $previousMessages;
 
     public ?Message $refMessage;
+
+    /**
+     * Whether this is a "waiting for reply" chase-up of an expected reply.
+     * When TRUE the subject is prefixed with "WAITING FOR REPLY: " to match
+     * the legacy V1 PHP ChatRoom::chaseupExpected() behaviour.
+     */
+    public bool $waitingForReply = false;
 
     /**
      * Whether this notification is for the sender's own message (copy to self).
@@ -91,13 +100,15 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         ChatRoom $chatRoom,
         ChatMessage $message,
         string $chatType,
-        ?Collection $previousMessages = NULL
+        ?Collection $previousMessages = NULL,
+        bool $waitingForReply = false
     ) {
         $this->recipient = $recipient;
         $this->sender = $sender;
         $this->chatRoom = $chatRoom;
         $this->message = $message;
         $this->chatType = $chatType;
+        $this->waitingForReply = $waitingForReply;
         $this->previousMessages = $previousMessages ?? collect();
         $this->userSite = config('freegle.sites.user');
         $this->modSite = config('freegle.sites.mod');
@@ -144,7 +155,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         $this->replyToAddress = 'notify-' . $chatRoom->id . '-' . $recipient->id . '@' . $this->userDomain;
 
         // Build from display name based on chat type.
-        // For User2Mod chats, we follow iznik-server behavior:
+        // For User2Mod chats, we follow the legacy V1 behaviour:
         // - Member receives: "{GroupName} Volunteers" (hide mod identity)
         // - Mod receives from member: "{MemberName} via Freegle"
         // - Mod receives from another mod: "{GroupName} Volunteers"
@@ -203,6 +214,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             ],
             $hasAmp
         );
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_CHAT;
     }
 
     /**
@@ -424,10 +440,30 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 ),
                 'jobAds' => $jobAds['jobs'],
                 'jobsUrl' => $this->trackedUrl($this->userSite . '/jobs', 'jobs_link', 'jobs'),
-                'donateUrl' => $this->trackedUrl('https://freegle.in/paypal1510', 'donate_link', 'donate'),
+                // Our own Stripe donate page rather than the PayPal-only
+                // shortlink, so Apple Pay / Google Pay / Link are on offer too.
+                // See DonateLinkService.
+                'donateUrl' => $this->trackedUrl(
+                    app(DonateLinkService::class)->url(
+                        $this->recipient,
+                        app(DonateLinkService::class)->defaultAmount(),
+                        'chatnotify'
+                    ),
+                    'donate_link',
+                    'donate'
+                ),
+                'donateMarksUrl' => config('freegle.images.paymethods'),
                 'ampIncluded' => $ampIncluded,
                 'isOwnMessage' => $this->isOwnMessage,
                 'otherUserName' => $otherUserName,
+                // A Freegle prompt asks a question whose answers are buttons, and
+                // buttons cannot live in email: a one-click answer in a mail is
+                // answerable by anyone who ever sees that mail, including a
+                // forwarded copy, and these answers change what the member's post
+                // says. So the mail carries the question and sends them to the
+                // chat to answer it - which the call to action has to be honest
+                // about, rather than saying "Reply to Freegle".
+                'isPrompt' => $this->message->type === ChatMessage::TYPE_PROMPT,
             ], $this->getTrackingData()), 'emails.text.chat.notification');
 
         // Render AMP version if enabled, User2User chat, and recipient's domain supports AMP.
@@ -485,12 +521,11 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             // Add mail type header for tracking.
             $headers->addTextHeader('X-Freegle-Mail-Type', 'ChatNotification');
 
-            // Add List-Unsubscribe headers for RFC 8058 one-click unsubscribe.
-            // Only for persisted users with valid IDs.
-            if ($this->recipient->exists && $this->recipient->id) {
-                $headers->addTextHeader('List-Unsubscribe', $this->recipient->listUnsubscribe());
-                $headers->addTextHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
-            }
+            // List-Unsubscribe is added by MjmlMailable::addListUnsubscribeHeaders() from
+            // the category this mailable declares. It used to be added here as well,
+            // pointing at the one-click page that deletes the account - so the mail
+            // carried two conflicting List-Unsubscribe headers, one of which answered
+            // "stop emailing me about chats" by removing the member's account.
 
             // Add referenced message IDs if available.
             if ($this->refMessage) {
@@ -538,7 +573,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     /**
      * Generate the subject line based on context.
      *
-     * Matches iznik-server logic: use the last "interested in" message in the chat
+     * Matches the legacy V1 PHP logic: use the last "interested in" message in the chat
      * to get the item subject, since that's the most likely thing they're talking about.
      *
      * For User2Mod chats:
@@ -550,11 +585,27 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      */
     protected function generateSubject(): string
     {
+        $subject = $this->generateBaseSubject();
+
+        // Chase-up of an expected reply: prefix to match the legacy V1 PHP
+        // ChatRoom::chaseupExpected() behaviour.
+        if ($this->waitingForReply) {
+            return 'WAITING FOR REPLY: ' . $subject;
+        }
+
+        return $subject;
+    }
+
+    /**
+     * Generate the base (un-prefixed) subject line based on context.
+     */
+    protected function generateBaseSubject(): string
+    {
         if ($this->chatType === ChatRoom::TYPE_USER2MOD) {
             $group = $this->chatRoom->group;
 
             if ($this->isModerator) {
-                // Moderator subject - matches iznik-server exactly.
+                // Moderator subject - matches the legacy V1 PHP implementation exactly.
                 $groupName = $group?->nameshort ?? 'Freegle';
                 $memberName = $this->member?->displayname ?? 'A member';
                 $memberEmail = $this->member?->email_preferred ?? '';
@@ -574,18 +625,24 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         }
 
         // For USER2USER chats, find the last "interested in" message to get the item subject.
-        // This matches the iznik-server getChatEmailSubject() logic.
+        // This matches the legacy V1 PHP getChatEmailSubject() logic.
         $interestedInfo = $this->getLastInterestedMessageInfo();
 
         if ($interestedInfo) {
-            // Format: "Regarding: [GroupName] ItemSubject"
+            // Format: "Regarding: ItemSubject" - deliberately NO group name. With
+            // rippling a post sits on many groups and any single pick can mislead:
+            // the old "most relevant" pick (recipient's memberships sorted by
+            // messages_groups.arrival DESC) chose the most-recently-RIPPLED group,
+            // so a Bristol post's replies arrived as [Bath Freegle], [Dursley],
+            // [North Cotswolds] - changing as the poster's rippled memberships
+            // changed. The item subject's own location suffix says where it is.
             // Strip any existing "Regarding:" or "Re:" prefixes from the subject.
             $subject = $interestedInfo['subject'];
             $subject = str_replace('Regarding:', '', $subject);
             $subject = str_replace('Re: ', '', $subject);
             $subject = trim($subject);
 
-            return "Regarding: [{$interestedInfo['groupName']}] {$subject}";
+            return "Regarding: {$subject}";
         }
 
         // Fallback if no interested message found.
@@ -596,9 +653,9 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
      * Get the last "interested in" message info for this chat.
      *
      * This queries the chat for the most recent TYPE_INTERESTED message and returns
-     * the associated item's subject and group name.
+     * the associated item's subject.
      *
-     * @return array{subject: string, groupName: string}|null
+     * @return array{subject: string}|null
      */
     protected function getLastInterestedMessageInfo(): ?array
     {
@@ -613,25 +670,19 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             return NULL;
         }
 
-        // Get the referenced message with its group.
         $refMessage = $interestedMessage->refMessage;
         if (!$refMessage) {
             return NULL;
         }
 
-        // Get the group for this message.
-        $group = $refMessage->groups()->first();
-        $groupName = $group?->namefull ?? $group?->nameshort ?? 'Freegle';
-
         return [
             'subject' => $refMessage->subject,
-            'groupName' => $groupName,
         ];
     }
 
     /**
      * Get a clean snippet of the message for use in subject lines.
-     * Matches the snippet format used in iznik-server ChatRoom::getSnippet().
+     * Matches the snippet format used in the legacy V1 PHP ChatRoom::getSnippet().
      *
      * @param int $maxLength Maximum length of the snippet
      */
@@ -639,7 +690,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     {
         $text = $this->message->message ?? '';
 
-        // For certain message types, use generic descriptions (matching iznik-server).
+        // For certain message types, use generic descriptions (matching the legacy V1 PHP implementation).
         switch ($this->message->type) {
             case ChatMessage::TYPE_ADDRESS:
                 return 'Address sent...';
@@ -650,7 +701,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             case ChatMessage::TYPE_RENEGED:
                 return 'Promise cancelled...';
             case ChatMessage::TYPE_COMPLETED:
-                // Match iznik-server: different text for OFFER (TAKEN) vs WANTED (RECEIVED).
+                // Match the legacy V1 PHP implementation: different text for OFFER (TAKEN) vs WANTED (RECEIVED).
                 if ($this->refMessage?->type === Message::TYPE_OFFER) {
                     if (!empty($text)) {
                         break; // Use the text below.
@@ -705,7 +756,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     /**
      * Prepare a single message for display.
      *
-     * For User2Mod chats, we follow iznik-server behavior:
+     * For User2Mod chats, we follow the legacy V1 behaviour:
      * - When notifying a member, mod messages show "Volunteers" and group profile
      * - When notifying a mod, messages show actual user names/profiles
      */
@@ -723,7 +774,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             && $message->userid !== $this->chatRoom->user1;
 
         // For User2Mod chats when notifying a member, hide mod identity.
-        // This matches iznik-server prepareForTwig() behavior.
+        // This matches the legacy V1 PHP prepareForTwig() behavior.
         $shouldHideModIdentity = $this->chatType === ChatRoom::TYPE_USER2MOD
             && !$this->isModerator  // Recipient is a member
             && $isFromMod;          // Message is from a mod
@@ -998,7 +1049,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     /**
      * Get group profile image URL for User2Mod chats.
      *
-     * This matches iznik-server behavior where mod messages to members
+     * This matches the legacy V1 PHP behaviour where mod messages to members
      * use the group's profile image instead of the individual mod's profile.
      * Format: gimg_{profile_image_id}.jpg where profile is from groups.profile column
      */

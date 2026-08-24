@@ -17,8 +17,8 @@
       :class="{ 'chat-empty-message': isEmptyMessage }"
     >
       <div>
-        <!-- ModTools: clickable links enabled -->
-        <template v-if="isModTools">
+        <!-- ModTools, and volunteer chats on Freegle: clickable links enabled -->
+        <template v-if="linksClickable">
           <span v-if="!highlightEmails">
             <span
               v-if="messageIsNew"
@@ -54,7 +54,7 @@
             />
           </span>
         </template>
-        <!-- Freegle: no clickable links for safety -->
+        <!-- Freegle member-to-member chat: no clickable links for safety -->
         <template v-else>
           <span v-if="!highlightEmails">
             <span v-if="messageIsNew" class="prewrap fw-bold">{{
@@ -102,6 +102,7 @@
           :zoom="16"
           :max-zoom="maxZoom"
           :center="[lat, lng]"
+          :options="mapOptions"
           :style="'width: 100%; height: 200px'"
         >
           <l-tile-layer :url="osmtile()" :attribution="attribution()" />
@@ -124,7 +125,7 @@ import {
 import { ref, computed, onMounted } from '#imports'
 import ProfileImage from '~/components/ProfileImage'
 import { MAX_MAP_ZOOM, POSTCODE_REGEX } from '~/constants'
-import { attribution, osmtile } from '~/composables/useMap'
+import { attribution, osmtile, INLINE_MAP_OPTIONS } from '~/composables/useMap'
 import { useLocationStore } from '~/stores/location'
 import { useMiscStore } from '~/stores/misc'
 
@@ -169,6 +170,7 @@ const lng = ref(null)
 
 // Computed properties
 const maxZoom = computed(() => MAX_MAP_ZOOM)
+const mapOptions = INLINE_MAP_OPTIONS
 
 const messageIsNew = computed(() => {
   return (
@@ -196,8 +198,17 @@ const postcode = computed(() => {
   return ret
 })
 
-// In ModTools, we make URLs clickable. In Freegle, we don't for safety reasons.
+// In ModTools, we make URLs clickable. In Freegle we don't, because a link from
+// another member could be a scam.
 const isModTools = computed(() => miscStore.modtools)
+
+// ...but a User2Mod chat is the conversation with your own community's
+// volunteers, so that risk doesn't apply. Standard messages routinely point
+// members at a link (e.g. where to edit their post), and on the app that link
+// was dead text with no way to follow it.
+const linksClickable = computed(
+  () => isModTools.value || chat.value?.chattype === 'User2Mod'
+)
 
 // Linkified message for ModTools (without email highlighting)
 const linkifiedMessage = computed(() => {
@@ -224,7 +235,7 @@ onMounted(async () => {
 })
 </script>
 <style scoped lang="scss">
-/* Chat link styling for ModTools - uses :deep() since content is rendered via v-html */
+/* Chat link styling - uses :deep() since content is rendered via v-html */
 :deep(.chat-link) {
   color: var(--color-link);
   text-decoration: underline;

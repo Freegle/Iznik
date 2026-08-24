@@ -56,6 +56,14 @@ class HousekeeperResultsMail extends MjmlMailable
         );
     }
 
+    /**
+     * Transactional - an internal report to volunteers - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return NULL;

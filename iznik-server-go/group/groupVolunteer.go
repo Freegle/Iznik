@@ -40,16 +40,16 @@ func GetGroupVolunteers(id uint64) []GroupVolunteer {
 	// Get most recent profile.
 	//
 	// showmod setting defaults true.
-	db.Raw("SELECT memberships.userid AS id, ui.id AS profileid, ui.url AS url, ui.archived, ui.externaluid, ui.externalmods, "+
-		"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, "+
-		"CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod, "+
-		"users.lastaccess, memberships.added, memberships.role, memberships.settings, "+
-		"(SELECT ue.email FROM users_emails ue WHERE ue.userid = memberships.userid AND ue.preferred = 1 LIMIT 1) AS email "+
-		"FROM memberships "+
-		"LEFT JOIN users_images ui ON ui.id = ("+
-		"	SELECT MAX(ui2.id) minid FROM users_images ui2 WHERE ui2.userid = memberships.userid "+
-		")  "+
-		"INNER JOIN users ON users.id = memberships.userid WHERE groupid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&all)
+	db.Table("memberships").
+		Select("memberships.userid AS id, ui.id AS profileid, ui.url AS url, ui.archived, ui.externaluid, ui.externalmods, "+
+			"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname, "+
+			"CASE WHEN JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod, "+
+			"users.lastaccess, memberships.added, memberships.role, memberships.settings, "+
+			"(SELECT ue.email FROM users_emails ue WHERE ue.userid = memberships.userid AND ue.preferred = 1 LIMIT 1) AS email").
+		Joins("LEFT JOIN users_images ui ON ui.id = ( SELECT MAX(ui2.id) minid FROM users_images ui2 WHERE ui2.userid = memberships.userid )").
+		Joins("INNER JOIN users ON users.id = memberships.userid").
+		Where("groupid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&all)
 
 	for ix, r := range all {
 		if r.Showmod {

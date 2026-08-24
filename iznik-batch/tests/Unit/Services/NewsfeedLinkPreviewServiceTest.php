@@ -31,6 +31,19 @@ class TestableNewsfeedLinkPreviewService extends NewsfeedLinkPreviewService
     {
         return $this->upsertInvalid($url);
     }
+
+    public function isFetchableUrlPublic(string $url): bool
+    {
+        return $this->isFetchableUrl($url);
+    }
+
+    // Deterministic host resolution for tests (no external DNS): literal IPs pass through so the SSRF
+    // range checks run against them; hostnames resolve to a public IP so fetch-logic tests reach the
+    // (faked) HTTP call with the SSRF check still active.
+    protected function resolveHostIps(string $host): array
+    {
+        return filter_var($host, FILTER_VALIDATE_IP) ? [$host] : ['93.184.216.34'];
+    }
 }
 
 class NewsfeedLinkPreviewServiceTest extends TestCase
@@ -41,6 +54,33 @@ class NewsfeedLinkPreviewServiceTest extends TestCase
     {
         parent::setUp();
         $this->service = new TestableNewsfeedLinkPreviewService();
+    }
+
+    // -------------------------------------------------------------------------
+    // isFetchableUrl — SSRF guard
+    // -------------------------------------------------------------------------
+
+    public function test_isFetchableUrl_blocks_internal_and_bad_schemes(): void
+    {
+        // Literal-IP URLs so no DNS lookup is needed. Internal/private/link-local and non-http(s)
+        // schemes must all be rejected before the server-side fetch happens.
+        foreach ([
+            'http://127.0.0.1/x',
+            'https://10.0.0.1/x',
+            'http://172.16.0.1/x',
+            'https://192.168.1.1/x',
+            'http://169.254.169.254/latest/meta-data/',
+            'http://[::1]/x',
+            'ftp://8.8.8.8/x',
+            'javascript:alert(1)',
+        ] as $url) {
+            $this->assertFalse($this->service->isFetchableUrlPublic($url), "must reject SSRF/bad url: $url");
+        }
+    }
+
+    public function test_isFetchableUrl_allows_public_ip(): void
+    {
+        $this->assertTrue($this->service->isFetchableUrlPublic('https://8.8.8.8/image.png'));
     }
 
     // -------------------------------------------------------------------------

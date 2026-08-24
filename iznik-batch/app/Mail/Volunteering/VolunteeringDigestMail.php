@@ -4,6 +4,8 @@ namespace App\Mail\Volunteering;
 
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\TrackableEmail;
+use App\Services\DonateLinkService;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
@@ -11,9 +13,22 @@ use Illuminate\Support\Collection;
 class VolunteeringDigestMail extends MjmlMailable
 {
     use TrackableEmail;
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_VOLUNTEERING;
+    }
+
+    /**
+     * @param array $volunteerings Deduplicated opportunities across all the
+     *                             recipient's volunteering-enabled groups (plus
+     *                             global opportunities). Each carries a 'groups'
+     *                             array of ['name' => , 'url' => ] pairs for the
+     *                             recipient's groups it was posted on (empty for
+     *                             global opportunities).
+     */
     public function __construct(
         public readonly string $recipientEmail,
-        public readonly string $groupName,
         public readonly array $volunteerings,
         public readonly string $unsubscribeUrl,
         public readonly Collection $jobAds = new Collection(),
@@ -27,13 +42,13 @@ class VolunteeringDigestMail extends MjmlMailable
             $this->userId,
             null,
             $this->getSubject(),
-            ['group' => $this->groupName, 'vol_count' => count($this->volunteerings)]
+            ['vol_count' => count($this->volunteerings)]
         );
     }
 
     protected function getSubject(): string
     {
-        return "[{$this->groupName}] Volunteer Opportunity Roundup";
+        return 'Volunteer opportunities near you';
     }
 
     public function envelope(): Envelope
@@ -41,7 +56,7 @@ class VolunteeringDigestMail extends MjmlMailable
         return new Envelope(
             from: new Address(
                 config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
-                $this->groupName
+                config('freegle.site_name', 'Freegle')
             ),
             to: [new Address($this->recipientEmail)],
             subject: $this->getSubject(),
@@ -62,14 +77,26 @@ class VolunteeringDigestMail extends MjmlMailable
         });
 
         return $this->mjmlView('emails.mjml.volunteering.digest', [
-            'groupName'      => $this->groupName,
             'volunteerings'  => $this->volunteerings,
             'userSite'       => $userSite,
             'unsubscribeUrl' => $this->unsubscribeUrl,
             'email'          => $this->recipientEmail,
             'jobAds'         => $jobAds,
             'jobsUrl'        => $this->trackedUrl("{$userSite}/jobs", 'jobs_link', 'jobs'),
-            'donateUrl'      => $this->trackedUrl('https://freegle.in/paypal1510', 'donate_link', 'donate'),
+            // Our own Stripe donate page rather than the PayPal-only shortlink,
+            // so Apple Pay / Google Pay / Link are on offer too. USER_SITE is on
+            // the Go API's isValidRedirectURL allow-list, so the tracked
+            // redirect still resolves. See DonateLinkService.
+            'donateUrl'      => $this->trackedUrl(
+                app(DonateLinkService::class)->urlForUserId(
+                    $this->userId,
+                    app(DonateLinkService::class)->defaultAmount(),
+                    'volunteeringdigest'
+                ),
+                'donate_link',
+                'donate'
+            ),
+            'donateMarksUrl' => config('freegle.images.paymethods'),
         ]);
     }
 }

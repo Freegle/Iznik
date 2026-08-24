@@ -1,5 +1,14 @@
 <template>
-  <div class="donation-ask-container">
+  <div v-if="!dismissed" class="donation-ask-container">
+    <button
+      type="button"
+      class="donation-dismiss"
+      aria-label="Dismiss donation request"
+      title="Maybe later"
+      @click="onDismiss"
+    >
+      <span aria-hidden="true">×</span>
+    </button>
     <div class="donation-ask-content">
       <!-- Solution Framing Variation (#5) - Environmental focus -->
       <p v-if="variation === 'solution-framing'" class="donation-message">
@@ -63,7 +72,7 @@ import StripeDonate from '~/components/StripeDonate.vue'
 import Api from '~/api'
 import { action } from '~/composables/useClientLog'
 
-const emit = defineEmits(['donation-made'])
+const emit = defineEmits(['donation-made', 'dismissed'])
 
 const runtimeConfig = useRuntimeConfig()
 const api = Api(runtimeConfig)
@@ -75,6 +84,21 @@ const testAmount = ref(1)
 // Use test amount as the selected amount (can be changed by slider)
 const selectedAmount = ref(testAmount.value)
 const payPalFallback = ref(false)
+const dismissed = ref(false)
+
+// Let a non-donor quietly close the ask. It's an inline card (not a blocking
+// modal), but on mobile it dominates the fold, so a subtle dismiss lets people
+// get to their posts without feeling nagged. Mirrors DonationAskModal's dismiss.
+function onDismiss() {
+  dismissed.value = true
+
+  action('donation_ask_dismissed', {
+    variant: variation.value,
+    context: 'myposts_inline',
+  })
+
+  emit('dismissed')
+}
 
 // Watch testAmount changes from bandit API
 watch(testAmount, (newVal) => {
@@ -229,6 +253,27 @@ onMounted(async () => {
   }
 }
 
+.donation-dismiss {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.5rem;
+  z-index: 1;
+  border: none;
+  background: transparent;
+  color: var(--color-gray-600);
+  font-size: 1.75rem;
+  line-height: 1;
+  padding: 0.25rem 0.6rem;
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity var(--transition-normal);
+
+  &:hover,
+  &:focus {
+    opacity: 1;
+  }
+}
+
 .donation-ask-content {
   max-width: 600px;
   margin: 0 auto;
@@ -373,31 +418,51 @@ onMounted(async () => {
   }
 }
 
-// Mobile optimization - larger touch targets
+// Mobile optimization - keep the card compact so the user's posts stay near
+// the fold, while keeping touch targets large.
 @include media-breakpoint-down(md) {
   .donation-ask-container {
-    padding: 1.5rem;
-    margin: 1rem auto 1.5rem;
+    padding: 1rem 1rem 1.25rem;
+    margin: 0.5rem auto 1rem;
     max-width: calc(100% - 2rem); // Ensure equal space on both sides
   }
 
   .donation-message {
-    font-size: 1.1rem;
+    font-size: 1rem;
+    line-height: 1.4;
+    margin-bottom: 1rem;
+  }
+
+  .donation-controls {
+    margin-bottom: 1rem;
+  }
+
+  .amount-display {
+    margin-bottom: 0.5rem;
   }
 
   .amount-value {
-    font-size: 2rem;
+    font-size: 1.75rem;
+  }
+
+  .amount-slider {
+    margin: 0.5rem 0 0.25rem;
+  }
+
+  .stripe-container {
+    margin-top: 1rem;
+    gap: 0.75rem;
   }
 }
 
 @include media-breakpoint-down(sm) {
   .donation-ask-container {
-    margin: 1.5rem auto;
+    margin: 0.5rem auto 1rem;
     max-width: calc(100% - 2rem); // Ensure equal space on both sides
   }
 
   .amount-value {
-    font-size: 1.8rem;
+    font-size: 1.6rem;
   }
 
   // Larger slider thumb for mobile (easier to touch)

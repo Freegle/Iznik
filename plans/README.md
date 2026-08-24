@@ -1,41 +1,31 @@
-# Plans Directory
+# Plans
 
-This directory contains Claude-generated plans and documentation organised by status.
+This directory is a working area for **plans, designs, research and runbooks** produced
+while building Freegle. It is scratch space for work in flight, not polished
+documentation.
 
-## Directory Structure
+> Looking for documentation on how Freegle works (for members, moderators, developers or
+> ops)? That lives in [`../docs/`](../docs/README.md), not here.
 
-### `active/` - Work in Progress
-Plans currently being implemented or partially complete.
-- **laravel-batch-jobs-implementation.md** - Migration of PHP cron jobs to Laravel (Phases 1-3 done)
-- **logging-tree-architecture.md** - Logging context architecture (server changes done, client pending)
-- **digestchanges.md** - Unified Freegle Digest consolidation
-- **amp-email-implementation.md** - AMP email support (code complete, awaiting Google registration)
-- **2025-12-26-job-ad-source-tracking.md** - Job ad click tracking
+Obsolete plans (work that has shipped, or been superseded by a canonical doc) are removed
+periodically so this stays a picture of current and future work, not a graveyard. Git
+history keeps the removed ones if you ever need them.
 
-### `future/` - Not Yet Started
-Research and plans for potential future work.
-- **Spiralling Out.md** - Isochrone-based message notification expansion
-- **browserstack-testing-plan.md** - Percy visual testing integration
-- **monorepo-migration.md** - Consolidate repos into monorepo
-- **help-for-support.md** - Sentry Session Replay for debugging
-- **image-recognition-*.md** - AI image analysis research (3 files)
-- **app-login.md** - App login/signup improvements
+## Structure
 
-### `reference/` - Documentation & Research
-Setup guides, research documents, and tracking files.
-- **loki-live-setup.md** - Loki server setup instructions
-- **exploratory-testing.md** - AI-driven exploratory testing process
-- **logging-and-email-tracking-research.md** - Logging technology research
-- **Moving Go API to Netlify.md** - Netlify Go functions research
+- **`active/`** - plans for work in progress or partially done.
+- **`in-progress/`** - a small set of actively-worked items.
+- **`future/`** - research and ideas not yet started.
+- **`reference/`** - setup guides and research notes kept for reference.
+- **`design-review/`** - a one-time UX and accessibility review.
+- Dated files at the top level (for example `2026-07-03-host-reboot-runbook.md`,
+  `2026-07-08-edge-stage1-runbook.md`) are runbooks, diagnostics and one-off designs,
+  named by date.
 
-### Existing Organised Folders
-- **api/** - V1 to V2 API migration documentation
-- **design-review/** - UX/accessibility review (5 documents)
-- **notification-modernization/** - Notification system research (9+ documents)
+## Conventions
 
-## Usage
-
-- Check `active/` for current work in progress
-- Consult `completed/` for implementation details of finished features
-- Review `future/` when planning new work
-- Use `reference/` for setup guides and research
+- Prefix a new dated plan or runbook with `YYYY-MM-DD-`.
+- When a plan's work ships, or a canonical doc supersedes it, delete the plan (git keeps
+  the history) rather than leaving it to rot.
+- Keep polished, audience-facing documentation in [`../docs/`](../docs/README.md); use
+  this directory for the messy thinking that gets you there.

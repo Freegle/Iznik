@@ -2,7 +2,7 @@
 
 **Work in Progress**
 
-This is a Laravel-based replacement for the bulk/batch PHP code in `iznik-server`. It handles background tasks like email notifications, digests, and data cleanup that previously ran as cron jobs or background scripts.
+This is a Laravel-based replacement for the bulk/batch PHP code in the legacy V1 PHP implementation. It handles background tasks like email notifications, digests, and data cleanup that previously ran as cron jobs or background scripts.
 
 ## Status
 
@@ -10,7 +10,7 @@ This project is under active development. The goal is to migrate batch processin
 
 ## What This Replaces
 
-The batch jobs in `iznik-server/scripts/cron/` and similar bulk operations are being reimplemented here using:
+The batch jobs in the legacy V1 PHP implementation's cron scripts and similar bulk operations are being reimplemented here using:
 - Laravel's queue system for job processing
 - Eloquent models mapped to the existing `iznik` database schema
 - MJML templates for email rendering

@@ -78,13 +78,6 @@
             necessary to make those buttons work.
           </li>
           <li>
-            We use
-            <ExternalLink href="https://matomo.org">Matomo</ExternalLink> to
-            collect information about how people use the site. This is similar
-            to Google Analytics, but more privacy-safe. We have configured this
-            not to use any cookies.
-          </li>
-          <li>
             We record information about your browser/device and how you use the
             site. This helps diagnose problems and make the site easier to use.
             We don't pass anything identifying you to other people.
@@ -150,9 +143,7 @@
         </p>
         <h2>4. Unsubscribing and deleting your data</h2>
         <h3>4.1 Unsubscribing from emails</h3>
-        <p>
-          You can stop receiving emails from Freegle at any time. Either:
-        </p>
+        <p>You can stop receiving emails from Freegle at any time. Either:</p>
         <ul>
           <li>
             Go to
@@ -187,14 +178,31 @@
           log back in to reactivate your account.
         </p>
         <p>
-          If you logged in using Facebook, you can also request deletion directly
-          through Facebook: go to
-          <strong>Settings &amp; Privacy → Settings → Your Facebook Information
-          → Deactivation and Deletion</strong>.
+          If you logged in using Facebook, you can also request deletion
+          directly through Facebook: go to
+          <strong
+            >Settings &amp; Privacy → Settings → Your Facebook Information →
+            Deactivation and Deletion</strong
+          >.
         </p>
         <p>
-          Your data is also deleted automatically if your account is inactive for
-          six months.
+          If you signed up but never joined a community, and you haven't used
+          Freegle for six months, we remove your personal information
+          automatically. Your name, email address, profile picture, saved
+          addresses and login details are all deleted.
+        </p>
+        <p>
+          If you are a member of a community, we don't do this, so your posting
+          history stays intact and you can pick up where you left off by logging
+          back in. We do stop emailing you after six months without a visit, and
+          start again if you come back. You can remove your data at any time
+          using the button above.
+        </p>
+        <p>
+          Whichever way your data is removed, we keep an anonymous record that a
+          post existed, with your personal details stripped out, so that our
+          figures for how much has been reused stay accurate. That record can't
+          be traced back to you.
         </p>
         <h2>5. Communities leaving Freegle</h2>
         <p>
@@ -224,9 +232,34 @@
         <p>Here are the changes to this page.</p>
         <ul class>
           <li>
-            10/05/2026: Restructure section 4 to clearly explain how to unsubscribe
-            and request data deletion, with a prominent delete button, to satisfy
-            Facebook Platform Terms 4.b.
+            06/08/2026: Remove section 2.1 on voice descriptions. You can no
+            longer describe an item by speaking, so we no longer record audio,
+            no longer send anything to Groq, and hold no voice recordings.
+          </li>
+          <li>
+            18/07/2026: Section 4.2: correct the description of what happens to
+            inactive accounts. Automatic removal only applies to accounts which
+            never joined a community. Member accounts are kept, but stop
+            receiving email after six months of inactivity. Also clarify that we
+            keep an anonymous record of posts for our reuse figures.
+          </li>
+          <li>
+            17/07/2026: Section 2.1: we no longer ask whether other freeglers
+            may hear your voice recording, because we never play it to them.
+          </li>
+          <li>
+            09/07/2026: Clarify in section 2.1 that a voice recording may be
+            shared with other freeglers, not only the person collecting, if you
+            choose to allow it.
+          </li>
+          <li>
+            08/07/2026: Add section 2.1 on voice descriptions, our use of Groq
+            for speech-to-text, and the 90-day retention of voice recordings.
+          </li>
+          <li>
+            10/05/2026: Restructure section 4 to clearly explain how to
+            unsubscribe and request data deletion, with a prominent delete
+            button, to satisfy Facebook Platform Terms 4.b.
           </li>
           <li>
             20/12/2025: Add mention of recording more information for diagnosing

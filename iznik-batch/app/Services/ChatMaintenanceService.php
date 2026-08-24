@@ -12,7 +12,7 @@ class ChatMaintenanceService
     /**
      * Update message counts and latest message dates for recently active chat rooms.
      *
-     * Migrated from iznik-server/scripts/cron/chat_latestmessage.php
+     * Migrated from the legacy V1 PHP chat_latestmessage cron script.
      */
     public function updateMessageCounts(bool $dryRun = false): array
     {
@@ -47,7 +47,7 @@ class ChatMaintenanceService
     /**
      * Update message valid/invalid counts and latest message date for a single chat room.
      *
-     * Replicates ChatRoom::updateMessageCounts() from iznik-server.
+     * Replicates ChatRoom::updateMessageCounts() from the legacy V1 PHP implementation.
      */
     protected function updateRoomCounts(int $chatId, bool $dryRun = false): void
     {

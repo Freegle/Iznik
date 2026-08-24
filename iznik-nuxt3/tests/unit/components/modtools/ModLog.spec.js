@@ -229,6 +229,29 @@ describe('ModLog', () => {
         text: 'Manual',
       })
       expect(wrapperManual.text()).toContain('Clicked on Join button')
+
+      // Rippled text shows the rippling-specific reason, not the generic auto-join
+      const wrapperRippled = createWrapper({
+        id: 1,
+        type: 'Group',
+        subtype: 'Joined',
+        text: 'Rippled',
+      })
+      expect(wrapperRippled.text()).toContain(
+        'Joined automatically when their post rippled into this group'
+      )
+      expect(wrapperRippled.text()).not.toContain('when posting/replying')
+
+      // Any other auto-join text still shows the generic message
+      const wrapperAuto = createWrapper({
+        id: 1,
+        type: 'Group',
+        subtype: 'Joined',
+        text: 'Auto',
+      })
+      expect(wrapperAuto.text()).toContain(
+        'Joined automatically when posting/replying'
+      )
     })
 
     it('shows Left when same user, Removed when different users for Group/Left', () => {
@@ -707,8 +730,8 @@ describe('ModLog', () => {
       expect(wrapper.find('.row').exists()).toBe(true)
     })
 
-    it('handles User/Deleted with byuser (Rejected) and without byuser (self-leave)', () => {
-      // With byuser - shows Rejected member
+    it('handles User/Deleted: another mod (Rejected), no byuser and self-delete (left platform)', () => {
+      // byuser is a different person (a mod removed them) - shows Rejected member
       const wrapperWithByuser = createWrapper({
         id: 1,
         type: 'User',
@@ -728,6 +751,20 @@ describe('ModLog', () => {
         text: 'privacy',
       })
       expect(wrapperWithoutByuser.text()).toContain('User left platform')
+
+      // Self-delete: byuser === user. The V2 soft-delete records the actor, who
+      // for a self-delete is the user themselves, so it must NOT say "Rejected
+      // member" (that wording is for a moderator removing someone else).
+      const wrapperSelfDelete = createWrapper({
+        id: 1,
+        type: 'User',
+        subtype: 'Deleted',
+        user: { id: 1, displayname: 'User' },
+        byuser: { id: 1, displayname: 'User' },
+        text: 'privacy',
+      })
+      expect(wrapperSelfDelete.text()).toContain('User left platform')
+      expect(wrapperSelfDelete.text()).not.toContain('Rejected member')
     })
   })
 

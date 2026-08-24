@@ -119,12 +119,12 @@ func TestGetImageDeliveryUrlWithEnvVarNoQuerySuffix(t *testing.T) {
 	// When IMAGE_DELIVERY is set to a bare URL (no ?url= suffix, as in docker-compose),
 	// the constructed URL must still include ?url= and not produce a concatenated mess.
 	t.Setenv("IMAGE_DELIVERY", "http://delivery.localhost:80")
-	t.Setenv("UPLOADS", "https://uploads.ilovefreegle.org:8080/")
+	t.Setenv("UPLOADS", "https://uploads.test/")
 
 	uid := "freegletusd-7c27c9460ebbe956c4957f8ee5e5666d"
 	url := misc.GetImageDeliveryUrl(uid, "")
 
-	expected := "http://delivery.localhost:80?url=https://uploads.ilovefreegle.org:8080/7c27c9460ebbe956c4957f8ee5e5666d"
+	expected := "http://delivery.localhost:80?url=https://uploads.test/7c27c9460ebbe956c4957f8ee5e5666d"
 	assert.Equal(t, expected, url, "URL should use ?url= separator, not concatenate raw domains")
 }
 

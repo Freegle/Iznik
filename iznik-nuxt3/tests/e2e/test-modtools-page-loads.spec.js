@@ -152,8 +152,14 @@ test.describe('ModTools Page Loads', () => {
 
     // Wait for the loading spinner to disappear (fetchReview completes).
     const spinner = page.locator('.spinner-border').first()
-    if (await spinner.isVisible({ timeout: timeouts.ui.appearance }).catch(() => false)) {
-      await expect(spinner).not.toBeVisible({ timeout: timeouts.navigation.default })
+    if (
+      await spinner
+        .isVisible({ timeout: timeouts.ui.appearance })
+        .catch(() => false)
+    ) {
+      await expect(spinner).not.toBeVisible({
+        timeout: timeouts.navigation.default,
+      })
     }
 
     // The page heading should always be visible after load.
@@ -216,7 +222,9 @@ test.describe('ModTools Page Loads', () => {
 
     // Exercise the watch(groupid) callback by changing the community dropdown.
     const groupSelect = page.locator('#communitieslist')
-    await expect(groupSelect).toBeVisible({ timeout: timeouts.navigation.default })
+    await expect(groupSelect).toBeVisible({
+      timeout: timeouts.navigation.default,
+    })
 
     // Find a non-zero group option to trigger the watcher (value "0" = "All my communities").
     const options = await groupSelect.locator('option').all()

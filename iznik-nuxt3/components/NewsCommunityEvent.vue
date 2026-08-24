@@ -15,10 +15,13 @@
       </span>
       <span v-if="event.groups?.length" class="meta-item">
         on
-        <span v-for="(groupid, index) in event.groups" :key="groupid">
-          <span v-if="index > 0">, </span>
-          <span v-if="group(groupid)">{{ group(groupid).namedisplay }}</span>
-        </span>
+        <ShowMore
+          :items="event.groups.map((id) => group(id)).filter(Boolean)"
+          :limit="3"
+          inline
+        >
+          <template #item="{ item }">{{ item.namedisplay }}</template>
+        </ShowMore>
       </span>
     </div>
 
@@ -42,15 +45,6 @@
         <OurUploadedImage
           v-if="event.image?.ouruid"
           :src="event.image?.ouruid"
-          :modifiers="event.image?.externalmods"
-          alt="Community Event Photo"
-        />
-        <NuxtPicture
-          v-else-if="event.image?.externaluid"
-          format="webp"
-          fit="cover"
-          provider="uploadcare"
-          :src="event.image?.externaluid"
           :modifiers="event.image?.externalmods"
           alt="Community Event Photo"
         />
@@ -101,8 +95,8 @@ import { timeago } from '~/composables/useTimeFormat'
 import NewsLoveComment from '~/components/NewsLoveComment'
 import OurUploadedImage from '~/components/OurUploadedImage'
 
-const CommunityEventModal = defineAsyncComponent(() =>
-  import('~/components/CommunityEventModal')
+const CommunityEventModal = defineAsyncComponent(
+  () => import('~/components/CommunityEventModal')
 )
 
 const props = defineProps({

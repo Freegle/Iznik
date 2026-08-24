@@ -114,7 +114,7 @@ class ModNotifService
         }
 
         $modtoolsUrl = config('freegle.sites.mod', 'https://modtools.org');
-        $settingsUrl = rtrim($modtoolsUrl, '/') . '/modtools/settings';
+        $settingsUrl = rtrim($modtoolsUrl, '/') . '/settings';
 
         foreach ($modData as $modId => $data) {
             $textSummary = $this->buildTextSummary($data['groups'], $data['chat_review'], $settingsUrl);
@@ -212,7 +212,11 @@ class ModNotifService
             ->where('messages_groups.groupid', $groupId)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
             ->where('messages_groups.deleted', 0)
-            ->whereNull('messages.heldby')
+            // A hold is per-group. Reading the message-wide messages.heldby mirror here
+            // dropped a post from THIS group's count because some other group it rippled
+            // to had held its own copy, so mods were told they had less waiting than their
+            // pending list showed (Discourse 9970/2).
+            ->whereNull('messages_groups.heldby')
             ->whereNull('messages.deleted')
             ->when($minageFilter, fn ($q) => $q->where('messages_groups.arrival', '<', $minageFilter))
             ->count();

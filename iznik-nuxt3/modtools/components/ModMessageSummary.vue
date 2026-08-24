@@ -62,6 +62,7 @@
           :attachments="message.attachments"
           :sample-image="message.sampleimage"
           :disabled="message.successful"
+          :subject="message.subject"
           thumbnail
           :preload="preload"
         />
@@ -75,11 +76,11 @@ import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 import MessageItemLocation from '~/components/MessageItemLocation.vue'
 
-const MessageFreegled = defineAsyncComponent(() =>
-  import('~/components/MessageFreegled')
+const MessageFreegled = defineAsyncComponent(
+  () => import('~/components/MessageFreegled')
 )
-const MessagePromised = defineAsyncComponent(() =>
-  import('~/components/MessagePromised')
+const MessagePromised = defineAsyncComponent(
+  () => import('~/components/MessagePromised')
 )
 
 const emit = defineEmits(['expand', 'attachments'])

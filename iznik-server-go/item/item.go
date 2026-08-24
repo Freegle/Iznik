@@ -12,7 +12,11 @@ func FetchForMessage(msgid uint64) *Item {
 
 	db := database.DBConn
 
-	db.Raw("SELECT items.id, items.name FROM items INNER JOIN messages_items ON items.id = messages_items.itemid WHERE msgid = ?", msgid).Scan(&item)
+	db.Table("items").
+		Select("items.id, items.name").
+		Joins("INNER JOIN messages_items ON items.id = messages_items.itemid").
+		Where("msgid = ?", msgid).
+		Scan(&item)
 
 	// Return nil when no item record exists (e.g. TrashNothing messages).
 	// PHP omits the item key entirely when there's no record.

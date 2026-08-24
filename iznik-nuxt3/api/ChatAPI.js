@@ -75,6 +75,16 @@ export default class ChatAPI extends BaseAPI {
     })
   }
 
+  // Answer a Freegle prompt - one of the tappable options on a type='Prompt'
+  // message. The server applies whatever the answer means (e.g. setting the
+  // post's deadline) as well as recording it, so there is nothing to patch here
+  // afterwards.
+  answerPrompt(chatid, chatmsgid, answer) {
+    return this.$postv2(`/chat/${chatid}/message/${chatmsgid}/prompt`, {
+      answer,
+    })
+  }
+
   hideChat(chatid) {
     return this.$postv2('/chatrooms', { id: chatid, status: 'Closed' })
   }
@@ -101,5 +111,18 @@ export default class ChatAPI extends BaseAPI {
 
   referToSupport(chatid) {
     return this.$postv2('/chatrooms', { id: chatid, action: 'ReferToSupport' })
+  }
+
+  commonGroups(chatid) {
+    return this.$getv2('/chat/' + chatid + '/commongroups')
+  }
+
+  reportNoGroup(chatid, reason, comment) {
+    return this.$postv2('/chatrooms', {
+      id: chatid,
+      action: 'ReportNoGroup',
+      reason,
+      comment,
+    })
   }
 }

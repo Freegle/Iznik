@@ -88,6 +88,11 @@
         class="description"
         :size="textareaSize"
       />
+      <NoticeMessage v-if="invalidBody" variant="danger" class="mt-1">
+        <p class="mb-0">
+          {{ bodyMessage }}
+        </p>
+      </NoticeMessage>
     </div>
   </div>
 </template>
@@ -98,9 +103,13 @@ import { useComposeStore } from '~/stores/compose'
 import { ref, watch } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useImageStore } from '~/stores/image'
+import {
+  isNumericOnlyBody,
+  invalidBodyMessage,
+} from '~/composables/useItemValidation'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const PostItem = defineAsyncComponent(() => import('~/components/PostItem'))
 const draggable = defineAsyncComponent(() => import('vuedraggable'))
@@ -202,6 +211,10 @@ const placeholder = computed(() => {
     ? "e.g. colour, condition, size, whether it's working etc."
     : 'Size, colour, any specific requirements...'
 })
+
+// A purely-numeric description ("24") tells nobody what the item is; flag it.
+const invalidBody = computed(() => isNumericOnlyBody(description.value))
+const bodyMessage = computed(() => invalidBodyMessage(props.type))
 
 function $id(type) {
   return uid(type)

@@ -1,14 +1,55 @@
-# Git attributes for FreegleDocker
+# Git attributes for FreegleDocker (one monorepo: Go APIs, Vue/Nuxt front ends,
+# Laravel batch, Kotlin/Swift apps, plus the retired V1 PHP monolith).
 
+# ─── Line endings ────────────────────────────────────────────────────────────
 # Bash scripts must always use LF (Unix) line endings, even on Windows
 *.sh text eol=lf
-
 # Windows batch files should use CRLF line endings
 *.cmd text eol=crlf
 *.bat text eol=crlf
-
 # Markdown and documentation can use platform-native line endings
 *.md text
-
 # Git hooks should always use LF (they are bash scripts)
 .git/hooks/* text eol=lf
+
+# ─── GitHub Linguist ─────────────────────────────────────────────────────────
+# Keep the repo's language stats reflecting the ACTIVELY-DEVELOPED code
+# (Go, Vue/JS/TS, Laravel PHP, Kotlin/Swift). Without these overrides the badge
+# is dominated by a bulk JSON data archive, generated migrations, and the
+# retired V1 PHP monolith. Linguist reads these attributes to decide what to
+# count; linguist-vendored / linguist-generated / linguist-documentation remove
+# a path from the language breakdown.
+
+
+# Bulk data archive of incoming messages — data, not source (thousands of JSON).
+iznik-batch/incoming-archive/** linguist-generated
+iznik-batch/incoming-archive/** linguist-vendored
+
+# Laravel migrations are machine-generated from the DB schema
+# (laravel-migrations-generator) — authoritative but boilerplate.
+iznik-batch/database/migrations/** linguist-generated
+
+# Generated Swagger / OpenAPI artefacts.
+iznik-server-go/swagger/** linguist-generated
+**/swagger.json linguist-generated
+
+# Dependency lock files.
+**/package-lock.json linguist-generated
+**/composer.lock linguist-generated
+**/yarn.lock linguist-generated
+**/pnpm-lock.yaml linguist-generated
+
+# Minified / bundled / source-map assets.
+*.min.js linguist-generated
+*.min.css linguist-generated
+*.map linguist-generated
+
+# Vendored third-party trees (usually gitignored, but be explicit).
+**/vendor/** linguist-vendored
+**/node_modules/** linguist-vendored
+
+# Documentation.
+*.md linguist-documentation
+docs/** linguist-documentation
+**/CHANGELOG* linguist-documentation
+LICENSE* linguist-documentation

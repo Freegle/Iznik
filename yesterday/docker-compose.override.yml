@@ -143,6 +143,10 @@ services:
       - ./conf/percona-my.cnf:/etc/my.cnf:ro
 
   phpmyadmin:
+    networks:
+      default:
+        aliases:
+          - freegle-phpmyadmin
     # Accessed via 2FA gateway at /phpmyadmin (Admin only)
     # No direct external access - only through yesterday-2fa gateway
     # Basic auth disabled - authentication handled by 2FA gateway
@@ -165,6 +169,10 @@ services:
       - "traefik.enable=false"
 
   mailpit:
+    networks:
+      default:
+        aliases:
+          - freegle-mailhog
     # Accessed via 2FA gateway at /mailpit (Admin only)
     # No direct external access - only through yesterday-2fa gateway
     # Basic auth disabled - authentication handled by 2FA gateway
@@ -174,35 +182,11 @@ services:
     labels:
       - "traefik.enable=false"
 
-  apiv1:
-    # Accessible only through Yesterday 2FA gateway on port 8181
-    # Mount MySQL client config with production database password
-    # File: ./iznik-server-my.cnf (created by scripts/generate-mysql-configs.sh)
-    ports: !reset []
-    volumes:
-      - ./iznik-server-my.cnf:/root/.my.cnf:ro
-    labels:
-      - "traefik.enable=false"
-    # Simplified startup command for Yesterday - skips DB initialization (schema.sql, testenv.php, etc)
-    # to preserve restored production data
-    command: >
-      /bin/sh -c "sed -i \"s/define('SQLPASSWORD', '.*')/define('SQLPASSWORD', '\$$MYSQL_PASSWORD')/\" /etc/iznik.conf &&
-      sed -i \"s/define('IMAGE_DOMAIN', '.*')/define('IMAGE_DOMAIN', 'delivery.ilovefreegle.org')/\" /etc/iznik.conf &&
-      sed -i \"s/define('IMAGE_DELIVERY', NULL);/define('IMAGE_DELIVERY', 'https:\\/\\/delivery.ilovefreegle.org');/\" /etc/iznik.conf &&
-      /etc/init.d/ssh start &&
-      cp install/nginx.conf /etc/nginx/sites-available/default &&
-      /etc/init.d/nginx start &&
-      /etc/init.d/cron start &&
-      /etc/init.d/php8.1-fpm start &&
-      /etc/init.d/postfix start &&
-      cd /var/www/iznik &&
-      sh -c 'nohup sh -c \"while true; do cd /var/www/iznik/scripts/cron && php ./message_spatial.php >> /tmp/iznik.message_spatial.out 2>&1; sleep 10; done\" </dev/null >/dev/null 2>&1 & exec sleep infinity'"
-    environment:
-      # Use production image services so restored data displays correctly
-      - TUS_UPLOADER=https://uploads.ilovefreegle.org/
-      - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
-
   apiv2:
+    networks:
+      default:
+        aliases:
+          - freegle-apiv2
     # Accessible only through Yesterday 2FA gateway on port 8193
     ports: !reset []
     labels:
@@ -217,10 +201,6 @@ services:
     deploy:
       replicas: 0
 
-  apiv1-phpunit:
-    deploy:
-      replicas: 0
-
   batch:
     # Disable batch on Yesterday - scheduled jobs should not run against backup database
     deploy:
@@ -230,6 +210,10 @@ services:
       - DB_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
 
   freegle-dev-local:
+    networks:
+      default:
+        aliases:
+          - freegle-freegle-dev
     # Routed through Traefik for SSL termination on port 3002
     # No direct port binding - Traefik handles HTTPS and proxies to container
     ports: !reset []
@@ -244,7 +228,6 @@ services:
       - "traefik.http.routers.freegle-dev.service=freegle-dev"
       - "traefik.http.services.freegle-dev.loadbalancer.server.port=3002"
     environment:
-      - IZNIK_API_V1=https://${YESTERDAY_HOSTNAME}:8181/api
       - IZNIK_API_V2=https://${YESTERDAY_HOSTNAME}:8193/api
       - IMAGE_DELIVERY=https://${YESTERDAY_HOSTNAME}:8095
       - TUS_UPLOADER=https://uploads.ilovefreegle.org/
@@ -269,6 +252,10 @@ services:
       replicas: 0
 
   modtools-dev-local:
+    networks:
+      default:
+        aliases:
+          - freegle-modtools-dev
     # Routed through Traefik for SSL termination on port 3003
     # No direct port binding - Traefik handles HTTPS and proxies to container
     ports: !reset []
@@ -283,7 +270,6 @@ services:
       - "traefik.http.routers.modtools-dev.service=modtools-dev"
       - "traefik.http.services.modtools-dev.loadbalancer.server.port=3000"
     environment:
-      - IZNIK_API_V1=https://${YESTERDAY_HOSTNAME}:8181/api
       - IZNIK_API_V2=https://${YESTERDAY_HOSTNAME}:8193/api
       - IMAGE_DELIVERY=https://${YESTERDAY_HOSTNAME}:8095
       - IMAGE_BASE_URL=https://uploads.ilovefreegle.org
@@ -323,9 +309,16 @@ services:
 
 volumes:
   freegle_db:
-    # Mark as external - this volume is populated by the restore script
-    # with production backup data and should not be recreated by Docker
-    external: true
+    # LVM fast-switch: the datadir lives on the XFS thin LV mounted at
+    # /mnt/iznik-active (see yesterday/scripts/setup-lvm-thin.sh). percona's
+    # freegle_db:/var/lib/mysql mapping is unchanged — it now resolves to the
+    # active thin clone, so switch-backup.sh can flip days in seconds.
+    # REQUIRES setup-lvm-thin.sh + cutover-to-lvm.sh to have run on this host.
+    driver: local
+    driver_opts:
+      type: none
+      device: /mnt/iznik-active
+      o: bind
   loki-data:
     # NOT external - Docker creates this automatically if it doesn't exist
     # The restore script will populate it with historical logs if available,

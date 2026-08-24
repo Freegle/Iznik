@@ -1,7 +1,13 @@
 import { spawn, execSync } from 'child_process'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { checkContainersReady, containersNotReadyMessage } from '../../utils/requiredContainers'
 
 const prefix = process.env.COMPOSE_PROJECT_NAME || 'freegle'
+
+// The database, the container the tests compile and run inside, and the spatial-knn
+// finder the API calls. A missing spatial-knn does not fail fast - it stalls the
+// suite on connect timeouts until the whole run looks broken.
+const REQUIRED_CONTAINERS = ['percona', 'apiv2', 'spatial-knn']
 
 export default defineEventHandler(async (event) => {
   console.log('Starting Go tests...')
@@ -15,6 +21,22 @@ export default defineEventHandler(async (event) => {
       statusCode: 409,
       message: 'Go tests are already running'
     })
+  }
+
+  // Refuse to start rather than produce a red run that blames the code.
+  const readiness = checkContainersReady(prefix, REQUIRED_CONTAINERS)
+  if (!readiness.ok) {
+    const message = containersNotReadyMessage('Go', readiness)
+    setTestState('go', {
+      status: 'failed',
+      success: false,
+      message,
+      logs: message + '\n',
+      progress: { completed: 0, total: 0, passed: 0, failed: 0, current: '' },
+      startTime: Date.now(),
+      endTime: Date.now(),
+    })
+    throw createError({ statusCode: 503, message })
   }
 
   // Initialize test status
@@ -37,22 +59,37 @@ export default defineEventHandler(async (event) => {
     console.log('Failed to resolve percona IP, using hostname')
   }
 
-  // Build test command
+  // Build test command. Both variants need an explicit -timeout: the big integration
+  // package normally finishes just under go test's default 10m, so under any extra DB
+  // load (e.g. the Laravel suite running concurrently) it gets killed at exactly 600s
+  // with zero test failures — a phantom red.
+  // The coverage variant also pins -p 1. Without it ~10 packages run concurrently
+  // against the single iznik_go_test database, on a runner where CI deliberately runs
+  // iznik-batch, Playwright, Go and Vitest in parallel (load hit 14.26 while Go was
+  // running, build 32736). Load-dependent error and timeout branches then get covered
+  // on one run and not the next, which is what puts "Coverage decreased (-0.004%)" —
+  // one statement — on commits containing no Go at all. Serialising costs effectively
+  // nothing here: Go finishes ~2m into a step whose critical path is Playwright at
+  // ~19m, so the suite can slow down several-fold without moving the job's wall clock,
+  // and the timeouts above it are 30m (go test) / 35m (orb poll) / 48m (watchdog).
+  // Not applied to the plain variant: no coverage is produced there, so determinism
+  // buys nothing and developers keep the faster parallel run.
   const testCmd = withCoverage
-    ? `export CGO_ENABLED=1 && export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go mod tidy && go test -v -race -timeout 30m -coverprofile=coverage.out ./... -coverpkg ./...`
-    : `export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go test -count=1 ./... -v`
+    ? `export CGO_ENABLED=1 && export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go mod tidy && go test -v -race -p 1 -timeout 30m -coverprofile=coverage.out ./... -coverpkg ./...`
+    : `export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go test -count=1 -timeout 30m ./... -v`
 
   // Run tests asynchronously
   const testProcess = spawn('sh', ['-c', `
     set -e
     echo "Setting up Go test database (iznik_go_test)..."
 
-    # Copy schema from main iznik database
-    docker exec ${prefix}-apiv1 sh -c "\\
-      mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_go_test; CREATE DATABASE iznik_go_test;' && \\
-      mysqldump -h percona -u root -piznik --no-data --routines --triggers iznik | mysql -h percona -u root -piznik iznik_go_test && \\
-      mysql -h percona -u root -piznik -e \\"SET GLOBAL sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'\\" && \\
-      mysql -h percona -u root -piznik -e \\"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\\"" || echo "Warning: Database setup had issues, continuing..."
+    # Clone the schema (no data) from the migrated iznik database via the percona container.
+    # Go tests create their own fixture data at runtime, so only the schema is required.
+    docker exec ${prefix}-percona sh -c "\\
+      mysql -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_go_test; CREATE DATABASE iznik_go_test;' && \\
+      mysqldump -u root -piznik --no-data --routines --triggers iznik | mysql -u root -piznik iznik_go_test && \\
+      mysql -u root -piznik -e \\"SET GLOBAL sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'\\" && \\
+      mysql -u root -piznik -e \\"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\\"" || echo "Warning: Database setup had issues, continuing..."
 
     echo "Running Go tests against iznik_go_test database..."
     docker exec -w /app ${prefix}-apiv2 sh -c "${testCmd} 2>&1"

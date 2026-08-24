@@ -4,13 +4,17 @@
   "description": "Claude Agent server for Freegle support queries",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@anthropic-ai/claude-agent-sdk": "^0.2.83",
+    "better-sqlite3": "^11.0.0",
     "cors": "^2.8.5",
     "express": "^4.18.2",
+    "mjml": "^4.15.3",
+    "mysql2": "^3.11.0",
+    "nodemailer": "^6.9.14",
     "uuid": "^9.0.0",
     "zod": "^4.0.0"
   },

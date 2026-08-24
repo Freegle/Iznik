@@ -1,0 +1,211 @@
+package test
+
+import (
+	"testing"
+
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/firstreply"
+	"github.com/stretchr/testify/assert"
+)
+
+// Tick 1 is the reach the post has now; tick 3 is where it ends up. A point in
+// tick 3 but not tick 1 is somebody the current rules make wait days.
+const frTick1 = "POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))"
+const frTick3 = "POLYGON((-1.0 51.0, 1.0 51.0, 1.0 52.0, -1.0 52.0, -1.0 51.0))"
+
+// ensureFirstReplyTables is defined once, in chatprompt_test.go.
+
+// seedRipplingReach gives msgid a current reach of tick 1 and an eventual reach of tick 3.
+func seedRipplingReach(t *testing.T, msgID uint64, withMax bool) {
+	db := database.DBConn
+
+	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	res := db.Exec("INSERT INTO rippling_reach "+
+		"(msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers, "+
+		" max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "+
+		"VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), "+
+		" NOW(), 'drive', 1, 3, 4000, 30, NULL, NOW(), 'expanding', NOW(), NOW())",
+		msgID, frTick1, frTick1)
+	if res.Error != nil {
+		t.Fatalf("could not seed reach: %v", res.Error)
+	}
+
+	if withMax {
+		db.Exec("UPDATE rippling_reach SET max_polygon = ST_GeomFromText(?, 3857), "+
+			"max_cumulative_users = 4000 WHERE msgid = ?", frTick3, msgID)
+	}
+}
+
+// TestFirstReplyPassthrough_FirstReplyInsideEventualReach: the whole point of the
+// feature. Somebody the ripple has not got to yet, but will, replies to a post
+// that has nothing. Holding them would delay the poster's only reply to protect
+// an ordering that replier crosses in a few days anyway.
+func TestFirstReplyPassthrough_FirstReplyInsideEventualReach(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpass")
+
+	t.Setenv("FIRSTREPLY_ENABLED", "true")
+	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	// Whole-network arm; the rollout split is exercised separately.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough test", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	seedRipplingReach(t, msgID, true)
+
+	// (lng, lat) inside tick 3 only.
+	assert.True(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
+}
+
+func TestFirstReplyPassthrough_SecondReplyIsStillHeld(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpass2")
+
+	t.Setenv("FIRSTREPLY_ENABLED", "true")
+	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	// Whole-network arm; the rollout split is exercised separately.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	replierID := CreateTestUser(t, prefix+"_replier", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough second", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	seedRipplingReach(t, msgID, true)
+
+	chatID := CreateTestChatRoom(t, replierID, &posterID, nil, "User2User")
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, "+
+		"reviewrequired, processingrequired, processingsuccessful) "+
+		"VALUES (?, ?, 'I would like this', 'Interested', ?, NOW(), 0, 0, 1)",
+		chatID, replierID, msgID)
+	defer db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+
+	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9),
+		"once a post has a reply, local-first ordering is worth the delay again")
+}
+
+func TestFirstReplyPassthrough_OutsideEventualReachIsHeld(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpass3")
+
+	t.Setenv("FIRSTREPLY_ENABLED", "true")
+	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	// Whole-network arm; the rollout split is exercised separately.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough far", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	seedRipplingReach(t, msgID, true)
+
+	// Aberdeen: the post never gets there.
+	assert.False(t, firstreply.ShouldPassThrough(db, msgID, -2.1, 57.1))
+}
+
+func TestFirstReplyPassthrough_DisabledAndUnpopulatedBothHold(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frpass4")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough off", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	// Switched off: unchanged behaviour.
+	t.Setenv("FIRSTREPLY_ENABLED", "false")
+	seedRipplingReach(t, msgID, true)
+	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
+
+	// Switched on but the eventual reach has not been computed yet - the state
+	// every row is in until the backfill drains. Must also be unchanged.
+	t.Setenv("FIRSTREPLY_ENABLED", "true")
+	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+	// Whole-network arm; the rollout split is exercised separately.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
+	seedRipplingReach(t, msgID, false)
+	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
+}
+
+// The rollout split has to agree with the batch side's msgid % 100 bucketing, or
+// a post would be in the trial for an emailed reply and out of it for an in-app
+// one - which would make the arms meaningless.
+func TestFirstReplyPassthrough_RespectsTheRolloutPercentage(t *testing.T) {
+	ensureFirstReplyTables(t)
+	db := database.DBConn
+	prefix := uniquePrefix("frrollout")
+
+	t.Setenv("FIRSTREPLY_ENABLED", "true")
+	t.Setenv("FIRSTREPLY_PASSTHROUGH_ENABLED", "true")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: rollout", 51.5, -0.1)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	seedRipplingReach(t, msgID, true)
+
+	// Default is nobody, so enabling the lever alone changes nothing.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "0")
+	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9),
+		"a zero rollout must select nothing, not everything")
+
+	// Full rollout includes every post.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "100")
+	assert.True(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
+
+	// A partial rollout agrees with the SHARED bucket, not with msgid % 100.
+	//
+	// This used to assert msgid % 100 < 50. Bucketing moved to
+	// CRC32(msgid|firstreply) % 100 in d4a069215 so the arms do not collide with
+	// other experiments split on the same id, and the assertion was left behind.
+	// The two expressions agree for about half of all ids, so the test passed or
+	// failed on whichever auto-increment id the fixture happened to get - a coin
+	// flip that looked like flakiness rather than a stale assertion.
+	t.Setenv("FIRSTREPLY_ROLLOUT_PERCENT", "50")
+	assert.Equal(t, firstreply.RolloutBucket(msgID) < 50,
+		firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9))
+}
+
+// The bucket is a CROSS-STACK contract: Laravel's Rollout::includes uses
+// crc32($msgid . '|firstreply') % 100 and MySQL's CRC32() is the same
+// polynomial. If Go's expression drifts, a post lands in the trial for an
+// emailed reply and out of it for an in-app one, and the arms quietly stop
+// meaning anything - which no test comparing Go against Go would notice.
+//
+// So pin known values. These were computed independently of the Go code.
+func TestRolloutBucketMatchesTheOtherStacks(t *testing.T) {
+	for msgid, want := range map[uint64]int{
+		1:      69,
+		2:      93,
+		12345:  36,
+		999999: 99,
+	} {
+		assert.Equal(t, want, firstreply.RolloutBucket(msgid),
+			"bucket for msgid %d must match crc32('%d|firstreply') %% 100", msgid, msgid)
+	}
+}
+
+// The trial bucket is CRC32(msgid . "|firstreply") % 100, shared bit-for-bit
+// by PHP crc32 (App\Services\FirstReply\Rollout, pinned in RolloutTest.php)
+// and MySQL CRC32() (Rollout's query scopes). These values are pinned against
+// PHP's output: if any side drifts, the three doors run different trials.
+// A hash rather than msgid % 100 because ids are minted under Galera's
+// auto_increment_increment stride, and a raw modulus is only uniform while
+// the stride stays coprime with the bucket count.
+func TestRolloutBucketPinnedCrossLanguage(t *testing.T) {
+	assert.Equal(t, 69, firstreply.RolloutBucket(1))
+	assert.Equal(t, 47, firstreply.RolloutBucket(121254506))
+	assert.Equal(t, 92, firstreply.RolloutBucket(121346222))
+	assert.Equal(t, 39, firstreply.RolloutBucket(999999999))
+}

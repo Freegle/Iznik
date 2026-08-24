@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools" android:versionCode="1140" android:versionName="2.0.100" >
 
-  <application android:allowBackup="true" android:icon="@mipmap/ic_launcher" android:label="@string/app_name" android:supportsRtl="true" android:theme="@style/AppTheme" android:largeHeap="true">
+  <application android:allowBackup="true" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@mipmap/ic_launcher" android:label="@string/app_name" android:supportsRtl="true" android:theme="@style/AppTheme" android:largeHeap="true">
 
     <activity android:exported="true" android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation" android:name="org.ilovefreegle.direct.MainActivity" android:label="@string/title_activity_main" android:theme="@style/AppTheme.NoActionBarLaunch" android:launchMode="singleTask">
       <intent-filter>
@@ -29,11 +29,26 @@
         <data android:host=" " />
         <data android:pathPrefix="/" />
       </intent-filter>
+      <!-- Long-press app-icon quick actions -->
+      <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+      <!-- Share an image into Freegle from another app ("Share" -> Freegle) to
+           start an OFFER with the photo pre-attached. Handled natively in
+           MainActivity (ACTION_SEND / ACTION_SEND_MULTIPLE). -->
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/*" />
+      </intent-filter>
+      <intent-filter>
+        <action android:name="android.intent.action.SEND_MULTIPLE" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="image/*" />
+      </intent-filter>
     </activity>
     <activity android:name="com.facebook.FacebookActivity"
         android:configChanges="keyboard|keyboardHidden|screenLayout|screenSize|orientation"
         android:label="@string/app_name" />
-    
+
     <activity
         android:name="com.facebook.CustomTabActivity"
         android:exported="true">
@@ -80,9 +95,14 @@
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.READ_CALENDAR"/>
   <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
-  <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
-  <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
-  <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+  <!--
+    Photo upload uses the permission-free Android Photo Picker (Capacitor Camera
+    pickImages / getPhoto source Photos -> PickVisualMedia) and the system camera
+    intent, so none of the restricted media / legacy storage permissions are
+    needed. READ_MEDIA_IMAGES in particular is a Google Play restricted permission
+    that caused a ModTools review rejection ("permission not related to core
+    purpose"). Removed for both Freegle and ModTools.
+  -->
   <uses-permission android:name="android.permission.READ_CONTACTS" />
   <queries>
     <intent>

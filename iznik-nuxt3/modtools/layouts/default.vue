@@ -87,7 +87,7 @@
         <ModMenuItemLeft
           link="/messages/pending"
           name="Pending"
-          :count="['pending']"
+          :count="['pending', 'spam']"
           :othercount="['pendingother']"
           indent
           @mobilehidemenu="mobilehidemenu"
@@ -156,6 +156,21 @@
           name="Gift Aid"
           indent
           :count="['giftaid']"
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
+          v-if="hasPermissionClearance"
+          link="/helper-escalated"
+          name="Clearances"
+          indent
+          :count="['helperEscalated']"
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
+          v-if="hasPermissionClearance"
+          link="/modtools/helper-flow"
+          name="Helper flow"
+          indent
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
@@ -232,8 +247,21 @@
           link="/sysadmin"
           name="SysAdmin"
           :count="
-            admin ? ['housekeeping', 'cronjobs', 'emailin', 'emailout'] : []
+            admin
+              ? [
+                  'housekeeping',
+                  'cronjobs',
+                  'emailin',
+                  'emailout',
+                  'maildeferrals',
+                ]
+              : []
           "
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
+          link="/rippling"
+          name="Rippling"
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
@@ -244,6 +272,12 @@
         <ModMenuItemLeft
           link="/teams"
           name="Teams"
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
+          v-if="onPartnershipsTeam"
+          link="/partnerships"
+          name="Partnerships"
           @mobilehidemenu="mobilehidemenu"
         />
         <div>
@@ -317,12 +351,15 @@ const {
   hasPermissionNewsletter,
   hasPermissionSpamAdmin,
   hasPermissionGiftAid,
+  hasPermissionClearance,
+  onPartnershipsTeam,
   checkWork,
+  resetCheckWork,
 } = useModMe()
 
 const { count: aiImagesCount, fetchCount: fetchAIImagesCount } = useAIImages()
 
-if (process.client) {
+if (import.meta.client) {
   // Ensure we don't wrongly think we have some outstanding requests if the server happened to start some.
   miscStore.apiCount = 0
 }
@@ -430,6 +467,21 @@ watch(
   { immediate: true }
 )
 
+// Re-login detection: when the user logs out then logs back in without a page
+// reload, modGroupStore is empty and isFirstCheckWork is stale-false.  Watch for
+// the logged-out → logged-in transition and immediately refresh groups + reset
+// the beep baseline so the first post-login checkWork doesn't beep spuriously.
+const hadLoggedOut = ref(false)
+watch(loggedIn, async (newVal, oldVal) => {
+  if (!newVal && oldVal) {
+    hadLoggedOut.value = true
+  } else if (newVal && !oldVal && hadLoggedOut.value) {
+    hadLoggedOut.value = false
+    resetCheckWork()
+    await checkWork(true)
+  }
+})
+
 // Lifecycle hooks and watches
 onMounted(async () => {
   inMTapp.value = window.sessionStorage?.getItem('inMTapp')
@@ -476,9 +528,8 @@ onMounted(async () => {
   // Capacitor app: clear all delivered notifications on open and sync badge count
   if (mobileStore.isApp) {
     try {
-      const { PushNotifications } = await import(
-        '@freegle/capacitor-push-notifications-cap7'
-      )
+      const { PushNotifications } =
+        await import('@freegle/capacitor-push-notifications-cap8')
       await PushNotifications.removeAllDeliveredNotifications()
     } catch (e) {
       console.log('removeAllDeliveredNotifications error', e)
@@ -490,9 +541,8 @@ onMounted(async () => {
       const { App } = await import('@capacitor/app')
       App.addListener('resume', async () => {
         try {
-          const { PushNotifications } = await import(
-            '@freegle/capacitor-push-notifications-cap7'
-          )
+          const { PushNotifications } =
+            await import('@freegle/capacitor-push-notifications-cap8')
           await PushNotifications.removeAllDeliveredNotifications()
         } catch (e) {}
         await checkWork()

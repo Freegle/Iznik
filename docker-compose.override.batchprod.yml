@@ -1,0 +1,39 @@
+# Batch-prod host ONLY - not used in dev or CI.
+#
+# Opt in on the prod batch host by setting in its .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.override.batchprod.yml
+#
+# Assigns compose services to cgroup v2 systemd slices so user-facing work is
+# guaranteed priority over batch under contention, without hard caps that
+# would waste idle capacity. Requires the systemd cgroup driver (already the
+# case on the prod host: `docker info` shows "Cgroup Driver: systemd") and the
+# slice units installed in /etc/systemd/system/ (see interactive.slice /
+# batch.slice at the repo root and plans/2026-07-08-batch-host-cgroup-slices.md).
+#
+# Tiers:
+#  - interactive.slice (CPUWeight=800): embedding-sidecar (apiv2 semantic
+#    search calls it live from user requests), postfix (mail flow).
+#  - batch.slice (CPUWeight=25): batch-prod (the scheduler and dominant CPU
+#    consumer) plus spatial/spatial-knn (serve the batch digest path on this
+#    host; the public spatial.ilovefreegle.org routing runs on db1/2/3).
+#  - Everything else (loki, redis, mjml, rspamd, spamassassin, ai-support-
+#    helper) stays in Docker's default cgroup under system.slice (weight 100).
+
+services:
+  embedding-sidecar:
+    cgroup_parent: interactive.slice
+    # memory.low on the container scope itself - protection independent of
+    # whether the cgroup2 mount propagates the slice's MemoryLow recursively.
+    mem_reservation: 2g
+
+  postfix:
+    cgroup_parent: interactive.slice
+
+  batch-prod:
+    cgroup_parent: batch.slice
+
+  spatial:
+    cgroup_parent: batch.slice
+
+  spatial-knn:
+    cgroup_parent: batch.slice

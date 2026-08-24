@@ -68,7 +68,9 @@ func TestCreateImageAttachmentWithParent(t *testing.T) {
 }
 
 func TestCreateImageNoAuth(t *testing.T) {
-	// Image POST does not require auth - images are uploaded before the user signs up.
+	// SECURITY: an anonymous caller may NOT attach an image to an EXISTING message - that would
+	// let anyone deface another user's post. (Unlinked pre-signup uploads with no parent id are
+	// still allowed - see TestCreateImageNoAuthUnlinked.)
 	prefix := uniquePrefix("CreateImageNoAuth")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
@@ -80,6 +82,72 @@ func TestCreateImageNoAuth(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestCreateImageNoAuthUnlinked verifies the pre-signup give/post flow still works: an image
+// uploaded with no parent id (linked to the draft on submit) is accepted without auth.
+func TestCreateImageNoAuthUnlinked(t *testing.T) {
+	prefix := uniquePrefix("CreateImageUnlinked")
+	body := fmt.Sprintf(`{"externaluid":"freegletusd-unlinked-%s","imgtype":"Message"}`, prefix)
+	req := httptest.NewRequest("POST", "/api/image", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Read the row back rather than trusting the 200. messages_attachments.contenttype
+	// is NOT NULL with no default, and doCreate used to omit it for imgtype=Message:
+	// under a lenient sql_mode MySQL silently substituted '' and the endpoint still
+	// answered 200, so a status-only assertion passed while the column was junk. It
+	// stayed that way long enough for 54,057 of the most recent 200,000 production
+	// rows to carry ''. Asserting the stored value is what makes this test able to
+	// fail for the reason it exists.
+	db := database.DBConn
+	var contenttype string
+	db.Raw("SELECT contenttype FROM messages_attachments WHERE id = ?",
+		uint64(result["id"].(float64))).Scan(&contenttype)
+	assert.Equal(t, "image/jpeg", contenttype)
+}
+
+// TestCreateImageCrossUserDenied verifies a logged-in user cannot attach an image to another
+// user's existing message.
+func TestCreateImageCrossUserDenied(t *testing.T) {
+	prefix := uniquePrefix("CreateImageCross")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	msgID := CreateTestMessage(t, ownerID, groupID, "Cross test "+prefix, 55.9533, -3.1883)
+
+	attackerID := CreateTestUser(t, prefix+"attacker", "User")
+	_, token := CreateTestSession(t, attackerID)
+
+	body := fmt.Sprintf(`{"externaluid":"freegletusd-cross-%s","imgtype":"Message","msgid":%d}`, prefix, msgID)
+	req := httptest.NewRequest("POST", "/api/image?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+// TestCreateUserAvatarOwnedByRequester verifies that uploading an avatar for
+// imgtype='User' with the correct JWT succeeds and links the row to the user.
+func TestCreateUserAvatarOwnedByRequester(t *testing.T) {
+	prefix := uniquePrefix("AvatarOwn")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	body := fmt.Sprintf(
+		`{"externaluid":"freegletusd-avatar-%s","imgtype":"User","user":%d}`,
+		prefix, userID,
+	)
+	req := httptest.NewRequest("POST", "/api/image?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
 	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
 
 	respBody := rsp(resp)
@@ -87,6 +155,73 @@ func TestCreateImageNoAuth(t *testing.T) {
 	json.Unmarshal(respBody, &result)
 	assert.NotZero(t, result["id"])
 	assert.Equal(t, float64(0), result["ret"])
+
+	// Confirm users_images.userid is set to the requester's ID (not NULL).
+	db := database.DBConn
+	var userid uint64
+	db.Raw("SELECT userid FROM users_images WHERE id = ?", uint64(result["id"].(float64))).Scan(&userid)
+	assert.Equal(t, userID, userid, "users_images.userid must equal the requester's ID")
+}
+
+// TestCreateUserAvatarForAnotherUser verifies that a user cannot set another
+// user's avatar (avatar-hijack prevention): must return 403.
+func TestCreateUserAvatarForAnotherUser(t *testing.T) {
+	prefix := uniquePrefix("AvatarHijack")
+	userA := CreateTestUser(t, prefix+"A", "User")
+	userB := CreateTestUser(t, prefix+"B", "User")
+	_, tokenA := CreateTestSession(t, userA)
+
+	// User A tries to upload an avatar for User B.
+	body := fmt.Sprintf(
+		`{"externaluid":"freegletusd-hijack-%s","imgtype":"User","user":%d}`,
+		prefix, userB,
+	)
+	req := httptest.NewRequest("POST", "/api/image?jwt="+tokenA, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+// TestCreateUserAvatarNoAuth verifies that uploading imgtype='User' without a
+// JWT returns 401 (not the 200 that non-User types return without auth).
+func TestCreateUserAvatarNoAuth(t *testing.T) {
+	prefix := uniquePrefix("AvatarNoAuth")
+	userID := CreateTestUser(t, prefix, "User")
+
+	body := fmt.Sprintf(
+		`{"externaluid":"freegletusd-noauth-avatar-%s","imgtype":"User","user":%d}`,
+		prefix, userID,
+	)
+	req := httptest.NewRequest("POST", "/api/image", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestCreateUserAvatarAdminCanSetForOther verifies that an Admin can upload an
+// avatar for any user (bypasses the ownership check).
+func TestCreateUserAvatarAdminCanSetForOther(t *testing.T) {
+	prefix := uniquePrefix("AvatarAdmin")
+	adminID := CreateTestUser(t, prefix+"Admin", "Admin")
+	targetID := CreateTestUser(t, prefix+"Target", "User")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	body := fmt.Sprintf(
+		`{"externaluid":"freegletusd-admin-avatar-%s","imgtype":"User","user":%d}`,
+		prefix, targetID,
+	)
+	req := httptest.NewRequest("POST", "/api/image?jwt="+adminToken, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	respBody := rsp(resp)
+	var result map[string]interface{}
+	json.Unmarshal(respBody, &result)
+	assert.NotZero(t, result["id"])
 }
 
 func TestCreateImageMissingUID(t *testing.T) {
@@ -215,7 +350,8 @@ func TestRotateImageWithBooleanFlag(t *testing.T) {
 }
 
 func TestRotateImageNoAuth(t *testing.T) {
-	// Rotate also works without auth - consistent with create.
+	// SECURITY: rotating an image now requires authentication and ownership - an anonymous
+	// caller may not rotate (deface) an existing image.
 	prefix := uniquePrefix("RotateNoAuth")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
@@ -235,16 +371,11 @@ func TestRotateImageNoAuth(t *testing.T) {
 	json.Unmarshal(createRespBody, &createResult)
 	imageID := createResult["id"].(float64)
 
-	// Rotate without auth.
+	// Rotate without auth is now rejected.
 	rotateBody := fmt.Sprintf(`{"id":%d,"rotate":90,"type":"Message"}`, int(imageID))
 	rotateReq := httptest.NewRequest("POST", "/api/image", strings.NewReader(rotateBody))
 	rotateReq.Header.Set("Content-Type", "application/json")
 
 	rotateResp, _ := getApp().Test(rotateReq)
-	assert.Equal(t, fiber.StatusOK, rotateResp.StatusCode)
-
-	rotateRespBody := rsp(rotateResp)
-	var rotateResult map[string]interface{}
-	json.Unmarshal(rotateRespBody, &rotateResult)
-	assert.Equal(t, float64(0), rotateResult["ret"])
+	assert.Equal(t, fiber.StatusUnauthorized, rotateResp.StatusCode)
 }

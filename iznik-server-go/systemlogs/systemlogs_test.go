@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -150,7 +151,32 @@ func TestParseTimeRange_StartBeforeEnd(t *testing.T) {
 func TestBuildLogQLQuery_BaseAlwaysHasFreegle(t *testing.T) {
 	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "", "")
 	assert.Contains(t, q, `app="freegle"`)
+	// No JSON-field filter means no `| json`: the parse decompresses and
+	// parses every line the selector matches (minutes against a production
+	// day) and a bare query gains nothing from it. parseLogEntry parses the
+	// raw line itself, so the response is unchanged.
+	assert.NotContains(t, q, "| json")
+}
+
+// When a JSON-field filter needs the parse, the `|=` substring prefilter must
+// come BEFORE `| json`, so only candidate lines pay for the parser.
+func TestBuildLogQLQuery_PrefilterComesBeforeParse(t *testing.T) {
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "trace-123", "", "", "")
 	assert.Contains(t, q, "| json")
+	assert.Contains(t, q, `| trace_id = "trace-123"`)
+	filterAt := strings.Index(q, `|= "trace-123"`)
+	jsonAt := strings.Index(q, "| json")
+	assert.True(t, filterAt >= 0, "the |= prefilter must be present")
+	assert.True(t, filterAt < jsonAt, "the |= prefilter must come before | json")
+}
+
+// The email filter is regex-only (no JSON-field stage), so it needs the
+// lowercased |= prefilter but no `| json`.
+func TestBuildLogQLQuery_EmailPrefiltersWithoutParse(t *testing.T) {
+	q := buildLogQLQuery("", "", "", "", "", "", "", "", "", "", "", "Upper@Example.COM")
+	assert.Contains(t, q, `|= "upper@example.com"`)
+	assert.Contains(t, q, `(?i)`)
+	assert.NotContains(t, q, "| json")
 }
 
 func TestBuildLogQLQuery_SingleSource(t *testing.T) {
@@ -676,4 +702,38 @@ func TestBuildSingleTraceSummary_SingleLog(t *testing.T) {
 	assert.Equal(t, 1, summary.ChildCount)
 	assert.Equal(t, "2026-01-01T10:00:00Z", summary.FirstTimestamp)
 	assert.Equal(t, "2026-01-01T10:00:00Z", summary.LastTimestamp)
+}
+
+// ---------------------------------------------------------------------------
+// canViewGroupLogs — Support/Admin branches only. Those return before touching
+// database.DBConn, which is nil in this package's tests; the moderates-the-group
+// branch is covered by the DB-backed suite in test/.
+// ---------------------------------------------------------------------------
+
+func TestCanViewGroupLogs_SupportSeesAnyGroup(t *testing.T) {
+	assert.True(t, canViewGroupLogs(0, 12345, utils.SYSTEMROLE_SUPPORT))
+}
+
+func TestCanViewGroupLogs_AdminSeesAnyGroup(t *testing.T) {
+	assert.True(t, canViewGroupLogs(0, 12345, utils.SYSTEMROLE_ADMIN))
+}
+
+// ---------------------------------------------------------------------------
+// parseTimeRange — the 30-day clamp
+// ---------------------------------------------------------------------------
+
+// Production Loki 400-rejects a query range wider than 30d1h, so an over-wide
+// request returns NOTHING rather than less. The clamp is what keeps a "1000d"
+// request useful, and a regression in it would look like "logs have vanished".
+func TestParseTimeRange_ClampsRangeWiderThanThirtyDays(t *testing.T) {
+	startTs, endTs := parseTimeRange("1000d", "now")
+
+	assert.Equal(t, int64(30*24*time.Hour), endTs-startTs,
+		"a start older than 30 days must be clamped to exactly 30 days before the end")
+}
+
+func TestParseTimeRange_DoesNotClampRangeInsideThirtyDays(t *testing.T) {
+	startTs, endTs := parseTimeRange("29d", "now")
+
+	assert.Equal(t, int64(29*24*time.Hour), endTs-startTs, "29 days is inside the limit and must be left alone")
 }

@@ -10,7 +10,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-
 // GetSimulation handles GET /simulation and dispatches based on the 'action' query param.
 //
 // @Summary Get simulation data
@@ -62,8 +61,9 @@ func listRuns(c *fiber.Ctx) error {
 	}
 
 	var runs []RunRow
-	db.Raw("SELECT id, name, description, created, completed, parameters, filters, message_count, metrics, status " +
-		"FROM simulation_message_isochrones_runs WHERE status = 'completed' ORDER BY created DESC LIMIT 100").Scan(&runs)
+	db.Table("simulation_message_isochrones_runs").
+		Select("id, name, description, created, completed, parameters, filters, message_count, metrics, status").
+		Where("status = 'completed'").Order("created DESC").Limit(100).Scan(&runs)
 
 	result := make([]map[string]interface{}, len(runs))
 	for i, r := range runs {
@@ -134,8 +134,9 @@ func getRun(c *fiber.Ctx) error {
 	}
 
 	var r RunRow
-	db.Raw("SELECT id, name, description, created, completed, parameters, filters, message_count, metrics, status "+
-		"FROM simulation_message_isochrones_runs WHERE id = ?", runID).Scan(&r)
+	db.Table("simulation_message_isochrones_runs").
+		Select("id, name, description, created, completed, parameters, filters, message_count, metrics, status").
+		Where("id = ?", runID).Scan(&r)
 
 	if r.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Not found"})
@@ -190,7 +191,7 @@ func getMessage(c *fiber.Ctx) error {
 
 	// Get total messages in the run.
 	var total int64
-	db.Raw("SELECT COUNT(*) FROM simulation_message_isochrones_messages WHERE runid = ?", runID).Scan(&total)
+	db.Table("simulation_message_isochrones_messages").Where("runid = ?", runID).Count(&total)
 
 	// Get the message at this sequence.
 	type MessageRow struct {
@@ -205,9 +206,9 @@ func getMessage(c *fiber.Ctx) error {
 	}
 
 	var msg MessageRow
-	db.Raw("SELECT id, runid, sequence, msgid, subject, lat, lng, groupid "+
-		"FROM simulation_message_isochrones_messages WHERE runid = ? AND sequence = ?",
-		runID, index).Scan(&msg)
+	db.Table("simulation_message_isochrones_messages").
+		Select("id, runid, sequence, msgid, subject, lat, lng, groupid").
+		Where("runid = ? AND sequence = ?", runID, index).Scan(&msg)
 
 	if msg.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Message not found"})
@@ -225,9 +226,9 @@ func getMessage(c *fiber.Ctx) error {
 	}
 
 	var expansions []ExpansionRow
-	db.Raw("SELECT id, sim_msgid, sequence, minutes, users, lat, lng "+
-		"FROM simulation_message_isochrones_expansions WHERE sim_msgid = ? ORDER BY sequence ASC",
-		msg.ID).Scan(&expansions)
+	db.Table("simulation_message_isochrones_expansions").
+		Select("id, sim_msgid, sequence, minutes, users, lat, lng").
+		Where("sim_msgid = ?", msg.ID).Order("sequence ASC").Scan(&expansions)
 
 	if expansions == nil {
 		expansions = make([]ExpansionRow, 0)
@@ -243,9 +244,9 @@ func getMessage(c *fiber.Ctx) error {
 	}
 
 	var users []UserRow
-	db.Raw("SELECT id, sim_msgid, userid, lat, lng "+
-		"FROM simulation_message_isochrones_users WHERE sim_msgid = ?",
-		msg.ID).Scan(&users)
+	db.Table("simulation_message_isochrones_users").
+		Select("id, sim_msgid, userid, lat, lng").
+		Where("sim_msgid = ?", msg.ID).Scan(&users)
 
 	if users == nil {
 		users = make([]UserRow, 0)

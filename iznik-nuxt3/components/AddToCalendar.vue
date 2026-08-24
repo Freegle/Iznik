@@ -9,7 +9,7 @@
       <v-icon icon="calendar-alt" />
       Add to Calendar
     </b-button>
-    {{ message }}
+    <div v-if="message" class="mt-1 small text-muted">{{ message }}</div>
   </div>
 </template>
 <script setup>
@@ -17,6 +17,7 @@ import saveAs from 'save-file'
 import dayjs from 'dayjs'
 import utc from 'dayjs/plugin/utc'
 import timezone from 'dayjs/plugin/timezone'
+import { buildIcs } from '~/composables/useCalendarEvent'
 import { useMobileStore } from '@/stores/mobile' // APP
 
 dayjs.extend(utc)
@@ -44,162 +45,146 @@ const props = defineProps({
   },
 })
 
-const message = ref(null) // TODO Seems unused
+// Shown to the member when we fall back to a downloaded file or something goes wrong, so the
+// button never silently does nothing (Discourse 9927).
+const message = ref(null)
 
-async function download(e) {
-  console.log('AddToCalendar button clicked!')
-  e.preventDefault()
-  e.stopPropagation()
-
-  // Extract and decode the calendar data from the link
-  console.log('calendarLink:', props.calendarLink)
-  const url = new URL(props.calendarLink)
-  const encodedData = url.searchParams.get('data')
+// Pull the base64 event payload out of the calendar link.
+function parseEventData(link) {
+  const encodedData = new URL(link).searchParams.get('data')
   if (!encodedData) {
-    console.error('No calendar data found in link')
-    return
+    return null
   }
+  return JSON.parse(atob(encodedData))
+}
 
-  console.log('Decoding calendar data...')
-  const decodedData = atob(encodedData)
-  const eventData = JSON.parse(decodedData)
-  console.log('Event data:', eventData)
+// Download an .ics that any calendar app can import. Used for the web, and as the app fallback
+// when the native calendar hook is unavailable or errors - so the button always does something.
+async function downloadIcs(eventData) {
+  const blob = new Blob([buildIcs(eventData)], {
+    type: 'text/calendar;charset=utf-8',
+  })
+  await saveAs(blob, 'freegle-handover.ics')
+}
 
-  const mobileStore = useMobileStore()
-  console.log('Is app?', mobileStore.isApp)
-  if (!mobileStore.isApp) {
-    // Web version - generate ICS file from the structured data
-    const startDateTime = `${eventData.startDate.replace(
-      /-/g,
-      ''
-    )}T${eventData.startTime.replace(/:/g, '')}00`
-    const endDateTime = `${eventData.startDate.replace(
-      /-/g,
-      ''
-    )}T${eventData.endTime.replace(/:/g, '')}00`
-
-    const icsContent = [
-      'BEGIN:VCALENDAR',
-      'VERSION:2.0',
-      'PRODID:-//Freegle//NONSGML Event//EN',
-      'BEGIN:VEVENT',
-      `DTSTART;TZID=${eventData.timeZone}:${startDateTime}`,
-      `DTEND;TZID=${eventData.timeZone}:${endDateTime}`,
-      `SUMMARY:${eventData.name}`,
-      `DESCRIPTION:${eventData.description}`,
-      `LOCATION:${eventData.location}`,
-      'END:VEVENT',
-      'END:VCALENDAR',
-    ].join('\r\n')
-
-    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' })
-    await saveAs(blob, 'freegle-handover.ics')
-    return
-  }
-
-  // APP version - use Cordova calendar plugin with structured data
-  let startDate, endDate
-
+// Parse the event's start/end into Date objects in its own timezone, falling back to local time.
+function eventDates(eventData) {
   try {
-    // Try to use timezone-aware parsing
-    const startDateTime = `${eventData.startDate} ${eventData.startTime}`
-    const endDateTime = `${eventData.startDate} ${eventData.endTime}`
-
-    startDate = dayjs.tz(startDateTime, eventData.timeZone).toDate()
-    endDate = dayjs.tz(endDateTime, eventData.timeZone).toDate()
-
-    // Validate the dates
-    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+    const start = dayjs
+      .tz(`${eventData.startDate} ${eventData.startTime}`, eventData.timeZone)
+      .toDate()
+    const end = dayjs
+      .tz(`${eventData.startDate} ${eventData.endTime}`, eventData.timeZone)
+      .toDate()
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       throw new TypeError('Invalid dates from timezone parsing')
     }
-    console.log('Using timezone-aware dates:', startDate, endDate)
+    return { start, end }
   } catch (err) {
-    // Fallback to simple local time parsing if timezone parsing fails
-    console.log('Timezone parsing failed, using fallback:', err)
     const [year, month, day] = eventData.startDate.split('-').map(Number)
-    const [startHour, startMin] = eventData.startTime.split(':').map(Number)
-    const [endHour, endMin] = eventData.endTime.split(':').map(Number)
+    const [sh, sm] = eventData.startTime.split(':').map(Number)
+    const [eh, em] = eventData.endTime.split(':').map(Number)
+    return {
+      start: new Date(year, month - 1, day, sh, sm, 0),
+      end: new Date(year, month - 1, day, eh, em, 0),
+    }
+  }
+}
 
-    startDate = new Date(year, month - 1, day, startHour, startMin, 0)
-    endDate = new Date(year, month - 1, day, endHour, endMin, 0)
-    console.log('Using fallback dates:', startDate, endDate)
+async function download(e) {
+  e.preventDefault()
+  e.stopPropagation()
+  message.value = null
+
+  let eventData
+  try {
+    eventData = parseEventData(props.calendarLink)
+  } catch (err) {
+    eventData = null
+  }
+  if (!eventData) {
+    console.error(
+      'AddToCalendar: could not read the calendar link',
+      props.calendarLink
+    )
+    message.value = 'Sorry, we could not read the event details.'
+    return
   }
 
+  const mobileStore = useMobileStore()
+
+  // Web: hand the browser an .ics to import.
+  if (!mobileStore.isApp) {
+    try {
+      await downloadIcs(eventData)
+    } catch (err) {
+      console.error('AddToCalendar: failed to build/save the .ics', err)
+      message.value = "Sorry, we couldn't create the calendar file."
+    }
+    return
+  }
+
+  // App: try the native calendar plugin. If it is missing (it may not be exposed in the
+  // WebView) or it errors, fall back to the .ics download so the button is never a silent
+  // no-op - the symptom reported in 9927.
+  const fallback = async () => {
+    try {
+      await downloadIcs(eventData)
+      message.value =
+        "We've saved a calendar file - open it to add this to your calendar."
+    } catch (err) {
+      console.error('AddToCalendar: fallback .ics failed', err)
+      message.value = "Sorry, we couldn't add this to your calendar."
+    }
+  }
+
+  const cal = window.plugins?.calendar
+  if (!cal) {
+    console.warn(
+      'AddToCalendar: native calendar plugin unavailable; using .ics fallback'
+    )
+    await fallback()
+    return
+  }
+
+  const { start, end } = eventDates(eventData)
   const title = eventData.name
   const eventLocation = eventData.location || ''
   const notes = eventData.description
 
-  // Check if calendar plugin is available
-  console.log('Checking for calendar plugin...')
-  console.log('window:', typeof window)
-  console.log('window.plugins:', window.plugins)
-  console.log('window.plugins.calendar:', window.plugins?.calendar)
-
-  if (!window.plugins || !window.plugins.calendar) {
-    console.error('❌ Calendar plugin not available!')
-    console.error('This might mean:')
-    console.error('1. Plugin not synced to Android project')
-    console.error('2. Cordova plugins not loaded yet')
-    console.error('3. Plugin not installed correctly')
-    // Don't return - let it fail naturally so we see the error
-  } else {
-    console.log('✅ Calendar plugin is available!')
+  const onError = async (msg) => {
+    console.error('AddToCalendar: native calendar error', msg)
+    await fallback()
   }
-
-  console.log('Creating calendar event:', {
-    title,
-    location: eventLocation,
-    notes,
-    startDate,
-    endDate,
-  })
-
-  // Call hasWritePermission
-  // Then requestWritePermission if necessary
-  // Then createEventInteractively if possible
-  const success = function (message) {
-    console.log('Add calendar success', JSON.stringify(message))
+  const onSuccess = () => {
+    message.value = null
   }
-  const error = function (message) {
-    console.error('Add calendar error:', message)
-  }
-  const error1 = function (message) {
-    console.error('hasWritePermission error:', message)
-  }
-  const errorw = function (message) {
-    console.error('requestWritePermission error:', message)
-  }
-  const successw = function () {
-    console.log('requestWritePermission success')
-    window.plugins.calendar.createEventInteractively(
-      title,
-      eventLocation,
-      notes,
-      startDate,
-      endDate,
-      success,
-      error
-    )
-  }
-  const success1 = function (message) {
-    console.log('hasWritePermission success:', JSON.stringify(message))
-    if (message || !mobileStore.isiOS) {
-      console.log('Calling createEventInteractively directly')
-      window.plugins.calendar.createEventInteractively(
+  const createEvent = () => {
+    try {
+      cal.createEventInteractively(
         title,
         eventLocation,
         notes,
-        startDate,
-        endDate,
-        success,
-        error
+        start,
+        end,
+        onSuccess,
+        onError
       )
-    } else {
-      console.log('Requesting write permission first')
-      window.plugins.calendar.requestWritePermission(successw, errorw)
+    } catch (err) {
+      onError(err)
     }
   }
 
-  window.plugins.calendar.hasWritePermission(success1, error1)
+  try {
+    cal.hasWritePermission((has) => {
+      if (has || !mobileStore.isiOS) {
+        createEvent()
+      } else {
+        cal.requestWritePermission(createEvent, onError)
+      }
+    }, onError)
+  } catch (err) {
+    onError(err)
+  }
 }
 </script>

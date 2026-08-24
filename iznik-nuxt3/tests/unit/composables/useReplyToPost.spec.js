@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref } from 'vue'
 
+// ── Module under test ────────────────────────────────────────────────────────
+import { useReplyToPost } from '~/composables/useReplyToPost'
+
 // ── Store mocks ──────────────────────────────────────────────────────────────
 // Must be declared before importing the module under test.
 
@@ -26,8 +29,10 @@ vi.mock('~/composables/useClientLog', () => ({
   action: (...args) => mockAction(...args),
 }))
 
-// ── Module under test ────────────────────────────────────────────────────────
-import { useReplyToPost } from '~/composables/useReplyToPost'
+const mockTrackConversion = vi.fn()
+vi.mock('~/composables/useTrackConversion', () => ({
+  trackConversion: (...args) => mockTrackConversion(...args),
+}))
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,6 +48,9 @@ function freshReplyStore(overrides = {}) {
     replyMsgId: 42,
     replyMessage: 'Hello, is this still available?',
     replyingAt: RECENT_AT,
+    replySource: 'browse',
+    draftMsgId: null,
+    clearDraft: vi.fn(),
     ...overrides,
   }
 }
@@ -89,6 +97,22 @@ describe('useReplyToPost', () => {
       expect(replyToSend.value).toBeNull()
     })
 
+    it('never treats a composing draft as a pending send', () => {
+      // Drafts (typed but never submitted) live in separate draft* fields.
+      // They must never surface here, or an unsent draft would auto-send on
+      // the next page load after login.
+      mockReplyStore = freshReplyStore({
+        replyMsgId: null,
+        replyMessage: null,
+        replyingAt: null,
+        draftMsgId: 42,
+        draftMessage: 'Half-typed draft that must never auto-send',
+        draftAt: RECENT_AT,
+      })
+      const { replyToSend } = useReplyToPost()
+      expect(replyToSend.value).toBeNull()
+    })
+
     it('returns null when replyMessage is missing', () => {
       mockReplyStore = freshReplyStore({ replyMessage: null })
       const { replyToSend } = useReplyToPost()
@@ -120,6 +144,7 @@ describe('useReplyToPost', () => {
         replyMsgId: 42,
         replyMessage: 'Hello, is this still available?',
         replyingAt: RECENT_AT,
+        replySource: 'browse',
       })
     })
 
@@ -130,17 +155,19 @@ describe('useReplyToPost', () => {
       expect(replyToSend.value.replyMsgId).toBe(42)
     })
 
-    it('includes all three store fields in the returned object', () => {
+    it('includes the pending-send store fields in the returned object', () => {
       mockReplyStore = freshReplyStore({
         replyMsgId: 99,
         replyMessage: 'Test message',
         replyingAt: RECENT_AT,
+        replySource: 'message_page',
       })
       const { replyToSend } = useReplyToPost()
       expect(replyToSend.value).toEqual({
         replyMsgId: 99,
         replyMessage: 'Test message',
         replyingAt: RECENT_AT,
+        replySource: 'message_page',
       })
     })
   })
@@ -161,7 +188,9 @@ describe('useReplyToPost', () => {
     })
 
     it('returns null when message is not found in the store', () => {
-      mockMessageStore = freshMessageStore({ byId: vi.fn().mockReturnValue(null) })
+      mockMessageStore = freshMessageStore({
+        byId: vi.fn().mockReturnValue(null),
+      })
       const { replyToUser } = useReplyToPost()
       expect(replyToUser.value).toBeNull()
       expect(mockMessageStore.byId).toHaveBeenCalledWith(42)
@@ -187,8 +216,8 @@ describe('useReplyToPost', () => {
     it('looks up the message by the correct replyMsgId', () => {
       mockReplyStore = freshReplyStore({ replyMsgId: 123 })
       const { replyToUser } = useReplyToPost()
-      // Access value to trigger the computed
-      void replyToUser.value
+      // Access value to trigger the computed; byId returns null by default.
+      expect(replyToUser.value).toBeNull()
       expect(mockMessageStore.byId).toHaveBeenCalledWith(123)
     })
   })
@@ -198,13 +227,20 @@ describe('useReplyToPost', () => {
   describe('replyToPost', () => {
     it('returns null and logs a null action when replyToSend is null (not logged in)', async () => {
       mockMe.value = null
-      mockReplyStore = freshReplyStore({ replyMsgId: 5, replyMessage: 'Hi', replyingAt: RECENT_AT })
+      mockReplyStore = freshReplyStore({
+        replyMsgId: 5,
+        replyMessage: 'Hi',
+        replyingAt: RECENT_AT,
+      })
       const { replyToPost } = useReplyToPost()
       const result = await replyToPost({ openChat: vi.fn() })
       expect(result).toBeNull()
-      expect(mockAction).toHaveBeenCalledWith('reply_to_post_null', expect.objectContaining({
-        is_logged_in: false,
-      }))
+      expect(mockAction).toHaveBeenCalledWith(
+        'reply_to_post_null',
+        expect.objectContaining({
+          is_logged_in: false,
+        })
+      )
     })
 
     it('returns null and logs a null action when reply is stale', async () => {
@@ -212,10 +248,13 @@ describe('useReplyToPost', () => {
       const { replyToPost } = useReplyToPost()
       const result = await replyToPost({ openChat: vi.fn() })
       expect(result).toBeNull()
-      expect(mockAction).toHaveBeenCalledWith('reply_to_post_null', expect.objectContaining({
-        is_logged_in: true,
-        reply_stale: true,
-      }))
+      expect(mockAction).toHaveBeenCalledWith(
+        'reply_to_post_null',
+        expect.objectContaining({
+          is_logged_in: true,
+          reply_stale: true,
+        })
+      )
     })
 
     it('returns null when chatButtonRef is null even with a valid pending reply', async () => {
@@ -229,7 +268,31 @@ describe('useReplyToPost', () => {
       const chatButtonRef = { openChat }
       const { replyToPost } = useReplyToPost()
       await replyToPost(chatButtonRef)
-      expect(openChat).toHaveBeenCalledWith(null, 'Hello, is this still available?', 42)
+      // openInNewTab=false, noNavigate=false by default; the committing surface
+      // (reply provenance) rides along as the final argument.
+      expect(openChat).toHaveBeenCalledWith(
+        null,
+        'Hello, is this still available?',
+        42,
+        false,
+        false,
+        'browse'
+      )
+    })
+
+    it('passes noNavigate through to openChat when staying on the page', async () => {
+      const openChat = vi.fn().mockResolvedValue(undefined)
+      const chatButtonRef = { openChat }
+      const { replyToPost } = useReplyToPost()
+      await replyToPost(chatButtonRef, true)
+      expect(openChat).toHaveBeenCalledWith(
+        null,
+        'Hello, is this still available?',
+        42,
+        false,
+        true,
+        'browse'
+      )
     })
 
     it('returns the replyMsgId on success', async () => {
@@ -245,6 +308,51 @@ describe('useReplyToPost', () => {
       await replyToPost(chatButtonRef)
       expect(mockReplyStore.replyMsgId).toBeNull()
       expect(mockReplyStore.replyMessage).toBeNull()
+      expect(mockReplyStore.replySource).toBeNull()
+    })
+
+    it('clears a composing draft for the same item after sending', async () => {
+      // After a page-load auto-send (LayoutCommon path, no state machine),
+      // the draft must be cleared so reopening the reply pane does not
+      // restore already-sent text and risk a duplicate send.
+      mockReplyStore = freshReplyStore({
+        replyMsgId: 42,
+        draftMsgId: 42,
+        clearDraft: vi.fn(),
+      })
+      const chatButtonRef = { openChat: vi.fn().mockResolvedValue(undefined) }
+      const { replyToPost } = useReplyToPost()
+      await replyToPost(chatButtonRef)
+      expect(mockReplyStore.clearDraft).toHaveBeenCalled()
+    })
+
+    it('does not clear a draft belonging to a different item', async () => {
+      // A draft for item 77 must survive a send for item 42.
+      mockReplyStore = freshReplyStore({
+        replyMsgId: 42,
+        draftMsgId: 77,
+        clearDraft: vi.fn(),
+      })
+      const chatButtonRef = { openChat: vi.fn().mockResolvedValue(undefined) }
+      const { replyToPost } = useReplyToPost()
+      await replyToPost(chatButtonRef)
+      expect(mockReplyStore.clearDraft).not.toHaveBeenCalled()
+    })
+
+    it('fires a Reply Sent conversion event on success', async () => {
+      const chatButtonRef = { openChat: vi.fn().mockResolvedValue(undefined) }
+      const { replyToPost } = useReplyToPost()
+      await replyToPost(chatButtonRef)
+      expect(mockTrackConversion).toHaveBeenCalledWith('Reply Sent', {
+        message_id: 42,
+      })
+    })
+
+    it('does not fire Reply Sent when there is no valid reply to send', async () => {
+      mockReplyStore = freshReplyStore({ replyMsgId: null })
+      const { replyToPost } = useReplyToPost()
+      await replyToPost({ openChat: vi.fn() })
+      expect(mockTrackConversion).not.toHaveBeenCalled()
     })
 
     it('updates replyingAt to current time after sending', async () => {
@@ -258,7 +366,9 @@ describe('useReplyToPost', () => {
       const chatButtonRef = { openChat: vi.fn().mockResolvedValue(undefined) }
       const { replyToPost } = useReplyToPost()
       await replyToPost(chatButtonRef)
-      expect(mockAction).toHaveBeenCalledWith('reply_to_post_success', { message_id: 42 })
+      expect(mockAction).toHaveBeenCalledWith('reply_to_post_success', {
+        message_id: 42,
+      })
     })
 
     it('does not call action() when chatButtonRef is null (returns early without logging)', async () => {
@@ -274,29 +384,37 @@ describe('useReplyToPost', () => {
       mockReplyStore = freshReplyStore({ replyingAt: oldReplyingAt })
       const { replyToPost } = useReplyToPost()
       await replyToPost({ openChat: vi.fn() })
-      expect(mockAction).toHaveBeenCalledWith('reply_to_post_null', expect.objectContaining({
-        has_replying_at: true,
-        reply_age_ms: NOW - oldReplyingAt,
-        reply_stale: true,
-      }))
+      expect(mockAction).toHaveBeenCalledWith(
+        'reply_to_post_null',
+        expect.objectContaining({
+          has_replying_at: true,
+          reply_age_ms: NOW - oldReplyingAt,
+          reply_stale: true,
+        })
+      )
     })
 
     it('reports reply_age_ms as null when replyingAt is not set', async () => {
       mockReplyStore = freshReplyStore({ replyingAt: null })
       const { replyToPost } = useReplyToPost()
       await replyToPost({ openChat: vi.fn() })
-      expect(mockAction).toHaveBeenCalledWith('reply_to_post_null', expect.objectContaining({
-        has_replying_at: false,
-        reply_age_ms: null,
-        reply_stale: null,
-      }))
+      expect(mockAction).toHaveBeenCalledWith(
+        'reply_to_post_null',
+        expect.objectContaining({
+          has_replying_at: false,
+          reply_age_ms: null,
+          reply_stale: null,
+        })
+      )
     })
 
     it('awaits openChat before clearing the store', async () => {
       let storeClearedDuringOpenChat = false
-      const openChat = vi.fn().mockImplementation(async () => {
+      const openChat = vi.fn().mockImplementation(() => {
         storeClearedDuringOpenChat =
-          mockReplyStore.replyMsgId === null || mockReplyStore.replyMessage === null
+          mockReplyStore.replyMsgId === null ||
+          mockReplyStore.replyMessage === null
+        return Promise.resolve()
       })
       const { replyToPost } = useReplyToPost()
       await replyToPost({ openChat })
@@ -307,13 +425,21 @@ describe('useReplyToPost', () => {
     })
 
     it('uses the correct replyMsgId as replySent even if message is not in messageStore', async () => {
-      mockReplyStore = freshReplyStore({ replyMsgId: 77, replyMessage: 'Still available?', replyingAt: RECENT_AT })
-      mockMessageStore = freshMessageStore({ byId: vi.fn().mockReturnValue(null) })
+      mockReplyStore = freshReplyStore({
+        replyMsgId: 77,
+        replyMessage: 'Still available?',
+        replyingAt: RECENT_AT,
+      })
+      mockMessageStore = freshMessageStore({
+        byId: vi.fn().mockReturnValue(null),
+      })
       const chatButtonRef = { openChat: vi.fn().mockResolvedValue(undefined) }
       const { replyToPost } = useReplyToPost()
       const result = await replyToPost(chatButtonRef)
       expect(result).toBe(77)
-      expect(mockAction).toHaveBeenCalledWith('reply_to_post_success', { message_id: 77 })
+      expect(mockAction).toHaveBeenCalledWith('reply_to_post_success', {
+        message_id: 77,
+      })
     })
   })
 
@@ -325,7 +451,11 @@ describe('useReplyToPost', () => {
         label: 'user not logged in, no store data',
         setup() {
           mockMe.value = null
-          mockReplyStore = freshReplyStore({ replyMsgId: null, replyMessage: null, replyingAt: null })
+          mockReplyStore = freshReplyStore({
+            replyMsgId: null,
+            replyMessage: null,
+            replyingAt: null,
+          })
         },
         expected: {
           is_logged_in: false,

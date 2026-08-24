@@ -1,8 +1,8 @@
 import { defineStore } from 'pinia'
+import { runHoldAware } from '~/api/heldConflict'
 import api from '~/api'
 
-export const useAdminsStore = defineStore({
-  id: 'admins',
+export const useAdminsStore = defineStore('admins', {
   state: () => ({
     list: {},
   }),
@@ -43,14 +43,21 @@ export const useAdminsStore = defineStore({
     },
     async approve(params) {
       // Go API binds `pending` to *bool; a numeric 0 here yields 400.
-      await api(this.config).admins.patch({
-        id: params.id,
-        pending: false,
-      })
+      await runHoldAware(
+        () =>
+          api(this.config).admins.patch({
+            id: params.id,
+            pending: false,
+          }),
+        () => this.fetch({ id: params.id })
+      )
       await this.fetch({ id: params.id })
     },
     async edit(params) {
-      await api(this.config).admins.patch(params)
+      await runHoldAware(
+        () => api(this.config).admins.patch(params),
+        () => this.fetch({ id: params.id })
+      )
       await api(this.config).admins.fetch(params)
     },
     async delete(params) {
@@ -58,7 +65,10 @@ export const useAdminsStore = defineStore({
       this.clearAdmin(params.id)
     },
     async hold(params) {
-      await api(this.config).admins.hold(params.id)
+      await runHoldAware(
+        () => api(this.config).admins.hold(params.id),
+        () => this.fetch({ id: params.id })
+      )
       await this.fetch({ id: params.id })
     },
     async release(params) {

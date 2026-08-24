@@ -77,10 +77,69 @@
     <div v-else-if="chatmessage?.type === 'Reminder'">
       <chat-message-reminder :id="id" :chatid="chatid" :pov="pov" />
     </div>
-    <div v-else>
-      Unknown chat message type {{ chatmessage?.type }}, {{ chat }}
-      {{ chatmessage }}
+    <!-- A question from Freegle with tappable answers, e.g. "could you deliver?"
+         on a post that has gone quiet. -->
+    <div v-else-if="chatmessage?.type === 'Prompt'">
+      <chat-message-prompt :id="id" :chatid="chatid" :pov="pov" />
     </div>
+    <!-- Synthetic system notices, e.g. "the item you replied about has now been
+         taken" posted when a replied-to post is taken/withdrawn. Just the text. -->
+    <div
+      v-else-if="chatmessage?.type === 'System'"
+      class="system-message text-center text-muted small px-3 py-2"
+    >
+      <span class="preline forcebreak">{{ chatmessage?.message }}</span>
+    </div>
+    <!-- A type this build does not know about. Every message carries readable
+         text in `message` whatever its type, so show that: a client that is
+         simply older than the feature then degrades to a plain message instead
+         of rendering something broken.
+
+         This used to dump the type and two raw objects into the conversation.
+         That is a fine thing to see in development and a terrible one to send to
+         a member - it has already happened once in the wild, with `System`
+         (6d833bb62). The dump does not help them, and they cannot report it
+         usefully. Old apps are not upgradeable in arrears, so the fallback has
+         to be safe for the app somebody is still running two years from now. -->
+    <div v-else class="preline forcebreak">
+      {{ chatmessage?.message }}
+    </div>
+    <!-- Held-by-rippling notice. Deliberately never shown to the sender: their
+         reply should look like an ordinary sent message awaiting a response, so
+         they are not aware it is being held back. Only moderators, viewing
+         someone else's held reply, see the notice. -->
+    <b-badge
+      v-if="chatmessage?.heldbyrippling && chatmessage?.userid !== myid"
+      variant="warning"
+      class="mt-1"
+      data-testid="rippling-held-badge"
+    >
+      Held: rippling out<span v-if="ripplingHeldFor">
+        ({{ ripplingHeldFor }})</span
+      >
+    </b-badge>
+    <!-- A hold that has ENDED. ripplinghold is only ever sent to moderators, so this is
+         inherently mod-only and needs no myid guard - a member never has the field. Without
+         it a delayed or binned reply looks like an ordinary one, which is how a 47-hour
+         rippling hold got reported as a mail fault (Discourse 10025). -->
+    <b-badge
+      v-if="ripplingEnded"
+      :variant="chatmessage?.ripplinghold?.delivered ? 'warning' : 'danger'"
+      class="mt-1"
+      data-testid="rippling-ended-badge"
+    >
+      <span v-if="chatmessage?.ripplinghold?.delivered">
+        Held as too far for: {{ ripplingHeldFor }}
+      </span>
+      <span v-else-if="chatmessage?.ripplinghold?.status === 'taken-gone'">
+        Never delivered: held as too far for {{ ripplingHeldFor }}, item went
+      </span>
+      <!-- 'dropped' is not produced anywhere - see the note in ModChatReview.vue.
+           Kept as a safety net so an unexpected status is not silently invisible. -->
+      <span v-else>
+        Never delivered: held as too far for {{ ripplingHeldFor }}
+      </span>
+    </b-badge>
     <chat-message-warning v-if="phoneNumber" />
     <chat-message-date-read :id="id" :chatid="chatid" :last="last" :pov="pov" />
 
@@ -141,17 +200,18 @@ import ChatMessageModMail from './ChatMessageModMail'
 import ChatMessageReminder from './ChatMessageReminder'
 import { setupChat } from '~/composables/useChat'
 import { useChatStore } from '~/stores/chat'
+import { durationMinutes } from '~/composables/useTimeFormat'
 import { ref, computed } from '#imports'
 import SupportLink from '~/components/SupportLink.vue'
 import ChatMessageWarning from '~/components/ChatMessageWarning'
 import 'vue-simple-context-menu/dist/vue-simple-context-menu.css'
 import { useMe } from '~/composables/useMe'
 
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
-const ResultModal = defineAsyncComponent(() =>
-  import('~/components/ResultModal.vue')
+const ResultModal = defineAsyncComponent(
+  () => import('~/components/ResultModal.vue')
 )
 
 const props = defineProps({
@@ -198,6 +258,22 @@ const showConfirmModal = ref(false)
 const { chat, otheruser, chatmessage } = await setupChat(props.chatid, props.id)
 
 // Computed properties
+
+// Rippling reply-hold, mod-only (the API sends ripplinghold to moderators only). heldminutes
+// is server-computed, so a still-open hold does not depend on this device's clock.
+const ripplingHeldFor = computed(() =>
+  durationMinutes(chatmessage.value?.ripplinghold?.heldminutes)
+)
+
+// A hold that has finished, whichever way it finished. 'held' is covered by the existing
+// heldbyrippling badge, so this is only the terminal states.
+const ripplingEnded = computed(() => {
+  const status = chatmessage.value?.ripplinghold?.status
+  return (
+    status === 'released' || status === 'taken-gone' || status === 'dropped'
+  )
+})
+
 const phoneNumber = computed(() => {
   let ret = false
 

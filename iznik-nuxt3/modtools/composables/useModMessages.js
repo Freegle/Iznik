@@ -8,6 +8,7 @@
 // - which in turn stops useModMessages watch(work) from updating the messages list
 // - until another timed update occurs
 
+import { onScopeDispose, getCurrentScope } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '@/stores/auth'
 // import { useModGroupStore } from '@/stores/modgroup'
@@ -18,7 +19,10 @@ const summarykey = ref(false)
 const busy = ref(false)
 const context = ref(null)
 const groupid = ref(0)
-const group = ref(null)
+// Exported so read-only consumers (useKeywords) can follow the selected
+// community without calling setupModMessages(), which is a setup function and
+// does setup-shaped things.
+export const group = ref(null)
 const limit = ref(10)
 const workType = ref(null)
 const show = ref(0)
@@ -31,6 +35,31 @@ const memberTerm = ref(null)
 const nextAfterRemoved = ref(null)
 
 const distance = ref(10)
+
+// Holds a workdetail refresh that arrived while a modal was open (e.g. a
+// moderator typing a rejection reason). The list is NOT refreshed while a modal
+// is open — re-rendering would unmount the modal and lose the draft — so the
+// pending refresh is parked here and applied when the modal closes.
+const pendingWorkRefresh = ref(null)
+
+// Bootstrap sets <body> overflow:hidden while a modal is open, so use that as a
+// cross-component "is any modal open?" signal. The typeof guard keeps it
+// SSR-safe (no document on the server). A moderator editing a Pending message
+// in place (ModMessage.vue's inline Edit/Save - not a modal) sets
+// miscStore.modtoolsediting instead ("do not check for work" - stores/misc.js).
+// Treat that the same as a modal being open: otherwise a workdetail change
+// landing while editing (or in the instant after Save flips modtoolsediting
+// back off and the work-poll catches up) forces an unprotected full-list
+// reload that can drop the message the moderator just saved, reappearing only
+// on a manual page reload (Discourse 10001/2).
+function refreshMustWait() {
+  const miscStore = useMiscStore()
+  return (
+    (typeof document !== 'undefined' &&
+      document.body?.style?.overflow === 'hidden') ||
+    !!miscStore.modtoolsediting
+  )
+}
 
 const summary = computed(() => {
   if (!summarykey.value) return false
@@ -82,7 +111,7 @@ const messages = computed(() => {
   if (collection.value && REAL_COLLECTIONS.includes(collection.value)) {
     const allowed =
       collection.value === 'Pending'
-        ? ['Pending', 'PendingOther']
+        ? ['Pending', 'PendingOther', 'Spam']
         : [collection.value]
     const contextGid = groupid.value ? parseInt(groupid.value) : null
     messages = messages.filter((m) => {
@@ -126,7 +155,16 @@ const visibleMessages = computed(() => {
 })
 
 export function setupModMessages(reset) {
-  // Do not include any watch in here as a separate watch is called for each time setupModMessages() is called
+  // The refresh machinery below is registered ONLY for reset=true, i.e. for the
+  // page that owns this queue. Everything here is shared module-level state, so
+  // a watcher registered by a second caller is a duplicate that does the same
+  // clear-then-refetch again. setupModMessages() is called by the page, by
+  // ModMessages.vue, and by useKeywords.js from a MODULE-LEVEL computed that
+  // re-evaluates on every group change - so the duplicates accumulated as a
+  // moderator worked. Measured in production over one day: a single work-count
+  // tick fired 2 identical listing requests for a moderator who used one group
+  // filter, and up to 13 for one who used seven. Registering per call also
+  // leaks when there is no active effect scope to dispose them.
 
   /* watch(group, async (newValue, oldValue) => {
     console.log("===useModMessages watch group", newValue?.id, oldValue?.id, groupid.value)
@@ -263,42 +301,92 @@ export function setupModMessages(reset) {
     }
   })
 
-  watch(workdetail, (newVal, oldVal) => {
-    // console.log('<<<<useModMessages watch workdetail. oldVal:', oldVal, 'newVal:', newVal)
-    if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return // Not actually changed
-    // if( collection.value!=='Pending') return
-    let doFetch = false
+  if (reset) {
+    watch(workdetail, (newVal, oldVal) => {
+      if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return // Not actually changed
 
-    const miscStore = useMiscStore()
-    // console.log('uMM getMessages',miscStore.deferGetMessages)
-    if (miscStore.deferGetMessages) return
+      const miscStore = useMiscStore()
 
-    const bodyoverflow = document.body.style.overflow
-    if (bodyoverflow !== 'hidden') {
-      if (newVal !== oldVal) {
-        // There's new stuff to fetch.
-        // console.log('Fetch')
-        doFetch = true
-      } else {
-        /* In Nuxt 2 miscStore visible was set if we are visible
-        const visible = miscStore.get('visible')
-        //console.log('Visible', visible)
-
-        if (!visible) {
-          // If we're not visible, then clear what we have in the store.  We don't want to do that under our own
-          // feet, but if we do this then we will pick up changes from other people and avoid confusion.
-          console.log('Clear')
-          await messageStore.clear()
-          doFetch = true
-        } */
+      // When the work total INCREASES, genuinely new work has arrived (e.g. a new
+      // pending message). The list must refresh to show it - otherwise the count /
+      // red alert updates but the message stays invisible until a manual reload
+      // (Discourse #9737).
+      const newTotal = Number(newVal?.total ?? 0)
+      const oldTotal = Number(oldVal?.total ?? 0)
+      if (newTotal > oldTotal) {
+        // ...but NOT while a modal is open, or a message is being edited in
+        // place. Refreshing re-renders the message list, which unmounts an
+        // open modal (e.g. a moderator part-way through typing a rejection
+        // reason) - or the ModMessage a moderator is editing - and loses their
+        // draft. Park the refresh and apply it when the modal closes / editing
+        // finishes (see the observers below), so the new message still appears
+        // without a manual reload.
+        if (refreshMustWait()) {
+          pendingWorkRefresh.value = newVal
+          return
+        }
+        getMessages(newVal)
+        return
       }
 
-      if (doFetch) {
-        // console.log('uMM watch workdetail getmessages', newVal)
-        getMessages(newVal)
+      // No new work (count unchanged or decreased by a mod action the component
+      // already handled): keep the existing suppression so the list does not
+      // reload under the user's feet.
+      if (miscStore.deferGetMessages) return
+      if (refreshMustWait()) {
+        // Park it, exactly as the total-increased branch above does. Do NOT drop
+        // it: another moderator holding a message moves it from `pending` to
+        // `pendingother` (see groupWork.go), so the total never changes and this
+        // branch is the ONLY one that can surface a hold. Dropping it lost the
+        // hold permanently — the watcher's oldVal advances, so every later tick
+        // compares equal and early-returns — leaving the other moderator looking
+        // at a card with no "Held" banner until they manually reloaded. They
+        // moderated the post out from under the holding mod (Discourse #9946).
+        pendingWorkRefresh.value = newVal
+        return
+      }
+      getMessages(newVal)
+    })
+
+    // Apply a refresh that was deferred because a modal was open, as soon as the
+    // modal closes. Bootstrap toggles <body> overflow:hidden around modals, so we
+    // observe that attribute; when it clears and a refresh is pending, run it.
+    // This keeps an open rejection modal (and its draft) intact during editing
+    // while still surfacing the new pending message the moment it is dismissed.
+    if (
+      typeof document !== 'undefined' &&
+      typeof MutationObserver !== 'undefined'
+    ) {
+      const bodyOverflowObserver = new MutationObserver(() => {
+        if (pendingWorkRefresh.value && !refreshMustWait()) {
+          const deferred = pendingWorkRefresh.value
+          pendingWorkRefresh.value = null
+          getMessages(deferred)
+        }
+      })
+      bodyOverflowObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['style'],
+      })
+      if (getCurrentScope()) {
+        onScopeDispose(() => bodyOverflowObserver.disconnect())
       }
     }
-  })
+
+    // Apply a refresh that was deferred because a message was being edited in
+    // place, as soon as editing finishes (mirrors the modal-close observer
+    // above). ModMessage.vue's save()/cancelEdit() clear modtoolsediting.
+    watch(
+      () => useMiscStore().modtoolsediting,
+      (editing) => {
+        if (!editing && pendingWorkRefresh.value && !refreshMustWait()) {
+          const deferred = pendingWorkRefresh.value
+          pendingWorkRefresh.value = null
+          getMessages(deferred)
+        }
+      }
+    )
+  }
 
   return {
     busy,

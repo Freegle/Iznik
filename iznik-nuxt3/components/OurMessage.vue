@@ -10,25 +10,19 @@
       },
     }"
     class="position-relative"
-    itemscope
-    itemtype="http://schema.org/Product"
   >
-    <div
-      itemprop="offers"
-      itemscope
-      itemtype="http://schema.org/Offer"
-      class="d-none"
-    >
-      <meta itemprop="priceCurrency" content="GBP" />
-      <span itemprop="price">0</span> |
-      <span itemprop="availability">Instock</span>
-    </div>
+    <!-- Structured data lives in the JSON-LD block emitted by the message page
+    (composables/useMessageJsonLd.js). The microdata that used to sit here declared a
+    schema.org/Product but carried no name, image or description, so Google discarded
+    it, and it was inside a d-none element, which their guidelines don't allow for
+    microdata. -->
     <div v-if="startExpanded">
       <MessageExpanded
         :id="message.id"
         :replyable="replyable"
         :hide-close="hideClose"
         :actions="actions"
+        @replied="emit('replied')"
       />
     </div>
     <div v-else>
@@ -52,27 +46,36 @@
         :actions="actions"
         fullscreen-overlay
         @close="closeMobileExpanded"
+        @replied="emit('replied')"
       />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, defineAsyncComponent, nextTick, onMounted } from 'vue'
+import {
+  ref,
+  computed,
+  defineAsyncComponent,
+  nextTick,
+  onMounted,
+  onBeforeUnmount,
+} from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { action } from '~/composables/useClientLog'
+import { useDwellView } from '~/composables/useDwellView'
 
-const MessageExpanded = defineAsyncComponent(() =>
-  import('~/components/MessageExpanded')
+const MessageExpanded = defineAsyncComponent(
+  () => import('~/components/MessageExpanded')
 )
-const MessageSummary = defineAsyncComponent(() =>
-  import('~/components/MessageSummary')
+const MessageSummary = defineAsyncComponent(
+  () => import('~/components/MessageSummary')
 )
-const MessageModal = defineAsyncComponent(() =>
-  import('~/components/MessageModal')
+const MessageModal = defineAsyncComponent(
+  () => import('~/components/MessageModal')
 )
 
 const props = defineProps({
@@ -134,9 +137,18 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  // Where this card is rendered, recorded with the view so browse-feed views are
+  // distinguishable from detail views. The feed leaves the default ('browse');
+  // the message page passes 'message_page' (or a notification ?src= tag). Both
+  // the passive dwell and the tap-to-expand are still "in the feed" → 'browse'.
+  viewSource: {
+    type: String,
+    required: false,
+    default: 'browse',
+  },
 })
 
-const emit = defineEmits(['notFound', 'view', 'visible'])
+const emit = defineEmits(['notFound', 'view', 'visible', 'replied'])
 
 // Stores
 const messageStore = useMessageStore()
@@ -195,21 +207,22 @@ function closeMobileExpanded() {
   showMobileExpanded.value = false
 }
 
-async function view() {
+async function view(source = props.viewSource) {
   if (props.recordView) {
     if (me.value && message.value?.unseen) {
-      await messageStore.view(props.id)
+      await messageStore.view(props.id, source)
     }
 
     emit('view')
   }
 }
 
-function visibilityChanged(isVisible) {
-  if (isVisible) {
-    view()
-  }
-}
+// Only count a passive in-list view once the post has actually dwelled on
+// screen — a fast scroll-past shouldn't register as a view. Genuine opens go
+// through expand() -> view() directly and aren't gated by the dwell.
+const { onVisibilityChange: visibilityChanged, cancel: cancelDwellView } =
+  useDwellView(view)
+onBeforeUnmount(cancelDwellView)
 
 // Initial fetch
 try {

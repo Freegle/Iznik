@@ -18,6 +18,12 @@ env.cacheDir = process.env.HF_CACHE_DIR || '/app/model-cache';
 
 console.log(JSON.stringify({ level: 'info', event: 'startup', num_threads: NUM_THREADS }));
 
+// NOTE: `quantized` is a transformers.js **v2** option and is ignored by the v3
+// runtime we are on: this loads the fp32 model.onnx (~547MB), not an int8 one.
+// Leave it that way. The 194k embeddings in messages_embeddings were all
+// generated fp32, and switching this process to `dtype: 'q8'` would quantize
+// query vectors only, putting them in a different space from every stored
+// document vector. Changing it means re-embedding the whole corpus first.
 const extractor = await pipeline(
   'feature-extraction',
   'nomic-ai/nomic-embed-text-v1.5',
@@ -31,6 +37,23 @@ const extractor = await pipeline(
 );
 
 console.log(JSON.stringify({ level: 'info', event: 'model_loaded', num_threads: NUM_THREADS }));
+
+// Warm up the ONNX session before we start accepting requests. Loading the model
+// weights (above) is not enough: the first actual inference pays a large one-time
+// cost (session graph optimisation + memory-arena allocation) — measured at ~20s.
+// Without this, the first real user search after every deploy/restart eats that
+// latency. Now that vector search is every caller's default, run one throwaway
+// inference here so that cost lands at startup instead of on a user.
+{
+  const t0 = process.hrtime.bigint();
+  try {
+    await extractor(['search_query: warmup'], { pooling: 'mean', normalize: true });
+    const warmMs = Number(process.hrtime.bigint() - t0) / 1e6;
+    console.log(JSON.stringify({ level: 'info', event: 'warmup', elapsed_ms: Number(warmMs.toFixed(2)) }));
+  } catch (e) {
+    console.log(JSON.stringify({ level: 'error', event: 'warmup', error: e.message }));
+  }
+}
 
 const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {

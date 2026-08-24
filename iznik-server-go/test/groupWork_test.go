@@ -45,7 +45,7 @@ func TestGetGroupWork_ActiveMod(t *testing.T) {
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test pending', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", msgID, groupID)
 
 	// Insert a spam message.
 	var spamMsgID uint64
@@ -96,7 +96,7 @@ func TestGetGroupWork_BackupMod(t *testing.T) {
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test backup pending', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", msgID, groupID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -134,12 +134,13 @@ func TestGetGroupWork_HeldPending(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
-	// Insert a held pending message.
+	// Insert a held pending message — held is tracked per-group on
+	// messages_groups.heldby (not the global messages.heldby).
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, heldby) VALUES (?, 'Offer', 'Test held', 'Test body', 'Test body', ?)", senderID, holderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test held', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby) VALUES (?, ?, 'Pending', 0, ?)", msgID, groupID, holderID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -158,6 +159,62 @@ func TestGetGroupWork_HeldPending(t *testing.T) {
 	// Held message on active group → pendingother.
 	assert.Equal(t, int64(0), found.Pending, "Held pending should not be in 'pending'")
 	assert.GreaterOrEqual(t, found.Pendingother, int64(1), "Held pending should be in 'pendingother'")
+
+	// Clean up.
+	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+}
+
+// TestGetGroupWork_HeldPerGroup verifies that holding a cross-posted message on
+// one group does not make it count as held on another group it is also pending on.
+// Held status lives on messages_groups.heldby (per-group), not messages.heldby.
+func TestGetGroupWork_HeldPerGroup(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("gwheldpg")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+
+	// Active mod on both groups.
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// One message pending on both groups, held on group A only.
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	var msgID uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test held per group', 'Test body', 'Test body')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby) VALUES (?, ?, 'Pending', 0, ?)", msgID, groupA, holderID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", msgID, groupB)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	var gA, gB *group.GroupWork
+	for i := range result {
+		if result[i].Groupid == groupA {
+			gA = &result[i]
+		}
+		if result[i].Groupid == groupB {
+			gB = &result[i]
+		}
+	}
+	assert.NotNil(t, gA, "Expected group A in results")
+	assert.NotNil(t, gB, "Expected group B in results")
+
+	// Held on A → counted as held (pendingother), not unheld (pending).
+	assert.Equal(t, int64(0), gA.Pending, "Held-on-A copy must not be in group A 'pending'")
+	assert.GreaterOrEqual(t, gA.Pendingother, int64(1), "Held-on-A copy must be in group A 'pendingother'")
+
+	// Not held on B → counted as unheld (pending), not held (pendingother).
+	assert.GreaterOrEqual(t, gB.Pending, int64(1), "Unheld-on-B copy must be in group B 'pending'")
+	assert.Equal(t, int64(0), gB.Pendingother, "Unheld-on-B copy must not be in group B 'pendingother'")
 
 	// Clean up.
 	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
@@ -256,11 +313,11 @@ func TestGetGroupWork_MultipleGroups(t *testing.T) {
 	var msgID1, msgID2 uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test multi 1', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID1)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID1, groupID1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", msgID1, groupID1)
 
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test multi 2', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID2)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID2, groupID2)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", msgID2, groupID2)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -408,6 +465,58 @@ func TestGetGroupWork_EditReview(t *testing.T) {
 	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 }
 
+// Regression (Discourse 9839): an edit on a post that rippled INTO a group must
+// NOT inflate that group's Edit work count. The rippled-in copy is Approved with
+// rippled_in=1; the Edit list filters rippled_in=0, so a count that ignored that
+// showed a "ghost" badge against a group whose Edit list is empty. The count must
+// match the list — edits belong to the post's ORIGIN group only.
+func TestGetGroupWork_EditReviewExcludesRippledIn(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("gweditrip")
+
+	originGroup := CreateTestGroup(t, prefix+"_orig")
+	rippledGroup := CreateTestGroup(t, prefix+"_rip")
+	originMod := CreateTestUser(t, prefix+"_omod", "User")
+	rippledMod := CreateTestUser(t, prefix+"_rmod", "User")
+	CreateTestMembership(t, originMod, originGroup, "Moderator")
+	CreateTestMembership(t, rippledMod, rippledGroup, "Moderator")
+	_, originToken := CreateTestSession(t, originMod)
+	_, rippledToken := CreateTestSession(t, rippledMod)
+
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	var msgID uint64
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Rippled edit count', 'b', 'b')", senderID)
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
+	// Origin row (rippled_in=0) plus a rippled-in copy (rippled_in=1).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, rippled_in) VALUES (?, ?, 'Approved', 0, 0)", msgID, originGroup)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, rippled_in) VALUES (?, ?, 'Approved', 0, 1)", msgID, rippledGroup)
+	db.Exec("INSERT INTO messages_edits (msgid, timestamp, reviewrequired, oldtext, newtext) VALUES (?, NOW(), 1, 'old', 'new')", msgID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_edits WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	})
+
+	editCountFor := func(token string, gid uint64) int64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result []group.GroupWork
+		json2.Unmarshal(rsp(resp), &result)
+		for i := range result {
+			if result[i].Groupid == gid {
+				return result[i].Editreview
+			}
+		}
+		return 0
+	}
+
+	assert.GreaterOrEqual(t, editCountFor(originToken, originGroup), int64(1),
+		"origin group's Edit count should include the edit")
+	assert.Equal(t, int64(0), editCountFor(rippledToken, rippledGroup),
+		"rippled-into group's Edit count must NOT include the rippled-in copy's edit (Discourse 9839)")
+}
+
 func TestGetGroupWork_OwnerRole(t *testing.T) {
 	// Owners should also see work counts.
 	prefix := uniquePrefix("gwowner")
@@ -542,7 +651,7 @@ func TestGetGroupWork_DeletedMessageNotCounted(t *testing.T) {
 	var msgID uint64
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, deleted) VALUES (?, 'Offer', 'Test deleted pending', 'Test body', 'Test body', NOW())", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NOW())", msgID, groupID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -680,4 +789,103 @@ func TestGetGroupWork_HappinessExcludesEmptyComments(t *testing.T) {
 	}
 	assert.NotNil(t, found2)
 	assert.Equal(t, int64(1), found2.Happiness, "Real comments should count in happiness badge")
+}
+
+// The Feedback (Happiness) badge count must match the Feedback list: a post that
+// rippled INTO a group counts only for its ORIGIN group, not the rippled-into
+// one. Regression guard for the badge/list mismatch that got PR #1144 rejected
+// (only the list was scoped). Discourse 9808/633.
+func TestGetGroupWork_HappinessExcludesRippledIn(t *testing.T) {
+	prefix := uniquePrefix("gwhapripple")
+	db := database.DBConn
+	originGroup := CreateTestGroup(t, prefix+"_origin")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+
+	// One moderator of BOTH groups, so /api/group/work returns both counts.
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, originGroup, "Moderator")
+	CreateTestMembership(t, modID, rippledGroup, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" offer item", 52.5, -1.8)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments, reviewed) VALUES (?, 'Taken', 'Happy', 'Great!', 0)", msgID)
+	// Ripple the same post into rippledGroup (Approved copy, rippled_in = 1).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, rippled_in) VALUES (?, ?, 'Approved', NOW(), 1)", msgID, rippledGroup)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	var origin, rippled *group.GroupWork
+	for i := range result {
+		if result[i].Groupid == originGroup {
+			origin = &result[i]
+		} else if result[i].Groupid == rippledGroup {
+			rippled = &result[i]
+		}
+	}
+	assert.NotNil(t, origin)
+	assert.Equal(t, int64(1), origin.Happiness, "origin group's badge counts the item")
+	if rippled != nil {
+		assert.Equal(t, int64(0), rippled.Happiness, "rippled-into group's badge must not count the rippled-in copy")
+	}
+}
+
+// group/work only counts a pending post once its content check has run - until then it may
+// still be auto-approved, so counting it shows a number the moderator cannot act on
+// (Discourse 9481/563). session.go applies the same filter for the ModTools badge; without
+// it here the two disagreed about the same queue.
+//
+// A HELD post is exempt: a moderator has claimed it, it will never auto-approve, and it is
+// already sitting in their list. Holding also used to stop the content check running at
+// all, so a held post could stay unchecked indefinitely and vanish from the count entirely
+// (Discourse 9481/635).
+func TestGroupWorkPendingContentCheckFilter(t *testing.T) {
+	prefix := uniquePrefix("gw_cccheck")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	holderID := CreateTestUser(t, prefix+"_holder", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+	mk := func(subject string) uint64 {
+		var id uint64
+		db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', ?, 'Test body', 'Test body')", senderID, subject)
+		db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1", senderID, subject).Scan(&id)
+		return id
+	}
+
+	uncheckedID := mk(prefix + " unchecked unheld")
+	heldUncheckedID := mk(prefix + " unchecked HELD")
+	defer db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", uncheckedID, heldUncheckedID)
+	defer db.Exec("DELETE FROM messages WHERE id IN (?, ?)", uncheckedID, heldUncheckedID)
+
+	// Unheld and not yet content-checked: must NOT count - it may still auto-approve.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, NULL)", uncheckedID, groupID)
+	// Held and not yet content-checked: must still count as held work.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, heldby, contentcheck_checked_at) VALUES (?, ?, 'Pending', 0, ?, NULL)", heldUncheckedID, groupID, holderID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	var g *group.GroupWork
+	for i := range result {
+		if result[i].Groupid == groupID {
+			g = &result[i]
+		}
+	}
+	assert.NotNil(t, g, "Expected the group in results")
+
+	assert.Equal(t, int64(0), g.Pending,
+		"an unheld post with no content check yet must not be counted")
+	assert.Equal(t, int64(1), g.Pendingother,
+		"a held post counts even before the content check has run")
 }

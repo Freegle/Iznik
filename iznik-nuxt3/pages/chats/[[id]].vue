@@ -73,6 +73,13 @@
                   <button class="mark-read-btn" @click="markAllRead">
                     <v-icon icon="check-double" />
                     <span class="d-none d-sm-inline">Mark all read</span>
+                    <b-badge
+                      v-if="chatStore.unreadCount > 0"
+                      variant="danger"
+                      class="mark-all-read-badge"
+                    >
+                      {{ chatStore.unreadCount }}
+                    </b-badge>
                   </button>
                 </div>
                 <div
@@ -109,11 +116,14 @@
                       >
                         {{ closedCount }}
                       </b-badge>
-                      <span v-if="showClosed">Hide</span>
-                      <span v-else>Show </span>
-                      {{ closedChats.length }} hidden/blocked chat<span
-                        v-if="closedChats.length > 1"
-                        >s</span
+                      <span v-if="showClosed"
+                        >Return to chats that are not hidden</span
+                      >
+                      <span v-else
+                        >Show {{ closedChats.length }} hidden/blocked chat<span
+                          v-if="closedChats.length > 1"
+                          >s</span
+                        ></span
                       >
                     </b-button>
                   </div>
@@ -173,7 +183,12 @@
                     <span>Show older chats</span>
                   </button>
                   <button
-                    v-if="complete && visibleChats && visibleChats.length"
+                    v-if="
+                      complete &&
+                      visibleChats &&
+                      visibleChats.length &&
+                      !showClosed
+                    "
                     class="chat-action-btn"
                     @click="showHideAll"
                   >
@@ -193,6 +208,7 @@
                   max-width="300px"
                   div-id="div-gpt-ad-1691925773522-0"
                   class="mt-2"
+                  placement="chat_list"
                 />
               </VisibleWhen>
             </div>
@@ -257,12 +273,12 @@ import ExternalDa from '~/components/ExternalDa.vue'
 import ChatListEntry from '~/components/ChatListEntry.vue'
 import { useMiscStore } from '~/stores/misc'
 
-const ContactDetailsAskModal = defineAsyncComponent(() =>
-  import('~/components/ContactDetailsAskModal.vue')
+const ContactDetailsAskModal = defineAsyncComponent(
+  () => import('~/components/ContactDetailsAskModal.vue')
 )
 
-const ChatHideModal = defineAsyncComponent(() =>
-  import('~/components/ChatHideModal')
+const ChatHideModal = defineAsyncComponent(
+  () => import('~/components/ChatHideModal')
 )
 
 const chatStore = useChatStore()
@@ -284,6 +300,14 @@ const loggedIn = computed(() => authStore.user !== null)
 
 definePageMeta({
   layout: 'login',
+  // Constant key so selecting a chat does NOT remount this page. Nuxt's default key
+  // interpolates the route params (generateRouteKey -> interpolatePath), so it changed
+  // from /chats/1 to /chats/2 on every selection and tore the whole page down and back
+  // up. That re-ran onMounted, whose deep-link "scroll the selected chat to the top of
+  // the panel" jumped the list under someone who had just clicked a chat they could
+  // already see - and re-ran the fetchOlder() below it too. gotoChat() already assumed
+  // this was the case ("quicker than navigating and re-rendering this page"); now it is.
+  key: 'chats',
 })
 
 let title = 'Chats'
@@ -300,9 +324,13 @@ const showChats = ref(20)
 const showContactDetailsAskModal =
   storeToRefs(chatStore).showContactDetailsAskModal
 
-const id = route.params.id ? parseInt(route.params.id) : 0
+// The chat we arrived on, used for the initial fetch and the page title. The template
+// must NOT use these: they are read once during setup, and the page no longer remounts
+// when you pick a different chat, so they would stay pinned to the chat you arrived on.
+// `id` and `chat` below are the reactive versions the template uses.
+const initialId = route.params.id ? parseInt(route.params.id) : 0
 
-let chat = null
+let initialChat = null
 
 const search = ref(null)
 
@@ -310,32 +338,32 @@ if (route.query.search) {
   search.value = route.query.search
 }
 
-if (myid && process.client) {
+if (myid && import.meta.client) {
   // Fetch the list of chats. Only on client — SSR has no auth token
   // and the template uses <client-only> anyway.
-  await chatStore.fetchChats(search.value, true, id)
+  await chatStore.fetchChats(search.value, true, initialId)
 
   // Is this chat in the list?
-  chat = chatStore.byChatId(id)
+  initialChat = chatStore.byChatId(initialId)
 
-  if (!chat) {
+  if (!initialChat) {
     // Might be old.  Try fetching it specifically.
     try {
-      chat = await chatStore.fetchChat(id)
+      initialChat = await chatStore.fetchChat(initialId)
     } catch (e) {
-      console.log("Couldn't fetch chat", id, e)
+      console.log("Couldn't fetch chat", initialId, e)
     }
   } else {
     // We have the chat, but maybe it's not quite up to date (e.g. a new message).  So fetch, but don't wait.
-    title = chat.name
-    description = 'Chat with ' + chat.name
+    title = initialChat.name
+    description = 'Chat with ' + initialChat.name
 
-    chatStore.fetchChat(id)
+    chatStore.fetchChat(initialId)
   }
 
-  if (id) {
+  if (initialId) {
     // Find id in the list of chats.
-    const index = chatStore.list.findIndex((c) => c.id === id)
+    const index = chatStore.list.findIndex((c) => c.id === initialId)
     showChats.value = Math.max(showChats.value, index + 1)
   }
 }
@@ -352,6 +380,13 @@ const bump = ref(1)
 let searchGeneration = 0
 const distance = ref(1000)
 const selectedChatId = ref(null)
+
+// The chat currently being viewed, for the mobile navbar. These used to be plain setup
+// constants, refreshed only because picking a chat remounted the whole page; now that it
+// does not, they have to track the selection or the navbar would keep showing the chat
+// you first arrived on (and would never appear at all if you arrived at /chats).
+const id = computed(() => selectedChatId.value || 0)
+const chat = computed(() => (id.value ? chatStore.byChatId(id.value) : null))
 
 // If no chats were found initially, mark as complete so "Show older chats" button appears.
 if (chatStore.list.length === 0) {
@@ -441,53 +476,69 @@ watch(search, (newVal, oldVal) => {
   }
 })
 
+// Bring a chat we have ARRIVED at into view: render enough of the list to reach it,
+// fetching older chats if it isn't loaded yet, then put it at the top of the panel.
+//
+// This is for deep links - opening /chats/123 from an email, a push notification or a
+// bookmark, where the chat can be a long way down the list, or not loaded at all. It is
+// deliberately NOT run when someone picks a chat out of the list they are already looking
+// at: they can see where it is, so moving it under their cursor (and pulling the entire
+// chat history to make room below it) is disruptive rather than helpful.
+async function revealChat(chatId) {
+  // Ensure enough chats are rendered so the target chat can be scrolled
+  // to the top of the panel (needs entries below it too).
+  const SCROLL_SLACK = 50
+  let idx = filteredChats.value.findIndex((c) => c.id === chatId)
+
+  if (idx < 0 && !chatStore.searchSince) {
+    // Selected chat is not in the current list.  This happens for brand-new
+    // User2Mod chats (latestmessage=0) which the API excludes by default.
+    // Fetch with keepChat so the API force-includes it regardless of the
+    // latestmessage filter.
+    await fetchOlder()
+    idx = filteredChats.value.findIndex((c) => c.id === chatId)
+  }
+
+  if (idx >= 0) {
+    const below = filteredChats.value.length - 1 - idx
+    if (below < SCROLL_SLACK && !chatStore.searchSince) {
+      // Not enough chats below the target to scroll it to the top of the
+      // panel. Fetch all historical chats to populate entries below it.
+      await fetchOlder()
+      idx = filteredChats.value.findIndex((c) => c.id === chatId)
+    }
+
+    if (idx >= 0) {
+      showChats.value = Math.max(showChats.value, idx + 1 + SCROLL_SLACK)
+    }
+  }
+
+  await nextTick()
+  const activeEl = chatlistRef.value?.querySelector('.chat.active')
+  if (activeEl) {
+    activeEl.scrollIntoView({ block: 'start' })
+  }
+}
+
+// The page no longer remounts when the chat changes (see the key in definePageMeta), so
+// the selection has to follow the route rather than being read once on mount. This covers
+// in-list clicks, Back, and any other navigation; it must NOT reveal/scroll, which is for
+// arrivals only.
+watch(
+  () => route.params.id,
+  (newId) => {
+    selectedChatId.value = newId ? parseInt(newId) : 0
+  }
+)
+
 onMounted(async () => {
   selectedChatId.value = null
 
   if (authStore.user) {
-    const route = useRoute()
     selectedChatId.value = route.params.id ? parseInt(route.params.id) : 0
 
     if (selectedChatId.value) {
-      // Ensure enough chats are rendered so the target chat can be scrolled
-      // to the top of the panel (needs entries below it too).
-      const SCROLL_SLACK = 50
-      let idx = filteredChats.value.findIndex(
-        (c) => c.id === selectedChatId.value
-      )
-
-      if (idx < 0 && !chatStore.searchSince) {
-        // Selected chat is not in the current list.  This happens for brand-new
-        // User2Mod chats (latestmessage=0) which the API excludes by default.
-        // Fetch with keepChat so the API force-includes it regardless of the
-        // latestmessage filter.
-        await fetchOlder()
-        idx = filteredChats.value.findIndex(
-          (c) => c.id === selectedChatId.value
-        )
-      }
-
-      if (idx >= 0) {
-        const below = filteredChats.value.length - 1 - idx
-        if (below < SCROLL_SLACK && !chatStore.searchSince) {
-          // Not enough chats below the target to scroll it to the top of the
-          // panel. Fetch all historical chats to populate entries below it.
-          await fetchOlder()
-          idx = filteredChats.value.findIndex(
-            (c) => c.id === selectedChatId.value
-          )
-        }
-
-        if (idx >= 0) {
-          showChats.value = Math.max(showChats.value, idx + 1 + SCROLL_SLACK)
-        }
-      }
-
-      await nextTick()
-      const activeEl = chatlistRef.value?.querySelector('.chat.active')
-      if (activeEl) {
-        activeEl.scrollIntoView({ block: 'start' })
-      }
+      await revealChat(selectedChatId.value)
     }
   }
 })
@@ -513,8 +564,15 @@ function showHideAll() {
 }
 
 async function hideAll() {
-  for (let i = 0; i < visibleChats.value.length; i++) {
-    await chatStore.hide(visibleChats.value[i].id)
+  // Snapshot IDs before iterating: filteredChats covers all loaded chats
+  // (not just the visible page) and a plain array avoids skipping entries
+  // when the reactive computed shrinks as each chat is hidden.
+  // Exclude User2Mod (volunteer) chats — members must never lose access to them.
+  const ids = filteredChats.value
+    .filter((c) => c.chattype !== 'User2Mod')
+    .map((c) => c.id)
+  for (const id of ids) {
+    await chatStore.hide(id)
   }
 
   const router = useRouter()
@@ -544,7 +602,7 @@ function scanChats(closed, chats) {
   }
 
   chats = chats.filter((chat) => {
-    if (id && !closed && chat.id === id) {
+    if (id.value && !closed && chat.id === id.value) {
       return true
     }
 
@@ -602,24 +660,25 @@ async function markAllRead() {
   chatStore.fetchChats()
 }
 
-function gotoChat(id) {
+function gotoChat(chatId) {
   const router = useRouter()
+  const wasSelected = Boolean(selectedChatId.value)
 
-  if (selectedChatId.value) {
-    // We just replace the route, which is quicker than navigating and re-rendering this page.
-    //
-    // This means that history won't get updated, which means that Back will go to the top-level /chats page.
-    // That is nice behaviour otherwise you have to hit Back a lot if you've viewed several chats.
-    selectedChatId.value = id
-    let url = id ? '/chats/' + id : '/chats'
+  // Selecting a chat no longer re-renders the page either way (see the key in
+  // definePageMeta) - the route watcher moves the selection. push vs replace is now
+  // purely about history: once a chat is open we replace, so Back goes to the top-level
+  // /chats page rather than walking back through every chat viewed.
+  selectedChatId.value = chatId
+  let url = chatId ? '/chats/' + chatId : '/chats'
 
-    if (search.value) {
-      url += '?search=' + search.value
-    }
+  if (search.value) {
+    url += '?search=' + search.value
+  }
 
+  if (wasSelected) {
     router.replace(url)
   } else {
-    router.push(id ? '/chats/' + id : '/chats')
+    router.push(url)
   }
 }
 
@@ -727,15 +786,19 @@ async function searchMore() {
   }
 }
 
+/* Red outline + count badge, consistent with the individual chat's mark-read button
+ * (.navbar-mark-read in ChatMobileNavbar.vue) so the "mark read" affordance looks the
+ * same in the list and in a conversation. */
 .mark-read-btn {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 8px 12px;
-  background: transparent;
-  border: 1px solid $color-gray--light;
+  background: rgba(255, 255, 255, 0.9);
+  border: 2px solid $color-red;
   border-radius: var(--radius-xl, 1.25rem);
-  color: var(--color-gray-600);
+  color: $color-red;
   font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
@@ -743,10 +806,21 @@ async function searchMore() {
   white-space: nowrap;
 
   &:hover {
-    background: $color-green-background;
-    border-color: $color-green-background;
+    background: $color-red;
+    border-color: $color-red;
     color: white;
   }
+}
+
+.mark-all-read-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  font-size: 0.6rem;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  line-height: 18px;
 }
 
 /* Empty state styling */

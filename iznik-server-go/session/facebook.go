@@ -217,7 +217,7 @@ func completeFacebookLogin(c *fiber.Ctx, fbID, email, firstName, lastName, fullN
 	// A new INSERT would become the effective avatar (ORDER BY id DESC LIMIT 1),
 	// overwriting any custom upload the user has set.
 	var avatarCount int64
-	database.DBConn.Raw("SELECT COUNT(*) FROM users_images WHERE userid = ?", userID).Scan(&avatarCount)
+	database.DBConn.Table("users_images").Where("userid = ?", userID).Count(&avatarCount)
 	if avatarCount == 0 {
 		saveProfileImage(userID, pictureURL)
 	}

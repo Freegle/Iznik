@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import ChatMessageText from '~/components/ChatMessageText.vue'
 
 // Mock vue-highlight-words external component
@@ -68,6 +68,7 @@ vi.mock('~/composables/useLinkify', () => ({
 vi.mock('~/composables/useMap', () => ({
   attribution: () => '© OpenStreetMap',
   osmtile: () => 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  INLINE_MAP_OPTIONS: { scrollWheelZoom: false, bounceAtZoomLimits: true },
 }))
 
 // Mock constants
@@ -100,8 +101,9 @@ describe('ChatMessageText', () => {
             props: ['fluid', 'src', 'lazy', 'rounded'],
           },
           'l-map': {
-            template: '<div class="l-map"><slot /></div>',
-            props: ['zoom', 'maxZoom', 'center', 'style'],
+            template:
+              '<div class="l-map" :data-scrollwheelzoom="String(options && options.scrollWheelZoom)"><slot /></div>',
+            props: ['zoom', 'maxZoom', 'center', 'style', 'options'],
           },
           'l-tile-layer': {
             template: '<div class="l-tile-layer"></div>',
@@ -132,6 +134,22 @@ describe('ChatMessageText', () => {
     expect(wrapperMine.find('.myChatMessage').exists()).toBe(true)
   })
 
+  it('disables wheel zoom on the postcode map', async () => {
+    // Leaflet grabs the wheel event by default, so without scrollWheelZoom
+    // disabled, scrolling the conversation with the pointer over the map zooms
+    // the map out instead of scrolling it, leaving it stuck at world view.
+    const wrapper = createWrapper()
+    expect(wrapper.find('.l-map').exists()).toBe(false)
+
+    wrapper.vm.lat = 53.8321
+    wrapper.vm.lng = -2.6191
+    await nextTick()
+
+    expect(wrapper.find('.l-map').attributes('data-scrollwheelzoom')).toBe(
+      'false'
+    )
+  })
+
   it('highlights emails only when highlightEmails prop is true', () => {
     // Without highlighting
     const wrapperNoHighlight = createWrapper({ highlightEmails: false })
@@ -140,5 +158,35 @@ describe('ChatMessageText', () => {
     // With highlighting
     const wrapperWithHighlight = createWrapper({ highlightEmails: true })
     expect(wrapperWithHighlight.find('.highlighter').exists()).toBe(true)
+  })
+
+  // Links stay plain text in member-to-member chat, where a link could be a
+  // scam. A User2Mod chat is the conversation with your own community's
+  // volunteers, and their standard messages routinely point you at a link
+  // (e.g. where to edit your post) - which on the app was dead text.
+  describe('clickable links', () => {
+    // The linkified branch renders through v-html; the plain branch renders
+    // through the Highlighter component, so the stub tells them apart.
+    const linkified = (wrapper) => !wrapper.find('.highlighter').exists()
+
+    it('leaves links plain in member-to-member chat', async () => {
+      const { useChatMessageBase } = await import('~/composables/useChat')
+      useChatMessageBase.mockReturnValueOnce({
+        ...mockComposableReturn,
+        chat: { value: { ...mockChat, chattype: 'User2User' } },
+      })
+
+      expect(linkified(createWrapper({ highlightEmails: true }))).toBe(false)
+    })
+
+    it('makes links clickable in a chat with the volunteers', async () => {
+      const { useChatMessageBase } = await import('~/composables/useChat')
+      useChatMessageBase.mockReturnValueOnce({
+        ...mockComposableReturn,
+        chat: { value: { ...mockChat, chattype: 'User2Mod' } },
+      })
+
+      expect(linkified(createWrapper({ highlightEmails: true }))).toBe(true)
+    })
   })
 })

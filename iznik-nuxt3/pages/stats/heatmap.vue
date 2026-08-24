@@ -65,9 +65,9 @@ import { buildHead } from '~/composables/useBuildHead'
 // Import LeafletHeatmap conditionally
 let LeafletHeatmap = null
 
-if (process.client) {
-  LeafletHeatmap = defineAsyncComponent(() =>
-    import('~/components/LeafletHeatmap.vue')
+if (import.meta.client) {
+  LeafletHeatmap = defineAsyncComponent(
+    () => import('~/components/LeafletHeatmap.vue')
   )
 }
 
@@ -99,7 +99,7 @@ const map = ref(null)
 const mapWidth = computed(() => {
   let height = 0
 
-  if (process.client) {
+  if (import.meta.client) {
     height = Math.floor(window.innerHeight - 250)
     height = height < 200 ? 200 : height
   }
@@ -113,7 +113,10 @@ const heatMapData = computed(() => {
 
   if (heatmapData?.forEach) {
     heatmapData.forEach((loc) => {
-      data.push([loc.lat, loc.lng, loc.count])
+      // Default the weight to 1 when the API doesn't send a count. Without this a
+      // missing/undefined count makes `currentMax` NaN below, which turns every
+      // weighted value into NaN, empties weightedData, and the heatmap never renders.
+      data.push([loc.lat, loc.lng, Number(loc.count) || 1])
     })
   }
 
@@ -157,15 +160,6 @@ const weightedData = computed(() => {
         }
       }
     })
-
-    console.log(
-      'Weighted',
-      currentMax,
-      minlog,
-      maxlog,
-      weighted,
-      heatMapData.value
-    )
   }
 
   return weighted

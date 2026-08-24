@@ -1,6 +1,9 @@
 package tryst
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -77,62 +80,83 @@ func TestCalendarLink_PartialDateReturnsEmpty(t *testing.T) {
 	assert.Equal(t, "", calendarLink(strPtr("2024-06-15")))
 }
 
+// decodeCalendarLinkData parses the `data` query param out of a calendarLink()
+// result the same way AddToCalendar.vue's download() does: extract, base64url
+// decode, then JSON unmarshal.
+func decodeCalendarLinkData(t *testing.T, link string) map[string]string {
+	t.Helper()
+
+	u, err := url.Parse(link)
+	assert.NoError(t, err)
+
+	encoded := u.Query().Get("data")
+	assert.NotEmpty(t, encoded)
+
+	decoded, err := base64.RawURLEncoding.DecodeString(encoded)
+	assert.NoError(t, err)
+
+	var eventData map[string]string
+	assert.NoError(t, json.Unmarshal(decoded, &eventData))
+
+	return eventData
+}
+
 func TestCalendarLink_MySQLDatetimeFormat(t *testing.T) {
 	link := calendarLink(strPtr("2024-06-15 10:30:00"))
-	assert.Contains(t, link, "https://www.google.com/calendar/render")
-	assert.Contains(t, link, "20240615T103000Z") // start
-	assert.Contains(t, link, "20240615T113000Z") // end = start + 1h
+	eventData := decodeCalendarLinkData(t, link)
+	assert.Equal(t, "2024-06-15", eventData["startDate"])
+	assert.Equal(t, "10:30", eventData["startTime"])
+	assert.Equal(t, "11:30", eventData["endTime"]) // end = start + 1h
 }
 
 func TestCalendarLink_RFC3339Format(t *testing.T) {
 	link := calendarLink(strPtr("2024-06-15T10:30:00Z"))
-	assert.Contains(t, link, "20240615T103000Z")
-	assert.Contains(t, link, "20240615T113000Z")
+	eventData := decodeCalendarLinkData(t, link)
+	assert.Equal(t, "10:30", eventData["startTime"])
+	assert.Equal(t, "11:30", eventData["endTime"])
 }
 
 func TestCalendarLink_RFC3339WithOffset(t *testing.T) {
 	// +01:00 offset → stored as UTC 09:30, end UTC 10:30.
 	link := calendarLink(strPtr("2024-06-15T10:30:00+01:00"))
-	assert.Contains(t, link, "20240615T093000Z")
-	assert.Contains(t, link, "20240615T103000Z")
+	eventData := decodeCalendarLinkData(t, link)
+	assert.Equal(t, "09:30", eventData["startTime"])
+	assert.Equal(t, "10:30", eventData["endTime"])
 }
 
 func TestCalendarLink_ContainsFreegleTitle(t *testing.T) {
 	link := calendarLink(strPtr("2024-01-01 00:00:00"))
-	assert.Contains(t, link, "Freegle+Handover")
+	eventData := decodeCalendarLinkData(t, link)
+	assert.Contains(t, eventData["name"], "Freegle")
 }
 
 func TestCalendarLink_ContainsDetails(t *testing.T) {
 	link := calendarLink(strPtr("2024-01-01 00:00:00"))
-	assert.Contains(t, link, "Arrange+handover+of+Freegle+item")
+	eventData := decodeCalendarLinkData(t, link)
+	assert.Contains(t, eventData["description"], "handover")
 }
 
-func TestCalendarLink_ContainsActionTemplate(t *testing.T) {
+func TestCalendarLink_IncludesTimeZone(t *testing.T) {
 	link := calendarLink(strPtr("2024-01-01 00:00:00"))
-	assert.Contains(t, link, "action=TEMPLATE")
-}
-
-func TestCalendarLink_ContainsSFAndOutput(t *testing.T) {
-	link := calendarLink(strPtr("2024-01-01 00:00:00"))
-	assert.Contains(t, link, "sf=true")
-	assert.Contains(t, link, "output=xml")
-}
-
-func TestCalendarLink_DatesSlashSeparated(t *testing.T) {
-	// Google Calendar expects dates=START/END.
-	link := calendarLink(strPtr("2024-03-10 09:00:00"))
-	assert.Contains(t, link, "20240310T090000Z/20240310T100000Z")
+	eventData := decodeCalendarLinkData(t, link)
+	assert.NotEmpty(t, eventData["timeZone"])
 }
 
 func TestCalendarLink_MidnightRollsOverToNextDay(t *testing.T) {
 	// Start at 23:30, end should be 00:30 the following day.
 	link := calendarLink(strPtr("2024-06-30 23:30:00"))
-	assert.Contains(t, link, "20240630T233000Z/20240701T003000Z")
+	eventData := decodeCalendarLinkData(t, link)
+	assert.Equal(t, "2024-06-30", eventData["startDate"])
+	assert.Equal(t, "23:30", eventData["startTime"])
+	assert.Equal(t, "00:30", eventData["endTime"])
 }
 
-func TestCalendarLink_URLStartsWithGoogleCalendar(t *testing.T) {
+func TestCalendarLink_URLPointsToCalendarPage(t *testing.T) {
 	link := calendarLink(strPtr("2024-01-01 12:00:00"))
-	assert.True(t, strings.HasPrefix(link, "https://www.google.com/calendar/render"))
+	u, err := url.Parse(link)
+	assert.NoError(t, err)
+	assert.Equal(t, "/calendar", u.Path)
+	assert.True(t, strings.HasPrefix(link, "https://"))
 }
 
 func TestCalendarLink_NonEmptyForValidInput(t *testing.T) {
@@ -143,11 +167,34 @@ func TestCalendarLink_NonEmptyForValidInput(t *testing.T) {
 func TestCalendarLink_NewYearMidnight(t *testing.T) {
 	// Edge: 2023-12-31 23:00:00 UTC → end 2024-01-01 00:00:00 UTC.
 	link := calendarLink(strPtr("2023-12-31 23:00:00"))
-	assert.Contains(t, link, "20231231T230000Z/20240101T000000Z")
+	eventData := decodeCalendarLinkData(t, link)
+	assert.Equal(t, "2023-12-31", eventData["startDate"])
+	assert.Equal(t, "23:00", eventData["startTime"])
+	assert.Equal(t, "00:00", eventData["endTime"])
 }
 
 func TestCalendarLink_LeapDay(t *testing.T) {
 	// Leap day should parse fine.
 	link := calendarLink(strPtr("2024-02-29 08:00:00"))
-	assert.Contains(t, link, "20240229T080000Z/20240229T090000Z")
+	eventData := decodeCalendarLinkData(t, link)
+	assert.Equal(t, "2024-02-29", eventData["startDate"])
+	assert.Equal(t, "08:00", eventData["startTime"])
+	assert.Equal(t, "09:00", eventData["endTime"])
+}
+
+// TestCalendarLink_DataParamMatchesFrontendContract reproduces topic 9927 post 1:
+// the in-app "Add to Calendar" button greys out and does nothing when tapped.
+// AddToCalendar.vue's download() does the equivalent of decodeCalendarLinkData()
+// above, and bails out silently (console.error only) if there is no `data` param
+// or the fields it needs are missing. This test performs that same parse against
+// the real calendarLink() output.
+func TestCalendarLink_DataParamMatchesFrontendContract(t *testing.T) {
+	link := calendarLink(strPtr("2024-06-15 10:30:00"))
+	eventData := decodeCalendarLinkData(t, link)
+
+	assert.Equal(t, "2024-06-15", eventData["startDate"])
+	assert.Equal(t, "10:30", eventData["startTime"])
+	assert.Equal(t, "11:30", eventData["endTime"])
+	assert.NotEmpty(t, eventData["timeZone"])
+	assert.NotEmpty(t, eventData["name"])
 }

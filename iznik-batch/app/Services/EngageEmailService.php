@@ -65,7 +65,22 @@ class EngageEmailService
                 continue;
             }
 
+            // Provider is refusing our mail. Skipped without writing to the
+            // `engage` table, so the RESEND_INTERVAL_DAYS clock does not
+            // start: when they recover, this member is a fresh candidate
+            // rather than one we have to wait months to try again.
+            if (app(\App\Services\Mail\MailSuppressionService::class)
+                ->shouldSkip($user->email_preferred, (int) $user->id, 'engage')) {
+                continue;
+            }
+
             if (!$force && !$user->relevantallowed) {
+                continue;
+            }
+
+            // Honour the "Encouragement emails" setting, which is also what the
+            // `engagement` unsubscribe category turns off.
+            if (!$force && !$user->wantsEngagementMail()) {
                 continue;
             }
 

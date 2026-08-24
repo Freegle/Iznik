@@ -13,6 +13,14 @@ export default class EmailTrackingAPI extends BaseAPI {
   }
 
   /**
+   * Providers currently refusing our mail, and the members whose mail we are
+   * holding as a result.
+   */
+  async fetchDeferrals() {
+    return await this.$getv2('/modtools/email/deferrals')
+  }
+
+  /**
    * Fetch email tracking records for a specific user.
    * @param {number|string} userIdOrEmail - The user ID or email address
    * @param {Object} params - Query parameters
@@ -61,5 +69,27 @@ export default class EmailTrackingAPI extends BaseAPI {
    */
   async fetchTopClickedLinks(params = {}) {
     return await this.$getv2('/modtools/email/stats/clicks', params)
+  }
+
+  /**
+   * Fetch digest click-through rate by post position.
+   * @param {Object} params - Query parameters
+   * @param {string} [params.start] - Start date (YYYY-MM-DD)
+   * @param {string} [params.end] - End date (YYYY-MM-DD)
+   * @param {string} [params.type] - Email type filter (default: all UnifiedDigest* types)
+   */
+  async fetchDigestPositions(params = {}) {
+    return await this.$getv2('/modtools/email/stats/digestpositions', params)
+  }
+
+  /**
+   * Fetch reengagement effectiveness stats: send/open/click/reengage funnel,
+   * broken down by reengagement stage, experiment arm, and post segment.
+   * @param {Object} params - Query parameters
+   * @param {string} [params.start] - Start date (YYYY-MM-DD)
+   * @param {string} [params.end] - End date (YYYY-MM-DD)
+   */
+  async fetchReengageEffectiveness(params = {}) {
+    return await this.$getv2('/modtools/email/stats/reengage', params)
   }
 }

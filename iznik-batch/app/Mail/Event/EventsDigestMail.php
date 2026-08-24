@@ -4,6 +4,7 @@ namespace App\Mail\Event;
 
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\TrackableEmail;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -11,9 +12,19 @@ class EventsDigestMail extends MjmlMailable
 {
     use TrackableEmail;
 
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_EVENTS;
+    }
+
+    /**
+     * @param array $events Deduplicated events across all the recipient's
+     *                      event-enabled groups. Each carries a 'groups' array
+     *                      of ['name' => , 'url' => ] pairs for the recipient's
+     *                      groups it was posted on.
+     */
     public function __construct(
         public readonly string $recipientEmail,
-        public readonly string $groupName,
         public readonly array $events,
         public readonly string $unsubscribeUrl,
         public readonly ?int $userId = null,
@@ -26,13 +37,13 @@ class EventsDigestMail extends MjmlMailable
             $this->userId,
             null,
             $this->getSubject(),
-            ['group' => $this->groupName, 'event_count' => count($this->events)]
+            ['event_count' => count($this->events)]
         );
     }
 
     protected function getSubject(): string
     {
-        return "[{$this->groupName}] Community Event Roundup";
+        return 'Community events near you';
     }
 
     public function envelope(): Envelope
@@ -40,7 +51,7 @@ class EventsDigestMail extends MjmlMailable
         return new Envelope(
             from: new Address(
                 config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
-                $this->groupName
+                config('freegle.site_name', 'Freegle')
             ),
             to: [new Address($this->recipientEmail)],
             subject: $this->getSubject(),
@@ -52,7 +63,6 @@ class EventsDigestMail extends MjmlMailable
         $userSite = config('freegle.sites.user');
 
         return $this->mjmlView('emails.mjml.event.events-digest', [
-            'groupName'      => $this->groupName,
             'events'         => $this->events,
             'userSite'       => $userSite,
             'unsubscribeUrl' => $this->unsubscribeUrl,

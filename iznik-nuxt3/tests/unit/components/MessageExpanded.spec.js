@@ -348,10 +348,10 @@ describe('MessageExpanded', () => {
             template: '<span class="message-tag" :data-id="id" />',
             props: ['id', 'inline'],
           },
-          MessageReplySection: {
+          ChatReplyPane: {
             template:
-              '<div class="message-reply-section" :data-id="id" @close="$emit(\'close\')" @sent="$emit(\'sent\')" />',
-            props: ['id'],
+              '<div class="chat-reply-pane-stub" :data-id="messageId" @close="$emit(\'close\')" @sent="$emit(\'sent\')" />',
+            props: ['messageId'],
             emits: ['close', 'sent'],
           },
           NoticeMessage: {
@@ -704,6 +704,47 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.reply-button').exists()).toBe(false)
     })
 
+    // Rippling-out: the post is visible but hasn't rippled to this viewer, so a
+    // reply is held for a bounded spell before it reaches the owner. Say how long,
+    // rather than leaving them with an open-ended promise.
+    describe('reach-blocked hold notice', () => {
+      it('says when the post is due to reach here when the API sends an estimate', async () => {
+        mockFromme.value = false
+        mockMessage.value.replyeligible = false
+        mockMessage.value.reachesyouat = new Date(
+          Date.now() + 3 * 60 * 60 * 1000
+        ).toISOString()
+        mockMessage.value.reachesyoufully = true
+        const wrapper = await createWrapper({ replyable: true })
+
+        expect(wrapper.find('[data-testid="reach-blocked-eta"]').exists()).toBe(
+          true
+        )
+        expect(wrapper.text().replace(/\s+/g, ' ')).toContain(
+          "It's due to reach you in about 3 hours"
+        )
+        expect(wrapper.text()).not.toContain('as soon as it does')
+      })
+
+      it('falls back to the open-ended wording when there is no estimate', async () => {
+        mockFromme.value = false
+        mockMessage.value.replyeligible = false
+        const wrapper = await createWrapper({ replyable: true })
+
+        expect(wrapper.find('[data-testid="reach-blocked-eta"]').exists()).toBe(
+          false
+        )
+        expect(wrapper.text()).toContain('as soon as it does')
+      })
+
+      it('says nothing about a hold when the post has reached the viewer', async () => {
+        mockFromme.value = false
+        const wrapper = await createWrapper({ replyable: true })
+
+        expect(wrapper.text()).not.toContain("hasn't reached your area yet")
+      })
+    })
+
     it('hides reply button when not replyable', async () => {
       const wrapper = await createWrapper({ replyable: false })
       expect(wrapper.find('.reply-button').exists()).toBe(false)
@@ -715,14 +756,14 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.reply-button').exists()).toBe(false)
     })
 
-    it('expands reply section when reply button clicked', async () => {
+    it('opens the chat reply pane when reply button clicked', async () => {
       const wrapper = await createWrapper()
-      expect(wrapper.find('.message-reply-section').exists()).toBe(false)
+      expect(wrapper.find('.chat-reply-pane-stub').exists()).toBe(false)
 
       await wrapper.find('.reply-button').trigger('click')
       await flushPromises()
 
-      expect(wrapper.find('.message-reply-section').exists()).toBe(true)
+      expect(wrapper.find('.chat-reply-pane-stub').exists()).toBe(true)
     })
 
     it('shows cancel button in modal/fullscreen mode', async () => {
@@ -772,16 +813,15 @@ describe('MessageExpanded', () => {
   })
 
   describe('replied state', () => {
-    it('shows confirmation alert after sending reply', async () => {
+    it('shows confirmation alert after a reply is sent', async () => {
       const wrapper = await createWrapper()
 
-      // Expand reply section
+      // Open the reply pane.
       await wrapper.find('.reply-button').trigger('click')
       await flushPromises()
 
-      // Trigger sent event
-      const replySection = wrapper.find('.message-reply-section')
-      await replySection.trigger('sent')
+      // The reply pane reports the reply was sent.
+      await wrapper.find('.chat-reply-pane-stub').trigger('sent')
       await flushPromises()
 
       expect(wrapper.find('.b-alert').exists()).toBe(true)
@@ -1037,10 +1077,10 @@ describe('MessageExpanded', () => {
       expect(comp.vm.replied).toBe(false)
     })
 
-    it('initializes replyExpanded as false', async () => {
+    it('initializes showReplyOverlay as false', async () => {
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(MessageExpanded)
-      expect(comp.vm.replyExpanded).toBe(false)
+      expect(comp.vm.showReplyOverlay).toBe(false)
     })
 
     it('initializes showMapModal as false', async () => {
@@ -1191,20 +1231,53 @@ describe('MessageExpanded', () => {
       expect(comp.vm.showMessagePhotosModal).toBe(true)
     })
 
-    it('expandReply sets replyExpanded to true', async () => {
-      const wrapper = await createWrapper()
-      const comp = wrapper.findComponent(MessageExpanded)
-      comp.vm.expandReply()
-      expect(comp.vm.replyExpanded).toBe(true)
+    it('expandReply opens the reply overlay on every breakpoint', async () => {
+      // The chat-style reply pane is now used consistently everywhere, rather
+      // than expanding inline on desktop and navigating on mobile.
+      for (const bp of ['sm', 'md', 'lg', '']) {
+        mockBreakpoint.value = bp
+        const wrapper = await createWrapper()
+        const comp = wrapper.findComponent(MessageExpanded)
+        expect(comp.vm.showReplyOverlay).toBe(false)
+        comp.vm.expandReply()
+        expect(comp.vm.showReplyOverlay).toBe(true)
+      }
+      mockBreakpoint.value = 'md' // restore default
     })
 
-    it('sent sets replied to true and replyExpanded to false', async () => {
+    it('sent sets replied to true and closes the reply overlay', async () => {
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(MessageExpanded)
-      comp.vm.replyExpanded = true
+      comp.vm.showReplyOverlay = true
       comp.vm.sent()
-      expect(comp.vm.replyExpanded).toBe(false)
+      expect(comp.vm.showReplyOverlay).toBe(false)
       expect(comp.vm.replied).toBe(true)
+    })
+
+    it('sent closes the message after a delay when replying from a list (inModal)', async () => {
+      const wrapper = await createWrapper({ inModal: true })
+      const comp = wrapper.findComponent(MessageExpanded)
+      vi.useFakeTimers()
+      comp.vm.showReplyOverlay = true
+      comp.vm.sent()
+      // Confirmation shows first; not closed immediately.
+      expect(comp.emitted('close')).toBeFalsy()
+      vi.advanceTimersByTime(1500)
+      vi.useRealTimers()
+      expect(comp.emitted('close')).toBeTruthy()
+    })
+
+    it('sent does NOT auto-close on the standalone message page (navigates to chat instead)', async () => {
+      const wrapper = await createWrapper({
+        inModal: false,
+        fullscreenOverlay: false,
+      })
+      const comp = wrapper.findComponent(MessageExpanded)
+      vi.useFakeTimers()
+      comp.vm.sent()
+      vi.advanceTimersByTime(3000)
+      vi.useRealTimers()
+      expect(comp.emitted('close')).toBeFalsy()
     })
   })
 
@@ -1215,10 +1288,11 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('renders NuxtPicture when attachment has externaluid', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockMessage.value.attachments = [{ id: 1, externaluid: 'ext123' }]
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
 
     it('renders ProxyImage when attachment has path', async () => {
@@ -1241,14 +1315,15 @@ describe('MessageExpanded', () => {
       ).toBe(2)
     })
 
-    it('renders NuxtPicture thumbnails when externaluid exists', async () => {
+    it('renders no picture thumbnails for bare externaluids', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockAttachmentCount.value = 2
       mockMessage.value.attachments = [
         { id: 1, externaluid: 'ext123' },
         { id: 2, externaluid: 'ext456' },
       ]
       const wrapper = await createWrapper()
-      expect(wrapper.findAll('.thumbnail-item .nuxt-picture').length).toBe(2)
+      expect(wrapper.findAll('.thumbnail-item .nuxt-picture').length).toBe(0)
     })
 
     it('renders ProxyImage thumbnails when path exists', async () => {

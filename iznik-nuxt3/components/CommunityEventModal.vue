@@ -34,16 +34,6 @@
               alt="Community Event Photo"
               class="modal-image"
             />
-            <NuxtPicture
-              v-else-if="event?.image?.imageuid"
-              format="webp"
-              width="200"
-              provider="uploadcare"
-              :src="event.image.imageuid"
-              :modifiers="event.image.imagemods"
-              alt="Community Event Photo"
-              class="modal-image"
-            />
             <b-img
               v-else
               lazy
@@ -131,10 +121,12 @@
           </div>
           <p v-if="user?.id" class="posted-by">
             Posted by {{ user.displayname }}
-            <span v-for="(group, index) in groups" :key="index">
-              <span v-if="index > 0">, </span><span v-else>&nbsp;on</span>
-              {{ group.namedisplay }}
-            </span>
+            <template v-if="groups.length">
+              &nbsp;on
+              <ShowMore :items="groups" :limit="3" inline>
+                <template #item="{ item }">{{ item.namedisplay }}</template>
+              </ShowMore>
+            </template>
           </p>
         </div>
         <VeeForm v-else-if="event" ref="form">
@@ -407,23 +399,23 @@ defineRule('min', min)
 defineRule('max', max)
 
 // Load components asynchronously
-const GroupSelect = defineAsyncComponent(() =>
-  import('~/components/GroupSelect')
+const GroupSelect = defineAsyncComponent(
+  () => import('~/components/GroupSelect')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const StartEndCollection = defineAsyncComponent(() =>
-  import('~/components/StartEndCollection')
+const StartEndCollection = defineAsyncComponent(
+  () => import('~/components/StartEndCollection')
 )
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
-const DonationButton = defineAsyncComponent(() =>
-  import('~/components/DonationButton')
+const DonationButton = defineAsyncComponent(
+  () => import('~/components/DonationButton')
 )
-const ExternalLink = defineAsyncComponent(() =>
-  import('~/components/ExternalLink')
+const ExternalLink = defineAsyncComponent(
+  () => import('~/components/ExternalLink')
 )
 
 // Props

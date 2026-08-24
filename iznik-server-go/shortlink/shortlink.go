@@ -1,12 +1,15 @@
 package shortlink
 
 import (
-	"strings"
 	"os"
 	"strconv"
+	"strings"
 
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type Shortlink struct {
@@ -48,7 +51,7 @@ func GetShortlink(c *fiber.Ctx) error {
 	if id > 0 {
 		// Single shortlink with click history.
 		var s Shortlink
-		db.Raw("SELECT * FROM shortlinks WHERE id = ?", id).Scan(&s)
+		db.Table("shortlinks").Where("id = ?", id).Scan(&s)
 
 		if s.ID == 0 {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Not found"})
@@ -58,7 +61,8 @@ func GetShortlink(c *fiber.Ctx) error {
 
 		// Get click history.
 		var clicks []ClickHistory
-		db.Raw("SELECT DATE(timestamp) AS date, COUNT(*) AS count FROM shortlink_clicks WHERE shortlinkid = ? GROUP BY date ORDER BY date ASC", id).Scan(&clicks)
+		db.Table("shortlink_clicks").Select("DATE(timestamp) AS date, COUNT(*) AS count").Where("shortlinkid = ?", id).
+			Group("date").Order("date ASC").Scan(&clicks)
 
 		if clicks == nil {
 			clicks = make([]ClickHistory, 0)
@@ -84,9 +88,9 @@ func GetShortlink(c *fiber.Ctx) error {
 	// List all shortlinks.
 	var links []Shortlink
 	if groupid > 0 {
-		db.Raw("SELECT * FROM shortlinks WHERE groupid = ? ORDER BY LOWER(name) ASC", groupid).Scan(&links)
+		db.Table("shortlinks").Where("groupid = ?", groupid).Order("LOWER(name) ASC").Scan(&links)
 	} else {
-		db.Raw("SELECT * FROM shortlinks ORDER BY LOWER(name) ASC").Scan(&links)
+		db.Table("shortlinks").Order("LOWER(name) ASC").Scan(&links)
 	}
 
 	if links == nil {
@@ -137,31 +141,38 @@ func PostShortlink(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Invalid parameters"})
 	}
 
+	// SECURITY: shortlinks are a per-group moderator tool; creation was previously
+	// unauthenticated. Require the caller to be a mod/owner of the target group
+	// (admin/support included via IsModOfGroup).
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
+	}
+	if !auth.IsModOfGroup(myid, req.Groupid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Not a moderator of this group"})
+	}
+
 	// Check if name already exists.
 	var existing uint64
-	db.Raw("SELECT id FROM shortlinks WHERE name LIKE ?", req.Name).Scan(&existing)
+	db.Table("shortlinks").Select("id").Where("name LIKE ?", req.Name).Scan(&existing)
 	if existing > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 3, "status": "Name already in use"})
 	}
 
 	// Create the shortlink.
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Database error"})
+	// Plain, isolated, literal single-row
+	// INSERT ('Group' is a fixed literal, not a bind); id read back via GORM's
+	// map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"name":    req.Name,
+		"type":    gorm.Expr("'Group'"),
+		"groupid": req.Groupid,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO shortlinks (name, type, groupid) VALUES (?, 'Group', ?)", req.Name, req.Groupid)
-	if err != nil {
+	if err := db.Table("shortlinks").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Failed to create shortlink"})
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,
@@ -178,7 +189,7 @@ func resolveShortlinkURL(s *Shortlink, userSite string) {
 			External  *string
 			Onhere    int
 		}
-		database.DBConn.Raw("SELECT nameshort, external, onhere FROM `groups` WHERE id = ?", *s.Groupid).Scan(&g)
+		database.DBConn.Table("groups").Select("nameshort, external, onhere").Where("id = ?", *s.Groupid).Scan(&g)
 
 		s.Nameshort = g.Nameshort
 

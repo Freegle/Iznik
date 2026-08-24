@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "note": "PII masks are baked into *.masked.png copies so sensitive pixels never reach the video. Coordinates are fractions of each image's natural size.",
+  "images": [
+    {
+      "src": "clearance-composer.png",
+      "out": "clearance-composer.masked.png",
+      "regions": [
+        { "comment": "no PII in the composer (email field is a placeholder)" }
+      ]
+    },
+    {
+      "src": "recipient-interest.png",
+      "out": "recipient-interest.masked.png",
+      "regions": [
+        { "comment": "live logged-in recipient view shows no poster name/avatar — no PII to mask. Re-check if the capture state changes." }
+      ]
+    },
+    {
+      "src": "giver-chat.png",
+      "out": "giver-chat.masked.png",
+      "regions": [
+        { "comment": "test users only — names like 'PW User2_bulkofferflow' are test data, not real PII, so nothing to mask" }
+      ]
+    },
+    {
+      "src": "mod-bulk-preview.png",
+      "out": "mod-bulk-preview.masked.png",
+      "regions": [
+        { "comment": "mod preview modal shows item names + town, no personal PII" }
+      ]
+    }
+  ]
+}

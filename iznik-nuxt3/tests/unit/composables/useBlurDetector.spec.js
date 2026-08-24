@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   BlurThresholds,
+  analyzeBlur,
   shouldWarnBlur,
   useBlurDetector,
 } from '~/composables/useBlurDetector'
@@ -86,5 +87,43 @@ describe('useBlurDetector composable', () => {
     const api = useBlurDetector()
     expect(api.shouldWarnBlur(10)).toEqual(shouldWarnBlur(10))
     expect(api.shouldWarnBlur(300)).toEqual(shouldWarnBlur(300))
+  })
+})
+
+// The image loader must never hang forever: on the app share path a
+// capacitor:// file URL can fire neither onload nor onerror (native side
+// still flushing the file), and an unsettled promise here blocked the whole
+// quality check and with it the upload - a photo tile stuck at 0% with no
+// error and no retry. The loader now rejects after a timeout, which
+// analyzePhotoQuality's existing catch turns into "continue without quality
+// warnings".
+describe('analyzeBlur image-load timeout', () => {
+  it('rejects instead of hanging when the image never loads or errors', async () => {
+    vi.useFakeTimers()
+    const RealImage = globalThis.Image
+    // An Image that never fires onload or onerror - the stall case.
+    globalThis.Image = class {
+      get src() {
+        return undefined
+      }
+
+      set src(_) {
+        // Never calls back.
+      }
+    }
+
+    try {
+      const pending = analyzeBlur(
+        'capacitor://localhost/_capacitor_file_/x.jpg'
+      )
+      // Attach the rejection expectation before advancing time so the
+      // rejection is observed, not unhandled.
+      const assertion = expect(pending).rejects.toThrow(/timed out/i)
+      await vi.advanceTimersByTimeAsync(8001)
+      await assertion
+    } finally {
+      globalThis.Image = RealImage
+      vi.useRealTimers()
+    }
   })
 })

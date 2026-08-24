@@ -23,7 +23,7 @@ const initialTestState = (): TestState => ({
 // Server-side test state storage
 const testStates = new Map<string, TestState>([
   ['go', initialTestState()],
-  ['php', initialTestState()],
+  ['spatial', initialTestState()],
   ['laravel', initialTestState()],
   ['playwright', initialTestState()],
   ['vitest', initialTestState()],

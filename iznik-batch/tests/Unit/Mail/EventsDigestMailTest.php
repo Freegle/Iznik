@@ -31,7 +31,6 @@ class EventsDigestMailTest extends TestCase
 
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             events:         [$this->makeEvent(42)],
             unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
         );
@@ -57,7 +56,6 @@ class EventsDigestMailTest extends TestCase
 
         $mail = new EventsDigestMail(
             recipientEmail: 'test@example.com',
-            groupName:      'Testville Freegle',
             events:         [$this->makeEvent()],
             unsubscribeUrl: $unsubscribeUrl,
         );
@@ -88,5 +86,52 @@ class EventsDigestMailTest extends TestCase
 
         $this->assertStringStartsWith($userSite, $eventUrl,
             'Event URL must start with the configured site URL (no extra protocol prepended)');
+    }
+
+    public function test_preheader_contains_event_title_and_date_for_single_event(): void
+    {
+        $userSite = config('freegle.sites.user');
+
+        $event = $this->makeEvent(1);
+        $event['title'] = 'Repair Cafe Lewisham';
+        $event['start'] = 'Sat, 14th June 2:00pm';
+
+        $mail = new EventsDigestMail(
+            recipientEmail: 'test@example.com',
+            events:         [$event],
+            unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
+        );
+
+        $html = $mail->render();
+
+        // Single-event preview: "<title> - <start>"
+        $this->assertStringContainsString('Repair Cafe Lewisham', $html,
+            'Single-event preheader must contain the event title');
+        $this->assertStringContainsString('Sat, 14th June 2:00pm', $html,
+            'Single-event preheader must contain the event start date');
+    }
+
+    public function test_preheader_contains_title_and_more_count_for_multiple_events(): void
+    {
+        $userSite = config('freegle.sites.user');
+
+        $first  = $this->makeEvent(1);
+        $first['title'] = 'Repair Cafe Lewisham';
+        $second = $this->makeEvent(2);
+        $third  = $this->makeEvent(3);
+
+        $mail = new EventsDigestMail(
+            recipientEmail: 'test@example.com',
+            events:         [$first, $second, $third],
+            unsubscribeUrl: $userSite . '/unsubscribe?email=' . urlencode('test@example.com'),
+        );
+
+        $html = $mail->render();
+
+        // Multiple-event preview: "<first title> and N more community events near you"
+        $this->assertStringContainsString('Repair Cafe Lewisham', $html,
+            'Multi-event preheader must contain the first event title');
+        $this->assertStringContainsString('2 more community events near you', $html,
+            'Multi-event preheader must state the count of remaining events');
     }
 }

@@ -7,6 +7,7 @@
       :div-id="adDivId"
       class="mt-2 w-100"
       list-only
+      placement="sidebar_left"
       @rendered="onAdRendered"
     />
     <CommunityEventSidebar
@@ -26,11 +27,11 @@
 import { ref, computed } from 'vue'
 import BotLeftBox from './BotLeftBox'
 import { useMe } from '~/composables/useMe'
-const CommunityEventSidebar = defineAsyncComponent(() =>
-  import('~/components/CommunityEventSidebar')
+const CommunityEventSidebar = defineAsyncComponent(
+  () => import('~/components/CommunityEventSidebar')
 )
-const VolunteerOpportunitySidebar = defineAsyncComponent(() =>
-  import('~/components/VolunteerOpportunitySidebar')
+const VolunteerOpportunitySidebar = defineAsyncComponent(
+  () => import('~/components/VolunteerOpportunitySidebar')
 )
 
 const props = defineProps({

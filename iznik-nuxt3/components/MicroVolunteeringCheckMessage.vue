@@ -25,17 +25,6 @@
               :width="640"
               :height="480"
             />
-            <NuxtPicture
-              v-else-if="message.attachments[0]?.externaluid"
-              format="webp"
-              provider="uploadcare"
-              :src="message.attachments[0].externaluid"
-              :modifiers="message.attachments[0].externalmods"
-              alt="Item Photo"
-              class="photo-image"
-              :width="640"
-              :height="480"
-            />
             <ProxyImage
               v-else-if="message.attachments[0]?.path"
               class-name="photo-image"
@@ -200,6 +189,8 @@ import OurUploadedImage from './OurUploadedImage'
 import ProxyImage from './ProxyImage'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
 import { useMessageStore } from '~/stores/message'
+import { useAuthStore } from '~/stores/auth'
+import { useNotificationStore } from '~/stores/notification'
 
 const props = defineProps({
   id: {
@@ -212,6 +203,8 @@ const emit = defineEmits(['next'])
 
 const microVolunteeringStore = useMicroVolunteeringStore()
 const messageStore = useMessageStore()
+const authStore = useAuthStore()
+const notificationStore = useNotificationStore()
 
 // State
 const showComments = ref(false)
@@ -226,6 +219,23 @@ found.value = !!messageStore.byId(props.id)
 
 const message = computed(() => {
   return messageStore?.byId(props.id)
+})
+
+// Group context the volunteer is voting in. Pick the group on the message that
+// the user is also a member of, preferring the most-recent arrival when several
+// match. Falls back to the message's first group if there's no overlap (which
+// shouldn't happen — the server only serves a challenge for a message on one
+// of the user's groups — but is safe rather than sending 0).
+const groupid = computed(() => {
+  const groups = message.value?.groups || []
+  if (groups.length === 0) return 0
+  const myGroupIds = new Set(
+    (authStore.groups || []).map((g) => Number.parseInt(g.groupid))
+  )
+  const shared = groups
+    .filter((g) => myGroupIds.has(Number.parseInt(g.groupid)))
+    .sort((a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0))
+  return Number.parseInt((shared[0] || groups[0]).groupid)
 })
 
 // Computed properties for display
@@ -259,7 +269,7 @@ const messageTypeClass = computed(() => {
 const categoryIcon = computed(() => {
   // Return appropriate icon based on message type
   const type = message.value?.type?.toLowerCase()
-  if (type === 'wanted') return 'search'
+  if (type === 'wanted') return 'shopping-cart'
   return 'gift'
 })
 
@@ -279,10 +289,12 @@ async function sendComments(callback) {
   // Record the result with comments.
   await microVolunteeringStore.respond({
     msgid: props.id,
+    groupid: groupid.value,
     response: 'Reject',
     comments: comments.value,
     msgcategory: msgcategory.value,
   })
+  await refreshNotificationCount()
   callback()
 
   emit('next')
@@ -292,11 +304,29 @@ async function approve(callback) {
   // Approved - that's it.
   await microVolunteeringStore.respond({
     msgid: props.id,
+    groupid: groupid.value,
     response: 'Approve',
   })
+  await refreshNotificationCount()
   callback()
 
   emit('next')
+}
+
+// After recording a response the server has already marked the "post to check"
+// notification seen. Refresh the badge count straight away so the indicator
+// clears immediately, rather than lingering (and re-presenting the same post)
+// until the next 60-second poll. Never let a count refresh failure block the
+// flow - the user has already voted.
+async function refreshNotificationCount() {
+  try {
+    await notificationStore.fetchCount()
+  } catch (e) {
+    console.log(
+      'Failed to refresh notification count after microvolunteering',
+      e
+    )
+  }
 }
 </script>
 <style scoped lang="scss">

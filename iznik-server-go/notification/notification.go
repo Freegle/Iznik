@@ -5,6 +5,8 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"time"
 )
 
@@ -36,9 +38,12 @@ func Count(c *fiber.Ctx) error {
 	start := time.Now().AddDate(0, 0, -utils.NOTIFICATION_AGE).Format("2006-01-02")
 
 	var count []int64
-	db.Raw("SELECT COUNT(*) AS count FROM users_notifications "+
-		"LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) "+
-		"WHERE touser = ? AND timestamp >= ? AND seen = 0 AND spam_users.id IS NULL;", utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER, myid, start).Pluck("count", &count)
+	db.Table("users_notifications").
+		Select("COUNT(*) AS count").
+		Joins("LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?)",
+			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER).
+		Where("touser = ? AND timestamp >= ? AND seen = 0 AND spam_users.id IS NULL", myid, start).
+		Pluck("count", &count)
 
 	if len(count) > 0 {
 		return c.JSON(fiber.Map{
@@ -60,21 +65,29 @@ func List(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
-	// Update last-active timestamp so the system knows the user is online.
-	db.Exec("UPDATE users SET lastaccess = NOW() WHERE id = ?", myid)
+	// NOTE: users.lastaccess is deliberately NOT updated here. The auth middleware
+	// already maintains it (throttled to 10 minutes, guarded in SQL); an extra
+	// unthrottled same-row UPDATE on every 60s navbar poll sprayed same-row writes
+	// across the Galera hosts and caused certification conflicts
+	// (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md, adjacent fix 1).
 
 	// V1 parity: notification.php GET calls $me->recordActive() which inserts a row into
 	// users_active (userid, timestamp) with timestamp truncated to the hour. This is used by
 	// Stats.php for active-users-per-group counts and the moderator activity leaderboard.
 	hourTimestamp := time.Now().UTC().Truncate(time.Hour).Format("2006-01-02 15:04:05")
-	db.Exec("INSERT IGNORE INTO users_active (userid, timestamp) VALUES (?, ?)", myid, hourTimestamp)
+	db.Table("users_active").Clauses(clause.Insert{Modifier: "IGNORE"}).
+		Create(map[string]interface{}{"userid": myid, "timestamp": hourTimestamp})
 
 	start := time.Now().AddDate(0, 0, -utils.NOTIFICATION_AGE).Format("2006-01-02")
 
 	var notifications []Notification
-	db.Raw("SELECT * FROM users_notifications "+
-		"LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?) "+
-		"WHERE touser = ? AND timestamp >= ? AND spam_users.id IS NULL ORDER BY users_notifications.id DESC", utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER, myid, start).Scan(&notifications)
+	db.Table("users_notifications").
+		Select("*").
+		Joins("LEFT JOIN spam_users ON spam_users.userid = users_notifications.fromuser AND collection IN (?, ?)",
+			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER).
+		Where("touser = ? AND timestamp >= ? AND spam_users.id IS NULL", myid, start).
+		Order("users_notifications.id DESC").
+		Scan(&notifications)
 
 	if notifications == nil {
 		notifications = make([]Notification, 0)
@@ -118,7 +131,8 @@ func Seen(c *fiber.Ctx) error {
 	}
 
 	// Mark specific notification as seen for this user
-	result := db.Exec("UPDATE users_notifications SET seen = 1 WHERE touser = ? AND id = ?", myid, req.ID)
+	result := db.Table("users_notifications").Where("touser = ? AND id = ?", myid, req.ID).
+		Update("seen", gorm.Expr("1"))
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to update notification")
@@ -151,7 +165,7 @@ func AllSeen(c *fiber.Ctx) error {
 	}
 
 	// Mark all notifications as seen for this user
-	result := db.Exec("UPDATE users_notifications SET seen = 1 WHERE touser = ?", myid)
+	result := db.Table("users_notifications").Where("touser = ?", myid).Update("seen", gorm.Expr("1"))
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to update notifications")

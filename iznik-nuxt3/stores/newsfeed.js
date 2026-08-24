@@ -1,9 +1,9 @@
 import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import api from '~/api'
+import { useAuthStore } from '~/stores/auth'
 
-export const useNewsfeedStore = defineStore({
-  id: 'newsfeed',
+export const useNewsfeedStore = defineStore('newsfeed', {
   state: () => ({
     // This is a barebones list of items in order.
     feed: [],
@@ -20,6 +20,10 @@ export const useNewsfeedStore = defineStore({
     // Most recently used distance.
     lastDistance: 0,
 
+    // Whether the last feed fetch asked for every area's newsletter posts
+    // (ChitChat moderators only).
+    lastAllNewsletters: false,
+
     // Track what was seen before visiting ChitChat page (for "you're up to date" divider).
     seenBeforeVisit: null,
 
@@ -28,6 +32,9 @@ export const useNewsfeedStore = defineStore({
 
     // Timer ID for delayed seen marking.
     delayedSeenTimer: null,
+    // Whether this visit's baseline has been set from a server seenwatermark.
+    // First-write-wins per visit; reset by snapshotSeenBeforeVisit().
+    watermarkCaptured: false,
   }),
   actions: {
     init(config) {
@@ -47,7 +54,22 @@ export const useNewsfeedStore = defineStore({
       this.count = ret?.count || 0
       return this.count
     },
-    addItems(items) {
+    addItems(items, fromRecursion) {
+      // The server stamps its per-user seen watermark on the top-level item of
+      // GET /newsfeed/<id>. The FIRST one to arrive this visit becomes the
+      // "new since your last visit" baseline - before the auto-seen POST below
+      // can advance the server watermark past it. Recursed calls (nested
+      // replies) never capture: the field is only meaningful on the top level.
+      if (!fromRecursion && !this.watermarkCaptured) {
+        for (const item of items) {
+          if (typeof item.seenwatermark === 'number') {
+            this.seenBeforeVisit = item.seenwatermark
+            this.watermarkCaptured = true
+            break
+          }
+        }
+      }
+
       const prevMax = this.maxSeen
 
       items.forEach((item) => {
@@ -60,7 +82,7 @@ export const useNewsfeedStore = defineStore({
         if (item.replies?.length) {
           item.replies.forEach((reply) => {
             if (typeof reply === 'object') {
-              this.addItems([reply])
+              this.addItems([reply], true)
             }
           })
         }
@@ -90,9 +112,26 @@ export const useNewsfeedStore = defineStore({
     },
     snapshotSeenBeforeVisit() {
       // Capture what was seen before visiting the page.
-      // This is used to show the "you're up to date" divider.
+      // This is used to show the "you're up to date" divider and per-reply
+      // "New" pills. The session maxSeen is only a fallback baseline: the
+      // first server seenwatermark to arrive (see addItems) overwrites it,
+      // which is what makes "new since your last visit" survive a fresh page
+      // load, where maxSeen starts at 0.
       this.seenBeforeVisit = this.maxSeen
       this.delayedSeenMode = true
+      this.watermarkCaptured = false
+    },
+    ensureSeenBaselineForThreadView() {
+      // Thread and deep-link views need delayed-seen protection like the feed,
+      // but must NOT re-snapshot when the session already has a baseline: on a
+      // feed-to-thread navigation the store holds every fetched id, so a fresh
+      // snapshot from maxSeen would wipe the New pills the reader came to see.
+      this.delayedSeenMode = true
+
+      if (this.seenBeforeVisit === null) {
+        this.seenBeforeVisit = this.maxSeen
+        this.watermarkCaptured = false
+      }
     },
     startDelayedSeen(delayMs = 30000) {
       // Start a timer to mark items as seen after delay.
@@ -104,6 +143,21 @@ export const useNewsfeedStore = defineStore({
         this.markAllSeen()
       }, delayMs)
     },
+    // Clear the count without needing to have loaded the items. markAllSeen below can
+    // only raise the watermark as far as the highest item this session happens to have
+    // fetched, which is why a member with a backlog had to scroll weeks back to shift it.
+    async markAllRead() {
+      if (this.delayedSeenTimer) {
+        clearTimeout(this.delayedSeenTimer)
+        this.delayedSeenTimer = null
+      }
+
+      this.delayedSeenMode = false
+
+      await api(this.config).news.seenAll()
+      this.count = 0
+    },
+
     markAllSeen() {
       // Mark all items as seen and update the count.
       if (this.delayedSeenTimer) {
@@ -131,10 +185,20 @@ export const useNewsfeedStore = defineStore({
       this.delayedSeenMode = false
       this.seenBeforeVisit = null
     },
-    async fetchFeed(distance) {
+    // allNewsletters defaults to whatever was last asked for so that a refetch
+    // triggered by something else - posting, for instance - doesn't silently
+    // drop a moderator out of the review view.
+    async fetchFeed(distance, allNewsletters = this.lastAllNewsletters) {
       this.lastDistance = distance
+      this.lastAllNewsletters = allNewsletters
       distance = distance || 'anywhere'
-      this.feed = await api(this.config).news.fetch(null, distance)
+      this.feed = await api(this.config).news.fetch(
+        null,
+        distance,
+        undefined,
+        undefined,
+        allNewsletters ? 'all' : undefined
+      )
       return this.feed
     },
     async fetch(id, force, lovelist) {
@@ -204,6 +268,36 @@ export const useNewsfeedStore = defineStore({
         await this.fetchFeed()
       } else {
         await this.fetch(threadhead, true)
+
+        // Read-your-own-writes guarantee: the refetch above can miss the reply
+        // we just posted (replica lag on a degraded cluster, caches). The
+        // poster must ALWAYS see their own reply immediately, so if it is not
+        // in the store after the refetch, add an optimistic copy - a later
+        // fetch of the real row simply overwrites it by id.
+        if (id && replyto && !this.list[id]) {
+          const me = useAuthStore(this.config).user
+          this.addItems([
+            {
+              id,
+              userid: me?.id,
+              displayname: me?.displayname,
+              profile: me?.profile,
+              message,
+              replyto,
+              threadhead,
+              type: 'Message',
+              timestamp: new Date().toISOString(),
+              replies: [],
+              loves: 0,
+              optimistic: true,
+            },
+          ])
+
+          const parent = this.list[replyto]
+          if (parent && !parent.replies.includes(id)) {
+            parent.replies.push(id)
+          }
+        }
       }
 
       return id
@@ -239,6 +333,53 @@ export const useNewsfeedStore = defineStore({
     async referTo(id, type) {
       await api(this.config).news.referto(id, type)
       await this.fetch(id, true)
+    },
+    // Whether this post repeats one of the poster's own live OFFER/WANTEDs.
+    // ChitChat moderators only; returns null for anyone else (the server 403s)
+    // so a member never learns anything about the poster's other posts.
+    async duplicate(id) {
+      try {
+        const ret = await api(this.config).news.duplicate(id)
+        return ret?.duplicate ?? null
+      } catch (e) {
+        return null
+      }
+    },
+    // Turn a ChitChat post into a real OFFER/WANTED belonging to the person who
+    // posted it. ChitChat moderators only.
+    //
+    // Deliberately drives the same two calls a member's own compose does —
+    // create the draft, then join-and-post — with ?onbehalfof= naming the
+    // member. Reimplementing posting here would skip the group, spatial,
+    // indexing and embedding work those routes do, and produce posts that look
+    // right but behave oddly. The server derives the member's location and
+    // group; we never send the moderator's.
+    //
+    // Errors propagate so the modal can say so rather than appearing to work.
+    async convertToPost(id, { type, item, body, userid }) {
+      const messageApi = api(this.config).message
+
+      const draft = await messageApi.put({
+        messagetype: type,
+        item,
+        textbody: body,
+        collection: 'Draft',
+        onbehalfof: userid,
+      })
+
+      const msgid = draft?.id
+
+      if (!msgid) {
+        throw new Error("Sorry, we couldn't create that post.")
+      }
+
+      await messageApi.joinAndPost(msgid, null, { onbehalfof: userid })
+
+      // Tell the member on the thread, and point them at My Posts.
+      await api(this.config).news.convertedToPost(id, msgid)
+      await this.fetch(id, true)
+
+      return msgid
     },
     async report(id, reason) {
       await api(this.config).news.report(id, reason)

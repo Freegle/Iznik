@@ -31,12 +31,8 @@
         id="other-user-group"
         ref="expandBtnRef"
         class="other-user-group"
-        :class="{ clickme: chat.chattype === 'User2User' && otheruser?.info }"
-        @click="
-          chat.chattype === 'User2User' && otheruser?.info
-            ? toggleProfileCard()
-            : null
-        "
+        :class="{ clickme: chat.chattype === 'User2User' }"
+        @click="chat.chattype === 'User2User' ? toggleProfileCard() : null"
       >
         <ProfileImage
           v-if="chat.icon"
@@ -49,11 +45,11 @@
       </div>
     </div>
 
-    <!-- Profile popover — only for User2User where other user info is available -->
+    <!-- Profile popover — only for User2User where other user info is available.
+         A User2Mod (contact-the-volunteers) chat has no single other-user profile,
+         so this rendered as an empty white box under the header (Discourse 9918). -->
     <b-popover
-      v-if="
-        cssReady && chat.chattype === 'User2User' && otheruser && otheruser.info
-      "
+      v-if="cssReady && chat.chattype === 'User2User'"
       v-model="profileCardExpanded"
       target="other-user-group"
       placement="bottom"
@@ -61,6 +57,22 @@
       manual
     >
       <div v-if="otheruser && otheruser.info" class="profile-card-content">
+        <!-- Until this was here the card could only be dismissed by tapping the
+             avatar again, taking one of the actions, or scrolling the thread -
+             none of which look like a way out, so it read as stuck open.
+             Hidden while the first-visit hint is up: "Got it" already closes the
+             whole card (dismissHint), so a second control there would only
+             overlap it. -->
+        <button
+          v-if="!showProfileHint"
+          class="profile-card-close"
+          type="button"
+          aria-label="Close profile info"
+          title="Close"
+          @click="profileCardExpanded = false"
+        >
+          <v-icon icon="times" />
+        </button>
         <!-- Hint tip for first-time visitors -->
         <div v-if="showProfileHint" class="profile-hint-tip">
           <span>Tap here to show profile info.</span>
@@ -86,7 +98,15 @@
             <SupporterInfo v-if="otheruser.supporter" class="supporter-badge" />
           </div>
           <div class="profile-card-details">
-            <div class="profile-card-badges">
+            <!-- Freegle's own chat: no rating, no "last seen", no distance -
+                 none of it means anything for an account that is not a person.
+                 The "these are automated" note is said once here rather than on
+                 every message. -->
+            <div v-if="chat.systemchat" class="systemchat-note">
+              Automated messages about your posts. Freegle doesn't read replies
+              here.
+            </div>
+            <div v-else class="profile-card-badges">
               <UserRatings
                 :id="chat.otheruid"
                 :key="'otheruser-' + chat.otheruid"
@@ -97,21 +117,32 @@
                 @show-remove-modal="handleShowRemoveModal"
               />
             </div>
-            <div class="profile-card-stats">
-              <span v-if="otheruser.lastaccess" class="stat-chip">
+            <div v-if="!chat.systemchat" class="profile-card-stats">
+              <span
+                v-if="otheruser.lastaccess"
+                v-b-tooltip.bottom="LAST_SEEN_TOOLTIP"
+                class="stat-chip"
+              >
                 <v-icon icon="clock" class="stat-icon" />
                 <span class="stat-label">Last seen</span>
-                {{ otheraccessFull }}
+                {{ lastSeenAgo }}
               </span>
-              <span v-if="replytimeFull" class="stat-chip">
+              <span
+                v-if="replytimeFull"
+                v-b-tooltip.bottom="REPLY_TIME_TOOLTIP"
+                class="stat-chip"
+              >
                 <v-icon icon="reply" class="stat-icon" />
                 <span class="stat-label">Replies in</span>
                 {{ replytimeFull }}
               </span>
-              <span v-if="!otheruser?.deleted && milesaway" class="stat-chip">
+              <span
+                v-if="!otheruser?.deleted && milesaway"
+                v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+                class="stat-chip"
+              >
                 <v-icon icon="map-marker-alt" class="stat-icon" />
-                <span class="stat-label">Distance</span>
-                {{ milesaway }} miles
+                {{ milesaway }} miles away
               </span>
             </div>
           </div>
@@ -131,7 +162,12 @@
           }}</b-badge>
         </button>
         <button
-          v-if="otheruser && otheruser.info && !otheruser?.deleted"
+          v-if="
+            !chat.systemchat &&
+            otheruser &&
+            otheruser.info &&
+            !otheruser?.deleted
+          "
           class="action-btn"
           @click="showInfo"
         >
@@ -139,7 +175,7 @@
           <span>Profile</span>
         </button>
         <button
-          v-if="chat.chattype === 'User2User' || !unseen"
+          v-if="chat.chattype !== 'User2Mod' || chat.status === 'Closed'"
           class="action-btn"
           @click="chat.status === 'Closed' ? unhide() : showhide()"
         >
@@ -150,7 +186,7 @@
           <span>{{ chat.status === 'Closed' ? 'Show' : 'Hide' }}</span>
         </button>
         <button
-          v-if="chat.chattype === 'User2User' && otheruser"
+          v-if="!chat.systemchat && chat.chattype === 'User2User' && otheruser"
           class="action-btn"
           @click="chat.status === 'Blocked' ? unhide() : showblock()"
         >
@@ -159,7 +195,10 @@
         </button>
         <button
           v-if="
-            chat.chattype === 'User2User' && otheruser && !otheruser?.deleted
+            !chat.systemchat &&
+            chat.chattype === 'User2User' &&
+            otheruser &&
+            !otheruser?.deleted
           "
           class="action-btn action-btn--danger"
           @click="report"
@@ -234,14 +273,14 @@ const router = useRouter()
 
 const ChatBlockModal = defineAsyncComponent(() => import('./ChatBlockModal'))
 const ChatHideModal = defineAsyncComponent(() => import('./ChatHideModal'))
-const ChatReportModal = defineAsyncComponent(() =>
-  import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(
+  () => import('~/components/ChatReportModal')
 )
-const UserRatingsDownModal = defineAsyncComponent(() =>
-  import('~/components/UserRatingsDownModal')
+const UserRatingsDownModal = defineAsyncComponent(
+  () => import('~/components/UserRatingsDownModal')
 )
-const UserRatingsRemoveModal = defineAsyncComponent(() =>
-  import('~/components/UserRatingsRemoveModal')
+const UserRatingsRemoveModal = defineAsyncComponent(
+  () => import('~/components/UserRatingsRemoveModal')
 )
 
 const props = defineProps({
@@ -266,11 +305,11 @@ const showRatingsDownModal = ref(false)
 const showRatingsRemoveModal = ref(false)
 const ratingsUserId = ref(null)
 
-const otheraccessFull = computed(() => {
+// Keeps the "ago" so the chip reads "Last seen 2 hours ago", and copes with
+// timeago's non-numeric forms like "a few seconds ago".
+const lastSeenAgo = computed(() => {
   if (!otheruser.value?.lastaccess) return null
-  const full = timeago(otheruser.value.lastaccess)
-  // Remove "ago" suffix for cleaner display
-  return full.replace(/ ago$/, '')
+  return timeago(otheruser.value.lastaccess)
 })
 
 const replytimeFull = computed(() => {
@@ -605,12 +644,44 @@ onBeforeUnmount(() => {
 }
 
 .profile-card-content {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid $color-gray--lighter;
   margin-bottom: 10px;
+}
+
+/* Top-right of the card. 44px is the minimum comfortable touch target, which
+   matters more here than on desktop - this popover only exists below md. Given
+   a solid background and a border so it reads as a control rather than as a
+   stray glyph, and stacked above the first-visit hint tip, which it would
+   otherwise sit on top of unnoticed. */
+.profile-card-close {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid $color-gray--light;
+  border-radius: 50%;
+  background-color: white;
+  color: $color-gray--darker;
+  font-size: 1.1rem;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.profile-card-close:hover,
+.profile-card-close:focus {
+  background-color: $color-gray--lighter;
+  color: black;
 }
 
 .profile-card-main {
@@ -668,6 +739,12 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
+/* Said once, in the header, instead of on every message. */
+.systemchat-note {
+  font-size: 0.8125rem;
+  color: $color-gray--dark;
+}
+
 .stat-chip {
   display: inline-flex;
   align-items: center;
@@ -678,21 +755,30 @@ onBeforeUnmount(() => {
   color: $color-gray--darker;
   font-weight: 500;
   border-radius: var(--radius-sm, 0.375rem);
+
+  /* Spelling the labels out costs width, so shrink rather than wrap on phones. */
+  @include media-breakpoint-down(sm) {
+    gap: 3px;
+    padding: 3px 6px;
+    font-size: 0.65rem;
+  }
 }
 
 .stat-icon {
   font-size: 0.7rem;
-  color: $color-green--dark;
+  color: $color-green--darker;
+
+  @include media-breakpoint-down(sm) {
+    font-size: 0.6rem;
+  }
 }
 
+/* The label is what tells "last seen" apart from "replies in" - both render as a
+   bare duration - so it stays visible on mobile and the chip shrinks instead. */
 .stat-label {
-  display: none;
+  display: inline;
   color: var(--color-gray-600);
   font-weight: 400;
-
-  @include media-breakpoint-up(md) {
-    display: inline;
-  }
 }
 
 .profile-card-ratings {

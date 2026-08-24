@@ -17,7 +17,7 @@
 //
 // We don't shrink.  If you're reading this, why not code it?
 import { storeToRefs } from 'pinia'
-import { ref, watch, onBeforeUnmount } from '#imports'
+import { ref, watch, onMounted, onBeforeUnmount, nextTick } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 
 const props = defineProps({
@@ -87,6 +87,36 @@ const checkRows = () => {
   timer.value = setTimeout(checkRows, 100)
 }
 
+// Grow to fit whatever is already in the box. The polling above only starts from
+// the currentValue watcher, which never fires for the value we were mounted with
+// - so a box arriving pre-filled (a standard message template, an edit form) sat
+// at its minimum rows with a scrollbar and the text apparently missing.
+// One bounded pass rather than a permanent timer: pre-filled boxes are common and
+// their content doesn't change until someone types, which starts the timer anyway.
+const growToFit = async () => {
+  const maxRows = Number(props.maxRows)
+
+  while (Number(currentRows.value) < maxRows) {
+    await nextTick()
+
+    if (!ta.value?.$el) {
+      return
+    }
+
+    if (ta.value.$el.scrollHeight <= ta.value.$el.clientHeight) {
+      return
+    }
+
+    currentRows.value = Number(currentRows.value) + 1
+  }
+}
+
+onMounted(() => {
+  if (currentValue.value) {
+    growToFit()
+  }
+})
+
 watch(
   () => props.modelValue,
   (newVal) => {
@@ -100,10 +130,18 @@ watch(currentValue, (newVal) => {
   if (newVal && !timer.value) {
     // Starting the timer here avoids having the timer run for empty textareas, which happen a lot in ChitChat.
     checkRows()
-  } else if (!newVal && timer.value) {
-    // No longer need to check.
-    clearTimeout(timer.value)
-    timer.value = null
+  } else if (!newVal) {
+    // Emptied - usually because the comment was just sent. Shrink back to the
+    // starting height: currentRows only ever grew, so after posting a long
+    // comment the box stayed at its grown height with nothing in it, which on
+    // mobile left an empty 8-row box filling the screen.
+    currentRows.value = props.rows
+
+    if (timer.value) {
+      // No longer need to check.
+      clearTimeout(timer.value)
+      timer.value = null
+    }
   }
 
   emit('update:modelValue', newVal)

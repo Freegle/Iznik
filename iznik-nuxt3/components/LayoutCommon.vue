@@ -15,10 +15,12 @@
       <client-only>
         <div v-if="allowAd">
           <div
-            class="sticky w-100 d-flex flex-column"
+            class="sticky w-100 flex-column"
             :class="{
+              'd-flex': !replyOverlayOpen,
+              'd-none': replyOverlayOpen,
               allowClicks: !stickyAdRendered,
-              'bg-white': stickyAdRendered,
+              'sticky-ad-zone': stickyAdRendered,
             }"
           >
             <div
@@ -36,6 +38,7 @@
                   div-id="div-gpt-ad-1699973618906-0"
                   :jobs="true"
                   :hide-jobs-header="true"
+                  placement="sticky_footer_mobile"
                   @rendered="adRendered"
                   @failed="adFailed"
                 />
@@ -49,6 +52,7 @@
                   div-id="div-gpt-ad-1707999304775-0"
                   :jobs="true"
                   :hide-jobs-header="true"
+                  placement="sticky_footer_desktop"
                   @rendered="adRendered"
                 />
               </VisibleWhen>
@@ -64,6 +68,7 @@
     <client-only>
       <DeletedRestore />
       <BouncingEmail />
+      <MailDelayed />
       <div class="navbar-toggle" style="display: none" />
     </client-only>
     <div
@@ -145,26 +150,29 @@ import { useReplyToPost } from '~/composables/useReplyToPost'
 import { useMe } from '~/composables/useMe'
 import { useMobileStore } from '@/stores/mobile'
 import ChatButton from '~/components/ChatButton'
-const InterestedInOthersModal = defineAsyncComponent(() =>
-  import('~/components/InterestedInOthersModal.vue')
+const InterestedInOthersModal = defineAsyncComponent(
+  () => import('~/components/InterestedInOthersModal.vue')
 )
-const DeletedRestore = defineAsyncComponent(() =>
-  import('~/components/DeletedRestore.vue')
+const DeletedRestore = defineAsyncComponent(
+  () => import('~/components/DeletedRestore.vue')
 ) // APP
 
 const { replyToSend, replyToUser, replyToPost } = useReplyToPost()
 
-const SupportLink = defineAsyncComponent(() =>
-  import('~/components/SupportLink')
+const SupportLink = defineAsyncComponent(
+  () => import('~/components/SupportLink')
 )
-const BouncingEmail = defineAsyncComponent(() =>
-  import('~/components/BouncingEmail')
+const BouncingEmail = defineAsyncComponent(
+  () => import('~/components/BouncingEmail')
 )
-const BreakpointFettler = defineAsyncComponent(() =>
-  import('~/components/BreakpointFettler')
+const MailDelayed = defineAsyncComponent(
+  () => import('~/components/MailDelayed')
 )
-const OrientationFettler = defineAsyncComponent(() =>
-  import('~/components/OrientationFettler')
+const BreakpointFettler = defineAsyncComponent(
+  () => import('~/components/BreakpointFettler')
+)
+const OrientationFettler = defineAsyncComponent(
+  () => import('~/components/OrientationFettler')
 )
 const ExternalDa = defineAsyncComponent(() => import('~/components/ExternalDa'))
 
@@ -186,12 +194,22 @@ const route = useRoute()
 
 // Computed properties
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+// Hide the sticky ad/jobs banner while the chat-style reply pane is open so it
+// doesn't overlap the full-screen overlay.
+const replyOverlayOpen = computed(() => miscStore.replyOverlayOpen)
 const routePath = computed(() => route?.path)
 const allowAd = computed(() => {
   // We don't want to show the ad on the landing page when logged out - looks tacky.
   // Recent donors don't see ads, so don't reserve space for them (avoids CLS).
   if (recentDonor.value) return false
-  if (routePath.value === '/partnerships') return false
+  if (
+    routePath.value === '/partnerships' ||
+    routePath.value === '/partnerships/' ||
+    routePath.value === '/together' ||
+    routePath.value === '/together/'
+  ) {
+    return false
+  }
   return routePath.value !== '/' || loggedIn.value
 })
 // Keep constant margin - navbar is fixed position so content shouldn't shift when it hides/shows
@@ -204,7 +222,7 @@ function updateTime() {
 }
 
 function monitorTabVisibility() {
-  if (process.client) {
+  if (import.meta.client) {
     document.addEventListener('visibilitychange', async () => {
       miscStore.visible = !document.hidden
 
@@ -256,13 +274,13 @@ const replyToPostChatButton = ref(null)
 const windowHeight = ref(0)
 
 function updateWindowHeight() {
-  if (process.client) {
+  if (import.meta.client) {
     windowHeight.value = window.innerHeight
   }
 }
 
 onMounted(async () => {
-  if (process.client) {
+  if (import.meta.client) {
     // Start our timer. Holding the time in the store allows us to update the time regularly and have reactivity
     // cause displayed fromNow() values to change, rather than starting a timer for each of them.
     updateTime()
@@ -309,7 +327,6 @@ onMounted(async () => {
       $sentrySetUser({ id: myid.value })
 
       if (typeof __insp !== 'undefined') {
-        // eslint-disable-next-line no-undef
         __insp.push([
           'tagSession',
           {
@@ -319,9 +336,7 @@ onMounted(async () => {
         ])
       }
     } else {
-      // eslint-disable-next-line no-lonely-if
       if (typeof __insp !== 'undefined') {
-        // eslint-disable-next-line no-undef
         __insp.push([
           'tagSession',
           {
@@ -335,7 +350,7 @@ onMounted(async () => {
     console.log('Failed to set context', e)
   }
 
-  if (process.client) {
+  if (import.meta.client) {
     if (replyToSend.value?.replyMsgId) {
       // We have loaded the site with a reply that needs sending. This happens if we force login in a way that
       // causes us to navigate away and back again. Fetch the relevant message.
@@ -392,7 +407,7 @@ const desktopTallDetector = ref(null)
 const desktopMaxHeight = computed(() => {
   // Use windowHeight to trigger reactivity on resize
   // Check if desktop tall detector is visible (using CSS media queries)
-  if (windowHeight.value && process.client && desktopTallDetector.value) {
+  if (windowHeight.value && import.meta.client && desktopTallDetector.value) {
     const computed = window.getComputedStyle(desktopTallDetector.value)
     return computed.display === 'block' ? '250px' : '90px'
   }
@@ -402,7 +417,7 @@ const desktopMaxHeight = computed(() => {
 const mobileMaxHeight = computed(() => {
   // Use windowHeight to trigger reactivity on resize
   // Check if mobile tall detector is visible (using CSS media queries)
-  if (windowHeight.value && process.client && mobileTallDetector.value) {
+  if (windowHeight.value && import.meta.client && mobileTallDetector.value) {
     const computed = window.getComputedStyle(mobileTallDetector.value)
     return computed.display === 'block' ? '100px' : '50px'
   }
@@ -410,7 +425,7 @@ const mobileMaxHeight = computed(() => {
 })
 
 onBeforeUnmount(() => {
-  if (process.client) {
+  if (import.meta.client) {
     clearTimeout(timeTimer)
     window.removeEventListener('resize', updateWindowHeight)
   }
@@ -474,6 +489,22 @@ body.modal-open {
 
   @include media-breakpoint-up(lg) {
     background-color: transparent;
+  }
+
+  /* Light-grey background behind the sticky bottom ad (the "drop ads" / job
+     ads) so the advertising zone reads as distinct from the white bottom nav
+     bar above it, and so the zone reads as one surface. The banner reserves a
+     fixed height (sticky-banner.scss) but the ad, or the jobs block standing
+     in for it, only takes its natural height. With few jobs the remainder was
+     left showing the page straight through a position:fixed banner. Same
+     $gray-200 as .jobs-slot in JobsDaSlot, so the leftover space reads as part
+     of the block rather than a hole.
+
+     Nested inside .sticky on purpose: as a flat .sticky-ad-zone rule it had
+     equal specificity to the lg transparent above and lost on source order,
+     so the tint was dead on desktop from the day it was added. */
+  &.sticky-ad-zone {
+    background-color: $gray-200;
   }
 
   z-index: 10000;

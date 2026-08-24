@@ -8,9 +8,10 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm/clause"
 )
 
 type Team struct {
@@ -58,7 +59,7 @@ func GetTeam(c *fiber.Ctx) error {
 
 	// Get by name.
 	if name != "" {
-		db.Raw("SELECT id FROM teams WHERE name LIKE ?", name).Scan(&id)
+		db.Table("teams").Select("id").Where("name LIKE ?", name).Scan(&id)
 		if id == 0 {
 			// Team not found is a search result, not a resource error - return 200.
 			return c.JSON(fiber.Map{"ret": 2, "status": "Not found"})
@@ -68,14 +69,14 @@ func GetTeam(c *fiber.Ctx) error {
 	if id > 0 {
 		// Single team with members.
 		var t Team
-		db.Raw("SELECT * FROM teams WHERE id = ?", id).Scan(&t)
+		db.Table("teams").Where("id = ?", id).Scan(&t)
 		if t.ID == 0 {
 			return c.JSON(fiber.Map{"ret": 2, "status": "Not found"})
 		}
 
 		var members []TeamMember
-		db.Raw("SELECT userid, description, added, nameoverride, imageoverride "+
-			"FROM teams_members WHERE teamid = ?", id).Scan(&members)
+		db.Table("teams_members").Select("userid, description, added, nameoverride, imageoverride").
+			Where("teamid = ?", id).Scan(&members)
 
 		memberList := make([]map[string]interface{}, len(members))
 		for i, m := range members {
@@ -90,8 +91,8 @@ func GetTeam(c *fiber.Ctx) error {
 				entry["displayname"] = *m.Nameoverride
 			} else {
 				var displayname string
-				db.Raw("SELECT COALESCE(fullname, CONCAT(COALESCE(firstname,''), ' ', COALESCE(lastname,'')), 'Unknown') FROM users WHERE id = ?",
-					m.Userid).Scan(&displayname)
+				db.Table("users").Select("COALESCE(fullname, CONCAT(COALESCE(firstname,''), ' ', COALESCE(lastname,'')), 'Unknown')").
+					Where("id = ?", m.Userid).Scan(&displayname)
 				entry["displayname"] = strings.TrimSpace(displayname)
 			}
 
@@ -120,7 +121,7 @@ func GetTeam(c *fiber.Ctx) error {
 
 	// List all teams.
 	var teams []Team
-	db.Raw("SELECT * FROM teams ORDER BY LOWER(name) ASC").Scan(&teams)
+	db.Table("teams").Order("LOWER(name) ASC").Scan(&teams)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,
@@ -143,13 +144,12 @@ func getVolunteers(c *fiber.Ctx) error {
 	}
 
 	var vols []VolRow
-	db.Raw("SELECT DISTINCT memberships.userid, users.firstname, users.lastname, users.fullname, "+
-		"users.added, users.settings "+
-		"FROM memberships "+
-		"INNER JOIN `groups` ON `groups`.id = memberships.groupid "+
-		"AND memberships.role IN (?, ?) "+
-		"INNER JOIN users ON users.id = memberships.userid "+
-		"WHERE `groups`.type = ?", utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.GROUP_TYPE_FREEGLE).Scan(&vols)
+	db.Table("memberships").
+		Select("DISTINCT memberships.userid, users.firstname, users.lastname, users.fullname, users.added, users.settings").
+		Joins("INNER JOIN `groups` ON `groups`.id = memberships.groupid AND memberships.role IN (?, ?)", utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Joins("INNER JOIN users ON users.id = memberships.userid").
+		Where("`groups`.type = ?", utils.GROUP_TYPE_FREEGLE).
+		Scan(&vols)
 
 	members := []map[string]interface{}{}
 	for _, v := range vols {
@@ -216,7 +216,7 @@ func getUserProfile(userid uint64, imageOverride *string) map[string]interface{}
 
 	db := database.DBConn
 	var imgID uint64
-	db.Raw("SELECT id FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userid).Scan(&imgID)
+	db.Table("users_images").Select("id").Where("userid = ?", userid).Order("id DESC").Limit(1).Scan(&imgID)
 
 	if imgID > 0 {
 		return map[string]interface{}{
@@ -270,24 +270,21 @@ func PostTeam(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Database error"})
+	// Plain, isolated, literal single-row
+	// INSERT; the generated id is read back via GORM's map-Create "@id" writeback
+	// (proven in test/insertid_gorm_writeback_test.go), same pattern already
+	// shipped for over
+	// a dozen sibling sites.
+	row := map[string]interface{}{
+		"name":        req.Name,
+		"email":       req.Email,
+		"description": req.Description,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO teams (name, email, description) VALUES (?, ?, ?)",
-		req.Name, req.Email, req.Description)
-	if err != nil {
+	if err := db.Table("teams").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Create failed"})
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
 }
@@ -310,21 +307,25 @@ func PatchTeam(c *fiber.Ctx) error {
 	}
 
 	type PatchRequest struct {
-		ID          uint64 `json:"id"`
-		Action      string `json:"action"`
-		Userid      uint64 `json:"userid"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Email       string `json:"email"`
-		Wikiurl     string `json:"wikiurl"`
+		ID          utils.FlexUint64 `json:"id"`
+		Action      string           `json:"action"`
+		Userid      utils.FlexUint64 `json:"userid"`
+		Name        string           `json:"name"`
+		Description string           `json:"description"`
+		Email       string           `json:"email"`
+		Wikiurl     string           `json:"wikiurl"`
 	}
 
 	var req PatchRequest
+	// FlexUint64 unmarshals both string and numeric JSON values, so BodyParser
+	// handles ModTools teams.vue sending userid from a <b-form-input
+	// type="number"> v-model, which yields a JSON string.
 	if strings.Contains(c.Get("Content-Type"), "application/json") {
 		c.BodyParser(&req)
 	}
 	if req.ID == 0 {
-		req.ID, _ = strconv.ParseUint(c.FormValue("id", c.Query("id", "0")), 10, 64)
+		id, _ := strconv.ParseUint(c.FormValue("id", c.Query("id", "0")), 10, 64)
+		req.ID = utils.FlexUint64(id)
 	}
 
 	if req.ID == 0 {
@@ -338,27 +339,26 @@ func PatchTeam(c *fiber.Ctx) error {
 		if req.Userid == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing userid"})
 		}
-		db.Exec("REPLACE INTO teams_members (userid, teamid, description) VALUES (?, ?, ?)",
-			req.Userid, req.ID, req.Description)
+		db.Table("teams_members").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{"userid": req.Userid, "teamid": req.ID, "description": req.Description})
 	case "Remove":
 		if req.Userid == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 2, "status": "Missing userid"})
 		}
-		db.Exec("DELETE FROM teams_members WHERE userid = ? AND teamid = ?",
-			req.Userid, req.ID)
+		db.Table("teams_members").Where("userid = ? AND teamid = ?", req.Userid, req.ID).Delete(nil)
 	default:
 		// Update team attributes.
 		if req.Name != "" {
-			db.Exec("UPDATE teams SET name = ? WHERE id = ?", req.Name, req.ID)
+			db.Table("teams").Where("id = ?", req.ID).Update("name", req.Name)
 		}
 		if req.Description != "" {
-			db.Exec("UPDATE teams SET description = ? WHERE id = ?", req.Description, req.ID)
+			db.Table("teams").Where("id = ?", req.ID).Update("description", req.Description)
 		}
 		if req.Email != "" {
-			db.Exec("UPDATE teams SET email = ? WHERE id = ?", req.Email, req.ID)
+			db.Table("teams").Where("id = ?", req.ID).Update("email", req.Email)
 		}
 		if req.Wikiurl != "" {
-			db.Exec("UPDATE teams SET wikiurl = ? WHERE id = ?", req.Wikiurl, req.ID)
+			db.Table("teams").Where("id = ?", req.ID).Update("wikiurl", req.Wikiurl)
 		}
 	}
 
@@ -388,7 +388,9 @@ func DeleteTeam(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM teams WHERE id = ?", id)
+	// Team carries no gorm.DeletedAt,
+	// so this stays a hard DELETE rather than becoming a soft-delete UPDATE.
+	db.Where("id = ?", id).Delete(&Team{})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

@@ -8,6 +8,14 @@ use Illuminate\Mail\Mailables\Envelope;
 
 class ChatReviewPendingMail extends MjmlMailable
 {
+    /**
+     * Transactional - a moderator review queue notice - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public readonly string $recipientEmail,
         public readonly string $groupName,
@@ -42,7 +50,7 @@ class ChatReviewPendingMail extends MjmlMailable
         return $this->mjmlView('emails.mjml.chat.review-pending', [
             'groupName'   => $this->groupName,
             'count'       => $this->count,
-            'reviewUrl'   => $modSite . '/modtools/chats/review',
+            'reviewUrl'   => $modSite . '/chats/review',
             'mentorsAddr' => $mentorsAddr,
             'email'       => $this->recipientEmail,
         ]);

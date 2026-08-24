@@ -14,6 +14,7 @@ import (
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type loginRow struct {
@@ -27,11 +28,8 @@ type loginRow struct {
 
 func fetchLoginsForUser(userID uint64) []loginRow {
 	logins := make([]loginRow, 0)
-	database.DBConn.Raw(
-		"SELECT id, userid, type, CAST(uid AS CHAR) AS uid, added, lastaccess "+
-			"FROM users_logins WHERE userid = ? ORDER BY lastaccess DESC",
-		userID,
-	).Scan(&logins)
+	database.DBConn.Table("users_logins").Select("id, userid, type, CAST(uid AS CHAR) AS uid, added, lastaccess").
+		Where("userid = ?", userID).Order("lastaccess DESC").Scan(&logins)
 	return logins
 }
 
@@ -93,7 +91,7 @@ func GetMerge(c *fiber.Ctx) error {
 	}
 
 	var m MergeRow
-	db.Raw("SELECT id, user1, user2, uid, accepted, rejected FROM merges WHERE id = ? AND uid = ?", id, uid).Scan(&m)
+	db.Table("merges").Select("id, user1, user2, uid, accepted, rejected").Where("id = ? AND uid = ?", id, uid).Scan(&m)
 
 	if m.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
@@ -106,19 +104,19 @@ func GetMerge(c *fiber.Ctx) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT COALESCE(fullname, 'A freegler') FROM users WHERE id = ?", m.User1).Scan(&name1)
+		db.Table("users").Select("COALESCE(fullname, 'A freegler')").Where("id = ?", m.User1).Scan(&name1)
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT COALESCE(email, '') FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", m.User1).Scan(&email1)
+		db.Table("users_emails").Select("COALESCE(email, '')").Where("userid = ?", m.User1).Order("preferred DESC").Limit(1).Scan(&email1)
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT COALESCE(fullname, 'A freegler') FROM users WHERE id = ?", m.User2).Scan(&name2)
+		db.Table("users").Select("COALESCE(fullname, 'A freegler')").Where("id = ?", m.User2).Scan(&name2)
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT COALESCE(email, '') FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", m.User2).Scan(&email2)
+		db.Table("users_emails").Select("COALESCE(email, '')").Where("userid = ?", m.User2).Order("preferred DESC").Limit(1).Scan(&email2)
 	}()
 	go func() {
 		defer wg.Done()
@@ -197,25 +195,19 @@ func CreateMerge(c *fiber.Ctx) error {
 	uid := generateUID()
 
 	db := database.DBConn
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"user1":     req.User1,
+		"user2":     req.User2,
+		"offeredby": myid,
+		"uid":       uid,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO merges (user1, user2, offeredby, uid) VALUES (?, ?, ?, ?)",
-		req.User1, req.User2, myid, uid)
-
-	if err != nil {
+	if err := db.Table("merges").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	// Queue email to both users (default true).
 	sendEmail := true
@@ -235,8 +227,9 @@ func CreateMerge(c *fiber.Ctx) error {
 	}
 
 	// Flag related users as notified.
-	db.Exec("UPDATE users_related SET notified = 1 WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		req.User1, req.User2, req.User2, req.User1)
+	db.Table("users_related").
+		Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", req.User1, req.User2, req.User2, req.User1).
+		Update("notified", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID, "uid": uid})
 }
@@ -287,7 +280,7 @@ func PostMerge(c *fiber.Ctx) error {
 	}
 
 	var m MergeRow
-	db.Raw("SELECT id, user1, user2, uid FROM merges WHERE id = ? AND uid = ?", req.ID, req.UID).Scan(&m)
+	db.Table("merges").Select("id, user1, user2, uid").Where("id = ? AND uid = ?", req.ID, req.UID).Scan(&m)
 
 	if m.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
@@ -304,9 +297,9 @@ func PostMerge(c *fiber.Ctx) error {
 
 	switch req.Action {
 	case "Accept":
-		db.Exec("UPDATE merges SET accepted = NOW() WHERE id = ?", req.ID)
+		db.Table("merges").Where("id = ?", req.ID).Update("accepted", gorm.Expr("NOW()"))
 	case "Reject":
-		db.Exec("UPDATE merges SET rejected = NOW() WHERE id = ?", req.ID)
+		db.Table("merges").Where("id = ?", req.ID).Update("rejected", gorm.Expr("NOW()"))
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid action")
 	}
@@ -355,8 +348,9 @@ func DeleteMerge(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("UPDATE users_related SET notified = 1 WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
-		req.User1, req.User2, req.User2, req.User1)
+	db.Table("users_related").
+		Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", req.User1, req.User2, req.User2, req.User1).
+		Update("notified", gorm.Expr("1"))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

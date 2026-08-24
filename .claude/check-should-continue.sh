@@ -29,13 +29,22 @@ CONTINUE_PATTERNS=(
   'TODO:?\s'
   'should (now|next|also|then)'
   'would (now|next|also|then) need to'
-  # Offering to do work
-  'shall I (proceed|continue|go ahead|do|fix|run|start|implement|update|add|create|write)'
-  'want me to (proceed|continue|go ahead|do|fix|run|start|implement|update|add|create|write)'
+  # Offering to do work. Key off the OFFER PHRASE itself, not a hand-maintained
+  # verb allowlist: the old list missed "shall I close", "want me to go in that
+  # order", etc., which are exactly the stops we want to block. Any "shall I <verb>"
+  # / "want me to <verb>" / "should I <verb>?" at the end of a turn is an offer to
+  # do work we should just be doing.
+  'shall I [a-z]'
+  'should I [a-z][a-z]+'
+  '(do you |would you )?want me to [a-z]'
   'would you like me to'
-  'I can (proceed|continue|go ahead|do this|fix|run|start|implement|update|add|create|write)'
-  'let me know if you.*(want|need|like)'
-  "if you'?d like.*(I can|we can)"
+  'would you prefer'
+  'I can (just )?(proceed|continue|go|do|fix|run|start|implement|update|add|create|write|close|handle|tackle|push|commit|open|merge|verify|check|investigate|boost|apply|wire|remove|delete|refactor|test|review|look|kick)'
+  'let me know'
+  "if you'?d like"
+  # Choosing between options / asking which to do first
+  'which .*(would you like|do you want|should I|first)'
+  'in (that|which) order'
   # Summarising remaining work
   'remaining (work|tasks|items|steps)'
   'left to do'

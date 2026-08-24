@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Housekeeper: ' . $task])
+  @include('emails.mjml.partials.head', ['preview' => ($taskStatus === 'success' ? 'OK' : 'FAILED') . ': ' . $summary])
 
   <mj-body background-color="#ffffff">
     @include('emails.mjml.partials.header', ['title' => 'Housekeeper: ' . $task])

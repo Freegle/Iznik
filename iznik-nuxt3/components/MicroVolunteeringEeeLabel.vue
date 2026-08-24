@@ -2,9 +2,9 @@
   <div>
     <div class="intro-text mb-3">
       <p>
-        Help us train Freegle's AI to spot electrical items needing
-        recycling. For the item below, tell us what condition it's in,
-        roughly how heavy it is, and how big it is.
+        Help us train Freegle's AI to recognise items from their photos. For the
+        item below, tell us what condition it's in, roughly how heavy it is, and
+        how big it is.
       </p>
     </div>
 
@@ -98,30 +98,30 @@ const microVolunteeringStore = useMicroVolunteeringStore()
 
 const CONDITION_OPTIONS = [
   { value: 'reusable', label: 'Reusable' },
-  { value: 'damaged',  label: 'Damaged' },
-  { value: 'unsure',   label: "Can't tell" },
+  { value: 'damaged', label: 'Damaged' },
+  { value: 'unsure', label: "Can't tell" },
 ]
 
 const WEIGHT_OPTIONS = [
-  { value: 'under_1kg',  label: 'Under 1 kg' },
-  { value: '1_5kg',      label: '1 - 5 kg' },
-  { value: '5_20kg',     label: '5 - 20 kg' },
-  { value: '20_100kg',   label: '20 - 100 kg' },
+  { value: 'under_1kg', label: 'Under 1 kg' },
+  { value: '1_5kg', label: '1 - 5 kg' },
+  { value: '5_20kg', label: '5 - 20 kg' },
+  { value: '20_100kg', label: '20 - 100 kg' },
   { value: 'over_100kg', label: 'Over 100 kg' },
-  { value: 'unsure',     label: "Can't tell" },
+  { value: 'unsure', label: "Can't tell" },
 ]
 
 const SIZE_OPTIONS = [
-  { value: 'tiny',   label: 'Tiny (< 20cm)' },
-  { value: 'small',  label: 'Small (20 - 50cm)' },
+  { value: 'tiny', label: 'Tiny (< 20cm)' },
+  { value: 'small', label: 'Small (20 - 50cm)' },
   { value: 'medium', label: 'Medium (50 - 100cm)' },
-  { value: 'large',  label: 'Large (> 100cm)' },
+  { value: 'large', label: 'Large (> 100cm)' },
   { value: 'unsure', label: "Can't tell" },
 ]
 
 const condition = ref(null)
-const weight    = ref(null)
-const size      = ref(null)
+const weight = ref(null)
+const size = ref(null)
 
 const complete = computed(() => condition.value && weight.value && size.value)
 
@@ -133,9 +133,9 @@ async function submit(callback) {
 
   await microVolunteeringStore.respond({
     eee_attachment_id: props.item.attid,
-    eee_condition:     condition.value,
-    eee_weight:        weight.value,
-    eee_size:          size.value,
+    eee_condition: condition.value,
+    eee_weight: weight.value,
+    eee_size: size.value,
   })
 
   callback?.()

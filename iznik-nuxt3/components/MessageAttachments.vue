@@ -45,21 +45,7 @@
         v-else-if="attachments[0].ouruid"
         :src="attachments[0].ouruid"
         :modifiers="attachments[0].externalmods"
-        alt="Item Photo"
-        :width="width"
-        :height="height"
-        :sizes="thumbnail ? '200px' : '320px md:768px'"
-        :preload="preload"
-        @error="brokenImage"
-        @click="$emit('zoom')"
-      />
-      <NuxtPicture
-        v-else-if="attachments[0].externaluid"
-        format="webp"
-        provider="uploadcare"
-        :src="attachments[0].externaluid"
-        :modifiers="attachments[0].externalmods"
-        alt="Item Photo"
+        :alt="photoAlt"
         :width="width"
         :height="height"
         :sizes="thumbnail ? '200px' : '320px md:768px'"
@@ -70,8 +56,8 @@
       <ProxyImage
         v-else
         class-name="p-0 rounded"
-        alt="Item picture"
-        title="Item picture"
+        :alt="photoAlt"
+        :title="photoAlt"
         :src="attachments[0].path"
         :sizes="thumbnail ? '200px' : '320px md:768px'"
         :width="width"
@@ -121,7 +107,16 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  /* What the photo is of, for the alt text. Optional so callers that don't have the
+  subject to hand still work; we fall back to a generic description. */
+  subject: {
+    type: String,
+    required: false,
+    default: null,
+  },
 })
+
+const photoAlt = computed(() => props.subject || 'Item photo')
 
 const defaultAttachments = ref(false)
 const imagewrapper = ref(null)

@@ -97,6 +97,34 @@ func TestGetDashboardTimeSeries(t *testing.T) {
 	assert.True(t, ok, "Activity should be an array")
 }
 
+// TestGetDashboardApprovedMemberCountPublic verifies that member counts are public:
+// a non-moderator gets the ApprovedMemberCount time-series (not nil), while the
+// genuinely mod-only ActiveUsers stays withheld. (Authority stats page #member-counts.)
+func TestGetDashboardApprovedMemberCountPublic(t *testing.T) {
+	prefix := uniquePrefix("DashAMC")
+	_, token := CreateFullTestUser(t, prefix)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=ApprovedMemberCount&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	comps := result["components"].(map[string]interface{})
+	_, ok := comps["ApprovedMemberCount"].([]interface{})
+	assert.True(t, ok, "ApprovedMemberCount must be a public array for non-moderators")
+
+	// ActiveUsers must remain moderator-only (a non-mod gets nil).
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=ActiveUsers&jwt=%s", token), nil)
+	resp2, _ := getApp().Test(req2)
+	var result2 map[string]interface{}
+	json2.Unmarshal(rsp(resp2), &result2)
+	comps2 := result2["components"].(map[string]interface{})
+	assert.Nil(t, comps2["ActiveUsers"], "ActiveUsers must remain moderator-only")
+}
+
 func TestGetDashboardNoAuth(t *testing.T) {
 	// Without auth, should still return success but with limited data.
 	req := httptest.NewRequest("GET", "/api/dashboard?components=RecentCounts", nil)
@@ -183,6 +211,63 @@ func TestDashboardNewMessagesNoDoubleCount(t *testing.T) {
 	comps := result2["components"].(map[string]interface{})
 	rc := comps["RecentCounts"].(map[string]interface{})
 	assert.Equal(t, float64(1), rc["newmessages"], "RecentCounts should not double-count multi-group messages")
+}
+
+// A wide date range (the admin "back to 2015" case that used to run as one 70-81s statement)
+// must walk multiple bounded windows and still produce the same answers: the legacy and
+// RecentCounts newmessages counts find the message, count its crosspost once, and UsersPosting
+// still surfaces the poster.
+func TestDashboardWideRangeBoundedWalk(t *testing.T) {
+	prefix := uniquePrefix("DashWide")
+	groupA := CreateTestGroup(t, prefix+"A")
+	groupB := CreateTestGroup(t, prefix+"B")
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupA, "Moderator")
+	CreateTestMembership(t, userID, groupB, "Moderator")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" Test", 55.9533, -3.1883)
+	// Crosspost to groupB: the windowed walk must still count this message once.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0)", msgID, groupB)
+
+	wideRange := "start=2024-01-01&end=today"
+
+	// Legacy dashboard.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?allgroups=true&%s&jwt=%s", wideRange, token), nil)
+	resp, _ := getApp().Test(req, 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	dash := result["dashboard"].(map[string]interface{})
+	assert.Equal(t, float64(1), dash["newmessages"], "wide-range legacy count should find the message exactly once")
+
+	// RecentCounts and UsersPosting components over the same wide range.
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=RecentCounts,UsersPosting&allgroups=true&%s&jwt=%s", wideRange, token), nil)
+	resp2, _ := getApp().Test(req2, 60000)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var result2 map[string]interface{}
+	json2.Unmarshal(rsp(resp2), &result2)
+	comps := result2["components"].(map[string]interface{})
+
+	rc := comps["RecentCounts"].(map[string]interface{})
+	assert.Equal(t, float64(1), rc["newmessages"], "wide-range RecentCounts should find the message exactly once")
+
+	up, ok := comps["UsersPosting"].([]interface{})
+	assert.True(t, ok, "UsersPosting should be an array for a moderator")
+	found := false
+	for _, u := range up {
+		row := u.(map[string]interface{})
+		if row["id"] == float64(userID) {
+			found = true
+			assert.Equal(t, float64(1), row["posts"], "crossposted message should count once for its poster")
+		}
+	}
+	assert.True(t, found, "wide-range UsersPosting should include the poster")
 }
 
 func TestGetDashboardV2Path(t *testing.T) {
@@ -399,6 +484,58 @@ func TestGetDashboardHappiness(t *testing.T) {
 	assert.Greater(t, len(happy), 0, "Should have at least one happiness entry")
 }
 
+// A rating is one member's view of how their post went, so it counts ONCE however many
+// groups the post is on. The query this replaced counted join rows against
+// messages_groups, so a post that had rippled outwards had its rating counted again for
+// every group it reached - measured at more than four times the real total on
+// production.
+func TestGetDashboardHappinessCountsOneVotePerRating(t *testing.T) {
+	prefix := uniquePrefix("DashHappyOneVote")
+	db := database.DBConn
+	groupID, userID, token := createModDashboardFixtures(t, prefix)
+
+	var msgID uint64
+	db.Raw("SELECT msgid FROM messages_groups WHERE groupid = ? LIMIT 1", groupID).Scan(&msgID)
+
+	// The same post also sits on a second group the moderator runs, and has rippled
+	// into a third. Neither may make the one rating count again.
+	groupB := CreateTestGroup(t, prefix+"B")
+	CreateTestMembership(t, userID, groupB, "Moderator")
+	groupC := CreateTestGroup(t, prefix+"C")
+	CreateTestMembership(t, userID, groupC, "Moderator")
+
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 0)", msgID, groupB)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupC)
+
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, timestamp) VALUES (?, 'Taken', 'Happy', NOW())", msgID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN (?, ?)", msgID, groupB, groupC)
+	})
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=Happiness&allgroups=true&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	comps := result["components"].(map[string]interface{})
+	rows, ok := comps["Happiness"].([]interface{})
+	assert.True(t, ok, "Happiness should be an array")
+
+	counts := map[string]float64{}
+	for _, r := range rows {
+		row := r.(map[string]interface{})
+		counts[row["happiness"].(string)] = row["count"].(float64)
+	}
+
+	assert.Equal(t, float64(1), counts["Happy"],
+		"one rating on a post spanning three groups is still one vote")
+}
+
 func TestGetDashboardPopularPostsWithGroup(t *testing.T) {
 	prefix := uniquePrefix("DashPP")
 	groupID, _, token := createModDashboardFixtures(t, prefix)
@@ -414,6 +551,106 @@ func TestGetDashboardPopularPostsWithGroup(t *testing.T) {
 	assert.True(t, ok, "PopularPosts should be an array")
 	// Should have the test message.
 	assert.Greater(t, len(pp), 0, "Should have at least one popular post")
+}
+
+// TestGetDashboardPopularPostsNoDuplicateAcrossRippledGroups verifies that a post
+// which has been rippled into several of a moderator's groups is shown ONCE in the
+// Popular Posts list, not once per group it reached. Rippling-out adds a
+// messages_groups row (rippled_in=1) per group a post ripples to; without a
+// rippled_in filter / dedup the allgroups query returns one identical row per group.
+func TestGetDashboardPopularPostsNoDuplicateAcrossRippledGroups(t *testing.T) {
+	prefix := uniquePrefix("DashPPDup")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"A")
+	groupB := CreateTestGroup(t, prefix+"B")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Native post on groupA (origin row, rippled_in defaults to 0).
+	msgID := CreateTestMessage(t, modID, groupA, prefix+" OFFER: rippled item", 52.5, -1.8)
+
+	// Ripple the SAME post into groupB — an Approved copy marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupB)
+
+	// Give it a couple of views so it ranks.
+	viewer1 := CreateTestUser(t, prefix+"_v1", "User")
+	viewer2 := CreateTestUser(t, prefix+"_v2", "User")
+	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer1)
+	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer2)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_likes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB)
+	})
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=PopularPosts&allgroups=true&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	comps := result["components"].(map[string]interface{})
+	pp, ok := comps["PopularPosts"].([]interface{})
+	assert.True(t, ok, "PopularPosts should be an array")
+
+	occurrences := 0
+	for _, row := range pp {
+		post := row.(map[string]interface{})
+		if uint64(post["id"].(float64)) == msgID {
+			occurrences++
+		}
+	}
+	assert.Equal(t, 1, occurrences, "A rippled post must appear once, not once per group it reached")
+}
+
+// TestGetDashboardPopularPostsExcludesRippledIn verifies that a post which only
+// rippled INTO a group (it is not native to it) is not listed among that group's
+// Popular Posts. Popular Posts on a group means that group's own posts, matching the
+// per-group native-only semantics used elsewhere (stats, IP-abuse, edit queue).
+func TestGetDashboardPopularPostsExcludesRippledIn(t *testing.T) {
+	prefix := uniquePrefix("DashPPRin")
+	db := database.DBConn
+
+	origin := CreateTestGroup(t, prefix+"Origin")
+	rippledTo := CreateTestGroup(t, prefix+"RippledTo")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, rippledTo, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Native post on the origin group (mod does not moderate it).
+	msgID := CreateTestMessage(t, posterID, origin, prefix+" OFFER: not mine", 52.5, -1.8)
+
+	// The post ripples INTO rippledTo — an Approved copy marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, rippledTo)
+
+	viewer := CreateTestUser(t, prefix+"_v", "User")
+	db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View')", msgID, viewer)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_likes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledTo)
+	})
+
+	// Dashboard for rippledTo only — the rippled-in copy must not be listed.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=PopularPosts&group=%d&jwt=%s", rippledTo, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	comps := result["components"].(map[string]interface{})
+	pp, ok := comps["PopularPosts"].([]interface{})
+	assert.True(t, ok, "PopularPosts should be an array")
+
+	for _, row := range pp {
+		post := row.(map[string]interface{})
+		assert.NotEqual(t, msgID, uint64(post["id"].(float64)),
+			"A post only rippled into the group must not be shown as its own popular post")
+	}
 }
 
 func TestGetDashboardPopularPostsSystemwide(t *testing.T) {

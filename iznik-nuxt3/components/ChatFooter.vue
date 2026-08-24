@@ -79,6 +79,14 @@
             multiple
           />
         </div>
+        <ChatNotice
+          v-if="sendError"
+          variant="warning"
+          dismissible
+          @dismiss="sendError = null"
+        >
+          {{ sendError }}
+        </ChatNotice>
         <label for="chatmessage" class="visually-hidden">Chat message</label>
         <div class="textarea-wrapper">
           <div v-if="!sendmessage && !isFocused" class="textarea-placeholder">
@@ -103,7 +111,7 @@
             v-model="sendmessage"
             class="h-100"
             enterkeyhint="send"
-            autocapitalize="none"
+            :autocapitalize="autocapitalizeMode"
             @keydown="typing"
             @keydown.enter.exact.prevent
             @keyup.enter.exact="sendOnEnter"
@@ -352,6 +360,7 @@ import {
   computed,
   watch,
   onMounted,
+  onBeforeUnmount,
   nextTick,
   defineAsyncComponent,
 } from 'vue'
@@ -363,6 +372,7 @@ import SpinButton from './SpinButton'
 import { setupChat } from '~/composables/useChat'
 import { useMiscStore } from '~/stores/misc'
 import { useMessageStore } from '~/stores/message'
+import { useChatDraftStore } from '~/stores/chatdraft'
 import { fetchOurOffers } from '~/composables/useThrottle'
 import { useAuthStore } from '~/stores/auth'
 import { useAddressStore } from '~/stores/address'
@@ -371,6 +381,7 @@ import 'floating-vue/dist/style.css'
 import { action } from '~/composables/useClientLog'
 import { useMe } from '~/composables/useMe'
 import { useTypewriter } from '~/composables/useTypewriter'
+import { isIOS } from '~/composables/useIsIOS'
 import JumpingDots from '~/components/JumpingDots.vue'
 import ChatNotice from '~/components/ChatNotice.vue'
 
@@ -379,30 +390,38 @@ const props = defineProps({
   id: { type: Number, required: true },
 })
 
+// iOS auto-capitalise engages the virtual Shift key, so Return at a sentence
+// start arrives as shift+enter: keyup.enter.exact never fires and
+// keydown.enter.shift inserts a newline instead of sending (the 2020 bug this
+// box's autocapitalize="none" was added for - angular/angular#32963). That is
+// iOS keyboard design, not a fixed WebKit bug, so keep the workaround there
+// and capitalise everywhere else.
+const autocapitalizeMode = isIOS() ? 'none' : 'sentences'
+
 // Define emits
 const emit = defineEmits(['typing', 'scrollbottom'])
 
 // Don't use dynamic imports because it stops us being able to scroll to the bottom after render.
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const UserRatings = defineAsyncComponent(() =>
-  import('~/components/UserRatings')
+const UserRatings = defineAsyncComponent(
+  () => import('~/components/UserRatings')
 )
-const AddressModal = defineAsyncComponent(() =>
-  import('~/components/AddressModal')
+const AddressModal = defineAsyncComponent(
+  () => import('~/components/AddressModal')
 )
-const ChatRSVPModal = defineAsyncComponent(() =>
-  import('~/components/ChatRSVPModal')
+const ChatRSVPModal = defineAsyncComponent(
+  () => import('~/components/ChatRSVPModal')
 )
-const NudgeWarningModal = defineAsyncComponent(() =>
-  import('~/components/NudgeWarningModal')
+const NudgeWarningModal = defineAsyncComponent(
+  () => import('~/components/NudgeWarningModal')
 )
-const NudgeTooSoonWarningModal = defineAsyncComponent(() =>
-  import('~/components/NudgeTooSoonWarningModal')
+const NudgeTooSoonWarningModal = defineAsyncComponent(
+  () => import('~/components/NudgeTooSoonWarningModal')
 )
-const MicroVolunteering = defineAsyncComponent(() =>
-  import('~/components/MicroVolunteering')
+const MicroVolunteering = defineAsyncComponent(
+  () => import('~/components/MicroVolunteering')
 )
 
 const { me, myid } = useMe()
@@ -411,8 +430,13 @@ const { me, myid } = useMe()
 const authStore = useAuthStore()
 const miscStore = useMiscStore()
 const addressStore = useAddressStore()
+const chatDraftStore = useChatDraftStore()
 
-// Setup chat data
+// Setup chat data. setupChat() is a plain synchronous function - it must not be
+// awaited here. A top-level await in <script setup> makes Vue treat the whole
+// component as async setup(), which silently detaches any watch()/onMounted()/
+// onBeforeUnmount() registered afterwards from the component instance (they never
+// fire). That broke the draft-save-on-chat-switch flush below (topic 9884 post 2).
 const {
   chat,
   otheruser,
@@ -421,7 +445,7 @@ const {
   chatmessages,
   milesaway,
   milesstring,
-} = await setupChat(props.id)
+} = setupChat(props.id)
 
 // Extract writable state from store
 const { lastTyping } = storeToRefs(miscStore)
@@ -437,6 +461,10 @@ const showPromiseMaybe = ref(false)
 const showProfileModal = ref(false)
 const showAddress = ref(false)
 const sendmessage = ref(null)
+const sendError = ref(null)
+// Composing-draft persistence: how long after the last keystroke the draft is saved.
+const DRAFT_SAVE_DEBOUNCE = 500
+let draftSaveTimer = null
 const RSVP = ref(false)
 const likelymsg = ref(null)
 const ouroffers = ref([])
@@ -786,11 +814,33 @@ const send = async (callback) => {
       // Encode up any emojis.
       msg = untwem(msg)
 
-      // Send it
-      await chatStore.send(props.id, msg)
+      // Send it. A failed send (e.g. a post that's since been purged -> 404) must not throw to the
+      // global error.vue page: catch it, keep the typed text so they don't lose it, and show an
+      // inline explanation instead. Note: a rippled post outside our reach no longer 403s — the
+      // reply is now accepted and held server-side — so the 403 branch is a generic backstop.
+      try {
+        sendError.value = null
+        await chatStore.send(props.id, msg)
+      } catch (e) {
+        sending.value = false
+        const status = e?.response?.status
+        if (status === 403) {
+          sendError.value =
+            "Sorry, your message couldn't be sent just now. Please try again."
+        } else if (status === 404) {
+          sendError.value =
+            "Sorry, this post is no longer available, so your message couldn't be sent."
+        } else {
+          sendError.value =
+            "Sorry, your message couldn't be sent just now. Please try again."
+        }
+        return
+      }
 
-      // Clear the message now it's sent.
+      // Clear the message now it's sent - and drop the saved draft so it can't be restored.
       sendmessage.value = ''
+      if (draftSaveTimer) clearTimeout(draftSaveTimer)
+      chatDraftStore.clearDraft(props.id)
 
       await _updateAfterSend()
 
@@ -851,6 +901,37 @@ watch(sendmessage, (newVal, oldVal) => {
   if ((newVal && !oldVal) || (!newVal && oldVal)) {
     emit('typing', newVal?.length)
   }
+
+  // Persist the typed-but-unsent text (debounced) so switching to another chat - or reloading -
+  // doesn't lose it. Cleared on a successful send and when the box is emptied.
+  if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  draftSaveTimer = setTimeout(() => {
+    chatDraftStore.saveDraft(props.id, sendmessage.value)
+  }, DRAFT_SAVE_DEBOUNCE)
+})
+
+// Restore this chat's saved draft into the compose box. Fires on mount (this component is
+// re-created per chat) and, defensively, on any in-place id change - saving the previous chat's
+// draft first so switching never loses text. Only fills an empty box, never clobbering live typing.
+watch(
+  () => props.id,
+  (newId, oldId) => {
+    if (oldId && oldId !== newId) {
+      chatDraftStore.saveDraft(oldId, sendmessage.value)
+    }
+    const saved = chatDraftStore.getDraft(newId)
+    if (saved && !sendmessage.value) {
+      sendmessage.value = saved
+    }
+  },
+  { immediate: true }
+)
+
+// A draft typed just before switching may still be sitting in the debounce timer when this
+// component is torn down on the switch - flush it so nothing is lost.
+onBeforeUnmount(() => {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer)
+  chatDraftStore.saveDraft(props.id, sendmessage.value)
 })
 
 watch(

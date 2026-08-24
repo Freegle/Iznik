@@ -53,11 +53,11 @@ import { useRouter } from '#imports'
 import { useMessageStore } from '~/stores/message'
 import { useMe } from '~/composables/useMe'
 
-const MessageShareModal = defineAsyncComponent(() =>
-  import('./MessageShareModal')
+const MessageShareModal = defineAsyncComponent(
+  () => import('./MessageShareModal')
 )
-const MessageReportModal = defineAsyncComponent(() =>
-  import('./MessageReportModal')
+const MessageReportModal = defineAsyncComponent(
+  () => import('./MessageReportModal')
 )
 
 const props = defineProps({

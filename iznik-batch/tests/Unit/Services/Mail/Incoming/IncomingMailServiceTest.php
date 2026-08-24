@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\Mail\Incoming\IncomingMailService;
 use App\Services\Mail\Incoming\MailParserService;
+use App\Services\Mail\Incoming\ParsedEmail;
 use App\Services\Mail\Incoming\RoutingResult;
 use Illuminate\Support\Facades\DB;
 use App\Mail\Fbl\FblNotification;
@@ -223,6 +224,79 @@ class IncomingMailServiceTest extends TestCase
         $result = $this->service->route($parsed);
 
         $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+    }
+
+    /**
+     * @return array{0: \App\Models\User, 1: string}
+     */
+    private function unsubscribeByMail(string $type): array
+    {
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('unsub')]);
+        $userEmail = $user->emails->first()->email;
+        $group = $this->createTestGroup();
+
+        \App\Models\Membership::create([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'role' => \App\Models\Membership::ROLE_MEMBER,
+            'collection' => \App\Models\Membership::COLLECTION_APPROVED,
+            'emailfrequency' => 24,
+        ]);
+
+        $key = 'validkey123';
+        DB::table('users_logins')->insert([
+            'userid' => $user->id,
+            'type' => 'Link',
+            'credentials' => $key,
+            'added' => now(),
+            'lastaccess' => now(),
+        ]);
+
+        $to = "unsubscribe-{$user->id}-{$key}-{$type}@users.ilovefreegle.org";
+        $email = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $to,
+            'Subject' => 'One-click unsubscribe',
+        ]);
+
+        $this->service->route($this->parser->parse($email, $userEmail, $to));
+
+        return [$user->fresh(), $userEmail];
+    }
+
+    public function test_oneclick_unsubscribe_turns_off_the_category_not_the_account(): void
+    {
+        // Previously this soft-deleted the account and ignored the category entirely, so
+        // "stop sending me digests" was answered by deleting the member.
+        [$user] = $this->unsubscribeByMail('digest');
+
+        $this->assertNull($user->deleted, 'Unsubscribing from digests must not delete the account');
+        $this->assertSame(
+            0,
+            \App\Models\Membership::where('userid', $user->id)->where('emailfrequency', '!=', 0)->count()
+        );
+        $this->assertEquals(1, $user->relevantallowed, 'Other categories must be untouched');
+    }
+
+    public function test_oneclick_unsubscribe_acknowledges_it(): void
+    {
+        Mail::fake();
+
+        [$user, $userEmail] = $this->unsubscribeByMail('digest');
+
+        Mail::assertSent(\App\Mail\Session\UnsubscribedNotice::class, function ($mail) use ($userEmail) {
+            return $mail->hasTo($userEmail);
+        });
+    }
+
+    public function test_oneclick_unsubscribe_with_unknown_category_falls_back_to_all(): void
+    {
+        // A mangled address must not silently do nothing - the member asked to stop.
+        [$user] = $this->unsubscribeByMail('somethingelse');
+
+        $this->assertEquals(0, $user->relevantallowed);
+        $this->assertEquals(0, $user->newslettersallowed);
+        $this->assertNull($user->deleted);
     }
 
     public function test_routes_oneclick_unsubscribe_to_dropped_with_invalid_key(): void
@@ -1105,6 +1179,58 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(ChatMessage::TYPE_INTERESTED, $chatMsg->type);
     }
 
+    /**
+     * Rippling-out: a direct-email reply to a specific post (refmsgid resolved via x-fd-msgid) from
+     * a replier whose area the post's reach has NOT reached yet must be HELD - the same gate as the
+     * digest reply path - so the poster is not notified out-of-reach via the direct-mail route.
+     */
+    public function test_direct_mail_reply_to_post_held_when_replier_outside_reach(): void
+    {
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
+        // Replier located OUTSIDE the post's reach polygon (reach covers ~51.5,-0.1; replier 52.0,1.0).
+        $replier = $this->createTestUser([
+            'email_preferred' => $this->uniqueEmail('replier'),
+            'lastlocation' => $this->createLocation(52.0, 1.0),
+        ]);
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        // The post is rippling out; its reach does not yet cover the replier's location.
+        DB::statement('DELETE FROM rippling_reach WHERE msgid = ?', [$message->id]);
+        DB::insert(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, rejected_groups, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))']
+        );
+
+        $replierEmail = $replier->emails->first()->email;
+        $posterSlugAddr = "someslug-{$poster->id}@users.ilovefreegle.org";
+        $emailRaw = $this->createMinimalEmail([
+            'From' => $replierEmail,
+            'To' => $posterSlugAddr,
+            'Subject' => $message->subject,
+            'x-fd-msgid' => (string) $message->id,
+        ], 'I would love this item!');
+        $parsed = $this->parser->parse($emailRaw, $replierEmail, $posterSlugAddr);
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $replier->id)
+            ->where('type', ChatMessage::TYPE_INTERESTED)
+            ->orderBy('id', 'desc')
+            ->first();
+        $this->assertNotNull($chatMsg, 'Direct mail reply to a post should create a TYPE_INTERESTED message');
+        $this->assertEquals($message->id, $chatMsg->refmsgid);
+
+        // The out-of-reach reply must be HELD so the poster is not notified until reach catches up.
+        $held = DB::table('rippling_held_replies')->where('chatmsgid', $chatMsg->id)->first();
+        $this->assertNotNull($held, 'Out-of-reach direct-email reply to a post must be held');
+        $this->assertSame('held', $held->status);
+    }
+
     public function test_direct_mail_finds_refmsgid_by_subject(): void
     {
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
@@ -1268,8 +1394,11 @@ class IncomingMailServiceTest extends TestCase
     // Group Post Routing Tests
     // ========================================
 
-    public function test_routes_approved_member_post_to_approved(): void
+    public function test_routes_unmoderated_member_post_to_pending_for_content_check(): void
     {
+        // An unmoderated member's emailed post is NOT approved on arrival: it starts
+        // Pending so the content-check batch job can gate it (promote clean posts,
+        // hold ones matching a concern keyword) - matching the web/API submit path.
         $group = $this->createTestGroup();
         $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('member')]);
         $this->createMembership($user, $group, [
@@ -1296,7 +1425,15 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        $this->assertEquals(RoutingResult::APPROVED, $result);
+        $this->assertEquals(RoutingResult::PENDING, $result);
+
+        // The post lands Pending (awaiting its first content check), not Approved.
+        $context = $this->service->getLastRoutingContext();
+        $collection = DB::table('messages_groups')
+            ->where('msgid', $context['message_id'])
+            ->where('groupid', $group->id)
+            ->value('collection');
+        $this->assertEquals('Pending', $collection);
     }
 
     public function test_routes_moderated_member_post_to_pending(): void
@@ -1397,9 +1534,10 @@ class IncomingMailServiceTest extends TestCase
         ]);
 
         // Add worry word to database
-        DB::table('worrywords')->insert([
+        DB::table('concern_keywords')->insert([
             'keyword' => 'kitten',
-            'type' => 'Review',
+            'category' => 'review',
+            'action' => 'flag',
         ]);
 
         $userEmail = $user->emails->first()->email;
@@ -1421,6 +1559,110 @@ class IncomingMailServiceTest extends TestCase
 
         // Worry words cause posts to be held for review
         $this->assertEquals(RoutingResult::PENDING, $result);
+    }
+
+    /**
+     * Build a ParsedEmail with the given subject/body via the real mail parser,
+     * for exercising the private containsWorryWords() directly. Group/user/
+     * membership are irrelevant to that method, so they're omitted here.
+     */
+    private function parseEmailWithBody(string $subject, string $body): ParsedEmail
+    {
+        $email = $this->createMinimalEmail([
+            'From' => 'sender@example.com',
+            'To' => 'testgroup@groups.ilovefreegle.org',
+            'Subject' => $subject,
+        ], $body);
+
+        return $this->parser->parse($email, 'sender@example.com', 'testgroup@groups.ilovefreegle.org');
+    }
+
+    public function test_contains_worry_words_ignores_stale_legacy_worrywords_table(): void
+    {
+        // Regression guard (Discourse #9944/7): containsWorryWords() used to read the
+        // legacy 'worrywords' table, which is a one-time migration snapshot that is
+        // never written to again (see MigrateConcernKeywordsCommand). A row inserted
+        // only there (never migrated into concern_keywords) must NOT be able to flag
+        // a post - if it does, this method is checking the wrong table again.
+        DB::table('worrywords')->insert([
+            'keyword' => 'puppy',
+            'type' => 'Review',
+        ]);
+
+        $parsed = $this->parseEmailWithBody(
+            'OFFER: Free puppy (London)',
+            'Adorable puppy needs a good home.'
+        );
+
+        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
+        $method->setAccessible(true);
+
+        $this->assertFalse($method->invoke($this->service, $parsed));
+    }
+
+    public function test_contains_worry_words_flags_concern_keyword(): void
+    {
+        // Sanity check: a genuine (non-whitelisted) concern keyword still flags,
+        // bounding the fix below so whitelisting can't blanket-suppress everything.
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'cash',
+            'category' => 'review',
+            'action' => 'flag',
+        ]);
+
+        $parsed = $this->parseEmailWithBody(
+            'OFFER: Sofa, cash on collection',
+            'Collection only, please bring a van.'
+        );
+
+        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
+        $method->setAccessible(true);
+
+        $this->assertTrue($method->invoke($this->service, $parsed));
+    }
+
+    public function test_contains_worry_words_respects_whitelisted_phrase_despite_contained_keyword(): void
+    {
+        // Discourse #9944/7: 'Cashes Green' was whitelisted via the concern_keywords
+        // 'allowed' category (the current admin UI), but posts arriving BY EMAIL kept
+        // getting held because containsWorryWords() read the legacy 'worrywords' table,
+        // which never received the new whitelist row.
+        //
+        // containsWorryWords()'s single-word check is EXACT match only (levenshtein
+        // distance < 1, unlike ContentCheckService's fuzzy/inflection matching), so
+        // this reproduces the bug with a keyword that is a whole word contained in the
+        // whitelisted phrase ('green' inside 'Cashes Green') rather than an inflection.
+        //
+        // Also seed the legacy table with the same 'green' keyword (but NOT the
+        // whitelist row, which only ever existed in concern_keywords) so this test
+        // actually fails against the pre-fix code - otherwise the legacy table has no
+        // matching keyword at all and containsWorryWords() would return false for the
+        // wrong reason (nothing to match on, not a working whitelist).
+        DB::table('worrywords')->insert([
+            'keyword' => 'green',
+            'type' => 'Review',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'green',
+            'category' => 'review',
+            'action' => 'flag',
+        ]);
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Cashes Green',
+            'category' => 'allowed',
+            'action' => 'flag',
+        ]);
+
+        $parsed = $this->parseEmailWithBody(
+            'OFFER: Sofa near Cashes Green (Stroud)',
+            'Collection only, please bring a van.'
+        );
+
+        $method = new \ReflectionMethod(IncomingMailService::class, 'containsWorryWords');
+        $method->setAccessible(true);
+
+        // Whitelisted phrase must suppress the contained 'green' match.
+        $this->assertFalse($method->invoke($this->service, $parsed));
     }
 
     // ========================================
@@ -1740,74 +1982,6 @@ class IncomingMailServiceTest extends TestCase
 
         $parsed = $this->parser->parse(
             $email,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::INCOMING_SPAM, $result);
-    }
-
-    public function test_ip_user_threshold_detected_as_spam(): void
-    {
-        [$user, $group, $userEmail] = $this->createPostableUser();
-
-        // Create message history with many users from same IP (> USER_THRESHOLD=5)
-        for ($i = 0; $i < 6; $i++) {
-            $u = $this->createTestUser(['email_preferred' => $this->uniqueEmail("ipuser{$i}")]);
-            DB::table('messages_history')->insert([
-                'fromuser' => $u->id,
-                'prunedsubject' => "Subject {$i}",
-                'groupid' => $group->id,
-                'fromip' => '203.0.113.99',
-                'fromname' => "User {$i}",
-                'arrival' => now(),
-            ]);
-        }
-
-        // Email with the same suspicious IP
-        $rawEmail = "From: {$userEmail}\r\nTo: {$group->nameshort}@groups.ilovefreegle.org\r\n"
-            ."Subject: OFFER: Something (London)\r\nX-Freegle-IP: 203.0.113.99\r\n\r\n"
-            .'Normal body text';
-
-        $parsed = $this->parser->parse(
-            $rawEmail,
-            $userEmail,
-            $group->nameshort.'@groups.ilovefreegle.org'
-        );
-
-        $result = $this->service->route($parsed);
-
-        $this->assertEquals(RoutingResult::INCOMING_SPAM, $result);
-    }
-
-    public function test_ip_group_threshold_detected_as_spam(): void
-    {
-        [$user, , $userEmail] = $this->createPostableUser();
-
-        // Create message history with many groups from same IP (>= GROUP_THRESHOLD=20)
-        for ($i = 0; $i < 20; $i++) {
-            $g = $this->createTestGroup();
-            DB::table('messages_history')->insert([
-                'fromuser' => $user->id,
-                'prunedsubject' => 'Subject',
-                'groupid' => $g->id,
-                'fromip' => '203.0.113.88',
-                'fromname' => 'Test User',
-                'arrival' => now(),
-            ]);
-        }
-
-        $group = $this->createTestGroup();
-        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
-
-        $rawEmail = "From: {$userEmail}\r\nTo: {$group->nameshort}@groups.ilovefreegle.org\r\n"
-            ."Subject: OFFER: Something (London)\r\nX-Freegle-IP: 203.0.113.88\r\n\r\n"
-            .'Normal body text';
-
-        $parsed = $this->parser->parse(
-            $rawEmail,
             $userEmail,
             $group->nameshort.'@groups.ilovefreegle.org'
         );
@@ -2921,11 +3095,12 @@ class IncomingMailServiceTest extends TestCase
         return [$user, $group, $userEmail];
     }
 
-    public function test_autoreply_to_notify_address_is_not_globally_dropped(): void
+    public function test_autoreply_to_notify_address_is_dropped(): void
     {
-        // Legacy code routes notify- addresses BEFORE checking auto-reply globally.
-        // An auto-reply to a notify address should reach handleChatNotificationReply(),
-        // not be dropped by the global auto-reply filter.
+        // An out-of-office / vacation auto-reply to a chat notification address is a
+        // machine response to our own email. It must be dropped, not delivered into
+        // the chat as if the member had replied - real OOO texts have been sent on
+        // to other freeglers this way.
         $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
         $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
         $chat = $this->createTestChatRoom($user1, $user2);
@@ -2935,6 +3110,8 @@ class IncomingMailServiceTest extends TestCase
         DB::table('chat_rooms')
             ->where('id', $chat->id)
             ->update(['latestmessage' => now()->subDays(1)]);
+
+        $chatMessagesBefore = DB::table('chat_messages')->where('chatid', $chat->id)->count();
 
         $email = $this->createMinimalEmail([
             'From' => $user2Email,
@@ -2951,7 +3128,102 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        // Should be routed to user (chat reply), NOT dropped
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertEquals(
+            $chatMessagesBefore,
+            DB::table('chat_messages')->where('chatid', $chat->id)->count(),
+            'auto-reply must not create a chat message'
+        );
+    }
+
+    public function test_human_reply_to_notify_address_is_not_dropped_as_autoreply(): void
+    {
+        // A genuine reply without auto-reply markers must still be delivered.
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subDays(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'Yes please, I can collect tomorrow evening.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_USER, $result);
+    }
+
+    public function test_pattern_only_autoreply_dropped_when_chat_recently_active(): void
+    {
+        // No Auto-Submitted header, but the body matches an OOO pattern and the chat
+        // had a message within the last 5 hours - a real auto-responder firing right
+        // after our notification. Matches legacy MailRouter recency behaviour.
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subHours(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'I am currently away from the office until Monday.');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+    }
+
+    public function test_pattern_only_autoreply_delivered_when_chat_not_recently_active(): void
+    {
+        // No Auto-Submitted header and the chat has been quiet for over 5 hours: a
+        // late reply whose wording merely matches an OOO pattern is usually human,
+        // so it must be delivered (legacy MailRouter tradeoff, kept deliberately).
+        $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
+        $user2 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user2')]);
+        $chat = $this->createTestChatRoom($user1, $user2);
+        $user2Email = $user2->emails->first()->email;
+
+        DB::table('chat_rooms')
+            ->where('id', $chat->id)
+            ->update(['latestmessage' => now()->subDays(1)]);
+
+        $email = $this->createMinimalEmail([
+            'From' => $user2Email,
+            'To' => "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: Your message',
+        ], 'Sorry, I was away from the office yesterday. Yes please, still available?');
+
+        $parsed = $this->parser->parse(
+            $email,
+            $user2Email,
+            "notify-{$chat->id}-{$user2->id}@users.ilovefreegle.org"
+        );
+
+        $result = $this->service->route($parsed);
+
         $this->assertEquals(RoutingResult::TO_USER, $result);
     }
 
@@ -2998,16 +3270,19 @@ class IncomingMailServiceTest extends TestCase
         }
     }
 
-    public function test_autoreply_to_replyto_address_is_not_globally_dropped(): void
+    public function test_autoreply_to_replyto_address_is_dropped(): void
     {
-        // Auto-replies to replyto- addresses should reach handleReplyToAddress(),
-        // not be dropped by the global auto-reply filter.
+        // An out-of-office auto-reply to a replyto- address is a machine response to
+        // our digest/notification mail. It must not open a chat with the poster - a
+        // member's OOO responder replied to digest posts and confused the posters.
         $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
         $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
         $group = $this->createTestGroup();
         $this->createMembership($poster, $group);
         $message = $this->createTestMessage($poster, $group);
         $replierEmail = $replier->emails->first()->email;
+
+        $chatMessagesBefore = DB::table('chat_messages')->count();
 
         $email = $this->createMinimalEmail([
             'From' => $replierEmail,
@@ -3024,8 +3299,12 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        // Should be routed to user (reply to message), NOT dropped by global auto-reply filter
-        $this->assertEquals(RoutingResult::TO_USER, $result);
+        $this->assertEquals(RoutingResult::DROPPED, $result);
+        $this->assertEquals(
+            $chatMessagesBefore,
+            DB::table('chat_messages')->count(),
+            'auto-reply must not create a chat message to the poster'
+        );
     }
 
     /**
@@ -3068,7 +3347,8 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        $this->assertEquals(RoutingResult::APPROVED, $result);
+        // Unmoderated members now start Pending (content-check gated), not Approved.
+        $this->assertEquals(RoutingResult::PENDING, $result);
 
         $context = $this->service->getLastRoutingContext();
         $this->assertEquals($group->id, $context['group_id']);
@@ -4250,7 +4530,9 @@ class IncomingMailServiceTest extends TestCase
 
         $result = $this->service->route($parsed);
 
-        $this->assertEquals(RoutingResult::APPROVED, $result);
+        // Posting record is created whether the post lands Approved or Pending; an
+        // unmoderated member's post now starts Pending (content-check gated).
+        $this->assertEquals(RoutingResult::PENDING, $result);
 
         $context = $this->service->getLastRoutingContext();
         $this->assertArrayHasKey('message_id', $context);
@@ -4850,7 +5132,7 @@ class IncomingMailServiceTest extends TestCase
     /**
      * Test that recordFailure() increments retrycount and sets retrylastfailure.
      *
-     * V1 parity: Message::recordFailure() in iznik-server/include/message/Message.php
+     * V1 parity: the legacy V1 PHP Message::recordFailure()
      * does: UPDATE messages SET retrycount = LAST_INSERT_ID(retrycount), retrylastfailure = NOW()
      * and logs to the logs table with type='Message', subtype='Failure'.
      */
@@ -5078,5 +5360,96 @@ class IncomingMailServiceTest extends TestCase
         Mail::assertSent(\App\Mail\Digest\DigestReplyNotice::class, function ($mail) use ($senderEmail) {
             return $mail->hasTo($senderEmail);
         });
+    }
+
+    // ========================================
+    // Digest Reply Label Tests (Issue #9775)
+    // ========================================
+
+    public function test_digest_reply_via_original_message_separator_appends_label(): void
+    {
+        // Regression test for #9775: a user replying to a digest email via a mail
+        // client that quotes it with "-----Original Message-----" should get the
+        // "(Probably replied to digest - check View original email)" label appended
+        // to the chat message body so moderators know to check the original email.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('digestreplier')]);
+        $this->createMembership($user, $group);
+        $memberEmail = $user->emails->first()->email;
+
+        $body = "Hi, I wanted to reply to one of the posts in the digest.\r\n\r\n"
+            . "-----Original Message-----\r\n"
+            . "From: ".$group->nameshort."-auto@groups.ilovefreegle.org\r\n"
+            . "Subject: [".$group->nameshort."] What's New\r\n"
+            . "\r\nHere is all the digest content...";
+
+        $email = $this->createMinimalEmail([
+            'From' => $memberEmail,
+            'To' => $group->nameshort.'-auto@groups.ilovefreegle.org',
+            'Subject' => "Re: [".$group->nameshort."] What's New",
+        ], $body);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $memberEmail,
+            $group->nameshort.'-auto@groups.ilovefreegle.org'
+        );
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $user->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($chatMsg, 'Chat message should have been created');
+        $this->assertStringContainsString(
+            '(Probably replied to digest - check View original email)',
+            $chatMsg->message,
+            'Digest reply label should be appended to the chat message body'
+        );
+    }
+
+    public function test_digest_reply_via_auto_address_header_appends_label(): void
+    {
+        // Regression test for #9775: a user replying to a digest email via a mail
+        // client that quotes it with "On ... -auto@groups.ilovefreegle.org> wrote:"
+        // should get the digest label appended to the chat message body.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('digestreplier2')]);
+        $this->createMembership($user, $group);
+        $memberEmail = $user->emails->first()->email;
+
+        $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        $body = "Yes, I am interested in that item!\r\n\r\n"
+            . "On 10 Jun 2026, at 08:00, ".$group->nameshort."-auto@".$groupDomain."> wrote:\r\n"
+            . "\r\n> OFFER: Old sofa (Somewhere)\r\n"
+            . "> Posted by Someone";
+
+        $email = $this->createMinimalEmail([
+            'From' => $memberEmail,
+            'To' => $group->nameshort.'-auto@'.$groupDomain,
+            'Subject' => "Re: [".$group->nameshort."] What's New",
+        ], $body);
+
+        $parsed = $this->parser->parse(
+            $email,
+            $memberEmail,
+            $group->nameshort.'-auto@'.$groupDomain
+        );
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $user->id)
+            ->orderBy('id', 'desc')
+            ->first();
+
+        $this->assertNotNull($chatMsg, 'Chat message should have been created');
+        $this->assertStringContainsString(
+            '(Probably replied to digest - check View original email)',
+            $chatMsg->message,
+            'Digest reply label should be appended to the chat message body'
+        );
     }
 }

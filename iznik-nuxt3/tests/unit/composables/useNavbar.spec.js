@@ -1,4 +1,21 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from 'vitest'
+
+import {
+  navBarHidden,
+  clearNavBarTimeout,
+  setNavBarHidden,
+  updateScrollTime,
+} from '~/composables/useNavbar'
 
 // Mock all store dependencies before importing the composable.
 // useMiscStore is the only store used by the module-level functions.
@@ -11,18 +28,12 @@ vi.mock('~/stores/misc', () => ({
 vi.mock('~/stores/newsfeed', () => ({ useNewsfeedStore: () => ({}) }))
 vi.mock('~/stores/message', () => ({ useMessageStore: () => ({}) }))
 vi.mock('~/stores/notification', () => ({ useNotificationStore: () => ({}) }))
-vi.mock('~/stores/logo', () => ({ useLogoStore: () => ({}) }))
-vi.mock('~/stores/communityevent', () => ({ useCommunityEventStore: () => ({}) }))
+vi.mock('~/stores/communityevent', () => ({
+  useCommunityEventStore: () => ({}),
+}))
 vi.mock('~/stores/volunteering', () => ({ useVolunteeringStore: () => ({}) }))
 vi.mock('~/stores/mobile', () => ({ useMobileStore: () => ({ isApp: false }) }))
 vi.mock('~/composables/useMe', () => ({ fetchMe: vi.fn() }))
-
-import {
-  navBarHidden,
-  clearNavBarTimeout,
-  setNavBarHidden,
-  updateScrollTime,
-} from '~/composables/useNavbar'
 
 // TYPING_TIME_INVERVAL is 10000ms (from constants.js)
 const TYPING_TIME_INVERVAL = 10000
@@ -330,5 +341,154 @@ describe('useNavbar module-level functions', () => {
         expect(vi.getTimerCount()).toBe(0) // no more timers
       })
     })
+  })
+})
+
+// AssertFlip: badge must include notificationStore.count, not just chatStore.unreadCount.
+// Scenario: user deletes 2 chat-review items → chatStore.unreadCount drops to 0;
+// notificationStore.count stays at 1 (the "spurious stuck" notification).
+// BUGGY: chatCount computed fires setBadgeCount(0), clearing the badge.
+// FIXED: chatCount computed fires setBadgeCount(1) = 0 chats + 1 notification.
+describe('chatCount badge sync (fix/ios-badge-sync-9654-13)', () => {
+  let mockSetBadgeCount
+  // Use a closure variable so the doMock factory picks up per-test values.
+  let mockNotificationCount = 1
+
+  beforeEach(() => {
+    vi.resetModules()
+    mockSetBadgeCount = vi.fn()
+    mockNotificationCount = 1 // default: 1 stuck notification
+
+    // Stub Nuxt auto-import globals that useNavbar() calls directly (not via import).
+    vi.stubGlobal('useRoute', () => ({ path: '/', params: {}, query: {} }))
+    vi.stubGlobal('useRouter', () => ({
+      push: vi.fn(),
+      currentRoute: { value: { path: '/' } },
+    }))
+    vi.stubGlobal('useHead', () => {})
+    vi.stubGlobal('useRuntimeConfig', () => ({ public: {} }))
+    // useNavbar() calls onMounted() at module top level (outside a component).
+    // Stub it as a no-op to prevent Vue's "no active instance" warning (which
+    // the test setup converts into a thrown error). The callback only calls
+    // getCounts() which is irrelevant to the badge-count assertion.
+    vi.stubGlobal('onMounted', vi.fn())
+
+    vi.doMock('~/stores/mobile', () => ({
+      useMobileStore: () => ({ isApp: true, setBadgeCount: mockSetBadgeCount }),
+    }))
+    // Factory reads mockNotificationCount at import time (lazy closure).
+    vi.doMock('~/stores/notification', () => ({
+      useNotificationStore: () => ({ count: mockNotificationCount }),
+    }))
+    vi.doMock('~/stores/misc', () => ({
+      useMiscStore: () => ({ lastTyping: null }),
+    }))
+    vi.doMock('~/stores/newsfeed', () => ({
+      useNewsfeedStore: () => ({ count: 0, fetchCount: vi.fn() }),
+    }))
+    vi.doMock('~/stores/message', () => ({
+      useMessageStore: () => ({
+        count: 0,
+        activePostsCounter: 0,
+        fetchCount: vi.fn(),
+        fetchActivePostCount: vi.fn(),
+      }),
+    }))
+    vi.doMock('~/stores/communityevent', () => ({
+      useCommunityEventStore: () => ({ count: 0, fetchList: vi.fn() }),
+    }))
+    vi.doMock('~/stores/volunteering', () => ({
+      useVolunteeringStore: () => ({ count: 0, fetchList: vi.fn() }),
+    }))
+    vi.doMock('~/composables/useMe', () => ({ fetchMe: vi.fn() }))
+
+    // Chat store: 0 unread chats (all review items deleted)
+    globalThis.__mockChatStore = {
+      unreadCount: 0,
+      byChatId: () => null,
+      fetchChats: vi.fn(),
+      fetchMessages: vi.fn(),
+    }
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.unstubAllGlobals()
+    delete globalThis.__mockChatStore
+  })
+
+  afterAll(() => {
+    vi.resetModules()
+  })
+
+  it('sets badge to chatCount + notificationCount when app is active', async () => {
+    // mockNotificationCount = 1 (set in beforeEach), chatStore.unreadCount = 0
+    const { useNavbar } = await import('~/composables/useNavbar')
+    const { chatCount } = useNavbar()
+
+    // Accessing the computed triggers setBadgeCount.
+    // BUGGY: setBadgeCount(0) — only chatStore.unreadCount (0).
+    // FIXED: setBadgeCount(1) — 0 chats + 1 notification.
+    expect(chatCount.value).toBeDefined()
+
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(1)
+  })
+
+  it('sets badge to 0 when both chat and notification counts are 0', async () => {
+    // Override notification count before the module is imported.
+    // The doMock factory reads mockNotificationCount lazily, so setting it here
+    // (before the import below) makes the factory return count: 0.
+    mockNotificationCount = 0
+
+    const { useNavbar } = await import('~/composables/useNavbar')
+    const { chatCount } = useNavbar()
+    expect(chatCount.value).toBeDefined()
+
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(0)
+  })
+
+  it('clamps combined badge to 99 when chats + notifications exceed 99', async () => {
+    // chatStore.unreadCount = 99, notificationStore.count = 5 → combined = 104.
+    // BUGGY (#674): setBadgeCount(104) — clamp applied to chats alone, not the sum.
+    // FIXED: setBadgeCount(99) — Math.min(99, 99 + 5).
+    mockNotificationCount = 5
+
+    vi.doMock('~/stores/chat', () => ({
+      useChatStore: () => ({
+        unreadCount: 99,
+        byChatId: () => null,
+        fetchChats: vi.fn(),
+        fetchMessages: vi.fn(),
+      }),
+    }))
+
+    const { useNavbar } = await import('~/composables/useNavbar')
+    const { chatCount } = useNavbar()
+    expect(chatCount.value).toBeDefined()
+
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(99)
+  })
+
+  // Review of fix/notification-badge-9953-6: chatCount's badge write and
+  // mobileStore's startBadgeSync() watch (stores/mobile.js) both computed
+  // Math.min(99, chats + notifications) independently, with no shared
+  // helper - two implementations of the same formula that could silently
+  // drift apart. Assert on the source (rather than the numeric outcome,
+  // which is identical either way) so a later edit that reintroduces an
+  // inline duplicate here fails this test.
+  it('computes the badge total via the shared combinedBadgeCount() helper, not an inline duplicate', () => {
+    const source = readFileSync(
+      resolve(__dirname, '../../../composables/useNavbar.js'),
+      'utf-8'
+    )
+    expect(source).toMatch(
+      /import\s*\{\s*combinedBadgeCount\s*\}\s*from\s*'~\/composables\/useBadgeCount'/
+    )
+
+    const chatCountBody = source.match(
+      /const chatCount = computed\(\(\) => \{([\s\S]*?)\n {2}\}\)/
+    )
+    expect(chatCountBody).not.toBeNull()
+    expect(chatCountBody[1]).toMatch(/combinedBadgeCount\(/)
   })
 })

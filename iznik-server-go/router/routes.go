@@ -25,11 +25,12 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
-	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
+	"github.com/freegle/iznik-server-go/avatar"
+	"github.com/freegle/iznik-server-go/browse"
 	"github.com/freegle/iznik-server-go/changes"
 	"github.com/freegle/iznik-server-go/charity"
 	"github.com/freegle/iznik-server-go/chat"
@@ -38,6 +39,7 @@ import (
 	"github.com/freegle/iznik-server-go/communityevent"
 	"github.com/freegle/iznik-server-go/config"
 	"github.com/freegle/iznik-server-go/dashboard"
+	"github.com/freegle/iznik-server-go/deprecation"
 	"github.com/freegle/iznik-server-go/domain"
 	"github.com/freegle/iznik-server-go/donations"
 	"github.com/freegle/iznik-server-go/emailtracking"
@@ -46,33 +48,38 @@ import (
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
 	"github.com/freegle/iznik-server-go/isochrone"
+	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
-	"github.com/freegle/iznik-server-go/logo"
 	"github.com/freegle/iznik-server-go/logs"
 	"github.com/freegle/iznik-server-go/membership"
 	"github.com/freegle/iznik-server-go/merge"
 	"github.com/freegle/iznik-server-go/message"
 
 	"github.com/freegle/iznik-server-go/microvolunteering"
-	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modconfig"
 	"github.com/freegle/iznik-server-go/newsfeed"
 	"github.com/freegle/iznik-server-go/noticeboard"
 	"github.com/freegle/iznik-server-go/notification"
+	"github.com/freegle/iznik-server-go/partnerships"
+	"github.com/freegle/iznik-server-go/recommendations"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/session"
 	"github.com/freegle/iznik-server-go/shortlink"
-	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/simulation"
 	"github.com/freegle/iznik-server-go/spammers"
 	"github.com/freegle/iznik-server-go/src"
+	"github.com/freegle/iznik-server-go/sso"
 	"github.com/freegle/iznik-server-go/status"
 	"github.com/freegle/iznik-server-go/stdmsg"
 	"github.com/freegle/iznik-server-go/story"
 	"github.com/freegle/iznik-server-go/systemlogs"
 	"github.com/freegle/iznik-server-go/team"
+	"github.com/freegle/iznik-server-go/town"
 	"github.com/freegle/iznik-server-go/tryst"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/userdump"
 	"github.com/freegle/iznik-server-go/visualise"
 	"github.com/freegle/iznik-server-go/volunteering"
 	"github.com/gofiber/fiber/v2"
@@ -104,6 +111,15 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		rg.Post("/abtest", abtest.PostABTest)
 
+		// Browse-feed scroll depth: record how far down the feed a session scrolled.
+		// @Router /scrolldepth [post]
+		// @Summary Record browse-feed scroll depth
+		// @Description One row per browse session (furthest feed position reached); no login required
+		// @Tags browse
+		// @Accept json
+		// @Produce json
+		rg.Post("/scrolldepth", browse.RecordScrollDepth)
+
 		// Message Activity
 		// @Router /activity [get]
 		// @Summary Get recent activity
@@ -111,7 +127,11 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags message
 		// @Produce json
 		// @Success 200 {array} message.Activity
-		rg.Get("/activity", message.GetRecentActivity)
+		rg.Get("/activity", deprecation.Marker("GET /activity", "2026-08-01"), message.GetRecentActivity)
+
+		// Lists the endpoints currently wrapped in deprecation.Marker() + their
+		// sunset dates, for the nightly monitor:deprecated-endpoints report.
+		rg.Get("/deprecated", deprecation.GetDeprecated)
 
 		// User Addresses
 		// @Router /address [get]
@@ -174,7 +194,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Param id path integer true "Alert ID"
 		// @Success 200 {object} map[string]interface{}
-		rg.Get("/modtools/alert/:id", alert.GetAlert)
+		rg.Get("/modtools/alert/:id", deprecation.Marker("GET /modtools/alert/:id", "2026-08-01"), alert.GetAlert)
 
 		// @Router /alert [put]
 		// @Summary Create a new alert
@@ -197,7 +217,7 @@ func SetupRoutes(app *fiber.App) {
 
 		// Admin
 		rg.Get("/modtools/admin", admin.ListAdmins)
-		rg.Get("/modtools/admin/:id", admin.GetAdmin)
+		rg.Get("/modtools/admin/:id", deprecation.Marker("GET /modtools/admin/:id", "2026-08-01"), admin.GetAdmin)
 		rg.Post("/modtools/admin", admin.PostAdmin)
 		rg.Patch("/modtools/admin", admin.PatchAdmin)
 		rg.Delete("/modtools/admin", admin.DeleteAdmin)
@@ -208,6 +228,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/admin/ai-images/:id/regenerate", aiimage.Regenerate)
 		rg.Post("/admin/ai-images/:id/accept", aiimage.Accept)
 		rg.Post("/admin/ai-images/:id/keep", aiimage.KeepCurrent)
+		rg.Post("/admin/ai-images/:id/suppress", aiimage.Suppress)
 
 		// Authority Search
 		// @Router /authority [get]
@@ -240,6 +261,18 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Authority ID"
 		// @Success 200 {array} authority.Message
 		rg.Get("/authority/:id/message", authority.Messages)
+
+		// Item impact estimate
+		// @Router /item/impact [get]
+		// @Summary Estimate reuse impact for an item name
+		// @Description Estimates weight, CO2e saved and financial benefit of reuse for qty units of a free-text item name. Public, read-only - never writes to the items catalog. Lookup order: (1) exact case-insensitive match against the items catalog with a known weight, (2) fuzzy word-overlap match (>10%) against the standard weights reference table, (3) popularity-weighted average item weight.
+		// @Tags item
+		// @Produce json
+		// @Param name query string true "Free-text item name"
+		// @Param qty query integer false "Quantity (default 1)"
+		// @Success 200 {object} item.ImpactResponse
+		// @Failure 400 {object} fiber.Error "Missing or empty name"
+		rg.Get("/item/impact", item.Impact)
 
 		// Chats
 		// @Router /chat [get]
@@ -277,6 +310,15 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} chat.ChatMessage
 		rg.Get("/chat/:id/message", chat.GetChatMessages)
 
+		// @Router /chat/{id}/commongroups [get]
+		// @Summary Groups in common between the two chat participants
+		// @Tags chat
+		// @Produce json
+		// @Param id path integer true "Chat ID"
+		// @Security BearerAuth
+		// @Success 200 {array} chat.CommonGroup
+		rg.Get("/chat/:id/commongroups", chat.GetCommonGroups)
+
 		// Create Chat Message
 		// @Router /chat/{id}/message [post]
 		// @Summary Create chat message
@@ -289,6 +331,21 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} chat.ChatMessage
 		rg.Post("/chat/:id/message", chat.CreateChatMessage)
+
+		// Answer a Freegle prompt
+		// @Router /chat/{id}/message/{mid}/prompt [post]
+		// @Summary Answer a Freegle chat prompt
+		// @Description Records the member's answer to a type='Prompt' chat message and applies
+		// @Description it to the posts the prompt covers. Only the member the prompt was sent
+		// @Description to may answer, and only once.
+		// @Tags chat
+		// @Accept json
+		// @Produce json
+		// @Param id path integer true "Chat ID"
+		// @Param mid path integer true "Chat message ID"
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/chat/:id/message/:mid/prompt", chat.AnswerChatPrompt)
 
 		// Patch Chat Message
 		// @Router /chatmessages [patch]
@@ -383,7 +440,7 @@ func SetupRoutes(app *fiber.App) {
 		// Changes
 		// @Router /changes [get]
 		// @Summary Get changes since timestamp
-		// @Description Returns message changes, user changes, and ratings since a given time. Requires partner key.
+		// @Description Returns message changes, user changes (Modified or Deleted), and ratings since a given time. Requires partner key.
 		// @Tags changes
 		// @Produce json
 		// @Param since query string false "ISO8601 timestamp (defaults to 1 hour ago)"
@@ -509,6 +566,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} config.ConfigItem
 		rg.Get("/config/:key", config.Get)
 
+		// Rippling-out live event counters, read-only, Support/Admin only (sysadmin §15/§16).
+		ripplingAdmin := rg.Group("/rippling")
+		ripplingAdmin.Use(config.RequireSupportOrAdminMiddleware())
+		ripplingAdmin.Get("/metrics", rippling.Metrics)
+		ripplingAdmin.Get("/analytics", rippling.Analytics)
+		ripplingAdmin.Get("/density", rippling.Density)
+		ripplingAdmin.Get("/analytics/drivetime", rippling.AnalyticsDriveTimes)
+		ripplingAdmin.Post("/analytics/drivetime/score", rippling.AnalyticsDriveScore)
+		ripplingAdmin.Post("/analytics/drivetime/aggregate", rippling.AnalyticsDriveAggregate)
+
 		// Create a protected route group for admin endpoints
 		adminConfig := rg.Group("/config/admin")
 		adminConfig.Use(config.RequireSupportOrAdminMiddleware())
@@ -557,7 +624,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Accept json
 		// @Produce json
 		// @Security BearerAuth
-		adminConfig.Patch("", config.PatchAdminConfig)
+		adminConfig.Patch("", deprecation.Marker("PATCH /config/admin", "2026-08-01"), config.PatchAdminConfig)
 
 		// Groups
 		// @Router /group [get]
@@ -601,6 +668,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Group ID"
 		// @Success 200 {array} message.Message
 		rg.Get("/group/:id/message", group.GetGroupMessages)
+
+		// Group Message Summaries
+		// @Router /group/{id}/message/summary [get]
+		// @Summary Get id + subject for a group's live posts
+		// @Description Backs the server-rendered, crawlable post list on the community page
+		// @Tags group,message
+		// @Produce json
+		// @Param id path integer true "Group ID"
+		// @Success 200 {array} group.GroupMessageSummary
+		rg.Get("/group/:id/message/summary", group.GetGroupMessageSummaries)
 
 		// Group PATCH
 		// @Router /group [patch]
@@ -654,19 +731,29 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Noticeboard ID"
 		// @Security BearerAuth
 		// @Success 200 {object} fiber.Map
-		rg.Delete("/noticeboard/:id", noticeboard.DeleteNoticeboard)
+		rg.Delete("/noticeboard/:id", deprecation.Marker("DELETE /noticeboard/:id", "2026-08-01"), noticeboard.DeleteNoticeboard)
 
 		// Isochrones
+		//
+		// DEPRECATED: the per-user isochrone editor was removed in the rippling-out
+		// "Nearby = reach" flip (PR #921). No current client (Freegle or ModTools) calls
+		// these four CRUD endpoints - the isochrone store/editor that used them was
+		// deleted (stores/isochrone.js -> stores/nearby.js; components/IsoChrone.vue
+		// removed). Kept only for backward compatibility with any older deployed clients;
+		// safe to remove once those have aged out. NOTE: /isochrone/message and
+		// /message/count below are NOT deprecated - they still back the Nearby feed and
+		// its unseen count.
 		// @Router /isochrone [get]
 		// @Summary List isochrones
-		// @Description Returns all isochrones
+		// @Description [DEPRECATED - no current client calls this; see PR #921] Returns all isochrones
 		// @Tags isochrone
 		// @Produce json
+		// @Deprecated
 		// @Success 200 {array} isochrone.Isochrone
-		rg.Get("/isochrone", isochrone.ListIsochrones)
-		rg.Put("/isochrone", isochrone.CreateIsochrone)
-		rg.Patch("/isochrone", isochrone.EditIsochrone)
-		rg.Delete("/isochrone", isochrone.DeleteIsochrone)
+		rg.Get("/isochrone", deprecation.Marker("GET /isochrone", "2026-08-01"), isochrone.ListIsochrones)
+		rg.Put("/isochrone", deprecation.Marker("PUT /isochrone", "2026-08-01"), isochrone.CreateIsochrone)
+		rg.Patch("/isochrone", deprecation.Marker("PATCH /isochrone", "2026-08-01"), isochrone.EditIsochrone)
+		rg.Delete("/isochrone", deprecation.Marker("DELETE /isochrone", "2026-08-01"), isochrone.DeleteIsochrone)
 
 		// Isochrone Messages
 		// @Router /isochrone/message [get]
@@ -692,6 +779,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Post("/image", image.Post)
+
+		// Legacy image URL resolution
+		// @Router /image [get]
+		// @Summary Resolve a legacy image URL to a redirect
+		// @Description Replaces V1 GET /api/image, which the images.ilovefreegle.org vhost rewrites the old *img_N.jpg URL forms into. Redirects to the delivery CDN (externaluid/externalurl/Azure-archived rows) or the default profile image.
+		// @Tags image
+		// @Param id query int true "Attachment id"
+		// @Param w query int false "Thumbnail width (honoured for archived rows only, matching V1)"
+		// @Param h query int false "Thumbnail height (honoured for archived rows only, matching V1)"
+		// @Success 302
+		rg.Get("/image", image.Get)
 
 		// Jobs
 		// @Router /job [get]
@@ -746,6 +844,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {array} location.Location
 		rg.Get("/location/typeahead", location.Typeahead)
 
+		// Location Resolve (exact place name -> best matching location)
+		// @Router /location/resolve [get]
+		// @Summary Resolve an exact place name to a location
+		// @Description Returns the single best location for an exact place name (county/town/postcode),
+		// @Description used to offer "search near <place>" when an item search returns nothing. 404 if unknown.
+		// @Tags location
+		// @Produce json
+		// @Param name query string true "Exact place name"
+		// @Success 200 {object} location.Location
+		rg.Get("/location/resolve", location.Resolve)
+
 		// Location Addresses
 		// @Router /location/{id}/addresses [get]
 		// @Summary Get addresses for location
@@ -769,6 +878,7 @@ func SetupRoutes(app *fiber.App) {
 
 		// Location Search (GET /locations - search by lat/lng, typeahead, or bounding box)
 		rg.Get("/locations", location.SearchLocations)
+		rg.Get("/town/near", town.Near)
 
 		// Location Write Operations
 		rg.Put("/locations", location.CreateLocation)
@@ -780,8 +890,17 @@ func SetupRoutes(app *fiber.App) {
 		// @Router /messages [get]
 		// @Summary List messages with moderation queue support
 		// @Tags message
-		rg.Get("/messages", message.ListMessages)
+		rg.Get("/messages", deprecation.Marker("GET /messages", "2026-08-01"), message.ListMessages)
 		rg.Get("/modtools/messages", message.ListMessagesMT)
+
+		// Message Sitemap
+		// @Router /message/sitemap [get]
+		// @Summary Live posts for the search-engine sitemap
+		// @Description Returns id + lastmod for every currently-live Offer/Wanted post, for building sitemap.xml
+		// @Tags message
+		// @Produce json
+		// @Success 200 {array} message.SitemapEntry
+		rg.Get("/message/sitemap", message.Sitemap)
 
 		// Message Count
 		// @Router /message/count [get]
@@ -837,6 +956,55 @@ func SetupRoutes(app *fiber.App) {
 		// @Param ids path string true "Message IDs (comma separated)"
 		// @Success 200 {array} message.Message
 		// @Failure 404 {object} fiber.Error "Message not found"
+		// Actual rippling-out progress of a post, for the moderation reach map to compare
+		// against the expected/projected reach. Mod-of-group only.
+		// @Router /message/{id}/reach [get]
+		// @Summary Actual rippling-out progress of a post (moderation)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Success 200 {object} message.ReachResponse
+		// @Failure 403 {object} fiber.Error "Moderator of the post's group required"
+		rg.Get("/message/:id/reach", message.Reach)
+
+		// Similar posts for the "more like this nearby" recommendation strip.
+		// @Router /message/{id}/similar [get]
+		// @Summary Posts similar to a given post (recommendations)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 8, max 20)"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/:id/similar", message.Similar)
+
+		// Offers matching a wanted being composed. Registered before /message/:ids
+		// so "matches" is not treated as a message id.
+		// @Router /message/matches [get]
+		// @Summary Offers matching a wanted being composed (recommendations)
+		// @Tags message
+		// @Produce json
+		// @Param query query string true "Item text of the wanted"
+		// @Param lat query number true "Poster's latitude"
+		// @Param lng query number true "Poster's longitude"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/matches", message.Matches)
+
+		// Opposite-type posts matching a given post — candidate set for the
+		// matched-posts email (batch job). Reach-filtered against the post owner.
+		// @Router /message/{id}/matches [get]
+		// @Summary Opposite-type posts matching a given post (matched-posts email)
+		// @Tags message
+		// @Produce json
+		// @Param id path int true "Message ID"
+		// @Param limit query int false "Max results (default 10, max 30)"
+		// @Success 200 {array} message.SimilarResult
+		rg.Get("/message/:id/matches", message.PostMatches)
+
+		// Members whose SAVED SEARCH matches this post, at the same
+		// MinMatchedPostScore the matched-posts email uses - both compare stored
+		// document embeddings, so the number means the same thing on both.
+		rg.Get("/message/:id/searchmatches", message.SearchMatchesForPost)
+
 		rg.Get("/message/:ids", message.GetMessagesWithHistory)
 
 		// Mark Messages Seen
@@ -851,6 +1019,23 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 400 {object} fiber.Error "Invalid request"
 		// @Failure 401 {object} fiber.Error "Not logged in"
 		rg.Post("/messages/markseen", message.MarkSeen)
+
+		// Clear Browse Count
+		//
+		// Distinct from markseen above, and deliberately so: markseen records that these
+		// particular posts were VIEWED (a messages_likes impression, feeding the view count
+		// posters see). This one records only that the member has cleared their unread
+		// count, which is not a claim that they looked at anything.
+		//
+		// @Router /messages/clearcount [post]
+		// @Summary Clear the browse unread count
+		// @Description Marks the member's whole browse feed as cleared, without the client enumerating posts
+		// @Tags message
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Not logged in"
+		rg.Post("/messages/clearcount", isochrone.ClearCount)
 
 		// Message Actions (POST)
 		// @Router /message [post]
@@ -874,7 +1059,38 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} map[string]interface{}
 		rg.Patch("/message/tn/:tnpostid", message.PatchMessageByTN)
 		rg.Put("/message", message.PutMessage)
-		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
+		rg.Delete("/message/:id", deprecation.Marker("DELETE /message/:id", "2026-08-01"), message.DeleteMessageEndpoint)
+
+		// Bulk-offer ("clearance") logged-out update page: an external item-owner
+		// toggles item available/taken and edits counts via an unguessable secret
+		// token in the URL. No JWT - the token is the sole credential and grants
+		// only availability/count edits to that one offer (see message/bulkEdit.go).
+		rg.Get("/bulkoffer/update/:token", message.GetBulkEditOffer)
+		rg.Post("/bulkoffer/update/:token", message.PostBulkEditOffer)
+
+		// Freegle Helper — cross-clearance escalated queue (ModTools). Registered
+		// before /helper/:msgid so the literal "escalated" isn't parsed as a msgid.
+		rg.Get("/helper/escalated", message.GetHelperEscalated)
+
+		// Freegle Helper — AI concierge state + proposals for a bulk offer.
+		// @Router /helper/{msgid} [get]
+		// @Summary Get Helper state for a bulk offer
+		// @Description Offerer/mod only. Returns the Helper batch, per-replier FSM knowledge records with per-item state and score, queued proposals, and Helper-sent message ids.
+		// @Tags message
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Get("/helper/:msgid", message.GetHelper)
+
+		// @Router /helper [post]
+		// @Summary Helper actions
+		// @Description Offerer/mod only. Actions: EnsureBatch, SetStatus (pause/resume/stop), UpsertReplier, SetItemState, Proposal, ResolveProposal (confirm/edit/send or dismiss), Send (auto-send a conversational message).
+		// @Tags message
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		rg.Post("/helper", message.PostHelper)
 
 		// User
 		// @Router /user/{id} [get]
@@ -888,6 +1104,18 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 404 {object} fiber.Error "User not found"
 		rg.Get("/user/search", user.SearchUsers)
 		rg.Get("/user/byemail/:email", user.GetUserByEmail)
+		// Targeted opt-out from matched-posts suggestion emails (relevantallowed=0),
+		// key-authenticated so it works as a one-click List-Unsubscribe. Registered
+		// before /user/:id? so "relevantoff" is not treated as a user id.
+		// @Router /user/relevantoff [get]
+		rg.Get("/user/relevantoff", user.RelevantOff)
+		rg.Post("/user/relevantoff", user.RelevantOff)
+		// Category opt-out, the HTTPS arm of the List-Unsubscribe header on bulk mail.
+		// Key-authenticated like relevantoff, and registered before /user/:id? for the
+		// same reason: so "unsubscribe" is not treated as a user id.
+		// @Router /user/unsubscribe [post]
+		rg.Get("/user/unsubscribe", user.Unsubscribe)
+		rg.Post("/user/unsubscribe", user.Unsubscribe)
 		rg.Get("/user/:id?", user.GetUser)
 
 		// User Actions (POST)
@@ -958,6 +1186,29 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 404 {object} fiber.Error "Newsfeed item not found"
 		rg.Get("/newsfeed/:id", newsfeed.Single)
 
+		// Newsfeed duplicate check (ChitChat moderators only)
+		// @Router /newsfeed/{id}/duplicate [get]
+		// @Summary Whether a ChitChat post duplicates the poster's own live OFFER/WANTED
+		// @Description Moderator-only. Names one of the poster's own live posts when the
+		// @Description ChitChat entry says the same thing, so it can be hidden.
+		// @Tags newsfeed
+		// @Produce json
+		// @Param id path integer true "Newsfeed ID"
+		// @Success 200 {object} newsfeed.DuplicateResponse
+		// @Failure 403 {object} fiber.Error "Not a ChitChat moderator"
+		rg.Get("/newsfeed/:id/duplicate", newsfeed.Duplicate)
+
+		// @Router /newsfeed/{id}/convertinfo [get]
+		// @Summary Where a convert-to-post would land
+		// @Description Moderator-only. The postcode and community a post made for the
+		// @Description member would use, so the modal can show it before committing.
+		// @Tags newsfeed
+		// @Produce json
+		// @Param id path integer true "Newsfeed ID"
+		// @Success 200 {object} newsfeed.ConvertInfoResult
+		// @Failure 403 {object} fiber.Error "Not a ChitChat moderator"
+		rg.Get("/newsfeed/:id/convertinfo", newsfeed.ConvertInfo)
+
 		// Newsfeed Count
 		// @Router /newsfeedcount [get]
 		// @Summary Get newsfeed count
@@ -973,6 +1224,8 @@ func SetupRoutes(app *fiber.App) {
 		// @Description Returns newsfeed items
 		// @Tags newsfeed
 		// @Produce json
+		// @Param distance query string false "Feed radius in metres, or 'nearby'/'anywhere'"
+		// @Param newsletters query string false "Set to 'all' to see Community News posts from every area. ChitChat moderators only; ignored for anyone else."
 		// @Success 200 {array} newsfeed.Item
 		rg.Get("/newsfeed", newsfeed.Feed)
 		rg.Post("/newsfeed", newsfeed.Post)
@@ -1058,7 +1311,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags story
 		// @Accept json
 		// @Produce json
-		rg.Post("/story", story.PostStory)
+		rg.Post("/story", deprecation.Marker("POST /story", "2026-08-01"), story.PostStory)
 
 		// @Router /story/like [post]
 		// @Summary Like a story
@@ -1079,7 +1332,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags story
 		// @Param id path integer true "Story ID"
 		// @Produce json
-		rg.Delete("/story/:id", story.DeleteStory)
+		rg.Delete("/story/:id", deprecation.Marker("DELETE /story/:id", "2026-08-01"), story.DeleteStory)
 
 		// Session Actions
 		// @Router /session [post]
@@ -1117,7 +1370,7 @@ func SetupRoutes(app *fiber.App) {
 		// System Status
 		// @Router /status [get]
 		// @Summary Get system status
-		// @Description Returns the system status from /tmp/iznik.status
+		// @Description Returns the platform status published by the batch system's outcome monitoring
 		// @Tags status
 		// @Produce json
 		// @Success 200 {object} map[string]interface{}
@@ -1136,9 +1389,28 @@ func SetupRoutes(app *fiber.App) {
 
 		// Teams
 		rg.Get("/team", team.GetTeam)
-		rg.Post("/team", team.PostTeam)
+		rg.Post("/team", deprecation.Marker("POST /team", "2026-08-01"), team.PostTeam)
 		rg.Patch("/team", team.PatchTeam)
-		rg.Delete("/team", team.DeleteTeam)
+		rg.Delete("/team", deprecation.Marker("DELETE /team", "2026-08-01"), team.DeleteTeam)
+
+		// Partnerships (ModTools). The literal paths must be registered before
+		// /partnership/:id, or "summary" and "statsjob" would be matched as ids.
+		rg.Get("/partnership/summary", partnerships.Summary)
+		rg.Get("/partnership/statsjob", partnerships.ListStatsJobs)
+		rg.Post("/partnership/statsjob", partnerships.CreateStatsJob)
+		rg.Delete("/partnership/statsjob/:id", partnerships.DeleteStatsJob)
+		rg.Get("/partnership/statsfile/:id", partnerships.DownloadStatsFile)
+		rg.Get("/partnership", partnerships.List)
+		rg.Post("/partnership", partnerships.Create)
+		rg.Get("/partnership/:id", partnerships.Single)
+		rg.Patch("/partnership/:id", partnerships.Update)
+		rg.Delete("/partnership/:id", partnerships.Delete)
+		rg.Get("/partnership/:id/group", partnerships.Groups)
+		rg.Patch("/partnership/:id/group", partnerships.PatchGroups)
+		rg.Put("/partnership/:id/year", partnerships.PutYears)
+		rg.Post("/partnership/:id/payment", partnerships.CreatePayment)
+		rg.Patch("/partnership/:id/payment/:paymentid", partnerships.UpdatePayment)
+		rg.Delete("/partnership/:id/payment/:paymentid", partnerships.DeletePayment)
 
 		// Mod Configs
 		rg.Get("/modtools/modconfig", modconfig.GetModConfig)
@@ -1219,6 +1491,18 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats", emailtracking.Stats)
 
+		// Deferral suppressions (authenticated, admin only)
+		// @Router /modtools/email/deferrals [get]
+		// @Summary List providers currently refusing our mail, and the members affected
+		// @Description Support view of deferral-aware mail suppression: active suppressions plus members whose mail is being held
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/deferrals", emailtracking.Deferrals)
+
 		// Email Statistics Time Series (authenticated, admin only)
 		// @Router /email/stats/timeseries [get]
 		// @Summary Get daily email statistics for charting
@@ -1262,6 +1546,51 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 401 {object} fiber.Error "Unauthorized"
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/stats/clicks", emailtracking.TopClickedLinks)
+
+		// Digest Click Positions (authenticated, admin only)
+		// @Router /email/stats/digestpositions [get]
+		// @Summary Get digest click-through rate by post position
+		// @Description Returns click-through rate per post position within unified digests, for analysing how position affects engagement
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD)"
+		// @Param end query string false "End date (YYYY-MM-DD)"
+		// @Param type query string false "Email type filter (default: all UnifiedDigest* types)"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/stats/digestpositions", emailtracking.DigestClickPositions)
+
+		// Re-engagement Email Effectiveness (authenticated, admin only)
+		// @Router /email/stats/reengage [get]
+		// @Summary Get re-engagement email effectiveness
+		// @Description Returns funnel (sent/opened/clicked/reengaged) counts overall and broken down by stage, experiment arm and journey segment
+		// @Tags emailtracking
+		// @Produce json
+		// @Security BearerAuth
+		// @Param start query string false "Start date (YYYY-MM-DD)"
+		// @Param end query string false "End date (YYYY-MM-DD)"
+		// @Success 200 {object} map[string]interface{}
+		// @Failure 401 {object} fiber.Error "Unauthorized"
+		// @Failure 403 {object} fiber.Error "Forbidden"
+		rg.Get("/modtools/email/stats/reengage", emailtracking.ReengageEffectiveness)
+
+		// Browse-feed scroll-depth curve for the sysadmin "Scrolling" tab (Support/Admin).
+		// @Router /modtools/scroll/depth [get]
+		// @Summary Browse-feed scroll-depth curve
+		// @Description For each feed position N, the fraction of sessions that scrolled at least N deep
+		// @Tags browse
+		// @Produce json
+		rg.Get("/modtools/scroll/depth", browse.ScrollDepthCurve)
+
+		// Recommendation funnel (impressions/clicks/replies + holdout) for the
+		// sysadmin "Recommendations" tab (Support/Admin).
+		// @Router /modtools/recommendations/stats [get]
+		// @Summary Recommendation funnel stats
+		// @Tags recommendations
+		// @Produce json
+		rg.Get("/modtools/recommendations/stats", recommendations.Stats)
 
 		// Email Tracking for specific user (authenticated, admin only)
 		// @Router /email/user/{id} [get]
@@ -1328,7 +1657,6 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200
 		rg.Post("/stripeipn", donations.StripeIPN)
 
-
 		// Gift Aid
 		// @Router /giftaid [get]
 		// @Summary Get Gift Aid declaration
@@ -1385,15 +1713,6 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/export", export.PostExport)
 		rg.Get("/export", export.GetExport)
 
-		// Logo
-		// @Router /logo [get]
-		// @Summary Get logo
-		// @Description Returns logo information
-		// @Tags misc
-		// @Produce json
-		// @Success 200 {object} logo.LogoResponse
-		rg.Get("/logo", logo.Get)
-
 		// Microvolunteering
 		// @Router /microvolunteering [get]
 		// @Summary Get microvolunteering challenge
@@ -1424,7 +1743,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Security BearerAuth
 		// @Success 200 {object} fiber.Map
-		rg.Patch("/microvolunteering", microvolunteering.ModFeedback)
+		rg.Patch("/microvolunteering", deprecation.Marker("PATCH /microvolunteering", "2026-08-01"), microvolunteering.ModFeedback)
 
 		// User by Email
 
@@ -1612,7 +1931,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Delete("/merge", merge.DeleteMerge)
 
 		// Simulation
-		rg.Get("/simulation", simulation.GetSimulation)
+		rg.Get("/simulation", deprecation.Marker("GET /simulation", "2026-08-01"), simulation.GetSimulation)
 
 		// Domains
 		rg.Get("/domains", domain.GetDomain)
@@ -1636,6 +1955,10 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} systemlogs.CountsResponse
 		systemLogsGroup.Get("/counts", systemlogs.GetLogCounts)
+
+		// User support data dump (Support/Admin only) — streams a per-user SQLite
+		// database of every user-linked table plus their Loki logs and Sentry issues.
+		rg.Get("/modtools/user/:id/dump", userdump.GetUserDump)
 	}
 
 	// Delivery routes (public - no auth required for email client access)
@@ -1675,6 +1998,33 @@ func SetupRoutes(app *fiber.App) {
 	// @Param s query integer false "Scroll percentage"
 	// @Success 302 {string} string "Redirect"
 	delivery.Get("/i/:id", emailtracking.Image)
+
+	// Compact redirect — reconstructs an internal destination from type+id.
+	// MORE path segments than /r/:id so Fiber matches it as a distinct route.
+	// @Router /e/d/r/{ref}/{type}/{idenc}/{pos} [get]
+	// @Summary Compact delivery redirect
+	// @Description Reconstructs an internal destination URL from type+id and redirects
+	// @Tags delivery
+	// @Param ref path string true "12-char tracking ref"
+	// @Param type path string true "Resource type (m, s, g)"
+	// @Param idenc path string true "base64url-encoded resource id"
+	// @Param pos path string true "Position label"
+	// @Success 302 {string} string "Redirect"
+	delivery.Get("/r/:ref/:type/:idenc/:pos", emailtracking.ClickCompact)
+
+	// Compact image — reconstructs a delivery URL from type+id+preset.
+	// MORE path segments than /i/:id so Fiber matches it as a distinct route.
+	// @Router /e/d/i/{ref}/{type}/{idenc}/{preset}/{pos} [get]
+	// @Summary Compact delivery image
+	// @Description Reconstructs an image delivery URL from type+id+preset and redirects
+	// @Tags delivery
+	// @Param ref path string true "12-char tracking ref"
+	// @Param type path string true "Resource type (t, u)"
+	// @Param idenc path string true "base64url-encoded resource id"
+	// @Param preset path int true "Dimension preset (0,1,2)"
+	// @Param pos path string true "Position label"
+	// @Success 302 {string} string "Redirect to image"
+	delivery.Get("/i/:ref/:type/:idenc/:preset/:pos", emailtracking.ImageCompact)
 
 	// Note: MDN read receipts come as emails and are processed by the incoming mail handler.
 	// The emailtracking.RecordMDNOpen() function can be called via internal API.
@@ -1772,4 +2122,22 @@ func SetupRoutes(app *fiber.App) {
 	// @Param body body object true "Message body with 'message' field"
 	// @Success 200 {object} amp.ReplyResponse
 	ampGroup.Post("/digest/:id/reply", amp.PostDigestReply)
+
+	// Shared digest reply — identity (mid/rt/exp/uid) and message come from the
+	// FORM BODY, so one <amp-form> in the digest template replies to any post.
+	// Fewer path segments than /digest/:id/reply, so it's a distinct route.
+	// @Router /amp/digest/reply [post]
+	// @Summary Post reply to digest email post (shared form)
+	// @Description Submits an inline reply to a digest-email post; identity in the body
+	// @Tags AMP
+	// @Accept x-www-form-urlencoded
+	// @Produce json
+	// @Param mid formData int true "Message ID (the post being replied to)"
+	// @Param rt formData string true "Token (HMAC)"
+	// @Param uid formData int true "User ID"
+	// @Param exp formData int true "Token expiry timestamp"
+	// @Param tid formData int false "Email tracking ID for analytics"
+	// @Param message formData string true "Reply text"
+	// @Success 200 {object} amp.ReplyResponse
+	ampGroup.Post("/digest/reply", amp.PostDigestReplyShared)
 }

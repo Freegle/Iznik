@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
+import { runHoldAware } from '~/api/heldConflict'
 import api from '~/api'
 import { fetchMe } from '~/composables/useMe'
 import { useUserStore } from '~/stores/user'
 import { useMemberStore } from '~/stores/member'
 
-export const useSpammerStore = defineStore({
-  id: 'spammer',
+export const useSpammerStore = defineStore('spammer', {
   state: () => ({
     // Use array because we need to store them in the order returned by the server.
     list: [],
@@ -159,11 +159,15 @@ export const useSpammerStore = defineStore({
         )
         return
       }
-      await api(this.config).spammers.patch({
-        id: params.id,
-        userid: params.userid,
-        collection: 'Spammer',
-      })
+      await runHoldAware(
+        () =>
+          api(this.config).spammers.patch({
+            id: params.id,
+            userid: params.userid,
+            collection: 'Spammer',
+          }),
+        () => this.fetch({ collection: 'PendingAdd' })
+      )
 
       await fetchMe(true)
 
@@ -211,13 +215,17 @@ export const useSpammerStore = defineStore({
         )
         return
       }
-      await api(this.config).spammers.patch({
-        id: params.id,
-        userid: params.userid,
-        reason: params.reason,
-        collection: 'PendingAdd',
-        heldby: params.myid,
-      })
+      await runHoldAware(
+        () =>
+          api(this.config).spammers.patch({
+            id: params.id,
+            userid: params.userid,
+            reason: params.reason,
+            collection: 'PendingAdd',
+            heldby: params.myid,
+          }),
+        () => this.fetch({ collection: 'PendingAdd' })
+      )
 
       this.context = null
 

@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ref } from 'vue'
 import NewsAlert from '~/components/NewsAlert.vue'
 
 const mockById = vi.fn()
+const mockChitChatMod = ref(false)
+
+vi.mock('~/composables/useMe', () => ({
+  useMe: () => ({
+    chitChatMod: mockChitChatMod,
+  }),
+}))
 
 vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => ({
@@ -30,6 +38,7 @@ describe('NewsAlert', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockChitChatMod.value = false
     mockById.mockReturnValue(mockNewsfeed)
   })
 
@@ -103,6 +112,21 @@ describe('NewsAlert', () => {
     it('shows news love comment component', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.news-love-comment').exists()).toBe(true)
+    })
+
+    it('does not show the area to an ordinary member', () => {
+      // Members see the alerts for their own area, so naming it adds nothing.
+      mockById.mockReturnValue({ ...mockNewsfeed, location: 'Penzance' })
+      const wrapper = createWrapper()
+      expect(wrapper.text()).not.toContain('Penzance')
+    })
+
+    it('shows the area to a ChitChat moderator', () => {
+      // Reviewing posts from all over the country is meaningless without it.
+      mockChitChatMod.value = true
+      mockById.mockReturnValue({ ...mockNewsfeed, location: 'Penzance' })
+      const wrapper = createWrapper()
+      expect(wrapper.text()).toContain('Penzance')
     })
   })
 

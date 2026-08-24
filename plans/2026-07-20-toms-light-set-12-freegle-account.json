@@ -1,0 +1,122 @@
+[
+ {
+  "ref": "NT1",
+  "theme": "Work",
+  "name": "Local people employed or retained",
+  "proxy": 44992.42,
+  "units": "no. people FTE",
+  "definition": "This Measure covers the employment of local people. Qualifying employees must live in the local area, have an employment contract that reflects the hours they regularly work with a guaranteed minimum working time of 16 hours per week and at least 4 weeks of notice for shifts in the working pattern. The Full Time Equivalent (FTE) calculation must be derived from the length of the employment contract within the reporting period. The Measure requires a definition of the local area.",
+  "unit_guidance": "No. people (FTE) * length of contract (in years) where the maximum number of FTE per person per year is 1.0;  A full-time equivalent (FTE) of 1.0 corresponds to having one person employed at least 35 hours per week for a period of 12 months. If they are employed for a shorter period, the FTE should be calculated at a proportional rate.",
+  "evidence": "(1) Forecast number of relevant local people to be employed or retained. (2) Expected employment duration and type (full time or part time) per person. (3) Any initiatives or recruitment programmes that will be used to employ local people. (4) Names of any proposed partner organisations if known."
+ },
+ {
+  "ref": "NT3",
+  "theme": "Work",
+  "name": "Long-term unemployed people recruited",
+  "proxy": 51561.0,
+  "units": "no. people FTE",
+  "definition": "This Measure covers the employment of a person who can be classified as 'Long-term unemployed'. Qualifying employees will have been unemployed for a year or more. The Measure can only be used once per qualifying employee, for the first year of their employment, and does not include students.",
+  "unit_guidance": "No. people FTE (capped at 1 year per employee); A full-time equivalent (FTE) of 1.0 corresponds to having one person employed at least 35 hours per week for a period of 12 months. If they are employed for a shorter period, the FTE should be calculated at a proportional rate.",
+  "evidence": "(1) Forecast number of relevant future employees (Long-term unemployed). (2) Expected employment duration and type (full time or part time) per person. (3) Any initiatives or recruitment programmes that will be used to employ Long-term unemployed people. (4) Names of any proposed partner organisations if known."
+ },
+ {
+  "ref": "NT9",
+  "theme": "Work",
+  "name": "Accredited training for new employees",
+  "proxy": 347.0,
+  "units": "no. weeks",
+  "definition": "This Measure covers new employment with accredited vocational training. Qualifying courses are at level 2 or higher such as: BTEC, City & Guilds, NVQ, HNC, RQF or T-levels. Courses must be completed by the employee and supported by the organisation until qualification is attained. This Measure can only be used to record training opportunities for new employees, not existing employees.",
+  "unit_guidance": "Training Weeks; No. weeks of training per person. A week has to include at least 3 training days per week; weeks with fewer training days can only be counted pro rata (total course days divided by 5).",
+  "evidence": "(1) Forecast number of people on relevant vocational training courses. (2) Expected number of weeks spent on each course per person. (3) Qualification level for each course. (4) Name of accredited training provider(s) if available."
+ },
+ {
+  "ref": "NT10",
+  "theme": "Work",
+  "name": "Employment of new apprentices",
+  "proxy": 309.73,
+  "units": "no. weeks",
+  "definition": "This Measure covers the employment of new apprentices at level 2 or higher. Qualifying apprenticeships must follow an established path of progression to ensure timely completion and should be supported by the organisation until complete. This Measure can only be used to record opportunities for new employees and not upskilling for existing employees.",
+  "unit_guidance": "Employment Weeks; No. weeks of apprenticeship training per person.",
+  "evidence": "(1) Forecast number of relevant people (apprentices) to be employed. (2) Expected relevant working time (weeks spent on apprenticeship) per person. (3) Expected qualification level for each apprentice. (4) Name of accredited training provider for each apprentice if known."
+ },
+ {
+  "ref": "NT11",
+  "theme": "Work",
+  "name": "Personalised support to help unemployed people into work",
+  "proxy": 110.99,
+  "units": "no. hrs (total session duration)*no. attendees",
+  "definition": "This Measure covers the provision of expert-led personalised support to help unemployed people gain work (not including students). Examples include career mentoring, mock interviews, CV advice, careers guidance, etc. Group sessions must be of a small enough size to allow recipients to receive personalised support based on their individual and specific needs. Training can be delivered online or in person. An employee's hours can only be recorded if they have been allocated time during paid working hours or time off in lieu.",
+  "unit_guidance": "Attendee Hours; No. attendees * Session duration (in hours).",
+  "evidence": "(1) Forecast number of sessions, number of people receiving training and session duration. (2) Description of relevant activity/activities to be delivered, including confirmation that content will be personalised to individual needs. (3) Names of any proposed partner organisations if known."
+ },
+ {
+  "ref": "NT8",
+  "theme": "Work",
+  "name": "Support for students at local educational institutions",
+  "proxy": 17.48,
+  "units": "no. staff volunteering hours",
+  "definition": "This Measure covers staff volunteering with pupils and students of local educational institutions. Qualifying activities include corporate presentations, preparing and delivering career talks, curriculum support, literacy support, and specific industry talks.  They can take place virtually as well as onsite. Recorded hours of staff time can only include time spent preparing and conducting the activities. An employee's volunteering hours can only be recorded if they have been allocated time during paid working hours or time off in lieu.",
+  "unit_guidance": "Volunteering Hours; No. volunteering hours per employee per event.",
+  "evidence": "(1) Forecast number of staff hours. (2) Description of the types of curriculum support activities to be delivered. (3) Names of proposed educational establishments if known."
+ },
+ {
+  "ref": "NT18",
+  "theme": "Economy",
+  "name": "Spend with local companies in the supply chain",
+  "proxy": 0.0,
+  "units": "\u00a3",
+  "definition": "This Measure covers spend with local suppliers and reflects the economic and social benefits to the local community. It allows for adjustment by local area and industry. The Measure requires a definition of the local area.",
+  "unit_guidance": "Total amount of \u00a3 spent with the supply chain within the defined local area.",
+  "evidence": "(1) Forecast \u00a3 to be spent with suppliers in the defined local area. (2) Types of goods/services, and estimated proportions, to be procured. (3) Names of proposed suppliers if known."
+ },
+ {
+  "ref": "NT15",
+  "theme": "Economy",
+  "name": "Expert support to VCSEs and SMEs",
+  "proxy": 106.34,
+  "units": "no. staff expert hours",
+  "definition": "This Measure covers employees providing their expertise to Voluntary, Community and Social Enterprises (VCSEs) or Small and Medium Enterprises (SMEs). Qualifying activities include a range of expert-led sessions offering specialist business advice that builds the capacity of VCSEs and SMEs. Recorded hours of staff time can only include time spent preparing and conducting the activities. An employee's expert hours can only be recorded if they have been allocated time during paid working hours or time off in lieu.",
+  "unit_guidance": "Expert Hours; No. expert hours per employee per event.",
+  "evidence": "(1) Forecast number of employee hours and their relevant qualification/role. (2) Description of the expert support to be provided. (3) Names of organisations to benefit from the advice if known."
+ },
+ {
+  "ref": "NT28",
+  "theme": "Community",
+  "name": "Support for local community projects through donations",
+  "proxy": 1.0,
+  "units": "\u00a3 invested",
+  "definition": "This Measure covers financial and in-kind contributions to a range of initiatives aimed at improving the welfare and wellbeing of a community.  These include financial and in-kind contributions to community projects and can be run in partnership with a VCSE or as part of a company programme.  Each of the types of support offered should be recorded separately in the appropriate categories.",
+  "unit_guidance": "Total \u00a3 invested; Including cash, equipment, and use of assets (e.g., space).",
+  "evidence": "(1) Forecast resources to be invested. (2) Description of the types of initiatives planned. (3) Names of any proposed partner organisations if known."
+ },
+ {
+  "ref": "NT29",
+  "theme": "Community",
+  "name": "Support for local community projects through volunteering",
+  "proxy": 17.48,
+  "units": "no. staff volunteering hours",
+  "definition": "This Measure covers staff volunteering on local community projects. Qualifying activities include a range of initiatives geared at improving community wellbeing. These can be run in partnership with a VCSE or as part of a company programme based on local need. Recorded hours of staff time can only include time spent preparing and conducting the activities. An employee's volunteering hours can only be recorded if they have been allocated time during paid working hours or time off in lieu.",
+  "unit_guidance": "Volunteering Hours; No. volunteering hours per employee per event.",
+  "evidence": "(1) Forecast number of staff hours. (2) Description of the types of local community activities to be delivered. (3) Names of any proposed partner organisations if known."
+ },
+ {
+  "ref": "NT33",
+  "theme": "Planet",
+  "name": "Miles driven using Zero Emission Vehicles",
+  "proxy": 0.047,
+  "units": "miles driven",
+  "definition": "This Measure covers the miles driven by Zero Emission Vehicles (ZEV) instead of Internal Combustion Engine (ICE) vehicles. This Measure addresses miles driven for business use.",
+  "unit_guidance": "Accumulated miles; Miles driven with ZEVs instead of ICE vehicles.",
+  "evidence": "(1) Description of organisation's ZEV plan. (2) Forecast miles to be driven by ZEVs."
+ },
+ {
+  "ref": "NT117",
+  "theme": "Planet",
+  "name": "Support for environmental & biodiversity conservation",
+  "proxy": 1.0,
+  "units": "\u00a3 invested inc. time, materials, equipment etc",
+  "definition": "This Measure covers support for a range of initiatives aimed at the conservation of the natural environment and biodiversity. Supported initiatives must be expertly designed and take into account placement on different types of land, alternative use, climate change effects, biodiversity implications, etc., and can be run in partnership with a VCSE or as part of a company programme. Recorded hours of staff time can only include time spent preparing and conducting the activities. Each of the types of support offered should be recorded separately.",
+  "unit_guidance": "Total resources invested; Including cash, equipment, use of assets (e.g., space) and employee time (valued at the prevailing volunteering or expert hours rate).",
+  "evidence": "(1) Forecast resources to be invested. (2) Description of the types of initiatives planned. (3) Names of any proposed partner organisations if known."
+ }
+]

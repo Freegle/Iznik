@@ -33,21 +33,47 @@
           bg-colour="dark green"
           :position="index"
           :list-length="displayedJobs.length"
-          context="daslot"
+          :context="placement"
+          @clicked="onJobClicked"
         />
       </div>
     </div>
+    <!-- Always mounted; shown on-demand when a job is clicked and the cap allows. -->
+    <JobsFollowUpModal
+      ref="followUpModal"
+      :exclude-ids="displayedJobIds"
+      :placement="'modal_more_jobs'"
+    />
   </div>
 </template>
 <script setup>
-import { computed, onMounted, onBeforeUnmount, defineAsyncComponent } from 'vue'
+import {
+  computed,
+  ref,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+  defineAsyncComponent,
+} from 'vue'
 import { useJobStore } from '~/stores/job'
 import { useAuthStore } from '~/stores/auth'
+import { useJobsFollowUpModal } from '~/composables/useJobsFollowUpModal'
 const JobOne = defineAsyncComponent(() => import('./JobOne'))
+const JobsFollowUpModal = defineAsyncComponent(
+  () => import('./JobsFollowUpModal')
+)
 const NoticeMessage = defineAsyncComponent(() => import('./NoticeMessage'))
 const DonationButton = defineAsyncComponent(() => import('./DonationButton'))
 
 const props = defineProps({
+  // Which slot this instance is mounted in (sticky_footer_mobile/desktop,
+  // sidebar_left/right, ...). Threaded onto each job's click/impression so
+  // per-placement performance is measurable. Defaults to the legacy 'daslot'.
+  placement: {
+    type: String,
+    required: false,
+    default: 'daslot',
+  },
   minWidth: {
     type: String,
     required: false,
@@ -82,26 +108,45 @@ const emit = defineEmits(['rendered', 'borednow'])
 
 const jobStore = useJobStore()
 const authStore = useAuthStore()
+const { shouldShowModal, recordShown } = useJobsFollowUpModal()
 
-const me = authStore.user
-const lat = me?.lat
-const lng = me?.lng
+const followUpModal = ref(null)
 
-const location = computed(() => me?.settings?.mylocation?.name || null)
+// REACTIVE, deliberately. This used to be `const me = authStore.user` with `lat`/`lng`
+// as plain consts read once at setup, and a fetch that ran only if they happened to be
+// there at that instant. The sticky footer slot mounts with the layout, so whenever the
+// session had not hydrated yet - routinely in the app, which restores a token rather
+// than a cookie - lat/lng were undefined, the fetch never ran, and nothing ever
+// triggered a retry because a `computed` over a captured plain object cannot update.
+// The slot then rendered nothing while still reporting success (see below), leaving a
+// 123px grey band with no ad in it.
+const me = computed(() => authStore.user)
+const lat = computed(() => me.value?.lat)
+const lng = computed(() => me.value?.lng)
 
-if (location.value && lat && lng) {
-  try {
-    await jobStore.fetch(lat, lng)
-  } catch (e) {
-    console.log('Jobs fetch failed', e)
-  }
-}
+const location = computed(() => me.value?.settings?.mylocation?.name || null)
+
+// Fetch as soon as we have somewhere to fetch for, and again if the member moves.
+// immediate covers the case where the session was already there at setup.
+watch(
+  [location, lat, lng],
+  async ([loc, la, ln]) => {
+    if (!loc || !la || !ln) return
+
+    try {
+      await jobStore.fetch(la, ln)
+    } catch (e) {
+      console.log('Jobs fetch failed', e)
+    }
+  },
+  { immediate: true }
+)
 
 let refreshTimer = null
 const AD_REFRESH_TIMEOUT = 31000
 
 onMounted(() => {
-  emit('rendered', true)
+  emit('rendered', hasContent.value)
   refreshTimer = setTimeout(() => {
     // We only show the jobs for a while.  If people don't engage with them on initial page load they're not likely
     // to, so we might as well shift to showing other ads so that we get some revenue.
@@ -136,6 +181,36 @@ const list = computed(() => {
 const displayedJobs = computed(() => {
   return props.listOnly ? list.value.slice(0, 10) : list.value.slice(0, 20)
 })
+
+// Whether this slot is actually showing anything - the same condition as the template's
+// own v-if, so the two cannot disagree. Declared after `list` because the watch below
+// reads it immediately, and `list` is a const in the same setup scope.
+const hasContent = computed(() => Boolean(location.value && list.value.length))
+
+// Report what we ACTUALLY rendered. An unconditional emit('rendered', true) in onMounted
+// is what left a 123px grey band with nothing in it at the bottom of every page whose
+// jobs list was empty: ExternalDa believed an ad had rendered, so LayoutCommon set
+// stickyAdRendered=1, reserved the height, applied the .sticky-ad-zone tint and showed
+// the "Hate ads?" CTA - while the collapse path (.adNotShown, padding-bottom 0) needs
+// stickyAdRendered === 0 and so could never fire.
+//
+// Re-emitted on change because the jobs arrive asynchronously: the first answer is
+// usually "nothing yet" and the caller has to hear the second one.
+watch(hasContent, (has) => emit('rendered', has))
+
+/* IDs of the jobs currently displayed in this slot, passed to the modal so
+ * it can exclude them and show different ads. */
+const displayedJobIds = computed(() => displayedJobs.value.map((j) => j.id))
+
+/* Called when a JobOne inside this slot emits 'clicked'. Check the frequency
+ * cap; if allowed, open the follow-up modal with the remaining jobs. */
+function onJobClicked(clickedId) {
+  if (!shouldShowModal()) {
+    return
+  }
+  followUpModal.value?.show(clickedId, props.placement)
+  recordShown()
+}
 </script>
 <style scoped lang="scss">
 @import 'bootstrap/scss/functions';
@@ -144,9 +219,26 @@ const displayedJobs = computed(() => {
 
 .jobs-slot {
   width: 100%;
-  background: $white;
-  border: 1px solid $gray-200;
+  /* Muted so the job-ads block reads as distinct sponsored content and separates
+     from the mobile nav bar, which is pure white and sits directly above it.
+     $color-gray--lighter (#F5F5F5) was too close to white to do that - against
+     the white bar the two ran together into one surface. */
+  background: $gray-200;
+  border: 1px solid $gray-300;
   overflow-y: auto;
+}
+
+/* JobOne paints its rows white, which covered the muted background above and
+   left the block looking white again. Inside this slot the rows sit ON the
+   muted background instead; elsewhere (the /jobs page, the sidebar) they keep
+   their own white. */
+.jobs-slot :deep(.job-summary) {
+  background: transparent;
+
+  &:hover,
+  &:focus-visible {
+    background: $gray-300;
+  }
 }
 
 .jobs-slot-header {
@@ -154,11 +246,13 @@ const displayedJobs = computed(() => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.6rem 0.75rem;
-  background: $gray-100;
+  /* Sits a step darker than the body so the block reads as a labelled panel
+     rather than a lighter strip inside a darker one. */
+  background: $gray-300;
   color: $gray-700;
   font-weight: 600;
   font-size: 0.85rem;
-  border-bottom: 1px solid $gray-200;
+  border-bottom: 1px solid $gray-400;
 }
 
 .jobs-slot-icon {

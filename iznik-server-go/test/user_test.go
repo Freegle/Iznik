@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	user2 "github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/location"
 	"github.com/freegle/iznik-server-go/user"
+	user2 "github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -321,6 +322,43 @@ func TestInventNameFallsBackToGeneratedName(t *testing.T) {
 	// With no email, GenerateName() is used — result should be a non-empty plausible word.
 	assert.NotEmpty(t, u.Displayname)
 	assert.NotEqual(t, "A freegler", u.Displayname)
+}
+
+func TestInventNameRejectsAuthorityEmailLocalPart(t *testing.T) {
+	db := database.DBConn
+
+	// Role addresses like info@ are common, and "info" is an authority word, so
+	// SanitizeDisplayName rewrites it to "A freegler" on every read. Storing it
+	// would strand the user there permanently: InventName only runs when the
+	// stored fullname is "A freegler", which it no longer would be.
+	db.Exec("INSERT INTO users (fullname, systemrole) VALUES ('A freegler', 'User')")
+	var targetID uint64
+	db.Raw("SELECT id FROM users ORDER BY id DESC LIMIT 1").Scan(&targetID)
+	require.NotZero(t, targetID)
+
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, 'info@example.com', 1)", targetID)
+
+	prefix := uniquePrefix("invent_authority")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	_, viewerToken := CreateTestSession(t, viewerID)
+
+	url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, viewerToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	assert.NoError(t, err)
+	assert.NotEqual(t, "info", u.Displayname, "an authority local part must not be used as the invented name")
+	assert.NotEqual(t, "A freegler", u.Displayname)
+	assert.NotEmpty(t, u.Displayname)
+
+	// The name we stored must be one that survives sanitisation, otherwise the
+	// next read shows "A freegler" again with no way back.
+	var storedFullname string
+	db.Raw("SELECT fullname FROM users WHERE id = ?", targetID).Scan(&storedFullname)
+	assert.Equal(t, u.Displayname, storedFullname)
 }
 
 func TestGetUsersBatch(t *testing.T) {
@@ -1814,6 +1852,170 @@ func TestPostUserUnbounceNotAdmin(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+// TestPostUserUnbounceSelf verifies that a regular member can unbounce
+// themselves — the self-service "Try again" button in their own Settings
+// (AccountSection.vue). Regression: the handler required admin/support, so a
+// bouncing member clicking "Try again" always got a 403. It must also clear the
+// per-email users_emails.bounced timestamp, not just users.bouncing.
+func TestPostUserUnbounceSelf(t *testing.T) {
+	prefix := uniquePrefix("unbounceself")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, userToken := CreateTestSession(t, userID)
+
+	// Mark the user (and their email) as bouncing.
+	db.Exec("UPDATE users SET bouncing = 1 WHERE id = ?", userID)
+	db.Exec("UPDATE users_emails SET bounced = NOW() WHERE userid = ?", userID)
+
+	payload := map[string]interface{}{
+		"action": "Unbounce",
+		"id":     userID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+userToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Both the user-level flag and the per-email timestamp must be cleared.
+	var bouncing bool
+	db.Raw("SELECT bouncing FROM users WHERE id = ?", userID).Scan(&bouncing)
+	assert.False(t, bouncing)
+
+	var bouncedCount int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND bounced IS NOT NULL", userID).Scan(&bouncedCount)
+	assert.Equal(t, int64(0), bouncedCount)
+}
+
+// TestPostUserUnsubscribeBySupportRemovesMembership verifies that a Support user clicking
+// "Unsubscribe" in the Support tools removes the target user's memberships and marks their
+// account as deleted (limbo). Regression: POST /user action=Unsubscribe was missing from
+// PostUser's switch, returning "Unknown action" so nothing happened (Discourse #9738 post 1).
+func TestPostUserUnsubscribeBySupportRemovesMembership(t *testing.T) {
+	prefix := uniquePrefix("unsub_support")
+	db := database.DBConn
+
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Verify member exists before unsubscribe.
+	var memberBefore int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+		targetID, groupID).Scan(&memberBefore)
+	assert.Equal(t, int64(1), memberBefore, "setup: target must be a member before unsubscribe")
+
+	payload := map[string]interface{}{
+		"action": "Unsubscribe",
+		"id":     targetID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+supportToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Membership must be removed.
+	var memberAfter int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+		targetID, groupID).Scan(&memberAfter)
+	assert.Equal(t, int64(0), memberAfter, "Unsubscribe must remove the approved membership")
+
+	// User account must be in limbo (deleted set).
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", targetID).Scan(&deleted)
+	assert.NotNil(t, deleted, "Unsubscribe must mark the user account as deleted (limbo)")
+
+	// A log entry must exist for the unsubscribe.
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'User' AND subtype = 'Deleted' AND user = ? AND byuser = ?",
+		targetID, supportID).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Unsubscribe must create a User/Deleted log entry")
+}
+
+// TestLimboUserLogsGroupLeft verifies that self-deleting an account (DELETE /user)
+// writes a Group/Left log entry for each group the user belonged to.
+// Regression guard for Discourse #9678 post 2: V1 parity requires per-group Left logs.
+func TestLimboUserLogsGroupLeft(t *testing.T) {
+	prefix := uniquePrefix("limbo_grplft")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	req := httptest.NewRequest("DELETE", "/api/user?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'Group' AND subtype = 'Left' AND user = ? AND groupid = ?",
+		userID, groupID).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "account deletion must log Group/Left for each group the user belonged to (V1 parity)")
+}
+
+// TestUnsubscribeLogsGroupLeft verifies that the Support-tools Unsubscribe action
+// also writes a Group/Left log entry per group (same softLimboUser path).
+// Regression guard for Discourse #9678 post 2.
+func TestUnsubscribeLogsGroupLeft(t *testing.T) {
+	prefix := uniquePrefix("unsub_grplft")
+	db := database.DBConn
+
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	payload := map[string]interface{}{"action": "Unsubscribe", "id": targetID}
+	s, _ := json.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/user?jwt="+supportToken, bytes.NewBuffer(s))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'Group' AND subtype = 'Left' AND user = ? AND groupid = ?",
+		targetID, groupID).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Unsubscribe must log Group/Left for each group the user belonged to (V1 parity)")
+}
+
+// TestPostUserUnsubscribeNonSupportForbidden verifies that a regular user cannot unsubscribe
+// another user via POST /user action=Unsubscribe.
+func TestPostUserUnsubscribeNonSupportForbidden(t *testing.T) {
+	prefix := uniquePrefix("unsub_noperm")
+	callerID := CreateTestUser(t, prefix+"_caller", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	_, callerToken := CreateTestSession(t, callerID)
+
+	payload := map[string]interface{}{
+		"action": "Unsubscribe",
+		"id":     targetID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+callerToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
 func TestPostUserMerge(t *testing.T) {
 	prefix := uniquePrefix("merge")
 	db := database.DBConn
@@ -2741,7 +2943,8 @@ func TestGetUserFetchMT_MessageHistoryForMod(t *testing.T) {
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	CreateTestMembership(t, posterID, groupID, "Member")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, modToken := CreateTestSession(t, modID)
@@ -4140,7 +4343,8 @@ func TestRecentWanted_GoAPI_ExcludesNonApproved(t *testing.T) {
 
 	groupID := CreateTestGroup(t, prefix)
 	posterID := CreateTestUser(t, prefix+"_poster", "User")
-	modID := CreateTestUser(t, prefix+"_mod", "User")
+	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	CreateTestMembership(t, posterID, groupID, "Member")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, modToken := CreateTestSession(t, modID)
@@ -4228,4 +4432,548 @@ func TestRecentWanted_GoAPI_ExcludesNonApproved(t *testing.T) {
 	assert.True(t, postdateFieldExists,
 		"messagehistory entries must include 'postdate' field (bug: Go API returns 'arrival' only; "+
 			"frontend uses msg.postdate → dayjs(undefined) = current time instead of original arrival)")
+}
+
+// Under rippling-out a post's reach follows the poster's declared location, so a member who keeps
+// changing location is the spam vector that group-spread (activedistance) used to be. The mod user
+// info therefore exposes a count of distinct postcodes the member set in the last 90 days, gated to
+// moderators of the member (and self/admin), like activedistance.
+func TestUserLocationChangesModInfo(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("locchg")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	// Three distinct postcodes within the window, a duplicate (must not double-count) and one older
+	// than 90 days (must be excluded).
+	for _, pc := range []string{"AB1 1AA", "AB2 2BB", "AB3 3CC", "AB3 3CC"} {
+		db.Exec("INSERT INTO logs (type, subtype, user, byuser, text, timestamp) "+
+			"VALUES ('User', 'PostcodeChange', ?, ?, ?, NOW())", targetID, targetID, pc)
+	}
+	db.Exec("INSERT INTO logs (type, subtype, user, byuser, text, timestamp) "+
+		"VALUES ('User', 'PostcodeChange', ?, ?, 'OLD9 9ZZ', NOW() - INTERVAL 91 DAY)", targetID, targetID)
+	defer db.Exec("DELETE FROM logs WHERE user = ? AND subtype = 'PostcodeChange'", targetID)
+
+	t.Run("Moderator sees distinct 90-day location-change count", func(t *testing.T) {
+		url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modToken)
+		resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var u user2.User
+		err = json.NewDecoder(resp.Body).Decode(&u)
+		assert.NoError(t, err)
+		assert.Equal(t, targetID, u.ID)
+		assert.NotNil(t, u.Locationchanges, "mod should see the location-change count")
+		assert.Equal(t, 3, *u.Locationchanges, "3 distinct postcodes in 90 days; duplicate and old one excluded")
+	})
+
+	t.Run("Without modtools the count is not computed", func(t *testing.T) {
+		url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, modToken)
+		resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var u user2.User
+		err = json.NewDecoder(resp.Body).Decode(&u)
+		assert.NoError(t, err)
+		assert.Nil(t, u.Locationchanges, "non-modtools fetch omits the location-change count")
+	})
+}
+
+// TestGetUserMessageHistory_IncludesPending verifies that Pending messages appear in the
+// messagehistory returned by GET /api/user/:id?modtools=true.
+//
+// ModTools duplicate detection (ModMessage.vue checkHistory) relies on messagehistory to
+// flag a new Pending post as a duplicate of a prior pending post from the same user.
+// Commit b277d9fab added AND mg.collection='Approved' to GetUserMessageHistory, which
+// broke this: Pending messages were silently excluded so no duplicate was ever flagged.
+// (Discourse 9518/341)
+//
+// This test asserts the FIXED behaviour (FAILS on buggy code, PASSES after fix).
+func TestGetUserMessageHistory_IncludesPending(t *testing.T) {
+	prefix := uniquePrefix("msghistory_pending")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	// A real group moderator has systemrole=Moderator (synced by SyncSystemRole in production).
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Insert a Pending message — simulates a post awaiting moderation.
+	pendingSubject := prefix + " OFFER free bike"
+	db.Exec(
+		"INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', NOW())",
+		posterID, pendingSubject)
+	var pendingMsgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, pendingSubject).Scan(&pendingMsgID)
+	require.NotZero(t, pendingMsgID, "pending message must be created")
+	db.Exec(
+		"INSERT INTO messages_groups (msgid, groupid, arrival, collection) "+
+			"VALUES (?, ?, NOW(), 'Pending')",
+		pendingMsgID, groupID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", pendingMsgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", pendingMsgID)
+	})
+
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var raw map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&raw)
+	require.NoError(t, err)
+
+	// messagehistory is omitted (omitempty) when empty; nil means no history was returned.
+	pendingFound := false
+	if histRaw, exists := raw["messagehistory"]; exists {
+		if history, ok := histRaw.([]interface{}); ok {
+			for _, h := range history {
+				entry, _ := h.(map[string]interface{})
+				id := uint64(entry["id"].(float64))
+				if id == pendingMsgID {
+					pendingFound = true
+				}
+			}
+		}
+	}
+
+	// FIXED behaviour: Pending must appear so checkHistory() in ModMessage.vue can flag it
+	// as a duplicate. FAILS on code with mg.collection='Approved' filter.
+	assert.True(t, pendingFound,
+		"Pending message must appear in messagehistory for duplicate detection "+
+			"(regression: b277d9fab added mg.collection='Approved' filter that excludes Pending)")
+}
+
+// TestMessageHistory_NoDuplicatesOnRepost covers Discourse #9672 post 3.
+//
+// Root cause: GetUserMessageHistory LEFT JOINed messages_postings without a
+// groupid constraint (mp ON mp.msgid = m.id).  A message reposted N times has N
+// rows in messages_postings; the unconstrained JOIN fans those rows out into N
+// duplicate history entries per (message, group) pair, causing the "duplicated
+// and incomplete" posting history the reporter sees when filtering by a specific
+// community group in ModPostingHistoryModal.
+//
+// Fix: replace the JOIN with a correlated subquery
+//
+//	COALESCE((SELECT MAX(mp.date) ... WHERE mp.msgid = m.id AND mp.groupid = mg.groupid), m.arrival)
+//
+// which produces exactly one row per (message, group) and uses only postings
+// for that specific group (no cross-group contamination of arrival dates).
+func TestMessageHistory_NoDuplicatesOnRepost(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mh_dup")
+
+	userID := CreateTestUser(t, prefix, "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Table", 55.9533, -3.1883)
+
+	// Insert two messages_postings rows for the same (msgid, groupid): the initial
+	// post and one autorepost — exactly the pattern the real submit+repost path
+	// produces.  Before the fix, the LEFT JOIN fans these into 2 history rows.
+	db.Exec("INSERT INTO messages_postings (msgid, groupid, repost, autorepost) VALUES (?, ?, 0, 0)", msgID, groupID)
+	db.Exec("INSERT INTO messages_postings (msgid, groupid, repost, autorepost) VALUES (?, ?, 1, 1)", msgID, groupID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_postings WHERE msgid = ?", msgID)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var count int
+	for _, h := range history {
+		if h.ID == msgID && h.Groupid == groupID {
+			count++
+		}
+	}
+
+	assert.Equal(t, 1, count,
+		"exactly one messagehistory entry per (msgID, groupID) regardless of repost count")
+}
+
+// TestMessageHistory_NoDuplicatesOnRipple: a post rippled OUT to other groups gets
+// an extra messages_groups row (rippled_in=1) per receiving group. The posting
+// history must count the origin only, so a widely-rippled post appears ONCE - not
+// once per group (Discourse #9851 / the 23x Posting History for a bulk offer).
+func TestMessageHistory_NoDuplicatesOnRipple(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mh_ripple")
+
+	userID := CreateTestUser(t, prefix, "User")
+	originGroup := CreateTestGroup(t, prefix)
+	rippledGroup := CreateTestGroup(t, prefix+"r")
+
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Table", 55.9533, -3.1883)
+
+	// Rippling-out: an Approved messages_groups row (rippled_in=1) on a receiving group.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, deleted, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var count int
+	for _, h := range history {
+		if h.ID == msgID {
+			count++
+		}
+	}
+
+	assert.Equal(t, 1, count,
+		"a post rippled to another group appears once in posting history, not per group")
+}
+
+// TestUserInfo_OfferCountNotInflatedByRipple guards the COUNT(DISTINCT) fix in
+// GetUserInfo: a post rippled to N groups counts as ONE offer, not N (Discourse
+// #9851 - offer/wanted numbers showing incorrectly on chitchat).
+func TestUserInfo_OfferCountNotInflatedByRipple(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("info_ripple")
+
+	userID := CreateTestUser(t, prefix, "User")
+	originGroup := CreateTestGroup(t, prefix)
+	rippledGroup := CreateTestGroup(t, prefix+"r")
+
+	msgID := CreateTestMessage(t, userID, originGroup, prefix+" Chair", 55.9533, -3.1883)
+
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, deleted, rippled_in) VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, rippledGroup)
+	})
+
+	info := user2.GetUserInfo(userID, 0)
+	assert.Equal(t, uint64(1), info.Offers,
+		"a post rippled to another group counts as one offer, not per group")
+}
+
+// TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary covers Discourse #9783/7.
+//
+// "Strange case": a post is in Pending state (collection='Pending', mg.deleted=0,
+// m.deleted IS NULL) but also has an outcome='Withdrawn' in messages_outcomes.
+// This happens when a batch process (e.g. processExpiredFromSpatialIndex) records
+// a Withdrawn outcome for a post that remains in the Pending queue.
+//
+// Before PR #805 (commit 5bc319c1d): GetUserMessageHistory used mg.collection='Approved'
+// only, so such a post was invisible in Post Summary even though it appeared in the
+// Pending moderation queue.
+//
+// After PR #805: mg.collection IN ('Approved','Pending') - the post appears in Post
+// Summary with outcome='Withdrawn', consistent with what the Pending queue shows.
+//
+// This test asserts the FIXED behaviour and guards against regression.
+func TestGetUserMessageHistory_WithdrawnPendingAppearsInSummary(t *testing.T) {
+	prefix := uniquePrefix("mh_wdpend")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix, "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Create a Pending message (simulates a post awaiting mod approval).
+	subject := prefix + " OFFER free table"
+	db.Exec(
+		"INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', NOW())",
+		userID, subject)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		userID, subject).Scan(&msgID)
+	require.NotZero(t, msgID, "test message must be created")
+	db.Exec(
+		"INSERT INTO messages_groups (msgid, groupid, arrival, collection) VALUES (?, ?, NOW(), 'Pending')",
+		msgID, groupID)
+
+	// Record a Withdrawn outcome WITHOUT soft-deleting messages_groups or messages.
+	// This is the "strange case" from Discourse #9783/7: a batch process can insert
+	// an outcome row without cleaning up the Pending row, so the post remains visible
+	// in the Pending queue while carrying a Withdrawn outcome.
+	db.Exec(
+		"INSERT INTO messages_outcomes (msgid, outcome, comments, timestamp) VALUES (?, 'Withdrawn', 'Auto-expired', NOW())",
+		msgID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var foundEntry *user2.UserMessageHistory
+	for i := range history {
+		if history[i].ID == msgID {
+			foundEntry = &history[i]
+			break
+		}
+	}
+
+	// FIXED: the post appears in history with the Withdrawn outcome so Post Summary
+	// is consistent with the Pending queue display.
+	// Would FAIL on code with mg.collection='Approved' only (pre-PR #805 regression).
+	require.NotNil(t, foundEntry,
+		"Pending post with Withdrawn outcome must appear in messagehistory "+
+			"(Discourse #9783/7: was invisible before PR #805 added COLLECTION_PENDING)")
+	require.NotNil(t, foundEntry.Outcome,
+		"outcome field must be non-nil for a post with a Withdrawn outcome row")
+	assert.Equal(t, "Withdrawn", *foundEntry.Outcome,
+		"outcome field must reflect the Withdrawn outcome from messages_outcomes")
+	assert.Equal(t, "Pending", foundEntry.Collection,
+		"collection field must reflect the Pending state of the messages_groups row")
+}
+
+// TestMessageHistory_ArrivalUsesLatestGroupPosting verifies that when a message
+// is posted to two groups and each group has its own messages_postings rows, the
+// arrival date returned for each group reflects only that group's most recent
+// posting date (no cross-group contamination).
+func TestMessageHistory_ArrivalUsesLatestGroupPosting(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mh_grp_arr")
+
+	userID := CreateTestUser(t, prefix, "User")
+	groupA := CreateTestGroup(t, prefix+"a")
+	groupB := CreateTestGroup(t, prefix+"b")
+
+	// Create message approved in both groups.
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" Chair", 55.9533, -3.1883)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// Group A had a posting 5 days ago; Group B had a posting 2 days ago.
+	db.Exec("INSERT INTO messages_postings (msgid, groupid, date, repost, autorepost) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 5 DAY), 0, 0)", msgID, groupA)
+	db.Exec("INSERT INTO messages_postings (msgid, groupid, date, repost, autorepost) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 2 DAY), 0, 0)", msgID, groupB)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_postings WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB)
+	})
+
+	history := user2.GetUserMessageHistory(userID)
+
+	var daysAgoA, daysAgoB int
+	var foundA, foundB bool
+	for _, h := range history {
+		if h.ID == msgID {
+			if h.Groupid == groupA {
+				foundA = true
+				daysAgoA = h.Daysago
+			} else if h.Groupid == groupB {
+				foundB = true
+				daysAgoB = h.Daysago
+			}
+		}
+	}
+
+	assert.True(t, foundA, "should have a history entry for groupA")
+	assert.True(t, foundB, "should have a history entry for groupB")
+	// Group A posting was 5 days ago; Group B posting was 2 days ago.
+	// Each should use only ITS OWN group's posting date.
+	assert.GreaterOrEqual(t, daysAgoA, 4, "groupA arrival should reflect its 5-day-old posting")
+	assert.LessOrEqual(t, daysAgoA, 6, "groupA arrival should reflect its 5-day-old posting")
+	assert.GreaterOrEqual(t, daysAgoB, 1, "groupB arrival should reflect its 2-day-old posting")
+	assert.LessOrEqual(t, daysAgoB, 3, "groupB arrival should reflect its 2-day-old posting")
+}
+
+// TestGetUserInfoOffersNotInflatedByRippling verifies that a single OFFER which has
+// rippled into extra groups is counted ONCE in the profile page's "info.offers" /
+// "info.openoffers" summary, not once per group it reached. Rippling-out adds an
+// Approved messages_groups row (rippled_in = 1) per group a post ripples into;
+// GetUserInfo's offers/wanteds query joins messages to messages_groups, so a naive
+// COUNT(*) fans out across those extra rows and inflates the count - the same
+// rippling pattern already fixed for the dashboard Popular Posts (0e639acdf) and the
+// mygroups browse count (9fda94a29).
+func TestGetUserInfoOffersNotInflatedByRippling(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("uinfo_ripple_off")
+
+	groupOrigin := CreateTestGroup(t, prefix+"Origin")
+	groupRippledA := CreateTestGroup(t, prefix+"RippledA")
+	groupRippledB := CreateTestGroup(t, prefix+"RippledB")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+
+	// Native OFFER on the origin group (origin row, rippled_in defaults to 0).
+	msgID := CreateTestMessage(t, posterID, groupOrigin, prefix+" OFFER: rippled item", 52.5, -1.8)
+
+	// Rippled into TWO further groups — Approved copies marked rippled_in = 1.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupRippledA)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupRippledB)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN (?, ?)", msgID, groupRippledA, groupRippledB)
+	})
+
+	url := fmt.Sprintf("/api/user/%d", posterID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(1), u.Info.Offers,
+		"a post rippled into extra groups must count once, not once per group it reached")
+	assert.Equal(t, uint64(1), u.Info.Openoffers,
+		"a post rippled into extra groups must count once in openoffers, not once per group it reached")
+}
+
+// TestGetUserInfoWantedsNotInflatedByRippling is the WANTED-side counterpart of
+// TestGetUserInfoOffersNotInflatedByRippling — the same query and switch statement in
+// GetUserInfo handles both message types, so both branches need coverage.
+func TestGetUserInfoWantedsNotInflatedByRippling(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("uinfo_ripple_wtd")
+
+	groupOrigin := CreateTestGroup(t, prefix+"Origin")
+	groupRippled := CreateTestGroup(t, prefix+"Rippled")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+
+	subject := prefix + " WANTED: rippled item"
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+		"VALUES (?, ?, 'body', 'body', 'Wanted', NOW())", posterID, subject)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, subject).Scan(&msgID)
+	require.NotZero(t, msgID, "wanted message must be created")
+
+	// Origin row (rippled_in = 0).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 0)", msgID, groupOrigin)
+	// Rippled-in copy (rippled_in = 1).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts, rippled_in) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0, 1)", msgID, groupRippled)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	})
+
+	url := fmt.Sprintf("/api/user/%d", posterID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	require.NoError(t, err)
+
+	assert.Equal(t, uint64(1), u.Info.Wanteds,
+		"a WANTED rippled into an extra group must count once, not once per group it reached")
+	assert.Equal(t, uint64(1), u.Info.Openwanteds,
+		"a WANTED rippled into an extra group must count once in openwanteds, not once per group it reached")
+}
+
+// A group moderator editing the settings of a member on a group they moderate is
+// allowed, and the change must actually persist to the target's row.
+func TestPatchUserSettingsBySharedGroupModPersists(t *testing.T) {
+	prefix := uniquePrefix("patchshared")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	db.Exec(`UPDATE users SET settings = '{"notifications":{"email":false}}' WHERE id = ?`, targetID)
+
+	payload := map[string]interface{}{
+		"id": targetID,
+		"settings": map[string]interface{}{
+			"notifications": map[string]interface{}{"email": true},
+		},
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var stored string
+	db.Raw("SELECT settings FROM users WHERE id = ?", targetID).Scan(&stored)
+	var settings map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(stored), &settings))
+	notifications, ok := settings["notifications"].(map[string]interface{})
+	require.True(t, ok, "notifications object should be present")
+	assert.Equal(t, true, notifications["email"], "shared-group mod's settings write must persist")
+}
+
+// enrichUserForModtools resolves privateposition.name via a "nearest Postcode-type
+// location" fallback when there is no cached settings.mylocation.name and no
+// lastlocation. That fallback used to run an unindexed bounding-box + distance-sort
+// query directly against `locations`; it now calls location.ClosestPostcode, the
+// same spatial-sidecar-backed helper already used for publiclocation (user.go:1077),
+// guarded by the old query's ~0.1-degree bounding box so a position with no postcode
+// that close shows nothing rather than one from miles away (the KNN itself has no
+// distance cap). One user is placed exactly at a postcode the sidecar knows (guard
+// passes, name resolves); another at a probe point whose nearest fixture postcode
+// is far outside the box (guard rejects, name stays empty).
+func TestPrivateLocationName_FallsBackToClosestPostcode(t *testing.T) {
+	prefix := uniquePrefix("privlocfallback")
+	db := database.DBConn
+
+	// Find some full postcode the sidecar's dataset and this DB both know, by
+	// probing from central London. The sparse test fixtures put the nearest one
+	// far away (Wales), which is exactly what the far-case below relies on.
+	probeLat, probeLng := float32(51.5), float32(-0.1)
+	pc := location.ClosestPostcode(probeLat, probeLng)
+	require.NotEmpty(t, pc.Name, "test precondition: spatial sidecar must resolve a postcode")
+
+	makeUser := func(tag string, lat, lng float32) uint64 {
+		db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+			"VALUES ('Test', ?, ?, 'User', NULL, ?)", prefix+tag, "Test User "+prefix+tag,
+			fmt.Sprintf(`{"mylocation":{"lat":%v,"lng":%v}}`, lat, lng))
+		var id uint64
+		db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", "Test User "+prefix+tag).Scan(&id)
+		require.Greater(t, id, uint64(0))
+		return id
+	}
+
+	// privatePositionName fetches the modtools self-view (which satisfies
+	// enrichUserForModtools' modDataAuthz gate) and returns privateposition.name.
+	privatePositionName := func(id uint64) interface{} {
+		_, token := CreateTestSession(t, id)
+		resp, _ := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", id, token), nil))
+		assert.Equal(t, 200, resp.StatusCode)
+		var result map[string]interface{}
+		json2.Unmarshal(rsp(resp), &result)
+		privPos, ok := result["privateposition"].(map[string]interface{})
+		require.True(t, ok, "Expected privateposition in modtools self-view response")
+		return privPos["name"]
+	}
+
+	// At the postcode itself: nearest is that postcode at ~zero distance, well
+	// inside the guard, so the name resolves.
+	nearID := makeUser("near", pc.Lat, pc.Lng)
+	assert.Equal(t, pc.Name, privatePositionName(nearID),
+		"privateposition.name should be the nearest postcode when within the distance guard")
+
+	// At the probe point: only run the far-case when the fixture set really does
+	// leave the probe outside the guard box (true today: nearest resolves to a
+	// Welsh postcode from a London probe), so adding closer fixtures later can't
+	// silently invert this assertion's meaning.
+	if float64(pc.Lat-probeLat) > 0.1 || float64(pc.Lat-probeLat) < -0.1 ||
+		float64(pc.Lng-probeLng) > 0.1 || float64(pc.Lng-probeLng) < -0.1 {
+		farID := makeUser("far", probeLat, probeLng)
+		assert.Empty(t, privatePositionName(farID),
+			"privateposition.name should stay empty when the nearest postcode is outside the guard box")
+	}
 }

@@ -1,8 +1,5 @@
 <template>
-  <div
-    v-observe-visibility="visibilityChanged"
-    :class="{ 'bg-info': scrollToThis }"
-  >
+  <div :class="{ 'deep-link-target': scrollToThis }">
     <div v-if="mod || myid === reply.userid || !reply.hidden" class="reply">
       <!-- More actions dropdown - positioned at top right of reply -->
       <button
@@ -59,8 +56,11 @@
         />
       </div>
       <div class="align-top reply-content">
+        <!-- text--small matches the message text so the name shares its
+             glyph size and baseline; without it the 1rem name floats above
+             the 0.9rem first line. -->
         <span
-          class="text-success fw-bold clickme"
+          class="text-success fw-bold clickme text--small"
           title="Click to see their profile"
           @click="showInfo"
           >{{ reply.displayname }}</span
@@ -89,24 +89,18 @@
             class="clickme replyphoto mt-2 mb-2"
             @click="showReplyPhotoModal"
           />
-          <NuxtPicture
-            v-else-if="reply?.image?.externaluid"
-            format="webp"
-            fit="cover"
-            provider="uploadcare"
-            :src="reply?.image?.externaluid"
-            :modifiers="reply?.image?.externalmods"
-            alt="ChitChat Photo"
-            :width="100"
-            class="clickme replyphoto mt-2 mb-2"
-            @click="showReplyPhotoModal"
-          />
         </div>
         <div v-if="userid" class="text-muted align-items-center">
           <span class="text-muted small me-1">
             <span class="d-none d-md-inline">{{ replyaddedago }}</span>
             <span class="d-md-none">{{ replyaddedagoShort }}</span>
           </span>
+          <span
+            v-if="isNew"
+            class="reply-new-pill ms-1 me-1"
+            aria-label="New reply"
+            >New</span
+          >
           <NewsUserInfo :id="id" class="me-1 d-inline" />
         </div>
         <div class="reply-actions">
@@ -162,13 +156,23 @@
         </div>
       </div>
     </div>
+    <!-- Forward rendered events from nested replies: without this the
+         notification deep-link scroll in NewsThread never hears about
+         depth 2+ replies mounting. When the nested list reports that its
+         whole subtree has mounted, this reply's subtree is complete too.
+         In the feed the children are suppressed and nothing stands in for
+         them here: recent ones are rows of their own in the card's
+         time-ordered tail, and the card's "View all N replies" link counts
+         and names the rest of the tree. -->
     <NewsReplies
-      v-if="reply?.replies?.length"
+      v-if="reply?.replies?.length && !suppressChildren"
       :id="id"
       :threadhead="threadhead"
       :scroll-to="scrollTo"
       :reply-to="reply.id"
       :depth="depth + 1"
+      @rendered="$emit('rendered', $event)"
+      @subtree-rendered="$emit('subtree-rendered', id)"
     />
     <div v-if="showReplyBox" class="mb-2 pb-1 ms-4">
       <div v-if="enterNewLine" class="w-100">
@@ -256,15 +260,12 @@
         </button>
       </div>
     </div>
-    <NuxtPicture
+    <OurUploadedImage
       v-if="imageuid"
-      format="webp"
-      fit="cover"
-      provider="uploadcare"
       :src="imageuid"
       :modifiers="imagemods"
       alt="ChitChat Photo"
-      width="100"
+      :width="100"
       class="mt-1 ms-4 image__uploaded"
     />
     <OurUploader
@@ -314,10 +315,17 @@ import {
   defineAsyncComponent,
   nextTick,
   onMounted,
+  onBeforeUnmount,
   watch,
 } from 'vue'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMiscStore } from '~/stores/misc'
+import {
+  scrollToAndPin,
+  imagesComplete,
+  whenImagesComplete,
+  whenAllSettled,
+} from '~/composables/useScrollAnchor'
 import { twem, untwem } from '~/composables/useTwem'
 import NewsUserInfo from '~/components/NewsUserInfo'
 import NewsHighlight from '~/components/NewsHighlight'
@@ -328,19 +336,19 @@ import AutoHeightTextarea from '~/components/AutoHeightTextarea'
 import { timeago, timeagoShort } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 
-const NewsPhotoModal = defineAsyncComponent(() =>
-  import('./NewsPhotoModal.vue')
+const NewsPhotoModal = defineAsyncComponent(
+  () => import('./NewsPhotoModal.vue')
 )
 const NewsLovesModal = defineAsyncComponent(() => import('./NewsLovesModal'))
 const NewsEditModal = defineAsyncComponent(() => import('./NewsEditModal'))
-const ConfirmModal = defineAsyncComponent(() =>
-  import('~/components/ConfirmModal.vue')
+const ConfirmModal = defineAsyncComponent(
+  () => import('~/components/ConfirmModal.vue')
 )
-const NewsReplies = defineAsyncComponent(() =>
-  import('~/components/NewsReplies.vue')
+const NewsReplies = defineAsyncComponent(
+  () => import('~/components/NewsReplies.vue')
 )
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const OurAtTa = defineAsyncComponent(() => import('~/components/OurAtTa'))
 
@@ -367,9 +375,18 @@ const props = defineProps({
     type: Number,
     required: true,
   },
+  // Feed cards render the recent part of a nested conversation as rows of the
+  // card's own tail rather than inline under the parent, so the inline list is
+  // suppressed to stop those replies appearing twice (set by NewsReplies in
+  // feed context).
+  suppressChildren: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
-const emit = defineEmits(['rendered', 'expand-combined'])
+const emit = defineEmits(['rendered', 'subtree-rendered', 'expand-combined'])
 
 // Stores
 const newsfeedStore = useNewsfeedStore()
@@ -399,12 +416,15 @@ const imagemods = ref(null)
 const showDeleteModal = ref(false)
 const showLoveModal = ref(false)
 const showEditModal = ref(false)
-const hasBecomeVisible = ref(false)
-const isVisible = ref(false)
 const showProfileModal = ref(false)
 const showNewsPhotoModal = ref(false)
 const currentAtts = ref([])
 const bump = ref(0) // Used to force re-renders
+// Guards sendReply against double-submit. The reply box binds Enter on BOTH keydown (parent div)
+// and keyup (textarea), so one Enter press can call sendReply twice; because replybox is only
+// cleared AFTER the async send, both calls pass the non-empty check and post twice, creating
+// duplicate replies (seen on live: newsfeed 613876/613879). Also covers double-click / slow network.
+const sending = ref(false)
 
 // Computed properties
 const enterNewLine = computed(() => {
@@ -418,6 +438,16 @@ const userid = computed(() => {
 const reply = computed(() => {
   /* Use passed replyData (for combined replies) or fall back to store lookup */
   return props.replyData || newsfeedStore?.byId(props.id)
+})
+
+/* Where a reply to this block should hang. Consecutive posts from one person are
+   shown as a single block that keeps the FIRST post's id, so replying to it used
+   to attach the reply to the first post - which then can't combine any more, and
+   the person's own run of posts ends up split apart by the reply sitting in the
+   middle of it. Attaching to the last post in the run keeps them in order. */
+const replyTarget = computed(() => {
+  const ids = props.replyData?.combinedIds
+  return ids?.length ? ids[ids.length - 1] : props.id
 })
 
 const replyaddedago = computed(() => {
@@ -465,7 +495,18 @@ const threadUsers = computed(() => {
 })
 
 const scrollToThis = computed(() => {
-  return parseInt(props.scrollTo) === props.id
+  const target = parseInt(props.scrollTo)
+  if (!target) return false
+  if (target === props.id) return true
+  // A combined block renders as one component keyed by its first id; a deep
+  // link to any of the later messages must still light this row up.
+  return !!reply.value?.combinedIds?.includes(target)
+})
+
+const isNew = computed(() => {
+  const seenBefore = newsfeedStore.seenBeforeVisit
+  if (!seenBefore) return false
+  return reply.value?.id > seenBefore
 })
 
 const getShowLovesLabel = computed(() => {
@@ -487,15 +528,6 @@ const hasMoreActions = computed(() => {
 
 // Watchers
 watch(
-  () => props.scrollTo,
-  (newVal) => {
-    if (parseInt(props.scrollTo) === props.id && scrollIntoView) {
-      scrollIntoView()
-    }
-  }
-)
-
-watch(
   currentAtts,
   (newVal) => {
     if (newVal.length > 0) {
@@ -508,11 +540,34 @@ watch(
   { deep: true }
 )
 
+// The pin this component started, if any, so unmount can stop it.
+let ownPin = null
+
 // Lifecycle hooks
 onMounted(() => {
   // This will get propogated up the stack so that we know if the reply to which we'd like to scroll has been
-  // rendered.  We'll then come through the watch above.
+  // rendered.  The deep-link scroll in NewsThread is driven by these events.
   emit('rendered', props.id)
+
+  // A combined block mounts once, keyed by its first id. Announce the later
+  // ids too, or a deep link to one of them never triggers the pin.
+  for (const cid of reply.value?.combinedIds || []) {
+    if (cid !== props.id) {
+      emit('rendered', cid)
+    }
+  }
+
+  // Completion signal for the deep-link pin: a reply with no children IS its
+  // whole subtree. With children, the nested <NewsReplies> reports when all
+  // of them (recursively) have mounted - forwarded below in the template.
+  // Suppressed children (feed context) never mount, so nothing to wait for.
+  if (!reply.value?.replies?.length || props.suppressChildren) {
+    emit('subtree-rendered', props.id)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (ownPin) ownPin()
 })
 
 // Methods
@@ -521,7 +576,7 @@ function showInfo() {
 }
 
 function focusedReply() {
-  replyingTo.value = props.id
+  replyingTo.value = replyTarget.value
   showReplyBox.value = true
 }
 
@@ -532,7 +587,7 @@ watch(replyboxref, (newVal, oldVal) => {
 })
 
 function replyReply() {
-  replyingTo.value = props.id
+  replyingTo.value = replyTarget.value
   showReplyBox.value = true
 
   // Reply with tag.
@@ -540,35 +595,91 @@ function replyReply() {
 }
 
 async function sendReply(callback) {
+  // Re-entrancy guard: a single Enter can fire this twice (keydown + keyup bindings); without this
+  // both would post before replybox is cleared, creating a duplicate reply.
+  if (sending.value) {
+    return
+  }
   // Encode up any emojis.
   if (replybox.value && replybox.value.trim()) {
-    const msg = untwem(replybox.value)
+    sending.value = true
+    try {
+      const msg = untwem(replybox.value)
 
-    await newsfeedStore.send(
-      msg,
-      replyingTo.value,
-      props.threadhead,
-      imageid.value
-    )
+      const newid = await newsfeedStore.send(
+        msg,
+        replyingTo.value,
+        props.threadhead,
+        imageid.value
+      )
 
-    // New message will be shown because it's in the store and we have a computed property.
+      // New message will be shown because it's in the store and we have a computed property.
+      //
+      // The refetch after send re-renders the thread in the server's new order
+      // (the server bumps the replied-to parent to the end), so the content
+      // under the viewport changes and the fresh reply can land off-screen.
+      // Keep the poster anchored to what they just wrote.
+      scrollReplyIntoView(newid)
 
-    // Clear and hide the textarea now it's sent.
-    replybox.value = null
-    showReplyBox.value = false
+      // Clear and hide the textarea now it's sent.
+      replybox.value = null
+      showReplyBox.value = false
 
-    // And any image id
-    imageid.value = null
-    imageuid.value = null
-    imagemods.value = null
+      // And any image id
+      imageid.value = null
+      imageuid.value = null
+      imagemods.value = null
 
-    // Force re-render. Store reactivity doesn't seem to work nicely with the nested reply structure we have.
-    bump.value++
+      // Force re-render. Store reactivity doesn't seem to work nicely with the nested reply structure we have.
+      bump.value++
+    } finally {
+      sending.value = false
+    }
   }
 
   if (typeof callback === 'function') {
     callback()
   }
+}
+
+function scrollReplyIntoView(id) {
+  if (!id) return
+  nextTick(() => {
+    // The pin re-resolves the selector on every correction, so it simply
+    // waits for the refetched thread to render the new reply, then holds it
+    // centered until the post-send refetch and image loads are complete.
+    ownPin = scrollToAndPin(
+      () => document.querySelector(`[data-reply-id="${id}"]`),
+      { block: 'center', done: contentSettled() }
+    )
+  })
+}
+
+// Resolves when nothing that could still move the layout is outstanding:
+// no in-flight API requests and no images still loading. Event-driven -
+// built on store reactivity and image load/error events, not timers.
+function contentSettled() {
+  return whenAllSettled([
+    {
+      ok: () => !miscStore.apiCount,
+      wait: () =>
+        new Promise((resolve) => {
+          const stop = watch(
+            () => miscStore.apiCount,
+            (n) => {
+              if (!n) {
+                stop()
+                resolve()
+              }
+            }
+          )
+        }),
+    },
+    {
+      ok: () => imagesComplete(),
+      wait: () => whenImagesComplete(),
+    },
+  ])
 }
 
 function newlineReply() {
@@ -649,43 +760,6 @@ function photoAdd() {
   uploading.value = true
 }
 
-function scrollIntoView() {
-  const api = miscStore.apiCount
-
-  if (api) {
-    // Try later
-    setTimeout(scrollIntoView, 100)
-  } else {
-    // No outstanding requests, so we can scroll.
-    const el = document.getElementById(`newsreply-${props.id}`)
-    if (el) {
-      el.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start',
-        inline: 'nearest',
-      })
-
-      nextTick(() => {
-        if (!isVisible.value) {
-          setTimeout(scrollIntoView, 200)
-        } else {
-          hasBecomeVisible.value = true
-        }
-      })
-    }
-  }
-}
-
-function visibilityChanged(visible) {
-  if (parseInt(props.scrollTo) === props.id && !hasBecomeVisible.value) {
-    isVisible.value = visible
-
-    if (!visible) {
-      scrollIntoView()
-    }
-  }
-}
-
 function showReplyPhotoModal() {
   showNewsPhotoModal.value = true
 }
@@ -702,9 +776,19 @@ function showReplyPhotoModal() {
   width: 100%;
 }
 
-.reply-content {
+/* Scope to the INNER text column only (the direct child of the .reply flex row). The
+   NewsReply component ROOT also carries the `reply-content` class (NewsReplies renders
+   <NewsReply class="reply-content">), and that root wraps the nested <NewsReplies>. If these
+   rules hit the root too, the padding-right (and flex/min-width) COMPOUND on every nesting
+   level, shifting each deeper reply progressively inward - the narrow, wasted-right-margin
+   ChitChat replies. Targeting `.reply > .reply-content` applies them once, to the text column. */
+.reply > .reply-content {
   flex: 1;
   min-width: 0;
+  /* Reserve a right-hand column so the inline name+text never runs under the
+     absolutely-positioned "..." menu (.reply-menu, right: -1rem). Without this
+     a long first line butts right against the dots (Discourse #9749). */
+  padding-right: 1.5rem;
 }
 
 /* Three dots menu - positioned at top right of the reply */
@@ -779,7 +863,9 @@ function showReplyPhotoModal() {
   font-size: 0.85rem;
   line-height: 1.2;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast),
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
     border-color var(--transition-fast);
 
   /* Smaller on xs screens */
@@ -823,7 +909,9 @@ function showReplyPhotoModal() {
   font-weight: 400 !important;
   text-decoration: none !important;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast),
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
     border-color var(--transition-fast);
 
   /* Respect Bootstrap display classes but use flexbox when visible */
@@ -892,7 +980,9 @@ function showReplyPhotoModal() {
   color: $color-gray--darker;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 
   &:hover {
     background: darken($color-gray--lighter, 5%);
@@ -921,5 +1011,48 @@ function showReplyPhotoModal() {
 
 :deep(.strike) {
   text-decoration: line-through;
+}
+
+.reply-new-pill {
+  display: inline-block;
+  padding: 0.1rem 0.375rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: $color-success-fg;
+  background: $color-success-bg;
+  border: 1px solid $color-success-border;
+  border-radius: 0.75rem;
+  vertical-align: middle;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* The reply a notification deep link points at. A brief flash draws the eye
+   on arrival, settling to a soft resting tint so the row stays identifiable.
+   Under reduced motion the flash is skipped but the resting cue remains.
+
+   Paint the reply ROW, not the component root: the root also wraps the nested
+   <NewsReplies>, the reply box and the uploader, so tinting it turned the whole
+   subtree green instead of marking the one reply the notification meant. */
+.deep-link-target > .reply {
+  background-color: rgba($color-success-bg, 0.35);
+  border-radius: 4px;
+
+  @media (prefers-reduced-motion: no-preference) {
+    animation: deep-link-flash 2.4s ease-out;
+  }
+}
+
+/* One hue start to finish. This used to open on $color-success-border (a mint
+   green) and settle on $color-success-bg (an olive one), so the flash read as
+   a colour change rather than a fade. */
+@keyframes deep-link-flash {
+  0% {
+    background-color: rgba($color-success-bg, 0.9);
+  }
+  100% {
+    background-color: rgba($color-success-bg, 0.35);
+  }
 }
 </style>

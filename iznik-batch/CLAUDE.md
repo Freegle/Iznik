@@ -5,7 +5,7 @@ This is the Laravel-based batch job processor for Freegle. It handles background
 ## Architecture
 
 - **Laravel 12** application with PHP 8.3+
-- Uses the main `iznik` database directly (same as iznik-server)
+- Uses the main `iznik` database directly (same as the legacy V1 PHP implementation)
 - PHPUnit tests use `iznik_batch_test` database
 - Uses MJML for email templates via the freegle-mjml HTTP server
 - Container name: `freegle-batch`
@@ -59,7 +59,7 @@ docker exec freegle-batch php artisan migrate:generate
 
 ## Email Guidelines
 
-**IMPORTANT:** Before migrating any email from iznik-server, read [EMAIL-MIGRATION-GUIDE.md](./EMAIL-MIGRATION-GUIDE.md) for lessons learned from previous migrations including common mistakes to avoid.
+**IMPORTANT:** Before migrating any email from the legacy V1 PHP implementation, read [EMAIL-MIGRATION-GUIDE.md](./EMAIL-MIGRATION-GUIDE.md) for lessons learned from previous migrations including common mistakes to avoid.
 
 - **Never use base64 data URIs in emails** - Gmail and most email clients strip them for security reasons. Use hosted image URLs instead.
 - Email images should be hosted on a CDN or web server and referenced via HTTPS URLs.
@@ -123,23 +123,23 @@ Spool directories:
 
 ## Reference Material
 
-When implementing services, check the PHPUnit tests in `iznik-server/test/ut/php` for the original business logic and schema usage. This helps understand the intention of the original code.
+When implementing services, check the legacy V1 PHP implementation's PHPUnit tests for the original business logic and schema usage. This helps understand the intention of the original code.
 
 ## Migration Rules
 
 **CRITICAL: Tests are specifications, not suggestions.**
 
-When migrating code from iznik-server to this Laravel application:
+When migrating code from the legacy V1 PHP implementation to this Laravel application:
 
 1. **Never change test assertions to make tests pass.** When a test fails, the test is telling you what the code _should_ do. The implementation must be fixed to match the test, not the other way around.
 
-2. **Always verify against iznik-server first.** Before changing any constant, enum value, or business logic, grep `iznik-server` to see what the original values/behavior are. The source of truth is always the PHP code in iznik-server, not database introspection or generated migrations.
+2. **Always verify against the legacy V1 PHP implementation first.** Before changing any constant, enum value, or business logic, check what the original values/behavior were. The source of truth is always the legacy V1 PHP implementation, not database introspection or generated migrations.
 
-3. **Fix the source, not the symptom.** If a migration is missing an enum value that iznik-server defines, fix the migration - don't remove the constant from the model.
+3. **Fix the source, not the symptom.** If a migration is missing an enum value that the legacy V1 PHP implementation defines, fix the migration - don't remove the constant from the model.
 
-4. **Red flag: changing test expectations.** Any time you're about to change what a test _expects_ (not how it sets up data), stop and verify the expected behavior against iznik-server before proceeding.
+4. **Red flag: changing test expectations.** Any time you're about to change what a test _expects_ (not how it sets up data), stop and verify the expected behavior against the legacy V1 PHP implementation before proceeding.
 
-5. **Document discrepancies.** If you find the database schema differs from iznik-server constants, document it and fix the migration rather than silently changing behavior.
+5. **Document discrepancies.** If you find the database schema differs from the legacy V1 PHP implementation's constants, document it and fix the migration rather than silently changing behavior.
 
 See `MIGRATION-STATUS.md` for progress tracking on migrating cron scripts.
 

@@ -7,10 +7,25 @@ import {
   watch,
   onMounted,
   onBeforeUnmount,
-  defineComponent,
   defineAsyncComponent,
-  h,
 } from 'vue'
+
+// ============================================
+// BROWSER API STUBS
+// ============================================
+// happy-dom lacks IntersectionObserver; components run their client-only
+// observer setup now that import.meta.client substitutes to true. Specs that
+// need to assert observer behaviour install their own richer mocks over this.
+if (!(globalThis as Record<string, unknown>).IntersectionObserver) {
+  ;(globalThis as Record<string, unknown>).IntersectionObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return []
+    }
+  }
+}
 
 // ============================================
 // VUE COMPOSITION API GLOBALS (for Nuxt auto-imports)
@@ -22,8 +37,8 @@ import {
 ;(globalThis as Record<string, unknown>).watch = watch
 ;(globalThis as Record<string, unknown>).onMounted = onMounted
 ;(globalThis as Record<string, unknown>).onBeforeUnmount = onBeforeUnmount
-;(globalThis as Record<string, unknown>).defineAsyncComponent = defineAsyncComponent
-
+;(globalThis as Record<string, unknown>).defineAsyncComponent =
+  defineAsyncComponent
 
 // ============================================
 // GLOBAL VARIABLE MOCKS (for pinia-plugin-persistedstate)
@@ -62,9 +77,15 @@ console.warn = (...args: unknown[]) => {
 // Mock useNuxtApp to provide $api and other injected services
 const mockApi = {
   dashboard: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
-  message: { fetch: vi.fn().mockResolvedValue({ data: {} }), fetchMultiple: vi.fn().mockResolvedValue([]) },
+  message: {
+    fetch: vi.fn().mockResolvedValue({ data: {} }),
+    fetchMultiple: vi.fn().mockResolvedValue([]),
+  },
   user: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
-  chat: { fetch: vi.fn().mockResolvedValue({ data: {} }), listChats: vi.fn().mockResolvedValue([]) },
+  chat: {
+    fetch: vi.fn().mockResolvedValue({ data: {} }),
+    listChats: vi.fn().mockResolvedValue([]),
+  },
   group: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
   news: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
   notification: { fetch: vi.fn().mockResolvedValue({ data: {} }) },
@@ -130,7 +151,8 @@ const mockNuxtApp = {
 ;(globalThis as Record<string, unknown>).navigateTo = vi.fn()
 
 // Mock defineNuxtPlugin (auto-imported by Nuxt, returns the plugin function as-is)
-;(globalThis as Record<string, unknown>).defineNuxtPlugin = (plugin: unknown) => plugin
+;(globalThis as Record<string, unknown>).defineNuxtPlugin = (plugin: unknown) =>
+  plugin
 
 // Mock definePageMeta (Nuxt compiler macro, no-op in tests)
 ;(globalThis as Record<string, unknown>).definePageMeta = () => {}
@@ -138,14 +160,36 @@ const mockNuxtApp = {
 // Mock useCookie
 ;(globalThis as Record<string, unknown>).useCookie = () => ref(null)
 
-// Mock useState
-;(globalThis as Record<string, unknown>).useState = (key: string, init?: () => unknown) => ref(init ? init() : null)
+// Mock useState. Nuxt's useState is KEYED AND SHARED: two callers passing the same key get
+// the same ref, which is the whole point of it and what composables built on it rely on
+// (useReachOverlay hands the browse map a shape the distance slider fetched). Returning a
+// fresh ref per call, as this did, silently turned every such composable into per-caller
+// state, so a test could pass while the components never actually saw each other's writes.
+//
+// Real Nuxt scopes these per SSR request. Here the module is the scope, so a spec that
+// shares a key across cases must reset between them: call clearNuxtState() in beforeEach.
+const nuxtStateStore = new Map<string, unknown>()
+;(globalThis as Record<string, unknown>).useState = (
+  key: string,
+  init?: () => unknown
+) => {
+  if (!nuxtStateStore.has(key)) {
+    nuxtStateStore.set(key, ref(typeof init === 'function' ? init() : null))
+  }
+  return nuxtStateStore.get(key)
+}
+;(globalThis as Record<string, unknown>).clearNuxtState = () =>
+  nuxtStateStore.clear()
 
 // Mock useFetch
-;(globalThis as Record<string, unknown>).useFetch = vi.fn().mockResolvedValue({ data: ref(null), pending: ref(false), error: ref(null) })
+;(globalThis as Record<string, unknown>).useFetch = vi
+  .fn()
+  .mockResolvedValue({ data: ref(null), pending: ref(false), error: ref(null) })
 
 // Mock useAsyncData
-;(globalThis as Record<string, unknown>).useAsyncData = vi.fn().mockResolvedValue({ data: ref(null), pending: ref(false), error: ref(null) })
+;(globalThis as Record<string, unknown>).useAsyncData = vi
+  .fn()
+  .mockResolvedValue({ data: ref(null), pending: ref(false), error: ref(null) })
 
 // ============================================
 // GLOBAL MOCKS (provided to template context)
@@ -166,18 +210,82 @@ config.global.mocks = {
 config.global.stubs = {
   // Stub bootstrap-vue-next components
   'b-button': {
-    template:
-      '<button :disabled="disabled" :class="variant"><slot /></button>',
+    template: '<button :disabled="disabled" :class="variant"><slot /></button>',
     props: ['variant', 'disabled', 'size'],
   },
   'b-card': {
     template:
       '<div class="card"><slot /><slot name="header" /><slot name="footer" /></div>',
   },
+  // Renders the `options` prop as real <option>s. Without them the stubbed <select> has
+  // no matching option for any value, so setValue('x') lands as '' and a test cannot
+  // drive the control at all — it silently exercises the wrong branch instead of the one
+  // it names. The <slot> is kept for components that pass options as slot content.
+  // Declares `change` and emits it with the VALUE, as bootstrap-vue-next does. Without
+  // that declaration a parent's @change is treated as a native listener on the <select>
+  // and receives an Event object instead, so a handler like
+  // `onPresetChange(p) { if (p === 'custom') return }` can never take its early return in
+  // tests — it silently runs the other branch.
   'b-form-select': {
     template:
-      '<select class="form-select" :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><slot /></select>',
+      '<select class="form-select" :value="modelValue" @change="onStubChange">' +
+      '<option v-for="o in stubOptions" :key="o.value" :value="o.value">{{ o.text }}</option>' +
+      '<slot /></select>',
     props: ['modelValue', 'id', 'options'],
+    emits: ['update:modelValue', 'change'],
+    methods: {
+      onStubChange(e: { target: { value: unknown } }) {
+        this.$emit('update:modelValue', e.target.value)
+        this.$emit('change', e.target.value)
+      },
+    },
+    computed: {
+      stubOptions() {
+        return (this.options || []).map((o) =>
+          o !== null && typeof o === 'object'
+            ? { value: o.value, text: o.text ?? o.value }
+            : { value: o, text: o }
+        )
+      },
+    },
+  },
+  'b-form-input': {
+    template:
+      '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+    props: ['modelValue', 'id', 'type', 'placeholder', 'maxlength'],
+  },
+  'b-form-checkbox': {
+    template:
+      '<label class="form-check"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked); $emit(\'change\', $event.target.checked)" /><slot /></label>',
+    props: ['modelValue'],
+  },
+  // b-form wraps the *-input/-select stubs below. Without it here, any component
+  // laying its controls out in a <b-form> logs "Failed to resolve component",
+  // which this file turns into a test failure.
+  'b-form': {
+    template: '<form @submit.prevent="$emit(\'submit\')"><slot /></form>',
+    props: ['inline'],
+  },
+  'b-form-group': {
+    template: '<div class="form-group"><slot /></div>',
+    props: ['label', 'labelFor'],
+  },
+  'b-badge': {
+    template: '<span class="badge" :class="variant"><slot /></span>',
+    props: ['variant'],
+  },
+  'b-form-radio-group': {
+    template: '<div class="radio-group"><slot /></div>',
+    props: ['modelValue', 'options', 'stacked'],
+  },
+  'b-form-checkbox-group': {
+    template: '<div class="checkbox-group"><slot /></div>',
+    props: ['modelValue', 'options', 'stacked'],
+  },
+  'b-form-radio': {
+    template:
+      '<label class="form-radio"><input type="radio" :value="value" @change="$emit(\'update:modelValue\', value)" /><slot /></label>',
+    props: ['modelValue', 'value'],
   },
 
   // Stub FontAwesome
@@ -206,7 +314,8 @@ config.global.stubs = {
 
   // Stub Spinner (auto-imported by Nuxt)
   Spinner: {
-    template: '<div class="spinner-border" role="status" :style="spinnerStyle" />',
+    template:
+      '<div class="spinner-border" role="status" :style="spinnerStyle" />',
     props: ['size'],
     setup(props) {
       const spinnerStyle = computed(() => ({
@@ -236,6 +345,17 @@ config.global.stubs = {
       'placeholder',
     ],
     emits: ['error'],
+  },
+
+  // Stub ShowMore (components/ShowMore.vue): render every item via its #item (or
+  // default) slot - a <div> per item in block mode, comma-separated spans in
+  // inline mode - so group-list specs see the names. The real cap / "+N more" /
+  // collapse behaviour is covered by ShowMore.spec.js, which mounts ShowMore
+  // directly (a directly-mounted root is not replaced by a global stub).
+  ShowMore: {
+    props: ['items', 'limit', 'inline', 'keyfield'],
+    template:
+      '<span><component :is="inline ? \'span\' : \'div\'" v-for="(item, i) in (items || [])" :key="i"><span v-if="inline && i > 0">, </span><slot name="item" :item="item" :index="i"><slot :item="item" :index="i" /></slot></component></span>',
   },
 }
 

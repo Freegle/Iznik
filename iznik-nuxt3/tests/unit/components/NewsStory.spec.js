@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, Suspense } from 'vue'
 import NewsStory from '~/components/NewsStory.vue'
@@ -47,6 +47,11 @@ describe('NewsStory', () => {
     mockNewsfeedStore.byId.mockReturnValue({ ...mockNewsfeed })
     mockStoryStore.byId.mockReturnValue({ ...mockStory })
     mockStoryStore.fetch.mockResolvedValue({ ...mockStory })
+    globalThis.__mockAuthStore = { user: { id: 42 }, forceLogin: false }
+  })
+
+  afterEach(() => {
+    delete globalThis.__mockAuthStore
   })
 
   async function createWrapper(props = {}) {
@@ -206,13 +211,14 @@ describe('NewsStory', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('renders NuxtPicture when image has externaluid', async () => {
+    it('does not render a picture for a bare externaluid', async () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       mockStoryStore.byId.mockReturnValue({
         ...mockStory,
         image: { externaluid: 'ext-123', externalmods: '{}' },
       })
       const wrapper = await createWrapper()
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
   })
 
@@ -259,6 +265,18 @@ describe('NewsStory', () => {
         .find((b) => b.text().includes('Tell your story!'))
       await tellButton.trigger('click')
       expect(wrapper.find('.story-add-modal').exists()).toBe(true)
+    })
+
+    it('asks for a login first when logged out', async () => {
+      globalThis.__mockAuthStore = { user: null, forceLogin: false }
+      const wrapper = await createWrapper()
+      const tellButton = wrapper
+        .findAll('.b-button')
+        .find((b) => b.text().includes('Tell your story!'))
+      await tellButton.trigger('click')
+
+      expect(wrapper.find('.story-add-modal').exists()).toBe(false)
+      expect(globalThis.__mockAuthStore.forceLogin).toBe(true)
     })
   })
 

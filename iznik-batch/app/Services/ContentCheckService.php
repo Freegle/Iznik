@@ -7,12 +7,13 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use LanguageDetection\Language;
+use Nitotm\Eld\LanguageDetector;
 
 class ContentCheckService
 {
     public function __construct(
         private readonly ?ContentEmbeddingService $embeddingService = null,
+        private readonly ?MessageSpatialService $messageSpatialService = null,
     ) {}
 
     public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
@@ -24,7 +25,30 @@ class ContentCheckService
     public const CHECK_URL               = 'Url';
     public const CHECK_MONEY             = 'Money';
     public const CHECK_LANGUAGE          = 'Language';
-    public const CHECK_IP_ABUSE          = 'IpAbuse';
+    public const CHECK_NOT_AN_ITEM       = 'NotAnItem';
+
+    // Not content problems - these explain a hold that the member's or group's
+    // moderation settings caused, so the mod queue says why (Discourse #9987).
+    public const CHECK_MEMBER_MODERATED  = 'MemberModerated';
+    public const CHECK_GROUP_MODERATED   = 'GroupModerated';
+    public const CHECK_NO_LOCATION       = 'NoLocation';
+
+    /**
+     * Candidate languages for the content-check language detector. Restricted to
+     * languages realistically seen on UK Freegle — English/Welsh, the main UK
+     * community languages, and frequent spam origins — so the detector cannot
+     * rank constructed/obscure languages (Interlingua, Occitan, Esperanto, Ido,
+     * Latin) top on short English and raise a false "not English" flag
+     * (Discourse #9481). Scandinavian (nb/nn/da/sv) is intentionally kept.
+     */
+    private const LANGUAGE_DETECT_SET = [
+        'en', 'cy', 'ga', 'gd', 'fr', 'de', 'nl', 'es', 'pt-BR', 'pt-PT', 'it',
+        'pl', 'ro', 'cs', 'sk', 'lt', 'lv', 'bg', 'hu', 'hr', 'sl', 'sr-Latn',
+        'uk', 'ru', 'ar', 'fa', 'ur', 'tr', 'so', 'he', 'zh-Hans', 'zh-Hant',
+        'ja', 'ko', 'vi', 'th', 'tl', 'id', 'ms-Latn', 'hi', 'bn', 'gu', 'ta',
+        'ml', 'sq', 'el-monoton', 'sv', 'da', 'nb', 'nn', 'fi', 'et', 'eu',
+        'ca', 'gl',
+    ];
     public const CHECK_BULK_MAIL         = 'BulkMail';
     public const CHECK_SUBJECT_REPEAT    = 'SubjectRepeat';
     public const CHECK_KNOWN_SPAMMER     = 'KnownSpammer';
@@ -48,6 +72,11 @@ class ContentCheckService
         'any', 'all', 'everything',
         // Other vocabulary gaps that map to "I haven't told you what it is".
         'goods', 'sundries', 'bric-a-brac', 'odds and ends',
+        // Content-free responses/fillers dropped into the item box ("Yes", "No",
+        // "Please", "Thanks"). A single such token is the whole item; multi-word
+        // names are rescued by any real noun, per the token logic below.
+        'yes', 'yeah', 'yep', 'yup', 'no', 'nope', 'nah', 'ok', 'okay',
+        'please', 'pls', 'ta', 'thanks', 'cheers',
     ];
 
     // Ambiguous single-token entries: each one has many legitimate uses
@@ -109,7 +138,10 @@ class ContentCheckService
         if ($r = $this->checkVagueItem($itemName)) {
             $reasons[] = $r;
         }
-        if ($r = $this->checkPhoneNumbers($subject, $textbody)) {
+        if ($r = $this->checkNotAnItem($subject, $textbody, $itemName)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkPhoneNumbers($subject, $textbody, $groupid)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkPII($subject, $textbody, $groupid)) {
@@ -127,20 +159,58 @@ class ContentCheckService
         if ($r = $this->checkLanguage($subject, $textbody)) {
             $reasons[] = $r;
         }
-        if ($r = $this->checkSubjectRepeat($subject, $msgid)) {
+        if ($r = $this->checkSubjectRepeat($subject, $msgid, $itemName)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkKnownSpammer($textbody)) {
-            $reasons[] = $r;
-        }
-        if ($r = $this->checkIpAbuse($msgid)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkBulkVolunteerMail($subject, $msgid)) {
             $reasons[] = $r;
         }
 
-        return $reasons;
+        return $this->dedupeReasons($reasons);
+    }
+
+    /**
+     * Collapse reasons that flag the SAME keyword more than once.
+     *
+     * Concern keywords and the legacy per-group worry words overlap: a per-group
+     * worry word that has been migrated into concern_keywords (scope=group) is
+     * matched by BOTH checkConcernKeywords and checkPerGroupWorryWords, producing
+     * two reasons ("Matched concern keyword 'x'" and "Matched per-group worry
+     * word 'x'") for the one word. Keep a single reason per keyword, preferring
+     * the richer ConcernKeyword (it carries a category that drives mod guidance).
+     * Reasons without a keyword (Vague, PhoneNumber, …) are never de-duplicated.
+     */
+    private function dedupeReasons(array $reasons): array
+    {
+        $indexByKeyword = [];
+        $out = [];
+
+        foreach ($reasons as $reason) {
+            $keyword = isset($reason['keyword']) ? strtolower(trim((string) $reason['keyword'])) : '';
+
+            if ($keyword === '') {
+                $out[] = $reason;
+                continue;
+            }
+
+            if (!isset($indexByKeyword[$keyword])) {
+                $indexByKeyword[$keyword] = count($out);
+                $out[] = $reason;
+                continue;
+            }
+
+            // Already have a reason for this keyword; prefer ConcernKeyword.
+            $existingIndex = $indexByKeyword[$keyword];
+            if ($reason['check'] === self::CHECK_CONCERN_KEYWORD
+                && $out[$existingIndex]['check'] !== self::CHECK_CONCERN_KEYWORD) {
+                $out[$existingIndex] = $reason;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -157,8 +227,9 @@ class ContentCheckService
      * Phone numbers are deliberately NOT checked in chat: sharing a phone
      * number is normal and expected when arranging a handover, so flagging it
      * produced too many false positives. (V1's Spam::checkReview() never
-     * checked phone numbers either.) The checkPhoneNumbers() check still runs
-     * for posts via checkMessage().
+     * checked phone numbers either.) The checkPhoneNumbers() check runs for
+     * posts via checkMessage(), but only when the group's restrictpersonalinfo
+     * rule is set.
      *
      * @return array|null Reason ['check','category','action','detail'] or null.
      */
@@ -178,37 +249,83 @@ class ContentCheckService
     }
 
     /**
-     * Process all unprocessed pending messages in batches of 100.
+     * Only NEW approved-on-arrival posts are content-checked (bounded by arrival),
+     * so the historical backlog of already-live posts is never rescanned.
+     */
+    private const APPROVED_CHECK_WINDOW_HOURS = 24;
+
+    /**
+     * Process all unprocessed messages in batches of 100.
      *
-     * Returns stats: ['approved' => int, 'kept_pending' => int, 'blocked' => int, 'errors' => int]
+     * Covers Pending posts awaiting their first check, and NEW Approved-on-arrival
+     * posts (e.g. from unmoderated members) that bypass the Pending queue - those
+     * are checked too but never auto-demoted; problems are surfaced to mods.
+     *
+     * Returns stats: ['approved' => int, 'kept_pending' => int, 'blocked' => int,
+     *                 'checked_approved' => int, 'flagged_approved' => int,
+     *                 'checked_held' => int, 'flagged_held' => int, 'errors' => int]
      */
     public function processUnprocessed(bool $dryRun = false): array
     {
-        $stats = ['approved' => 0, 'kept_pending' => 0, 'blocked' => 0, 'errors' => 0];
+        $stats = [
+            'approved'         => 0,
+            'kept_pending'     => 0,
+            'blocked'          => 0,
+            'checked_approved' => 0,
+            'flagged_approved' => 0,
+            'checked_held'     => 0,
+            'flagged_held'     => 0,
+            'errors'           => 0,
+        ];
 
-        DB::table('messages_groups as mg')
-            ->join('messages as m', 'm.id', '=', 'mg.msgid')
-            ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'))
-            ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
-            ->whereNull('mg.contentcheck_checked_at')
-            ->where('mg.deleted', 0)
-            ->whereNull('m.deleted')
-            ->whereNotNull('m.fromuser')
-            ->whereNull('u.deleted')
-            ->orderBy('mg.msgid')
-            ->orderBy('mg.groupid')
-            ->chunk(100, function ($candidates) use (&$stats, $dryRun) {
+        // Per-row processing, shared by the two candidate queries below.
+        $processChunk = function ($candidates) use (&$stats, $dryRun) {
                 foreach ($candidates as $row) {
                     try {
-                        $reasons     = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
-                        $isModerated = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser)
-                                    || $this->isGroupModerated((int) $row->groupid);
-                        $promote     = empty($reasons) && !$isModerated;
+                        $reasons = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
+
+                        // A moderator is holding this copy: record what the check found so
+                        // they get the reasons, but never promote or block it - that would
+                        // take the post out from under them (9816/9815).
+                        if ($row->heldby !== null) {
+                            $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'held');
+                            continue;
+                        }
+
+                        // Already-live (Approved-on-arrival) posts: content-check them but
+                        // never auto-demote a post members can already see. Clean -> just
+                        // record the check; any reasons -> store them and notify mods.
+                        if ($row->collection === MessageGroup::COLLECTION_APPROVED) {
+                            $this->recordCheckOnly($row, $reasons, $dryRun, $stats, 'approved');
+                            continue;
+                        }
+
+                        $userModerated  = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser);
+                        $groupModerated = $this->isGroupModerated((int) $row->groupid);
+                        $isModerated    = $userModerated || $groupModerated;
+                        // Never auto-promote an Offer/Wanted we couldn't locate (NULL lat -
+                        // subject didn't geocode and no usable poster fallback): it would go
+                        // live undiscoverable. Keep it in the mod queue so a moderator adds a
+                        // postcode via the "add a postcode" prompt (Discourse #9865).
+                        $missingLocation = $row->lat === null
+                                        && in_array($row->msgtype, ['Offer', 'Wanted'], true);
+                        $promote     = empty($reasons) && !$isModerated && !$missingLocation;
                         $hasBlock    = !$promote && !empty(array_filter(
                             $reasons,
                             fn($r) => ($r['action'] ?? 'flag') === 'block'
                         ));
+
+                        // A post held for a STATUS reason rather than a content reason used to
+                        // store no reasons at all, so it arrived in the mod queue with nothing
+                        // saying why - "there is no explanation of why the post needs Approval"
+                        // (Discourse #9987). Record the cause too. Appended after $hasBlock is
+                        // computed so it can never turn a flag into a block.
+                        if (!$promote && !$hasBlock) {
+                            $reasons = array_merge(
+                                $reasons,
+                                $this->holdReasons($userModerated, $groupModerated, $missingLocation)
+                            );
+                        }
 
                         if ($dryRun) {
                             if ($promote) {
@@ -234,7 +351,9 @@ class ContentCheckService
                                         'contentcheck_reasons'    => null,
                                     ]);
 
-                                if ($row->msgtype === Message::TYPE_OFFER) {
+                                // Clearance/bulk-offer posts are excluded from freebiealerts.app.
+                                if ($row->msgtype === Message::TYPE_OFFER &&
+                                    !DB::table('messages_bulk_items')->where('msgid', $row->msgid)->exists()) {
                                     DB::table('background_tasks')->insert([
                                         'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
                                         'data'      => json_encode(['msgid' => (int) $row->msgid]),
@@ -244,7 +363,7 @@ class ContentCheckService
                                 // Now Approved — add to the spatial index immediately so the
                                 // post shows in browse/search without waiting for the periodic
                                 // messages:update-spatial-index reconciler.
-                                (new MessageSpatialService())->addApprovedMessage((int) $row->msgid);
+                                ($this->messageSpatialService ?? app(MessageSpatialService::class))->addApprovedMessage((int) $row->msgid);
 
                                 $stats['approved']++;
                             });
@@ -287,9 +406,121 @@ class ContentCheckService
                         $stats['errors']++;
                     }
                 }
-            });
+        };
+
+        // The old single query OR'd the two cases (Pending, or recent Approved)
+        // together. No index leads with the selective predicate, so MySQL could
+        // only satisfy the ORDER BY mg.msgid + LIMIT by walking the `deleted`
+        // index - millions of rows - re-filtering each (EXPLAIN: ~4.59M rows,
+        // filtered 2.5%). Splitting into two passes lets each use an existing
+        // index. Which posts get checked, and how, is unchanged.
+        $base = fn () => DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->join('users as u', 'u.id', '=', 'm.fromuser')
+            ->select('mg.msgid', 'mg.groupid', 'mg.collection', 'mg.heldby', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'), DB::raw('m.lat as lat'))
+            // Either never checked, or checked and then edited. The edit stamps
+            // messages.editedat rather than clearing the check stamp, because the
+            // stamp is also what lets a moderator see the post at all - clearing it
+            // made a post vanish from the queue of the moderator who had just edited
+            // it (Discourse 10001). "Edited since checked" is derived by comparing
+            // the two timestamps, so there is no separate mark to clear and the state
+            // cannot drift; re-stamping contentcheck_checked_at on completion resolves
+            // the comparison by itself. Both cases need the same scan, so both are
+            // picked up here. The OR is not the driving predicate: each pass below
+            // leads with collection or arrival, so the index choice is unchanged and
+            // the row set is already small.
+            ->where(function ($q) {
+                $q->whereNull('mg.contentcheck_checked_at')
+                    ->orWhereColumn('m.editedat', '>', 'mg.contentcheck_checked_at');
+            })
+            ->where('mg.deleted', 0)
+            // Held messages ARE checked - checking is not acting. Skipping them entirely
+            // (the old "never fight a mod" rule, 9816/9815) left contentcheck_checked_at
+            // NULL for as long as the hold lasted, so the moderator holding the post never
+            // saw why it needed a look, and surfaces that count only checked rows reported
+            // fewer held posts than were in front of them (Discourse 9481/635). What must
+            // not happen is re-promoting or blocking it out from under them - see the
+            // heldby branch in the processing loop, which records the result and stops.
+            ->whereNull('m.deleted')
+            ->whereNotNull('m.fromuser')
+            ->whereNull('u.deleted')
+            ->orderBy('mg.msgid')
+            ->orderBy('mg.groupid');
+
+        // Pending posts awaiting a check - their first, or a fresh one after an edit.
+        // Served by the single-column `collection` index; being a secondary index it
+        // returns rows already ordered by the appended (msgid, groupid) clustered key,
+        // so no filesort, and Pending is the small live mod queue.
+        $base()
+            ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
+            ->chunk(100, $processChunk);
+
+        // NEW approved-on-arrival posts, bounded to recent arrivals so the
+        // historical backlog of live posts is never rescanned. Served by the
+        // `arrival` index range over just the recent window.
+        $base()
+            ->where('mg.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('mg.arrival', '>', now()->subHours(self::APPROVED_CHECK_WINDOW_HOURS))
+            ->chunk(100, $processChunk);
 
         return $stats;
+    }
+
+    /**
+     * Record the content check WITHOUT acting on the post - used where changing the
+     * collection would be wrong:
+     *   'approved' - already live, and we never demote a post members can already see;
+     *   'held'     - a moderator has claimed it, and promoting or blocking it would take
+     *                it out from under them (9816/9815).
+     * Either way a clean post is simply stamped as checked, and a post with reasons keeps
+     * its reasons stored and notifies the group's mods so a human can review it. Storing
+     * the reasons is the point for a held post: it is what tells the moderator holding it
+     * why it needed a look (Discourse 9481/635).
+     *
+     * @param string $kind 'approved' or 'held' - selects which stats counters to bump.
+     */
+    private function recordCheckOnly(object $row, array $reasons, bool $dryRun, array &$stats, string $kind = 'approved'): void
+    {
+        $hasReasons = !empty($reasons);
+        $flaggedKey = 'flagged_' . $kind;
+        $checkedKey = 'checked_' . $kind;
+
+        if ($dryRun) {
+            $stats[$hasReasons ? $flaggedKey : $checkedKey]++;
+            return;
+        }
+
+        if ($hasReasons) {
+            DB::transaction(function () use ($row, $reasons, &$stats, $flaggedKey) {
+                DB::table('messages_groups')
+                    ->where('msgid', $row->msgid)
+                    ->where('groupid', $row->groupid)
+                    ->update([
+                        'contentcheck_checked_at' => now(),
+                        'contentcheck_reasons'    => json_encode($reasons),
+                    ]);
+
+                DB::table('background_tasks')->insert([
+                    'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS,
+                    'data'      => json_encode(['group_id' => (int) $row->groupid]),
+                ]);
+
+                $stats[$flaggedKey]++;
+            });
+
+            Log::info("ContentCheck: flagged {$kind} message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
+            return;
+        }
+
+        DB::table('messages_groups')
+            ->where('msgid', $row->msgid)
+            ->where('groupid', $row->groupid)
+            ->update([
+                'contentcheck_checked_at' => now(),
+                'contentcheck_reasons'    => null,
+            ]);
+
+        $stats[$checkedKey]++;
     }
 
     /**
@@ -300,6 +531,50 @@ class ContentCheckService
      * @param int      $groupid  Group ID.
      * @param int|null $fromuser Known fromuser value; skips the messages query when supplied.
      */
+    /**
+     * Why a post is being kept pending when the content itself was clean.
+     *
+     * Without these a moderator sees a post sitting in the queue with no
+     * indication of what put it there, which is what Discourse #9987 reported.
+     * These are 'flag', never 'block' - they explain a hold, they don't cause one.
+     *
+     * @return array<int, array{check:string, category:null, action:string, detail:string}>
+     */
+    private function holdReasons(bool $userModerated, bool $groupModerated, bool $missingLocation): array
+    {
+        $reasons = [];
+
+        if ($groupModerated) {
+            $reasons[] = [
+                'check'    => self::CHECK_GROUP_MODERATED,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'This group moderates all posts, whatever the member\'s setting',
+            ];
+        }
+
+        // Only worth saying if the group isn't moderating everything anyway.
+        if ($userModerated && !$groupModerated) {
+            $reasons[] = [
+                'check'    => self::CHECK_MEMBER_MODERATED,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'This member\'s posts are moderated',
+            ];
+        }
+
+        if ($missingLocation) {
+            $reasons[] = [
+                'check'    => self::CHECK_NO_LOCATION,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'We could not work out where this post is - add a postcode before approving',
+            ];
+        }
+
+        return $reasons;
+    }
+
     public function isUserModerated(int $msgid, int $groupid, ?int $fromuser = null): bool
     {
         if ($fromuser === null) {
@@ -326,17 +601,24 @@ class ContentCheckService
     }
 
     /**
-     * Return true if the group's rules have fullymoderated = true.
+     * Return true if the group's "All Posts Moderated" setting is on.
+     *
+     * This must read settings.moderated — the enforcement setting ModTools
+     * writes and apiv2 checks — NOT rules.fullymoderated, which is the
+     * member-facing rules questionnaire answer ("Do you moderate all posts?")
+     * and routinely disagrees with the real setting (Discourse #9987: groups
+     * with the setting off had every post held because their questionnaire
+     * said yes, and vice versa).
      */
     public function isGroupModerated(int $groupid): bool
     {
-        $rulesJson = DB::table('groups')->where('id', $groupid)->value('rules');
-        if (!$rulesJson) {
+        $settingsJson = DB::table('groups')->where('id', $groupid)->value('settings');
+        if (!$settingsJson) {
             return false;
         }
-        $rules = is_string($rulesJson) ? json_decode($rulesJson, true) : $rulesJson;
+        $settings = is_string($settingsJson) ? json_decode($settingsJson, true) : $settingsJson;
 
-        return !empty($rules['fullymoderated']);
+        return !empty($settings['moderated']);
     }
 
     // -------------------------------------------------------------------------
@@ -354,12 +636,54 @@ class ContentCheckService
 
     private const FUZZY_LEVENSHTEIN_MIN_KW_LEN = 8;
 
+    /**
+     * Strip every 'allowed'-category concern keyword (global, plus this
+     * group's, when a group is given) from the text, word-boundary anchored
+     * and case-insensitive. Run before any flagging scan so whitelisted
+     * phrases - typically place names like 'Cashes Green' or 'Butt Road' -
+     * can't feed their words to literal/regex/fuzzy keyword matches.
+     * Replaced with a space so the surrounding words stay separated.
+     */
+    private function removeAllowedKeywords(string $text, int $groupid): string
+    {
+        $allowed = DB::table('concern_keywords')
+            ->where(function ($q) use ($groupid) {
+                $q->where('scope', 'global')
+                  ->orWhere(function ($q2) use ($groupid) {
+                      $q2->where('scope', 'group')->where('group_id', $groupid);
+                  });
+            })
+            ->where('category', 'allowed')
+            ->pluck('keyword');
+
+        foreach ($allowed as $phrase) {
+            $phrase = trim((string) $phrase);
+            if ($phrase === '') {
+                continue;
+            }
+            $text = (string) preg_replace(
+                '/\b' . preg_quote($phrase, '/') . '\b/i',
+                ' ',
+                $text
+            );
+        }
+
+        return $text;
+    }
+
     private function matchesFuzzy(string $haystack, string $keyword): bool
     {
         $kwLower = strtolower($keyword);
         $kwLen   = strlen($kwLower);
         if ($kwLen === 0) {
             return false;
+        }
+
+        // Multi-word phrases: token-by-token matching can never match a phrase
+        // like "discounted price" against individual haystack tokens. Use a
+        // word-boundary-anchored phrase match instead (Discourse #9620/283).
+        if (str_contains($kwLower, ' ')) {
+            return (bool) preg_match('/\b' . preg_quote($kwLower, '/') . '\b/', $haystack);
         }
 
         $variants = $this->inflectionVariants($kwLower);
@@ -512,6 +836,24 @@ class ContentCheckService
         return $result === 1;
     }
 
+    // Like safePreg, but returns the substring the pattern actually matched
+    // rather than a bool. Regex-mode concern keywords store a PATTERN (e.g.
+    // 'crack\s+cocaine'), not a literal word, so the mod-facing reason needs
+    // what the pattern matched in the post text, not the pattern itself -
+    // otherwise the flag notice reads as regex soup (Discourse #10024).
+    private function safePregCapture(string $pattern, string $subject): ?string
+    {
+        $result = @preg_match($pattern, $subject, $matches);
+        if (preg_last_error() !== PREG_NO_ERROR) {
+            Log::warning('ContentCheck: invalid regex pattern', [
+                'pattern' => $pattern,
+                'error'   => preg_last_error_msg(),
+            ]);
+            return null;
+        }
+        return $result === 1 ? $matches[0] : null;
+    }
+
     // -------------------------------------------------------------------------
     // Concern keywords — unified table replacing worrywords + spam_keywords.
     // Supports match_mode (fuzzy/literal/regex), global + per-group scope,
@@ -531,8 +873,15 @@ class ContentCheckService
             ->where('category', '!=', 'allowed')
             ->get();
 
-        $haystack = strtolower($subject . ' ' . $textbody);
-        $original = $subject . ' ' . $textbody;
+        // 'allowed'-category entries are a whitelist: text matching them is
+        // removed BEFORE scanning, so a flagging keyword can't fire on a word
+        // inside a whitelisted phrase. V1's worry words and the Go display path
+        // both do this; this path only excluded allowed rows from the flagger
+        // list, which left the whitelist with no effect - 'Cashes Green' kept
+        // tripping the fuzzy keyword 'cash' via its 'cashes' inflection
+        // (Discourse 9944).
+        $original = $this->removeAllowedKeywords($subject . ' ' . $textbody, $groupid);
+        $haystack = strtolower($original);
 
         foreach ($keywords as $kw) {
             $word = trim($kw->keyword);
@@ -540,8 +889,13 @@ class ContentCheckService
                 continue;
             }
 
+            // For regex mode, $word is a PATTERN rather than the literal text
+            // to display - capture what it actually matched so the mod-facing
+            // reason names real text from the post, not the pattern.
+            $matchedText = null;
+
             $matched = match ($kw->match_mode) {
-                'regex'   => $this->safePreg('/' . $word . '/i', $original),
+                'regex'   => ($matchedText = $this->safePregCapture('/' . $word . '/i', $original)) !== null,
                 'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
                 default   => $this->matchesFuzzy($haystack, $word),
             };
@@ -561,11 +915,14 @@ class ContentCheckService
                 continue;
             }
 
+            $displayWord = $matchedText ?? $word;
+
             return [
                 'check'    => self::CHECK_CONCERN_KEYWORD,
                 'category' => $kw->category,
                 'action'   => $kw->action ?? 'flag',
-                'detail'   => "Matched concern keyword '{$word}'",
+                'keyword'  => $displayWord,
+                'detail'   => "Matched concern keyword '{$displayWord}'",
             ];
         }
 
@@ -708,15 +1065,123 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
+    // Not-an-item — flag posts that are non-physical requests/offers (services,
+    // accommodation/rentals, jobs/work, help/advice) rather than a physical
+    // object. Freegle is for giving away things, so these are diverted to mods
+    // for review (action=flag, NOT auto-blocked). Keyword design is word-boundary
+    // + exclusion-guarded, validated against the production reject log to avoid
+    // false positives on real items: "vacuum cleaner" is not a cleaner-person,
+    // "removal boxes" is not a removal service, "job lot" is a bundle of goods,
+    // "dinner service" is crockery, and "ladder loan" is borrowing an item
+    // (which Freegle allows).
+    // -------------------------------------------------------------------------
+
+    /** Physical-item phrases that collide with non-item keywords — skip these. */
+    private const NOT_AN_ITEM_EXCLUSIONS = [
+        '/\b(vacuum|patio|window|oven|carpet|drain|fabric|pressure|jet|steam|spot|paint|tile|glass|leather|toilet|kitchen|shower|hoover|floor|wheel|pool|gutter|bbq|grill|mould|mold|nit|comb)\s+cleaner/',
+        '/\b(removal|moving|packing|cardboard|home|house|strong|storage|archive)\s+(box|boxes|crate|crates|bag|bags|paper)/',
+        '/\b(hair|paint|stain|tick|rust|odou?r|live|nit|mole|wart|graffiti|ear\s?wax)\s+removal/',
+        '/\bremoval\s+(box|boxes|cream|kit|tool|tools)/',
+        '/\bjob\s*lot\b/',
+        '/\b(dinner|tea|coffee|table|place|china|dining)\s+service\b/',
+        '/\b(loan|borrow|lend)\b/',
+        '/gardener[\'’]?s\s+world/',
+        '/\bdecorator[\'’]?s?\s+(spare|spares|tool|tools|paint|table|caddy|kit|trestle)/',
+        '/\b(motorway|emergency|bus|train|rail|ferry|postal|customer|council|nhs|social|financial|funeral|armed|secret|support|care|delivery)\s+services?\b/',
+    ];
+
+    /** Non-item trigger patterns, grouped by category; first match wins. */
+    private const NOT_AN_ITEM_PATTERNS = [
+        'accommodation' => [
+            '/\b(room|rooms|flat|house|garage|lock\s?-?\s?up|warehouse|studio|annexe?|bedsit|bedroom|property|driveway|parking\s+space)\b[^.!?\n]{0,30}\b(to|for)\s+(rent|let)\b/',
+            '/\bto let\b/', '/\bfor rent\b/', '/\bto rent\b/', '/\brenting\b/',
+            '/\blodger\b/', '/\bflat\s?share\b/', '/\bhouse\s?share\b/',
+            '/\baccommodation\b/', '/\btenant\b/', '/\broom available\b/',
+        ],
+        'service' => [
+            '/\bman\s+(with|and)\s+a?\s?(van|car)\b/', '/\bman\s*&\s*van\b/',
+            '/\b(cleaner|gardener|plumber|electrician|decorator|builder|tutor|handyman|hairdresser|barber|painter|joiner|locksmith)\s+(wanted|needed|required|available)\b/',
+            '/\b(need(ed)?|looking\s+for|want(ed)?|require[d]?)\s+a\s+(cleaner|gardener|plumber|electrician|decorator|builder|tutor|handyman|babysitter|child\s?minder|dog\s?walker|hairdresser|barber)\b/',
+            '/\b(domestic|house|home|office|end[\s-]of[\s-]tenancy)\s+cleaner\b/',
+            '/\b(cleaning|gardening|ironing|babysitting|child\s?minding|tutoring|decorating|plumbing|catering|delivery|moving)\s+service\b/',
+            '/\bdog\s?walk(er|ing)\b/', '/\bbaby\s?sit(ter|ting)\b/',
+            '/\bchild\s?mind(er|ing)\b/', '/\bhandy\s?man\b/', '/\bmassage\b/',
+            '/\bskill\s?swap\b/', '/\bservices\b/', '/\bservice\s+offered\b/',
+        ],
+        'work' => [
+            '/\bvacanc(y|ies)\b/', '/\bhiring\b/', '/\bwork\s+wanted\b/',
+            '/\b(part|full)[\s-]?time\s+job\b/', '/\bemployment\b/',
+            '/\bjob\s+vacancy\b/', '/\blooking\s+for\s+work\b/', '/\bzero\s+hours?\b/',
+        ],
+        'advice' => [
+            '/\badvice\b/', '/\bany\s+recommendations?\b/',
+            '/\bcan\s+(anyone|someone)\s+recommend\b/',
+            '/\blooking\s+for\s+(advice|recommendations?|someone\s+to)\b/',
+            '/\brecommendations?\s+for\s+a\b/',
+        ],
+    ];
+
+    /**
+     * Flag a post that appears to be a non-physical request/offer rather than an
+     * item. Pure text; returns a flag reason (kept Pending for mod review) or null.
+     */
+    public function checkNotAnItem(string $subject, string $textbody, ?string $itemName = null): ?array
+    {
+        $hay = strtolower(trim($subject . ' ' . $textbody . ' ' . ($itemName ?? '')));
+        if ($hay === '') {
+            return null;
+        }
+
+        // Exclusion guard: physical items that would otherwise match a keyword.
+        foreach (self::NOT_AN_ITEM_EXCLUSIONS as $ex) {
+            if (preg_match($ex, $hay)) {
+                return null;
+            }
+        }
+
+        foreach (self::NOT_AN_ITEM_PATTERNS as $category => $patterns) {
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $hay, $m)) {
+                    $matched = trim($m[0]);
+                    return [
+                        'check'    => self::CHECK_NOT_AN_ITEM,
+                        'category' => $category,
+                        'action'   => 'flag',
+                        'detail'   => "Post may be a non-physical request ({$category}) rather than an item — matched \"{$matched}\"",
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
     // Phone numbers — UK format check, applied to posts only (NOT chat: sharing
     // a number to arrange a handover is normal). Requires a proper UK prefix
     // (0, +44, or 0044) followed by 9–10 digits (with optional spaces/hyphens).
     // This specificity avoids false positives from short numeric strings like
     // flat numbers or times.
+    //
+    // Only flagged when the group's restrictpersonalinfo rule is set — phone
+    // numbers are explicitly called out in that setting's description ("eg
+    // telephone numbers, addresses"). Groups without the rule never see this
+    // flag. (V1 had no universal phone-number check; the setting description
+    // makes the intent clear.)
     // -------------------------------------------------------------------------
 
-    public function checkPhoneNumbers(string $subject, string $textbody): ?array
+    public function checkPhoneNumbers(string $subject, string $textbody, int $groupid): ?array
     {
+        $rulesJson = DB::table('groups')->where('id', $groupid)->value('rules');
+        if ($rulesJson) {
+            $rules = is_string($rulesJson) ? json_decode($rulesJson, true) : $rulesJson;
+            if (empty($rules['restrictpersonalinfo'])) {
+                return null;
+            }
+        } else {
+            return null;
+        }
+
         $haystack = $subject . ' ' . $textbody;
 
         // (?<!\d) / (?!\d) instead of \b — \b doesn't fire before a literal "+"
@@ -734,8 +1199,10 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // PII — external email addresses, only when group rule restrictpersonalinfo
-    // is set. Phone numbers in posts are checked via checkPhoneNumbers().
+    // PII — external email addresses, gated by the group rule restrictpersonalinfo.
+    // Phone numbers are also gated by the same rule via checkPhoneNumbers().
+    // Both checks are described by the setting: "Do you restrict personal info
+    // in posts eg telephone numbers, addresses?"
     // -------------------------------------------------------------------------
 
     public function checkPII(string $subject, string $textbody, int $groupid): ?array
@@ -880,7 +1347,10 @@ class ContentCheckService
         }
 
         $words    = array_filter(array_map('trim', explode(',', $raw)));
-        $haystack = strtolower($subject . ' ' . $textbody);
+        // Same whitelist cleaning as checkConcernKeywords: an allowed phrase
+        // must neutralise per-group worry words too (the Go display path
+        // applies Allowed removal to the combined global+group list).
+        $haystack = strtolower($this->removeAllowedKeywords($subject . ' ' . $textbody, $groupid));
 
         foreach ($words as $word) {
             if ($word === '') {
@@ -891,6 +1361,7 @@ class ContentCheckService
                     'check'    => self::CHECK_PER_GROUP_WORRY,
                     'category' => null,
                     'action'   => 'flag',
+                    'keyword'  => $word,
                     'detail'   => "Matched per-group worry word '{$word}'",
                 ];
             }
@@ -974,132 +1445,50 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // Language detection — flag non-English/Welsh messages over 50 chars
-    // (V1 Spam.php parity using patrickschur/language-detection).
-    // English is accepted if it is the top language, or if P(en|cy) >= 0.8 *
-    // P(top language) — the same lax threshold V1 uses.
+    // Language detection — flag a message as non-English/Welsh ONLY when the
+    // detector is confident. Uses nitotm/efficient-language-detector (ELD): it
+    // picks the correct top language on short, list-style Freegle posts where the
+    // old trigram library (patrickschur) mis-ranked plain English as a Latinate
+    // language (Discourse #9919, #9481), and its isReliable() lets us leave
+    // genuinely ambiguous short text alone rather than false-flagging it.
+    // The optional $detector callable returns ['lang' => code, 'reliable' => bool];
+    // used in tests for deterministic results.
     // -------------------------------------------------------------------------
 
-    public function checkLanguage(string $subject, string $textbody): ?array
+    public function checkLanguage(string $subject, string $textbody, ?callable $detector = null): ?array
     {
-        $text = trim(str_ireplace('xxx', '', strtolower($textbody)));
+        $text = trim(str_ireplace('xxx', '', $textbody));
 
-        if (strlen($text) <= 50) {
+        // Skip very short text — low spam risk and inherently ambiguous for any
+        // language detector, so checking it only generates false flags (#9481).
+        if (strlen($text) <= 80) {
             return null;
         }
 
         try {
-            $ld   = new Language();
-            $lang = $ld->detect($text)->close();
+            $detect = $detector ?? static function (string $t): array {
+                static $eld = null;
+                $eld ??= new LanguageDetector();
+                $res = $eld->detect($t);
 
-            if (empty($lang)) {
-                return null;
-            }
+                return ['lang' => $res->language, 'reliable' => $res->isReliable()];
+            };
+            $result   = $detect($text);
+            $lang     = $result['lang'] ?? '';
+            $reliable = (bool) ($result['reliable'] ?? false);
 
-            reset($lang);
-            $firstLang = key($lang);
-            $firstProb = $lang[$firstLang] ?? 0;
-            $enProb    = $lang['en'] ?? 0;
-            $cyProb    = $lang['cy'] ?? 0;
-            $ourProb   = max($enProb, $cyProb);
-
-            $isAcceptable = ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.9 * $firstProb);
-
-            if (!$isAcceptable) {
+            // Flag only when the detector is confident the text is neither English
+            // nor Welsh. Ambiguous text (isReliable() === false) is never flagged.
+            if ($lang !== '' && $lang !== 'en' && $lang !== 'cy' && $reliable) {
                 return [
                     'check'    => self::CHECK_LANGUAGE,
                     'category' => null,
                     'action'   => 'flag',
-                    'detail'   => "Post appears to be in language '{$firstLang}' rather than English or Welsh",
+                    'detail'   => "Post appears to be in language '{$lang}' rather than English or Welsh",
                 ];
             }
         } catch (\Exception $e) {
             Log::warning('ContentCheck: language detection error: ' . $e->getMessage());
-        }
-
-        return null;
-    }
-
-    /**
-     * Cap on user/group IDs we embed in an IpAbuse reason so the JSON stays
-     * small. Mods only need to spot patterns; the headline count is also kept
-     * in the detail string for chronic-abuse cases beyond the cap.
-     */
-    private const IP_ABUSE_ID_CAP = 50;
-
-    public function checkIpAbuse(int $msgid): ?array
-    {
-        $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
-
-        if (!$fromip) {
-            return null;
-        }
-
-        // Match v1 behaviour: only look at the last 31 days.
-        // V1 queries `messages_history` which is pruned to 31 days by purge_messages.php.
-        // Without a window, CGNAT mobile IPs accumulate years of users and always trigger.
-        $window = now()->subDays(31);
-
-        // IP used by 5+ different users
-        $userCount = DB::table('messages')
-            ->where('fromip', $fromip)
-            ->where('arrival', '>=', $window)
-            ->whereNotNull('fromuser')
-            ->distinct('fromuser')
-            ->count();
-
-        if ($userCount > 5) {
-            $users = DB::table('messages')
-                ->where('fromip', $fromip)
-                ->where('arrival', '>=', $window)
-                ->whereNotNull('fromuser')
-                ->select('fromuser')
-                ->groupBy('fromuser')
-                ->orderByRaw('MAX(arrival) DESC')
-                ->limit(self::IP_ABUSE_ID_CAP)
-                ->pluck('fromuser')
-                ->map(fn($id) => (int) $id)
-                ->all();
-
-            return [
-                'check'    => self::CHECK_IP_ABUSE,
-                'category' => null,
-                'action'   => 'flag',
-                'detail'   => "IP {$fromip} recently used by {$userCount} different user accounts",
-                'ip'       => $fromip,
-                'users'    => $users,
-            ];
-        }
-
-        // IP used to post to 20+ different groups
-        $groupCount = DB::table('messages_groups')
-            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
-            ->where('messages.fromip', $fromip)
-            ->where('messages.arrival', '>=', $window)
-            ->distinct('messages_groups.groupid')
-            ->count();
-
-        if ($groupCount >= 20) {
-            $groups = DB::table('messages_groups')
-                ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
-                ->where('messages.fromip', $fromip)
-                ->where('messages.arrival', '>=', $window)
-                ->select('messages_groups.groupid')
-                ->groupBy('messages_groups.groupid')
-                ->orderByRaw('MAX(messages_groups.arrival) DESC')
-                ->limit(self::IP_ABUSE_ID_CAP)
-                ->pluck('messages_groups.groupid')
-                ->map(fn($id) => (int) $id)
-                ->all();
-
-            return [
-                'check'    => self::CHECK_IP_ABUSE,
-                'category' => null,
-                'action'   => 'flag',
-                'detail'   => "IP {$fromip} recently used to post to {$groupCount} different groups",
-                'ip'       => $fromip,
-                'groups'   => $groups,
-            ];
         }
 
         return null;
@@ -1157,19 +1546,31 @@ class ContentCheckService
     // checkSubjectRepeat — flag mass-submission spam (V1 parity)
     // -------------------------------------------------------------------------
 
-    public function checkSubjectRepeat(string $subject, int $msgid): ?array
+    public function checkSubjectRepeat(string $subject, int $msgid, ?string $itemName = null): ?array
     {
-        // Don't check very short subjects - might be something like "TAKEN"
-        if (strlen(trim($subject)) < 10) {
+        // V1 parity: use the item name (pruned subject) for the length guard, not the full
+        // subject. The type prefix ("Offer: ") adds 7+ chars, making "Offer: Test" 11 chars
+        // but the actual item is "Test" (4 chars). Without this, test subjects accumulate
+        // across many groups over time and falsely flag legitimate mod/tester posts.
+        $textToCheck = ($itemName !== null && trim($itemName) !== '') ? trim($itemName) : trim($subject);
+        if (strlen($textToCheck) < 10) {
             return null;
         }
 
-        // Count distinct groups with same subject in the past N days
+        // Count distinct groups with same subject in the past N days.
+        // Exclude rippled-in rows (messages_groups.rippled_in = 1): rippling-out
+        // (ExpandService::rippleIntoNewGroups) inserts one messages_groups row
+        // per nearby group for the SAME message, so a single post fans out to
+        // 20-30 groups sharing one subject — which otherwise trips this check
+        // as if it were mass-submission spam (Discourse #9808/250). Only native
+        // (rippled_in = 0) postings count; genuine cross-group spam still has
+        // rippled_in = 0 rows and is unaffected.
         $distinctGroupCount = DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->where('m.subject', $subject)
             ->where('mg.arrival', '>=', now()->subDays(self::SUBJECT_REPEAT_WINDOW))
             ->where('mg.deleted', 0)
+            ->where('mg.rippled_in', 0)
             ->distinct('mg.groupid')
             ->count();
 

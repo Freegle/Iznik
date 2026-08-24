@@ -156,10 +156,40 @@ const CHAT_MESSAGE_ADDRESS = "Address"
 const CHAT_MESSAGE_NUDGE = "Nudge"
 const CHAT_MESSAGE_REFER_TO_SUPPORT = "ReferToSupport"
 
+// CHAT_MESSAGE_PROMPT is a question from Freegle with tappable answers. The
+// question text is in chat_messages.message like any other message; the options
+// and the answer live in chat_prompts, keyed on the message id.
+const CHAT_MESSAGE_PROMPT = "Prompt"
+
+// Prompt kinds. Each says what ANSWERING does - see chat.applyPromptAnswer and
+// App\Services\FirstReply\PromptService.
+const PROMPT_KIND_DELIVERY = "delivery"
+const PROMPT_KIND_DEADLINE = "deadline"
+const PROMPT_KIND_VIEWS = "views"
+const PROMPT_KIND_PHOTO = "photo"
+
 const NEWSFEED_TYPE_ALERT = "Alert"
 const NEWSFEED_TYPE_COMMUNITY_EVENT = "CommunityEvent"
 const NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY = "VolunteerOpportunity"
 const NEWSFEED_EVENTS_PER_FEED = 20
+
+// Alerts are capped the same way events are, and for the same reason: Community
+// News drip-posts to the feed as type Alert (CommunityNewsChitChatService), so
+// without a cap a busy news run would crowd out members' own ChitChat. Only
+// PINNED alerts - central Freegle announcements - escape the geographic filter;
+// everything else stays local to the poster's area like any other post.
+const NEWSFEED_ALERTS_PER_FEED = 5
+
+// How far away an unpinned alert (Community News) can be and still reach a
+// member. Community News areas cluster groups onto their nearest town within
+// area_cluster_miles (20 miles, CommunityNewsAreaService), and the post sits at
+// the area centre - so a member can legitimately be up to ~20 miles from their
+// own area's news. A fixed box at that scale is used instead of the feed's
+// density-derived radius, which collapses to its 1km floor against a wall of
+// co-located historical posts (e.g. the member's own) and then starves them of
+// news entirely.
+const NEWSFEED_ALERT_RADIUS_KM = 32.0
+
 const NEWSFEED_MODSTATUS_SUPPRESSED = "Suppressed"
 
 const NEARBY = 50
@@ -248,6 +278,16 @@ func NilIfZero(v uint64) interface{} {
 
 func Blur(lat float64, lng float64, dist float64) (float64, float64) {
 	var dlat, dlng float64
+
+	// (0,0) is not a real location - it's what an unset/unresolved lat/lng (e.g. an
+	// email post whose subject location couldn't be geocoded, stored NULL and read
+	// back as 0) collapses to. Blurring it would step off Null Island to ~(0.004, 0),
+	// fabricating a fake location that then reads as "outside the UK" (ModMessage.vue
+	// outsideUK bbox check) and hides the "add a postcode" edit prompt. Leave it at
+	// (0,0) so downstream can treat it as "no location known" (Discourse #9865).
+	if lat == 0 && lng == 0 {
+		return 0, 0
+	}
 
 	// Some old posts have invalid lat/lng values, which would result in us returning NaN.
 	if lat > 90 || lat < -90 || lng > 180 || lng < -180 {
@@ -392,7 +432,6 @@ func TidyName(name string) string {
 	if tnOnlyRegexp.MatchString(name) {
 		name = "A freegler"
 	}
-
 
 	if len(name) == 0 {
 		name = "A freegler"

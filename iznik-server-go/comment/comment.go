@@ -7,9 +7,10 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // CommentItem is a flat comment representation. Client fetches user details separately via /user/:id.
@@ -53,7 +54,7 @@ func Get(c *fiber.Ctx) error {
 
 	// List comments for moderated groups.
 	groupid, _ := strconv.ParseUint(c.Query("groupid", "0"), 10, 64)
-	contextReviewed := c.Query("context[reviewed]", "")
+	contextID, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
 	// Get groups where user is moderator + admin/support check in parallel.
 	var wg sync.WaitGroup
@@ -78,31 +79,41 @@ func Get(c *fiber.Ctx) error {
 		})
 	}
 
-	// Build query.
-	query := "SELECT * FROM users_comments WHERE "
-	var args []interface{}
+	// Build query using keyset pagination on id (never null, unique).
+	//
+	// Three
+	// independent toggles - groupid>0, contextID>0, isAdmin - give 2x2x2 = 8
+	// possible rendered forms, all proven by the retired ormharness
+	// (shapes.json / TestTier3Shapes_f1e9e49a9c89, removed in d22ba1d6c). The
+	// WHERE is built as a single string and passed to ONE Where() call:
+	// GORM's clause.Where wraps any fragment containing "AND"/"OR" in an
+	// extra paren pair once there is more than one Where expression to
+	// combine (clause/where.go buildExprs), which would diverge from the
+	// golden.
+	whereSQL := ""
+	var whereArgs []interface{}
 
 	if groupid > 0 {
-		query += "groupid = ? AND "
-		args = append(args, groupid)
+		whereSQL += "groupid = ? AND "
+		whereArgs = append(whereArgs, groupid)
 	}
 
-	if contextReviewed != "" {
-		query += "users_comments.reviewed < ? AND "
-		args = append(args, contextReviewed)
+	if contextID > 0 {
+		whereSQL += "users_comments.id < ? AND "
+		whereArgs = append(whereArgs, contextID)
 	}
 
-	if isAdmin {
+	if !isAdmin {
 		// Admin/support can see all comments.
-	} else {
-		query += "(groupid IN (?) OR users_comments.byuserid = ?) AND "
-		args = append(args, modGroupIDs, myid)
+		whereSQL += "(groupid IN (?) OR users_comments.byuserid = ?) AND "
+		whereArgs = append(whereArgs, modGroupIDs, myid)
 	}
 
-	query += "1=1 ORDER BY reviewed DESC LIMIT 10"
+	whereSQL += "1=1"
 
 	var rows []CommentItem
-	db.Raw(query, args...).Scan(&rows)
+	db.Table("users_comments").Where(whereSQL, whereArgs...).
+		Order("users_comments.id DESC").Limit(10).Scan(&rows)
 
 	if len(rows) == 0 {
 		return c.JSON(fiber.Map{
@@ -116,11 +127,9 @@ func Get(c *fiber.Ctx) error {
 		rows[i].Flagged = rows[i].Flag
 	}
 
-	var ctx interface{}
-	lastReviewed := rows[len(rows)-1].Reviewed
-	if lastReviewed != nil {
-		ctx = fiber.Map{"reviewed": lastReviewed.Format(time.RFC3339)}
-	}
+	// Context is the ID of the last row; always set when rows are non-empty
+	// so the frontend can request the next page. Returns nil only when zero rows.
+	ctx := fiber.Map{"id": rows[len(rows)-1].ID}
 
 	return c.JSON(fiber.Map{
 		"comments": rows,
@@ -150,9 +159,9 @@ func getSingle(c *fiber.Ctx, myid uint64, id uint64) error {
 	var row CommentItem
 
 	if isAdmin {
-		db.Raw("SELECT * FROM users_comments WHERE id = ?", id).Scan(&row)
+		db.Table("users_comments").Where("id = ?", id).Scan(&row)
 	} else if len(modGroupIDs) > 0 {
-		db.Raw("SELECT * FROM users_comments WHERE id = ? AND groupid IN (?)", id, modGroupIDs).Scan(&row)
+		db.Table("users_comments").Where("id = ? AND groupid IN ?", id, modGroupIDs).Scan(&row)
 	}
 
 	if row.ID == 0 {
@@ -209,7 +218,7 @@ func canModerate(myid uint64, groupid *uint64) bool {
 
 	db := database.DBConn
 	var role string
-	db.Raw("SELECT role FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, *groupid, utils.COLLECTION_APPROVED).Scan(&role)
+	db.Table("memberships").Select("role").Where("userid = ? AND groupid = ? AND collection = ?", myid, *groupid, utils.COLLECTION_APPROVED).Scan(&role)
 
 	return role == utils.ROLE_MODERATOR || role == utils.ROLE_OWNER
 }
@@ -219,7 +228,7 @@ func canModerateComment(myid uint64, commentID uint64) bool {
 	db := database.DBConn
 
 	var groupid *uint64
-	db.Raw("SELECT groupid FROM users_comments WHERE id = ?", commentID).Scan(&groupid)
+	db.Table("users_comments").Select("groupid").Where("id = ?", commentID).Scan(&groupid)
 
 	return canModerate(myid, groupid)
 }
@@ -230,14 +239,14 @@ func flagOthers(userid uint64, groupid uint64) {
 	db := database.DBConn
 
 	var otherGroupIDs []uint64
-	db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND groupid != ?", userid, groupid).Pluck("groupid", &otherGroupIDs)
+	db.Table("memberships").Where("userid = ? AND groupid != ?", userid, groupid).Pluck("groupid", &otherGroupIDs)
 
 	now := time.Now().Format("2006-01-02 15:04")
 	reason := "Note flagged to other groups"
 
 	for _, gid := range otherGroupIDs {
-		db.Exec("UPDATE memberships SET reviewreason = ?, reviewrequestedat = ? WHERE groupid = ? AND userid = ?",
-			reason, now, gid, userid)
+		db.Table("memberships").Where("groupid = ? AND userid = ?", gid, userid).
+			Updates(map[string]interface{}{"reviewreason": reason, "reviewrequestedat": now})
 	}
 }
 
@@ -268,30 +277,30 @@ func Create(c *fiber.Ctx) error {
 		flag = 1
 	}
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"userid":   req.Userid,
+		"groupid":  req.Groupid,
+		"byuserid": myid,
+		"user1":    req.User1,
+		"user2":    req.User2,
+		"user3":    req.User3,
+		"user4":    req.User4,
+		"user5":    req.User5,
+		"user6":    req.User6,
+		"user7":    req.User7,
+		"user8":    req.User8,
+		"user9":    req.User9,
+		"user10":   req.User10,
+		"user11":   req.User11,
+		"flag":     flag,
 	}
-	sqlResult, err := sqlDB.Exec(
-		"INSERT INTO users_comments (userid, groupid, byuserid, user1, user2, user3, user4, user5, user6, user7, user8, user9, user10, user11, flag) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		req.Userid, req.Groupid, myid,
-		req.User1, req.User2, req.User3, req.User4, req.User5,
-		req.User6, req.User7, req.User8, req.User9, req.User10,
-		req.User11, flag,
-	)
-
-	if err != nil {
+	if err := db.Table("users_comments").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create comment")
 	}
-
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	// Flag user in other groups if flag is set
 	if id > 0 && req.Flag && req.Groupid != nil && *req.Groupid > 0 {
@@ -325,18 +334,28 @@ func Edit(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	db.Exec(
-		"UPDATE users_comments SET user1 = ?, user2 = ?, user3 = ?, user4 = ?, user5 = ?, user6 = ?, user7 = ?, user8 = ?, user9 = ?, user10 = ?, user11 = ?, flag = COALESCE(?, flag), byuserid = ?, reviewed = NOW() WHERE id = ?",
-		req.User1, req.User2, req.User3, req.User4, req.User5,
-		req.User6, req.User7, req.User8, req.User9, req.User10,
-		req.User11, req.Flag, myid, req.ID,
-	)
+	db.Table("users_comments").Where("id = ?", req.ID).Updates(map[string]interface{}{
+		"user1":    req.User1,
+		"user2":    req.User2,
+		"user3":    req.User3,
+		"user4":    req.User4,
+		"user5":    req.User5,
+		"user6":    req.User6,
+		"user7":    req.User7,
+		"user8":    req.User8,
+		"user9":    req.User9,
+		"user10":   req.User10,
+		"user11":   req.User11,
+		"flag":     gorm.Expr("COALESCE(?, flag)", req.Flag),
+		"byuserid": myid,
+		"reviewed": gorm.Expr("NOW()"),
+	})
 
 	// Flag user in other groups if flag is set to true
 	if req.Flag != nil && *req.Flag {
 		var commentUserid uint64
 		var commentGroupid uint64
-		db.Raw("SELECT userid, groupid FROM users_comments WHERE id = ?", req.ID).Row().Scan(&commentUserid, &commentGroupid)
+		db.Table("users_comments").Select("userid, groupid").Where("id = ?", req.ID).Row().Scan(&commentUserid, &commentGroupid)
 		if commentUserid > 0 && commentGroupid > 0 {
 			flagOthers(commentUserid, commentGroupid)
 		}
@@ -364,7 +383,7 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	db.Exec("DELETE FROM users_comments WHERE id = ?", id)
+	db.Table("users_comments").Where("id = ?", id).Delete(nil)
 
 	return c.JSON(fiber.Map{
 		"success": true,

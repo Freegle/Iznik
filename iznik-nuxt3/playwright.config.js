@@ -35,7 +35,9 @@ module.exports = defineConfig({
   // Fallback: self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness.
   workers: process.env.PW_WORKERS
     ? Number(process.env.PW_WORKERS)
-    : process.env.SELF_HOSTED_RUNNER === 'true' ? 11 : 6,
+    : process.env.SELF_HOSTED_RUNNER === 'true'
+      ? 11
+      : 6,
   maxFailures: 0,
   reporter: [
     ['list'],
@@ -106,6 +108,24 @@ module.exports = defineConfig({
                     // the e2e suite does not navigate into, so it is pure
                     // denominator noise. Unit tests cover it.
                     !sourcePath.includes('components/ChatMobileNavbar') &&
+                    // useHaptics: native-only Capacitor haptic feedback;
+                    // all methods are no-ops on web so Playwright never
+                    // exercises them. Unit-tested via useHaptics.spec.js.
+                    !sourcePath.includes('useHaptics') &&
+                    // give/mobile/photos: app-only give-flow page for
+                    // attaching photos before posting; Playwright e2e tests
+                    // run against the web build and never navigate here.
+                    // Unit-tested via pages/give/mobile/photos.spec.js.
+                    !sourcePath.includes('give/mobile/photos') &&
+                    // GeneratedAvatar: the variant is allVariants[hash(name) % 6],
+                    // so the spots and tiles branches are reached only for two of
+                    // the six variants, and whether a run happens to render a
+                    // member whose name lands on one of them is chance. Those two
+                    // lines alone swing the whole Playwright suite by ±0.07% -
+                    // master failed against itself across 6ef68f343 (21.976%) and
+                    // 53d476e3d (22.048%). Excluded from Playwright only; the unit
+                    // spec pins both variants by name and covers the file 100%.
+                    !sourcePath.includes('GeneratedAvatar') &&
                     sourcePath.length < 300
                   )
                 },

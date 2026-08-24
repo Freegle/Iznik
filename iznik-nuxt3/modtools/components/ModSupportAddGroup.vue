@@ -37,7 +37,9 @@
       <b-form-text>
         Core Group Area. Draw with
         <!-- eslint-disable-next-line -->
-        <ExternalLink href="https://arthur-e.github.io/Wicket/sandbox-gmaps3.html">this</ExternalLink>.
+        <ExternalLink href="https://freegle.github.io/Wicket/"
+          >this</ExternalLink
+        >.
       </b-form-text>
       <b-form-textarea
         v-model="cga"
@@ -73,6 +75,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useGroupStore } from '~/stores/group'
+import { toNumberOrNull } from '~/composables/useNumericInput'
 
 const groupStore = useGroupStore()
 
@@ -144,8 +147,10 @@ async function add(callback) {
       namefull: namefull.value,
       cga: cga.value,
       dpa: dpa.value,
-      lat: lat.value,
-      lng: lng.value,
+      // Send real numbers, not the number-input strings: the API's lat/lng are float and a
+      // string there fails the request parse, so the new group's centre never got set (9932).
+      lat: toNumberOrNull(lat.value),
+      lng: toNumberOrNull(lng.value),
     })
 
     if (groupId) {

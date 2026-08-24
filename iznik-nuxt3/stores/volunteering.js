@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
 import dayjs from 'dayjs'
 import { nextTick } from 'vue'
+import { runHoldAware } from '~/api/heldConflict'
 import api from '~/api'
 import { addStrings, earliestDate } from '~/composables/useTimeFormat'
 import { useAuthStore } from '~/stores/auth'
 
-export const useVolunteeringStore = defineStore({
-  id: 'volunteering',
+export const useVolunteeringStore = defineStore('volunteering', {
   state: () => ({
     list: {},
     forUser: [],
@@ -123,7 +123,10 @@ export const useVolunteeringStore = defineStore({
       return id
     },
     async save(data) {
-      await api(this.config).volunteering.save(data)
+      await runHoldAware(
+        () => api(this.config).volunteering.save(data),
+        () => this.fetch(data.id, true)
+      )
       await this.fetch(data.id, true)
     },
     async renew(id) {

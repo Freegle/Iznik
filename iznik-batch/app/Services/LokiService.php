@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -270,5 +272,57 @@ class LokiService
         }
 
         return substr(md5($email), 0, 16);
+    }
+
+    /**
+     * Read side: run a LogQL query over [$start, $end] and return the decoded
+     * JSON body of every matching log line — or NULL if the query itself failed
+     * (no URL, network error, non-200). NULL (vs an empty array) matters: a caller
+     * must not treat a query error as "zero results", or a Loki hiccup would look
+     * like "unused". An empty array means the query succeeded with no matches.
+     *
+     * @return array<int, array<string, mixed>>|null
+     */
+    public function queryRange(string $logql, Carbon $start, Carbon $end): ?array
+    {
+        $url = config('freegle.loki.query_url');
+        if (empty($url)) {
+            Log::warning('LokiService::queryRange: no freegle.loki.query_url configured');
+
+            return null;
+        }
+
+        try {
+            $resp = Http::timeout(30)->get(rtrim($url, '/').'/loki/api/v1/query_range', [
+                'query' => $logql,
+                'start' => $start->getTimestamp() * 1_000_000_000, // ns
+                'end' => $end->getTimestamp() * 1_000_000_000,   // ns
+                'limit' => 5000,
+                'direction' => 'forward',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('LokiService::queryRange failed: '.$e->getMessage());
+
+            return null;
+        }
+
+        if (! $resp->ok()) {
+            Log::warning('LokiService::queryRange non-200: '.$resp->status().' '.$resp->body());
+
+            return null;
+        }
+
+        $rows = [];
+        foreach (($resp->json('data.result') ?? []) as $stream) {
+            foreach (($stream['values'] ?? []) as $pair) {
+                // $pair = [ "<ns timestamp>", "<log line json>" ]
+                $decoded = json_decode($pair[1] ?? '', true);
+                if (is_array($decoded)) {
+                    $rows[] = $decoded;
+                }
+            }
+        }
+
+        return $rows;
     }
 }

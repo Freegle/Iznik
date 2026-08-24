@@ -22,6 +22,9 @@ type MessageGroupInfo struct {
 	Collection string    `json:"collection"`
 	Arrival    time.Time `json:"arrival"`
 	Heldby     *uint64   `json:"heldby,omitempty"`
+	// RippledIn marks a row created by the rippling engine; the mod queue uses it to show
+	// the rippled-in banner authoritatively (see MessageGroup.RippledIn). (9808/303)
+	RippledIn uint8 `json:"rippled_in"`
 }
 
 type PaginationContext struct {
@@ -47,10 +50,9 @@ type ListMessageItem struct {
 }
 
 type ListMessagesResponse struct {
-	Messages []ListMessageItem `json:"messages"`
+	Messages []ListMessageItem  `json:"messages"`
 	Context  *PaginationContext `json:"context,omitempty"`
 }
-
 
 // ListMessages handles GET /messages - list messages with moderation queue support.
 func ListMessages(c *fiber.Ctx) error {
@@ -128,80 +130,82 @@ func ListMessages(c *fiber.Ctx) error {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND m.fromuser IS NOT NULL "+
-				"AND m.id = ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchID, limit).Pluck("msgid", &msgIDs)
+			db.Table("messages_groups mg").
+				Select("DISTINCT mg.msgid").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND m.id = ?",
+					groupIDs, collection, searchID).
+				Order("mg.arrival DESC").
+				Limit(limit).
+				Pluck("msgid", &msgIDs)
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND m.fromuser IS NOT NULL "+
-				"AND m.subject LIKE ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchTerm, limit).Pluck("msgid", &msgIDs)
+			db.Table("messages_groups mg").
+				Select("DISTINCT mg.msgid").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL AND m.subject LIKE ?",
+					groupIDs, collection, searchTerm).
+				Order("mg.arrival DESC").
+				Limit(limit).
+				Pluck("msgid", &msgIDs)
 		}
 	} else if subaction == "searchmemb" && search != "" {
 		// If search is a numeric user ID, do a fast direct lookup first.
 		searchUID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchUID > 0 {
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND m.fromuser = ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchUID, limit).Pluck("msgid", &msgIDs)
+			db.Table("messages_groups mg").
+				Select("DISTINCT mg.msgid").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser = ?",
+					groupIDs, collection, searchUID).
+				Order("mg.arrival DESC").
+				Limit(limit).
+				Pluck("msgid", &msgIDs)
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"INNER JOIN users u ON u.id = m.fromuser "+
-				"LEFT JOIN users_emails ue ON ue.userid = u.id "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND (u.fullname LIKE ? OR ue.email LIKE ?) "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchTerm, searchTerm, limit).Pluck("msgid", &msgIDs)
+			db.Table("messages_groups mg").
+				Select("DISTINCT mg.msgid").
+				Joins("INNER JOIN messages m ON m.id = mg.msgid").
+				Joins("INNER JOIN users u ON u.id = m.fromuser").
+				Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
+				Where("mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND (u.fullname LIKE ? OR ue.email LIKE ?)",
+					groupIDs, collection, searchTerm, searchTerm).
+				Order("mg.arrival DESC").
+				Limit(limit).
+				Pluck("msgid", &msgIDs)
 		}
 	} else {
 		// Standard listing with optional pagination and fromuser filter.
-		sql := "SELECT DISTINCT mg.msgid FROM messages_groups mg " +
-			"INNER JOIN messages m ON m.id = mg.msgid " +
-			"WHERE mg.groupid IN (?) " +
-			"AND mg.collection = ? " +
-			"AND mg.deleted = 0 " +
-			"AND m.fromuser IS NOT NULL "
-
-		args := []interface{}{groupIDs, collection}
+		//
+		// fromuser>0
+		// and ctx pagination give 2x2 = 4 possible rendered forms, all proven
+		// by the retired ormharness (shapes.json /
+		// TestTier3Shapes_bfe25b4914e8, removed in d22ba1d6c).
+		// WHERE built as a single string for ONE Where() call: GORM's
+		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
+		// paren pair once there is more than one Where expression to combine
+		// (clause/where.go buildExprs), which would diverge from the golden.
+		whereSQL := "mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 AND m.fromuser IS NOT NULL"
+		whereArgs := []interface{}{groupIDs, collection}
 
 		if fromuser > 0 {
-			sql += "AND m.fromuser = ? "
-			args = append(args, fromuser)
+			whereSQL += " AND m.fromuser = ?"
+			whereArgs = append(whereArgs, fromuser)
 		}
 
 		if ctx != nil && ctx.Date > 0 {
 			ctxTime := time.Unix(ctx.Date, 0).UTC().Format("2006-01-02 15:04:05")
-			sql += "AND (mg.arrival < ? OR (mg.arrival = ? AND mg.msgid < ?)) "
-			args = append(args, ctxTime, ctxTime, ctx.ID)
+			whereSQL += " AND (mg.arrival < ? OR (mg.arrival = ? AND mg.msgid < ?))"
+			whereArgs = append(whereArgs, ctxTime, ctxTime, ctx.ID)
 		}
 
-		sql += "ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
-		args = append(args, limit)
-
-		db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+		db.Table("messages_groups mg").
+			Select("DISTINCT mg.msgid").
+			Joins("INNER JOIN messages m ON m.id = mg.msgid").
+			Where(whereSQL, whereArgs...).
+			Order("mg.arrival DESC, mg.msgid DESC").Limit(limit).Pluck("msgid", &msgIDs)
 	}
 
 	if len(msgIDs) == 0 {
@@ -239,26 +243,29 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT m.id, m.subject, m.type, m.fromuser, m.arrival, m.lat, m.lng, "+
-					"m.availablenow, m.availableinitially, m.tnpostid "+
-					"FROM messages m WHERE m.id = ?", msgID).Scan(&msg)
+				db.Table("messages m").
+					Select("m.id, m.subject, m.type, m.fromuser, m.arrival, m.lat, m.lng, m.availablenow, m.availableinitially, m.tnpostid").
+					Where("m.id = ?", msgID).Scan(&msg)
 			}()
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT groupid, collection, arrival, heldby FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&groups)
+				db.Table("messages_groups").Select("groupid, collection, arrival, heldby, rippled_in").
+					Where("msgid = ? AND deleted = 0", msgID).Scan(&groups)
 			}()
 
 			go func() {
 				defer wg.Done()
 				// Fetch first image only for thumbnail.
-				db.Raw("SELECT id, msgid, archived, externaluid, externalmods FROM messages_attachments WHERE msgid = ? ORDER BY `primary` DESC, id ASC LIMIT 1", msgID).Scan(&attachments)
+				db.Table("messages_attachments").Select("id, msgid, archived, externaluid, externalmods").
+					Where("msgid = ?", msgID).Order("`primary` DESC, id ASC").Limit(1).Scan(&attachments)
 			}()
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND type = ? AND reviewrequired = 0 AND reviewrejected = 0",
-					msgID, utils.MESSAGE_INTERESTED).Scan(&replycount)
+				db.Table("chat_messages").
+					Where("refmsgid = ? AND type = ? AND reviewrequired = 0 AND reviewrejected = 0", msgID, utils.MESSAGE_INTERESTED).
+					Count(&replycount)
 			}()
 
 			wg.Wait()
@@ -350,7 +357,15 @@ func buildMTUnionAllMsgIDQuery(branchSQL string, branchArgs []interface{}, group
 	// The outer GROUP BY deduplicates messages that appear in multiple queried
 	// groups (e.g. a cross-posted Pending message).  MAX(arrival) picks the
 	// most-recent arrival across all branches for ordering.
-	sb.WriteString("SELECT msgid FROM (SELECT msgid, MAX(arrival) AS arrival FROM (")
+	//
+	// MAX_EXECUTION_TIME caps the whole statement at 20s. The member-name search
+	// fallback (leading-wildcard fullname LIKE joined per group) can run 90s+ for
+	// a moderator of many groups when no groupid scopes it (Discourse 9518/366) —
+	// long enough to exceed the proxy read timeout, so the client never gets a
+	// response and the spinner hangs forever. The cap guarantees the query returns
+	// (empty, surfaced as "Nothing found") instead of hanging. Well-scoped queries
+	// run in well under a second, so the cap never bites them.
+	sb.WriteString("SELECT /*+ MAX_EXECUTION_TIME(20000) */ msgid FROM (SELECT msgid, MAX(arrival) AS arrival FROM (")
 
 	args := make([]interface{}, 0, (len(branchArgs)+1)*len(groupIDs)+1)
 	for i, gid := range groupIDs {
@@ -440,23 +455,52 @@ func ListMessagesMT(c *fiber.Ctx) error {
 
 	var msgIDs []uint64
 
-	// Hide messages not yet processed by the content-check batch job.
+	// Hide Pending messages not yet processed by the content-check batch job.
 	// The 30-minute fallback ensures mods always see messages if the batch job is down,
 	// and also makes existing rows (contentcheck_checked_at IS NULL) visible without a
 	// backfill — their arrival times are already in the past.
+	// When the Pending view also shows Spam-collection messages, scope the filter to
+	// Pending rows only (Spam messages have already been reviewed and need no content check).
 	contentcheckFilter := ""
 	if collection == utils.COLLECTION_PENDING {
-		contentcheckFilter = " AND (mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 30 MINUTE)"
+		contentcheckFilter = " AND (mg.collection != 'Pending' OR mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 30 MINUTE)"
 	}
+
+	// 9808/638: when a mod asks for their OWN-group posts only (?originonly=true), exclude
+	// posts that rippled INTO the group (rippled_in = 1) - they otherwise dominate the
+	// Approved list and make finding a group's own members' posts hard. Folded into the
+	// per-branch filter that every query variant below already appends, using the same
+	// messages_groups.rippled_in marker the Edit branch above hardcodes (9808/633). Constant
+	// clause, so no bound parameter is added.
+	if c.Query("originonly") == "true" {
+		contentcheckFilter += " AND mg.rippled_in = 0"
+	}
+
+	// A listing query that fails must never be reported as an empty queue. The
+	// all-communities form fans out over every group the moderator covers and
+	// is capped at MAX_EXECUTION_TIME(20000) (see buildMTUnionAllMsgIDQuery),
+	// so a slow replica aborts it. Swallowing that returned a perfectly normal
+	// "messages": [] to ModTools, which cannot tell it apart from a genuinely
+	// empty queue: the moderator gets an empty page while the work count in
+	// the menu insists there is work, and the infinite loader stops for good
+	// (Discourse 10037).
+	var listErr error
 
 	if collection == "Edit" {
 		// Edit review uses messages_edits table, not messages_groups collection.
-		db.Raw("SELECT DISTINCT me.msgid FROM messages_edits me "+
-			"INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 "+
-			"WHERE mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL "+
-			"AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) "+
-			"ORDER BY me.timestamp DESC LIMIT ?",
-			groupIDs, limit).Pluck("msgid", &msgIDs)
+		// Restrict to ORIGIN messages_groups rows (rippled_in = 0). A post rippled INTO a
+		// group gets an Approved row there (rippled_in = 1); without this filter an edit on a
+		// rippled-in post surfaces in every receiving group's Edit queue (and to active mods
+		// there via the all-groups path), but an edit belongs to the post's origin group(s)
+		// only. Same bug class as the IP-abuse fix (WHERE rippled_in=0).
+		listErr = db.Table("messages_edits me").
+			Select("DISTINCT me.msgid").
+			Joins("INNER JOIN messages_groups mg ON mg.msgid = me.msgid AND mg.deleted = 0 AND mg.rippled_in = 0").
+			Where("mg.groupid IN (?) AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY)",
+				groupIDs).
+			Order("me.timestamp DESC").
+			Limit(limit).
+			Pluck("msgid", &msgIDs).Error
 	} else if subaction == "searchall" && search != "" {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
@@ -469,7 +513,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchID}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
@@ -481,7 +525,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 	} else if subaction == "searchmemb" && search != "" {
 		// If search is a numeric user ID, do a fast direct lookup first.
@@ -498,7 +542,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchUID}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 		if len(msgIDs) == 0 {
 			// Fall back to name/email LIKE search.  The LEFT JOIN to
@@ -516,16 +560,30 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				contentcheckFilter +
 				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm, searchTerm}, groupIDs, limit)
-			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+			listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
 		}
 	} else {
+		// When listing the Pending review queue, also include Spam-collection messages.
+		// The badge work-count (session.workCount.spam) already counts these, so
+		// excluding them from the list creates a spurious "+1 over visible" badge
+		// (Discourse #9654 / V1 parity).
+		collectionFilter := "mg.collection = ?"
+		branchArgs := []interface{}{collection}
+		if collection == utils.COLLECTION_PENDING {
+			// Include Spam-collection messages in the Pending review queue, but
+			// only recent ones. Spam older than 30 days is stale — it should age
+			// out of the queue rather than accumulate indefinitely. Pending rows
+			// are never aged out here.
+			collectionFilter = "(mg.collection = ? OR (mg.collection = ? AND mg.arrival >= (NOW() - INTERVAL 30 DAY)))"
+			branchArgs = []interface{}{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
+		}
+
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
-			"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
+			"WHERE mg.groupid = %GID% AND " + collectionFilter + " AND mg.deleted = 0 " +
 			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
 			contentcheckFilter + " "
-		branchArgs := []interface{}{collection}
 
 		if fromuser > 0 {
 			branchSQL += "AND m.fromuser = ? "
@@ -539,7 +597,11 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		branchSQL += "ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 
 		sql, args := buildMTUnionAllMsgIDQuery(branchSQL, branchArgs, groupIDs, limit)
-		db.Raw(sql, args...).Pluck("msgid", &msgIDs)
+		listErr = db.Raw(sql, args...).Pluck("msgid", &msgIDs).Error
+	}
+
+	if listErr != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to list messages")
 	}
 
 	if len(msgIDs) == 0 {
@@ -549,9 +611,15 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	// Build pagination context from last ID.
 	var respCtx *PaginationContext
 	if len(msgIDs) == limit {
-		// Get arrival time of last message for pagination.
+		// The list orders msgids by MAX(arrival) across the queried groups (see
+		// buildMTUnionAllMsgIDQuery), so the cursor must be that same MAX — not an
+		// arbitrary group's arrival via LIMIT 1. Otherwise, for a cross-posted
+		// message the next page's arrival boundary lands at the wrong time and can
+		// drop messages that sort between the two values.
 		var lastArrival time.Time
-		db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? AND deleted = 0 LIMIT 1", msgIDs[len(msgIDs)-1]).Scan(&lastArrival)
+		db.Table("messages_groups").Select("MAX(arrival)").
+			Where("msgid = ? AND groupid IN ? AND deleted = 0", msgIDs[len(msgIDs)-1], groupIDs).
+			Scan(&lastArrival)
 		if !lastArrival.IsZero() {
 			respCtx = &PaginationContext{
 				Date: lastArrival.Unix(),
@@ -593,4 +661,3 @@ func GetMessagesWithHistory(c *fiber.Ctx) error {
 
 	return c.JSON(messages)
 }
-

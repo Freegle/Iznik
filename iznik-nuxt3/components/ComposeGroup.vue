@@ -1,161 +1,155 @@
 <template>
-  <b-form-select
-    v-model="group"
-    :style="(width ? 'width: ' + width + 'px' : '') + '; max-width: 300px;'"
-    :options="groupOptions"
-  />
+  <div class="compose-group" data-test="compose-group">
+    <div v-if="groupName" class="compose-group__card">
+      <GroupProfileImage
+        :image="profile"
+        size="sm"
+        alt-text="Community profile picture"
+        class="compose-group__logo"
+      />
+      <div class="compose-group__info">
+        <span class="compose-group__name">{{ groupName }}</span>
+        <p v-if="tagline" class="compose-group__tagline">
+          {{ tagline }}
+        </p>
+      </div>
+    </div>
+    <span v-else class="compose-group__finding text-muted">
+      Finding your local community…
+    </span>
+  </div>
 </template>
 <script setup>
-import { computed, nextTick, onMounted } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import GroupProfileImage from '~/components/GroupProfileImage.vue'
 import { useComposeStore } from '~/stores/compose'
-import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import api from '~/api'
 import { useRuntimeConfig } from '#app'
 
-defineProps({
-  width: {
-    type: Number,
-    required: false,
-    default: null,
-  },
-})
+// Rippling-out (#10): the origin group is DERIVED from the poster's postcode/location (the
+// containing-or-closest Freegle community) and is no longer chosen by hand. The post then
+// ripples out from there, so a manual group pick is no longer meaningful. Any pre-set group
+// (e.g. carried over from a repost or an earlier compose) is IGNORED - we always lock to the
+// first (nearest/containing) group for the current postcode.
 
 const composeStore = useComposeStore()
-const authStore = useAuthStore()
 const groupStore = useGroupStore()
 const runtimeConfig = useRuntimeConfig()
 
-const postcode = computed(() => {
-  return composeStore?.postcode
+const postcode = computed(() => composeStore?.postcode)
+
+// The group the post will go to: always the derived origin (nearest/containing community)
+// for the current postcode. A pre-set group is deliberately ignored (see note above).
+const selectedGroupId = computed(
+  () => postcode.value?.groupsnear?.[0]?.id || null
+)
+
+const groupName = computed(() => {
+  const id = selectedGroupId.value
+  if (!id) {
+    return null
+  }
+  const near = (postcode.value?.groupsnear || []).find(
+    (g) => parseInt(g.id) === parseInt(id)
+  )
+  const cached = groupStore.get(id)
+  return (
+    near?.namedisplay ||
+    near?.nameshort ||
+    cached?.namedisplay ||
+    cached?.nameshort ||
+    null
+  )
 })
 
-const myGroups = computed(() => {
-  console.log('Compute myGroups', authStore.groups)
-  return authStore.groups || []
-})
+// The postcode's groupsnear entries are deliberately trimmed (id/name only) to keep the
+// compose store small, so the profile picture and tagline come from the full group record.
+// We hold the FETCHED group in a local ref and drive the card from it, rather than reading
+// groupStore.get(id) reactively: get() returns a cross-store getter result whose dependency
+// on list[id] didn't reliably re-render the card once the fetch resolved, so the profile
+// image could stay on the /icon.png fallback (logged-in EH4 1HY showed the default instead
+// of the Edinburgh logo). Awaiting fetch() and assigning the result is deterministic. Name
+// shows immediately; profile/tagline fill in when the fetch resolves.
+const fullGroup = ref(null)
 
-const group = computed({
-  get() {
-    let ret = composeStore?.group
-
-    if (!ret) {
-      if (postcode.value?.groupsnear) {
-        ret = postcode.value.groupsnear[0].id
-      }
+watch(
+  selectedGroupId,
+  async (id) => {
+    fullGroup.value = null
+    if (!id) {
+      return
     }
-
-    return ret
+    const g = await groupStore.fetch(id)
+    // Guard against a stale resolution if the origin group changed while awaiting.
+    if (id === selectedGroupId.value) {
+      fullGroup.value = g
+    }
   },
-  set(newVal) {
-    composeStore.group = newVal
-  },
-})
+  { immediate: true }
+)
 
-const groupOptions = computed(() => {
-  const ret = []
-  const ids = {}
+const profile = computed(() => fullGroup.value?.profile || '/icon.png')
 
-  if (postcode.value && postcode.value.groupsnear) {
-    for (const group of postcode.value.groupsnear) {
-      if (!ids[group.id]) {
-        ret.push({
-          value: group.id,
-          text: group.namedisplay ? group.namedisplay : group.nameshort,
-        })
-
-        ids[group.id] = true
-      }
-    }
-  }
-
-  // Add any other groups we are a member of and might want to select.
-  for (const group of myGroups.value) {
-    if (!ids[group.groupid]) {
-      ret.push({
-        value: group.groupid,
-        text: group.namedisplay ? group.namedisplay : group.nameshort,
-      })
-
-      ids[group.groupid] = true
-    }
-  }
-
-  // Ensure the pre-selected group (e.g. from a repost flow) is always present,
-  // even before fetchUser() has populated myGroups. Without this, b-form-select
-  // resets its displayed value to the first available option because the current
-  // v-model value has no matching <option> element.
-  const currentGroup = composeStore.group
-  if (currentGroup && !ids[currentGroup]) {
-    const cached = groupStore.get(currentGroup)
-    ret.unshift({
-      value: currentGroup,
-      text: cached?.namedisplay || cached?.nameshort || String(currentGroup),
-    })
-  }
-
-  return ret
-})
+const tagline = computed(() => fullGroup.value?.tagline || null)
 
 onMounted(async () => {
-  // The postcode we have contains a list of groups. That list might contain groups which are no longer valid,
-  // for example if they have been merged. So we want to refetch the postcode so that our store gets updated.
-  // Preserve the currently selected group across the refetch so we don't overwrite a user's choice.
-
-  // Save the intended group at the very top, before ANY async work.
-  // This captures the pre-selected group (e.g. from a repost flow).
-  const savedGroup = composeStore.group
-
+  // Refetch the postcode so its group list is fresh (groups can merge), then lock the origin
+  // group to the containing-or-closest community, overriding any pre-set group.
   if (postcode.value) {
-    let location
     try {
-      location = await api(runtimeConfig).location.typeahead(postcode.value.name)
-    } catch (e) {
-      console.error('Failed to fetch postcode', e)
-    }
-
-    if (location) {
-      // Snapshot the group AFTER the async wait but BEFORE setPostcode.
-      // If the user changed the group during the typeahead, this captures their intent.
-      const groupAfterTypeahead = composeStore.group
-
-      composeStore.setPostcode(location[0])
-
-      // b-form-select may auto-update composeStore.group when its options change
-      // (because the current value is no longer in the new options list).
-      // Wait for Vue's reactive cycle to settle, then restore the intended group.
-      await nextTick()
-
-      if (!composeStore.group || composeStore.group !== groupAfterTypeahead) {
-        // Reactive cascade cleared or replaced the group — restore the right value:
-        // user's choice if they changed it during typeahead, otherwise savedGroup.
-        composeStore.group = groupAfterTypeahead || savedGroup
+      const location = await api(runtimeConfig).location.typeahead(
+        postcode.value.name
+      )
+      if (location?.[0]) {
+        composeStore.setPostcode(location[0])
       }
-    } else if (savedGroup && !composeStore.group) {
-      composeStore.group = savedGroup
+    } catch (e) {
+      console.error('Failed to refetch postcode', e)
     }
   }
 
-  await authStore.fetchUser()
-
-  // Final guard: b-form-select may have cleared composeStore.group during the
-  // async fetchUser wait (options re-evaluated while the saved group wasn't in
-  // groupsnear yet). Restore savedGroup only if the group was cleared — NOT if
-  // the user intentionally selected a different group.
-  if (savedGroup && !composeStore.group) {
-    const groupsNear = postcode.value?.groupsnear || []
-    const savedGroupValid =
-      groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||
-      myGroups.value.some((g) => parseInt(g.groupid) === parseInt(savedGroup))
-
-    if (savedGroupValid) {
-      composeStore.group = savedGroup
-    }
-  }
-
-  // If we have a postcode with groups but no group selected, auto-select the first one.
-  if (postcode.value?.groupsnear?.length && !composeStore.group) {
+  if (postcode.value?.groupsnear?.length) {
     composeStore.group = postcode.value.groupsnear[0].id
   }
 })
 </script>
+<style scoped lang="scss">
+@import 'assets/css/_color-vars.scss';
+
+.compose-group__card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid $color-gray--light;
+  border-radius: 8px;
+  background: $color-white;
+}
+
+.compose-group__logo {
+  /* GroupProfileImage sizes itself (60px via size="sm") and draws its own
+     thumbnail border; just stop it being squashed in the flex row. */
+  flex-shrink: 0;
+}
+
+.compose-group__info {
+  flex: 1;
+  min-width: 0;
+}
+
+.compose-group__name {
+  display: block;
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: $color-header;
+  line-height: 1.2;
+}
+
+.compose-group__tagline {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: $color-gray--darker;
+  line-height: 1.3;
+}
+</style>

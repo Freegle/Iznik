@@ -219,8 +219,6 @@ describe('ModChatReview', () => {
       ['UnknownMessage', 'reply to a post we cannot find'],
       ['Spam', 'failed spam checks'],
       ['CountryBlocked', 'country we are blocking'],
-      ['IPUsedForDifferentUsers', 'IP address'],
-      ['IPUsedForDifferentGroups', 'IP address'],
       ['SubjectUsedForDifferentGroups', 'subject line'],
       ['SpamAssassin', 'SpamAssassin'],
       ['Greetings spam', 'greetings spam'],
@@ -278,6 +276,23 @@ describe('ModChatReview', () => {
         .findAll('button')
         .find((b) => b.text().includes('Release'))
       expect(releaseButton).toBeUndefined()
+    })
+
+    // Discourse #9879/1: unlike pending-post review (ModMessageButtons.vue
+    // v-if="!heldByOnThisGroup" / v-else Release), the chat-review Hold button used
+    // v-if="!message.held || me.id === message.held.id" — which stays true once you
+    // hold it yourself, so the Hold button never disappeared like it does for posts.
+    it('hides the Hold button once held by me, same as pending-post review', () => {
+      const wrapper = mountComponent({ held: heldByMe })
+      const buttons = wrapper.findAll('.spin-button')
+      expect(
+        buttons.find((b) => b.attributes('data-label') === 'Hold')
+      ).toBeUndefined()
+      // Release takes its place, exactly as for pending posts.
+      const releaseButton = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Release'))
+      expect(releaseButton).toBeDefined()
     })
   })
 
@@ -474,7 +489,6 @@ describe('ModChatReview', () => {
 
     it.each([
       ['release', mockReleaseChat],
-      ['hold', mockHoldChat],
       ['approve', mockApproveChat],
       ['reject', mockRejectChat],
       ['whitelist', mockApproveAllFutureChat],
@@ -492,6 +506,20 @@ describe('ModChatReview', () => {
         }
       }
     )
+
+    // Discourse #9879/1: hold() used to emit('reload'), which made the parent
+    // (chats/review.vue) clear and refetch the ENTIRE review queue — resetting
+    // scroll to the top and losing the moderator's place after every hold. The
+    // store now updates the held message in place (see stores/chat.js holdChat),
+    // so hold() must NOT trigger that full-list reload.
+    it('hold calls store method with message id, does NOT emit reload, calls callback', async () => {
+      const wrapper = mountComponent()
+      const callback = vi.fn()
+      await wrapper.vm.hold(callback)
+      expect(mockHoldChat).toHaveBeenCalledWith(123)
+      expect(wrapper.emitted('reload')).toBeFalsy()
+      expect(callback).toHaveBeenCalled()
+    })
 
     it('showModnote sets showModChatNoteModal to true and calls callback', () => {
       const wrapper = mountComponent()
@@ -610,7 +638,9 @@ describe('ModChatReview', () => {
         touserid: 200,
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       // First = From:, gets sender's group (groupidfrom)
       expect(reviewUsers[0].props('groupid')).toBe(555)
       // Second = To:, gets recipient's group (groupid)
@@ -626,7 +656,9 @@ describe('ModChatReview', () => {
         touserid: 200,
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       reviewUsers.forEach((u) => {
         expect(u.props('groupid')).toBe(555)
       })
@@ -652,7 +684,9 @@ describe('ModChatReview', () => {
         touser: null,
       })
       // No ModChatReviewUser for To: (userid=0 is not a real user)
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       expect(reviewUsers.length).toBe(1) // only From:
       // But the chatroom name should appear as the To: label
       expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(true)
@@ -673,7 +707,9 @@ describe('ModChatReview', () => {
         touser: { id: 200, displayname: 'To User', spammer: false },
       })
       expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(false)
-      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      const reviewUsers = wrapper.findAllComponents({
+        name: 'ModChatReviewUser',
+      })
       expect(reviewUsers.length).toBe(2) // From: and To:
     })
 
@@ -691,6 +727,153 @@ describe('ModChatReview', () => {
     it('chatroomName computed returns name for User2Mod chattype', () => {
       const wrapper = mountComponent({ touserid: 0, touser: null })
       expect(wrapper.vm.chatroomName).toBe('TestGroup')
+    })
+  })
+
+  describe('rippling held notice', () => {
+    it('shows the rippling held notice when heldbyrippling is true', () => {
+      const wrapper = mountComponent({ heldbyrippling: true })
+      const notice = wrapper.find('[data-testid="rippling-held-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held: rippling out')
+    })
+
+    it('does not show the rippling held notice when heldbyrippling is false', () => {
+      const wrapper = mountComponent({ heldbyrippling: false })
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
+    })
+
+    it('does not show the rippling held notice when heldbyrippling is absent', () => {
+      const wrapper = mountComponent({})
+      // defaultMessage has no heldbyrippling key → should not render the notice
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
+    })
+
+    it('can show both manual hold notice and rippling held notice together', () => {
+      const wrapper = mountComponent({
+        heldbyrippling: true,
+        held: {
+          id: 888,
+          name: 'Other Mod',
+          email: 'other@example.com',
+          timestamp: '2025-01-01T10:00:00Z',
+        },
+      })
+      const notices = wrapper.findAll('.notice-message')
+      expect(notices.length).toBeGreaterThanOrEqual(2)
+      const fullText = wrapper.text()
+      expect(fullText).toContain('Held: rippling out')
+      expect(fullText).toContain('Held by')
+    })
+  })
+
+  // The four rippling-hold states a mod needs to tell apart. Before this, only "held now"
+  // was visible: a hold that had already released left NO trace, which is why the delay in
+  // Discourse 10025 looked like a mail-system fault, and 'taken-gone' rendered as "held ...
+  // will be delivered automatically" when in fact it never was and never will be.
+  describe('rippling hold states', () => {
+    it('held: shows how long it has been waiting so far', () => {
+      const wrapper = mountComponent({
+        heldbyrippling: true,
+        ripplinghold: {
+          status: 'held',
+          heldat: '2026-08-04T14:22:58Z',
+          heldminutes: 180,
+          delivered: false,
+        },
+      })
+      const notice = wrapper.find('[data-testid="rippling-held-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held: rippling out')
+      expect(notice.text()).toContain('3 hours')
+      // Still true for a live hold - it really will go out when the reach grows.
+      expect(notice.text()).toContain('delivered automatically')
+    })
+
+    it('released: reports the delay that already happened', () => {
+      const wrapper = mountComponent({
+        ripplinghold: {
+          status: 'released',
+          heldat: '2026-08-04T14:22:58Z',
+          releasedat: '2026-08-06T13:15:08Z',
+          heldminutes: 2812,
+          delivered: true,
+        },
+      })
+      const notice = wrapper.find('[data-testid="rippling-delayed-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held as too far for: 46 hours')
+      // Must NOT claim it is still waiting.
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
+    })
+
+    it('taken-gone: says never delivered, and does NOT promise delivery', () => {
+      const wrapper = mountComponent({
+        ripplinghold: {
+          status: 'taken-gone',
+          heldat: '2026-08-04T14:22:58Z',
+          releasedat: '2026-08-06T13:15:08Z',
+          heldminutes: 2812,
+          delivered: false,
+        },
+      })
+      const notice = wrapper.find('[data-testid="rippling-undelivered-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toMatch(/never (reached|delivered)/i)
+      expect(notice.text()).toContain('46 hours')
+      // The bug this fixes: the old notice promised automatic delivery.
+      expect(wrapper.text()).not.toContain('delivered automatically')
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
+    })
+
+    // Safety net only. Nothing writes 'dropped' - production has never recorded one
+    // against ~9,800 released and ~3,200 taken-gone - so this covers the defensive
+    // branch rather than a state moderators will meet. It must not go silently blank.
+    it('an unexpected terminal status still says never delivered, without inventing a reason', () => {
+      const wrapper = mountComponent({
+        ripplinghold: {
+          status: 'dropped',
+          heldat: '2026-08-04T14:22:58Z',
+          heldminutes: 300,
+          delivered: false,
+        },
+      })
+      const notice = wrapper.find('[data-testid="rippling-undelivered-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toMatch(/never (reached|delivered)/i)
+      expect(notice.text()).toContain('5 hours')
+      // No claim about an item being taken - we do not know that here.
+      expect(notice.text()).not.toContain('taken by someone else')
+      expect(wrapper.text()).not.toContain('delivered automatically')
+    })
+
+    it('falls back to the old notice when the API sends no ripplinghold detail', () => {
+      // Older API build, or a cached response: heldbyrippling alone must still warn.
+      const wrapper = mountComponent({ heldbyrippling: true })
+      const notice = wrapper.find('[data-testid="rippling-held-notice"]')
+      expect(notice.exists()).toBe(true)
+      expect(notice.text()).toContain('Held: rippling out')
+    })
+
+    it('shows nothing when there is no hold at all', () => {
+      const wrapper = mountComponent({})
+      expect(
+        wrapper.find('[data-testid="rippling-held-notice"]').exists()
+      ).toBe(false)
+      expect(
+        wrapper.find('[data-testid="rippling-delayed-notice"]').exists()
+      ).toBe(false)
+      expect(
+        wrapper.find('[data-testid="rippling-undelivered-notice"]').exists()
+      ).toBe(false)
     })
   })
 

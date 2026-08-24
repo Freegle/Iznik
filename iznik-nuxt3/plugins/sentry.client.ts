@@ -1,10 +1,5 @@
 // import * as Sentry from '@sentry/capacitor';
 import * as Sentry from '@sentry/vue'
-import { Integrations } from '@sentry/tracing'
-import {
-  HttpClient as HttpClientIntegration,
-  ExtraErrorData as ExtraErrorDataIntegration,
-} from '@sentry/integrations'
 import { defineNuxtPlugin, useRuntimeConfig } from '#app'
 import { useRouter } from '#imports'
 import { useMiscStore } from '~/stores/misc'
@@ -27,24 +22,19 @@ export default defineNuxtPlugin((nuxtApp) => {
   // Set auth store for user_id tracking in logs.
   clientLog.setAuthStore(useAuthStore())
 
-  // Start client logging immediately, with synchronous fallback.
-  // Augment with mobile device info asynchronously so plugin init does not
-  // block first paint waiting on the dynamic import.
+  // Start client logging immediately, so a session is recorded even if the app
+  // never finishes starting up.
+  //
+  // In the app this first event cannot carry the native app version or the
+  // Capacitor device info: neither exists yet this early. This used to try to
+  // fill them in here from the mobile store, but that ran at plugin-init time
+  // when the store had not been initialised, so isApp/deviceinfo were still
+  // false/null and the augmenting log NEVER fired - every app session_start in
+  // production had app_version:null. The mobile store now emits that second,
+  // richer event itself once App.getInfo() and Device.getInfo() have returned
+  // (see stores/mobile.js initApp), which is the only place the values are
+  // known to exist.
   clientLog.sessionStart()
-  ;(async () => {
-    try {
-      const { useMobileStore } = await import('~/stores/mobile')
-      const mobileStore = useMobileStore()
-      if (mobileStore.isApp && mobileStore.deviceinfo) {
-        clientLog.sessionStart(
-          { app_version: mobileStore.mobileVersion },
-          mobileStore.deviceinfo
-        )
-      }
-    } catch {
-      // Not in app context or store not available.
-    }
-  })()
 
   // Log page views on route changes.
   // This creates "user" parent nodes for subsequent API calls.
@@ -75,8 +65,19 @@ export default defineNuxtPlugin((nuxtApp) => {
       setTimeout(checkCMPComplete, 100)
     } else {
       Sentry.init({
-        app: [vueApp],
+        app: vueApp,
         dsn: config.public.SENTRY_DSN,
+        // Vue error-handler wiring (replaces the removed attachErrorHandler()
+        // and createTracingMixins() calls from the v7 SDK). The tracing knobs
+        // MUST sit inside tracingOptions - the v10 SDK never reads them as
+        // top-level siblings of dsn, it silently falls back to
+        // trackComponents: false and the component spans vanish.
+        attachProps: true,
+        tracingOptions: {
+          trackComponents: true,
+          timeout: 2000,
+          hooks: ['activate', 'mount', 'update'],
+        },
         // Some errors seem benign, and so we ignore them on the client side rather than clutter our sentry logs.
         ignoreErrors: [
           'ResizeObserver loop limit exceeded', // Benign - see https://stackoverflow.com/questions/49384120/resizeobserver-loop-limit-exceeded
@@ -103,13 +104,11 @@ export default defineNuxtPlugin((nuxtApp) => {
           'latLngToLayerPoint',
         ],
         integrations: [
-          new Integrations.BrowserTracing({
-            routingInstrumentation: Sentry.vueRouterInstrumentation(router),
-            tracePropagationTargets: ['localhost', 'ilovefreegle.org', /^\//],
-          }),
-          new HttpClientIntegration(),
-          new ExtraErrorDataIntegration(),
+          Sentry.browserTracingIntegration({ router }),
+          Sentry.httpClientIntegration(),
+          Sentry.extraErrorDataIntegration(),
         ],
+        tracePropagationTargets: ['localhost', 'ilovefreegle.org', /^\//],
         logErrors: false, // Note that this doesn't seem to work with nuxt 3
         tracesSampleRate: config.public.SENTRY_TRACES_SAMPLE_RATE || 1.0, // Sentry recommends adjusting this value in production
         debug: config.public.SENTRY_ENABLE_DEBUG || false, // Enable debug mode
@@ -139,7 +138,7 @@ export default defineNuxtPlugin((nuxtApp) => {
           // before that change still emit the unconditional captureMessage —
           // drop those here until the rollout window closes (remove ~30 days
           // after deploy). Narrowed to freegletusd- so real load failures on
-          // other providers (e.g. uploadcare) still surface.
+          // any other image source still surface.
           if (event.message?.startsWith('Failed to fetch image freegletusd-')) {
             return null
           }
@@ -265,12 +264,6 @@ export default defineNuxtPlugin((nuxtApp) => {
               return null
             } else if (originalExceptionString?.match(/Down for maintenance/)) {
               console.log('Maintenance - suppress exception', this)
-              return null
-            } else if (
-              originalExceptionString?.match(/Piwik undefined after waiting/)
-            ) {
-              // Some privacy blockers can cause this.
-              console.log('Suppress Piwik/Matomo exception')
               return null
             } else if (
               originalExceptionString?.match(/Google ad script blocked/)
@@ -405,21 +398,6 @@ export default defineNuxtPlugin((nuxtApp) => {
           // Continue sending to Sentry
           return event
         },
-      })
-
-      vueApp.mixin(
-        Sentry.createTracingMixins({
-          trackComponents: true,
-          timeout: 2000,
-          hooks: ['activate', 'mount', 'update'],
-        })
-      )
-      Sentry.attachErrorHandler(vueApp, {
-        logErrors: false,
-        attachProps: true,
-        trackComponents: true,
-        timeout: 2000,
-        hooks: ['activate', 'mount', 'update'],
       })
 
       // Set initial trace tags for correlation with Loki logs.

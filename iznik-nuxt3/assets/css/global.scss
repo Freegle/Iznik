@@ -1,4 +1,5 @@
 @import 'assets/css/sticky-banner.scss';
+@import 'assets/css/_feed-card.scss';
 
 #serverloader {
   z-index: 1000;
@@ -210,14 +211,16 @@ div[variant="success"] .card-header {
 }
 
 .forcebreak {
+  /* Wrap long, un-splittable tokens (URLs, long IDs) onto a new line so they don't
+     overflow their container - but keep NORMAL words whole. The previous rule also set
+     `word-break: break-all` and `hyphens: auto`, which broke ordinary words mid-word and
+     hyphenated them ("com-munities", "Corringha m"). In a flex layout (e.g. reply content
+     next to an avatar) `break-all` also let min-content collapse to a single character, so
+     the text column shrank to a 1-2-word ribbon in nested ChitChat replies on mobile.
+     `overflow-wrap: break-word` alone fixes both: whole words stay intact and set the
+     min-content width, and only a token too long for its own line is broken. */
   overflow-wrap: break-word;
-  word-wrap: break-word;
-  -ms-word-break: break-all;
-  word-break: break-word;
-  -ms-hyphens: auto;
-  -moz-hyphens: auto;
-  -webkit-hyphens: auto;
-  hyphens: auto;
+  word-wrap: break-word; /* legacy alias for older engines */
 }
 
 .black {
@@ -485,6 +488,17 @@ form {
   z-index: 199999 !important;
 }
 
+/*
+ * The sticky ad zone (LayoutCommon .sticky) is z-index 10000, above Bootstrap
+ * modals (1055), so it hid the bottom of the donation ask on mobile and the
+ * modal could not be scrolled clear of it. Lift the donation modal over the ad
+ * (but below JustGiving at 100000 and confirm modals at 200000). The backdrop
+ * is a child of .modal here, so it rides this stacking context too.
+ */
+.donation-modal-stripe {
+  z-index: 10010 !important;
+}
+
 .error__wrapper {
   display: flex;
   flex-direction: column;
@@ -579,4 +593,8 @@ form {
   --popper-theme-padding: 10px;
   --popper-theme-box-shadow: 0 6px 30px -6px rgba(0, 0, 0, 0.25);
   --header-navbar-height: 76px;
+
+  /* Side of the square photo in a lg+ feed card, which is also the card's height.
+     See assets/css/_feed-card.scss. */
+  @include feed-card-size-var;
 }

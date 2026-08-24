@@ -26,7 +26,7 @@
         label="Blank Reply"
       />
     </div>
-    <div v-else-if="pending" class="d-inline">
+    <div v-else-if="pending || spam" class="d-inline">
       <ModMessageButton
         v-if="!cantpost"
         :messageid="message.id"
@@ -39,12 +39,14 @@
       <ModMessageButton
         :messageid="message.id"
         :groupid="groupid"
+        :is-home-group="isHomeGroup"
         variant="warning"
         icon="times"
         reject
         label="Reject"
       />
       <ModMessageButton
+        v-if="isHomeGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -53,7 +55,7 @@
         label="Delete"
       />
       <ModMessageButton
-        v-if="!message.heldby"
+        v-if="!heldByOnThisGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="warning"
@@ -71,6 +73,7 @@
         label="Release"
       />
       <ModMessageButton
+        v-if="isHomeGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -89,6 +92,7 @@
         label="Blank Reply"
       />
       <ModMessageButton
+        v-if="isHomeGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -97,6 +101,7 @@
         label="Delete"
       />
       <ModMessageButton
+        v-if="isHomeGroup"
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
@@ -145,6 +150,7 @@
         :stdmsgid="stdmsg.id"
         :messageid="message.id"
         :groupid="groupid"
+        :is-home-group="isHomeGroup"
         :autosend="Boolean(stdmsg.autosend && allowAutoSend)"
       />
       <b-button
@@ -207,6 +213,14 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Delete / Delete as Spam remove the post itself (across all its groups), so they're only
+  // offered on the post's home/origin group - not on a rippled-in copy. Defaults true so
+  // non-rippling contexts are unaffected.
+  isHomeGroup: {
+    type: Boolean,
+    required: false,
+    default: true,
+  },
 })
 
 const messageStore = useMessageStore()
@@ -230,6 +244,16 @@ watch(
 const showRare = ref(false)
 const allowAutoSend = ref(true)
 
+// heldby is per-group (messages_groups.heldby); a hold on a DIFFERENT group this
+// post also rippled to must not swap Hold for Release on the copy being
+// administered here (Discourse 9970/2).
+const heldByOnThisGroup = computed(() => {
+  const groups = message.value?.groups || []
+  const gid = props.groupid || groups[0]?.groupid
+  const g = groups.find((grp) => parseInt(grp.groupid) === parseInt(gid))
+  return g?.heldby || null
+})
+
 function hasCollection(coll) {
   let ret = false
 
@@ -252,9 +276,17 @@ const approved = computed(() => {
   return hasCollection('Approved')
 })
 
+// Spam-collection messages are surfaced in the Pending review queue (Go API,
+// Discourse #9654). They need the same moderation actions as Pending — without
+// this they'd render with no action buttons at all (only the autosend toggle),
+// leaving mods unable to approve/reject/delete them.
+const spam = computed(() => {
+  return hasCollection('Spam')
+})
+
 const validActions = computed(() => {
   // The standard messages we show depend on the valid ones for this type of message.
-  if (pending.value) {
+  if (pending.value || spam.value) {
     const ret = ['Reject', 'Leave', 'Delete', 'Edit', 'Hold Message']
     if (!props.cantpost) {
       ret.push('Approve')

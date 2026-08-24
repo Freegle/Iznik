@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
+import { Camera } from '@capacitor/camera'
 import PhotoUploader from '~/components/PhotoUploader.vue'
+// The full-screen viewer is a defineAsyncComponent inside PhotoUploader; the
+// viewer tests assert against the REAL component (slides, counter), so it is
+// not stubbed. Importing it here warms the module cache, making the dynamic
+// import resolve instantly - on a loaded CI runner the first cold import of
+// its chain could exceed the tests' waitFor window and flake (seen live).
+import '~/components/MessagePhotosModal'
 
 // Mock defineAsyncComponent to return a stub for vuedraggable
 vi.stubGlobal('defineAsyncComponent', (fn) => {
@@ -54,7 +61,8 @@ const mockTusUpload = {
 }
 
 vi.mock('tus-js-client', () => ({
-  Upload: vi.fn((file, options) => {
+  // vitest 4 requires constructor mocks to be constructible (no arrows).
+  Upload: vi.fn(function (file, options) {
     // Store options for later use
     mockTusUpload._options = options
     return mockTusUpload
@@ -66,17 +74,21 @@ vi.mock('tus-js-client', () => ({
 const mockUppyInstance = vi.hoisted(() => ({
   use: vi.fn().mockReturnThis(),
   on: vi.fn().mockReturnThis(),
+  addPreProcessor: vi.fn(),
   close: vi.fn(),
   clear: vi.fn(),
   retryAll: vi.fn(),
 }))
 
 vi.mock('@uppy/core', () => ({
-  default: vi.fn(() => mockUppyInstance),
+  // vitest 4 requires constructor mocks to be constructible (no arrows).
+  default: vi.fn(function () {
+    return mockUppyInstance
+  }),
 }))
 
-vi.mock('@uppy/vue', () => ({
-  DashboardModal: {
+vi.mock('@uppy/vue/dashboard-modal', () => ({
+  default: {
     name: 'DashboardModal',
     template: '<div class="uppy-dashboard-modal" />',
     props: ['uppy', 'open', 'props'],
@@ -90,6 +102,19 @@ vi.mock('@uppy/tus', () => ({
 vi.mock('@uppy/compressor', () => ({
   default: vi.fn(),
 }))
+
+// Spy on the Loki action() logger so we can assert the upload/compression
+// telemetry payloads. Keep the module's other exports real.
+const mockAction = vi.hoisted(() => vi.fn())
+const mockLogError = vi.fn()
+vi.mock('~/composables/useClientLog', async (importOriginal) => {
+  const actual = await importOriginal()
+  return {
+    ...actual,
+    action: (...args) => mockAction(...args),
+    error: (...args) => mockLogError(...args),
+  }
+})
 
 // Mock image store
 const mockImageStore = {
@@ -151,6 +176,7 @@ describe('PhotoUploader', () => {
     vi.clearAllMocks()
     mockUppyInstance.use.mockClear().mockReturnThis()
     mockUppyInstance.on.mockClear().mockReturnThis()
+    mockUppyInstance.addPreProcessor.mockClear()
     mockUppyInstance.close.mockClear()
     mockUppyInstance.clear.mockClear()
     mockUppyInstance.retryAll.mockClear()
@@ -225,6 +251,11 @@ describe('PhotoUploader', () => {
           DashboardModal: {
             template: '<div class="uppy-dashboard-modal" />',
             props: ['uppy', 'open', 'props'],
+          },
+          'b-alert': {
+            template:
+              '<div v-if="modelValue" class="alert" :class="variant"><slot /></div>',
+            props: ['variant', 'modelValue'],
           },
         },
       },
@@ -656,6 +687,88 @@ describe('PhotoUploader', () => {
     })
   })
 
+  // AssertFlip test — declining the OS camera/photos permission must show a
+  // human-readable error instead of the attach silently going nowhere.
+  // Verified against the pre-fix code: all tests in this block fail red
+  // without the fix (the catch blocks only console.log the error) and pass
+  // once photoError is surfaced via a b-alert. Topic 9900/13.
+  describe('camera/gallery permission denied (app mode) — topic 9900/13', () => {
+    beforeEach(() => {
+      mockMobileStore.isApp = true
+    })
+
+    it('shows a human-readable error when the camera permission is declined', async () => {
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User denied access to camera')
+      )
+      createWrapper()
+
+      await wrapper.find('.add-photos-button').trigger('click')
+      const options = wrapper.findAll('.source-option')
+      await options[0].trigger('click') // Take Photo
+      await flushPromises()
+
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text().toLowerCase()).toContain('permission')
+      // No stalled/uploading photo entry left behind.
+      expect(wrapper.vm.photos.length).toBe(0)
+    })
+
+    it('shows a human-readable error when the gallery/photos permission is declined', async () => {
+      Camera.pickImages.mockRejectedValueOnce(
+        new Error('User denied access to photos')
+      )
+      createWrapper()
+
+      await wrapper.find('.add-photos-button').trigger('click')
+      const options = wrapper.findAll('.source-option')
+      await options[1].trigger('click') // Choose from Gallery
+      await flushPromises()
+
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text().toLowerCase()).toContain('permission')
+    })
+
+    it('stays silent when the user simply cancels (not a permission error)', async () => {
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User cancelled photos app')
+      )
+      createWrapper()
+
+      await wrapper.find('.add-photos-button').trigger('click')
+      const options = wrapper.findAll('.source-option')
+      await options[0].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.alert').exists()).toBe(false)
+    })
+
+    it('clears a previous permission error as soon as a new attempt starts', async () => {
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User denied access to camera')
+      )
+      createWrapper()
+
+      await wrapper.find('.add-photos-button').trigger('click')
+      let options = wrapper.findAll('.source-option')
+      await options[0].trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.alert').exists()).toBe(true)
+
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User cancelled photos app')
+      )
+      await wrapper.find('.add-photos-button').trigger('click')
+      options = wrapper.findAll('.source-option')
+      await options[0].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.alert').exists()).toBe(false)
+    })
+  })
+
   describe('quality warning modal', () => {
     it('shows quality modal when showQuality emitted', async () => {
       createWrapper({
@@ -1066,6 +1179,74 @@ describe('PhotoUploader', () => {
       expect(wrapper.vm.photos.length).toBe(0)
       expect(wrapper.vm.showSourceModal).toBe(true)
     })
+
+    // A critical blur warning holds the upload back until the member chooses.
+    // Dismissing the modal without choosing (header X, backdrop, Esc) used to
+    // leave the photo uploading:true with nothing in flight, which disables
+    // Next for good - and compose persists it, so it blocked posting on the
+    // next visit too.
+    it('dismissing the quality modal uploads the held photo instead of stranding it', async () => {
+      mockMobileStore.isApp = true
+      mockAnalyzePhotoQuality.mockResolvedValue({
+        hasIssues: true,
+        overallSeverity: 'critical',
+        warnings: [{ type: 'blur', message: 'This photo is very blurry' }],
+      })
+      createWrapper()
+
+      await wrapper.vm.processPhoto('/blurry.jpg')
+      await flushPromises()
+
+      expect(wrapper.vm.showQualityModal).toBe(true)
+      expect(wrapper.vm.photos[0].uploading).toBe(true)
+      expect(mockTusUpload.start).not.toHaveBeenCalled()
+
+      wrapper.vm.onQualityModalHidden()
+      await flushPromises()
+
+      expect(mockTusUpload.start).toHaveBeenCalled()
+      expect(wrapper.vm.pendingPhoto).toBeNull()
+    })
+
+    it('hiding after a button choice does not upload a second time', async () => {
+      createWrapper()
+      wrapper.vm.showQualityModal = true
+      wrapper.vm.pendingPhoto = { preview: '/test.jpg', uploading: true }
+
+      wrapper.vm.continueWithPhoto()
+      await flushPromises()
+      expect(mockTusUpload.start).toHaveBeenCalledTimes(1)
+
+      wrapper.vm.onQualityModalHidden()
+      await flushPromises()
+
+      expect(mockTusUpload.start).toHaveBeenCalledTimes(1)
+      expect(wrapper.vm.pendingPhoto).toBeNull()
+    })
+
+    // Android's back gesture navigates instead of closing the modal, so the
+    // component unmounts with the photo still held.
+    it('navigating away with the modal open leaves the photo recoverable', async () => {
+      mockMobileStore.isApp = true
+      mockAnalyzePhotoQuality.mockResolvedValue({
+        hasIssues: true,
+        overallSeverity: 'critical',
+        warnings: [{ type: 'blur', message: 'This photo is very blurry' }],
+      })
+      createWrapper()
+
+      await wrapper.vm.processPhoto('/blurry.jpg')
+      await flushPromises()
+
+      const held = wrapper.vm.photos[0]
+      expect(held.uploading).toBe(true)
+
+      wrapper.unmount()
+      wrapper = null
+
+      expect(held.uploading).toBe(false)
+      expect(held.error).toBe(true)
+    })
   })
 
   describe('edge cases', () => {
@@ -1367,6 +1548,34 @@ describe('PhotoUploader', () => {
     })
   })
 
+  describe('compact mode', () => {
+    it('shows only the compact add button and no gallery when compact', () => {
+      createWrapper({ compact: true, modelValue: [] })
+      expect(wrapper.find('.compact-add').exists()).toBe(true)
+      expect(wrapper.find('.empty-state').exists()).toBe(false)
+    })
+
+    it('hides the featured photo, carousel and add-more even with photos', () => {
+      createWrapper({
+        compact: true,
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      expect(wrapper.find('.featured-photo').exists()).toBe(false)
+      expect(wrapper.find('.thumbnail-carousel').exists()).toBe(false)
+      expect(wrapper.find('.add-more-section').exists()).toBe(false)
+      expect(wrapper.find('.compact-add').exists()).toBe(true)
+    })
+
+    it('is not compact by default — the gallery still shows', () => {
+      createWrapper({ modelValue: [{ id: 1, ouruid: 'uid1' }] })
+      expect(wrapper.find('.compact-add').exists()).toBe(false)
+      expect(wrapper.find('.featured-photo').exists()).toBe(true)
+    })
+  })
+
   // AssertFlip test — Step 1: documents the buggy behaviour (PASSES on current code).
   // Step 2 (inverted) is below and FAILS until the fix lands.
   describe('AI image pruning via Uppy upload (web mode) — bug: handleUppySuccess does not remove AI photos', () => {
@@ -1409,6 +1618,344 @@ describe('PhotoUploader', () => {
       expect(aiPhotos.length).toBe(0)
       expect(wrapper.vm.photos).toHaveLength(1)
       expect(wrapper.vm.photos[0].id).toBe(1)
+    })
+  })
+
+  describe('HEIC handling', () => {
+    it('registers the HEIC pre-processor', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      expect(mockUppyInstance.addPreProcessor).toHaveBeenCalledTimes(1)
+      expect(mockUppyInstance.addPreProcessor.mock.calls[0][0]).toBeInstanceOf(
+        Function
+      )
+    })
+
+    it('registers the HEIC pre-processor before the Compressor plugin', () => {
+      // Uppy runs pre-processors in registration order, and Compressor cannot
+      // read HEIC through a canvas - so HEIC has to become JPEG first.
+      mockMobileStore.isApp = false
+      createWrapper()
+      const compressorRegistered =
+        mockUppyInstance.use.mock.invocationCallOrder.at(-1)
+      const heicRegistered =
+        mockUppyInstance.addPreProcessor.mock.invocationCallOrder[0]
+      expect(heicRegistered).toBeLessThan(compressorRegistered)
+    })
+  })
+
+  describe('compression telemetry', () => {
+    function getHandler(name) {
+      return mockUppyInstance.on.mock.calls.find((c) => c[0] === name)?.[1]
+    }
+
+    it('registers the upload funnel and compression bracket listeners', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      const names = mockUppyInstance.on.mock.calls.map((c) => c[0])
+      expect(names).toContain('file-added')
+      expect(names).toContain('preprocess-progress')
+      expect(names).toContain('compressor:complete')
+      expect(names).toContain('preprocess-complete')
+      expect(names).toContain('upload-success')
+    })
+
+    it('logs upload_file_selected tagged uploader=photo', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('file-added')({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_file_selected',
+        expect.objectContaining({ uploader: 'photo', file_size: 5000 })
+      )
+    })
+
+    it('logs upload_compress_started on preprocess-progress', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith('upload_compress_started', {
+        uploader: 'photo',
+        file_size: 5000,
+      })
+    })
+
+    it('logs upload_compress_finished with compressed=true after a successful compress', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      getHandler('compressor:complete')([{ id: 'f1' }])
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 1000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({
+          uploader: 'photo',
+          original_size: 5000,
+          compressed_size: 1000,
+          elapsed_ms: expect.any(Number),
+          compressed: true,
+          shrunk: true,
+        })
+      )
+    })
+
+    it('records a silent compression failure when compressor:complete omits the file', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({ compressed: false, shrunk: false })
+      )
+    })
+
+    it('logs upload_succeeded tagged uploader=photo', () => {
+      mockMobileStore.isApp = false
+      createWrapper()
+      mockAction.mockClear()
+      getHandler('upload-success')({ id: 'f1', size: 1000, type: 'image/jpeg' })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_succeeded',
+        expect.objectContaining({ uploader: 'photo' })
+      )
+    })
+
+    it('logs enriched upload_failed on upload-error (status/size/attempt), not on the retry-only error event', () => {
+      mockMobileStore.isApp = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      createWrapper()
+      mockAction.mockClear()
+      // The global error event now only drives retry — it must NOT log.
+      getHandler('error')(new Error('boom'))
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_failed',
+        expect.anything()
+      )
+      // The per-file upload-error event logs the diagnosable detail.
+      const file = { id: 'f1', size: 5900000, type: 'image/jpeg' }
+      const err = new Error('Failed to upload big.jpg')
+      const response = { status: 413, body: 'Request Entity Too Large' }
+      getHandler('upload-error')(file, err, response)
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({
+          uploader: 'photo',
+          reason: 'Failed to upload big.jpg',
+          status: 413,
+          is_network_error: false,
+          file_size: 5900000,
+          file_type: 'image/jpeg',
+          attempt: 1,
+        })
+      )
+      consoleError.mockRestore()
+    })
+
+    it('counts retries so upload_failed reports the attempt number', () => {
+      mockMobileStore.isApp = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      createWrapper()
+      const file = { id: 'f9', size: 100, type: 'image/png' }
+      getHandler('upload-retry')('f9')
+      getHandler('upload-retry')('f9')
+      mockAction.mockClear()
+      getHandler('upload-error')(file, new Error('nope'), undefined)
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({ attempt: 3 })
+      )
+      consoleError.mockRestore()
+    })
+  })
+
+  // You should be able to check a photo is any good before you post it, not
+  // after - so tapping it opens the same full-screen zoomable viewer as a photo
+  // on a live post.
+  describe('viewing a photo full screen', () => {
+    // The viewer teleports to the body, so it is not inside the wrapper.
+    function viewer() {
+      return document.body.querySelector('.fullscreen-viewer')
+    }
+
+    it('opens the viewer when the featured photo is tapped', async () => {
+      createWrapper({
+        modelValue: [
+          { id: 1, ouruid: 'uid1' },
+          { id: 2, ouruid: 'uid2' },
+        ],
+      })
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+
+      // The viewer is loaded on demand, so give the import a moment.
+      await vi.waitFor(() => expect(viewer()).not.toBeNull(), { timeout: 5000 })
+
+      // Every photo, so you can page through them, starting on the one shown.
+      expect(viewer().querySelectorAll('.image-slide')).toHaveLength(2)
+      expect(viewer().querySelector('.image-counter').textContent.trim()).toBe(
+        '1 / 2'
+      )
+    })
+
+    it('does not open for a photo that is still uploading', async () => {
+      createWrapper({
+        modelValue: [{ id: 1, tempId: 't1', uploading: true, progress: 40 }],
+      })
+      await flushPromises()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
+    })
+
+    it('closes again when the viewer is dismissed', async () => {
+      createWrapper({ modelValue: [{ id: 1, ouruid: 'uid1' }] })
+      await flushPromises()
+
+      await wrapper.find('.featured-photo .photo-card').trigger('click')
+      await vi.waitFor(() => expect(viewer()).not.toBeNull(), { timeout: 5000 })
+
+      viewer().querySelector('.back-button').click()
+      await flushPromises()
+
+      expect(viewer()).toBeNull()
+    })
+  })
+
+  // The bytes go up via tus, then we register them with the API.  That second
+  // call is what has to finish for the photo to stop being "uploading", and the
+  // give flow has no exits while it is: Next is gated on anyUploading and Skip
+  // only renders in the empty state.  So if the register call never settles the
+  // member is not just missing a photo, they cannot post at all - and compose
+  // persists that to their next visit.  This happened live: the API layer
+  // awaited a connection check that polled for ever, so a 200 that had already
+  // come back was never read (see composables/useFetchRetry.js).  That is fixed
+  // at source, but the flow should not depend on the API layer never hanging.
+  describe('registering the uploaded photo hangs', () => {
+    async function startUploadThatHangs() {
+      mockImageStore.post.mockReturnValueOnce(new Promise(() => {}))
+
+      createWrapper({ modelValue: [] })
+      await flushPromises()
+
+      wrapper.vm.processPhoto('/photo.jpg')
+      await flushPromises()
+
+      mockTusUpload._options.onProgress(100, 100)
+      mockTusUpload._options.onSuccess()
+      await flushPromises()
+    }
+
+    it('leaves the photo uploading while the register call is still outstanding', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+
+        expect(wrapper.vm.photos[0].uploading).toBe(true)
+        expect(wrapper.vm.photos[0].progress).toBe(100)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('gives the photo up as failed rather than blocking the flow for ever', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+
+        await vi.advanceTimersByTimeAsync(61000)
+
+        expect(wrapper.vm.photos[0].uploading).toBe(false)
+        expect(wrapper.vm.photos[0].error).toBe(true)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // The tray syncs to the persisted compose store through a watcher that Vue
+    // stops when this component unmounts.  So if we go away while an upload is
+    // outstanding, the last thing written to the store says uploading:true, and
+    // when the upload does settle it mutates an object nothing is listening to.
+    // The store keeps uploading:true for ever, the give flow gates Next on it,
+    // and it is restored in that state on the next visit.  Live, the member
+    // navigated off the photos page 22s after the reply came back, which is
+    // what made her lockout permanent rather than momentary.
+    it('does not leave the tray saying uploading when we navigate away mid-upload', async () => {
+      // Stand in for the compose store: whatever the component last pushed out
+      // is what gets persisted and restored on the next visit.
+      const pushedOut = []
+
+      mockImageStore.post.mockReturnValueOnce(new Promise(() => {}))
+      createWrapper({
+        modelValue: [],
+        'onUpdate:modelValue': (v) => pushedOut.push(v),
+      })
+      await flushPromises()
+
+      wrapper.vm.processPhoto('/photo.jpg')
+      await flushPromises()
+      mockTusUpload._options.onProgress(100, 100)
+      mockTusUpload._options.onSuccess()
+      await flushPromises()
+
+      expect(pushedOut.length).toBeGreaterThan(0)
+      expect(pushedOut.at(-1)[0].uploading).toBe(true)
+
+      wrapper.unmount()
+      await flushPromises()
+
+      const persisted = pushedOut.at(-1)[0]
+      expect(persisted.uploading).toBe(false)
+      expect(persisted.error).toBe(true)
+    })
+
+    it('offers retry and delete once it has failed, so there is a way forward', async () => {
+      vi.useFakeTimers()
+      try {
+        await startUploadThatHangs()
+        await vi.advanceTimersByTimeAsync(61000)
+      } finally {
+        vi.useRealTimers()
+      }
+
+      await flushPromises()
+
+      const card = wrapper.find('.photo-card')
+      expect(card.attributes('data-error')).toBe('true')
+      expect(card.attributes('data-uploading')).toBe('false')
     })
   })
 })

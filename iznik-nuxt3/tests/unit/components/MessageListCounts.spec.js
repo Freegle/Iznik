@@ -51,18 +51,30 @@ describe('MessageListCounts', () => {
   describe('count display', () => {
     it('shows singular when count is 1', () => {
       const wrapper = createWrapper({ count: 1 })
-      expect(wrapper.find('.unread-text').text()).toBe('1 unread post')
+      expect(wrapper.find('.unread-text').text()).toBe('1 new post')
     })
 
     it('shows plural when count > 1', () => {
       const wrapper = createWrapper({ count: 5 })
-      expect(wrapper.find('.unread-text').text()).toBe('5 unread posts')
+      expect(wrapper.find('.unread-text').text()).toBe('5 new posts')
     })
 
-    it('caps browseCount at 99 for display logic', () => {
-      const wrapper = createWrapper({ count: 150 })
-      // browseCount is min(99, count) but text uses actual count
-      expect(wrapper.find('.unread-text').text()).toBe('150 unread posts')
+    // The nav badge caps at 99 with no room for a "+", so a member with a
+    // four-figure backlog reads it as a number that will not move. The divider
+    // has the room, and says "99+" so the cap is visible as a cap.
+    it('shows an exact count at the 99 boundary', () => {
+      const wrapper = createWrapper({ count: 99 })
+      expect(wrapper.find('.unread-text').text()).toBe('99 new posts')
+    })
+
+    it('shows 99+ once past the cap', () => {
+      const wrapper = createWrapper({ count: 100 })
+      expect(wrapper.find('.unread-text').text()).toBe('99+ new posts')
+    })
+
+    it('shows 99+ rather than a four-figure backlog', () => {
+      const wrapper = createWrapper({ count: 10463 })
+      expect(wrapper.find('.unread-text').text()).toBe('99+ new posts')
     })
 
     it('shows zero count in text when applicable', () => {

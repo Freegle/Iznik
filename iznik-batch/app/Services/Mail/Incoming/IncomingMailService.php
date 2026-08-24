@@ -3,6 +3,7 @@
 namespace App\Services\Mail\Incoming;
 
 use App\Mail\Fbl\FblNotification;
+use App\Mail\Session\UnsubscribedNotice;
 use App\Models\ChatImage;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
@@ -12,6 +13,10 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
+use App\Services\ItemService;
+use App\Services\Ripple\RippleReplyService;
+use App\Services\SpatialQueryService;
+use App\Services\UnsubscribeService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -45,6 +50,8 @@ class IncomingMailService
 
     private BounceService $bounceService;
 
+    private ItemService $itemService;
+
     /**
      * Context from the last routing decision (group name, user id, etc.).
      * Set during route() and read by controllers for logging.
@@ -54,11 +61,13 @@ class IncomingMailService
     public function __construct(
         ?SpamCheckService $spamCheck = null,
         ?StripQuotedService $stripQuoted = null,
-        ?BounceService $bounceService = null
+        ?BounceService $bounceService = null,
+        ?ItemService $itemService = null
     ) {
         $this->spamCheck = $spamCheck ?? app(SpamCheckService::class);
         $this->stripQuoted = $stripQuoted ?? new StripQuotedService;
         $this->bounceService = $bounceService ?? new BounceService;
+        $this->itemService = $itemService ?? new ItemService;
     }
 
     /**
@@ -980,8 +989,13 @@ class IncomingMailService
     /**
      * Handle one-click unsubscribe (RFC 8058).
      *
-     * Puts the user into "limbo" (soft delete) which allows them to recover their account.
-     * Format: unsubscribe-{userid}-{key}-{type}@users.ilovefreegle.org
+     * Format: unsubscribe-{userid}-{key}-{type}@users.ilovefreegle.org, which is the mailto:
+     * arm of the List-Unsubscribe header every bulk mailable carries.
+     *
+     * {type} says which category of email the member received, so we turn off that category
+     * rather than the whole account: someone who clicks "Unsubscribe" on a digest is telling
+     * us they don't want digests, not that they want to leave Freegle. We then acknowledge
+     * it, saying what is off and what may still arrive.
      */
     private function handleOneClickUnsubscribe(ParsedEmail $email): RoutingResult
     {
@@ -1034,21 +1048,73 @@ class IncomingMailService
             return $this->dropped("Invalid key for one-click unsubscribe");
         }
 
-        // Log old value for reversibility.
-        $oldDeleted = DB::table('users')->where('id', $userId)->value('deleted');
+        // An address we generated ourselves should always carry a known category, but a
+        // mangled or truncated one must not silently do nothing - fall back to turning
+        // everything off, which is what "unsubscribe" means to the member.
+        if (! UnsubscribeService::isValidType($type)) {
+            Log::warning('Unknown unsubscribe type - falling back to all', [
+                'user_id' => $userId,
+                'type' => $type,
+            ]);
+            $type = UnsubscribeService::TYPE_ALL;
+        }
 
-        // Put user into limbo (soft delete)
-        DB::table('users')
-            ->where('id', $userId)
-            ->update(['deleted' => now()]);
+        $service = app(UnsubscribeService::class);
+        $turnedOff = $service->apply($user, $type);
+        $stillOn = $service->stillOn($user);
 
-        Log::info('Put user into limbo via one-click unsubscribe', [
+        Log::info('Applied one-click unsubscribe from mailto arm', [
             'user_id' => $userId,
             'type' => $type,
-            'old_deleted' => $oldDeleted,
+            'turned_off' => $turnedOff,
+            'still_on' => $stillOn,
         ]);
 
+        $this->sendUnsubscribedNotice($user, $type, $turnedOff, $stillOn);
+
         return RoutingResult::TO_SYSTEM;
+    }
+
+    /**
+     * Acknowledge an unsubscribe: what we turned off, what may still arrive, and where to
+     * change it. Sent to the address the member actually reads, not whatever they mailed
+     * from, so it lands somewhere useful.
+     *
+     * @param  string[]  $turnedOff
+     * @param  string[]  $stillOn
+     */
+    private function sendUnsubscribedNotice(User $user, string $type, array $turnedOff, array $stillOn): void
+    {
+        $preferredEmail = $this->getPreferredEmail($user->id);
+
+        if (empty($preferredEmail)) {
+            Log::warning('No email to acknowledge unsubscribe to', ['user_id' => $user->id]);
+
+            return;
+        }
+
+        try {
+            MailFacade::send(new UnsubscribedNotice(
+                $user->id,
+                $preferredEmail,
+                $user->fullname ?? $user->firstname ?? null,
+                $type,
+                $turnedOff,
+                $stillOn
+            ));
+
+            Log::info('Sent unsubscribe acknowledgement', [
+                'user_id' => $user->id,
+                'type' => $type,
+            ]);
+        } catch (\Throwable $e) {
+            // The opt-out itself has already been applied and matters more than the
+            // acknowledgement, so a mail failure must not fail the routing.
+            Log::warning('Failed to send unsubscribe acknowledgement', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -1515,6 +1581,18 @@ class IncomingMailService
             return $this->handleBounce($email);
         }
 
+        // Drop auto-replies (out-of-office, vacation responders etc.). These are
+        // machine responses to our digest/notification mails; delivering them would
+        // open a chat with the poster containing someone's OOO text.
+        if ($email->isAutoReply()) {
+            Log::info('Dropping auto-reply to replyto address', [
+                'envelope_to' => $email->envelopeTo,
+                'subject' => $email->subject,
+            ]);
+
+            return $this->dropped("Auto-reply to replyto address");
+        }
+
         // Parse replyto-{msgid}-{fromid}
         $parts = explode('-', $localPart);
         if (count($parts) < 3) {
@@ -1619,13 +1697,22 @@ class IncomingMailService
         // Create the chat message as TYPE_INTERESTED with refmsgid.
         // Reply-to addresses are first replies to posts, so use TYPE_INTERESTED
         // (not TYPE_DEFAULT which is for ongoing chat notification replies).
-        $this->createChatMessageFromEmail(
+        $chatMsgId = $this->createChatMessageFromEmail(
             $chat,
             $fromUser->id,
             $email,
             refMsgId: $messageId,
             type: ChatMessage::TYPE_INTERESTED
         );
+
+        // Rippling-out held replies (#3): email/TN replies bypass the in-app reply-
+        // eligibility gate (#2), so re-apply the same reach test here. If the post is still
+        // rippling out and this replier's area isn't covered yet, hold the reply (record a
+        // rippling_held_replies row) so the poster isn't notified until it reaches them.
+        // hasReach fails open, so before the reach engine is live nothing is held.
+        if ($chatMsgId !== null) {
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $messageId, $fromUser, $email->isFromTrashNothing() ? 'tn' : 'email');
+        }
 
         // #7: Check if message has outcome (TAKEN/RECEIVED) - don't email if so
         $hasOutcome = DB::table('messages_outcomes')
@@ -1672,6 +1759,69 @@ class IncomingMailService
         ]);
 
         return RoutingResult::TO_USER;
+    }
+
+    /**
+     * Rippling-out (#3): hold an external reply when the post is still rippling out and
+     * the replier's area isn't covered yet. The replier's location is resolved as
+     * settings.mylocation else lastlocation — the SAME order the immediate mail and the
+     * digest reach-gate use, so the hold/read/notify paths agree on where the replier is.
+     * Records a rippling_held_replies row (status='held'); the delivery gate then withholds
+     * the poster notification until the post ripples to them (status→'released'). Inert until
+     * the reach engine populates rippling_reach (hasReach fails open before then).
+     */
+    private function holdReplyIfOutsideReach(int $chatId, int $chatMsgId, int $msgid, User $replier, string $source = 'email'): void
+    {
+        $latlng = $this->resolveReplierLatLng($replier);
+        if ($latlng === null) {
+            return;
+        }
+
+        [$lat, $lng] = $latlng;
+        $service = app(RippleReplyService::class);
+
+        // Their own density band, so a replier the rural-access ring covers is not held for
+        // being outside a reach that a headcount, rather than distance, cut short.
+        $band = $replier->settings['browseDensityBand'] ?? null;
+
+        if ($service->shouldHold($msgid, $lat, $lng, is_string($band) ? $band : null)) {
+            $service->hold($chatId, $chatMsgId, $msgid, $replier->id, $lat, $lng, $source);
+            Log::info('ripple:held-external-reply', [
+                'msgid' => $msgid,
+                'chatid' => $chatId,
+                'chatmsgid' => $chatMsgId,
+                'replieruserid' => $replier->id,
+                'source' => $source,
+            ]);
+        }
+    }
+
+    /**
+     * Resolve a replier's point as settings.mylocation (both coords) else their lastlocation —
+     * the same order the immediate-mail recipient query and the digest reach-gate use, so the
+     * held point (and releaseCovered, which tests it) agree with the read/notify paths.
+     *
+     * @return array{0:float,1:float}|null [lat, lng]
+     */
+    private function resolveReplierLatLng(User $replier): ?array
+    {
+        $settings = $replier->settings;
+        if (is_string($settings)) {
+            $settings = json_decode($settings, true) ?: [];
+        }
+        $myloc = is_array($settings) ? ($settings['mylocation'] ?? null) : null;
+        if (is_array($myloc) && isset($myloc['lat'], $myloc['lng']) && $myloc['lat'] !== null && $myloc['lng'] !== null) {
+            return [(float) $myloc['lat'], (float) $myloc['lng']];
+        }
+
+        if ($replier->lastlocation) {
+            $loc = DB::table('locations')->where('id', $replier->lastlocation)->first(['lat', 'lng']);
+            if ($loc && $loc->lat !== null && $loc->lng !== null) {
+                return [(float) $loc->lat, (float) $loc->lng];
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -1726,6 +1876,26 @@ class IncomingMailService
             ]);
 
             return $this->dropped("Reply to non-existent chat");
+        }
+
+        // Drop auto-replies (out-of-office, vacation responders etc.) - delivering
+        // them as chat messages sends one member's OOO text to other freeglers.
+        // An Auto-Submitted header (RFC 3834) is definitive, so always drop on it.
+        // The subject/body patterns can false-positive on genuine human wording, so
+        // (matching legacy MailRouter::replyToChatNotification) only trust them when
+        // the chat had a message within the last 5 hours: real auto-responders fire
+        // rapidly after our notification, late replies are usually human.
+        $recentMessage = $chat->latestmessage
+            && $chat->latestmessage->gt(now()->subHours(5));
+
+        if ($email->isAutoSubmitted() || ($recentMessage && $email->isAutoReply())) {
+            Log::info('Dropping auto-reply to chat notification', [
+                'chat_id' => $chatId,
+                'user_id' => $userId,
+                'subject' => $email->subject,
+            ]);
+
+            return $this->dropped("Auto-reply to chat notification");
         }
 
         // Check if chat is stale and sender email is unfamiliar
@@ -1861,7 +2031,7 @@ class IncomingMailService
         ?float $spamScore = null,
         ?string $prependSubject = null,
         bool $skipStripQuoted = false
-    ): void {
+    ): ?int {
         // Get body text, converting HTML to plain text if no text part exists.
         // This handles email clients like Apple Mail that may send HTML-only emails.
         $body = $email->textBody;
@@ -1876,12 +2046,30 @@ class IncomingMailService
             $body = $prependSubject . "\r\n\r\n" . $body;
         }
 
+        // Detect digest-reply patterns before stripping so we can append the label after.
+        // V1 parity: MailRouter.php detected "On ... -auto@GROUP_DOMAIN> wrote:" and
+        // "-----Original Message-----" to identify replies that include the full digest,
+        // then stripped the quoted content and appended the label text.
+        $isDigestReply = false;
+        if (! $skipStripQuoted) {
+            $groupDomain = preg_quote(config('freegle.mail.group_domain', 'groups.ilovefreegle.org'), '/');
+            if (preg_match('/^\s*On.*?-auto@' . $groupDomain . '>\s*wrote\s*:/ms', $body) ||
+                preg_match('/-----Original Message-----/', $body)) {
+                $isDigestReply = true;
+            }
+        }
+
         // Strip quoted reply text and signatures before storing.
         // For volunteer messages, the quoted text (conversation transcript, reported post)
-        // is the useful content - don't strip it. Matches legacy iznik-server behavior:
+        // is the useful content - don't strip it. Matches the legacy V1 PHP behavior:
         // "Don't strip quoted as it might be useful."
         if (! $skipStripQuoted) {
             $body = $this->stripQuoted->strip($body);
+        }
+
+        // Append digest-reply label so moderators know to check the original email.
+        if ($isDigestReply) {
+            $body = rtrim($body) . "\r\n\r\n(Probably replied to digest - check View original email)";
         }
 
         // Determine if this chat message needs review.
@@ -1978,6 +2166,8 @@ class IncomingMailService
             'user_id' => $userId,
             'review_required' => $reviewRequired,
         ]);
+
+        return $chatMsg->id;
     }
 
     /**
@@ -2034,7 +2224,12 @@ class IncomingMailService
                 // visible link. Without the lookup the chat message exists
                 // but ModTools wouldn't be able to show the original SMTP
                 // source.
+                // useWritePdo: a concurrent sibling process inserted this row on the
+                // write host. Under the read/write split a plain read could hit a
+                // lagging replica that hasn't applied that insert yet, returning null
+                // and dropping the chat-message-to-SMTP-source link.
                 $existingId = DB::table('messages')
+                    ->useWritePdo()
                     ->where('messageid', $messageId)
                     ->value('id');
                 if ($existingId) {
@@ -2199,8 +2394,6 @@ class IncomingMailService
             'Spam', 'Other', 'Last', 'Force', 'Fully', 'TooMany', 'User',
             'UnknownMessage', 'SameImage', 'DodgyImage',
             'CountryBlocked',
-            'IPUsedForDifferentUsers',
-            'IPUsedForDifferentGroups',
             'SubjectUsedForDifferentGroups',
             'SpamAssassin',
             'Greetings spam',
@@ -2336,7 +2529,7 @@ class IncomingMailService
         // TN "Reporting member/post" emails include a conversation transcript that
         // is valuable context for moderators. Don't strip quoted text for these -
         // the transcript contains From:/To:/Subject:/Date: lines that the strip
-        // logic would eat. Matches legacy iznik-server behavior which says
+        // logic would eat. Matches the legacy V1 PHP behavior which says
         // "Don't strip quoted as it might be useful" for volunteer messages,
         // but we still want to strip for other volunteer messages like digest replies.
         $isTnReport = str_starts_with($email->subject ?? '', 'Reporting ');
@@ -2511,6 +2704,11 @@ class IncomingMailService
         // Determine routing result first
         $routingResult = RoutingResult::PENDING;  // Default
         $pendingReason = null;
+        // True when the post would otherwise have gone live immediately (an
+        // unmoderated member, clean of the checks below). Such posts now start
+        // Pending and are promoted by the content-check batch job instead of being
+        // approved on arrival - see the routing note and the collection update below.
+        $awaitingContentCheck = false;
 
         // Check if user is unmapped (no location)
         if ($user->lastlocation === null) {
@@ -2530,11 +2728,18 @@ class IncomingMailService
         // API rejects PROHIBITED with "Not allowed to post on this group" (message.php:625)
         // so email should match: drop the post.
         else {
+            // Unmoderated members (DEFAULT/UNMODERATED) are NOT approved on arrival.
+            // Like the web/API submit path (iznik-server-go message.go: "All messages
+            // start Pending - the content check batch job ... promotes clean messages
+            // from non-moderated users to Approved"), they start Pending so the
+            // content-check job (messages:contentcheck) can gate them: clean posts are
+            // auto-promoted within a minute, while posts matching a concern keyword or
+            // content rule are held for a moderator instead of going live unchecked.
             $routingResult = match ($postingStatus) {
-                'DEFAULT', 'UNMODERATED' => RoutingResult::APPROVED,
                 'PROHIBITED' => RoutingResult::DROPPED,
-                default => RoutingResult::PENDING,  // NULL, MODERATED, or any other value
+                default => RoutingResult::PENDING,  // DEFAULT, UNMODERATED, NULL, MODERATED, ...
             };
+            $awaitingContentCheck = in_array($postingStatus, ['DEFAULT', 'UNMODERATED'], true);
         }
 
         // For DROPPED messages, don't create a record
@@ -2557,7 +2762,10 @@ class IncomingMailService
                 'date' => now(),
             ]);
 
-            // Update the collection based on routing result
+            // Update the collection based on routing result.
+            // Note: member posts are no longer Approved on arrival (see routing note
+            // above). The APPROVED branch is retained for completeness / any future
+            // caller; unmoderated members take the awaiting-content-check path below.
             if ($routingResult === RoutingResult::APPROVED) {
                 // Message is approved - update collection to Approved
                 MessageGroup::where('msgid', $messageId)
@@ -2573,8 +2781,23 @@ class IncomingMailService
                     'message_id' => $messageId,
                     'group_id' => $group->id,
                 ]);
+            } elseif ($awaitingContentCheck) {
+                // Unmoderated member: start Pending and let the content-check job
+                // promote it (clean) or hold and notify mods (flagged). We do NOT
+                // notify mods or add to the spatial index here - that is the
+                // content-check job's responsibility, so clean posts create no mod
+                // work and flagged posts never go live unchecked.
+                MessageGroup::where('msgid', $messageId)
+                    ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
+
+                Log::info('Message pending content check (auto-approve candidate)', [
+                    'message_id' => $messageId,
+                    'group_id' => $group->id,
+                ]);
             } else {
-                // Message is pending - collection is already Incoming, update to Pending
+                // Message is pending for a moderator reason (moderated user/group,
+                // worry words, unmapped user, Big Switch) - collection is already
+                // Incoming, update to Pending and notify mods now.
                 MessageGroup::where('msgid', $messageId)
                     ->update(['collection' => MessageGroup::COLLECTION_PENDING]);
 
@@ -2616,6 +2839,22 @@ class IncomingMailService
         try {
             // Determine message type from subject using keyword matching
             $type = Message::determineType($email->subject);
+
+            // A TrashNothing item cross-posted to N groups arrives as N separate emails, one
+            // per group, all carrying the same X-Trash-Nothing-Post-Id. It is one item, so it
+            // is one message: the first email creates it, and each later one attaches its
+            // group to that message. That gives one messages row with N messages_groups rows,
+            // the same shape as a Freegle-native cross-post, which is what the feed, the
+            // badge counts and search all expect - they key on msgid.
+            $tnPostId = $this->normaliseTnPostId($email->getTrashNothingPostId());
+
+            if ($tnPostId !== null) {
+                $existingId = $this->findLiveTnMessage($tnPostId);
+
+                if ($existingId !== null) {
+                    return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
+                }
+            }
 
             // Generate a unique message ID if not present
             $messageId = $email->messageId ?? (microtime(true) . '@' . config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
@@ -2687,10 +2926,14 @@ class IncomingMailService
                 'fromaddr' => $email->fromAddress,
                 'replyto' => $email->getHeader('Reply-To'),
                 'fromip' => $email->senderIp,
+                // Geolocate the sender IP so ModTools can flag posts from
+                // outside the UK (MessageHistory.vue). V1 (Message.php/Spam.php)
+                // stored the ISO code here; store NULL when it can't be resolved.
+                'fromcountry' => $email->senderIp ? $this->spamCheck->lookupIPCountryCode($email->senderIp) : null,
                 'subject' => $email->subject,
                 'suggestedsubject' => $email->subject, // TODO: implement subject suggestion
                 'messageid' => $messageId,
-                'tnpostid' => $email->getTrashNothingPostId(),
+                'tnpostid' => $tnPostId,
                 'textbody' => $cleanedTextBody,
                 'type' => $type,
                 'lat' => $lat,
@@ -2706,6 +2949,30 @@ class IncomingMailService
                 return null;
             }
 
+            // Two emails for one post id arriving together can both pass the lookup above
+            // and both create. Each insert autocommits, so id order is commit order: the
+            // higher id was written after the lower one was already committed and therefore
+            // sees it here. That one stands down, leaving a single message - no lock needed,
+            // and it holds across cluster nodes because it only reads committed rows.
+            if ($tnPostId !== null) {
+                $earlierId = $this->findLiveTnMessage($tnPostId);
+
+                if ($earlierId !== null && $earlierId !== (int) $message->id) {
+                    DB::table('messages')->where('id', $message->id)->update([
+                        'deleted' => now(),
+                        'tnpostid' => null,
+                        'messageid' => null,
+                    ]);
+
+                    Log::info('TN cross-post lost create race; attaching to earlier message', [
+                        'discarded' => $message->id,
+                        'canonical' => $earlierId,
+                    ]);
+
+                    return $this->attachGroupToTnMessage($earlierId, $email, $user, $group, $type, $spamType);
+                }
+            }
+
             // Create the messages_groups entry
             // Spam messages go to Pending for moderator review
             $collection = $spamType !== null
@@ -2719,6 +2986,12 @@ class IncomingMailService
                 'collection' => $collection,
                 'arrival' => now(),
             ]);
+
+            // Record the item from a well-formed "TYPE: item (location)" subject,
+            // exactly as V1 Message::save() did. The messages_items link is what
+            // the Weight stat's INNER JOIN relies on — without it, items given
+            // away via email (e.g. TrashNothing posts) contribute zero weight.
+            $this->itemService->recordFromSubject($message->id, $email->subject ?? '');
 
             // Add to message history for spam checking
             DB::table('messages_history')->insert([
@@ -2760,6 +3033,24 @@ class IncomingMailService
         } catch (\Exception $e) {
             // Check for duplicate message ID (can happen if message is resent)
             if (str_contains($e->getMessage(), 'Duplicate entry')) {
+                // If we lost a race for the same TN post, attach this group to the winner
+                // rather than dropping it, and do not leave our half-made row as a copy.
+                if (isset($tnPostId) && $tnPostId !== null) {
+                    $existingId = $this->findLiveTnMessage($tnPostId);
+
+                    if ($existingId !== null) {
+                        if ($message !== null && $message->id && (int) $message->id !== $existingId) {
+                            DB::table('messages')->where('id', $message->id)->update([
+                                'deleted' => now(),
+                                'tnpostid' => null,
+                                'messageid' => null,
+                            ]);
+                        }
+
+                        return $this->attachGroupToTnMessage($existingId, $email, $user, $group, $type, $spamType);
+                    }
+                }
+
                 Log::info('Duplicate message ID, likely resent message', [
                     'message_id' => $email->messageId,
                 ]);
@@ -2777,6 +3068,108 @@ class IncomingMailService
             if ($message !== null && $message->id) {
                 $this->recordFailure($message->id, $e->getMessage());
             }
+
+            return null;
+        }
+    }
+
+    /**
+     * A TrashNothing post id, trimmed, or null when absent or blank.
+     */
+    private function normaliseTnPostId(?string $tnPostId): ?string
+    {
+        if ($tnPostId === null) {
+            return null;
+        }
+
+        $trimmed = trim($tnPostId);
+
+        return $trimmed === '' ? null : $trimmed;
+    }
+
+    /**
+     * The live Freegle message for a TrashNothing post id, if we already hold one.
+     * Lowest id wins, so concurrent arrivals converge on the same message.
+     */
+    private function findLiveTnMessage(string $tnPostId): ?int
+    {
+        $id = DB::table('messages')
+            ->where('tnpostid', $tnPostId)
+            ->whereNull('deleted')
+            ->orderBy('id')
+            ->value('id');
+
+        return $id === null ? null : (int) $id;
+    }
+
+    /**
+     * Record a further group on a TrashNothing message we already hold.
+     *
+     * Only the per-GROUP side effects of createGroupPostMessage belong here: the
+     * messages_groups row, the spam-check history row and the receipt log. The
+     * per-MESSAGE work - the messages_items link, the TN image attachments - belongs to
+     * the message, not to each group on it, and repeating it would double-count the item
+     * in the weight stats and re-upload the photos.
+     */
+    private function attachGroupToTnMessage(
+        int $msgid,
+        ParsedEmail $email,
+        User $user,
+        Group $group,
+        string $type,
+        ?string $spamType = null
+    ): ?int {
+        try {
+            $collection = $spamType !== null
+                ? MessageGroup::COLLECTION_PENDING
+                : MessageGroup::COLLECTION_INCOMING;
+
+            // INSERT IGNORE: a redelivery of the same email for the same group must be a
+            // no-op, not an error. (msgid, groupid) is unique on messages_groups.
+            DB::statement(
+                'INSERT IGNORE INTO messages_groups (msgid, groupid, msgtype, collection, arrival) VALUES (?, ?, ?, ?, ?)',
+                [$msgid, $group->id, $type, $collection, now()]
+            );
+
+            $messageId = ($email->messageId ?? (microtime(true).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'))).'-'.$group->id;
+
+            DB::table('messages_history')->insert([
+                'groupid' => $group->id,
+                'source' => Message::SOURCE_EMAIL ?? 'Email',
+                'fromuser' => $user->id,
+                'envelopefrom' => $email->envelopeFrom,
+                'envelopeto' => $email->envelopeTo,
+                'fromname' => $email->fromName,
+                'fromaddr' => $email->fromAddress,
+                'fromip' => $email->senderIp,
+                'subject' => $email->subject,
+                'prunedsubject' => $this->pruneSubject($email->subject),
+                'messageid' => $messageId,
+                'msgid' => $msgid,
+            ]);
+
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Message',
+                'subtype' => 'Received',
+                'groupid' => $group->id,
+                'user' => $user->id,
+                'msgid' => $msgid,
+                'text' => $messageId,
+            ]);
+
+            Log::info('TN cross-post attached to existing message', [
+                'msgid' => $msgid,
+                'groupid' => $group->id,
+            ]);
+
+            return $msgid;
+        } catch (\Exception $e) {
+            Log::error('Failed to attach TN cross-post group to existing message', [
+                'msgid' => $msgid,
+                'groupid' => $group->id,
+                'error' => $e->getMessage(),
+            ]);
 
             return null;
         }
@@ -2879,12 +3272,22 @@ class IncomingMailService
     /**
      * Check if email contains worry words.
      *
-     * Worry words are stored in the 'worrywords' database table with types:
-     * - Regulated: UK regulated substances
-     * - Reportable: UK reportable substances
-     * - Medicine: Medicines/supplements
-     * - Review: Just needs looking at
-     * - Allowed: Exclusions (removed from text before checking)
+     * Worry words are stored in the 'concern_keywords' database table (global
+     * scope) with categories:
+     * - substance_regulated: UK regulated substances
+     * - substance_reportable: UK reportable substances
+     * - substance_medicine: Medicines/supplements
+     * - review / scam: Just needs looking at
+     * - allowed: Exclusions (removed from text before checking)
+     *
+     * Reads concern_keywords rather than the legacy 'worrywords' table:
+     * worrywords was a one-time migration snapshot (see
+     * MigrateConcernKeywordsCommand) and is never written to again — every
+     * keyword/whitelist edit made via the current admin UI (ModSupportConcernKeywords)
+     * only reaches concern_keywords, so reading worrywords here meant a moderator
+     * whitelisting a phrase (e.g. 'Cashes Green', Discourse #9944) had no effect
+     * on posts arriving by email even after ac3f80c82 fixed the chat/post-content-check
+     * paths, which already read concern_keywords.
      */
     private function containsWorryWords(ParsedEmail $email): bool
     {
@@ -2892,7 +3295,7 @@ class IncomingMailService
         $body = $email->textBody ?? '';
 
         // Get worry words from database
-        $worryWords = DB::table('worrywords')->get();
+        $worryWords = DB::table('concern_keywords')->where('scope', 'global')->get();
 
         // Check for pound sign (£) as a special case
         if (str_contains($subject, '£') || str_contains($body, '£')) {
@@ -2901,9 +3304,9 @@ class IncomingMailService
             return true;
         }
 
-        // First, remove any ALLOWED type words from the text
+        // First, remove any ALLOWED category phrases from the text
         foreach ($worryWords as $worryWord) {
-            if ($worryWord->type === 'Allowed') {
+            if ($worryWord->category === 'allowed') {
                 $pattern = '/\b'.preg_quote($worryWord->keyword, '/').'\b/i';
                 $subject = preg_replace($pattern, '', $subject);
                 $body = preg_replace($pattern, '', $body);
@@ -2912,12 +3315,12 @@ class IncomingMailService
 
         // Check for phrases (words containing spaces) with literal matching
         foreach ($worryWords as $worryWord) {
-            if ($worryWord->type !== 'Allowed' && str_contains($worryWord->keyword, ' ')) {
+            if ($worryWord->category !== 'allowed' && str_contains($worryWord->keyword, ' ')) {
                 if (stripos($subject, $worryWord->keyword) !== false ||
                     stripos($body, $worryWord->keyword) !== false) {
                     Log::debug('Worry word phrase found', [
                         'keyword' => $worryWord->keyword,
-                        'type' => $worryWord->type,
+                        'category' => $worryWord->category,
                     ]);
 
                     return true;
@@ -2937,7 +3340,7 @@ class IncomingMailService
             }
 
             foreach ($worryWords as $worryWord) {
-                if ($worryWord->type !== 'Allowed' && ! empty($worryWord->keyword)) {
+                if ($worryWord->category !== 'allowed' && ! empty($worryWord->keyword)) {
                     // Check length ratio (0.75 to 1.25)
                     $ratio = strlen($word) / strlen($worryWord->keyword);
                     if ($ratio >= 0.75 && $ratio <= 1.25) {
@@ -2946,7 +3349,7 @@ class IncomingMailService
                             Log::debug('Worry word found', [
                                 'word' => $word,
                                 'keyword' => $worryWord->keyword,
-                                'type' => $worryWord->type,
+                                'category' => $worryWord->category,
                             ]);
 
                             return true;
@@ -3051,7 +3454,7 @@ class IncomingMailService
 
         // Use TYPE_INTERESTED only when we found the post being replied to.
         // Without a refmsgid, use TYPE_DEFAULT since we can't link to a specific post.
-        $this->createChatMessageFromEmail(
+        $chatMsgId = $this->createChatMessageFromEmail(
             $chat,
             $senderUser->id,
             $email,
@@ -3060,6 +3463,14 @@ class IncomingMailService
             spamScore: $spamScore,
             prependSubject: $prependSubject
         );
+
+        // Rippling-out (#3): a direct-email reply to a SPECIFIC post (refmsgid resolved via the
+        // x-fd-msgid header or subject match) must be held when the replier's area isn't covered
+        // by the post's reach yet - the same gate as the digest reply path - so the poster isn't
+        // notified out-of-reach via this route. Only when we linked the reply to a post.
+        if ($refMsgId !== null && $chatMsgId !== null) {
+            $this->holdReplyIfOutsideReach($chat->id, $chatMsgId, $refMsgId, $senderUser, $email->isFromTrashNothing() ? 'tn' : 'email');
+        }
 
         // Track email reply in email_tracking for AMP comparison stats.
         $this->trackEmailReply($chat->id, $senderUser->id);
@@ -3303,7 +3714,7 @@ class IncomingMailService
         ]);
 
         // Create roster entries for both users so the notification system can
-        // track seen/emailed state. The legacy iznik-server code does this in
+        // track seen/emailed state. The legacy V1 PHP implementation does this in
         // ChatRoom::createConversation() via updateRoster() for both users.
         // Without roster entries, users never receive email notifications
         // about new messages in this chat.
@@ -3434,41 +3845,9 @@ class IncomingMailService
      */
     private function findClosestPostcodeId(float $lat, float $lng): ?int
     {
-        $srid = config('freegle.srid', 3857);
+        $ids = (new SpatialQueryService())->nearestIds('postcodes', $lat, $lng, 1);
 
-        // Start with a small search radius and expand if needed
-        $scan = 0.00001953125;
-
-        while ($scan <= 0.2) {
-            $swlat = $lat - $scan;
-            $nelat = $lat + $scan;
-            $swlng = $lng - $scan;
-            $nelng = $lng + $scan;
-
-            $poly = "POLYGON(($swlng $swlat, $swlng $nelat, $nelng $nelat, $nelng $swlat, $swlng $swlat))";
-
-            $sql = "SELECT locations.id,
-                           ST_distance(locations_spatial.geometry, ST_GeomFromText('POINT($lng $lat)', $srid)) AS dist
-                    FROM locations_spatial
-                    INNER JOIN locations ON locations.id = locations_spatial.locationid
-                    WHERE MBRContains(ST_Envelope(ST_GeomFromText('$poly', $srid)), locations_spatial.geometry)
-                      AND locations.type = 'Postcode'
-                      AND LOCATE(' ', locations.name) > 0
-                    ORDER BY dist ASC,
-                             CASE WHEN ST_Dimension(locations_spatial.geometry) < 2 THEN 0
-                                  ELSE ST_AREA(locations_spatial.geometry) END ASC
-                    LIMIT 1";
-
-            $result = DB::selectOne($sql);
-
-            if ($result) {
-                return (int) $result->id;
-            }
-
-            $scan *= 2;
-        }
-
-        return null;
+        return $ids[0] ?? null;
     }
 
     /**
@@ -3537,7 +3916,41 @@ class IncomingMailService
      */
     private function parseSubject(string $subj): array
     {
-        return \App\Support\SubjectParser::parse($subj);
+        $type = null;
+        $item = null;
+        $location = null;
+
+        $p = strpos($subj, ':');
+
+        if ($p !== false) {
+            $startp = $p;
+            $rest = trim(substr($subj, $p + 1));
+            $p = strlen($rest) - 1;
+
+            if (substr($rest, -1) == ')') {
+                $count = 0;
+
+                do {
+                    $curr = substr($rest, $p, 1);
+
+                    if ($curr == '(') {
+                        $count--;
+                    } elseif ($curr == ')') {
+                        $count++;
+                    }
+
+                    $p--;
+                } while ($count > 0 && $p > 0);
+
+                if ($count == 0) {
+                    $type = trim(substr($subj, 0, $startp));
+                    $location = trim(substr($rest, $p + 2, strlen($rest) - $p - 3));
+                    $item = trim(substr($rest, 0, $p));
+                }
+            }
+        }
+
+        return [$type, $item, $location];
     }
 
     /**
@@ -3605,6 +4018,12 @@ class IncomingMailService
             }
 
             $html = $response->body();
+            if (trim($html) === '') {
+                // loadHTML('') throws ValueError on PHP 8 - the @ silences
+                // warnings, not thrown Errors (same trap as the link-preview
+                // cron, fixed together 2026-08-17).
+                return [];
+            }
             $doc = new \DOMDocument;
             @$doc->loadHTML($html);
 
@@ -3769,17 +4188,11 @@ class IncomingMailService
      */
     private function addEmailToUser(int $userId, ?string $email): void
     {
-        $email = trim((string) $email);
-
-        if ($email === '') {
+        if (empty($email)) {
             return;
         }
 
-        // Reject anything that isn't a syntactically valid address — bounce
-        // envelope-froms like `MAILER-DAEMON` or `<>` reach this code path.
-        if (!preg_match(Message::EMAIL_REGEXP, $email)) {
-            return;
-        }
+        $email = trim($email);
 
         // Don't add system addresses
         $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
@@ -3886,15 +4299,20 @@ class IncomingMailService
      */
     private function addToSpatialIndex(int $messageId, int $groupId): void
     {
-        $message = Message::find($messageId);
+        // useWritePdo: this runs immediately after the message is created and its
+        // messages_groups row set to Approved (see routeToGroup). Under the read/write
+        // split a plain read could hit a lagging replica and return null, silently
+        // skipping the spatial-index entry until the reconciler cron catches up.
+        $message = Message::query()->useWritePdo()->find($messageId);
         if (! $message || (! $message->lat && ! $message->lng)) {
             return;
         }
 
         $srid = config('freegle.srid', 3857);
 
-        // Get arrival from messages_groups
+        // Get arrival from messages_groups (same read-your-write reasoning as above).
         $mg = DB::table('messages_groups')
+            ->useWritePdo()
             ->where('msgid', $messageId)
             ->where('groupid', $groupId)
             ->first();
@@ -4037,7 +4455,7 @@ class IncomingMailService
     /**
      * Record a processing failure against a message.
      *
-     * V1 parity: Message::recordFailure() in iznik-server/include/message/Message.php.
+     * V1 parity: the legacy V1 PHP Message::recordFailure().
      * Increments retrycount and sets retrylastfailure so the message can be retried later.
      * Also logs the failure to the logs table (type=Message, subtype=Failure).
      */

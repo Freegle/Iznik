@@ -5,7 +5,6 @@ namespace App\Mail\Message;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
-use App\Models\Group;
 use App\Models\Message;
 use App\Models\User;
 use Illuminate\Mail\Mailables\Address;
@@ -48,7 +47,7 @@ class DeadlineReached extends MjmlMailable
             ? Message::OUTCOME_TAKEN
             : Message::OUTCOME_RECEIVED;
 
-        $group = $message->groups->first();
+        $group = $this->originGroupForMessage($message);
 
         $this->initTracking(
             'DeadlineReached',
@@ -61,12 +60,30 @@ class DeadlineReached extends MjmlMailable
     }
 
     /**
+     * The group to show the poster for their own message: the ORIGIN group,
+     * the one they actually posted to.
+     *
+     * Rippling adds a messages_groups row per group the post spreads into
+     * (rippled_in = 1, arrival = the ripple time) and auto-joins the poster
+     * there, so the old "recipient's membership with the most recent arrival"
+     * pick named whichever distant group the post most recently rippled into.
+     * Falls back to the earliest-arrival row for pre-rippling data.
+     */
+    protected function originGroupForMessage(Message $message): ?object
+    {
+        $groups = $message->groups;
+
+        return $groups->first(fn ($g) => !($g->pivot->rippled_in ?? 0))
+            ?? $groups->sortBy(fn ($g) => $g->pivot->arrival ?? null)->first();
+    }
+
+    /**
      * Build the message.
      */
     public function build(): static
     {
         $userSite = config('freegle.sites.user');
-        $group = $this->message->groups->first();
+        $group = $this->originGroupForMessage($this->message);
         $groupName = $group?->nameshort ?? 'Freegle';
 
         return $this->to($this->user->email_preferred, $this->user->displayname)
@@ -102,6 +119,14 @@ class DeadlineReached extends MjmlMailable
     protected function getSubject(): string
     {
         return 'Deadline reached: ' . $this->message->subject;
+    }
+
+    /**
+     * Transactional - about the member's own post - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
     }
 
     /**

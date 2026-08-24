@@ -47,12 +47,19 @@ func TestDashboardHeatmapWithData(t *testing.T) {
 	assert.True(t, ok, "heatmap should be an array")
 	assert.Greater(t, len(heatmap), 0, "heatmap should have at least one entry from test data")
 
-	// Verify each entry has lat and lng
+	// Verify each entry has lat, lng and count. count is essential: the client weights
+	// the heatmap by it, and a missing count (the bug this covers) made the whole map
+	// render blank.
 	if len(heatmap) > 0 {
 		point := heatmap[0].(map[string]interface{})
 		_, hasLat := point["lat"]
 		_, hasLng := point["lng"]
+		count, hasCount := point["count"]
 		assert.True(t, hasLat, "heatmap point should have lat")
 		assert.True(t, hasLng, "heatmap point should have lng")
+		assert.True(t, hasCount, "heatmap point should have count (client weights by it)")
+		if hasCount {
+			assert.GreaterOrEqual(t, count.(float64), 1.0, "heatmap point count should be >= 1")
+		}
 	}
 }

@@ -211,7 +211,7 @@ export async function putStatusPost(db: DB, opts: { postId?: number; apiKey?: st
   const resp = await fetch(`${DISCOURSE_BASE}/posts/${postId}.json`, {
     method: 'PUT',
     headers: {
-      'User-Api-Key': apiKey,
+      'Api-Key': apiKey,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: form.toString(),

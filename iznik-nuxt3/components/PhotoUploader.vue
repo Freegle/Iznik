@@ -1,10 +1,37 @@
 <template>
   <div class="app-photo-uploader" @dragenter="onDragEnter">
+    <!-- Compact mode (e.g. the bulk-clearance editor): render nothing but an
+         "Add photos" button. The actual photos live in the parent's draggable
+         tray, so there is no big featured gallery to fight with drag-to-item. -->
+    <div v-if="compact" class="compact-add">
+      <b-button
+        variant="outline-primary"
+        size="lg"
+        class="add-photos-button"
+        data-testid="compact-add-photos"
+        @click="openPhotoOptions"
+      >
+        <v-icon icon="camera" /> Add photos
+      </b-button>
+      <span v-if="emptySubtitle" class="compact-add__hint">{{
+        emptySubtitle
+      }}</span>
+    </div>
+
+    <b-alert
+      v-if="photoError"
+      variant="danger"
+      :model-value="true"
+      class="mt-2"
+    >
+      {{ photoError }}
+    </b-alert>
+
     <!-- Featured photo - always shows first photo (the primary one for post) -->
     <!-- Drop target: dragging a thumbnail here makes it the primary photo -->
     <Transition name="fade">
       <div
-        v-if="selectedPhoto"
+        v-if="selectedPhoto && !compact"
         class="featured-photo"
         :class="{ 'drop-target-active': dragging }"
         @dragover.prevent
@@ -28,12 +55,13 @@
           @rotate="rotatePhoto(selectedPhoto, 90)"
           @retry="retryUpload(selectedPhoto)"
           @show-quality="showQualityWarning(selectedPhoto)"
+          @select="viewPhoto"
         />
       </div>
     </Transition>
 
     <!-- Thumbnail carousel (excluding selected photo) -->
-    <div v-if="photos.length > 1" class="thumbnail-carousel">
+    <div v-if="photos.length > 1 && !compact" class="thumbnail-carousel">
       <draggable
         v-model="photos"
         class="thumbnail-strip"
@@ -72,7 +100,7 @@
 
     <!-- Add more button (when photos exist) - secondary style -->
     <div
-      v-if="photos.length > 0 && photos.length < maxPhotos"
+      v-if="photos.length > 0 && photos.length < maxPhotos && !compact"
       class="add-more-section"
     >
       <b-button
@@ -86,7 +114,7 @@
     </div>
 
     <!-- Empty state -->
-    <div v-if="photos.length === 0" class="empty-state">
+    <div v-if="photos.length === 0 && !compact" class="empty-state">
       <div class="empty-icon">
         <v-icon icon="camera" size="4x" />
       </div>
@@ -132,6 +160,7 @@
       centered
       @ok="continueWithPhoto"
       @cancel="retakePhoto"
+      @hidden="onQualityModalHidden"
     >
       <p>{{ qualityModalMessage }}</p>
       <template #footer="{}">
@@ -143,6 +172,14 @@
         </div>
       </template>
     </b-modal>
+
+    <!-- Full-screen zoomable view of the featured photo -->
+    <MessagePhotosModal
+      v-if="viewingPhoto"
+      :attachments="photos"
+      :initial-index="selectedIndex"
+      @hidden="viewingPhoto = false"
+    />
 
     <!-- Uppy Dashboard Modal for web browsers -->
     <DashboardModal
@@ -173,15 +210,23 @@ import {
 } from 'vue'
 import { Camera, CameraSource, CameraResultType } from '@capacitor/camera'
 import * as tus from 'tus-js-client'
-// eslint-disable-next-line import/default
+
 import Uppy from '@uppy/core'
-import { DashboardModal } from '@uppy/vue'
-// eslint-disable-next-line import/default, import/namespace, import/no-named-as-default, import/no-named-as-default-member
+import DashboardModal from '@uppy/vue/dashboard-modal'
+
 import Tus from '@uppy/tus'
 import Compressor from '@uppy/compressor'
 import PhotoCard from './PhotoCard.vue'
 import OurUploadedImage from '~/components/OurUploadedImage.vue'
 import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
+import {
+  createHeicPreProcessor,
+  createHeicSafeCompressor,
+} from '~/composables/useUppyHeic'
+import { action, error as logError } from '~/composables/useClientLog'
+import { withTimeout } from '~/composables/usePromiseTimeout'
+import { describeUploadError } from '~/composables/useUploadErrorDetail'
+import { reportCameraError } from '~/composables/useCameraErrorMessage'
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMobileStore } from '~/stores/mobile'
@@ -190,7 +235,15 @@ import {
   getQualityMessage,
 } from '~/composables/usePhotoQuality'
 
+// The bytes are already uploaded by the time we register the photo, so this
+// call is small.  Generous ceiling: we only want to catch a hang, never a slow
+// connection.
+const FINALISE_TIMEOUT_MS = 60000
+
 const draggable = defineAsyncComponent(() => import('vuedraggable'))
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
+)
 
 const props = defineProps({
   modelValue: {
@@ -207,6 +260,14 @@ const props = defineProps({
     type: Number,
     required: false,
     default: 10,
+  },
+  // Compact mode: hide the featured photo / carousel / empty state and show
+  // only an "Add photos" button. Used where the photos are displayed and
+  // managed by the parent (e.g. the bulk-clearance editor's draggable tray).
+  compact: {
+    type: Boolean,
+    required: false,
+    default: false,
   },
   recognise: {
     type: Boolean,
@@ -247,6 +308,10 @@ const dragging = ref(false)
 // modelValue prop) replaces the array mid-drag and vuedraggable reverts the order.
 const suppressModelValueSync = ref(false)
 const showSourceModal = ref(false)
+// Human-readable message shown when a Camera/gallery call fails (e.g. the OS
+// permission prompt was declined) - see useCameraErrorMessage for what does
+// and doesn't count as an error worth telling the user about.
+const photoError = ref(null)
 const showQualityModal = ref(false)
 const qualityModalTitle = ref('')
 const qualityModalMessage = ref('')
@@ -272,6 +337,17 @@ function selectPhoto(index) {
     photos.value.unshift(photo)
     // Keep selectedIndex at 0 (always show first photo as featured)
     selectedIndex.value = 0
+  }
+}
+
+// Tapping the featured photo opens the same full-screen zoomable viewer as a
+// photo on a live post, so you can check the picture is any good before you
+// post it. A photo still uploading has nothing to show yet.
+const viewingPhoto = ref(false)
+
+function viewPhoto() {
+  if (selectedPhoto.value && !selectedPhoto.value.uploading) {
+    viewingPhoto.value = true
   }
 }
 
@@ -305,6 +381,8 @@ watch(
 
 // Open photo source selection
 function openPhotoOptions() {
+  photoError.value = null
+
   if (isApp.value) {
     // App: show native camera/gallery modal
     showSourceModal.value = true
@@ -330,6 +408,7 @@ async function takePhoto() {
     await processPhoto(image.webPath)
   } catch (e) {
     console.log('Camera cancelled or error:', e.message)
+    photoError.value = reportCameraError(e)
   }
 }
 
@@ -348,6 +427,7 @@ async function chooseFromGallery() {
     }
   } catch (e) {
     console.log('Gallery cancelled or error:', e.message)
+    photoError.value = reportCameraError(e)
   }
 }
 
@@ -431,8 +511,27 @@ async function uploadPhoto(photo, webPath) {
             recognise: props.recognise && photos.value.indexOf(photo) === 0,
           }
 
+          action('photo bytes uploaded', {
+            event_type: 'photo_upload',
+            photo_stage: 'tus_complete',
+            imgtype: props.type,
+          })
+
           try {
-            const ret = await imageStore.post(att)
+            // The bytes are already up at this point; this call only registers
+            // them, so it is quick under any normal conditions.  Bound it
+            // anyway.  This is the step that has to complete for the photo to
+            // stop being "uploading", and the give flow has no way out while
+            // it is: Next is gated on anyUploading and Skip only renders in
+            // the empty state.  So an await here that never settles does not
+            // lose a photo, it locks the member out of posting entirely, and
+            // compose persists that state to the next visit.  Better a photo
+            // that failed and offers Retry than a flow with no exits.
+            const ret = await withTimeout(
+              imageStore.post(att),
+              FINALISE_TIMEOUT_MS,
+              'Timed out registering the uploaded photo'
+            )
 
             // Update photo with server data
             photo.id = ret.id
@@ -446,12 +545,23 @@ async function uploadPhoto(photo, webPath) {
             // Remove any AI-generated images now that a real photo has been added
             photos.value = photos.value.filter((p) => !p.externalmods?.ai)
 
+            action('photo registered', {
+              event_type: 'photo_upload',
+              photo_stage: 'registered',
+              attachment_id: ret.id,
+            })
+
             emit('photoProcessed', ret.id)
             resolve()
           } catch (e) {
             console.error('Image post failed:', e)
             photo.error = true
             photo.uploading = false
+            logError('Photo upload could not be completed', {
+              event_type: 'photo_upload',
+              photo_stage: 'finalise_failed',
+              reason: e?.message,
+            })
             reject(e)
           }
         },
@@ -544,6 +654,20 @@ function continueWithPhoto() {
   }
 
   pendingPhoto.value = null
+}
+
+// The quality modal can be dismissed without choosing either button - the
+// header X, the backdrop, or Esc. processPhoto has already put the photo in
+// the tray with uploading:true and is holding the upload back until a
+// decision, so a dismissal that ran neither handler would leave it pinned at
+// 0% with nothing in flight to ever clear the flag. That is not cosmetic: the
+// give flow gates Next on anyUploading, Skip only renders in the empty state,
+// and compose persists, so the photo comes back on the next visit and blocks
+// posting for good. Dismissing means "keep it", so treat it as Use This.
+function onQualityModalHidden() {
+  if (pendingPhoto.value) {
+    continueWithPhoto()
+  }
 }
 
 // Retake photo
@@ -683,6 +807,13 @@ async function handleUppySuccess(result) {
   uppy.value.clear()
 }
 
+// Per-file compression telemetry (see OurUploader.vue for the rationale). Keyed
+// by file.id; an entry lives from preprocess-progress to preprocess-complete.
+const compressTimers = new Map()
+// Per-file retry counter (keyed by file.id) so upload_failed reports which
+// attempt failed — attempt 5 = retry ladder exhausted (a genuine stop).
+const uploadRetries = new Map()
+
 // Initialize Uppy for web browsers
 onMounted(() => {
   if (isApp.value) return
@@ -702,15 +833,91 @@ onMounted(() => {
       allowedFileTypes: ['image/*', '.jpg', '.jpeg', '.png', '.gif', '.heic'],
       maxNumberOfFiles: props.maxPhotos,
     },
+  }).use(Tus, {
+    endpoint: runtimeConfig.public.TUS_UPLOADER,
+    uploadDataDuringCreation: true,
   })
-    .use(Tus, {
-      endpoint: runtimeConfig.public.TUS_UPLOADER,
-      uploadDataDuringCreation: true,
-    })
-    .use(Compressor)
+  // Must be registered before Compressor - pre-processors run in the order
+  // they're added. Converts HEIC to JPEG so Compressor's canvas re-encode has
+  // something the browser can draw; the wrapped Compressor then skips anything
+  // still HEIC. See useUppyHeic.
+  uppy.value.addPreProcessor(
+    createHeicPreProcessor({ getUppy: () => uppy.value, uploader: 'photo' })
+  )
+  uppy.value.use(createHeicSafeCompressor(Compressor))
 
   uppy.value.on('complete', handleUppySuccess)
+  // Upload funnel telemetry (Loki, event_type=action). This uploader previously
+  // had none. Per-file so selected/compress/succeeded counts are comparable
+  // (avoid mixing per-file file-added with per-batch upload events).
+  uppy.value.on('file-added', (file) => {
+    action('upload_file_selected', {
+      uploader: 'photo',
+      file_size: file?.size,
+      file_type: file?.type,
+    })
+  })
+  uppy.value.on('preprocess-progress', (file) => {
+    // Per file, at compression START — file.size is the ORIGINAL size.
+    if (!file || compressTimers.has(file.id)) return
+    const originalSize = file?.size ?? file?.data?.size ?? null
+    compressTimers.set(file.id, {
+      startedAt: Date.now(),
+      originalSize,
+      compressed: false,
+    })
+    action('upload_compress_started', {
+      uploader: 'photo',
+      file_size: originalSize,
+    })
+  })
+  uppy.value.on('compressor:complete', (files) => {
+    // Only successfully-compressed files appear here; absence = silent failure.
+    for (const file of files || []) {
+      const entry = compressTimers.get(file?.id)
+      if (entry) entry.compressed = true
+    }
+  })
+  uppy.value.on('preprocess-complete', (file) => {
+    // Per file, at compression END — file.size is now the COMPRESSED size.
+    const entry = file && compressTimers.get(file.id)
+    if (!entry) return
+    const compressedSize = file?.size ?? file?.data?.size ?? null
+    action('upload_compress_finished', {
+      uploader: 'photo',
+      file_type: file?.type,
+      original_size: entry.originalSize,
+      compressed_size: compressedSize,
+      elapsed_ms: Date.now() - entry.startedAt,
+      compressed: entry.compressed,
+      shrunk:
+        entry.originalSize != null &&
+        compressedSize != null &&
+        compressedSize < entry.originalSize,
+    })
+    compressTimers.delete(file.id)
+  })
+  uppy.value.on('upload-success', (file) => {
+    action('upload_succeeded', {
+      uploader: 'photo',
+      file_size: file?.size,
+      file_type: file?.type,
+    })
+  })
+  // Per-FILE failure carries file + server response — log diagnosable detail here.
+  uppy.value.on('upload-error', (file, error, response) => {
+    console.error('Upload error', file?.id, error, response)
+    action('upload_failed', {
+      uploader: 'photo',
+      attempt: (uploadRetries.get(file?.id) ?? 0) + 1,
+      ...describeUploadError(error, file, response),
+    })
+  })
+  uppy.value.on('upload-retry', (fileID) => {
+    uploadRetries.set(fileID, (uploadRetries.get(fileID) ?? 0) + 1)
+  })
   const scheduleRetry = createRetryCoalescer(() => uppy.value)
+  // Global error event drives retry only; logging lives in upload-error above.
   uppy.value.on('error', (error) => {
     console.error('Upload error, retry', error)
     scheduleRetry()
@@ -718,11 +925,62 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  // Navigating away with the quality modal still open leaves the held photo
+  // uploading:true with no upload running and no modal left to resolve it.
+  // Android's back gesture does exactly this: the app's backButton handler
+  // calls history.back() without closing open modals. Starting an upload from
+  // a component that is going away is not reliable, so surface it as a failure
+  // instead - that clears anyUploading and gives the card its Retry/Delete
+  // controls, which is recoverable rather than a permanent 0%.
+  if (pendingPhoto.value?.uploading) {
+    pendingPhoto.value.uploading = false
+    pendingPhoto.value.error = true
+  }
+  pendingPhoto.value = null
+
+  // Same trap as the held photo above, one step later: a photo whose upload is
+  // still outstanding when we go away.  The tray reaches the persisted compose
+  // store through a watcher that Vue stops with this component, so the last
+  // thing written out says uploading:true, and when the upload finally settles
+  // it mutates an object nothing is listening to any more.  Next is gated on
+  // anyUploading and the state is restored on the next visit, so that is a
+  // permanent posting lockout rather than a lost photo.
+  //
+  // Mark them failed and push that out by hand - the watcher will not fire for
+  // us again, and the parent's setter writes to a store that outlives us both.
+  const stranded = photos.value.filter((p) => p?.uploading)
+
+  if (stranded.length) {
+    stranded.forEach((photo) => {
+      photo.uploading = false
+      photo.error = true
+    })
+
+    emit(
+      'update:modelValue',
+      photos.value.map((p) => ({ ...p }))
+    )
+
+    logError('Left the photo tray with an upload still in flight', {
+      event_type: 'photo_upload',
+      photo_stage: 'stranded_on_unmount',
+      stranded: stranded.length,
+      max_progress: Math.max(...stranded.map((p) => p.progress ?? 0)),
+    })
+  }
+
+  compressTimers.clear()
+  uploadRetries.clear()
   if (uppy.value && typeof uppy.value.close === 'function') {
     uppy.value.close()
     uppy.value = null
   }
 })
+
+// Allow a parent (e.g. the give-flow photos page handling a shared image) to
+// push a photo in programmatically. processPhoto runs the same quality check +
+// upload path as the camera/gallery flows; webPath must be fetch()-able.
+defineExpose({ processPhoto })
 </script>
 
 <style scoped lang="scss">
@@ -730,6 +988,20 @@ onBeforeUnmount(() => {
 
 .app-photo-uploader {
   padding: 1rem;
+}
+
+/* Compact mode: just the add button + a short hint, no gallery. */
+.compact-add {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0;
+}
+
+.compact-add__hint {
+  font-size: 0.85rem;
+  color: $color-gray--normal;
 }
 
 /* Featured photo area - square */
@@ -787,7 +1059,8 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 2px solid $color-black-opacity-15;
   cursor: pointer;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     transform var(--transition-normal);
   position: relative;
 
@@ -1089,7 +1362,8 @@ onBeforeUnmount(() => {
 </style>
 
 <style lang="scss">
-@import '@uppy/core/dist/style.css';
-@import '@uppy/webcam/dist/style.css';
+@import '@uppy/core/css/style.css';
+@import '@uppy/dashboard/css/style.css';
+@import '@uppy/webcam/css/style.css';
 @import 'assets/css/uploader.scss';
 </style>

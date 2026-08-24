@@ -9,8 +9,8 @@ use Illuminate\Support\Facades\Log;
 /**
  * Attachment stored in the groups_images table.
  *
- * Mirrors the TYPE_GROUP behaviour of Attachment in iznik-server, including
- * getPath() and getPublic().
+ * Mirrors the TYPE_GROUP behaviour of Attachment in the legacy V1 PHP
+ * implementation, including getPath() and getPublic().
  */
 class GroupAttachment extends Model
 {
@@ -32,10 +32,10 @@ class GroupAttachment extends Model
      *
      * When $id is supplied the method works statically (no attachment row needs
      * to be loaded), matching the Group::getPublic() usage pattern in
-     * iznik-server where getPath(FALSE, $profileImageId) is called on an
-     * unloaded Attachment instance.
+     * the legacy V1 PHP implementation where getPath(FALSE, $profileImageId) is
+     * called on an unloaded Attachment instance.
      *
-     * Mirrors Attachment::getPath() from iznik-server for TYPE_GROUP.
+     * Mirrors Attachment::getPath() from the legacy V1 PHP implementation for TYPE_GROUP.
      */
     public function getPath(bool $thumb = false, ?int $id = null): ?string
     {

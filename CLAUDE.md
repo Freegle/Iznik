@@ -1,12 +1,21 @@
-**See also: [codingstandards.md](codingstandards.md)** for coding rules. **Use the `ralph` skill** for any non-trivial development task. For automated execution: `./ralph.sh -t "task description"`
+**See also: [./docs/developers/reference/coding-standards.md](./docs/developers/reference/coding-standards.md)** for coding rules. **Use the `ralph` skill** for any non-trivial development task. For automated execution: `./ralph.sh -t "task description"`
 
 ## Critical Rules
 
 - **NEVER merge PRs.** Only humans merge PRs. Stop at "PR is ready for merge".
 - **NEVER skip or make coverage optional in tests.** Fix the root cause if coverage upload fails.
 - **NEVER dismiss test failures as "pre-existing" or "unrelated".** Investigate and fix all failures.
-- **NEVER push unless explicitly told to** by the user.
+- **You may push the current branch and open a PR without being asked first, provided you have run the full relevant test suite locally and it passes.** If tests have not been run locally, or any are failing, do not push — run and fix them first. (Merging is still humans-only; see above.)
   - **Exception**: When CI is failing on master, you may push fixes directly to master (no PR required) — same as you would fix CI failures on an open PR.
+
+## Documentation
+
+Canonical documentation lives in **[`docs/`](docs/README.md)**, organised by audience: `members/`, `moderators/`, `developers/`, `ops/`. It is the place for "how things work" - not `plans/`, which is scratch that gets pruned when work ships.
+
+- **Keep docs current in the same PR as the change.** When you change behaviour a doc describes, update the doc. Each page declares in front matter the source paths and cross-stack tests it `covers:`, and `scripts/check-docs-freshness.mjs` fails a branch that changes a covered path without touching the page (satisfy it by updating the page, or bumping its `last_reviewed:`).
+- **Screenshots are generated, never hand-pasted** - regenerate via `iznik-nuxt3/tests/e2e/docs-screenshots.mjs` (see `docs/screenshots/README.md`).
+- **Developer docs point into the code, they do not duplicate it. Ops docs contain no secrets, credentials or IPs.**
+- Full conventions: **[`docs/maintaining-docs.md`](docs/maintaining-docs.md)**.
 
 ## Container Quick Reference
 
@@ -68,7 +77,7 @@ Logs on `localhost:3100`. Use `-G` with `--data-urlencode` for queries. Timestam
 
 ## Sentry
 
-Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See `SENTRY-INTEGRATION.md`.
+The monitor-fsm scans Sentry for unresolved issues and can open fix PRs for review. Set `SENTRY_AUTH_TOKEN` in `.env`. See `monitor-fsm/README.md`.
 
 ## Miscellaneous
 

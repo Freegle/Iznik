@@ -56,7 +56,31 @@ for (const composable of modtoolsOnlyComposables) {
 }
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    // Nuxt replaces import.meta.client/server at build time; source uses those
+    // (the eslint nuxt/prefer-import-meta autofix migrated process.client), so
+    // tests must substitute them the same way or client-only paths silently
+    // skip under happy-dom. `define` does not reach import.meta members in
+    // vitest, hence the explicit pre-transform.
+    {
+      name: 'nuxt-import-meta-flags',
+      enforce: 'pre' as const,
+      transform(code: string, id: string) {
+        // Substitute in app source only; spec files may reference the names.
+        if (id.includes('node_modules') || id.includes('/tests/')) return
+        if (
+          !code.includes('import.meta.client') &&
+          !code.includes('import.meta.server')
+        ) {
+          return
+        }
+        return code
+          .replaceAll('import.meta.client', 'true')
+          .replaceAll('import.meta.server', 'false')
+      },
+    },
+    vue(),
+  ],
   resolve: {
     // Allow imports without .vue extension
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue'],
@@ -91,6 +115,11 @@ export default defineConfig({
         'tests/unit/mocks/quill-html-edit-button.js'
       ),
       papaparse: path.join(rootDir, 'tests/unit/mocks/papaparse.js'),
+      // isomorphic-dompurify drags in jsdom (awkward under happy-dom); stub it.
+      'isomorphic-dompurify': path.join(
+        rootDir,
+        'tests/unit/mocks/isomorphic-dompurify.js'
+      ),
       'vue-letter': path.join(rootDir, 'tests/unit/mocks/vue-letter.js'),
       letterparser: path.join(rootDir, 'tests/unit/mocks/letterparser.js'),
       // Handsontable mocks
@@ -102,7 +131,11 @@ export default defineConfig({
         rootDir,
         'tests/unit/mocks/handsontable-registry.js'
       ),
-      'handsontable/dist/handsontable.full.css': path.join(
+      'handsontable/styles/handsontable.min.css': path.join(
+        rootDir,
+        'tests/unit/mocks/handsontable-css.js'
+      ),
+      'handsontable/styles/ht-theme-classic.min.css': path.join(
         rootDir,
         'tests/unit/mocks/handsontable-css.js'
       ),

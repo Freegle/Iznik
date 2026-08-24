@@ -53,6 +53,7 @@
             <template #footer>
               <StoryAddModal
                 v-if="showStoryAddModal"
+                @login-required="loginRequired"
                 @hidden="showStoryAddModal = false"
               />
             </template>
@@ -70,10 +71,11 @@ import { useAuthStore } from '~/stores/auth'
 import GroupSelect from '~/components/GroupSelect'
 import StoryOne from '~/components/StoryOne'
 import ScrollGrid from '~/components/ScrollGrid'
+import { useStoryAdd } from '~/composables/useStoryAdd'
 import { useRoute, useRouter, computed } from '#imports'
 
-const StoryAddModal = defineAsyncComponent(() =>
-  import('~/components/StoryAddModal')
+const StoryAddModal = defineAsyncComponent(
+  () => import('~/components/StoryAddModal')
 )
 
 const LIMIT = 100
@@ -123,11 +125,7 @@ useHead(
   )
 )
 
-const showStoryAddModal = ref(false)
-
-const showAddModal = function () {
-  showStoryAddModal.value = true
-}
+const { showStoryAddModal, showAddModal, loginRequired } = useStoryAdd()
 
 const stories = computed(() => {
   return storyStore.recent

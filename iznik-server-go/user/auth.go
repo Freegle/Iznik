@@ -6,8 +6,9 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/location"
 	"github.com/gofiber/fiber/v2"
-	"iznik-server-go/location"
+	"gorm.io/gorm"
 )
 
 // WhoAmI returns the authenticated user ID from the request, or 0 if not logged in.
@@ -32,7 +33,7 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 		if partnerkey != "" {
 			// Find in partners_keys table
 			var partnername string
-			db.Raw("SELECT partner FROM partners_keys WHERE `key`= ?", partnerkey).Scan(&partnername)
+			db.Table("partners_keys").Select("partner").Where("`key`= ?", partnerkey).Scan(&partnername)
 
 			// Change partnername to lower case
 			partnername = strings.ToLower(partnername)
@@ -41,7 +42,7 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 			if strings.Contains(partnername, "lovejunk") {
 				// We have a valid partner key.  See if we have a user with this ljuserid.
 				var ljuser User
-				db.Raw("SELECT * FROM users WHERE ljuserid = ?", ljuserid).Scan(&ljuser)
+				db.Table("users").Where("ljuserid = ?", ljuserid).Scan(&ljuser)
 
 				if ljuser.ID > 0 {
 					// We do.
@@ -65,7 +66,12 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 
 					// Create avatar from LoveJunk profile URL if provided.
 					if profileurl != nil && *profileurl != "" {
-						db.Exec("INSERT INTO users_images (userid, url, contenttype, `default`) VALUES (?, ?, 'image/jpeg', 0)", myid, *profileurl)
+						db.Table("users_images").Create(map[string]interface{}{
+							"userid":      myid,
+							"url":         *profileurl,
+							"contenttype": gorm.Expr("'image/jpeg'"),
+							"default":     gorm.Expr("0"),
+						})
 					}
 				}
 
@@ -73,12 +79,14 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 					// We have an approximate location.  This should be the first part of the postcode.
 					// Update the user's location if needed.
 					var locations []location.Location
-					db.Raw("SELECT id FROM locations WHERE name LIKE ? AND type = ? LIMIT 1;", *postcodeprefix+"%", location.TYPE_POSTCODE).Scan(&locations)
+					db.Table("locations").Select("id").
+						Where("name LIKE ? AND type = ?", *postcodeprefix+"%", location.TYPE_POSTCODE).
+						Limit(1).Scan(&locations)
 
 					if len(locations) > 0 && locations[0].ID > 0 && (ljuser.Lastlocation == nil || locations[0].ID != *ljuser.Lastlocation) {
 						// We have a location.
 						// Update user table with location.
-						db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", locations[0].ID, myid)
+						db.Table("users").Where("id = ?", myid).Update("lastlocation", locations[0].ID)
 					}
 				}
 			} else {

@@ -39,8 +39,8 @@
                   class="composer-textarea"
                 />
                 <NoticeMessage
-                  v-if="showGiveFind"
-                  ref="giveFind"
+                  v-if="showGiveAsk"
+                  ref="giveAsk"
                   variant="warning"
                   class="mt-2"
                 >
@@ -55,7 +55,7 @@
                       </b-button>
                     </div>
                     <div class="post__button d-flex justify-content-around">
-                      <b-button to="/find" variant="secondary">
+                      <b-button to="/ask" variant="secondary">
                         Ask for stuff
                       </b-button>
                     </div>
@@ -66,17 +66,6 @@
                   format="webp"
                   fit="cover"
                   :src="ouruid"
-                  :modifiers="imagemods"
-                  alt="ChitChat Photo"
-                  width="100"
-                  class="mt-2 uploaded-preview"
-                />
-                <NuxtPicture
-                  v-else-if="imageuid"
-                  format="webp"
-                  fit="cover"
-                  provider="uploadcare"
-                  :src="imageuid"
                   :modifiers="imagemods"
                   alt="ChitChat Photo"
                   width="100"
@@ -122,6 +111,16 @@
                   class="filter-select"
                   size="sm"
                 />
+                <!-- Community News posts are targeted at one area and capped in
+                     any one feed, so there is otherwise no way to review what is
+                     going out nationally. -->
+                <b-form-checkbox
+                  v-if="chitChatMod"
+                  v-model="allNewsletters"
+                  class="filter-newsletters"
+                >
+                  All newsletter posts
+                </b-form-checkbox>
               </div>
             </div>
           </div>
@@ -130,6 +129,19 @@
           <VisibleWhen :at="['xs', 'sm', 'md']">
             <NewsCommunityEventVolunteerSummary class="events-section" />
           </VisibleWhen>
+
+          <!-- Only offered when there is something to clear, and only on the feed itself
+               (not a single thread), where "all" has an obvious meaning. -->
+          <div v-if="!id && unreadCount" class="markallread-row">
+            <button
+              type="button"
+              class="markallread-btn"
+              @click="markAllRead"
+            >
+              <v-icon icon="check-double" class="me-1" />
+              Mark all {{ unreadCount }} read
+            </button>
+          </div>
 
           <!-- Posts feed -->
           <div class="posts-feed">
@@ -154,6 +166,8 @@
                 <NewsThread
                   :id="entry?.id"
                   :scroll-to="id"
+                  :context="id ? 'thread' : 'feed'"
+                  :jump-to-new="jumpToNew"
                   :duplicate-count="getDuplicateCount(entry?.id)"
                   @rendered="rendered"
                   @expand-duplicates="expandDuplicates"
@@ -192,6 +206,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useAuthStore } from '~/stores/auth'
 import { useLocationStore } from '~/stores/location'
+import { useTeamStore } from '~/stores/team'
 import NewsCommunityEventVolunteerSummary from '~/components/NewsCommunityEventVolunteerSummary'
 import { useMe } from '~/composables/useMe'
 import VisibleWhen from '~/components/VisibleWhen'
@@ -204,20 +219,20 @@ import MessageListUpToDate from '~/components/MessageListUpToDate.vue'
 import { untwem } from '~/composables/useTwem'
 import { useRoute } from '#imports'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
-const SidebarLeft = defineAsyncComponent(() =>
-  import('~/components/SidebarLeft')
+const SidebarLeft = defineAsyncComponent(
+  () => import('~/components/SidebarLeft')
 )
-const SidebarRight = defineAsyncComponent(() =>
-  import('~/components/SidebarRight')
+const SidebarRight = defineAsyncComponent(
+  () => import('~/components/SidebarRight')
 )
-const ExpectedRepliesWarning = defineAsyncComponent(() =>
-  import('~/components/ExpectedRepliesWarning')
+const ExpectedRepliesWarning = defineAsyncComponent(
+  () => import('~/components/ExpectedRepliesWarning')
 )
-const OurUploadedImage = defineAsyncComponent(() =>
-  import('~/components/OurUploadedImage')
+const OurUploadedImage = defineAsyncComponent(
+  () => import('~/components/OurUploadedImage')
 )
 
 // Route validation
@@ -233,6 +248,10 @@ definePageMeta({
 const runtimeConfig = useRuntimeConfig()
 const route = useRoute()
 const id = route.params.id
+
+// The feed's "N new" link ends in #new, meaning "take me to what I have not
+// read". Anything else that opens a thread just opens it at the top.
+const jumpToNew = route.hash === '#new'
 
 useHead(
   buildHead(
@@ -252,6 +271,7 @@ const miscStore = useMiscStore()
 const newsfeedStore = useNewsfeedStore()
 const authStore = useAuthStore()
 const locationStore = useLocationStore()
+const teamStore = useTeamStore()
 
 // We want this to be our next home page.
 const existingHomepage = miscStore.get('lasthomepage')
@@ -264,7 +284,20 @@ if (existingHomepage !== 'news') {
 }
 
 // Use me computed property from useMe composable for consistency
-const { me } = useMe()
+const { me, chitChatMod } = useMe()
+
+// chitChatMod resolves team membership through the team store, so the team has
+// to be loaded before the review filter can appear. The session already tells us
+// which teams we are in, so ordinary members cost no extra request.
+if (
+  me.value &&
+  (me.value.systemrole === 'Moderator' ||
+    me.value.systemrole === 'Support' ||
+    me.value.systemrole === 'Admin' ||
+    me.value.teams?.includes('ChitChat Moderation'))
+) {
+  teamStore.fetch('ChitChat Moderation')
+}
 const mod = computed(
   () =>
     me.value &&
@@ -286,13 +319,13 @@ const infiniteDistance = ref(1000)
 const runChecks = ref(true)
 const infiniteState = ref(null)
 const currentAtts = ref([])
-const showGiveFind = ref(false)
-const shownGiveFind = ref(false)
+const showGiveAsk = ref(false)
+const shownGiveAsk = ref(false)
 const error = ref(false)
 const threadhead = ref(null)
 const loadingThread = ref(false)
 const infiniteId = ref(new Date().getTime())
-const giveFind = ref(null)
+const giveAsk = ref(null)
 
 // Area/location filter options
 const areaOptions = [
@@ -320,6 +353,21 @@ const selectedArea = computed({
 
     await authStore.saveAndGet({
       settings,
+    })
+  },
+})
+
+// A reviewing tool rather than a preference, so it lives in local state rather
+// than the profile settings - no server round-trip, and it doesn't follow the
+// moderator onto their phone.
+const allNewsletters = computed({
+  get() {
+    return Boolean(miscStore.get('chitchatallnewsletters'))
+  },
+  set(newval) {
+    miscStore.set({
+      key: 'chitchatallnewsletters',
+      value: newval,
     })
   },
 })
@@ -421,6 +469,12 @@ const newsfeedToShow = computed(() => {
 // This is used to show the "you're up to date" divider.
 const seenBeforeVisit = computed(() => newsfeedStore.seenBeforeVisit)
 
+const unreadCount = computed(() => newsfeedStore.count)
+
+async function markAllRead() {
+  await newsfeedStore.markAllRead()
+}
+
 // Find the index in newsfeedToShow where we should show the divider.
 // The divider goes after the last "new" item (items with id > seenBeforeVisit).
 const upToDateDividerIndex = computed(() => {
@@ -499,7 +553,8 @@ function loadMore($state) {
 async function areaChange() {
   const newDistance = me.value?.settings?.newsfeedarea || 0
   await newsfeedStore.reset()
-  await newsfeedStore.fetchFeed(newDistance)
+  // reset() clears the store's memory of the flag, so pass it explicitly.
+  await newsfeedStore.fetchFeed(newDistance, allNewsletters.value)
   infiniteId.value++
   show.value = 0
 }
@@ -533,23 +588,23 @@ function photoAdd() {
   uploading.value = true
 }
 
-function scrollToGiveFind(give) {
+function scrollToGiveAsk(give) {
   nextTick(() => {
-    if (giveFind.value) {
-      giveFind.value.$el.scrollIntoView()
+    if (giveAsk.value) {
+      giveAsk.value.$el.scrollIntoView()
 
       setTimeout(() => {
-        if (give && giveFind.value?.$refs.givebutton?.$el) {
-          giveFind.value.$refs.givebutton.$el.scrollIntoView()
-        } else if (!give && giveFind.value?.$refs.findbutton?.$el) {
-          giveFind.value.$refs.findbutton.$el.scrollIntoView()
+        if (give && giveAsk.value?.$refs.givebutton?.$el) {
+          giveAsk.value.$refs.givebutton.$el.scrollIntoView()
+        } else if (!give && giveAsk.value?.$refs.askbutton?.$el) {
+          giveAsk.value.$refs.askbutton.$el.scrollIntoView()
         }
       }, 500)
     }
 
     window.scrollBy(0, 100)
     setTimeout(() => {
-      showGiveFind.value = false
+      showGiveAsk.value = false
     }, 30000)
   })
 }
@@ -562,7 +617,7 @@ function runCheck() {
     if (msg) {
       msg = msg.toLowerCase()
 
-      if (!shownGiveFind.value) {
+      if (!shownGiveAsk.value) {
         for (const word of [
           'offer',
           'giving away',
@@ -571,14 +626,14 @@ function runCheck() {
           'collection only',
         ]) {
           if (msg.length && msg.includes(word)) {
-            showGiveFind.value = true
-            shownGiveFind.value = true
-            scrollToGiveFind(true)
+            showGiveAsk.value = true
+            shownGiveAsk.value = true
+            scrollToGiveAsk(true)
           }
         }
       }
 
-      if (!shownGiveFind.value) {
+      if (!shownGiveAsk.value) {
         for (const word of [
           'wanted',
           'wanting',
@@ -591,9 +646,9 @@ function runCheck() {
           'if anyone has',
         ]) {
           if (msg.length && msg.includes(word)) {
-            showGiveFind.value = true
-            shownGiveFind.value = true
-            scrollToGiveFind(false)
+            showGiveAsk.value = true
+            shownGiveAsk.value = true
+            scrollToGiveAsk(false)
           }
         }
       }
@@ -605,6 +660,22 @@ function runCheck() {
 
 // Watch selectedArea for changes
 watch(selectedArea, async () => {
+  if (!me.value) {
+    // Logout resets the auth store, which flips selectedArea to 0.  Fetching
+    // the feed then would go out without a JWT and 401 → fatal error page.
+    return
+  }
+
+  await areaChange()
+})
+
+// Turning the newsletter review filter on or off rebuilds the feed the same way
+// a distance change does.
+watch(allNewsletters, async () => {
+  if (!me.value) {
+    return
+  }
+
   await areaChange()
 })
 
@@ -621,14 +692,10 @@ onMounted(() => {
   runCheck()
   initializeLocation()
 
-  // For feed view (not thread view), set up delayed seen marking.
-  if (!id) {
-    // Snapshot what was seen before visiting.
-    newsfeedStore.snapshotSeenBeforeVisit()
-
-    // Start 30s timer to mark as seen.
-    newsfeedStore.startDelayedSeen(30000)
-  }
+  // Start 30s timer to mark as seen. The baseline snapshot itself happens
+  // before the fetch dispatch below - on every view, not just the feed - so
+  // a notification deep link cannot instantly mark the whole thread seen.
+  newsfeedStore.startDelayedSeen(30000)
 })
 
 onBeforeUnmount(() => {
@@ -647,6 +714,18 @@ onBeforeUnmount(() => {
 // Initial data loading
 const settings = me.value?.settings
 distance.value = settings?.newsfeedarea || 0
+
+// Secure the seen baseline BEFORE any fetch is dispatched. This flips
+// delayedSeenMode on so the fetches below cannot fire an instant Seen POST.
+// The feed re-snapshots per visit (existing behaviour); a thread or deep-link
+// view keeps any session baseline so New pills survive feed-to-thread
+// navigation, and only snapshots on a cold load, where the first server
+// seenwatermark response then overwrites it (see stores/newsfeed.js).
+if (id) {
+  newsfeedStore.ensureSeenBaselineForThreadView()
+} else {
+  newsfeedStore.snapshotSeenBeforeVisit()
+}
 
 // Fetch data if user is logged in
 if (me.value) {
@@ -676,7 +755,7 @@ if (me.value) {
       }
     })
   } else {
-    newsfeedStore.fetchFeed(distance.value).then(() => {
+    newsfeedStore.fetchFeed(distance.value, allNewsletters.value).then(() => {
       // Fetch the first few threads in parallel so that they are in the store.
       const feed = newsfeedStore.feed
 
@@ -753,7 +832,8 @@ if (me.value) {
   padding: 0.875rem;
   font-size: 1rem;
   resize: none;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     box-shadow var(--transition-normal);
 
   &:focus {
@@ -831,6 +911,26 @@ if (me.value) {
 }
 
 // Filter section
+.markallread-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.markallread-btn {
+  background: none;
+  border: none;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  color: $primary;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
 .filter-section {
   margin-top: 0;
   background: white;
@@ -871,6 +971,15 @@ if (me.value) {
   }
 }
 
+/* Moderator-only, so it must not squeeze the distance filter - it keeps its
+   natural width and wraps to its own line when the row runs out of room. */
+.filter-newsletters {
+  flex: 0 0 auto;
+  font-size: 0.9rem;
+  color: $color-gray--darker;
+  white-space: nowrap;
+}
+
 // Events section
 .events-section {
   margin: 0.5rem 0.75rem;
@@ -893,13 +1002,18 @@ if (me.value) {
     padding: 0;
   }
 
-  // Modernize post cards on mobile
+  // Modernize post cards on mobile.
+  //
+  // No overflow:hidden. The thread's ... menu is absolutely positioned inside
+  // this card, so clipping the card clipped the menu to the card's height: a
+  // moderator saw the first few entries and had to scroll inside the dropdown
+  // to reach Hide, Delete or Mute. Card children sit inside .card-body, which
+  // is padded, so nothing reaches the rounded corners for the clip to tidy up.
   :deep(.card) {
     border-radius: var(--radius-sm, 0.375rem);
     border: none;
     box-shadow: var(--shadow-sm);
     margin-bottom: 0.75rem;
-    overflow: hidden;
   }
 
   :deep(.card-body) {

@@ -7,6 +7,7 @@ import MicroVolunteeringCheckMessage from '~/components/MicroVolunteeringCheckMe
 const mockMessageById = vi.fn()
 const mockMessageFetch = vi.fn()
 const mockMicroVolunteeringRespond = vi.fn()
+const mockNotificationFetchCount = vi.fn()
 
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => ({
@@ -18,6 +19,18 @@ vi.mock('~/stores/message', () => ({
 vi.mock('~/stores/microvolunteering', () => ({
   useMicroVolunteeringStore: () => ({
     respond: mockMicroVolunteeringRespond,
+  }),
+}))
+
+vi.mock('~/stores/notification', () => ({
+  useNotificationStore: () => ({
+    fetchCount: mockNotificationFetchCount,
+  }),
+}))
+
+vi.mock('~/stores/auth', () => ({
+  useAuthStore: () => ({
+    groups: [{ groupid: 456, role: 'Member' }],
   }),
 }))
 
@@ -86,6 +99,7 @@ describe('MicroVolunteeringCheckMessage', () => {
     type: 'Offer',
     date: '2023-01-01T10:00:00Z',
     area: 'Test Area',
+    groups: [{ groupid: 456, arrival: '2023-01-01T10:00:00Z' }],
     attachments: [
       {
         id: 1,
@@ -138,6 +152,40 @@ describe('MicroVolunteeringCheckMessage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  describe('notification refresh after responding', () => {
+    it('refreshes the notification count after approving a post', async () => {
+      mockMicroVolunteeringRespond.mockResolvedValue(undefined)
+      mockNotificationFetchCount.mockResolvedValue(0)
+      const wrapper = createWrapper()
+      await flushPromises()
+      const approveBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Yes, that looks ok'))
+      await approveBtn.trigger('click')
+      await flushPromises()
+      expect(mockMicroVolunteeringRespond).toHaveBeenCalledWith(
+        expect.objectContaining({ msgid: 123, response: 'Approve' })
+      )
+      // The stale badge/re-presented-post bug (#9856): the count must be
+      // refreshed from the server as soon as the response is recorded.
+      expect(mockNotificationFetchCount).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not throw if the count refresh fails after responding', async () => {
+      mockMicroVolunteeringRespond.mockResolvedValue(undefined)
+      mockNotificationFetchCount.mockRejectedValue(new Error('offline'))
+      const wrapper = createWrapper()
+      await flushPromises()
+      const approveBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes('Yes, that looks ok'))
+      await approveBtn.trigger('click')
+      await flushPromises()
+      expect(mockMicroVolunteeringRespond).toHaveBeenCalled()
+      expect(mockNotificationFetchCount).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('rendering', () => {
@@ -226,6 +274,7 @@ describe('MicroVolunteeringCheckMessage', () => {
 
       expect(mockMicroVolunteeringRespond).toHaveBeenCalledWith({
         msgid: 123,
+        groupid: 456,
         response: 'Approve',
       })
     })
@@ -341,6 +390,7 @@ describe('MicroVolunteeringCheckMessage', () => {
 
       expect(mockMicroVolunteeringRespond).toHaveBeenCalledWith({
         msgid: 123,
+        groupid: 456,
         response: 'Reject',
         comments: 'Test comment',
         msgcategory: 'CouldBeBetter',
@@ -378,11 +428,13 @@ describe('MicroVolunteeringCheckMessage', () => {
       expect(wrapper.find('.message-card').classes()).toContain('wanted')
     })
 
-    it('returns search icon for wanted messages', async () => {
+    it('returns cart icon for wanted messages', async () => {
       const messageWanted = { ...mockMessage, type: 'Wanted', attachments: [] }
       const wrapper = createWrapper({}, messageWanted)
       await flushPromises()
-      expect(wrapper.find('.placeholder-icon').classes()).toContain('search')
+      expect(wrapper.find('.placeholder-icon').classes()).toContain(
+        'shopping-cart'
+      )
     })
 
     it('returns gift icon for offer messages', async () => {

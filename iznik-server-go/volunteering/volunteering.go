@@ -11,6 +11,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"html"
 	"log"
 	"os"
@@ -44,6 +45,11 @@ type Volunteering struct {
 	Canmodify      bool               `json:"canmodify" gorm:"-"`
 }
 
+// listLimit caps how many opportunities a member's list returns. National ops are taken
+// first, so a very large number of them could in principle crowd out local ones - there
+// are none live today, and any that appear are central Freegle asks worth seeing.
+const listLimit = 20
+
 func List(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
@@ -71,10 +77,12 @@ func List(c *fiber.Ctx) error {
 
 		if len(modGroupIDs) > 0 {
 			var groupIds []uint64
-			db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
-				"INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-				"WHERE groupid IN (?) AND volunteering.deleted = 0 AND pending = 1 "+
-				"ORDER BY id DESC", modGroupIDs).Pluck("id", &groupIds)
+			db.Table("volunteering").
+				Select("DISTINCT volunteering.id").
+				Joins("INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+				Where("groupid IN (?) AND volunteering.deleted = 0 AND pending = 1", modGroupIDs).
+				Order("id DESC").
+				Pluck("id", &groupIds)
 			for _, id := range groupIds {
 				if !seen[id] {
 					seen[id] = true
@@ -88,10 +96,12 @@ func List(c *fiber.Ctx) error {
 		// row, i.e. groupid IS NULL) in addition to their per-group ones.
 		if auth.HasPermission(myid, auth.PERM_NATIONAL_VOLUNTEERS) {
 			var nationalIds []uint64
-			db.Raw("SELECT volunteering.id FROM volunteering "+
-				"LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-				"WHERE volunteering_groups.groupid IS NULL AND volunteering.deleted = 0 AND pending = 1 "+
-				"ORDER BY volunteering.id DESC").Pluck("id", &nationalIds)
+			db.Table("volunteering").
+				Select("volunteering.id").
+				Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+				Where("volunteering_groups.groupid IS NULL AND volunteering.deleted = 0 AND pending = 1").
+				Order("volunteering.id DESC").
+				Pluck("id", &nationalIds)
 			for _, id := range nationalIds {
 				if !seen[id] {
 					seen[id] = true
@@ -99,17 +109,57 @@ func List(c *fiber.Ctx) error {
 				}
 			}
 		}
-	} else if len(groupids) > 0 {
+	} else {
 		start := time.Now().Format("2006-01-02")
+		seen := make(map[uint64]bool)
 
-		db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
-			"INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-			"LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid "+
-			"LEFT JOIN users ON volunteering.userid = users.id "+
-			"WHERE groupid IN (?) AND "+
-			"(applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) "+
-			"AND users.deleted IS NULL "+
-			"ORDER BY id DESC LIMIT 20", groupids, start, start, myid).Pluck("id", &ids)
+		// National opportunities have NO volunteering_groups row (that absence is what makes
+		// them national), so the group query below can never find them - they were missing
+		// from the list entirely. Fetch them separately and put them FIRST: they apply
+		// whoever is looking, whereas ordering everything by id DESC would bury them under
+		// whatever local ops happen to be newer.
+		var nationalIds []uint64
+		db.Table("volunteering").
+			Select("DISTINCT volunteering.id").
+			Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+			Joins("LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid").
+			Joins("LEFT JOIN users ON volunteering.userid = users.id").
+			Where("volunteering_groups.groupid IS NULL AND (applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) AND users.deleted IS NULL",
+				start, start, myid).
+			Order("volunteering.id DESC").
+			Limit(listLimit).
+			Pluck("id", &nationalIds)
+
+		for _, id := range nationalIds {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+
+		if len(groupids) > 0 && len(ids) < listLimit {
+			var groupOpIds []uint64
+			db.Table("volunteering").
+				Select("DISTINCT volunteering.id").
+				Joins("INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+				Joins("LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid").
+				Joins("LEFT JOIN users ON volunteering.userid = users.id").
+				Where("groupid IN (?) AND (applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND (pending = 0 OR volunteering.userid = ?) AND users.deleted IS NULL",
+					groupids, start, start, myid).
+				Order("id DESC").
+				Limit(listLimit).
+				Pluck("id", &groupOpIds)
+
+			for _, id := range groupOpIds {
+				if len(ids) >= listLimit {
+					break
+				}
+				if !seen[id] {
+					seen[id] = true
+					ids = append(ids, id)
+				}
+			}
+		}
 	}
 
 	if len(ids) > 0 {
@@ -132,14 +182,15 @@ func ListGroup(c *fiber.Ctx) error {
 
 	start := time.Now().Format("2006-01-02")
 
-	db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
-		"LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
-		"LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid "+
-		"LEFT JOIN users ON volunteering.userid = users.id "+
-		"WHERE groupid = ? AND "+
-		"(applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND pending = 0 "+
-		"AND users.deleted IS NULL "+
-		"ORDER BY id DESC", id, start, start).Pluck("volunteeringid", &ids)
+	db.Table("volunteering").
+		Select("DISTINCT volunteering.id").
+		Joins("LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid").
+		Joins("LEFT JOIN volunteering_dates ON volunteering.id = volunteering_dates.volunteeringid").
+		Joins("LEFT JOIN users ON volunteering.userid = users.id").
+		Where("groupid = ? AND (applyby IS NULL OR applyby >= ?) AND (end IS NULL OR end >= ?) AND volunteering.deleted = 0 AND expired = 0 AND pending = 0 AND users.deleted IS NULL",
+			id, start, start).
+		Order("id DESC").
+		Pluck("volunteeringid", &ids)
 
 	if len(ids) > 0 {
 		return c.JSON(ids)
@@ -179,12 +230,12 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT id, archived, externaluid, externalmods FROM volunteering_images WHERE opportunityid = ? ORDER BY id DESC LIMIT 1", id).Scan(&image)
+			db.Table("volunteering_images").Select("id, archived, externaluid, externalmods").
+				Where("opportunityid = ?", id).Order("id DESC").Limit(1).Scan(&image)
 
 			if image.ID > 0 {
 				if image.Externaluid != "" {
 					image.Ouruid = image.Externaluid
-					image.Externalmods = image.Externalmods
 					image.Path = misc.GetImageDeliveryUrl(image.Externaluid, string(image.Externalmods))
 					image.Paththumb = misc.GetImageDeliveryUrl(image.Externaluid, string(image.Externalmods))
 					image.Externaluid = ""
@@ -203,7 +254,7 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT groupid FROM volunteering_groups WHERE volunteeringid = ?", id).Pluck("groupid", &groups)
+			db.Table("volunteering_groups").Where("volunteeringid = ?", id).Pluck("groupid", &groups)
 		}()
 
 		wg.Add(1)
@@ -211,7 +262,7 @@ func Single(c *fiber.Ctx) error {
 		go func() {
 			defer wg.Done()
 
-			db.Raw("SELECT * FROM volunteering_dates WHERE volunteeringid = ?", id).Scan(&dates)
+			db.Table("volunteering_dates").Where("volunteeringid = ?", id).Scan(&dates)
 		}()
 
 		wg.Wait()
@@ -258,7 +309,7 @@ func canModify(myid uint64, volunteeringID uint64) bool {
 	db := database.DBConn
 
 	var ownerID *uint64
-	db.Raw("SELECT userid FROM volunteering WHERE id = ?", volunteeringID).Scan(&ownerID)
+	db.Table("volunteering").Select("userid").Where("id = ?", volunteeringID).Scan(&ownerID)
 
 	if ownerID != nil && *ownerID == myid {
 		return true
@@ -276,10 +327,12 @@ func isModerator(myid uint64, volunteeringID uint64) bool {
 	// Single query to check if user is moderator/owner of any linked group.
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships m "+
-		"INNER JOIN volunteering_groups vg ON vg.groupid = m.groupid "+
-		"WHERE vg.volunteeringid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
-		volunteeringID, myid, utils.COLLECTION_APPROVED, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	db.Table("memberships m").
+		Select("COUNT(*)").
+		Joins("INNER JOIN volunteering_groups vg ON vg.groupid = m.groupid").
+		Where("vg.volunteeringid = ? AND m.userid = ? AND m.collection = ? AND m.role IN (?, ?)",
+			volunteeringID, myid, utils.COLLECTION_APPROVED, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Scan(&count)
 
 	return count > 0
 }
@@ -288,7 +341,7 @@ func isModerator(myid uint64, volunteeringID uint64) bool {
 func isMemberOfGroup(myid uint64, groupid uint64) bool {
 	db := database.DBConn
 	var count int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Scan(&count)
+	db.Table("memberships").Where("userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_APPROVED).Count(&count)
 	return count > 0
 }
 
@@ -337,28 +390,34 @@ func Create(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// Plain, isolated, literal single-row
+	// INSERT (the "1" for pending is a fixed literal, not a bind); id read back via
+	// GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"userid":         myid,
+		"pending":        gorm.Expr("1"),
+		"title":          req.Title,
+		"online":         req.Online,
+		"location":       req.Location,
+		"contactname":    req.Contactname,
+		"contactphone":   req.Contactphone,
+		"contactemail":   req.Contactemail,
+		"contacturl":     req.Contacturl,
+		"description":    req.Description,
+		"timecommitment": req.Timecommitment,
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO volunteering (userid, pending, title, online, location, contactname, contactphone, contactemail, contacturl, description, timecommitment) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		myid, req.Title, req.Online, req.Location, req.Contactname, req.Contactphone, req.Contactemail, req.Contacturl, req.Description, req.Timecommitment)
-
-	if err != nil {
+	if err := db.Table("volunteering").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create volunteering")
 	}
-
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	if id > 0 && req.GroupID > 0 {
-		db.Exec("INSERT IGNORE INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", id, req.GroupID)
+		// Converted together with its
+		// identical twin below (316bb6807874): a half-converted pair renumbers
+		// the survivor's site ID, so gate (h) refuses the split state.
+		db.Table("volunteering_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).
+			Create(map[string]interface{}{"volunteeringid": id, "groupid": req.GroupID})
 	}
 
 	return c.JSON(fiber.Map{"id": id})
@@ -393,6 +452,30 @@ type PatchRequest struct {
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /volunteering [patch]
+// volunteeringHeldByAnother returns the id and name of a DIFFERENT moderator holding
+// this opportunity, or 0 if it is free to act on.
+func volunteeringHeldByAnother(db *gorm.DB, id uint64, myid uint64) (uint64, string) {
+	var holder uint64
+	db.Table("volunteering").Select("COALESCE(heldby, 0)").Where("id = ?", id).Scan(&holder)
+	if holder == 0 || holder == myid {
+		return 0, ""
+	}
+	var name string
+	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&name)
+	return holder, name
+}
+
+// heldByAnotherResponse is the 409 a moderation action gets when someone else holds
+// the item, carrying who so the UI can name them rather than just failing.
+func heldByAnotherResponse(c *fiber.Ctx, holder uint64, name string) error {
+	return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+		"ret":        1,
+		"status":     "Held by another moderator",
+		"heldby":     holder,
+		"heldbyname": name,
+	})
+}
+
 func Update(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
@@ -411,7 +494,7 @@ func Update(c *fiber.Ctx) error {
 	// Check the volunteering exists
 	db := database.DBConn
 	var exists uint64
-	db.Raw("SELECT id FROM volunteering WHERE id = ?", req.ID).Scan(&exists)
+	db.Table("volunteering").Select("id").Where("id = ?", req.ID).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Volunteering not found")
 	}
@@ -420,36 +503,52 @@ func Update(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not authorized to modify this volunteering")
 	}
 
+	// A moderator holding this has an exclusive claim on it. Only block other
+	// MODERATORS: canModify also passes the owner, and a mod hold must not stop an
+	// owner editing their own opportunity. Release remains available below.
+	if req.Action != "Release" && isModerator(myid, req.ID) {
+		if holder, name := volunteeringHeldByAnother(db, req.ID, myid); holder != 0 {
+			return heldByAnotherResponse(c, holder, name)
+		}
+	}
+
 	// Update settable attributes
 	if req.Title != nil {
-		db.Exec("UPDATE volunteering SET title = ? WHERE id = ?", *req.Title, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Location != nil {
-		db.Exec("UPDATE volunteering SET location = ? WHERE id = ?", *req.Location, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("location", *req.Location)
 	}
 	if req.Online != nil {
-		db.Exec("UPDATE volunteering SET online = ? WHERE id = ?", *req.Online, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("online", *req.Online)
 	}
 	if req.Pending != nil {
-		db.Exec("UPDATE volunteering SET pending = ? WHERE id = ?", *req.Pending, req.ID)
+		// Approving out of moderation is terminal, so clear the hold with it rather
+		// than leaving the opportunity pinned as "Held" forever.
+		if *req.Pending {
+			db.Table("volunteering").Where("id = ?", req.ID).Update("pending", *req.Pending)
+		} else {
+			db.Table("volunteering").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"pending": *req.Pending, "heldby": gorm.Expr("NULL")})
+		}
 	}
 	if req.Contactname != nil {
-		db.Exec("UPDATE volunteering SET contactname = ? WHERE id = ?", *req.Contactname, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("contactname", *req.Contactname)
 	}
 	if req.Contactphone != nil {
-		db.Exec("UPDATE volunteering SET contactphone = ? WHERE id = ?", *req.Contactphone, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("contactphone", *req.Contactphone)
 	}
 	if req.Contactemail != nil {
-		db.Exec("UPDATE volunteering SET contactemail = ? WHERE id = ?", *req.Contactemail, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("contactemail", *req.Contactemail)
 	}
 	if req.Contacturl != nil {
-		db.Exec("UPDATE volunteering SET contacturl = ? WHERE id = ?", *req.Contacturl, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("contacturl", *req.Contacturl)
 	}
 	if req.Description != nil {
-		db.Exec("UPDATE volunteering SET description = ? WHERE id = ?", *req.Description, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("description", *req.Description)
 	}
 	if req.Timecommitment != nil {
-		db.Exec("UPDATE volunteering SET timecommitment = ? WHERE id = ?", *req.Timecommitment, req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("timecommitment", *req.Timecommitment)
 	}
 
 	// Process action
@@ -461,12 +560,14 @@ func Update(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusForbidden, "Not a member of the specified group")
 			}
 
-			db.Exec("INSERT IGNORE INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", req.ID, req.GroupID)
+			// Twin of c77cdc1a1f5f above.
+			db.Table("volunteering_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).
+				Create(map[string]interface{}{"volunteeringid": req.ID, "groupid": req.GroupID})
 
 			// Side effects: create newsfeed entry and notify group moderators.
 			// 1. Create newsfeed entry for this volunteering opportunity.
 			var ownerID *uint64
-			db.Raw("SELECT userid FROM volunteering WHERE id = ?", req.ID).Scan(&ownerID)
+			db.Table("volunteering").Select("userid").Where("id = ?", req.ID).Scan(&ownerID)
 			if ownerID != nil && *ownerID > 0 {
 				volID := req.ID
 				newsfeed.CreateNewsfeedEntry(newsfeed.TypeVolunteerOpportunity, *ownerID, req.GroupID, nil, &volID)
@@ -481,30 +582,39 @@ func Update(c *fiber.Ctx) error {
 		}
 	case "RemoveGroup":
 		if req.GroupID > 0 {
-			db.Exec("DELETE FROM volunteering_groups WHERE volunteeringid = ? AND groupid = ?", req.ID, req.GroupID)
+			db.Table("volunteering_groups").Where("volunteeringid = ? AND groupid = ?", req.ID, req.GroupID).Delete(nil)
 		}
 	case "AddDate":
-		db.Exec("INSERT INTO volunteering_dates (volunteeringid, start, end, applyby) VALUES (?, ?, ?, ?)",
-			req.ID, utils.NilIfEmpty(req.Start), utils.NilIfEmpty(req.End), utils.NilIfEmpty(req.Applyby))
+		db.Table("volunteering_dates").Create(map[string]interface{}{
+			"volunteeringid": req.ID,
+			"start":          utils.NilIfEmpty(req.Start),
+			"end":            utils.NilIfEmpty(req.End),
+			"applyby":        utils.NilIfEmpty(req.Applyby),
+		})
 	case "RemoveDate":
 		if req.DateID > 0 {
-			db.Exec("DELETE FROM volunteering_dates WHERE id = ?", req.DateID)
+			db.Table("volunteering_dates").Where("id = ?", req.DateID).Delete(nil)
 		}
 	case "SetPhoto":
 		if req.PhotoID > 0 {
-			db.Exec("UPDATE volunteering_images SET opportunityid = ? WHERE id = ?", req.ID, req.PhotoID)
+			db.Table("volunteering_images").Where("id = ?", req.PhotoID).Update("opportunityid", req.ID)
 		}
 	case "Renew":
-		db.Exec("UPDATE volunteering SET renewed = NOW(), expired = 0 WHERE id = ?", req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"renewed": gorm.Expr("NOW()"), "expired": gorm.Expr("0")})
 	case "Expire":
-		db.Exec("UPDATE volunteering SET expired = 1 WHERE id = ?", req.ID)
+		db.Table("volunteering").Where("id = ?", req.ID).Update("expired", gorm.Expr("1"))
 	case "Hold":
 		if isModerator(myid, req.ID) {
-			db.Exec("UPDATE volunteering SET heldby = ? WHERE id = ?", myid, req.ID)
+			// Don't take a hold off another mod - Release is how you do that.
+			if holder, name := volunteeringHeldByAnother(db, req.ID, myid); holder != 0 {
+				return heldByAnotherResponse(c, holder, name)
+			}
+			db.Table("volunteering").Where("id = ?", req.ID).Update("heldby", myid)
 		}
 	case "Release":
 		if isModerator(myid, req.ID) {
-			db.Exec("UPDATE volunteering SET heldby = NULL WHERE id = ?", req.ID)
+			db.Table("volunteering").Where("id = ?", req.ID).Update("heldby", gorm.Expr("NULL"))
 		}
 	}
 
@@ -532,7 +642,7 @@ func Delete(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var exists uint64
-	db.Raw("SELECT id FROM volunteering WHERE id = ?", id).Scan(&exists)
+	db.Table("volunteering").Select("id").Where("id = ?", id).Scan(&exists)
 	if exists == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Volunteering not found")
 	}
@@ -542,7 +652,8 @@ func Delete(c *fiber.Ctx) error {
 	}
 
 	// Soft delete.
-	db.Exec("UPDATE volunteering SET deleted = 1, deletedby = ? WHERE id = ?", myid, id)
+	db.Table("volunteering").Where("id = ?", id).
+		Updates(map[string]interface{}{"deleted": gorm.Expr("1"), "deletedby": myid})
 
 	return c.JSON(fiber.Map{"success": true})
 }

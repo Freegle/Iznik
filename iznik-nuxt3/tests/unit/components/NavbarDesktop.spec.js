@@ -6,8 +6,6 @@ import NavbarDesktop from '~/components/NavbarDesktop.vue'
 const mockNavbar = {
   online: ref(true),
   distance: ref(5),
-  logo: ref('/logo.png'),
-  logoFormat: ref('png'),
   unreadNotificationCount: ref(3),
   chatCount: ref(2),
   activePostsCount: ref(5),
@@ -66,10 +64,6 @@ describe('NavbarDesktop', () => {
             props: ['variant', 'disabled'],
             emits: ['click'],
           },
-          'b-img': {
-            template: '<img class="b-img" :src="src" :alt="alt" />',
-            props: ['src', 'format', 'alt'],
-          },
           'b-badge': {
             template: '<span class="b-badge" :class="variant"><slot /></span>',
             props: ['variant', 'title'],
@@ -120,12 +114,6 @@ describe('NavbarDesktop', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.offline-indicator').exists()).toBe(true)
     })
-
-    it('shows gif logo directly when format is gif', () => {
-      mockNavbar.logoFormat.value = 'gif'
-      const wrapper = createWrapper()
-      expect(wrapper.find('.b-img').exists()).toBe(true)
-    })
   })
 
   describe('logged in state', () => {
@@ -144,9 +132,9 @@ describe('NavbarDesktop', () => {
       expect(wrapper.find('#menu-option-give').exists()).toBe(true)
     })
 
-    it('shows find link', () => {
+    it('shows ask link', () => {
       const wrapper = createWrapper()
-      expect(wrapper.find('#menu-option-find').exists()).toBe(true)
+      expect(wrapper.find('#menu-option-ask').exists()).toBe(true)
     })
 
     it('shows my posts link', () => {
@@ -286,9 +274,9 @@ describe('NavbarDesktop', () => {
       expect(giveLink.find('[data-icon="gift"]').exists()).toBe(true)
     })
 
-    it('shows shopping-cart icon for find', () => {
+    it('shows shopping-cart icon for ask', () => {
       const wrapper = createWrapper()
-      const findLink = wrapper.find('#menu-option-find')
+      const findLink = wrapper.find('#menu-option-ask')
       expect(findLink.find('[data-icon="shopping-cart"]').exists()).toBe(true)
     })
 

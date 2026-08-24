@@ -123,11 +123,18 @@ func NewLokiMiddleware(config LokiMiddlewareConfig) fiber.Handler {
 			responseHeaders[string(key)] = string(value)
 		})
 
-		// Capture response body.
+		// Capture response body — but NEVER for a streamed response.
+		// Response().Body() on a SetBodyStreamWriter response drains the
+		// entire stream into memory first, which silently converts streaming
+		// into buffering: the userdump framed endpoint's heartbeat frames
+		// never reached the wire (TTFB equalled the whole build time), so the
+		// prod LB's 50s idle timeout 504'd every big dump despite them.
 		var responseBody map[string]interface{}
-		respBodyBytes := c.Response().Body()
-		if len(respBodyBytes) > 0 {
-			_ = json.Unmarshal(respBodyBytes, &responseBody)
+		if !c.Response().IsBodyStream() {
+			respBodyBytes := c.Response().Body()
+			if len(respBodyBytes) > 0 {
+				_ = json.Unmarshal(respBodyBytes, &responseBody)
+			}
 		}
 
 		// Log asynchronously using goroutine to avoid blocking response.

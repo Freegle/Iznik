@@ -16,7 +16,6 @@ services:
     networks:
       default:
         aliases:
-          - apiv1.localhost
           - apiv2.localhost
           - apiv2-live.localhost
           - freegle-dev-local.localhost
@@ -276,6 +275,7 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-delivery
     profiles:
       - frontend
+      - edge   # front-end host: weserv replaces the external wsrv.nl dependency
     networks:
       - default
     image: ghcr.io/weserv/images:5.x
@@ -297,6 +297,9 @@ services:
     volumes:
       - ./delivery-nginx.conf:/etc/nginx/nginx.conf:ro
       - ./delivery-imagesweserv.conf:/etc/nginx/imagesweserv.conf:ro
+      # Local dev: empty deny file (allows Docker-network fetches). Edge overrides this with the
+      # full private-range deny list (docker-compose.override.edge.yml) for SSRF protection.
+      - ./delivery-weserv-deny-private.dev.conf:/etc/nginx/weserv-deny-private.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:80/ || exit 1"]
       interval: 10s
@@ -318,13 +321,18 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-tusd
     profiles:
       - frontend
+      - edge   # front-end host: same tusd image, prod flags via ${TUSD_COMMAND}
     networks:
       default:
         aliases:
           - tusd.localhost
     ports:
       - "${PORT_TUSD:-1080}:8080"
-    command: -hooks-http=http://apiv1:80/api/image -hooks-enabled-events=pre-create,post-finish -base-path=/tus/ -cors-allow-headers=baggage,sentry-trace
+    # Default == the dev/CI command. The edge VM overrides it via .env:
+    #   TUSD_COMMAND=-upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
+    # No -hooks-http: uploaded images are turned into attachments by the apiv2 /api/image
+    # endpoint (client-side finalisation), matching app1 prod which runs without hooks.
+    command: ${TUSD_COMMAND:--base-path=/tus/ -cors-allow-headers=baggage,sentry-trace}
     depends_on:
       reverse-proxy:
         condition: service_healthy
@@ -343,33 +351,177 @@ services:
       - "traefik.http.services.tusd.loadbalancer.server.port=8080"
       - "traefik.http.middlewares.tusd-cors-headers.headers.customresponseheaders.Access-Control-Allow-Headers=Authorization, Origin, X-Requested-With, X-Request-ID, X-HTTP-Method-Override, Content-Type, Upload-Length, Upload-Offset, Tus-Resumable, Upload-Metadata, Upload-Defer-Length, Upload-Concat, Upload-Complete, Upload-Draft-Interop-Version, x-token, baggage, sentry-trace"
 
-  # Old status container - replaced by status-nuxt (2026-01-18)
-  # Keeping commented out for reference during transition
-  # status:
-  #   build:
-  #     context: ./status
-  #     network: host
-  #   container_name: ${COMPOSE_PROJECT_NAME:-freegle}-status
-  #   networks:
-  #     - default
-  #   ports:
-  #     - "8081:80"
-  #   labels:
-  #     - "traefik.enable=true"
-  #     - "traefik.http.routers.status.rule=Host(`status.localhost`)"
-  #     - "traefik.http.routers.status.entrypoints=web"
-  #     - "traefik.http.services.status.loadbalancer.server.port=80"
-  #   volumes:
-  #     - /var/run/docker.sock:/var/run/docker.sock:ro
-  #     - ./status/index.html:/app/index.html:ro
-  #     - ./status/logs.html:/app/logs.html:ro
-  #     - ./status/server.js:/app/server.js:ro
-  #     - ./ssl/certs:/app/ssl:ro
-  #     - .:/project:ro
-  #     - ./status/data:/app/data:rw
-  #     - rebuild-requests:/rebuild-requests
-  #   environment:
-  #     - DOCKER_HOST=unix:///var/run/docker.sock
+  # ===========================================================================
+  # edge profile — user-facing front-end services, deployed on the existing
+  # docker/batch host (scale-in-place, decided 2026-07-08 — see the REVISION in
+  # plans/2026-06-25-frontend-server-migration.md). These services run ONLY
+  # under the `edge` profile, which is in NO default profile set, so dev/CI
+  # never start them and are completely unaffected. Host port bindings and the
+  # adoption of the host's existing osm volumes live in the host-only
+  # docker-compose.override.edge.yml; on dev the stack is validated over the
+  # compose network.
+  # ===========================================================================
+  frontend-nginx:
+    image: nginx:1.27-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-frontend-nginx
+    profiles:
+      - edge
+    networks:
+      - default
+    depends_on:
+      delivery:
+        condition: service_started
+      tusd:
+        condition: service_started
+      tile-server:
+        condition: service_started
+        required: false
+    volumes:
+      - ./frontend-nginx.conf:/etc/nginx/nginx.conf:ro
+      - delivery-cache:/var/cache/nginx/wsrv_cache
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8081/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  tile-server:
+    # Pinned to the EXACT image the prod host's standalone tile container
+    # (confident_curran) runs, so adopting its existing osm-data volume works:
+    # the PostGIS data dir is Postgres-major-version-locked and a newer
+    # :latest could refuse to start on it. Upgrade deliberately after
+    # adoption, not implicitly via a pull.
+    image: overv/openstreetmap-tile-server@sha256:b6a79da39b6d0758368f7c62d22e49dd3ec59e78b194a5ef9dee2723b1f3fa79
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-tile-server
+    profiles:
+      - edge
+    networks:
+      - default
+    command: run
+    environment:
+      # Emit NO CORS here — the front door adds exactly one ACAO (plan §2
+      # double-CORS fix). In Stage 1 the front door is the host's native nginx
+      # `maps` vhost, which already adds one ACAO and proxies to :8080; keeping
+      # the container silent makes it exactly one header (and fixes today's
+      # confident_curran ALLOW_CORS=enabled double-CORS). frontend-nginx takes
+      # over the same single-ACAO role in a later stage.
+      - ALLOW_CORS=disabled
+      # Operational config carried over verbatim from the standalone prod tile
+      # container (confident_curran) so the swap is behaviour-for-behaviour:
+      # keep serving the already-imported osm-data AND keep applying minutely
+      # OSM replication so tiles don't go stale after adoption. (The merged
+      # def, written for a fresh VM import, omitted these — adopting without
+      # them would silently freeze tile updates.)
+      - UPDATES=enabled
+      - REPLICATION_URL=https://planet.openstreetmap.org/replication/minute/
+      - MAX_INTERVAL_SECONDS=60
+      - THREADS=100
+      - OSM2PGSQL_EXTRA_ARGS=-C 4096
+      - AUTOVACUUM=on
+      - TZ=UTC
+    shm_size: 256m
+    volumes:
+      - osm-data:/data/database
+      - osm-tiles:/data/tiles
+
+  # --- wiki (wiki.ilovefreegle.org) — adopted in place from the standalone
+  # wiki-media + wiki-mysql containers (scale-in-place, plan §2 step 2). Same
+  # host, same data: the /var/wiki host binds and the :8088 publish live in the
+  # host-only docker-compose.override.edge.yml. MediaWiki reaches its DB by the
+  # hostname `wiki-mysql` ($wgDBserver in the bind-mounted LocalSettings.php),
+  # which the compose service name provides on the private `wikinet` network —
+  # mirroring the standalone containers. Native nginx keeps fronting the vhost
+  # via 127.0.0.1:8088, so this is a same-port container swap.
+  wiki-mysql:
+    image: wiki-mysql:v02   # local-only custom image (not in any registry); already on the host
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-mysql
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    command: mysqld
+    # No MYSQL_* env on purpose: the /var/wiki/db datadir (bound in the edge
+    # override) is already initialised, so the entrypoint skips first-init and
+    # ignores those vars. This keeps the DB root/user passwords OUT of the repo;
+    # MediaWiki authenticates with the creds already in LocalSettings.php.
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  wiki-media:
+    image: mediawiki:1.39
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-media
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    depends_on:
+      wiki-mysql:
+        condition: service_healthy
+
+  # Elasticsearch backing the wiki's full-text search (CirrusSearch), replacing the old
+  # GoogleCustomWikiSearch. Single-node cluster on the private wikinet; wiki-media reaches it
+  # as http://wiki-elastic:9200. Edge profile only (prod wiki host) so it is inert for local
+  # dev / CI. Heap kept small (512m) as this box is shared. ES 7.10.2 matches the CirrusSearch
+  # REL1_43 that the (bind-mounted 1.43) wiki core runs.
+  wiki-elastic:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.10.2
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-wiki-elastic
+    profiles:
+      - edge
+    networks:
+      - wikinet
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - wiki-elastic-data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
+
+  # Grafana Alloy (edge) — ships the edge container logs (frontend-nginx
+  # uploads/delivery/tiles access + tusd events) to the Loki container via Docker
+  # service discovery, closing the edge log blind spot (plan §10). Distinct from
+  # the dev/monitoring `alloy` service (which ships apiv2_logs under the
+  # `monitoring` profile, not active on the prod host). Alloy, not Promtail (EOL).
+  alloy-edge:
+    image: grafana/alloy:v1.4.2
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-alloy-edge
+    profiles:
+      - edge
+    networks:
+      - default
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./alloy-edge.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+    restart: unless-stopped
+    depends_on:
+      loki:
+        condition: service_started
+        required: false
 
   status:
     build:
@@ -396,6 +548,10 @@ services:
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
+      # So the test runner can tell it is on CI. CI already builds the database
+      # fresh for every run, so the pre-run reset it does locally would just be
+      # repeating work - and the migrate is slow enough to time the run out.
+      - CI=${CI:-}
 
   ai-support-helper:
     build:
@@ -415,8 +571,50 @@ services:
       - "traefik.http.routers.ai-support-helper.entrypoints=web"
       - "traefik.http.services.ai-support-helper.loadbalancer.server.port=3000"
     environment:
-      # Anthropic API key for Claude API calls
+      # Claude auth: set CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`, bills to the
+      # subscription) or ANTHROPIC_API_KEY for api mode (bills to API credits). The OAuth
+      # token wins when both are set (see claude-agent-sdk/auth.js). Leave both unset and
+      # mount ~/.claude (see volumes) for session mode (local testing on the logged-in session).
+      - CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Unpinned alias, not a dated snapshot (snapshots get retired and the SDK
+      # then 404s). On the Claude subscription (session mode) Opus is available.
+      - SUPPORT_AI_MODEL=${SUPPORT_AI_MODEL:-opus}
+      # Go API: verifies the caller is a mod/support/admin AND serves get_user_dump.
+      - FREEGLE_API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
+      - API_URL=${FREEGLE_API_URL:-http://apiv2-live:8192}
+      # Read-only DB. Local: the whole-stack percona. Edge: a read-only grant on a read replica.
+      - DB_HOST=${SUPPORT_DB_HOST:-percona}
+      - DB_PORT=${SUPPORT_DB_PORT:-3306}
+      - DB_USER=${SUPPORT_DB_USER:-root}
+      - DB_PASSWORD=${SUPPORT_DB_PASSWORD:-iznik}
+      - DB_NAME=${SUPPORT_DB_NAME:-iznik}
+      # Loki. Local :3100 has null user_id (health noise); edge points at the prod tunnel.
+      - LOKI_URL=${SUPPORT_LOKI_URL:-http://loki:3100}
+      # Sentry - real errors behind "oh dear something went wrong".
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Discourse - where mods/members report bugs; fixes cite topic numbers absent from support emails.
+      - DISCOURSE_API_KEY=${DISCOURSE_API_KEY:-}
+      - DISCOURSE_API_USER=${DISCOURSE_API_USER:-Edward_Hibbert}
+      # Audit trail (who investigated whom, with what) - durable on the audit volume.
+      - AUDIT_LOG_PATH=/app/audit/audit.jsonl
+      # "Refer to geeks" email. The SMTP default is the local mailpit, so a
+      # referral sent while developing lands at mailpit.localhost and never
+      # reaches the real geeks list; edge/prod sets SUPPORT_SMTP_* to a relay.
+      - GEEKS_EMAIL=${GEEKS_EMAIL:-geeks@ilovefreegle.org}
+      - SUPPORT_REFERRAL_FROM=${SUPPORT_REFERRAL_FROM:-support@ilovefreegle.org}
+      - SUPPORT_SMTP_HOST=${SUPPORT_SMTP_HOST:-mailpit}
+      - SUPPORT_SMTP_PORT=${SUPPORT_SMTP_PORT:-1025}
+      - SUPPORT_SMTP_USER=${SUPPORT_SMTP_USER:-}
+      - SUPPORT_SMTP_PASS=${SUPPORT_SMTP_PASS:-}
+    volumes:
+      # Session mode (testing) ONLY: mount JUST the Claude OAuth credential read-only,
+      # NOT the whole ~/.claude (which holds memory/transcripts/project notes). This
+      # bounds what a prompt-injected read could exfiltrate. Edge/prod uses
+      # ANTHROPIC_API_KEY (api mode) and should OMIT this mount entirely.
+      - ${SUPPORT_CLAUDE_DIR:-/home/edward/.claude}/.credentials.json:/home/claude/.claude/.credentials.json:ro
+      - ai-support-audit:/app/audit
     restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
@@ -434,6 +632,8 @@ services:
     build:
       context: ./docker/embedding-sidecar
     restart: unless-stopped
+    ports:
+      - "0.0.0.0:${PORT_EMBEDDING_SIDECAR:-3200}:3200"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3200/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -453,6 +653,10 @@ services:
       - dev
     environment:
       - CI=${CI:-false}
+      # Make file-sync.sh and the rebuild monitor worktree-aware: without this the
+      # container has no COMPOSE_PROJECT_NAME, so both fall back to "freegle" and a
+      # worktree's host-scripts syncs/rebuilds into the MAIN instance's containers.
+      - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-freegle}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - .:/workspace
@@ -476,10 +680,10 @@ services:
               svc=$$(docker inspect "$$container" --format '{{index .Config.Labels "com.docker.compose.service"}}' 2>/dev/null || echo "$$container")
               if [ "$$svc" != "" ] && [ "$$container" != "null" ]; then
                 echo "Rebuilding service: $$svc ($$container)"
-                docker-compose -p freegle stop "$$svc" 2>/dev/null || true
-                docker-compose -p freegle rm -f "$$svc" 2>/dev/null || true
-                if docker-compose -p freegle build "$$svc" &&
-                   docker-compose -p freegle up --no-deps -d "$$svc"; then
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" stop "$$svc" 2>/dev/null || true
+                docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" rm -f "$$svc" 2>/dev/null || true
+                if docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" build "$$svc" &&
+                   docker-compose -p "$${COMPOSE_PROJECT_NAME:-freegle}" up --no-deps -d "$$svc"; then
                   echo "Rebuild completed successfully for $$service"
                 else
                   echo "Rebuild failed for $$service"
@@ -506,157 +710,6 @@ services:
     restart: unless-stopped
 
   # Freegle images.
-  apiv1:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-apiv1
-    profiles:
-      - frontend
-    networks:
-      - default
-    build:
-      context: ./iznik-server
-      network: host
-    depends_on:
-      percona:
-        condition: service_healthy
-        required: false
-      batch:
-        condition: service_healthy
-        required: false
-      beanstalkd:
-        condition: service_started
-      mailpit:
-        condition: service_started
-        required: false
-      redis:
-        condition: service_started
-      spamassassin-app:
-        condition: service_started
-        required: false
-      reverse-proxy:
-        condition: service_healthy
-        required: false
-    restart: "no"
-    environment:
-      - MYSQL_HOST=percona
-      - MYSQL_PORT=3306
-      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
-      - SKIP_DB_INIT=${SKIP_DB_INIT:-false}
-      - PHEANSTALK_SERVER=beanstalkd
-      - REDIS_CONNECT=redis
-      - IMAGE_DOMAIN=apiv1
-      - SPAMD_HOST=spamassassin-app
-      - SPAMD_PORT=783
-      - SMTP_HOST=mailpit
-      - TUS_UPLOADER=http://tusd:8080/tus
-      - SMTP_PORT=1025
-      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
-      - GOOGLE_PUSH_KEY=${GOOGLE_PUSH_KEY:-}
-      - GOOGLE_VISION_KEY=${GOOGLE_VISION_KEY:-}
-      - GOOGLE_PERSPECTIVE_KEY=${GOOGLE_PERSPECTIVE_KEY:-}
-      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
-      - GOOGLE_PROJECT=${GOOGLE_PROJECT:-}
-      - GOOGLE_APP_NAME=${GOOGLE_APP_NAME:-}
-      - MAPBOX_KEY=${MAPBOX_KEY:-}
-      - MAXMIND_ACCOUNT=${MAXMIND_ACCOUNT:-}
-      - MAXMIND_KEY=${MAXMIND_KEY:-}
-      - LOKI_ENABLED=true
-      - LOKI_URL=http://loki:3100
-    volumes:
-      - geoip_data:/var/lib/GeoIP
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80/api/config || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 60s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.apiv1.rule=Host(`apiv1.localhost`)"
-      - "traefik.http.routers.apiv1.entrypoints=web"
-      - "traefik.http.routers.apiv1.middlewares=apiv1-cors,retry-api1"
-      - "traefik.http.services.apiv1-localhost-freegledocker.loadbalancer.server.port=80"
-      - "traefik.http.middlewares.limit.buffering.maxRequestBodyBytes=8000000"
-      - "traefik.http.middlewares.apiv1-cors.headers.customresponseheaders.Access-Control-Allow-Origin=*"
-      - "traefik.http.middlewares.apiv1-cors.headers.customresponseheaders.Access-Control-Allow-Methods=GET,POST,PUT,PATCH,DELETE,OPTIONS"
-      - "traefik.http.middlewares.apiv1-cors.headers.customresponseheaders.Access-Control-Allow-Headers=*"
-      - "traefik.http.middlewares.apiv1-cors.headers.customresponseheaders.Access-Control-Max-Age=86400"
-      # Retry middleware for connection resilience
-      - "traefik.http.middlewares.retry-api1.retry.attempts=3"
-      - "traefik.http.middlewares.retry-api1.retry.initialinterval=100ms"
-    secrets:
-      - LOVE_JUNK_API
-      - LOVE_JUNK_SECRET
-      - PARTNER_KEY
-      - PARTNER_NAME
-      - IMAGE_DOMAIN
-    ports:
-      - "${PORT_APIV1_SSH:-1023}:22"
-      - "${PORT_APIV1_HTTP:-83}:80"
-      - "${PORT_APIV1_HTTP2:-8181}:80"
-
-  # Separate container for PHPUnit tests - uses isolated database to run in parallel with Playwright
-  apiv1-phpunit:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit
-    profiles:
-      - dev
-    networks:
-      - default
-    build:
-      context: ./iznik-server
-      network: host
-    depends_on:
-      percona:
-        condition: service_healthy
-        required: false
-      batch:
-        condition: service_healthy
-      beanstalkd:
-        condition: service_started
-        required: false
-      redis:
-        condition: service_started
-        required: false
-      tusd:
-        condition: service_started
-        required: false
-      delivery:
-        condition: service_started
-        required: false
-    restart: "no"
-    environment:
-      - MYSQL_HOST=percona
-      - MYSQL_PORT=3306
-      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
-      - SKIP_DB_INIT=${SKIP_DB_INIT:-false}
-      - PHEANSTALK_SERVER=beanstalkd
-      - PHEANSTALK_TUBE=phpunit
-      - REDIS_CONNECT=redis
-      - SQLDB=iznik_phpunit_test
-      - IMAGE_DOMAIN=apiv1-phpunit
-      - SPAMD_HOST=spamassassin-app
-      - SPAMD_PORT=783
-      - SMTP_HOST=mailpit
-      - SMTP_PORT=1025
-      - LOKI_ENABLED=false
-      - TUS_UPLOADER=http://tusd:8080/tus
-      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
-    volumes:
-      - geoip_data:/var/lib/GeoIP
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80/api/config && mysql -u root -piznik -h percona -e 'SELECT 1 FROM iznik_phpunit_test.users_notifications LIMIT 1' >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 10s
-      retries: 12
-      start_period: 120s
-    secrets:
-      - LOVE_JUNK_API
-      - LOVE_JUNK_SECRET
-      - PARTNER_KEY
-      - PARTNER_NAME
-      - IMAGE_DOMAIN
-
   apiv2:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-apiv2
     profiles:
@@ -698,10 +751,22 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd:8080/tus
+      # In dev, uploaded photos live in the local tusd, not the production
+      # store. The Go API builds delivery URLs as IMAGE_DELIVERY?url=UPLOADS+uid;
+      # without this UPLOADS defaults to production (uploads.ilovefreegle.org),
+      # so the resizer 404s on locally-uploaded files. Point it at local tusd's
+      # file-serving path (reachable from the delivery container) so dev images
+      # render — matching how V1 derives its base from TUS_UPLOADER.
+      - UPLOADS=http://tusd:8080/tus/
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
+      # Sentry API access for the user support data dump (read-only issue queries)
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
+      - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
       # Allowed domains for email tracking redirects
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
@@ -712,15 +777,22 @@ services:
       - DONATION_TARGET=${DONATION_TARGET:-}
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Rollback lever for the vector-search default: set to "keyword" to revert
+      # all callers (no searchmode param) to the legacy keyword cascade. Default
+      # (unset) = vector-hybrid search. Removed once keyword search is retired.
+      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       # Native ONNX pool: set both vars to bypass the HTTP sidecar for queries.
       # Model cache volume is shared with embedding-sidecar so no re-download needed.
       - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
       - EMBEDDING_TOKENIZER_PATH=${EMBEDDING_TOKENIZER_PATH:-}
-      - KNN_INDEX_PATH=/data/knn-locations.db
-      - KNN_ADMIN_PORT=8195
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
+      - SPATIAL_SERVER_URL=http://spatial:8196
+      # ripple-eval is served by the routing container ('spatial') on its internal
+      # no-auth port (SPATIAL_INTERNAL_PORT=8194) — NOT spatial-knn, NOT the 8196
+      # auth port. Explicit so the drive-time analytics don't silently misroute.
+      - ROUTING_EVAL_URL=${ROUTING_EVAL_URL:-http://spatial:8194}
     volumes:
       - apiv2_logs:/var/log/freegle
-      - knn_data:/data
       - embedding_model_cache:/app/model-cache
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8192/apiv2/online || exit 1"]
@@ -743,6 +815,93 @@ services:
       # Retry middleware for connection resilience
       - "traefik.http.middlewares.retry-api.retry.attempts=3"
       - "traefik.http.middlewares.retry-api.retry.initialinterval=100ms"
+
+  spatial-knn:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn
+    profiles:
+      - frontend
+      # Also in `production`: batch-prod hard-depends on this service, so the
+      # batch host (COMPOSE_PROFILES=backend,production,mail) must include it
+      # explicitly. Newer Compose (v5) auto-enables cross-profile dependencies,
+      # but older docker-compose binaries reject the project as invalid.
+      - production
+    networks:
+      default:
+        aliases:
+          - spatial-knn.localhost
+    build:
+      context: ./iznik-spatial-go
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - SPATIAL_INDEX_DIR=/data
+      - SPATIAL_PORT=8194
+      - SPATIAL_ADMIN_PORT=8195
+    volumes:
+      - spatial_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  spatial:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial
+    profiles:
+      - frontend
+      # Also in `production`: see spatial-knn note above.
+      - production
+    networks:
+      default:
+        aliases:
+          - spatial.localhost
+    build:
+      context: ./iznik-routing-go
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+      spatial-knn:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8196
+      - SPATIAL_INTERNAL_PORT=8194
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
+      # Override (e.g. in CI) to boot on the small committed Bristol extract so
+      # the container stays up for routing-go tests without the 2.5GB UK graph.
+      - OSM_PBF_PATH=${OSM_PBF_PATH:-/data/uk-latest.osm.pbf}
+      - DEPRIVATION_CSV=${DEPRIVATION_CSV:-/data/uk_lsoa_quintile.csv}
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - MYSQL_DBNAME=iznik
+      - JWT_SECRET=${JWT_SECRET:-secret}
+    volumes:
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8196/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 600s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.spatial.rule=Host(`spatial.localhost`)"
+      - "traefik.http.routers.spatial.entrypoints=web"
+      - "traefik.http.services.spatial.loadbalancer.server.port=8196"
 
   # V2 API with LIVE production database via tunnel
   # Start with: docker compose --profile prod-live up -d apiv2-live
@@ -776,15 +935,33 @@ services:
     restart: "no"
     environment:
       - MYSQL_HOST=db-live
+      # Optional read replica for the DB read/write split. Empty = single-host
+      # (all reads use MYSQL_HOST); set LIVE_DB_READ_HOST to route reads to a
+      # replica. Writes always go to MYSQL_HOST.
+      - MYSQL_HOST_READ=${LIVE_DB_READ_HOST:-}
       - MYSQL_PORT=${LIVE_DB_PORT:-1234}
       - MYSQL_USER=${LIVE_DB_USER:-root}
       - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
       - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
       - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+      # Routing server (graph) for on-the-fly rippling drive-time analytics. Prod: the routing
+      # internal no-auth port. Locally the SIBLING live container, not the dev one: this API
+      # answers for the production database, so a reach measured against the dev graph and the
+      # dev member index would be a local answer wearing a live label.
+      - ROUTING_EVAL_URL=${LIVE_ROUTING_EVAL_URL:-http://spatial-live:8194}
+      # Drive-time sample size + routing concurrency for the analytics endpoint. Tunable without a
+      # rebuild. apiv2-live reaches routing over the slow SSH tunnel, so raise concurrency locally.
+      - RIPPLE_ANALYTICS_SAMPLE=${RIPPLE_ANALYTICS_SAMPLE:-250}
+      - RIPPLE_ANALYTICS_CONCURRENCY=${RIPPLE_ANALYTICS_CONCURRENCY:-16}
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - LOKI_JSON_PATH=/var/log/freegle
+      # Sentry API access for the user support data dump (read-only issue queries)
+      - SENTRY_AUTH_TOKEN=${SENTRY_AUTH_TOKEN:-}
+      - SENTRY_ORG_SLUG=${SENTRY_ORG_SLUG:-freegle}
+      # Third-party API key allowing data-dump access without a Support/Admin login (blank = disabled)
+      - USERDUMP_API_KEY=${USERDUMP_API_KEY:-}
       - USER_SITE=www.ilovefreegle.org
       - IMAGE_DOMAIN=images.ilovefreegle.org
       - GROUP_DOMAIN=groups.ilovefreegle.org
@@ -795,6 +972,13 @@ services:
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
       - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
+      - SPATIAL_SERVER_URL=${LIVE_SPATIAL_SERVER_URL:-http://spatial-live:8196}
+      # Density banding (which decides a member's reach cap, and so what /town/near reports)
+      # asks this KNN index for the nearest k members. Left pointing at the dev index - which
+      # holds the seeded test users, not 169k real ones - every point measures as BandUnknown
+      # and /town/near quietly serves the flat fallback cap instead of the band's. That is the
+      # one number the rippling explorer's "whose posts can I see" direction is about.
+      - SPATIAL_KNN_URL=${LIVE_SPATIAL_KNN_URL:-http://spatial-knn-live:8194}
     volumes:
       - apiv2_logs:/var/log/freegle
     healthcheck:
@@ -818,6 +1002,98 @@ services:
       - "traefik.http.middlewares.apiv2-live-retry.retry.initialinterval=100ms"
       - "traefik.http.services.apiv2-live.loadbalancer.server.port=8192"
 
+  # KNN spatial index server with LIVE production database via tunnel.
+  # Provides user approx-locations and other spatial indices from production data.
+  # Start with: docker compose --profile prod-live up -d spatial-knn-live
+  # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
+  # WARNING: This connects to the REAL production database!
+  spatial-knn-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - spatial-knn-live.localhost
+    build:
+      context: ./iznik-spatial-go
+      network: host
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8194
+      - SPATIAL_ADMIN_PORT=8195
+      - SPATIAL_INDEX_DIR=/data
+      - MYSQL_HOST=db-live
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - MYSQL_DBNAME=iznik
+    volumes:
+      - spatial_knn_live_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
+  # Spatial server with LIVE production database via tunnel
+  # Start with: docker compose --profile prod-live up -d spatial-live
+  # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
+  # WARNING: This connects to the REAL production database!
+  spatial-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - spatial-live.localhost
+    build:
+      context: ./iznik-routing-go
+      network: host
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+      spatial-knn-live:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8196
+      - SPATIAL_INTERNAL_PORT=8194
+      - SPATIAL_KNN_URL=http://spatial-knn-live:8194
+      - OSM_PBF_PATH=/data/uk-latest.osm.pbf
+      - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
+      - MYSQL_HOST=db-live
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - MYSQL_DBNAME=iznik
+      - JWT_SECRET=${JWT_SECRET:-secret}
+    volumes:
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8196/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.spatial-live.rule=Host(`spatial-live.localhost`)"
+      - "traefik.http.routers.spatial-live.entrypoints=web"
+      - "traefik.http.services.spatial-live.loadbalancer.server.port=8196"
+
   # Development build with local APIs - standard dev workflow
   freegle-dev-local:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-dev-local
@@ -830,7 +1106,6 @@ services:
     ports:
       - "0.0.0.0:${PORT_FREEGLE_DEV_LOCAL:-3002}:3002"
     extra_hosts:
-      - "apiv1.localhost:host-gateway"
       - "apiv2.localhost:host-gateway"
     build:
       context: ./iznik-nuxt3
@@ -844,15 +1119,11 @@ services:
         condition: service_started
       mailpit:
         condition: service_started
-      apiv1:
-        condition: service_healthy
-        required: false
       apiv2:
         condition: service_started
         required: false
     restart: "no"
     environment:
-      - IZNIK_API_V1=http://apiv1.localhost:${PORT_TRAEFIK_HTTP:-80}/api
       - IZNIK_API_V2=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
@@ -872,11 +1143,6 @@ services:
       - "traefik.http.routers.freegle-dev-local.entrypoints=web"
       - "traefik.http.routers.freegle-dev-local.service=freegle-dev-local"
       - "traefik.http.services.freegle-dev-local.loadbalancer.server.port=3002"
-      # Route /api/* to the API container (mirrors Netlify _redirects behavior)
-      - "traefik.http.routers.freegle-dev-api.rule=Host(`freegle-dev-local.localhost`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.freegle-dev-api.entrypoints=web"
-      - "traefik.http.routers.freegle-dev-api.service=apiv1-localhost-freegledocker"
-      - "traefik.http.routers.freegle-dev-api.middlewares=apiv1-cors"
 
   # Development build with LIVE/PRODUCTION APIs - for mobile dev and testing with real data
   # WARNING: Actions in this container affect REAL Freegle data!
@@ -913,7 +1179,6 @@ services:
     restart: "no"
     environment:
       # LIVE/Production APIs - REAL DATA!
-      - IZNIK_API_V1=https://fdapilive.ilovefreegle.org/api
       - IZNIK_API_V2=${LIVE_FREEGLE_API_V2:-https://api.ilovefreegle.org/apiv2}
       # Use production delivery and USER_SITE - local delivery won't work
       # from mobile devices since they can't resolve localhost hostnames
@@ -944,7 +1209,6 @@ services:
     ports:
       - "0.0.0.0:${PORT_FREEGLE_PROD_LOCAL:-3012}:3003"
     extra_hosts:
-      - "apiv1.localhost:host-gateway"
       - "apiv2.localhost:host-gateway"
       - "apiv2-live.localhost:host-gateway"
     build:
@@ -960,9 +1224,6 @@ services:
         condition: service_started
       mailpit:
         condition: service_started
-      apiv1:
-        condition: service_healthy
-        required: false
       apiv2:
         condition: service_started
         required: false
@@ -976,7 +1237,6 @@ services:
       retries: 3
       start_period: 900s  # 15 minutes for npm run build
     environment:
-      - IZNIK_API_V1=http://apiv1.localhost:${PORT_TRAEFIK_HTTP:-80}/api
       - IZNIK_API_V2=${PROD_FREEGLE_API_V2:-http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
@@ -997,11 +1257,6 @@ services:
       - "traefik.http.routers.freegle-prod-local.middlewares=retry-prod"
       - "traefik.http.routers.freegle-prod-local.service=freegle-prod-local"
       - "traefik.http.services.freegle-prod-local.loadbalancer.server.port=3003"
-      # Route /api/* to the API container (mirrors Netlify _redirects behavior)
-      - "traefik.http.routers.freegle-prod-api.rule=Host(`freegle-prod-local.localhost`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.freegle-prod-api.entrypoints=web"
-      - "traefik.http.routers.freegle-prod-api.service=apiv1-localhost-freegledocker"
-      - "traefik.http.routers.freegle-prod-api.middlewares=apiv1-cors"
       # Retry middleware for connection resilience under parallel load
       - "traefik.http.middlewares.retry-prod.retry.attempts=3"
       - "traefik.http.middlewares.retry-prod.retry.initialinterval=100ms"
@@ -1018,7 +1273,6 @@ services:
     ports:
       - "0.0.0.0:${PORT_MODTOOLS_DEV_LOCAL:-3003}:3000"
     extra_hosts:
-      - "apiv1.localhost:host-gateway"
       - "apiv2.localhost:host-gateway"
     build:
       context: .
@@ -1033,15 +1287,11 @@ services:
         condition: service_started
       mailpit:
         condition: service_started
-      apiv1:
-        condition: service_healthy
-        required: false
       apiv2:
         condition: service_started
         required: false
     restart: "no"
     environment:
-      - IZNIK_API_V1=http://apiv1.localhost:${PORT_TRAEFIK_HTTP:-80}/api
       - IZNIK_API_V2=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
@@ -1054,17 +1304,13 @@ services:
       - NUXT_SSR_LOG=false
       - NODE_ENV=development
       - NUXT_BUILD_MODE=development
+      - SPATIAL_SERVER_URL=http://spatial.localhost:${PORT_TRAEFIK_HTTP:-80}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.modtools-dev-local.rule=Host(`modtools-dev-local.localhost`)"
       - "traefik.http.routers.modtools-dev-local.entrypoints=web"
       - "traefik.http.routers.modtools-dev-local.service=modtools-dev-local"
       - "traefik.http.services.modtools-dev-local.loadbalancer.server.port=3000"
-      # Route /api/* to the API container (mirrors Netlify _redirects behavior)
-      - "traefik.http.routers.modtools-dev-api.rule=Host(`modtools-dev-local.localhost`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.modtools-dev-api.entrypoints=web"
-      - "traefik.http.routers.modtools-dev-api.service=apiv1-localhost-freegledocker"
-      - "traefik.http.routers.modtools-dev-api.middlewares=apiv1-cors"
 
   # Development mode with LIVE/Production APIs - ModTools
   # WARNING: This connects to REAL production data!
@@ -1090,6 +1336,7 @@ services:
       - "0.0.0.0:${PORT_MODTOOLS_DEV_LIVE:-3006}:3000"
     extra_hosts:
       - "apiv2-live.localhost:host-gateway"
+      - "spatial-live.localhost:host-gateway"
     build:
       context: .
       dockerfile: ./iznik-nuxt3/modtools/Dockerfile
@@ -1101,7 +1348,6 @@ services:
     restart: "no"
     environment:
       # LIVE/Production APIs - REAL DATA!
-      - IZNIK_API_V1=https://fdapilive.ilovefreegle.org/api
       - IZNIK_API_V2=${LIVE_MT_API_V2:-https://api.ilovefreegle.org/apiv2}
       # Use production delivery and USER_SITE - local delivery won't work
       # from mobile devices since they can't resolve localhost hostnames
@@ -1114,6 +1360,7 @@ services:
       - NUXT_SSR_LOG=false
       - NODE_ENV=development
       - NUXT_BUILD_MODE=development
+      - SPATIAL_SERVER_URL=http://spatial-live.localhost:${PORT_TRAEFIK_HTTP:-80}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.modtools-dev-live.rule=Host(`modtools-dev-live.localhost`)"
@@ -1132,7 +1379,6 @@ services:
     ports:
       - "0.0.0.0:${PORT_MODTOOLS_PROD_LOCAL:-3013}:3001"
     extra_hosts:
-      - "apiv1.localhost:host-gateway"
       - "apiv2.localhost:host-gateway"
       - "apiv2-live.localhost:host-gateway"
     build:
@@ -1148,9 +1394,6 @@ services:
         condition: service_started
       mailpit:
         condition: service_started
-      apiv1:
-        condition: service_healthy
-        required: false
       apiv2:
         condition: service_started
         required: false
@@ -1164,7 +1407,6 @@ services:
       retries: 3
       start_period: 900s  # 15 minutes for npm run build
     environment:
-      - IZNIK_API_V1=http://apiv1.localhost:${PORT_TRAEFIK_HTTP:-80}/api
       - IZNIK_API_V2=${PROD_MT_API_V2:-http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd.localhost:${PORT_TRAEFIK_HTTP:-80}/tus/
@@ -1184,11 +1426,6 @@ services:
       - "traefik.http.routers.modtools-prod-local.entrypoints=web"
       - "traefik.http.routers.modtools-prod-local.service=modtools-prod-local"
       - "traefik.http.services.modtools-prod-local.loadbalancer.server.port=3001"
-      # Route /api/* to the API container (mirrors Netlify _redirects behavior)
-      - "traefik.http.routers.modtools-prod-api.rule=Host(`modtools-prod-local.localhost`) && PathPrefix(`/api`)"
-      - "traefik.http.routers.modtools-prod-api.entrypoints=web"
-      - "traefik.http.routers.modtools-prod-api.service=apiv1-localhost-freegledocker"
-      - "traefik.http.routers.modtools-prod-api.middlewares=apiv1-cors"
 
   playwright:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-playwright
@@ -1207,7 +1444,6 @@ services:
       - "freegle-dev-live.localhost:127.0.0.1"
       - "modtools-dev-local.localhost:127.0.0.1"
       - "modtools-prod-local.localhost:127.0.0.1"
-      - "apiv1.localhost:127.0.0.1"
       - "apiv2.localhost:127.0.0.1"
       - "delivery.localhost:127.0.0.1"
     volumes:
@@ -1231,9 +1467,6 @@ services:
         condition: service_started
       modtools-prod-local:
         condition: service_started
-      apiv1:
-        condition: service_healthy
-        required: false
       apiv2:
         condition: service_started
         required: false
@@ -1335,7 +1568,19 @@ services:
       dockerfile: docker/Dockerfile
     volumes:
       - ./iznik-batch:/var/www/html
-      - ./iznik-server:/var/www/iznik:ro
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
+      # Read-only: the Laravel ORM harness (iznik-batch/tests/Support/OrmHarness/)
+      # reads the raw-SQL inventory this manifest is the single source of truth
+      # for. iznik-batch alone is otherwise all this container can see, so a
+      # relative path from inside tests/ escaping upward to tools/orm-migration/
+      # resolves to nothing - found the hard way, the harness's Layer 1/2 tests
+      # erroring with "file_get_contents(...): Failed to open stream" before this
+      # mount existed. A bind mount of the real manifest is the honest fix (not a
+      # copy into iznik-batch/tests/fixtures/, which would fork the contract and
+      # drift from the source of truth silently).
+      - ./tools/orm-migration/services/laravel:/var/www/orm-migration-manifest:ro
       - apiv2_logs:/var/log/freegle
     depends_on:
       percona:
@@ -1389,14 +1634,25 @@ services:
       - FREEGLE_MOD_SITE=http://modtools-dev-local.localhost:${PORT_MODTOOLS_DEV_LOCAL:-3003}
       - FREEGLE_API_BASE_URL=http://localhost:${PORT_APIV2:-8193}
       - FREEGLE_DELIVERY_URL=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      # Community News: research credential (metered key OR a `claude setup-token`
+      # subscription token, which wins when set) + global kill switch.
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - COMMUNITY_NEWS_OAUTH_TOKEN=${COMMUNITY_NEWS_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}
+      - COMMUNITY_NEWS_ENABLED=${COMMUNITY_NEWS_ENABLED:-false}
+      - COMMUNITY_NEWS_MODEL=${COMMUNITY_NEWS_MODEL:-claude-opus-4-8}
       - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
       - AMP_API_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/amp
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - MJML_URL=http://mjml/
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Rollback lever for the vector-search default: set to "keyword" to revert
+      # all callers (no searchmode param) to the legacy keyword cascade. Default
+      # (unset) = vector-hybrid search. Removed once keyword search is retired.
+      - VECTOR_SEARCH_DEFAULT=${VECTOR_SEARCH_DEFAULT:-}
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter
+      - SPATIAL_KNN_URL=http://spatial-knn:8194
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter,Reengage,CommunityNews
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
       # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
       - CI=${CI:-false}
@@ -1414,6 +1670,13 @@ services:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-batch-prod
     profiles:
       - production
+    # Give the scheduler + daemons (schedule:work, mail:spool:process, ripple, digest
+    # shards) time to reach a safe stopping point on SIGTERM before Docker SIGKILLs them.
+    # The default is only 10s, too short for an in-flight email send / digest sweep to
+    # finish cleanly; a graceful shutdown was measured at ~9s, so 60s is generous headroom.
+    # This makes a plain `docker restart` / `docker compose restart` graceful without a
+    # manual -t flag (applied to the container's StopTimeout on next recreate).
+    stop_grace_period: 60s
     networks:
       - default
     build:
@@ -1426,11 +1689,33 @@ services:
         required: false
     volumes:
       - ./iznik-batch:/var/www/html
-      - ./iznik-server:/var/www/iznik:ro
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
       - /var/log/freegle:/var/log/freegle
-      - ${FIREBASE_CREDENTIALS_PATH:-/dev/null}:/etc/firebase.json:ro
+      # Bind source uses FIREBASE_HOST_PATH (HOST path). Distinct from
+      # FIREBASE_CREDENTIALS_PATH (CONTAINER path read by Laravel — always
+      # /etc/firebase.json, so we DON'T set it; sharing one var leaked the
+      # host path into the container's env via env_file and Laravel then
+      # tried to open it inside the container — memory
+      # project_push_dropped_devnull_firebase.
+      - ${FIREBASE_HOST_PATH:-/dev/null}:/etc/firebase.json:ro
+      # SSH key for monitor:scheduled-outcomes' host health checks (reboot
+      # required / security patches / monit — see HostHealthCheck). Same
+      # split-name pattern as FIREBASE_HOST_PATH: the HOST path lives in the
+      # compose .env on the batch host; the container always sees
+      # /etc/monitoring-ssh-key. Defaults to /dev/null (dev/CI: checks are
+      # disabled anyway when FREEGLE_MONITORING_HOSTS is empty).
+      - ${MONITORING_SSH_KEY_HOST_PATH:-/dev/null}:/etc/monitoring-ssh-key:ro
+      # Read-only probe key for mail:deferrals:scan. Separate from the
+      # monitoring key above on purpose: that one is a root shell across the
+      # estate, this one only reads the outbound relay's mail queue.
+      - ${MAIL_DEFERRALS_SSH_KEY_HOST_PATH:-/dev/null}:/etc/mail-deferrals-ssh-key:ro
     extra_hosts:
       - "db-host:${DB_HOST_IP:-127.0.0.1}"
+      # Read replica for the DB read/write split. Falls back to the write host
+      # (DB_HOST_IP) when DB_HOST_READ_IP is not set, giving single-host behaviour.
+      - "db-host-read:${DB_HOST_READ_IP:-${DB_HOST_IP:-127.0.0.1}}"
       - "mail-host:${MAIL_HOST_IP:-127.0.0.1}"
     depends_on:
       loki:
@@ -1438,6 +1723,15 @@ services:
       mjml:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # The scheduler fires spatial-dependent jobs (digest reach-gate, ripple, spatial
+      # index) the moment it starts, so it MUST wait for the spatial servers to finish
+      # their multi-minute graph/index rebuild — otherwise those jobs hang on a not-ready
+      # spatial, spin, hold their flocks and produce nothing (observed on the 2026-07-03
+      # reboot). Both have /health healthchecks that only pass once loaded.
+      spatial:
+        condition: service_healthy
+      spatial-knn:
         condition: service_healthy
     restart: unless-stopped
     environment:
@@ -1449,9 +1743,20 @@ services:
       # APP_KEY comes from env_file
       - LOG_CHANNEL=stack
       - LOG_LEVEL=debug
+      # Community News research credential: same compose substitution as the dev
+      # batch service. On the prod host CLAUDE_CODE_OAUTH_TOKEN lives in the
+      # project .env (it feeds ai-support-helper the same way), NOT in
+      # .env.background — so wire it through here rather than duplicating the
+      # secret into a second file. Empty defaults keep CI/dev unaffected.
+      - COMMUNITY_NEWS_OAUTH_TOKEN=${COMMUNITY_NEWS_OAUTH_TOKEN:-${CLAUDE_CODE_OAUTH_TOKEN:-}}
+      - COMMUNITY_NEWS_ENABLED=${COMMUNITY_NEWS_ENABLED:-false}
+      - COMMUNITY_NEWS_MODEL=${COMMUNITY_NEWS_MODEL:-claude-opus-4-8}
       # Database (production)
       - DB_CONNECTION=mysql
       - DB_HOST=db-host
+      # Reads go to the replica alias; it resolves to the write host unless
+      # DB_HOST_READ_IP is set in .env.background (see extra_hosts above).
+      - DB_HOST_READ=db-host-read
       - DB_PORT=3306
       - DB_DATABASE=iznik
       - DB_USERNAME=root
@@ -1486,7 +1791,7 @@ services:
       # Freegle Mail Configuration
       - FREEGLE_NOREPLY_ADDR=noreply@ilovefreegle.org
       - FREEGLE_USER_DOMAIN=users.ilovefreegle.org
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp,UnifiedDigest,Reengage,CommunityNews
       # Freegle Images
       - FREEGLE_IMAGES_DOMAIN=https://images.ilovefreegle.org
       - FREEGLE_DELIVERY_URL=https://delivery.ilovefreegle.org
@@ -1581,105 +1886,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  # =========================================
-  # MCP Support Tools (Privacy-Preserving Log Analysis)
-  # =========================================
-
-  # Container 0: Query Sanitizer - Frontend-facing, extracts and tokenizes PII
-  mcp-query-sanitizer:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-sanitizer
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/query-sanitizer
-      network: host
-    networks:
-      - default
-    ports:
-      - "${PORT_MCP_SANITIZER:-8084}:8080"
-    environment:
-      - PORT=8080
-      - PSEUDONYMIZER_URL=http://mcp-pseudonymizer:8080
-    depends_on:
-      mcp-pseudonymizer:
-        condition: service_healthy
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.mcp-sanitizer.rule=Host(`mcp-sanitizer.localhost`)"
-      - "traefik.http.routers.mcp-sanitizer.entrypoints=web"
-      - "traefik.http.services.mcp-sanitizer.loadbalancer.server.port=8080"
-
-  # Container 2: MCP Interface - Stateless proxy, NO key, forwards to pseudonymizer
-  mcp-interface:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-interface
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/mcp-interface
-      network: host
-    networks:
-      - default
-    environment:
-      - PORT=8080
-      - PSEUDONYMIZER_URL=http://mcp-pseudonymizer:8080
-    depends_on:
-      mcp-pseudonymizer:
-        condition: service_healthy
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # Container 3: Pseudonymizer - Has the key, queries Loki, pseudonymizes results
-  mcp-pseudonymizer:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mcp-pseudonymizer
-    profiles:
-      - dev
-    build:
-      context: ./support-tools/pseudonymizer
-      network: host
-    networks:
-      - default
-    volumes:
-      - mcp-pseudonymizer-data:/data
-      - mcp-audit-logs:/var/log/mcp-audit
-    environment:
-      - PORT=8080
-      - LOKI_URL=http://loki:3100
-      - DATA_DIR=/data
-      - AUDIT_LOG_DIR=/var/log/mcp-audit
-      # Database access for pseudonymized SQL queries
-      - DB_HOST=percona
-      - DB_PORT=3306
-      - DB_USER=root
-      - DB_PASSWORD=iznik
-      - DB_NAME=iznik
-    depends_on:
-      loki:
-        condition: service_healthy
-        required: false
-      percona:
-        condition: service_healthy
-        required: false
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
 volumes:
   rebuild-requests:
     driver: local
@@ -1696,19 +1902,39 @@ volumes:
     driver: local
   loki-data:
     name: ${LOKI_VOLUME:-loki-data}
-  knn_data:
+  spatial_data:
+    driver: local
+  spatial_knn_live_data:
+    driver: local
+  routing_data:
     driver: local
   apiv2_logs:
     driver: local
-  mcp-pseudonymizer-data:
-    driver: local
   embedding_model_cache:
     driver: local
-  mcp-audit-logs:
-    driver: local
+  # edge profile (front-end host) — see plans/2026-06-25-frontend-server-migration.md
+  delivery-cache:
+    driver: local   # frontend-nginx wsrv_cache (mirror of app1's 41 GB delivery cache)
+  tusd-data:
+    driver: local   # Docker-managed tusd upload dir; the VM override points /srv/tusd-data at NFS instead
+  osm-data:
+    driver: local   # tile-server PostGIS (osm-data, ~56 GB once imported)
+  osm-tiles:
+    driver: local   # tile-server rendered tiles (~44 GB)
+  alloy-data:
+    driver: local   # Grafana Alloy positions/WAL (edge log shipping)
+  wiki-elastic-data:
+    driver: local   # Elasticsearch index for the wiki's CirrusSearch (edge)
+  ai-support-audit:
+    driver: local   # durable audit log of AI Support Helper investigations (who queried whom)
 
 networks:
   default:
+    driver: bridge
+  # Private network for the adopted wiki pair (edge profile), isolating
+  # wiki-media <-> wiki-mysql exactly as the standalone `wikinet` did. Native
+  # nginx reaches wiki-media via its published host port, not this network.
+  wikinet:
     driver: bridge
 
 secrets:

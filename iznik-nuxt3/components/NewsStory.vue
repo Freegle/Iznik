@@ -26,18 +26,6 @@
               class="clickme story-image"
               @click="showPhotoModal"
             />
-            <NuxtPicture
-              v-else-if="story?.image?.externaluid"
-              fit="cover"
-              format="webp"
-              provider="uploadcare"
-              :src="story?.image?.externaluid"
-              :modifiers="story?.image?.externalmods"
-              alt="Freegler Story Photo"
-              sizes="100vw md:200px"
-              class="clickme story-image"
-              @click="showPhotoModal"
-            />
             <b-img
               v-else-if="story?.image"
               thumbnail
@@ -94,7 +82,11 @@
       imgflag="story"
       @hidden="showNewsPhotoModal = false"
     />
-    <StoryAddModal v-if="showAdd" @hidden="showAdd = false" />
+    <StoryAddModal
+      v-if="showAdd"
+      @login-required="loginRequired"
+      @hidden="showAdd = false"
+    />
     <StoryShareModal
       v-if="showNewsShareModal"
       :id="newsfeed.storyid"
@@ -110,6 +102,7 @@ import ReadMore from '~/components/ReadMore'
 import { twem } from '~/composables/useTwem'
 import NewsUserIntro from '~/components/NewsUserIntro'
 import NewsLoveComment from '~/components/NewsLoveComment'
+import { useStoryAdd } from '~/composables/useStoryAdd'
 
 const props = defineProps({
   id: {
@@ -124,14 +117,14 @@ defineEmits(['focus-comment'])
 const showNewsPhotoModal = ref(false)
 const showNewsShareModal = ref(false)
 
-const NewsPhotoModal = defineAsyncComponent(() =>
-  import('~/components/NewsPhotoModal')
+const NewsPhotoModal = defineAsyncComponent(
+  () => import('~/components/NewsPhotoModal')
 )
-const StoryAddModal = defineAsyncComponent(() =>
-  import('~/components/StoryAddModal')
+const StoryAddModal = defineAsyncComponent(
+  () => import('~/components/StoryAddModal')
 )
-const StoryShareModal = defineAsyncComponent(() =>
-  import('~/components/StoryShareModal')
+const StoryShareModal = defineAsyncComponent(
+  () => import('~/components/StoryShareModal')
 )
 
 const storyStore = useStoryStore()
@@ -154,7 +147,11 @@ try {
   console.log('Error fetching story:', e)
 }
 
-const showAdd = ref(false)
+const {
+  showStoryAddModal: showAdd,
+  showAddModal,
+  loginRequired,
+} = useStoryAdd()
 
 const story = computed(() => {
   return storyStore?.byId(newsfeed.value?.storyid)
@@ -177,10 +174,6 @@ function share() {
 
 function showPhotoModal() {
   showNewsPhotoModal.value = true
-}
-
-function showAddModal() {
-  showAdd.value = true
 }
 </script>
 <style scoped lang="scss">

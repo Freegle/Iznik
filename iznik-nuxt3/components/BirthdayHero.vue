@@ -280,6 +280,7 @@ const activeVolunteers = ref([])
 const donationSectionVisible = ref(false)
 const donationSectionRef = ref(null)
 let intersectionObserver = null
+let observerSetupTimer = null
 
 // Ensure group data is fetched with full details and fetch active volunteers
 onMounted(async () => {
@@ -289,13 +290,13 @@ onMounted(async () => {
   }
 
   // Set up intersection observer for donation section after DOM is ready
-  setTimeout(() => {
+  observerSetupTimer = setTimeout(() => {
     setupDonationVisibilityObserver()
   }, 100)
 })
 
 function setupDonationVisibilityObserver() {
-  if (process.client && donationSectionRef.value) {
+  if (import.meta.client && donationSectionRef.value) {
     intersectionObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -311,8 +312,14 @@ function setupDonationVisibilityObserver() {
   }
 }
 
-// Cleanup observer when component is destroyed
+// Cleanup observer when component is destroyed. Also cancel the deferred
+// setup: if the component unmounts within the 100ms window the callback
+// would otherwise create an observer after unmount (and, in unit tests,
+// after the environment's IntersectionObserver global is gone).
 onBeforeUnmount(() => {
+  if (observerSetupTimer) {
+    clearTimeout(observerSetupTimer)
+  }
   if (intersectionObserver) {
     intersectionObserver.disconnect()
   }

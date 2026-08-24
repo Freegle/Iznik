@@ -1,0 +1,17 @@
+# Mail spool backlog on the batch-prod host.
+#
+# The spool is a file queue drained by supervisor's mail-spooler daemon(s). A
+# backlog means mail is being generated faster than it is delivered, and it is
+# otherwise SILENT: the generating crons succeed, postfix on the smarthost is
+# healthy, and the only symptom is mail arriving hours late. On 2026-08-18 it
+# reached 67k / 8 hours and the first anyone knew was a person noticing their
+# hourly donation summary had not arrived.
+#
+# 20000 for 15 cycles (= 30 min at 120s/cycle). A digest run legitimately
+# queues tens of thousands and drains them, so the threshold alone would be
+# noise; it is the SUSTAINED part that means "not draining". At the observed
+# drain rate a 20k queue clears in ~20 min, so still being over it after 30
+# means delivery is genuinely not keeping up.
+check program mail-spool-backlog with path "/etc/monit/scripts/mail-spool-backlog.sh 20000"
+   group mail
+   if status != 0 for 15 cycles then alert

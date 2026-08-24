@@ -46,7 +46,7 @@
       </span>
     </nuxt-link>
     <span v-if="modinfo && membership" class="ms-2 order-1 order-sm-1 small">
-      <v-icon icon="calendar-alt" />
+      <v-icon icon="calendar-alt" class="me-1" />
       <span :class="joinedAge <= 31 ? 'text-danger' : ''"
         >Joined {{ dateshort(membership.added) }}</span
       >
@@ -134,7 +134,6 @@ const membership = computed(() => {
 
 const joinedAge = computed(() => {
   if (membership.value) {
-    // eslint-disable-next-line new-cap
     return new dayjs().diff(new dayjs(membership.value.added), 'days')
   }
 

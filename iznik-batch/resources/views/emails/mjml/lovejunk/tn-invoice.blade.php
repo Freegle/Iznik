@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Please raise an invoice for LoveJunk advertising income'])
+  @include('emails.mjml.partials.head', ['preview' => 'Please raise a LoveJunk invoice for £' . $tnAmount . ' (' . $start . ' to ' . $end . ')'])
 
   <mj-body background-color="#f4f4f4">
 
@@ -11,7 +11,7 @@
           LoveJunk Invoice Request
         </mj-text>
         <mj-text>
-          Please raise an invoice on Freegle Ltd for your share of the LoveJunk advertising income.
+          Please raise an invoice on Freegle for your share of the LoveJunk advertising income.
         </mj-text>
         <mj-divider border-color="#eeeeee" border-width="1px" />
         <mj-text>

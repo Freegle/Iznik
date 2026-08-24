@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Volunteer opportunities in ' . $groupName])
+  @include('emails.mjml.partials.head', ['preview' => ($volunteerings[0]['title'] ?? 'Volunteer opportunities near you') . (count($volunteerings) > 1 ? ' and ' . (count($volunteerings) - 1) . ' more' : '')])
 
   <mj-body background-color="#f4f4f4">
 
@@ -11,7 +11,7 @@
           Volunteer Opportunity Roundup
         </mj-text>
         <mj-text font-size="14px" color="#555555">
-          Charities, community organisations and good causes in {{ $groupName }} are looking for helpers.
+          Charities, community organisations and good causes near your Freegle communities are looking for helpers.
           If you'd like to add one, <a href="{{ $userSite }}/volunteering">click here</a>.
         </mj-text>
       </mj-column>
@@ -45,6 +45,17 @@
           {!! nl2br(e(mb_strlen($vol['description']) > 300 ? mb_substr($vol['description'], 0, 300) . '…' : $vol['description'])) !!}
         </mj-text>
         @endif
+        @if (!empty($vol['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $vol['groups']
+        );
+        @endphp
+        <mj-text font-size="11px" color="#999999" padding="0 0 4px">
+          Posted on {!! implode(', ', $groupLinks) !!}
+        </mj-text>
+        @endif
       </mj-column>
       <mj-column width="40%">
         <mj-image src="{{ $vol['photo_thumb'] }}" alt="{{ $vol['title'] }}"
@@ -71,6 +82,17 @@
         @if (!empty($vol['description']))
         <mj-text font-size="13px" color="#333333" padding="0 0 6px" line-height="1.5">
           {!! nl2br(e(mb_strlen($vol['description']) > 300 ? mb_substr($vol['description'], 0, 300) . '…' : $vol['description'])) !!}
+        </mj-text>
+        @endif
+        @if (!empty($vol['groups']))
+        @php
+        $groupLinks = array_map(
+            fn ($g) => '<a href="' . e($g['url']) . '" style="color: #999999; text-decoration: underline;">' . e($g['name']) . '</a>',
+            $vol['groups']
+        );
+        @endphp
+        <mj-text font-size="11px" color="#999999" padding="0 0 4px">
+          Posted on {!! implode(', ', $groupLinks) !!}
         </mj-text>
         @endif
       </mj-column>
@@ -181,6 +203,13 @@
         <mj-button href="{{ $donateUrl }}" mj-class="btn-success" font-size="14px" padding="12px 20px" width="90%">
           Donating helps too!
         </mj-button>
+      </mj-column>
+    </mj-section>
+    {{-- Donate now lands on our Stripe page, not PayPal, so show what's there.
+         Alt text repeats it for clients that block images. --}}
+    <mj-section background-color="#f8f9fa" padding="0 20px 16px 20px">
+      <mj-column>
+        <mj-image src="{{ $donateMarksUrl ?? config('freegle.images.paymethods') }}" alt="Donate with Apple Pay, Google Pay, PayPal or card" title="Donate with Apple Pay, Google Pay, PayPal or card" width="190px" align="center" padding="0" href="{{ $donateUrl }}" />
       </mj-column>
     </mj-section>
     @endif

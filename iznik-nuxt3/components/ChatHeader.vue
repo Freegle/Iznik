@@ -1,7 +1,36 @@
 <template>
   <div>
+    <!-- Freegle's own chat. Deliberately not the usual header: almost nothing
+         here is a conversation, so offering to rate, block or report it makes no
+         sense. The "these are automated" note lives here once instead of on
+         every message, and Hide is offered plainly for anyone who would rather
+         not see them - as is the settings toggle that stops them entirely. -->
+    <div v-if="chat?.systemchat" class="outer position-relative systemchat p-2">
+      <div class="d-flex align-items-center gap-2">
+        <ProfileImage
+          :image="chat.icon"
+          :name="chat.name"
+          class="pe-1 d-none d-md-flex"
+          is-thumbnail
+          size="lg"
+          border
+        />
+        <div class="flex-grow-1">
+          <h4 class="mb-0">{{ chat.name }}</h4>
+          <div class="text-muted small">
+            Automated messages about your posts. Freegle doesn't read replies
+            here - to reach a person, use
+            <nuxt-link no-prefetch to="/help">Help</nuxt-link>.
+          </div>
+        </div>
+        <b-button variant="secondary" size="sm" @click="showhide">
+          <span class="d-none d-md-inline">Hide chat</span>
+          <span class="d-inline d-md-none">Hide</span>
+        </b-button>
+      </div>
+    </div>
     <div
-      v-if="chat && (chat.chattype !== 'User2User' || otheruser?.info)"
+      v-else-if="chat && (chat.chattype !== 'User2User' || otheruser?.info)"
       class="outer position-relative"
     >
       <!-- Desktop header - original grid layout -->
@@ -339,11 +368,11 @@ console.log('ChatHeader: Script setup executing')
 
 const ChatBlockModal = defineAsyncComponent(() => import('./ChatBlockModal'))
 const ChatHideModal = defineAsyncComponent(() => import('./ChatHideModal'))
-const UserRatings = defineAsyncComponent(() =>
-  import('~/components/UserRatings')
+const UserRatings = defineAsyncComponent(
+  () => import('~/components/UserRatings')
 )
-const ChatReportModal = defineAsyncComponent(() =>
-  import('~/components/ChatReportModal')
+const ChatReportModal = defineAsyncComponent(
+  () => import('~/components/ChatReportModal')
 )
 const props = defineProps({
   id: {
@@ -491,6 +520,10 @@ const markRead = async () => {
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
+
+.systemchat {
+  border-bottom: 1px solid $color-gray--light;
+}
 
 .outer {
   display: none;

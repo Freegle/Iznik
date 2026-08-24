@@ -29,6 +29,7 @@ vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     me: ref({ id: 1, settings: { browseView: 'tiles' } }),
     myid: ref(1),
+    myGroups: ref([]),
   }),
 }))
 
@@ -98,8 +99,8 @@ describe('MessageList', () => {
       expect(true).toBe(true)
     })
 
-    it('passes showGiveFind prop to GroupHeader', () => {
-      // :show-give-find="showGiveFind"
+    it('passes showGiveAsk prop to GroupHeader', () => {
+      // :show-give-ask="showGiveAsk"
       expect(true).toBe(true)
     })
 
@@ -236,6 +237,97 @@ describe('MessageList', () => {
     it('removes duplicate messages by user and subject', () => {
       // key = fromuser + '|' + subject
       expect(true).toBe(true)
+    })
+
+    it('prefers the duplicate copy on a group the user is a member of', () => {
+      // Mirrors deDuplicatedMessages: among duplicates (same poster+subject) it
+      // keeps the copy whose group the user already belongs to, so replying does
+      // not auto-join them to a non-member group (Discourse 9733 / 9729).
+      const myGroupIdSet = new Set([10])
+      const store = {
+        1: {
+          id: 1,
+          fromuser: 5,
+          subject: 'OFFER: Sofa',
+          groups: [{ groupid: 20 }],
+        },
+        2: {
+          id: 2,
+          fromuser: 5,
+          subject: 'OFFER: Sofa',
+          groups: [{ groupid: 10 }],
+        },
+      }
+      const isOnMyGroup = (m) =>
+        !!m?.groups &&
+        m.groups.some((g) => myGroupIdSet.has(parseInt(g.groupid)))
+
+      const ret = []
+      const dups = []
+      ;[{ id: 1 }, { id: 2 }].forEach((m) => {
+        const message = store[m.id]
+        const key = message.fromuser + '|' + message.subject
+        if (!(key in dups)) {
+          ret.push(m)
+          dups[key] = m.id
+        } else {
+          const keptId = dups[key]
+          if (isOnMyGroup(message) && !isOnMyGroup(store[keptId])) {
+            const idx = ret.findIndex((x) => x.id === keptId)
+            if (idx !== -1) ret[idx] = m
+            dups[key] = m.id
+          }
+        }
+      })
+
+      expect(ret).toHaveLength(1)
+      expect(ret[0].id).toBe(2) // the copy on member group 10, not non-member 20
+    })
+
+    it('deduplicates same user+subject with differing trailing location text (Discourse 9733/7)', () => {
+      // Two separate messages from the same user for the same item, posted to
+      // different groups. The only difference is the location in the subject.
+      // The fix strips trailing (location) before building the dedup key so that
+      // "OFFER: bike (Bethnal Green)" and "OFFER: bike (Bethel)" collapse to one.
+      const store = {
+        1: {
+          id: 1,
+          fromuser: 5,
+          type: 'Offer',
+          subject: 'OFFER: bike (Bethnal Green)',
+          groups: [{ groupid: 20 }],
+        },
+        2: {
+          id: 2,
+          fromuser: 5,
+          type: 'Offer',
+          subject: 'OFFER: bike (Bethel)',
+          groups: [{ groupid: 10 }],
+        },
+      }
+
+      const stripLocation = (s) => s.replace(/\s*\([^)]*\)\s*$/, '').trimEnd()
+
+      const ret = []
+      const dups = []
+      ;[{ id: 1 }, { id: 2 }].forEach((m) => {
+        const message = store[m.id]
+        let key = message.fromuser + '|' + stripLocation(message.subject)
+        const p = message.subject.indexOf(':')
+        if (p !== -1) {
+          key =
+            message.fromuser +
+            '|' +
+            message.type +
+            stripLocation(message.subject.substring(p))
+        }
+        if (!(key in dups)) {
+          ret.push(m)
+          dups[key] = m.id
+        }
+      })
+
+      expect(ret).toHaveLength(1)
     })
 
     it('keeps firstSeenMessage over duplicates', () => {

@@ -95,7 +95,8 @@ const slide = ref(0)
 
 const { width, height } = useElementSize(wrapper)
 
-// Make width and height <= 3000 as that's an Uploadcare limit.
+// Never ask for more than 3000 in either direction - past that we are paying for bandwidth
+// nobody can see.
 if (width > 3000) {
   width.value = 3000
 }

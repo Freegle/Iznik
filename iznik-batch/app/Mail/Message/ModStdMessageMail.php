@@ -72,6 +72,14 @@ class ModStdMessageMail extends MjmlMailable
         return $this->stdSubject;
     }
 
+    /**
+     * Transactional - a moderator writing to them about their own post - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->recipientUserId;

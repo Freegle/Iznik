@@ -1,15 +1,37 @@
 package message
 
 import (
+	"sort"
+	"strings"
+
+	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+// markSeenChunk bounds how many message ids go into a single INSERT statement. "Mark seen" on a
+// busy browse feed can pass hundreds of ids; one INSERT per id (the old behaviour) meant one DB
+// round-trip per unread post, so the call scaled linearly with the unread count and felt slow.
+// Batching into multi-row INSERTs collapses that to a handful of round-trips.
+//
+// The chunk is kept moderate rather than "all in one" deliberately for Galera (Percona XtraDB
+// Cluster): a multi-row INSERT is a single transaction, so a certification conflict rolls the
+// WHOLE statement back. A moderate chunk bounds that blast radius and the lock footprint while
+// still cutting round-trips ~100x for a typical feed. It also stays well under max_allowed_packet
+// and the placeholder limit.
+const markSeenChunk = 100
 
 // MarkSeenRequest is the request body for marking messages as seen.
 type MarkSeenRequest struct {
 	IDs []uint64 `json:"ids"`
+	// Source optionally tags where these impressions came from (e.g.
+	// "similar_posts"), so a recommendation widget's impressions can be counted.
+	// Written only when the row is first created (first-touch), like pageview.
+	Source *string `json:"source"`
 }
 
 // MarkSeen marks messages as seen (viewed) by the authenticated user.
@@ -41,15 +63,128 @@ func MarkSeen(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Insert a View record for each message. ON DUPLICATE KEY UPDATE
-	// increments the count and updates the timestamp.
-	for _, msgID := range req.IDs {
-		db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1",
-			msgID, myid, utils.MESSAGE_LIKES_VIEW)
+	// Sort + de-duplicate the ids. De-dup guards against a caller repeating an id (which would
+	// otherwise appear twice in one multi-row INSERT and hit the ON DUPLICATE KEY UPDATE against
+	// its own earlier row within the same statement). Sorting makes every mark-seen acquire row
+	// locks in a consistent (ascending) order, so two concurrent same-user mark-seens can't
+	// deadlock by grabbing the same rows in opposite orders.
+	ids := dedupeSortedIDs(req.IDs)
+
+	// Insert a 'View' record per message (marks it "seen" for list de-duplication).
+	// pageview=0 marks this as a list-scroll impression, distinct from a genuine
+	// page-open (handleView writes 1). Both pageview and source are set only when
+	// this INSERT *creates* the row; the ON DUPLICATE KEY UPDATE deliberately does
+	// NOT touch them, so an existing genuine view (pageview 1) or a source already
+	// recorded by a first-touch is never downgraded/overwritten (first-touch wins,
+	// matching handleView's COALESCE(?, source) semantics).
+	//
+	// The rows are batched into multi-row INSERTs (markSeenChunk at a time) rather than one
+	// statement per id, so marking a large unread feed as seen is a few round-trips instead of
+	// one per post. The ON DUPLICATE KEY UPDATE clause is per-conflicting-row, so batching
+	// preserves the exact per-message semantics of the old loop.
+	var source interface{}
+	if req.Source != nil && *req.Source != "" {
+		source = *req.Source
 	}
+
+	for start := 0; start < len(ids); start += markSeenChunk {
+		end := start + markSeenChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+
+		// RetryExec retries transient connection/WSREP errors (Galera node not yet synced). It
+		// does NOT retry deadlocks/lock-timeouts - a Galera certification conflict rolls the whole
+		// multi-row statement back. If that happens we fall back to per-row inserts for this chunk
+		// so the rest still land: each is its own tiny autocommit transaction that certifies
+		// independently (exactly the old behaviour), degrading gracefully instead of losing the
+		// whole chunk. In practice this is rare: mark-seen rows are keyed (msgid, userid, type),
+		// so different users never conflict; only concurrent same-user mark-seens can.
+		if err := insertViewBatch(db, chunk, myid, source); err != nil && database.IsDeadlockOrLockTimeout(err) {
+			for _, msgID := range chunk {
+				// No id is
+				// read back here, so this is a plain ODKU upsert - no
+				// LAST_INSERT_ID/WithResult needed. Uses database.RetryGorm
+				// rather than a bare GORM chain so this per-row degrade-
+				// gracefully fallback (only reached after a deadlock in the
+				// batch insert) keeps the same retry-on-transient-connection-
+				// error behaviour RetryExec gave it; the builder closure is
+				// re-run fresh on every attempt since a *gorm.DB accumulates
+				// statement state.
+				database.RetryGorm(db, "markseen fallback", func(tx *gorm.DB) *gorm.DB {
+					return tx.Table("messages_likes").Clauses(clause.OnConflict{
+						DoUpdates: clause.Assignments(map[string]interface{}{
+							"timestamp": gorm.Expr("NOW()"),
+							"count":     gorm.Expr("count + 1"),
+						}),
+					}).Create(map[string]interface{}{
+						"msgid":    msgID,
+						"userid":   myid,
+						"type":     utils.MESSAGE_LIKES_VIEW,
+						"pageview": gorm.Expr("0"),
+						"source":   source,
+					})
+				})
+			}
+		}
+	}
+
+	// The badge count is remembered for a few seconds (see the browsecount package). Marking
+	// posts seen is the one change that must show at once, because the badge dropping is how
+	// the member knows it worked, so forget their count here rather than let it stand.
+	browsecount.Invalidate(myid)
 
 	return c.JSON(fiber.Map{
 		"success": true,
 	})
+}
+
+// buildInsertViewBatchQuery is a pure SQL-builder: no database needed - see
+// message_list.go's buildMTUnionAllMsgIDQuery for the established
+// convention this follows. Extracted from insertViewBatch (a pure
+// behaviour-preserving refactor - insertViewBatch's runtime SQL and
+// database.RetryExec call are unchanged) so the number-of-VALUE-tuples
+// parametrization (n = len(chunk), 1..markSeenChunk) can be proven correct
+// for any n via the retired ormharness's AssertGoldenParametrizedShape
+// (markseen_tier9_test.go, removed in d22ba1d6c) rather than sampled at one
+// or two chunk sizes -
+// see keep-raw site 40368b5c844a and
+// plans/active/orm-keepraw-adversarial-review.md §4.
+func buildInsertViewBatchQuery(chunk []uint64, myid uint64, source interface{}) (string, []interface{}) {
+	placeholders := make([]string, len(chunk))
+	args := make([]interface{}, 0, len(chunk)*4)
+	for i, msgID := range chunk {
+		placeholders[i] = "(?, ?, ?, 0, ?)"
+		args = append(args, msgID, myid, utils.MESSAGE_LIKES_VIEW, source)
+	}
+	return "INSERT INTO messages_likes (msgid, userid, type, pageview, source) VALUES " +
+		strings.Join(placeholders, ",") +
+		" ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1", args
+}
+
+// insertViewBatch inserts (or bumps) a 'View' row for every msgid in the chunk in a single
+// multi-row INSERT ... ON DUPLICATE KEY UPDATE, retrying transient connection/WSREP errors.
+// source is written only when the INSERT creates the row (first-touch); it is not overwritten
+// by the ON DUPLICATE KEY UPDATE clause.
+func insertViewBatch(db *gorm.DB, chunk []uint64, myid uint64, source interface{}) error {
+	sql, args := buildInsertViewBatchQuery(chunk, myid, source)
+	return database.RetryExec(db, sql, args...)
+}
+
+// dedupeSortedIDs returns the ids sorted ascending with duplicates removed.
+func dedupeSortedIDs(in []uint64) []uint64 {
+	if len(in) < 2 {
+		return in
+	}
+	sorted := make([]uint64, len(in))
+	copy(sorted, in)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	out := sorted[:1]
+	for _, v := range sorted[1:] {
+		if v != out[len(out)-1] {
+			out = append(out, v)
+		}
+	}
+	return out
 }

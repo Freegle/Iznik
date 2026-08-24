@@ -13,7 +13,9 @@
           @show-email-confirm-modal="showEmailConfirmModal = true"
         />
         <AddressBookSection @show-address-modal="showAddressModal = true" />
+        <FeedSettingsSection @update="updateMe" />
         <EmailSettingsSection @update="updateMe" />
+        <AppNotificationsSection @update="updateMe" />
         <OtherSettingsSection @update="updateMe" />
       </div>
 
@@ -49,7 +51,9 @@ import { buildHead } from '~/composables/useBuildHead'
 import ProfileSection from '~/components/settings/ProfileSection.vue'
 import AccountSection from '~/components/settings/AccountSection.vue'
 import AddressBookSection from '~/components/settings/AddressBookSection.vue'
+import FeedSettingsSection from '~/components/settings/FeedSettingsSection.vue'
 import EmailSettingsSection from '~/components/settings/EmailSettingsSection.vue'
+import AppNotificationsSection from '~/components/settings/AppNotificationsSection.vue'
 import OtherSettingsSection from '~/components/settings/OtherSettingsSection.vue'
 
 definePageMeta({
@@ -108,26 +112,28 @@ onMounted(async () => {
 })
 
 // Define async components for modals to improve performance
-const EmailConfirmModal = defineAsyncComponent(() =>
-  import('~/components/EmailConfirmModal')
+const EmailConfirmModal = defineAsyncComponent(
+  () => import('~/components/EmailConfirmModal')
 )
-const AddressModal = defineAsyncComponent(() =>
-  import('~/components/AddressModal')
+const AddressModal = defineAsyncComponent(
+  () => import('~/components/AddressModal')
 )
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
+const ProfileModal = defineAsyncComponent(
+  () => import('~/components/ProfileModal')
 )
 </script>
 
 <style scoped lang="scss">
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/navbar.scss';
 
 .settings-page {
   min-height: 100vh;
   background: $color-gray--lighter;
+  padding-bottom: $page-bottom-padding;
 }
 
 .settings-content {

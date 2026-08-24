@@ -91,12 +91,14 @@ describe('ModGroupSelect', () => {
                 :disabled="disabled"
                 @change="$emit('update:modelValue', parseInt($event.target.value))"
               >
-                <option v-for="opt in options" :key="opt.value" :value="opt.value">
-                  {{ opt.text }}
-                </option>
+                <slot />
               </select>
             `,
-            props: ['modelValue', 'options', 'size', 'disabled'],
+            props: ['modelValue', 'size', 'disabled'],
+          },
+          'b-form-select-option': {
+            template: '<option :value="value"><slot /></option>',
+            props: ['value'],
           },
         },
       },
@@ -297,6 +299,39 @@ describe('ModGroupSelect', () => {
       const options = wrapper.vm.groupOptions
       const gammaOption = options.find((o) => o.value === 3)
       expect(gammaOption.text).toContain('- backup')
+    })
+
+    it('colours work counts red for active groups', () => {
+      const wrapper = mountComponent({ work: ['pending'] })
+      const options = wrapper.vm.groupOptions
+      const alphaOption = options.find((o) => o.value === 1)
+      expect(alphaOption.class).toBe('text-danger')
+    })
+
+    it('colours work counts blue for backup groups', () => {
+      mockModGroupStore.list = {
+        ...sampleGroups,
+        3: { ...sampleGroups[3], work: { pending: 4 } },
+      }
+      const wrapper = mountComponent({ work: ['pending'] })
+      const options = wrapper.vm.groupOptions
+      const gammaOption = options.find((o) => o.value === 3)
+      expect(gammaOption.text).toBe('Gamma Group (4) - backup')
+      expect(gammaOption.class).toBe('text-info')
+    })
+
+    it('does not colour groups without work', () => {
+      const wrapper = mountComponent({ work: ['pending'] })
+      const options = wrapper.vm.groupOptions
+      const deltaOption = options.find((o) => o.value === 4)
+      expect(deltaOption.class).toBeNull()
+    })
+
+    it('applies the colour class to the rendered option', () => {
+      const wrapper = mountComponent({ work: ['pending'] })
+      const domOptions = wrapper.findAll('option')
+      const alpha = domOptions.find((o) => o.text().includes('Alpha Group'))
+      expect(alpha.classes()).toContain('text-danger')
     })
 
     it('sets selected property correctly for selected group', () => {

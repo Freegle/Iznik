@@ -24,6 +24,17 @@
 // behaviour. Must be set BEFORE the adapter import.
 if (!process.env.CLAUDECODE) process.env.CLAUDECODE = '1'
 
+// Force the brain + delegate `claude` calls onto the Claude Code SUBSCRIPTION
+// session, never a standalone API key. ../.env sets ANTHROPIC_API_KEY (for other
+// tools) and run-loop.sh exports it; if it reaches the claude-agent-sdk brain
+// call or the delegate_to_coder spawns (which pass no custom env, so they
+// inherit this process's), `claude` bills THAT key instead of the session — and
+// once its prepaid balance is exhausted every LLM call returns "Credit balance
+// is too low" and the FSM silently does nothing (iterations complete, 0 PRs).
+// Deleting it here (before the adapter import / any spawn) makes claude fall
+// back to the logged-in Max subscription. Belt-and-suspenders with run-loop.sh.
+if (process.env.ANTHROPIC_API_KEY) delete process.env.ANTHROPIC_API_KEY
+
 import { readFile, writeFile, unlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -44,6 +55,10 @@ import {
 import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 
 import { actions } from './actions/index.js'
+import { sanitizeLLMDecision } from './llm-json.js'
+import { ensureUsableInstanceStore } from './instance-store.js'
+import { pruneInstances } from './prune-instances.js'
+import { partitionFailedChecks } from './coverage-checks.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
 import { renderAllViews } from './db/views.js'
 import { putStatusPost } from './db/discourse-status.js'
@@ -53,6 +68,9 @@ const exec = promisify(execFile)
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const WORKFLOW_PATH = resolve(__dirname, '../workflow.json')
 const INSTANCE_STORE = resolve(__dirname, '../instance-store.json')
+// How many recent workflow instances to retain in the store. We never resume an old one,
+// so this is purely a debugging window; the rest are pruned each run to bound the file.
+const KEEP_INSTANCES = 20
 
 const MAX_STEPS = 40 // hard cap; real iterations should settle in ~15-25
 
@@ -152,12 +170,14 @@ interface RedPRCheck {
  * it force-transitions back to ROUTER whenever any redPR exists. The LLM cannot
  * escape this — there's no prompt to persuade.
  *
- * Pass `terminalPRNumbers` to exclude PRs the FSM has given up on (loop-breaker
- * terminal records). Without this, the hard-invariant ping-pongs with ROUTER:
- * ROUTER sees terminal PR and skips it → past the gate → hard-invariant re-adds it →
- * ROUTER skips it again → infinite oscillation.
+ * Pass `skipPRNumbers` to exclude PRs that CI_ROUTER will not pick this
+ * iteration: loop-breaker terminal records, and PRs whose fix attempt already
+ * ran without pushing anything. This set MUST track the router's own skip rule
+ * in ci_router_decide — if the driver drags back a PR the router then skips,
+ * the two oscillate: ROUTER skips it → past the gate → hard-invariant re-adds
+ * it → ROUTER skips it again, burning the step budget on nothing.
  */
-async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promise<RedPRCheck> {
+async function realRedPRCheck(skipPRNumbers: Set<number> = new Set()): Promise<RedPRCheck> {
   try {
     const { stdout: listOut } = await exec('gh', [
       'pr', 'list',
@@ -168,7 +188,7 @@ async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promi
       '--json', 'number,title,url',
     ], { maxBuffer: 10 * 1024 * 1024 })
     const rawPRs = JSON.parse(listOut) as Array<{ number: number; title: string; url: string }>
-    const prs = rawPRs.filter(p => !terminalPRNumbers.has(p.number))
+    const prs = rawPRs.filter(p => !skipPRNumbers.has(p.number))
     const redPRs: RedPRCheck['redPRs'] = []
     for (const pr of prs) {
       // `gh pr checks` uses exit code as a SIGNAL: 0=all green, 1=has failures,
@@ -215,69 +235,19 @@ async function realRedPRCheck(terminalPRNumbers: Set<number> = new Set()): Promi
           failed.push({ context: name, state, url })
         }
       }
-      if (failed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
+      if (failed.length > 0) {
+        // A PR red ONLY on Coveralls coverage-delta checks (tests pass) is not a
+        // hard CI failure — the coverage booster handles it. Don't force the
+        // instance back to CHECK_CI for coverage jitter.
+        const { realFailed } = partitionFailedChecks(failed)
+        if (realFailed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
+      }
     }
     return { redPRs }
   } catch (err: any) {
     console.error('[red-pr] list failed:', err.message)
     return { redPRs: [] }
   }
-}
-
-/**
- * Repair common Claude JSON shape errors before ai-flower validates.
- *
- * Seen in the wild:
- *   - `contextUpdates: "{...}"` (stringified object) — validator wants object
- *   - `actions: "[{...}]"` (stringified array) — validator wants array
- *   - leading/trailing markdown fences (ai-flower strips these, but only the
- *     first and last — if Claude wraps in ```json ... ``` twice it breaks)
- *
- * We only rewrite fields we're confident about. If parsing fails at any point,
- * return the input unchanged so ai-flower's own error surfaces.
- */
-function sanitizeLLMDecision(raw: string): string {
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*/m, '')
-    .replace(/\s*```\s*$/m, '')
-    .trim()
-  let parsed: any
-  try {
-    parsed = JSON.parse(cleaned)
-  } catch {
-    return raw
-  }
-  if (typeof parsed !== 'object' || parsed === null) return raw
-
-  let changed = false
-  if (typeof parsed.contextUpdates === 'string') {
-    try {
-      const inner = JSON.parse(parsed.contextUpdates)
-      if (typeof inner === 'object' && inner !== null) {
-        parsed.contextUpdates = inner
-        changed = true
-      }
-    } catch { /* leave as-is, validator will reject */ }
-  }
-  if (parsed.contextUpdates === undefined || parsed.contextUpdates === null) {
-    parsed.contextUpdates = {}
-    changed = true
-  }
-  if (typeof parsed.actions === 'string') {
-    try {
-      const inner = JSON.parse(parsed.actions)
-      if (Array.isArray(inner)) {
-        parsed.actions = inner
-        changed = true
-      }
-    } catch { /* leave */ }
-  }
-  if (parsed.actions === undefined) {
-    parsed.actions = []
-    changed = true
-  }
-
-  return changed ? JSON.stringify(parsed) : raw
 }
 
 function logInstance(i: WorkflowInstance, note: string) {
@@ -317,6 +287,13 @@ async function main() {
   const releaseLock = await acquireDriverLock()
 
   const definition = JSON.parse(await readFile(WORKFLOW_PATH, 'utf8')) as WorkflowDefinition
+
+  // An interrupted write leaves this file empty, which ai-flower cannot load.
+  // Reset rather than abort: monitor.db holds the durable history.
+  const repair = ensureUsableInstanceStore(INSTANCE_STORE)
+  if (repair.repaired) {
+    out(`⚠ instance store unusable (${repair.reason}) — reset it; previous file kept at ${repair.backupPath}`)
+  }
 
   const storage = new JSONFileStorage(INSTANCE_STORE)
   await storage.saveWorkflow(definition)
@@ -407,6 +384,19 @@ async function main() {
     actions,
     maxLLMRetries: 2,
   })
+
+  // Bound the instance store BEFORE we add this run's instance. We never resume an old
+  // instance (see below), so completed/errored ones pile up in instance-store.json - it
+  // had bloated to ~100MB / 1165 instances, which slows every load+save and eventually
+  // killed the loop. Keep the most recent few for debugging; delete the rest. Non-fatal.
+  try {
+    const pruned = await pruneInstances(engine, storage, KEEP_INSTANCES)
+    if (pruned > 0) {
+      out(`pruned ${pruned} old workflow instances (kept ${KEEP_INSTANCES})`)
+    }
+  } catch (e: any) {
+    outWarn(`instance prune failed (non-fatal): ${e?.message ?? e}`)
+  }
 
   // Fresh instance per driver run — iterations should not resume.
   const iterationStartTs = new Date().toISOString()
@@ -815,9 +805,14 @@ async function main() {
       const postRed = await engine.getInstance(instance.id)
       if (STATES_PAST_GATE.has(postRed.currentState)) {
         const ctxRed: any = postRed.context ?? {}
-        const attemptsRed: Array<{ prNumber: number; terminal?: boolean }> = Array.isArray(ctxRed.openPRFixAttempts) ? ctxRed.openPRFixAttempts : []
-        const terminalSet = new Set(attemptsRed.filter(a => a.terminal).map(a => a.prNumber))
-        const red = await realRedPRCheck(terminalSet)
+        const attemptsRed: Array<{ prNumber: number; terminal?: boolean; pushed?: boolean }> = Array.isArray(ctxRed.openPRFixAttempts) ? ctxRed.openPRFixAttempts : []
+        // Mirror ci_router_decide's skip rule exactly: a PR is out of play for
+        // this iteration once its attempt is terminal OR pushed nothing. Only
+        // suppressing terminal records here would oscillate against the router.
+        const skipSet = new Set(
+          attemptsRed.filter(a => a.terminal || a.pushed !== true).map(a => a.prNumber)
+        )
+        const red = await realRedPRCheck(skipSet)
         if (red.redPRs.length > 0) {
           const summary = red.redPRs.map(p => `#${p.number} (${p.failedChecks.length} red)`).join(', ')
           outWarn(`red tests on ${summary} — returning to check automated tests`)
@@ -840,7 +835,19 @@ async function main() {
       // straight to PARALLEL_ANALYZE_AND_FIX so Discourse parsing still runs.
       if (process.env.PARSE_ONLY === '1') {
         const parseOnlyNow = await engine.getInstance(instance.id)
-        if (parseOnlyNow.currentState === 'FIX_MASTER_CI') {
+        // Judge the state we are HEADED FOR, not only the one we are sitting
+        // in. A step's action returns its target as `_transition`, and reading
+        // currentState alone let a PARSE_ONLY run walk straight into
+        // PARALLEL_FIX_BUGS and dispatch real fix delegates: WORK_ROUTER
+        // returned _transition PARALLEL_FIX_BUGS, currentState still read as
+        // an analysis state, the stop never fired. Considering both is correct
+        // whenever the engine applies the transition.
+        const proposedNext: string[] = result.actionsExecuted
+          .map((a: any) => a?.result?._transition)
+          .filter((t: any): t is string => typeof t === 'string' && t.length > 0)
+        const candidateStates = [parseOnlyNow.currentState, ...proposedNext]
+
+        if (candidateStates.includes('FIX_MASTER_CI')) {
           out('PARSE_ONLY: master red but skipping fix — forcing straight to Discourse analysis')
           await engine.forceTransition(instance.id, 'PARALLEL_ANALYZE_AND_FIX', 'PARSE_ONLY: bypassing FIX_MASTER_CI')
           continue
@@ -849,8 +856,9 @@ async function main() {
           'LOAD_STATE', 'CHECK_CI', 'CI_ROUTER',
           'PARALLEL_ANALYZE_AND_FIX', 'COLLATE_RESULTS', 'WORK_ROUTER',
         ])
-        if (!ANALYSIS_STATES.has(parseOnlyNow.currentState)) {
-          out(`PARSE_ONLY: stopping before ${humanizeState(parseOnlyNow.currentState)}`)
+        const offender = candidateStates.find(s => !ANALYSIS_STATES.has(s))
+        if (offender) {
+          out(`PARSE_ONLY: stopping before ${humanizeState(offender)}`)
           break
         }
       }

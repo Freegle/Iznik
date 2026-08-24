@@ -18,7 +18,7 @@
         class="position-relative me-md-2 me-xl-0"
         :class="{ 'text-center small': !smallScreen }"
       >
-        <v-icon icon="bell" class="fa-2 notification-list__icon" />
+        <v-icon icon="bell" class="notification-list__icon" />
         <b-badge
           v-if="unreadNotificationCount"
           variant="danger"
@@ -34,8 +34,16 @@
       link-class="notification-list__item"
     >
       <div class="d-flex justify-content-end">
-        <b-button variant="secondary" size="sm" @click="markAllRead">
+        <b-button
+          variant="white"
+          size="sm"
+          class="btn-mark-read"
+          @click="markAllRead"
+        >
           Mark all read
+          <b-badge v-if="unreadNotificationCount" variant="danger" class="ms-1">
+            {{ unreadNotificationCount }}
+          </b-badge>
         </b-button>
       </div>
     </b-dropdown-item>
@@ -165,7 +173,13 @@ const showAboutMe = () => {
 }
 
 .notification-list__icon {
+  /* Both dimensions have to be pinned. FontAwesome sets an explicit
+     width: var(--fa-width, 1.25em) on .svg-inline--fa, so a height on its own
+     leaves the icon at the default width and the glyph shrinks to fit that
+     instead of scaling to the height. 32px matches the fa-2x icons either side
+     of it in the navbar. */
   height: 32px;
+  width: 32px;
   margin-bottom: 0;
 }
 

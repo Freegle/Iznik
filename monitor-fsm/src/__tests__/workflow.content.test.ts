@@ -158,20 +158,23 @@ describe('driver.ts — DIAGNOSE_BUG re-entry stale clearing', () => {
     expect(driverTs).toContain("current.currentState === 'DIAGNOSE_BUG'")
   })
 
+  // Use lastIndexOf on the bare condition — the loop-breaker block references
+  // `currentState === 'DIAGNOSE_BUG'` earlier in the file, so the *last*
+  // occurrence is the re-entry stale-clearing block we want to assert on.
   it('checks diagnosisMismatchReason before clearing', () => {
-    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const idx = driverTs.lastIndexOf("current.currentState === 'DIAGNOSE_BUG'")
     const block = driverTs.slice(idx, idx + 600)
     expect(block).toContain('diagnosisMismatchReason')
   })
 
   it('clears _action_search_code on mismatch re-entry', () => {
-    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const idx = driverTs.lastIndexOf("current.currentState === 'DIAGNOSE_BUG'")
     const block = driverTs.slice(idx, idx + 600)
     expect(block).toContain('_action_search_code: null')
   })
 
   it('clears _action_check_existing_prs on mismatch re-entry', () => {
-    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const idx = driverTs.lastIndexOf("current.currentState === 'DIAGNOSE_BUG'")
     const block = driverTs.slice(idx, idx + 600)
     expect(block).toContain('_action_check_existing_prs: null')
   })
@@ -235,10 +238,15 @@ describe('VERIFY_DISCOURSE_BATCH — close_extra_prs', () => {
     expect(prompt).toContain('iterationStartTs')
   })
 
-  it('calls close_extra_prs before adversarial_review_pr', () => {
+  it('calls close_extra_prs after adversarial_review_pr (batch design)', () => {
+    // In the parallel batch flow, each successful bug's PR is created and
+    // adversarially reviewed per-bug, THEN close_extra_prs runs ONCE at the end
+    // with the full set of kept PR numbers (expectedPrNumbers). It must therefore
+    // come AFTER the per-bug review, not before.
     const closeIdx = prompt.indexOf('close_extra_prs')
     const reviewIdx = prompt.indexOf('adversarial_review_pr')
-    expect(closeIdx).toBeLessThan(reviewIdx)
+    expect(reviewIdx).toBeGreaterThan(0)
+    expect(closeIdx).toBeGreaterThan(reviewIdx)
   })
 })
 
@@ -261,7 +269,7 @@ describe('delegate_to_coder boilerplate — PUSH_VERIFIED marker', () => {
   })
 
   it('instructs the delegate to verify via git log origin/<branch>', () => {
-    expect(actionsTs).toContain('git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H')
+    expect(actionsTs).toContain('git log origin/<branch> -1 --format=%H')
   })
 
   it('instructs the delegate to emit DELEGATE_FAILED= if verification fails', () => {
@@ -288,5 +296,222 @@ describe('delegate_to_coder boilerplate — PUSH_VERIFIED marker', () => {
     // First PV < first OM, second PV < second OM
     expect(pvPositions[0]).toBeLessThan(omPositions[0])
     expect(pvPositions[1]).toBeLessThan(omPositions[1])
+  })
+})
+
+// ── Topic discovery must not lose slow threads ────────────────────────────
+//
+// discover_active_topics is the ONLY thing that decides which Discourse topics
+// get a triage delegate (workflow.json lists it, and PARALLEL_FIX_BUGS builds one
+// task per topic with hasNew). It used to fetch a single page of /latest.json, so a
+// topic that was posted to and then slipped below the top ~30 by activity before the
+// next run was never fetched, its cursor never advanced, and the member's report was
+// dropped silently. Seen live: topic 9481 ("Testing please") sat at cursor 630 while
+// members posted up to 635.
+
+describe('discover_active_topics — paginated activity scan', () => {
+  it('walks several pages of /latest.json rather than one', () => {
+    expect(actionsTs).toContain('latest.json?order=activity&page=')
+    expect(actionsTs).toContain('for page in range(')
+  })
+
+  it('no longer relies on a single per_page fetch for discovery', () => {
+    // Scoped to this action's own body: the unused fetch_new_posts action further up
+    // the file still has the old single-page fetch. It is dead code (nothing in
+    // workflow.json or driver.ts calls it), so it cannot drop reports - but it does
+    // still contain the string, so a whole-file assertion here would be misleading.
+    const start = actionsTs.indexOf("name: 'discover_active_topics'")
+    expect(start).toBeGreaterThan(-1)
+    const next = actionsTs.indexOf("name: '", start + 40)
+    const body = actionsTs.slice(start, next === -1 ? undefined : next)
+    expect(body).not.toContain('per_page=')
+    expect(body).toContain('latest.json?order=activity&page=')
+  })
+
+  it('exposes the page count as a tunable parameter', () => {
+    expect(actionsTs).toContain('latestPages')
+  })
+
+  it('de-dupes topics seen on more than one page', () => {
+    expect(actionsTs).toContain('seen[t[\'id\']]')
+  })
+
+  it('stops early when a page comes back empty', () => {
+    expect(actionsTs).toMatch(/if not batch:\s*\n\s*break/)
+  })
+})
+
+// ── Fix agents must look for earlier attempts at the same bug ─────────────
+//
+// The monitor's own pr table only records PRs IT opened, so a fix that a human
+// wrote and closed is invisible to it. messages.heldby was consequently "fixed"
+// five times across topics 9904 and 9970 without the real cause being addressed.
+
+describe('PARALLEL_FIX_BUGS prompt — prior-attempts guard', () => {
+  const prompt: string = workflow.states.PARALLEL_FIX_BUGS.prompt
+
+  it('has a prior-attempts step', () => {
+    expect(prompt).toContain('PRIOR-ATTEMPTS CHECK')
+  })
+
+  it('runs before the diagnose step, not after', () => {
+    expect(prompt.indexOf('PRIOR-ATTEMPTS CHECK')).toBeLessThan(
+      prompt.indexOf('STEP 2 — DIAGNOSE')
+    )
+  })
+
+  it('searches GitHub for closed PRs, not just the monitor DB', () => {
+    expect(prompt).toContain('gh pr list --repo Freegle/Iznik --state all')
+  })
+
+  it('treats a closed-unmerged prior attempt as the signal to read', () => {
+    expect(prompt).toContain('CLOSED-but-NOT-MERGED')
+  })
+
+  it('requires the PR description to record what it found either way', () => {
+    expect(prompt).toContain('No prior attempt found for')
+    expect(prompt).toContain('Prior attempt(s): #')
+  })
+
+  it('tells the agent a repeated attempt means widening past the reported surface', () => {
+    expect(prompt).toContain('Laravel batch jobs')
+  })
+})
+
+describe('PARALLEL_ANALYZE_AND_FIX prompt — the PR fix delegate gets one turn', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  // A delegate once did the whole diagnosis, kicked the Laravel and Go suites
+  // off in the background, then ended its turn to "wait for the notifications".
+  // A `claude -p` one-shot has no next turn, so it exited having pushed
+  // nothing — which cost the focus PR an attempt and, before the router fix,
+  // starved Discourse triage for the rest of the iteration.
+  it('tells the delegate it has exactly one turn', () => {
+    expect(prompt).toContain('YOU GET EXACTLY ONE TURN')
+  })
+
+  it('forbids ending the turn while background work is pending', () => {
+    expect(prompt).toContain('never end your turn while anything is pending')
+  })
+
+  it('requires blocking on background commands within the same turn', () => {
+    expect(prompt).toContain('block until it finishes inside this same turn')
+  })
+
+  it('makes pushing before finishing the explicit bar', () => {
+    expect(prompt).toContain('PUSH BEFORE YOU FINISH')
+  })
+
+  it('warns that a run without a push counts as a failed attempt', () => {
+    expect(prompt).toContain('counts as a failed attempt')
+  })
+})
+
+describe('driver.ts — red-CI invariant tracks the router skip rule', () => {
+  const driverTs = readFileSync(join(__dirname, '../driver.ts'), 'utf8')
+
+  // The hard invariant drags any red PR back to CHECK_CI. Its suppression set
+  // must match ci_router_decide's skip rule, or the two oscillate: the router
+  // skips a PR that pushed nothing, the instance goes past the gate, the
+  // invariant re-adds it, the router skips it again — until the step cap.
+  it('suppresses PRs whose attempt pushed nothing, not just terminal records', () => {
+    const idx = driverTs.indexOf('const attemptsRed')
+    expect(idx).toBeGreaterThan(-1)
+    const block = driverTs.slice(idx, idx + 700)
+    expect(block).toContain('a.terminal || a.pushed !== true')
+  })
+
+  it('feeds that skip set into the red-PR check', () => {
+    expect(driverTs).toContain('realRedPRCheck(skipSet)')
+  })
+})
+
+describe('actions.ts — ci_router_decide budget and skip rules', () => {
+  it('drops a PR from re-picking once its attempt pushed nothing', () => {
+    const idx = actionsTs.indexOf('const attemptedNums')
+    expect(idx).toBeGreaterThan(-1)
+    const block = actionsTs.slice(idx, idx + 300)
+    expect(block).toContain('a.terminal || a.pushed !== true')
+  })
+
+  it('charges the fix budget per dispatch rather than per router visit', () => {
+    expect(actionsTs).toContain('pr_fix_dispatched_')
+    expect(actionsTs).toContain('already dispatched this iteration')
+  })
+
+  it('clears the dispatch marker when a PR goes green', () => {
+    const idx = actionsTs.indexOf('is green — reset fix attempt counter')
+    expect(idx).toBeGreaterThan(-1)
+    expect(actionsTs.slice(idx - 400, idx)).toContain('pr_fix_dispatched_')
+  })
+})
+
+describe('PARALLEL_ANALYZE_AND_FIX prompt — triage must emit the post number', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  // persist_classifications keys discourse_bug on (topic, post) and silently
+  // skips anything missing either. On 2026-08-06 the triage delegate returned
+  // Michael's ModTools report with no post field, so WORK_ROUTER dispatched
+  // "10010.undefined" and the bug was never recorded.
+  it('requires the post number as a classification field', () => {
+    const idx = prompt.indexOf('STEP 6. Classify each fetched post')
+    expect(idx).toBeGreaterThan(-1)
+    const block = prompt.slice(idx, idx + 700)
+    expect(block).toContain('- post:')
+    expect(block).toContain('post_stream.posts[].post_number')
+  })
+
+  it('requires the topic id too', () => {
+    const idx = prompt.indexOf('STEP 6. Classify each fetched post')
+    expect(prompt.slice(idx, idx + 700)).toContain('- topic:')
+  })
+
+  it('spells out that a classification without it is discarded', () => {
+    const idx = prompt.indexOf('STEP 6. Classify each fetched post')
+    expect(prompt.slice(idx, idx + 700)).toContain('DISCARDED')
+  })
+})
+
+describe('driver.ts — PARSE_ONLY stops before fixing states', () => {
+  const driverTs = readFileSync(join(__dirname, '../driver.ts'), 'utf8')
+
+  // PARSE_ONLY=1 is meant to end after WORK_ROUTER. On 2026-08-06 a PARSE_ONLY
+  // run went on to enter PARALLEL_FIX_BUGS and launch three real fix delegates,
+  // because the guard only inspected currentState while WORK_ROUTER's action
+  // had returned _transition PARALLEL_FIX_BUGS.
+  it('considers transitions the step proposed, not just currentState', () => {
+    const idx = driverTs.indexOf('const proposedNext')
+    expect(idx).toBeGreaterThan(-1)
+    const block = driverTs.slice(idx, idx + 500)
+    expect(block).toContain('_transition')
+    expect(block).toContain('candidateStates')
+  })
+
+  it('stops on any candidate state outside the analysis set', () => {
+    expect(driverTs).toContain('const offender = candidateStates.find(s => !ANALYSIS_STATES.has(s))')
+  })
+
+  it('still bypasses FIX_MASTER_CI rather than stopping on it', () => {
+    expect(driverTs).toContain("candidateStates.includes('FIX_MASTER_CI')")
+  })
+})
+
+describe('PARALLEL_ANALYZE_AND_FIX prompt — Discourse auth header', () => {
+  const prompt: string = workflow.states.PARALLEL_ANALYZE_AND_FIX.prompt
+
+  // Verified live 2026-08-06: `Api-Key` alone returns 200, while
+  // `User-Api-Key` + `Api-Username` returns 403. Six of twenty-one triage
+  // delegates lost their topic entirely to that 403.
+  it('uses the Api-Key header for topic fetches', () => {
+    expect(prompt).toContain('curl -s -H "Api-Key: <key>"')
+  })
+
+  it('never tells a delegate to send the rejected User-Api-Key pair', () => {
+    expect(prompt).not.toContain('-H "User-Api-Key')
+    expect(prompt).not.toContain('Api-Username: Edward_Hibbert')
+  })
+
+  it('warns at the key-fetch step that the pair is rejected', () => {
+    expect(prompt).toContain('REJECTED with HTTP 403')
   })
 })

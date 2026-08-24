@@ -15,6 +15,8 @@ vi.mock('~/composables/useMe', () => ({
 const mockFetchReview = vi.fn()
 const mockRegenerate = vi.fn()
 const mockAccept = vi.fn()
+const mockKeep = vi.fn()
+const mockSuppress = vi.fn()
 const mockImages = ref([])
 const mockLoading = ref(false)
 
@@ -25,6 +27,8 @@ vi.mock('~/modtools/composables/useAIImages', () => ({
     fetchReview: mockFetchReview,
     regenerate: mockRegenerate,
     accept: mockAccept,
+    keep: mockKeep,
+    suppress: mockSuppress,
     count: ref(0),
     fetchCount: vi.fn(),
   }),
@@ -44,7 +48,8 @@ const stubComponents = {
   'b-spinner': { template: '<span class="spinner" />' },
   'b-badge': { template: '<span class="badge"><slot /></span>' },
   'b-form-textarea': {
-    template: '<textarea v-bind="$attrs" @input="$emit(\'update:modelValue\', $event.target.value)"></textarea>',
+    template:
+      '<textarea v-bind="$attrs" @input="$emit(\'update:modelValue\', $event.target.value)"></textarea>',
     props: ['modelValue'],
     emits: ['update:modelValue'],
   },
@@ -53,13 +58,15 @@ const stubComponents = {
   'b-alert': { template: '<div class="alert"><slot /></div>' },
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   setActivePinia(createPinia())
   mockImages.value = []
   mockLoading.value = false
   mockFetchReview.mockReset()
   mockRegenerate.mockReset()
   mockAccept.mockReset()
+  mockKeep.mockReset()
+  mockSuppress.mockReset()
 })
 
 describe('Images page', () => {
@@ -87,8 +94,18 @@ describe('Images page', () => {
         regeneration_notes: null,
         pending_externaluid: null,
         votes: [
-          { userid: 10, displayname: 'Alice Smith', result: 'Reject', containspeople: 0 },
-          { userid: 11, displayname: 'Bob Jones', result: 'Reject', containspeople: 0 },
+          {
+            userid: 10,
+            displayname: 'Alice Smith',
+            result: 'Reject',
+            containspeople: 0,
+          },
+          {
+            userid: 11,
+            displayname: 'Bob Jones',
+            result: 'Reject',
+            containspeople: 0,
+          },
         ],
         reject_count: 2,
         approve_count: 0,
@@ -124,8 +141,18 @@ describe('Images page', () => {
         regeneration_notes: null,
         pending_externaluid: null,
         votes: [
-          { userid: 20, displayname: 'Carol White', result: 'Reject', containspeople: 0 },
-          { userid: 21, displayname: 'Dave Brown', result: 'Approve', containspeople: 0 },
+          {
+            userid: 20,
+            displayname: 'Carol White',
+            result: 'Reject',
+            containspeople: 0,
+          },
+          {
+            userid: 21,
+            displayname: 'Dave Brown',
+            result: 'Approve',
+            containspeople: 0,
+          },
         ],
         reject_count: 1,
         approve_count: 1,
@@ -171,7 +198,14 @@ describe('AIImageReview card interactions', () => {
         regeneration_notes: null,
         pending_externaluid: null,
         pending_image_url: null,
-        votes: [{ userid: 5, displayname: 'Eve Green', result: 'Reject', containspeople: 0 }],
+        votes: [
+          {
+            userid: 5,
+            displayname: 'Eve Green',
+            result: 'Reject',
+            containspeople: 0,
+          },
+        ],
         reject_count: 5,
         approve_count: 0,
       },
@@ -179,7 +213,9 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('calls regenerate when Regenerate button is clicked', async () => {
-    mockRegenerate.mockResolvedValue({ preview_url: 'https://delivery.ilovefreegle.org?url=test' })
+    mockRegenerate.mockResolvedValue({
+      preview_url: 'https://delivery.ilovefreegle.org?url=test',
+    })
     const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
     await flushPromises()
 
@@ -191,7 +227,8 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('shows preview image after regeneration', async () => {
-    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
+    const previewURL =
+      'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
     await flushPromises()
@@ -217,7 +254,8 @@ describe('AIImageReview card interactions', () => {
         status: 'regenerating',
         regeneration_notes: null,
         pending_externaluid: 'freegletusd-new-preview',
-        pending_image_url: 'https://delivery.ilovefreegle.org?url=freegletusd-new-preview',
+        pending_image_url:
+          'https://delivery.ilovefreegle.org?url=freegletusd-new-preview',
         votes: [],
         reject_count: 5,
         approve_count: 0,
@@ -228,7 +266,9 @@ describe('AIImageReview card interactions', () => {
 
     // The pending_image_url should be shown without clicking Regenerate.
     const imgs = wrapper.findAll('img')
-    const found = imgs.some((img) => img.attributes('src')?.includes('freegletusd-new-preview'))
+    const found = imgs.some((img) =>
+      img.attributes('src')?.includes('freegletusd-new-preview')
+    )
     expect(found).toBe(true)
 
     // Accept button should be visible since there's already a preview.
@@ -236,7 +276,8 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('calls accept when Accept button is clicked after regeneration', async () => {
-    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
+    const previewURL =
+      'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     mockAccept.mockResolvedValue({ ret: 0 })
 
@@ -257,7 +298,8 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('removes image from list after accept', async () => {
-    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
+    const previewURL =
+      'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     mockAccept.mockResolvedValue({ ret: 0 })
 
@@ -317,7 +359,12 @@ describe('AIImageReview loading and edge cases', () => {
         pending_externaluid: null,
         pending_image_url: null,
         votes: [
-          { userid: 10, displayname: 'Alice Smith', result: 'Reject', containspeople: 1 },
+          {
+            userid: 10,
+            displayname: 'Alice Smith',
+            result: 'Reject',
+            containspeople: 1,
+          },
         ],
         reject_count: 1,
         approve_count: 0,
@@ -390,7 +437,10 @@ describe('AIImageReview error handling', () => {
   it('shows spinner in image area while regeneration is in progress', async () => {
     let resolveRegen
     mockRegenerate.mockImplementation(
-      () => new Promise((resolve) => { resolveRegen = resolve })
+      () =>
+        new Promise((resolve) => {
+          resolveRegen = resolve
+        })
     )
     const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
     await flushPromises()
@@ -406,5 +456,67 @@ describe('AIImageReview error handling', () => {
     // Clean up: resolve the promise
     resolveRegen({})
     await flushPromises()
+  })
+})
+
+describe('AIImageReview suppress ("Don\'t use AI for this item")', () => {
+  beforeEach(() => {
+    mockImages.value = [
+      {
+        id: 42,
+        name: 'Cash',
+        externaluid: 'freegletusd-cash',
+        image_url: 'https://example.com/cash.jpg',
+        status: 'rejected',
+        regeneration_notes: null,
+        pending_externaluid: null,
+        pending_image_url: null,
+        votes: [],
+        reject_count: 5,
+        approve_count: 0,
+      },
+    ]
+  })
+
+  it('renders a suppress button for each image', async () => {
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="suppress-btn"]').exists()).toBe(true)
+  })
+
+  it('calls suppress with the image id when clicked', async () => {
+    mockSuppress.mockResolvedValue({ ret: 0 })
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="suppress-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(mockSuppress).toHaveBeenCalledWith(42)
+  })
+
+  it('removes the image from the list after suppress', async () => {
+    mockSuppress.mockResolvedValue({ ret: 0 })
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Cash')
+
+    await wrapper.find('[data-testid="suppress-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Cash')
+  })
+
+  it('shows an error and keeps the image when suppress throws', async () => {
+    mockSuppress.mockRejectedValue(new Error('Network error'))
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="suppress-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Failed to suppress')
+    // Image stays in the list so the moderator can retry.
+    expect(wrapper.text()).toContain('Cash')
   })
 })

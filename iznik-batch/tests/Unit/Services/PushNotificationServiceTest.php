@@ -53,7 +53,6 @@ class PushNotificationServiceTest extends TestCase
             'arrival' => now(),
             'lat' => $group->lat,
             'lng' => $group->lng,
-            'heldby' => $mod->id,  // held — must not count
         ]);
         MessageGroup::create([
             'msgid' => $message->id,
@@ -61,6 +60,9 @@ class PushNotificationServiceTest extends TestCase
             'collection' => MessageGroup::COLLECTION_PENDING,
             'arrival' => now(),
             'deleted' => 0,
+            // A hold belongs to a (message, group) pair, so it is this row that carries
+            // it — the badge reads the copy on the group, not the post as a whole.
+            'heldby' => $mod->id,  // held — must not count
         ]);
 
         $count = $this->service->getBadgeCount($mod->id);
@@ -206,6 +208,49 @@ class PushNotificationServiceTest extends TestCase
         $count = $this->service->getBadgeCount($mod->id);
 
         $this->assertEquals(0, $count, 'Messages with null fromuser must not inflate badge count');
+    }
+
+    /**
+     * Pending messages from DELETED users must NOT count towards the badge.
+     *
+     * Regression for Discourse #9654/12: mods reported the ModTools badge stuck at
+     * +1 after clearing all visible tasks. Root cause: getBadgeCount() counted
+     * pending messages whose author had been deleted (fromuser set, but
+     * users.deleted IS NOT NULL), while the app menu (session.go) filters them via
+     * INNER JOIN users ... u.deleted IS NULL. The phantom message is in the badge
+     * but not the menu, so the mod can never clear it. Live data at diagnosis time:
+     * 32 such messages across 24 groups.
+     */
+    public function test_pending_message_from_deleted_user_does_not_count_towards_badge(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser(['deleted' => now()]);  // author deleted
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,  // not held — would count if author were live
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $count = $this->service->getBadgeCount($mod->id);
+
+        $this->assertEquals(0, $count, 'Pending messages from deleted users must not inflate badge count (Discourse #9654/12)');
     }
 
     /**
@@ -438,6 +483,213 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
+     * Volunteering-only badge must route to /volunteering (V1 parity), not /messages/pending.
+     *
+     * Regression for Discourse #9692/10: when the badge total is driven by pending volunteering ops
+     * (no pending messages), the notification must route to /volunteering — not /messages/pending
+     * (empty page) and not /modtools (catch-all redirect with 2s delay).
+     */
+    public function test_buildModToolsPayload_volunteering_only_routes_to_volunteering(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Pending volunteering op — no pending messages
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 1,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Help needed',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge'], 'Badge must be 1 (the volunteering op)');
+        // Route must go directly to /volunteering — no /modtools/ prefix (would hit redirect page).
+        $this->assertSame('/volunteering', $payload['route'],
+            'Volunteering-only badge must route to /volunteering (V1 parity, Discourse #9692/10)');
+        // Title must mention "volunteer", not "message".
+        $this->assertStringContainsString('volunteer', $payload['title'],
+            'Title must describe the volunteering work, not say "messages pending"');
+        $this->assertStringNotContainsString('message', $payload['title'],
+            'Title must not say "messages" when only volunteering work is queued');
+    }
+
+    /**
+     * Pending-only badge must route to /messages/pending (no /modtools/ prefix).
+     *
+     * V1 parity: pending → route /messages/pending, title "N pending message(s)".
+     * The /modtools/ prefix hits the catch-all redirect page (Discourse #9692/10).
+     */
+    public function test_buildModToolsPayload_pending_only_routes_to_messages_pending(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge']);
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Pending-only badge must route to /messages/pending (no /modtools/ prefix)');
+        $this->assertStringContainsString('pending', $payload['title']);
+    }
+
+    /**
+     * Spam-only badge must route to /messages/pending (no /modtools/ prefix).
+     *
+     * V1 parity: spam → route /messages/pending, title "N message(s) to review".
+     */
+    public function test_buildModToolsPayload_spam_only_routes_to_messages_pending(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Spam (Location)',
+            'textbody' => 'Spam',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_SPAM,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('1', $payload['badge']);
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Spam-only badge must route to /messages/pending (no /modtools/ prefix)');
+        $this->assertStringContainsString('review', $payload['title']);
+    }
+
+    /**
+     * Mixed pending + volunteering: pending wins (last-wins, V1 parity).
+     *
+     * With both pending messages and volunteering ops, route must be /messages/pending
+     * and the title must mention both categories (multi-line, "\n"-joined).
+     */
+    public function test_buildModToolsPayload_mixed_pending_wins_over_volunteering(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Add a pending message
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        // Add a pending volunteering op
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 1,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Help needed',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertSame('2', $payload['badge'], 'Badge must be total of all categories');
+        // Pending wins (last in last-wins order)
+        $this->assertSame('/messages/pending', $payload['route'],
+            'Pending wins over volunteering in last-wins order (V1 parity)');
+        // Title must mention both categories
+        $this->assertStringContainsString('volunteer', $payload['title'],
+            'Multi-line title must mention volunteering');
+        $this->assertStringContainsString('pending', $payload['title'],
+            'Multi-line title must mention pending messages');
+    }
+
+    /**
+     * Zero-work payload must route to "/" not "/modtools" (V1 parity).
+     */
+    public function test_buildModToolsPayload_zero_routes_to_root(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertNotNull($payload, 'Zero-count payload must not be null (clears badge)');
+        $this->assertSame('0', $payload['badge']);
+        $this->assertSame('/', $payload['route'],
+            'Zero-work payload must route to "/" (V1 parity)');
+    }
+
+    /**
      * Visible ModTools push: priority high and notification.tag set so the
      * latest "N pending" entry replaces the previous one in the tray.
      */
@@ -496,6 +748,253 @@ class PushNotificationServiceTest extends TestCase
         $this->assertArrayNotHasKey('notification', $cfg);
     }
 
+    /**
+     * A mod of several communities must not get the same banner once per community.
+     *
+     * ModTools pushes are queued per GROUP but the payload is per USER - the aggregate
+     * work summary across every community they moderate. On prod 2026-08-23 a mod of
+     * three neighbouring London communities had 47 push tasks fire at 33 distinct
+     * instants, several of them 2-3 at a time for a single crossposted post, and each
+     * one landed as its own banner and beep (Discourse 9808/744).
+     */
+    public function test_notify_does_not_repeat_an_identical_modtools_push(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createPendingMessage($group);
+        $this->registerModToolsDevice($mod->id, 'tok-dupe');
+        $fake = $this->fakeMessaging();
+
+        $first = $this->service->notify($mod->id, true);
+        $second = $this->service->notify($mod->id, true);
+
+        $this->assertSame(1, $first, 'First push must be sent');
+        $this->assertSame(0, $second, 'Second identical push is the per-group fan-out, not new work');
+        $this->assertCount(1, $fake->sent, 'Only one FCM message may reach the device');
+    }
+
+    /**
+     * Suppression is on the payload, not the clock: work that changes the count still
+     * gets its banner, immediately.
+     */
+    public function test_notify_sends_again_when_the_work_changes(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createPendingMessage($group);
+        $this->registerModToolsDevice($mod->id, 'tok-changed');
+        $fake = $this->fakeMessaging();
+
+        $this->service->notify($mod->id, true);
+        $this->createPendingMessage($group);
+        $second = $this->service->notify($mod->id, true);
+
+        $this->assertSame(1, $second, 'A different pending count must still be pushed');
+        $this->assertCount(2, $fake->sent);
+    }
+
+    /**
+     * Once the window has passed, an identical summary is a fresh reminder rather than
+     * a duplicate of one already on the lock screen, so it goes out again.
+     */
+    public function test_notify_sends_again_once_the_duplicate_window_has_passed(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createPendingMessage($group);
+        $this->registerModToolsDevice($mod->id, 'tok-window');
+        $fake = $this->fakeMessaging();
+
+        $this->service->notify($mod->id, true);
+        $this->travel(10)->minutes();
+        $second = $this->service->notify($mod->id, true);
+
+        $this->assertSame(1, $second, 'Beyond the duplicate window the summary is sent again');
+        $this->assertCount(2, $fake->sent);
+    }
+
+    /**
+     * Every device of the mod's is deduplicated independently, so a second registration
+     * does not resurrect the duplicate banner.
+     */
+    public function test_notify_deduplicates_each_device_separately(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createPendingMessage($group);
+        $this->registerModToolsDevice($mod->id, 'tok-phone');
+        $this->registerModToolsDevice($mod->id, 'tok-tablet');
+        $fake = $this->fakeMessaging();
+
+        $first = $this->service->notify($mod->id, true);
+        $second = $this->service->notify($mod->id, true);
+
+        $this->assertSame(2, $first, 'Each registered device gets the first push');
+        $this->assertSame(0, $second, 'Neither device gets the duplicate');
+        $this->assertCount(2, $fake->sent);
+    }
+
+    /**
+     * iOS must replace the previous ModTools banner rather than stack another one.
+     * Android already does this via notification.tag; iOS needs apns-collapse-id, whose
+     * absence is why the fan-out showed up as three banners and beeps at once.
+     */
+    public function test_buildApnsConfig_modtools_collapses_to_one_banner(): void
+    {
+        $payload = [
+            'title' => '2 pending messages',
+            'message' => 'Open ModTools to review',
+            'channel_id' => 'modtools',
+            'count' => '2',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertSame('modtools-123', $cfg['headers']['apns-collapse-id'],
+            'ModTools pushes must collapse onto the same banner, matching the Android tag');
+        $this->assertSame('modtools', $cfg['payload']['aps']['thread-id']);
+        $this->assertSame(2, $cfg['payload']['aps']['badge']);
+        $this->assertSame('10', $cfg['headers']['apns-priority']);
+    }
+
+    /**
+     * The silent badge-clear push has no banner to collapse onto.
+     */
+    public function test_buildApnsConfig_zero_count_modtools_does_not_collapse(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+            'count' => '0',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertArrayNotHasKey('apns-collapse-id', $cfg['headers']);
+        $this->assertSame(0, $cfg['payload']['aps']['badge']);
+    }
+
+    /**
+     * Chat and new-post pushes are about a specific chat or post: collapsing them would
+     * replace an unread one with the next and lose it.
+     */
+    public function test_buildApnsConfig_non_modtools_pushes_never_collapse(): void
+    {
+        $payload = [
+            'title' => 'New chat message',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+            'count' => '1',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertArrayNotHasKey('apns-collapse-id', $cfg['headers']);
+        $this->assertArrayNotHasKey('thread-id', $cfg['payload']['aps']);
+    }
+
+    /**
+     * The NSE flag the rich daily-posts notification depends on must survive the
+     * extraction of this config out of sendFcm().
+     */
+    public function test_buildApnsConfig_new_posts_keeps_mutable_content(): void
+    {
+        $payload = [
+            'title' => '5 new posts near you',
+            'message' => 'Have a look',
+            'category' => PushNotificationService::CATEGORY_NEW_POSTS,
+            'count' => '5',
+        ];
+
+        $cfg = $this->invokeBuildApnsConfig(123, $payload);
+
+        $this->assertSame(1, $cfg['payload']['aps']['mutable-content'],
+            'NEW_POSTS must still wake the notification service extension');
+    }
+
+    /**
+     * Give the service a messaging double that records what it was asked to send.
+     */
+    private function fakeMessaging(): object
+    {
+        $fake = new class {
+            public array $sent = [];
+
+            public function validate($message): void {}
+
+            public function send($message): void
+            {
+                $this->sent[] = $message;
+            }
+        };
+
+        $prop = new \ReflectionProperty($this->service, 'messaging');
+        $prop->setAccessible(true);
+        $prop->setValue($this->service, $fake);
+
+        return $fake;
+    }
+
+    /**
+     * Register a ModTools device and return its subscription.
+     *
+     * The token is unique per call because the duplicate-suppression state lives in the
+     * cache, which outlives a single test run - a fixed token would let one run's entry
+     * suppress the next run's first push.
+     */
+    private function registerModToolsDevice(int $userId, string $label): string
+    {
+        $subscription = $label.'-'.uniqid('', true);
+
+        DB::table('users_push_notifications')->insert([
+            'userid' => $userId,
+            'type' => 'FCMIOS',
+            'subscription' => $subscription,
+            'apptype' => 'ModTools',
+            'added' => now(),
+            'lastsent' => null,
+        ]);
+
+        return $subscription;
+    }
+
+    private function createPendingMessage(Group $group): Message
+    {
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        return $message;
+    }
+
+    private function invokeBuildApnsConfig(int $userId, array $payload): array
+    {
+        $method = new \ReflectionMethod($this->service, 'buildApnsConfig');
+        $method->setAccessible(true);
+        return $method->invoke($this->service, $userId, $payload);
+    }
+
     private function invokeBuildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');
@@ -513,7 +1012,7 @@ class PushNotificationServiceTest extends TestCase
     // --- Chat message recipient computation (V1 parity tests) ---
     //
     // These pin the V1 ChatRoom::notifyMembers() target table from
-    // iznik-server/include/chat/ChatRoom.php:1458-1521. Each test corresponds
+    // the legacy V1 PHP implementation. Each test corresponds
     // to a cell in that table or an invariant ($excludeuser, getMemberships()>0).
     //
     // Tests target the new getChatMessageRecipients(messageId) method which
@@ -791,6 +1290,74 @@ class PushNotificationServiceTest extends TestCase
         $this->assertEquals('1', (string) $payload['modtools']);
     }
 
+    /**
+     * Emoji reached the phone as raw twem escapes: a member saw
+     * "No worries, I'll delete it for you \\u1f642\\u" in a push. The front end
+     * stores emoji that way (untwem in useTwem.js) and the email path for this
+     * same column already decodes it; only push did not.
+     */
+    public function test_chat_payload_decodes_emoji(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "No worries, I'll delete it for you \\\\u1f642\\\\u",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringContainsString("\u{1F642}", $payload['message'],
+            'the emoji itself must reach the phone');
+        $this->assertStringNotContainsString('1f642', $payload['message'],
+            'no raw codepoint may survive');
+        $this->assertStringNotContainsString('\\u', $payload['message'],
+            'no twem escape markers may survive');
+    }
+
+    public function test_chat_payload_decodes_multi_codepoint_emoji(): void
+    {
+        // Flags and ZWJ sequences encode as several codepoints joined by '-'.
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => "Flag \\\\u1f1ec-1f1e7\\\\u",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringContainsString("\u{1F1EC}\u{1F1E7}", $payload['message']);
+        $this->assertStringNotContainsString('1f1ec', $payload['message']);
+    }
+
+    /**
+     * Decoding must happen BEFORE the 256-char truncation. Truncating the encoded
+     * form could cut an escape in half and leave a fragment like "\\u1f6" on screen,
+     * and the limit should apply to what the member actually sees.
+     */
+    public function test_chat_payload_truncates_after_decoding_so_no_escape_is_severed(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        // Pad so that an emoji sits right around the 256-char boundary of the
+        // ENCODED string but well inside it once decoded.
+        $padding = str_repeat('a', 250);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => $padding . "\\\\u1f642\\\\u tail",
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertStringNotContainsString('\\u', $payload['message'],
+            'a severed escape must never appear');
+        $this->assertStringContainsString("\u{1F642}", $payload['message'],
+            'the emoji survives because decoding happens first');
+        $this->assertLessThanOrEqual(256, mb_strlen($payload['message']));
+    }
+
     public function test_chat_payload_uses_chatid_as_notid(): void
     {
         // V1: notId = chatid so a second message in the same chat REPLACES
@@ -833,6 +1400,142 @@ class PushNotificationServiceTest extends TestCase
             'Payload message should be truncated for push display (~256 chars)');
     }
 
+    /**
+     * The push body/subtitle must contain the message text — not repeat the
+     * sender's display name.
+     *
+     * Regression: when the chat message has text, 'message' in the payload
+     * must carry that text. The FCM notification body is built as
+     * `$payload['message'] ?: $payload['title']`, so a non-empty 'message'
+     * is the only defence against a double-sender-name push.
+     */
+    public function test_chat_payload_message_contains_text_not_sender_name(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'richard mackay']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'message' => 'Hi, is this still available?',
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('richard mackay', $payload['title'],
+            'Title must be the sender name');
+        $this->assertStringContainsString('Hi, is this still available?', $payload['message'],
+            'Payload message must carry the chat text, not the sender name');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Title and body must differ — body must NOT repeat the sender name');
+    }
+
+    /**
+     * TrashNothing-imported members have fullnames like "alice-g3486", taken from
+     * their -gNNN@user.trashnothing.com address. Every other surface hides that
+     * suffix via User::getDisplayNameAttribute (the chat notification email uses
+     * it), so the push banner must not show the raw users.fullname.
+     */
+    public function test_chat_payload_title_strips_trashnothing_group_suffix(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'alice-g3486']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_DEFAULT,
+            'message' => 'Still available?',
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('alice', $payload['title'],
+            'Push title must use the display name, which drops the TrashNothing -gNNN suffix');
+    }
+
+    /**
+     * Image messages have no text — the push body must fall back to a
+     * descriptive label ("Sent an image"), not repeat the sender name.
+     *
+     * Regression for the bug where title="richard mackay" and body="richard
+     * mackay" both showed the sender name on image-only chat messages.
+     */
+    public function test_chat_payload_image_message_body_is_descriptive_not_sender_name(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'richard mackay']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_IMAGE,
+            'message' => null,  // image-only: no text body
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('richard mackay', $payload['title'],
+            'Title must still be the sender name');
+        $this->assertSame('Sent an image', $payload['message'],
+            'Image message body must be "Sent an image", not the sender name');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Title and body must differ — body must NOT repeat the sender name for image messages');
+    }
+
+    /**
+     * "Interested" type messages have no text body — body must show "Interested".
+     */
+    public function test_chat_payload_interested_message_body_is_interested(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Alice']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_INTERESTED,
+            'message' => null,
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('Interested', $payload['message'],
+            '"Interested" type message body must be "Interested"');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Body must not repeat the sender name');
+    }
+
+    /**
+     * "Address" type messages have no text body — body must show "Sent an address".
+     */
+    public function test_chat_payload_address_message_body_is_descriptive(): void
+    {
+        $sender = $this->createTestUser(['fullname' => 'Bob']);
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($sender, $group);
+        $this->createMembership($recipient, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'type'    => \App\Models\ChatMessage::TYPE_ADDRESS,
+            'message' => null,
+        ]);
+
+        $payload = $this->service->buildChatMessagePayload($msg->id, $recipient->id, FALSE);
+
+        $this->assertSame('Sent an address', $payload['message'],
+            '"Address" type message body must be "Sent an address"');
+        $this->assertNotSame($payload['title'], $payload['message'],
+            'Body must not repeat the sender name');
+    }
+
     public function test_u2m_mod_to_member_payload_uses_group_volunteers_title(): void
     {
         // V1 hides individual mod identity from members: when a mod replies in
@@ -858,5 +1561,206 @@ class PushNotificationServiceTest extends TestCase
             'Mod sender to member in U2M must show "{Group} Volunteers" as title');
         $this->assertStringNotContainsString('ModBob', $payload['title'],
             'Individual mod name must NOT leak to the member in push title');
+    }
+
+    /**
+     * The app pushes the payload route into vue-router, so it must be a path.
+     * The stories exhort is scheduled with a full URL in users_notifications.url,
+     * which would otherwise be routed to verbatim and land on a 404.
+     */
+    public function test_buildUserNotificationPayload_strips_site_from_absolute_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => rtrim(config('freegle.sites.user'), '/') . '/stories',
+            'title' => 'Tell us your Freegle story!',
+            'text' => 'We love to hear why people Freegle.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/stories', $payload['route'],
+            'Absolute notification URLs on our own site must become a router path');
+    }
+
+    public function test_buildUserNotificationPayload_keeps_relative_notification_url(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'url' => '/microvolunteering/message/123',
+            'title' => 'Can you help?',
+            'text' => 'Check this post.',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $payload = $this->service->buildUserNotificationPayload($user->id);
+
+        $this->assertSame('/microvolunteering/message/123', $payload['route'],
+            'Relative notification URLs must be passed through unchanged');
+    }
+
+    // -----------------------------------------------------------------------
+    // consumerUnreadCounts() notification visibility (Discourse #9953)
+    //
+    // The app-icon badge is driven by consumerUnreadCounts()'s notifcount. The
+    // in-app bell/list (iznik-server-go notification.Count()/List()) only ever
+    // shows unseen notifications within a 90-day window and hides ones from a
+    // spam/pending-add sender. A notification invisible in the bell can never
+    // be marked seen there, so if the badge counts it anyway it becomes a
+    // permanent phantom blob - exactly Diz's report: "a permanent notification
+    // blob... and I don't [have any replies]".
+    // -----------------------------------------------------------------------
+
+    /**
+     * Sanity check: a recent, non-spam unseen notification does count, so the
+     * exclusion tests below aren't vacuously true.
+     */
+    public function test_consumerUnreadCounts_counts_recent_unseen_notification(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'seen' => 0,
+            'timestamp' => now()->subDays(1),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(1, $notifcount, 'A recent unseen notification must count towards the badge');
+    }
+
+    /**
+     * A notification older than the in-app bell's 90-day window can never be
+     * marked seen there (NotificationOne.vue's markSeen() only fires for a
+     * notification actually rendered in the list), so it must not permanently
+     * inflate the app-icon badge.
+     */
+    public function test_consumerUnreadCounts_excludes_notification_older_than_bell_window(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'Exhort',
+            'seen' => 0,
+            'timestamp' => now()->subDays(200),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(0, $notifcount,
+            'A notification the member can never see in the bell must not inflate the badge (Discourse #9953)');
+    }
+
+    /**
+     * Notifications from a spam/pending-add sender are hidden from the in-app
+     * bell (notification.Count()/List() LEFT JOIN spam_users) and from the
+     * chaseup mailer (NotificationChaseUpService::SPAM_COLLECTIONS) - the
+     * push-computed badge must exclude them too.
+     */
+    public function test_consumerUnreadCounts_excludes_notification_from_spam_sender(): void
+    {
+        $user = $this->createTestUser();
+        $spammer = $this->createTestUser();
+
+        DB::table('spam_users')->insert([
+            'userid' => $spammer->id,
+            'byuserid' => $user->id,
+            'collection' => 'Spammer',
+        ]);
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $spammer->id,
+            'touser' => $user->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(0, $notifcount,
+            'A notification from a spam-flagged sender must not inflate the badge (Discourse #9953)');
+    }
+
+    /**
+     * A Whitelisted spam_users row must not exclude the sender's notifications -
+     * only Spammer/PendingAdd hide a notification from the bell.
+     */
+    public function test_consumerUnreadCounts_does_not_exclude_whitelisted_sender(): void
+    {
+        $user = $this->createTestUser();
+        $sender = $this->createTestUser();
+
+        DB::table('spam_users')->insert([
+            'userid' => $sender->id,
+            'byuserid' => $user->id,
+            'collection' => 'Whitelisted',
+        ]);
+
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $user->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        [, $notifcount] = $this->service->consumerUnreadCounts($user->id);
+
+        $this->assertEquals(1, $notifcount,
+            'Whitelisted is not a spam collection and must not exclude the notification');
+    }
+
+    /**
+     * Every spelling FCM uses for a permanently dead token must trigger the
+     * purge. Regression: a rejected send reports the legacy name
+     * 'NotRegistered', which the old case-sensitive match ('UNREGISTERED')
+     * missed - so dead tokens were never cleaned up and every subsequent push
+     * to them failed silently (2,162 such errors on 2026-08-09 alone).
+     */
+    public function test_dead_token_errors_are_recognised_in_all_spellings(): void
+    {
+        foreach ([
+            'NotRegistered',
+            'UNREGISTERED',
+            'Requested entity was not found.',
+            'NOT_FOUND',
+            'SENDER_ID_MISMATCH',
+            'MismatchSenderId',
+            'The registration token is not a valid FCM registration token',
+            'Invalid registration token',
+            'InvalidRegistration',
+        ] as $error) {
+            $this->assertTrue(PushNotificationService::isDeadTokenError($error), "'$error' must be treated as a dead token");
+        }
+    }
+
+    public function test_transient_errors_do_not_kill_the_token(): void
+    {
+        foreach ([
+            'Deadline exceeded',
+            'Internal server error',
+            'QUOTA_EXCEEDED',
+            'The service is currently unavailable',
+            'APNs device token is disabled.',
+        ] as $error) {
+            $this->assertFalse(PushNotificationService::isDeadTokenError($error), "'$error' must NOT delete the subscription");
+        }
     }
 }

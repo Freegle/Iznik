@@ -221,13 +221,15 @@ class ContentCheckServiceTest extends TestCase
     }
 
     // =========================================================================
-    // checkPhoneNumbers — public, pure regex
+    // checkPhoneNumbers — gated by group restrictpersonalinfo rule
     // =========================================================================
 
     #[DataProvider('phoneNumberProvider')]
     public function test_check_phone_numbers(string $subject, string $body, bool $expectFlag): void
     {
-        $result = $this->service->checkPhoneNumbers($subject, $body);
+        // Phone number check is gated by restrictpersonalinfo; use a group that has it set.
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
+        $result = $this->service->checkPhoneNumbers($subject, $body, $group->id);
 
         if ($expectFlag) {
             $this->assertNotNull($result);
@@ -236,6 +238,15 @@ class ContentCheckServiceTest extends TestCase
         } else {
             $this->assertNull($result);
         }
+    }
+
+    public function test_check_phone_numbers_not_flagged_without_group_rule(): void
+    {
+        // Groups without restrictpersonalinfo must not have posts flagged for phone numbers.
+        $group = $this->createTestGroup();
+        $result = $this->service->checkPhoneNumbers('', 'Call 07911 123456 for details', $group->id);
+
+        $this->assertNull($result, 'Phone number must not flag when group has no restrictpersonalinfo rule');
     }
 
     public static function phoneNumberProvider(): array
@@ -316,6 +327,66 @@ class ContentCheckServiceTest extends TestCase
             'both symbols'           => ['£ and $ offer', 'text', true],
             'euro symbol no flag'    => ['', '€100 value', false],
             'hash no flag'           => ['', '#100', false],
+        ];
+    }
+
+    // =========================================================================
+    // checkNotAnItem — public, pure (non-physical-item detection)
+    // Positive/negative cases are drawn from the production reject log.
+    // =========================================================================
+
+    #[DataProvider('notAnItemProvider')]
+    public function test_check_not_an_item(string $subject, string $body, ?string $category): void
+    {
+        $result = $this->service->checkNotAnItem($subject, $body);
+
+        if ($category === null) {
+            $this->assertNull($result, "Expected NO flag for: {$subject} {$body}");
+        } else {
+            $this->assertNotNull($result, "Expected a flag for: {$subject} {$body}");
+            $this->assertSame(ContentCheckService::CHECK_NOT_AN_ITEM, $result['check']);
+            $this->assertSame('flag', $result['action']);
+            $this->assertSame($category, $result['category']);
+        }
+    }
+
+    public static function notAnItemProvider(): array
+    {
+        return [
+            // --- positives: flag, with expected category ---
+            'cleaner wanted'      => ['WANTED: Cleaner wanted', '', 'service'],
+            'man with a van'      => ['WANTED: Man with a Van', '', 'service'],
+            'man and car removal' => ['WANTED: man and car removal', '', 'service'],
+            'dog walker'          => ['WANTED: dog walker', '', 'service'],
+            'babysitter needed'   => ['WANTED: babysitter needed', '', 'service'],
+            'gardening service'   => ['OFFER: gardening service available', '', 'service'],
+            'services plural'     => ['OFFER: Services', '', 'service'],
+            'room to rent'        => ['OFFER: Room to rent', '', 'accommodation'],
+            'warehouse to rent'   => ['WANTED: Storage warehouse to rent', '', 'accommodation'],
+            'garage to rent'      => ['WANTED: Lockup garage to rent', '', 'accommodation'],
+            'lodger'              => ['WANTED: lodger wanted', '', 'accommodation'],
+            'job vacancy'         => ['', 'I have a job vacancy to fill', 'work'],
+            'part time job'       => ['WANTED: part time job', '', 'work'],
+            'food advice'         => ['WANTED: Food advice', '', 'advice'],
+
+            // --- negatives: real production items that must NOT trip ---
+            'vacuum cleaner'      => ['OFFER: Shark vacuum cleaner', '', null],
+            'patio cleaner'       => ['OFFER: Patio Cleaner', '', null],
+            'plain vacuum'        => ['WANTED: Vacuum cleaner', '', null],
+            'removal boxes'       => ['WANTED: Removal boxes', '', null],
+            'hair removal cream'  => ['OFFER: Nads hair removal cream', '', null],
+            'job lot'             => ['OFFER: job lot of books', '', null],
+            'dinner service'      => ['OFFER: Dinner service', '', null],
+            'ladder loan'         => ['WANTED: Ladder loan', '', null],
+            'loan camera'         => ['WANTED: Loan IR camera', '', null],
+            'gardeners world'     => ["OFFER: Gardener's World magazines", '', null],
+            'decorator spares'    => ['OFFER: Decorator spares', '', null],
+            'different items'     => ['WANTED: different items', '', null],
+            'lifted turf'         => ['OFFER: Lifted turf', '', null],
+            'guitar tutor'        => ['OFFER: Guitar tutor', '', null],
+            'plain sofa'          => ['WANTED: Sofa', '', null],
+            'garden soil'         => ['OFFER: Garden soil', '', null],
+            'motorway services'   => ['WANTED: footstool', 'Collection near the motorway services', null],
         ];
     }
 
@@ -430,7 +501,7 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_language_short_text_skipped(): void
     {
-        // Text <= 50 chars is never checked regardless of content
+        // Text <= 80 chars is never checked regardless of content
         $result = $this->service->checkLanguage('', 'Hola'); // 4 chars
         $this->assertNull($result);
     }
@@ -440,6 +511,31 @@ class ContentCheckServiceTest extends TestCase
         $text = 'I have a sofa and two chairs that I no longer need. They are in good condition and free to collect.';
         $result = $this->service->checkLanguage('', $text);
         $this->assertNull($result);
+    }
+
+    public function test_check_language_real_world_terse_english_reply_not_flagged(): void
+    {
+        // Regression: this exact production chat reply (chat_messages 108721900)
+        // was shown in ModTools chat review as "It might not be in English". At 60
+        // chars it now falls below the 80-char detection gate, so it is no longer
+        // checked — it was a false positive (terse English the library misranks as
+        // a Latinate conlang). Uses the REAL detector (not a mock).
+        $text = "Yes please can collect.Paul\n\nPossible collection times: Asap";
+        $this->assertLessThan(80, strlen(trim($text)));
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'Terse English reply must not be flagged as non-English');
+    }
+
+    public function test_check_language_long_english_not_flagged_with_restricted_set(): void
+    {
+        // Longer English (>80 chars) where the FULL library would rank a Latinate
+        // conlang (Interlingua/Occitan) top; with the restricted UK language set
+        // English ranks top, so it is accepted. Uses the REAL detector to lock in
+        // that the restricted set prevents conlang false positives (Discourse #9481).
+        $text = 'Hi there, yes I would love these if still available, I can come and collect them this afternoon if that suits you, thank you so much';
+        $this->assertGreaterThan(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'Long English must rank English top with the restricted set and not be flagged');
     }
 
     public function test_check_language_xxx_stripped_before_check(): void
@@ -452,48 +548,105 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_language_flagged_for_non_english(): void
     {
-        // Clear Spanish — well over 50 chars, will be detected as non-English
+        // Clear Spanish, well over 80 chars — ELD is confident, so it must flag.
         $text = 'Tengo un sofá que ya no necesito. Está en buenas condiciones y se puede recoger en cualquier momento del día. Contacta conmigo si estás interesado.';
         $result = $this->service->checkLanguage('', $text);
-        // Language detection may or may not flag this; we assert the return type is correct
-        $this->assertTrue($result === null || $result['check'] === ContentCheckService::CHECK_LANGUAGE);
+        $this->assertNotNull($result, 'Confident Spanish must be flagged');
+        $this->assertSame(ContentCheckService::CHECK_LANGUAGE, $result['check']);
+    }
+
+    public function test_check_language_terse_list_style_english_not_flagged(): void
+    {
+        // Regression (Discourse #9919): a plainly-English offer that is all English
+        // words, numbers and standard abbreviations. The old trigram library ranked
+        // this as a Latinate language and false-flagged it; ELD picks English. Real detector.
+        $text = 'Fridge freezer Beko W60 H180 good working order free to collect only from HA8 mon to fri evenings please, first to reply gets it.';
+        $this->assertGreaterThan(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'All-English-words offer must not be flagged as foreign (#9919)');
+    }
+
+    public function test_check_language_french_offer_flagged(): void
+    {
+        // A genuinely French offer that the old 0.8 ratio let through as a false
+        // negative — ELD detects it confidently. Real detector.
+        $text = 'Bonjour, je donne un canapé en bon état, à récupérer rapidement chez moi cette semaine, merci beaucoup et bonne journée à tous.';
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNotNull($result, 'Confident French must be flagged');
+        $this->assertSame(ContentCheckService::CHECK_LANGUAGE, $result['check']);
+    }
+
+    public function test_check_language_text_below_80_chars_skipped(): void
+    {
+        // The detection gate was raised 50→80: detection is a coin-flip on short
+        // text, so a sub-80-char message is skipped before detection even if a
+        // detector would flag it. This is how terse English replies (Discourse
+        // #9481) stop being false-flagged.
+        $alwaysFlags = static fn(string $text) => ['fr' => 0.90, 'en' => 0.10];
+        $text = 'Yes please can collect this thanks very much';
+        $this->assertLessThanOrEqual(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text, $alwaysFlags);
+        $this->assertNull($result, 'Sub-80-char text must be skipped before language detection');
+    }
+
+    public function test_clearly_non_english_still_flagged_with_v1_threshold(): void
+    {
+        // A message the detector confidently identifies as French must still be flagged.
+        $nonEnglishDetector = static fn(string $text) => ['lang' => 'fr', 'reliable' => true];
+        $text = 'Hi, is the sofa still available? I can collect on Saturday morning if that works for you. Thanks.';
+        $result = $this->service->checkLanguage('', $text, $nonEnglishDetector);
+        $this->assertNotNull($result);
+        $this->assertEquals(ContentCheckService::CHECK_LANGUAGE, $result['check']);
     }
 
     // =========================================================================
     // isGroupModerated — needs DB
     // =========================================================================
 
-    public function test_is_group_moderated_no_rules_returns_false(): void
+    public function test_is_group_moderated_no_settings_returns_false(): void
     {
         $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update(['rules' => null]);
+        DB::table('groups')->where('id', $group->id)->update(['settings' => null]);
 
         $this->assertFalse($this->service->isGroupModerated($group->id));
     }
 
-    public function test_is_group_moderated_empty_rules_returns_false(): void
+    public function test_is_group_moderated_empty_settings_returns_false(): void
     {
         $group = $this->createTestGroup();
-        DB::table('groups')->where('id', $group->id)->update(['rules' => json_encode([])]);
+        DB::table('groups')->where('id', $group->id)->update(['settings' => json_encode([])]);
 
         $this->assertFalse($this->service->isGroupModerated($group->id));
     }
 
-    public function test_is_group_moderated_fully_moderated_true(): void
+    public function test_is_group_moderated_setting_on(): void
     {
         $group = $this->createTestGroup();
         DB::table('groups')->where('id', $group->id)->update([
-            'rules' => json_encode(['fullymoderated' => true]),
+            'settings' => json_encode(['moderated' => 1]),
         ]);
 
         $this->assertTrue($this->service->isGroupModerated($group->id));
     }
 
-    public function test_is_group_moderated_fully_moderated_false(): void
+    public function test_is_group_moderated_setting_off(): void
     {
         $group = $this->createTestGroup();
         DB::table('groups')->where('id', $group->id)->update([
-            'rules' => json_encode(['fullymoderated' => false]),
+            'settings' => json_encode(['moderated' => false]),
+        ]);
+
+        $this->assertFalse($this->service->isGroupModerated($group->id));
+    }
+
+    public function test_is_group_moderated_ignores_rules_questionnaire(): void
+    {
+        // rules.fullymoderated is the member-facing questionnaire answer, not
+        // the enforcement setting - it must not hold posts (Discourse #9987).
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'rules'    => json_encode(['fullymoderated' => true]),
+            'settings' => json_encode(['moderated' => 0]),
         ]);
 
         $this->assertFalse($this->service->isGroupModerated($group->id));
@@ -697,6 +850,28 @@ class ContentCheckServiceTest extends TestCase
         $this->assertSame(ContentCheckService::CHECK_CONCERN_KEYWORD, $result['check']);
     }
 
+    // Regression test for Discourse #10024: a regex-mode concern keyword must
+    // report the text it actually matched in the post, not the raw pattern -
+    // a moderator reading "Matched concern keyword 'crack\s+cocaine'" has no
+    // idea what in the post triggered it.
+    public function test_check_concern_keywords_regex_match_reports_matched_text_not_pattern(): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'crack\s+cocaine',
+            'category'   => 'substance_regulated',
+            'match_mode' => 'regex',
+            'scope'      => 'global',
+            'group_id'   => 0,
+            'action'     => 'block',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('', 'selling crack cocaine cheap', 1);
+        $this->assertNotNull($result);
+        $this->assertSame('crack cocaine', $result['keyword'], 'keyword should be the matched text, not the regex pattern');
+        $this->assertSame("Matched concern keyword 'crack cocaine'", $result['detail']);
+        $this->assertStringNotContainsString('\s+', $result['detail'], 'detail must not leak the raw regex pattern');
+    }
+
     public function test_check_concern_keywords_exclude_pattern_skips(): void
     {
         DB::table('concern_keywords')->insert([
@@ -799,6 +974,56 @@ class ContentCheckServiceTest extends TestCase
 
         $result = $this->service->checkPerGroupWorryWords('free chair', 'collect from SE1', $group->id);
         $this->assertNull($result);
+    }
+
+    public function test_check_per_group_worry_words_multiword_phrase_matches(): void
+    {
+        // Discourse #9620 post 283: "free or at a discounted price" bypassed the
+        // content filter. Mods configured "discounted price" as a two-word worry
+        // word. matchesFuzzy() compared individual whitespace tokens against the
+        // full phrase, so "discounted" ≠ "discounted price" → no match.
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'discounted price']]),
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords(
+            '',
+            'I can give it away free or at a discounted price if needed',
+            $group->id
+        );
+        $this->assertNotNull($result, 'Multi-word worry word "discounted price" must flag text containing that phrase');
+        $this->assertSame(ContentCheckService::CHECK_PER_GROUP_WORRY, $result['check']);
+    }
+
+    public function test_check_per_group_worry_words_multiword_phrase_no_partial_match(): void
+    {
+        // "discounted price" as a phrase must NOT match text that only contains
+        // "discounted" (one word) or "price" (one word) separately.
+        $group = $this->createTestGroup();
+        DB::table('groups')->where('id', $group->id)->update([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'discounted price']]),
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords(
+            '',
+            'Collection any time, discounted delivery not available, just free',
+            $group->id
+        );
+        $this->assertNull($result, '"discounted price" phrase must not fire when only "discounted" appears alone');
+    }
+
+    public function test_matches_fuzzy_multiword_phrase_matches_in_haystack(): void
+    {
+        // matchesFuzzy() must handle multi-word keywords — the root cause of #9620.
+        $result = $this->callPrivate('matchesFuzzy', 'free or at a discounted price today', 'discounted price');
+        $this->assertTrue($result, 'matchesFuzzy must match a two-word keyword phrase found in the haystack');
+    }
+
+    public function test_matches_fuzzy_multiword_phrase_no_match_when_absent(): void
+    {
+        $result = $this->callPrivate('matchesFuzzy', 'free sofa in good condition', 'discounted price');
+        $this->assertFalse($result);
     }
 
     // =========================================================================

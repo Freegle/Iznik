@@ -1,13 +1,14 @@
 package stdmsg
 
 import (
-	"strings"
 	"strconv"
+	"strings"
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 type StdMsg struct {
@@ -34,8 +35,8 @@ func canModifyConfig(myid uint64, configid uint64) bool {
 
 	var createdby *uint64
 	var protected int
-	database.DBConn.Raw("SELECT createdby FROM mod_configs WHERE id = ?", configid).Scan(&createdby)
-	database.DBConn.Raw("SELECT protected FROM mod_configs WHERE id = ?", configid).Scan(&protected)
+	database.DBConn.Table("mod_configs").Select("createdby").Where("id = ?", configid).Scan(&createdby)
+	database.DBConn.Table("mod_configs").Select("protected").Where("id = ?", configid).Scan(&protected)
 
 	if createdby != nil && *createdby == myid {
 		return true
@@ -46,7 +47,6 @@ func canModifyConfig(myid uint64, configid uint64) bool {
 	return false
 }
 
-
 // GetStdMsg handles GET /stdmsg.
 //
 // @Summary Get standard message
@@ -56,6 +56,16 @@ func canModifyConfig(myid uint64, configid uint64) bool {
 // @Success 200 {object} map[string]interface{}
 // @Router /api/stdmsg [get]
 func GetStdMsg(c *fiber.Ctx) error {
+	// Standard messages are moderator canned-reply templates. Reading them requires
+	// a moderator, matching PostStdMsg/PatchStdMsg; the GET was previously wide open.
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
+	}
+	if !auth.IsSystemMod(myid) {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to view standard messages"})
+	}
+
 	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)
 	if id == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
@@ -63,7 +73,7 @@ func GetStdMsg(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var msg StdMsg
-	db.Raw("SELECT * FROM mod_stdmsgs WHERE id = ?", id).Scan(&msg)
+	db.Table("mod_stdmsgs").Where("id = ?", id).Scan(&msg)
 	if msg.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
@@ -128,42 +138,40 @@ func PostStdMsg(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Database error"})
+	// Plain, isolated, literal single-row
+	// INSERT (subjpref/subjsuff are fixed empty-string literals); id read back via
+	// GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"configid": req.Configid,
+		"title":    req.Title,
+		"subjpref": gorm.Expr("''"),
+		"subjsuff": gorm.Expr("''"),
+		"body":     gorm.Expr("''"),
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO mod_stdmsgs (configid, title, subjpref, subjsuff, body) VALUES (?, ?, '', '', '')", req.Configid, req.Title)
-	if err != nil {
+	if err := db.Table("mod_stdmsgs").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Create failed"})
 	}
-
-	var newID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		newID = uint64(lastID)
-	}
+	newIDInt, _ := row["@id"].(int64)
+	newID := uint64(newIDInt)
 
 	// Apply optional attributes.
 	if req.Action != "" {
-		db.Exec("UPDATE mod_stdmsgs SET action = ? WHERE id = ?", req.Action, newID)
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("action", req.Action)
 	}
 	if req.Subjpref != "" {
-		db.Exec("UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?", req.Subjpref, newID)
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("subjpref", req.Subjpref)
 	}
 	if req.Subjsuff != "" {
-		db.Exec("UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?", req.Subjsuff, newID)
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("subjsuff", req.Subjsuff)
 	}
 	if req.Body != "" {
-		db.Exec("UPDATE mod_stdmsgs SET body = ? WHERE id = ?", req.Body, newID)
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("body", req.Body)
 	}
 	if req.Rarelyused != 0 {
-		db.Exec("UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?", req.Rarelyused, newID)
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("rarelyused", req.Rarelyused)
 	}
 	if req.Autosend != 0 {
-		db.Exec("UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?", req.Autosend, newID)
+		db.Table("mod_stdmsgs").Where("id = ?", newID).Update("autosend", req.Autosend)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
@@ -214,7 +222,7 @@ func PatchStdMsg(c *fiber.Ctx) error {
 
 	// Get the stdmsg to find its configid.
 	var configid uint64
-	db.Raw("SELECT configid FROM mod_stdmsgs WHERE id = ?", req.ID).Scan(&configid)
+	db.Table("mod_stdmsgs").Select("configid").Where("id = ?", req.ID).Scan(&configid)
 	if configid == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
@@ -224,37 +232,37 @@ func PatchStdMsg(c *fiber.Ctx) error {
 	}
 
 	if req.Title != nil {
-		db.Exec("UPDATE mod_stdmsgs SET title = ? WHERE id = ?", *req.Title, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("title", *req.Title)
 	}
 	if req.Action != nil {
-		db.Exec("UPDATE mod_stdmsgs SET action = ? WHERE id = ?", *req.Action, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("action", *req.Action)
 	}
 	if req.Subjpref != nil {
-		db.Exec("UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?", *req.Subjpref, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("subjpref", *req.Subjpref)
 	}
 	if req.Subjsuff != nil {
-		db.Exec("UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?", *req.Subjsuff, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("subjsuff", *req.Subjsuff)
 	}
 	if req.Body != nil {
-		db.Exec("UPDATE mod_stdmsgs SET body = ? WHERE id = ?", *req.Body, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("body", *req.Body)
 	}
 	if req.Rarelyused != nil {
-		db.Exec("UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?", *req.Rarelyused, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("rarelyused", *req.Rarelyused)
 	}
 	if req.Autosend != nil {
-		db.Exec("UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?", *req.Autosend, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("autosend", *req.Autosend)
 	}
 	if req.Newmodstatus != nil {
-		db.Exec("UPDATE mod_stdmsgs SET newmodstatus = ? WHERE id = ?", *req.Newmodstatus, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("newmodstatus", *req.Newmodstatus)
 	}
 	if req.Newdelstatus != nil {
-		db.Exec("UPDATE mod_stdmsgs SET newdelstatus = ? WHERE id = ?", *req.Newdelstatus, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("newdelstatus", *req.Newdelstatus)
 	}
 	if req.Edittext != nil {
-		db.Exec("UPDATE mod_stdmsgs SET edittext = ? WHERE id = ?", *req.Edittext, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("edittext", *req.Edittext)
 	}
 	if req.Insert != nil {
-		db.Exec("UPDATE mod_stdmsgs SET `insert` = ? WHERE id = ?", *req.Insert, req.ID)
+		db.Table("mod_stdmsgs").Where("id = ?", req.ID).Update("insert", *req.Insert)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -293,7 +301,7 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var configid uint64
-	db.Raw("SELECT configid FROM mod_stdmsgs WHERE id = ?", req.ID).Scan(&configid)
+	db.Table("mod_stdmsgs").Select("configid").Where("id = ?", req.ID).Scan(&configid)
 	if configid == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
@@ -302,7 +310,7 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
 	}
 
-	db.Exec("DELETE FROM mod_stdmsgs WHERE id = ?", req.ID)
+	db.Table("mod_stdmsgs").Where("id = ?", req.ID).Delete(nil)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

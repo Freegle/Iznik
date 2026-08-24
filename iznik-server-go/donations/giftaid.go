@@ -8,6 +8,8 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // GiftAid represents a user's Gift Aid declaration
@@ -51,8 +53,12 @@ func GetGiftAid(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Get user ID from JWT
-	userID, _, _ := user.GetJWTFromRequest(c)
+	// Get the logged-in user. Use WhoAmI (not GetJWTFromRequest) so that
+	// c.Locals("authUsed") is set: that is what makes the global auth middleware
+	// enforce server-side session revocation. Reading the JWT directly would let a
+	// captured-but-logged-out token keep returning Gift Aid PII (name/address/
+	// postcode) until it expires. The other giftaid handlers already use WhoAmI.
+	userID := user.WhoAmI(c)
 	if userID == 0 {
 		return c.Status(401).JSON(fiber.Map{
 			"error": "Not logged in",
@@ -61,13 +67,11 @@ func GetGiftAid(c *fiber.Ctx) error {
 
 	// Query for user's gift aid record (exclude deleted records)
 	var giftaid GiftAid
-	result := db.Raw(`
-		SELECT id, userid, timestamp, period, fullname, firstname, lastname,
-		       homeaddress, deleted, reviewed, updated, postcode, housenameornumber
-		FROM giftaid
-		WHERE userid = ? AND deleted IS NULL
-		LIMIT 1
-	`, userID).Scan(&giftaid)
+	result := db.Table("giftaid").
+		Select("id, userid, timestamp, period, fullname, firstname, lastname, homeaddress, deleted, reviewed, updated, postcode, housenameornumber").
+		Where("userid = ? AND deleted IS NULL", userID).
+		Limit(1).
+		Scan(&giftaid)
 
 	if result.Error != nil {
 		return c.Status(500).JSON(fiber.Map{
@@ -132,7 +136,7 @@ func isGiftAidAdmin(myid uint64) bool {
 	}
 
 	var permissions *string
-	db.Raw("SELECT permissions FROM users WHERE id = ?", myid).Scan(&permissions)
+	db.Table("users").Select("permissions").Where("id = ?", myid).Scan(&permissions)
 
 	if permissions != nil && strings.Contains(strings.ToLower(*permissions), "giftaid") {
 		return true
@@ -156,12 +160,13 @@ func ListGiftAid(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var giftaids []GiftAidListItem
-	db.Raw(`SELECT giftaid.*, SUM(users_donations.GrossAmount) AS donations
-		FROM giftaid
-		LEFT JOIN users_donations ON users_donations.userid = giftaid.userid
-		WHERE giftaid.reviewed IS NULL AND giftaid.deleted IS NULL AND giftaid.period != 'Declined'
-		GROUP BY giftaid.userid
-		ORDER BY giftaid.timestamp DESC`).Scan(&giftaids)
+	db.Table("giftaid").
+		Select("giftaid.*, SUM(users_donations.GrossAmount) AS donations").
+		Joins("LEFT JOIN users_donations ON users_donations.userid = giftaid.userid").
+		Where("giftaid.reviewed IS NULL AND giftaid.deleted IS NULL AND giftaid.period != 'Declined'").
+		Group("giftaid.userid").
+		Order("giftaid.timestamp DESC").
+		Scan(&giftaids)
 
 	if giftaids == nil {
 		giftaids = make([]GiftAidListItem, 0)
@@ -170,7 +175,7 @@ func ListGiftAid(c *fiber.Ctx) error {
 	// Fetch emails for each user
 	for i := range giftaids {
 		var email *string
-		db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", giftaids[i].UserID).Scan(&email)
+		db.Table("users_emails").Select("email").Where("userid = ?", giftaids[i].UserID).Order("preferred DESC").Limit(1).Scan(&email)
 		giftaids[i].Email = email
 	}
 
@@ -198,8 +203,9 @@ func SearchGiftAid(c *fiber.Ctx) error {
 	searchPattern := "%" + search + "%"
 
 	var giftaids []GiftAidListItem
-	db.Raw("SELECT * FROM giftaid WHERE fullname LIKE ? OR homeaddress LIKE ? OR id LIKE ?",
-		searchPattern, searchPattern, searchPattern).Scan(&giftaids)
+	db.Table("giftaid").
+		Where("fullname LIKE ? OR homeaddress LIKE ? OR id LIKE ?", searchPattern, searchPattern, searchPattern).
+		Scan(&giftaids)
 
 	if giftaids == nil {
 		giftaids = make([]GiftAidListItem, 0)
@@ -208,7 +214,7 @@ func SearchGiftAid(c *fiber.Ctx) error {
 	// Fetch emails for each user
 	for i := range giftaids {
 		var email *string
-		db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", giftaids[i].UserID).Scan(&email)
+		db.Table("users_emails").Select("email").Where("userid = ?", giftaids[i].UserID).Order("preferred DESC").Limit(1).Scan(&email)
 		giftaids[i].Email = email
 	}
 
@@ -260,27 +266,50 @@ func SetGiftAid(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
-	}
-	sqlResult, err := sqlDB.Exec(`INSERT INTO giftaid (userid, period, fullname, firstname, lastname, homeaddress)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), period = ?, fullname = ?, firstname = ?, lastname = ?, homeaddress = ?, deleted = NULL`,
-		myid, req.Period, req.Fullname, req.Firstname, req.Lastname, req.Homeaddress,
-		req.Period, req.Fullname, req.Firstname, req.Lastname, req.Homeaddress)
+	// Clauses(gorm.WithResult()) reads the id from the same sql.Result the
+	// write returned — never issue a separate SELECT LAST_INSERT_ID() as it's
+	// unsafe under parallel load (GORM's connection pool may assign a
+	// different connection).
+	//
+	// giftaid has UNIQUE KEY (userid), so a member who declares again reuses their
+	// existing row. `timestamp` is DEFAULT CURRENT_TIMESTAMP with no ON UPDATE, so it
+	// must be refreshed here or the row keeps the date of the member's *first* ever
+	// declaration. That date is not cosmetic: it is written to the HMRC claim CSV as
+	// the declaration date, and GiftAidClaimService::identifyGiftAidedDonations
+	// matches donations against it (`>=` for period Future, `=` for This). Leaving it
+	// stale lets someone who declined years ago and re-declares Future today pull
+	// every donation since that old date into a claim.
+	//
+	// `reviewed` is cleared for the same reason: this is a new declaration, possibly
+	// with a new name or address, so it has to go back through review before we claim
+	// on it.
+	res := gorm.WithResult()
+	tx := db.Table("giftaid").Clauses(res, clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+			{Column: clause.Column{Name: "period"}, Value: gorm.Expr("?", req.Period)},
+			{Column: clause.Column{Name: "fullname"}, Value: gorm.Expr("?", req.Fullname)},
+			{Column: clause.Column{Name: "firstname"}, Value: gorm.Expr("?", req.Firstname)},
+			{Column: clause.Column{Name: "lastname"}, Value: gorm.Expr("?", req.Lastname)},
+			{Column: clause.Column{Name: "homeaddress"}, Value: gorm.Expr("?", req.Homeaddress)},
+			{Column: clause.Column{Name: "deleted"}, Value: gorm.Expr("NULL")},
+			{Column: clause.Column{Name: "timestamp"}, Value: gorm.Expr("NOW()")},
+			{Column: clause.Column{Name: "reviewed"}, Value: gorm.Expr("NULL")},
+		},
+	}).Create(map[string]interface{}{
+		"userid": myid, "period": req.Period, "fullname": req.Fullname,
+		"firstname": req.Firstname, "lastname": req.Lastname, "homeaddress": req.Homeaddress,
+	})
 
-	if err != nil {
+	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to set gift aid")
 	}
 
 	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
+	if res.Result != nil {
+		if lastID, idErr := res.Result.LastInsertId(); idErr == nil && lastID > 0 {
+			id = uint64(lastID)
+		}
 	}
 
 	return c.JSON(fiber.Map{"id": id})
@@ -320,31 +349,31 @@ func EditGiftAid(c *fiber.Ctx) error {
 	// Update each field individually if provided (non-nil pointer means explicitly sent,
 	// even if empty string -- allowing fields to be cleared).
 	if req.Period != nil {
-		db.Exec("UPDATE giftaid SET period = ? WHERE id = ?", *req.Period, req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("period", *req.Period)
 	}
 	if req.Fullname != nil {
-		db.Exec("UPDATE giftaid SET fullname = ? WHERE id = ?", *req.Fullname, req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("fullname", *req.Fullname)
 	}
 	if req.Firstname != nil {
-		db.Exec("UPDATE giftaid SET firstname = ? WHERE id = ?", *req.Firstname, req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("firstname", *req.Firstname)
 	}
 	if req.Lastname != nil {
-		db.Exec("UPDATE giftaid SET lastname = ? WHERE id = ?", *req.Lastname, req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("lastname", *req.Lastname)
 	}
 	if req.Homeaddress != nil {
-		db.Exec("UPDATE giftaid SET homeaddress = ? WHERE id = ?", *req.Homeaddress, req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("homeaddress", *req.Homeaddress)
 	}
 	if req.Postcode != nil {
-		db.Exec("UPDATE giftaid SET postcode = ? WHERE id = ?", *req.Postcode, req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("postcode", *req.Postcode)
 	}
 	if req.Housenameornumber != nil {
-		db.Exec("UPDATE giftaid SET housenameornumber = ? WHERE id = ?", *req.Housenameornumber, req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("housenameornumber", *req.Housenameornumber)
 	}
 	if req.Reviewed != nil && *req.Reviewed {
-		db.Exec("UPDATE giftaid SET reviewed = NOW() WHERE id = ?", req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("reviewed", gorm.Expr("NOW()"))
 	}
 	if req.Deleted != nil && *req.Deleted {
-		db.Exec("UPDATE giftaid SET deleted = NOW() WHERE id = ?", req.ID)
+		db.Table("giftaid").Where("id = ?", req.ID).Update("deleted", gorm.Expr("NOW()"))
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -368,13 +397,20 @@ func DeleteGiftAid(c *fiber.Ctx) error {
 
 	// Get user's name for the insert if record doesn't exist
 	var fullname string
-	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&fullname)
+	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", myid).Scan(&fullname)
 
 	// INSERT or update existing record to mark as Declined.
-	db.Exec(`INSERT INTO giftaid (userid, period, fullname, homeaddress)
-		VALUES (?, 'Declined', ?, '')
-		ON DUPLICATE KEY UPDATE period = 'Declined', deleted = NOW()`,
-		myid, fullname)
+	db.Table("giftaid").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"period":  gorm.Expr("'Declined'"),
+			"deleted": gorm.Expr("NOW()"),
+		}),
+	}).Create(map[string]interface{}{
+		"userid":      myid,
+		"period":      gorm.Expr("'Declined'"),
+		"fullname":    fullname,
+		"homeaddress": gorm.Expr("''"),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

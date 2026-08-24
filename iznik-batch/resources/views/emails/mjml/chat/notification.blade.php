@@ -1,12 +1,12 @@
 <mjml>
   @if($isMod2Mod ?? false)
-  @include('emails.mjml.partials.head', ['preview' => $senderName . ' sent a message in Volunteer Chat'])
+  @include('emails.mjml.partials.head', ['preview' => $senderName . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 70)])
   @elseif($isModerator ?? false)
-  @include('emails.mjml.partials.head', ['preview' => 'Member conversation with ' . ($memberName ?? 'a member')])
+  @include('emails.mjml.partials.head', ['preview' => ($memberName ?? 'Member') . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 70)])
   @elseif($isOwnMessage ?? false)
-  @include('emails.mjml.partials.head', ['preview' => 'Copy of your message to ' . ($otherUserName ?? 'the other user')])
+  @include('emails.mjml.partials.head', ['preview' => 'Your message to ' . ($otherUserName ?? 'the other user') . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 55)])
   @else
-  @include('emails.mjml.partials.head', ['preview' => $senderName . ' sent you a message'])
+  @include('emails.mjml.partials.head', ['preview' => $senderName . ': ' . \Illuminate\Support\Str::limit(strip_tags($chatMessage['text']), 75)])
   @endif
   <mj-body background-color="#ffffff">
     {{-- Header - ModTools blue for moderators, Freegle green for members --}}
@@ -222,7 +222,9 @@
     <mj-section background-color="#ffffff" padding="25px 20px">
       <mj-column>
         <mj-button href="{{ $chatUrl }}" mj-class="{{ ($isModerator ?? false) ? 'btn-modtools' : 'btn-success' }}" font-size="18px" padding="14px 40px">
-          @if($isOwnMessage ?? false)
+          @if($isPrompt ?? false)
+          Answer this
+          @elseif($isOwnMessage ?? false)
           View conversation
           @elseif($isMod2Mod ?? false)
           Reply to volunteers
@@ -415,6 +417,13 @@
         <mj-button href="{{ $donateUrl }}" mj-class="btn-success" font-size="14px" padding="12px 20px" width="90%">
           Donating helps too!
         </mj-button>
+      </mj-column>
+    </mj-section>
+    {{-- Donate now lands on our Stripe page, not PayPal, so show what's there.
+         Alt text repeats it for clients that block images. --}}
+    <mj-section mj-class="bg-light" padding="0 20px 16px 20px">
+      <mj-column>
+        <mj-image src="{{ $donateMarksUrl ?? config('freegle.images.paymethods') }}" alt="Donate with Apple Pay, Google Pay, PayPal or card" title="Donate with Apple Pay, Google Pay, PayPal or card" width="190px" align="center" padding="0" href="{{ $donateUrl }}" />
       </mj-column>
     </mj-section>
     @endif

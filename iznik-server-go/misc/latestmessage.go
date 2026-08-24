@@ -17,7 +17,7 @@ func LatestMessage(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	err := db.Raw("SELECT MAX(date) FROM messages").Scan(&latestMessage).Error
+	err := db.Table("messages").Select("MAX(date)").Scan(&latestMessage).Error
 
 	if err != nil {
 		return c.JSON(LatestMessageResult{

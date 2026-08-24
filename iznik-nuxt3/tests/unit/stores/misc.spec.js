@@ -26,6 +26,8 @@ describe('misc store', () => {
       expect(store.vals).toEqual({})
       expect(store.somethingWentWrong).toBe(false)
       expect(store.errorDetails).toBeNull()
+      expect(store.appOutOfDate).toBe(false)
+      expect(store.appOutOfDateMessage).toBe('')
       expect(store.needToReload).toBe(false)
       expect(store.visible).toBe(true)
       expect(store.apiCount).toBe(0)
@@ -139,6 +141,28 @@ describe('misc store', () => {
     })
   })
 
+  describe('setAppOutOfDate', () => {
+    it('sets appOutOfDate flag and stores the server message', () => {
+      const store = useMiscStore()
+      store.setAppOutOfDate(
+        'App is out of date - please upgrade or use the website'
+      )
+
+      expect(store.appOutOfDate).toBe(true)
+      expect(store.appOutOfDateMessage).toBe(
+        'App is out of date - please upgrade or use the website'
+      )
+    })
+
+    it('falls back to an empty message when none is supplied', () => {
+      const store = useMiscStore()
+      store.setAppOutOfDate()
+
+      expect(store.appOutOfDate).toBe(true)
+      expect(store.appOutOfDateMessage).toBe('')
+    })
+  })
+
   describe('api counter', () => {
     it('increments api count', () => {
       const store = useMiscStore()
@@ -176,7 +200,11 @@ describe('misc store', () => {
       const mockResponse = { status: 200 }
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse))
 
-      const result = await store.fetchWithTimeout('http://test/online', null, 5000)
+      const result = await store.fetchWithTimeout(
+        'http://test/online',
+        null,
+        5000
+      )
       expect(result).toBe(mockResponse)
     })
 
@@ -253,10 +281,7 @@ describe('misc store', () => {
 
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
 
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({ status: 500 })
-      )
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 500 }))
 
       await store.checkOnline()
 
@@ -313,7 +338,7 @@ describe('misc store', () => {
   })
 
   describe('startOnlineCheck', () => {
-    it('starts online check when no timer exists', async () => {
+    it('starts online check when no timer exists', () => {
       vi.useFakeTimers()
       const store = useMiscStore()
       store.init({ public: { APIv2: 'http://test' } })
@@ -365,6 +390,36 @@ describe('misc store', () => {
       vi.advanceTimersByTime(1000)
 
       await promise
+    })
+
+    // Every API request awaits this before fetching, and useFetchRetry's
+    // retryOn() awaits it again before deciding whether to make another
+    // attempt.  It used to poll every second for ever with no timeout and no
+    // reject, so a member who went offline at the wrong moment left a caller
+    // awaiting a promise that could never settle.  That is how a give-flow
+    // photo got stranded at uploading:true / 100% for good: the server had
+    // accepted the image (200) but PhotoUploader's `await imageStore.post()`
+    // never returned, so nothing ever cleared the flag, and compose persisted
+    // it.  Give up instead - the caller then gets a normal failure it already
+    // knows how to handle.
+    it('gives up rather than polling for ever when we stay offline', async () => {
+      vi.useFakeTimers()
+      const store = useMiscStore()
+      store.online = false
+
+      let settled = false
+      Promise.resolve(store.waitForOnline()).then(
+        () => {
+          settled = true
+        },
+        () => {
+          settled = true
+        }
+      )
+
+      await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+
+      expect(settled).toBe(true)
     })
   })
 

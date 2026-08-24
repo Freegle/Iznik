@@ -35,6 +35,17 @@
               @donation-made="donationMade"
             />
 
+            <!-- Just posted a WANTED? Show any matching offers already available
+                 nearby, now that the post is safely in. -->
+            <WantedMatches
+              v-if="justPostedWanted"
+              :query="wantedMatchQuery"
+              :lat="justPostedWanted.lat || 0"
+              :lng="justPostedWanted.lng || 0"
+            />
+
+            <MyPostsClearances :posts="posts" />
+
             <MyPostsPostsList
               :posts="posts"
               :loading="loading"
@@ -83,7 +94,9 @@ import VisibleWhen from '~/components/VisibleWhen'
 import SidebarLeft from '~/components/SidebarLeft'
 import SidebarRight from '~/components/SidebarRight'
 import ExpectedRepliesWarning from '~/components/ExpectedRepliesWarning'
+import WantedMatches from '~/components/WantedMatches.vue'
 import MyPostsPostsList from '~/components/MyPostsPostsList.vue'
+import MyPostsClearances from '~/components/MyPostsClearances.vue'
 import MyPostsSearchesList from '~/components/MyPostsSearchesList.vue'
 import MyPostsDonationAsk from '~/components/MyPostsDonationAsk.vue'
 import NewUserInfo from '~/components/NewUserInfo.vue'
@@ -93,8 +106,8 @@ import { useRuntimeConfig } from '#app'
 import { action } from '~/composables/useClientLog'
 
 console.log('My Posts page setup')
-const DonationAskModal = defineAsyncComponent(() =>
-  import('~/components/DonationAskModal')
+const DonationAskModal = defineAsyncComponent(
+  () => import('~/components/DonationAskModal')
 )
 
 const authStore = useAuthStore()
@@ -135,6 +148,22 @@ const { showDonationAskModal } = await useDonationAskModal()
 
 // `posts` holds both OFFERs and WANTEDs (both old and active)
 const posts = computed(() => messageStore.byUserList[myid.value] || [])
+
+// After posting a WANTED, surface any offers already available nearby that
+// match it. We deliberately don't do this during compose (it distracts from
+// getting the post in) — only once the post is live, here on the landing page.
+// The just-posted message id arrives via history.state (see onMounted -> ids).
+const justPostedWanted = computed(() => {
+  if (type.value !== 'Wanted' || !ids.value?.length) return null
+  return messageStore.list[ids.value[0]] || null
+})
+const wantedMatchQuery = computed(() => {
+  const m = justPostedWanted.value
+  if (!m) return ''
+  if (m.item && typeof m.item === 'object') return m.item.name || ''
+  if (typeof m.item === 'string' && m.item) return m.item
+  return m.subject || ''
+})
 
 const loading = ref(true)
 

@@ -3,6 +3,7 @@ import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
+import { trackConversion } from '~/composables/useTrackConversion'
 
 // Module-level globals
 const postType = ref(null)
@@ -127,10 +128,10 @@ export function setup(type) {
 
   const myid = authStore.user?.id
 
-  if (myid) {
-    // Get our own posts so that we can spot duplicates.
-    messageStore.fetchByUser(myid, false)
-  }
+  // Load our own active posts so PostItem's duplicate check can spot a repost of
+  // something still open (see loadOwnActivePosts). Fire-and-forget: the check is
+  // reactive and lights up as the messages arrive.
+  loadOwnActivePosts(messageStore, myid)
 
   // Update all the refs with initial values
   loggedIn.value = !!myid
@@ -226,6 +227,22 @@ export function setup(type) {
   }
 }
 
+// loadOwnActivePosts loads the member's own active posts as FULL messages into the
+// message store's `list`, so PostItem's duplicate check - which reads
+// messageStore.all and compares on item.name - can spot a repost of something still
+// open. fetchByUser only fills byUserList with lean summaries that omit item.name (a
+// slot the check never reads), so pull each active post's full record into `list`
+// (mirrors pages/myposts.vue). No-op when logged out.
+export function loadOwnActivePosts(messageStore, myid) {
+  if (!myid) {
+    return Promise.resolve()
+  }
+
+  return messageStore.fetchByUser(myid, true).then((active) => {
+    ;(active || []).forEach((p) => messageStore.fetch(p.id))
+  })
+}
+
 // makeCanSubmit returns a computed that gates the submit button on message validity.
 // Pass the page's own refs so it can be tested without mounting the full component.
 // requirePostcode adds the whereami-style postcode/group checks.
@@ -250,10 +267,24 @@ export function makeCanSubmit({
   })
 }
 
-export async function deleteItem(id) {
+// "Clear and start over": reset the current item to empty IN PLACE, keeping its id and
+// type, so the store-bound inputs clear reactively and the compose form stays mounted.
+// The old handler deleted the message instead, which left the compose page with no item
+// to render - ids went empty, so the form disappeared (leaving just the stepper and the
+// "Add an item name..." hint) and the rest of the wizard read as invalid, e.g. the
+// whoami step showed a disabled "Enter email to continue" even for a logged-in user
+// (Discourse 9915). If there's somehow no message of this type yet, seed a blank one so
+// the form still renders.
+export function clearItem(id) {
   const composeStore = useComposeStore()
+  const type = postType.value
 
-  await composeStore.deleteMessage(id)
+  if (id !== undefined && id !== null && composeStore.message(id)) {
+    composeStore.clearMessage(id)
+  } else if (type && !composeStore.messages.some((m) => m && m.type === type)) {
+    const newId = composeStore.add()
+    composeStore.setType({ id: newId, type })
+  }
 }
 
 export function postcodeClear() {
@@ -294,7 +325,7 @@ export function postcodeSelect(pc) {
 
       if (!found) {
         console.log('Current group not found in list')
-        if (!groupid && pc.groupsnear.length) {
+        if (pc.groupsnear.length) {
           console.log('Use new nearby group', pc.groupsnear[0].id)
           composeStore.group = pc.groupsnear[0].id
         }
@@ -332,7 +363,10 @@ export async function freegleIt(type, router, options = {}) {
     await Promise.all(
       results.map(async (res) => {
         console.log('Consider result', res, type)
-        if (type === 'Offer' && res.id) {
+        if (res.id) {
+          // Both types: myposts needs the ids to show what you just posted.
+          // The Offer-only consumers (donation ask, "viewed after Offer") gate
+          // on type themselves, so they're unaffected.
           params.ids.push(res.id)
         }
 
@@ -363,6 +397,15 @@ export async function freegleIt(type, router, options = {}) {
         }
       })
     )
+
+    // The post has genuinely been submitted (and any inline signup handled),
+    // so record success-point conversion events for Google Ads.
+    trackConversion(type === 'Offer' ? 'Give an Item' : 'Find an Item')
+
+    if (params.newuser) {
+      // Posting anonymously just created an account - that's a registration.
+      trackConversion('Register with Website')
+    }
 
     const promises = []
 

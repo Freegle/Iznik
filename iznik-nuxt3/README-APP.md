@@ -47,12 +47,16 @@ The app uses Capacitor to bridge web code with native device features. This sect
 
 ### Capacitor Framework
 
-The app uses Capacitor 7 to bridge web code with native functionality:
+The app uses Capacitor 8 to bridge web code with native functionality:
 
 - **App ID**: `org.ilovefreegle.direct`
 - **App Name**: Freegle
 - **Config File**: `capacitor.config.ts`
 - **Web Directory**: `.output/public` (from Nuxt static build)
+- **Minimum OS**: Android 8.0 (minSdk 26, `android/variables.gradle`); iOS 15.0
+  (`ios/App/Podfile` + pbxproj) — the iOS floor moved from 14.0 with Capacitor 8,
+  which requires iOS 15; existing installs on iOS 14 keep the last compatible
+  build but stop receiving updates
 
 ### Android Native Files
 
@@ -91,30 +95,21 @@ These features use native device capabilities not available in web browsers.
 
 The mobile app supports multiple authentication methods with native implementations:
 
-1. **Google Sign-In**
-   - Package: `@codetrix-studio/capacitor-google-auth`
+1. **Google Sign-In and Facebook Login**
+   - Package: `@capgo/capacitor-social-login`
    - Platform-specific client IDs for Android and iOS
-   - Native Google Sign-In UI
+   - Native sign-in UI; supports Facebook "Limited Login" on iOS
 
-2. **Facebook Login**
-   - Package: Custom Capacitor Social Login plugin
-   - Support for "Limited Login" on iOS
-   - Native Facebook authentication
-
-3. **Apple Sign In**
-   - iOS only
+2. **Apple Sign In**
+   - Package: `@capacitor-community/apple-sign-in` (iOS only)
    - Native Sign in with Apple integration
    - Identity token handling
-
-4. **Yahoo Login**
-   - Uses in-app browser (Cordova InAppBrowser)
-   - OAuth flow with native browser
 
 ### Push Notifications
 
 Custom implementation using Freegle's fork:
 
-- **Package**: `@freegle/capacitor-push-notifications-cap7`
+- **Package**: `@freegle/capacitor-push-notifications-cap8` (cap8 branch of the capacitor-push-notifications-cap7 repo, based on upstream 8.1.2)
 - **Features**:
   - Foreground and background push handling
   - Badge count management on home screen icon
@@ -122,6 +117,33 @@ Custom implementation using Freegle's fork:
   - Multiple notification channels (Android)
   - Sound and vibration control
   - Notification permissions handling
+
+#### Notification types
+
+- **Chat messages** (`CHAT_MESSAGE`, `chat_messages` channel) — reply/mark-read actions.
+- **Daily new posts** (`NEW_POSTS`, `new_posts` channel) — one push per day summarising new
+  OFFER/WANTED posts near the user (the push analogue of the daily email digest). Rendered
+  richly: Android `InboxStyle` (a few items + "+N more") for several posts or `BigPictureStyle`
+  (item photo) for a single post; iOS uses a Notification Service Extension to attach the photo.
+  Sent **data-only** on Android so the native builder renders it. Opt-out via
+  `settings.notifications.dailypostspush` (app-only toggle in Settings). Tapping opens `/browse`.
+  Server side is `push:daily-posts` in iznik-batch, gated by `FREEGLE_POSTS_PUSH_ALLOWLIST`.
+
+#### Android backup and FCM tokens
+
+Android auto-backup must NOT restore Firebase's installation prefs: a restored
+Firebase Installation ID makes the FCM SDK return the PREVIOUS install's token,
+which FCM invalidated at uninstall — so a reinstalled app re-registers a dead
+token, every push to it is rejected (`NotRegistered`), and the app believes
+registration succeeded. `android/app/src/main/res/xml/backup_rules.xml`
+(Android ≤11) and `data_extraction_rules.xml` (12+, cloud restore AND
+device-to-device transfer) exclude `com.google.android.gms.appid.xml` and
+`com.google.firebase.messaging.xml` from backup for this reason; keep the
+exclusions if the backup config is ever reworked. The server purges tokens FCM
+reports as dead (`PushNotificationService::isDeadTokenError` in iznik-batch),
+but that cannot help a device that keeps re-registering a restored dead token —
+the affected user's remedy is clearing the app's storage/data so a fresh token
+is minted.
 
 ### Camera & Photo Management
 
@@ -153,31 +175,67 @@ Mobile-specific Stripe implementation:
    - Share posts using native share sheet
    - Platform-specific share UI
 
-3. **Calendar Integration**
+3. **Share Into the App (photo → give flow)**
+   - Android: `ACTION_SEND`/`ACTION_SEND_MULTIPLE` handled by `MainActivity`,
+     which copies images to cache and exposes them via the
+     `window.FreegleShare` bridge; iOS mirrors this with a
+     `freegleshare://` deep link
+   - `stores/mobile.js` consumes pending shares as soon as the App plugin
+     import resolves (early in `initApp()`), and routes to
+     `/give/mobile/photos`
+   - The photos page attaches each shared image through the same
+     `PhotoUploader.processPhoto()` path as manual picks; Next is disabled
+     while any attachment is still uploading
+   - The photo-quality image loaders are bounded (8s timeout) so a
+     `capacitor://` file URL that never fires load/error cannot hang the
+     upload
+
+4. **Calendar Integration**
    - Add events to native calendar
    - Permission handling (iOS requires multiple permission types)
    - Uses Cordova Calendar plugin
 
-4. **Pinch Zoom**
+5. **Pinch Zoom**
    - Enabled for Android
    - Native zoom gestures
+   - Transient magnifier: scales the whole WebView viewport (navbars included)
+     while zoomed; distinct from the permanent text-size preference below
 
-5. **Device Information**
+5. **System Text Size (accessibility)**
+   - `@capacitor/text-zoom`: on startup (and again on resume) the app reads
+     the OS-preferred text zoom - iOS Dynamic Type / Android font scale - and
+     applies it to the WebView (`stores/mobile.js` `initTextZoom()`)
+   - Without this, WKWebView ignores iOS Dynamic Type entirely, so the app
+     rendered at a fixed text size whatever the member set in Settings →
+     Accessibility
+   - Text grows with reflow, and the navbars are unaffected
+
+6. **Device Information**
    - Collect device details for debugging
    - Persistent device ID
    - OS version tracking
    - Send to Sentry for error context
 
-6. **App Updates**
+7. **App Updates**
    - Check for required updates
    - Check for available updates
    - Version comparison logic
    - Update prompts
 
-7. **Rate App**
+8. **Rate App**
    - Native rating prompts
    - Timing logic to avoid annoying users
    - Platform-specific app store links
+
+8. **Hardware Back Button (Android)**
+   - `initBackButton()` in `stores/mobile.js` listens for Capacitor's
+     `backButton` event (fired for both the back button and the back
+     gesture)
+   - Navigates back through webview history while there is any, then
+     backgrounds the app with `App.minimizeApp()` at the root — the
+     standard Android behaviour
+   - Without this listener Capacitor swallows back presses once history
+     is empty and the app cannot be exited
 
 </details>
 
@@ -212,6 +270,7 @@ A dedicated Pinia store handles all mobile-specific state and functionality:
 - `initPushNotifications()`: Configure push notification system
 - `checkForAppUpdate()`: Check for app updates
 - `initWakeUpActions()`: Handle app resume/wake events
+- `initBackButton()`: Android back button/gesture — history back, minimize at root
 
 </details>
 
@@ -243,12 +302,16 @@ Several components have mobile-specific behavior:
 5. **Chat Components**
    - Optimized for mobile screens
    - Native sharing integration
+   - The chat box and ChitChat comment box use
+     `autocapitalize="sentences"` except on iOS (app and Safari), where
+     auto-capitalise engages the virtual Shift key so Return arrives as
+     shift+enter and breaks send-on-enter (`composables/useIsIOS.js`;
+     angular/angular#32963 — iOS keyboard design, not a fixed bug)
 
 ### Ads & Analytics
 
 - **CookieYes**: App-specific version (`cookieyesapp.js`)
 - **Google AdSense**: Modified for HTTPS enforcement
-- **Matomo**: Mobile app tracking
 - **Sentry**: Error reporting with device context
 - **Ad Behavior**: Some ads disabled or modified for mobile
 
@@ -271,10 +334,10 @@ The mobile app requires specific Capacitor plugins and dependencies for native f
 
 ```json
 {
-  "@capacitor/core": "^7.x",
-  "@capacitor/cli": "^7.x",
-  "@capacitor/android": "^7.x",
-  "@capacitor/ios": "^7.x"
+  "@capacitor/core": "^8.x",
+  "@capacitor/cli": "^8.x",
+  "@capacitor/android": "^8.x",
+  "@capacitor/ios": "^8.x"
 }
 ```
 
@@ -315,6 +378,12 @@ The mobile app requires specific Capacitor plugins and dependencies for native f
   "cordova-plugin-calendar": "Calendar integration"
 }
 ```
+
+**Add to Calendar** (`components/AddToCalendar.vue`): uses `window.plugins.calendar`
+(cordova-plugin-calendar) to add a handover to the device calendar. If the plugin is not
+exposed in the WebView, or the native call errors, it falls back to downloading a `.ics`
+file (built by `composables/useCalendarEvent.js`) so the button is never a silent no-op — the
+symptom reported in Discourse 9927. On the web it always uses the `.ics`.
 
 </details>
 
@@ -928,6 +997,30 @@ Both iOS and Android are built and deployed in parallel with shared version numb
    - **Android**: Auto-promotes Beta → Production (if not already promoted)
    - **iOS**: Auto-submits latest TestFlight build to App Store review (if not already submitted)
    - Only the LATEST build from last 24 hours is submitted/promoted
+
+### ModTools Release Cadence
+
+ModTools releases differ from FD deliberately:
+
+- **No per-push builds and no Play beta track** — nothing builds ModTools when
+  `production` moves. The only builders are the weekly schedule and a manual
+  trigger.
+- **Weekly schedule**: CircleCI scheduled pipeline
+  `weekly-modtools-release-schedule`, Wednesday 20:00 UTC, runs the
+  `modtools-production` workflow (parameter `build_modtools_production: true`
+  on `production`): version increment → Android straight to the Play
+  **production** track + iOS to TestFlight → App Store submit attempt.
+- **Why 20:00**: two hours before the FD `weekly-promote-schedule` (22:00).
+  The inline iOS submit usually runs before Apple has processed the fresh
+  build and exits gracefully; the promote workflow's
+  `auto-submit-ios-modtools` then submits it the same night once processed.
+- **Manual release**: set `build_modtools_production: true` in the CircleCI
+  pipeline parameters UI (or API) on `production`.
+- **Version bookkeeping**: the Android job writes the released version back to
+  the `CURRENT_MODTOOLS_VERSION` project env var via `CIRCLECI_API_TOKEN`. If
+  that write fails, fix the token and set the variable by hand before the next
+  release — a stale value makes the next release rebuild the SAME version,
+  which Apple rejects (the train closes once a version is approved).
 
 ### Android-Specific
 

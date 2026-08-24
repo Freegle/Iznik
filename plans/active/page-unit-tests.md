@@ -25,11 +25,11 @@ Branch: feature/page-unit-tests
 | 15 | shortlinks/[id].vue | Route param, fetch, data transform | ⬜ Pending | |
 | 16 | give/options.vue | Deadline math, onMounted message lookup | ⬜ Pending | |
 | 17 | give/index.vue | Breakpoint redirect logic | ⬜ Pending | |
-| 18 | find/index.vue | Same as give/index | ⬜ Pending | |
+| 18 | ask/index.vue | Same as give/index | ⬜ Pending | |
 | 19 | browse/[[term]].vue | Bounds calculation, query params | ⬜ Pending | |
 | 20 | microvolunteering/message/[[id]].client.vue | Privilege check, store interactions | ⬜ Pending | |
 | 21 | engage.vue | Query params, conditional routing | ⬜ Pending | |
 | 22 | facebook/unsubscribe/[[id]].vue | Param, fetch, 404 handling | ⬜ Pending | |
 | 23 | jobs.vue | Category building, search handler, watch | ⬜ Pending | |
 | 24 | give/whoami.vue | Email validation, async checking | ⬜ Pending | |
-| 25 | find/whoami.vue | Same as give/whoami | ⬜ Pending | |
+| 25 | ask/whoami.vue | Same as give/whoami | ⬜ Pending | |

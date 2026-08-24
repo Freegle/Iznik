@@ -1,6 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, effectScope } from 'vue'
 
+// ~/stores/auth is pre-aliased to tests/unit/mocks/auth-store.js;
+// override via globalThis.__mockAuthStore.
+
+import { useMessageDisplay } from '~/composables/useMessageDisplay'
+
 // ---- mocks (vi.mock is hoisted before imports) ----
 
 const mockTimeagoShort = vi.fn()
@@ -38,17 +43,26 @@ vi.mock('~/stores/group', () => ({
   useGroupStore: () => ({ get: mockGetGroup }),
 }))
 
+// Nearby store lookups (server distance + pinned ids). Same Map/Set references throughout
+// so tests mutate them via .set()/.add()/.clear() and the composable sees the change.
+// Empty by default -> the distance badge falls back to the client-side milesAway calc and
+// isPinned is false, as off the browse feed.
+const mockNearbyDistances = new Map()
+const mockNearbyPinned = new Set()
+
+vi.mock('~/stores/nearby', () => ({
+  useNearbyStore: () => ({
+    distanceById: mockNearbyDistances,
+    pinnedIds: mockNearbyPinned,
+  }),
+}))
+
 // mockMe must be a ref so the composable's `me.value` lookup works
 const mockMe = ref(null)
 
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({ me: mockMe }),
 }))
-
-// ~/stores/auth is pre-aliased to tests/unit/mocks/auth-store.js;
-// override via globalThis.__mockAuthStore.
-
-import { useMessageDisplay } from '~/composables/useMessageDisplay'
 
 // ---- helpers ----
 
@@ -84,6 +98,8 @@ function make(msgData, opts = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockNearbyDistances.clear()
+  mockNearbyPinned.clear()
   mockMe.value = null
   mockByIdUser.mockReturnValue(null)
   mockGetGroup.mockReturnValue(null)
@@ -106,7 +122,10 @@ afterEach(() => {
 describe('useMessageDisplay', () => {
   describe('messageId can be a plain value (non-ref)', () => {
     it('resolves message when messageId is a plain number', () => {
-      mockByIdMessage.mockReturnValue({ id: 42, subject: 'OFFER: Plain ID test' })
+      mockByIdMessage.mockReturnValue({
+        id: 42,
+        subject: 'OFFER: Plain ID test',
+      })
       let c
       const scope = effectScope()
       scope.run(() => {
@@ -183,7 +202,11 @@ describe('useMessageDisplay', () => {
 
     it('uses custom group keyword for offer when provided', () => {
       const c = make(
-        { id: 1, subject: 'GIVE: Custom keyword item', groups: [{ groupid: 10 }] },
+        {
+          id: 1,
+          subject: 'GIVE: Custom keyword item',
+          groups: [{ groupid: 10 }],
+        },
         { group: { settings: { keywords: { offer: 'GIVE' } } } }
       )
       expect(c.strippedSubject.value).toBe('Custom keyword item')
@@ -200,7 +223,7 @@ describe('useMessageDisplay', () => {
     it('falls back to default keywords when group has no settings', () => {
       const c = make(
         { id: 1, subject: 'OFFER: Fallback test', groups: [{ groupid: 10 }] },
-        { group: {} }  // group without settings
+        { group: {} } // group without settings
       )
       expect(c.strippedSubject.value).toBe('Fallback test')
     })
@@ -223,7 +246,10 @@ describe('useMessageDisplay', () => {
     })
 
     it('returns stripped subject unchanged when no parentheses at end', () => {
-      const c = make({ id: 1, subject: 'OFFER: Item name with (parens) in middle' })
+      const c = make({
+        id: 1,
+        subject: 'OFFER: Item name with (parens) in middle',
+      })
       // Parens not at end — no trailing location
       expect(c.subjectItemName.value).toBe('Item name with (parens) in middle')
     })
@@ -268,11 +294,14 @@ describe('useMessageDisplay', () => {
       [[], false, 0],
       [[{ id: 1 }], true, 1],
       [[{ id: 1 }, { id: 2 }, { id: 3 }], true, 3],
-    ])('attachments %j → gotAttachments=%s, count=%d', (attachments, gotAtt, count) => {
-      const c = make({ id: 1, attachments })
-      expect(c.gotAttachments.value).toBe(gotAtt)
-      expect(c.attachmentCount.value).toBe(count)
-    })
+    ])(
+      'attachments %j → gotAttachments=%s, count=%d',
+      (attachments, gotAtt, count) => {
+        const c = make({ id: 1, attachments })
+        expect(c.gotAttachments.value).toBe(gotAtt)
+        expect(c.attachmentCount.value).toBe(count)
+      }
+    )
 
     it('returns false/0 when attachments property is absent', () => {
       const c = make({ id: 1 })
@@ -306,13 +335,43 @@ describe('useMessageDisplay', () => {
       expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
     })
 
+    it('uses the ORIGIN group arrival, not a rippled-in copy that happens to be first', () => {
+      // Rippling adds a messages_groups row per group the post spreads to, with
+      // arrival = the ripple-bump time, and groups[] order is arbitrary. Showing a
+      // bump time made a 7-hour-old post read "1 hour" and the "Newest posted"
+      // order look shuffled - the sort correctly uses original post time.
+      const c = make({
+        id: 1,
+        groups: [
+          { arrival: '2026-05-16T10:00:00Z', rippled_in: 1 },
+          { arrival: '2026-05-14T10:00:00Z', rippled_in: 0 },
+          { arrival: '2026-05-15T10:00:00Z', rippled_in: 1 },
+        ],
+        arrival: '2026-05-13T10:00:00Z',
+      })
+      expect(c.timeAgo.value).toBe('2h')
+      expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-14T10:00:00Z')
+    })
+
+    it('falls back to message arrival when every group row is rippled-in', () => {
+      // Should not happen (there is always an origin row), but a bump time must
+      // never be shown as the posted age.
+      const c = make({
+        id: 1,
+        groups: [{ arrival: '2026-05-16T10:00:00Z', rippled_in: 1 }],
+        arrival: '2026-05-15T10:00:00Z',
+      })
+      expect(c.timeAgo.value).toBe('2h')
+      expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
+    })
+
     it('falls back to arrival when groups arrival is absent', () => {
       const c = make({
         id: 1,
         groups: [{}],
         arrival: '2026-05-15T10:00:00Z',
       })
-      c.timeAgo.value // trigger
+      expect(c.timeAgo.value).toBe('2h')
       expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })
 
@@ -321,7 +380,7 @@ describe('useMessageDisplay', () => {
         id: 1,
         date: '2026-05-14T10:00:00Z',
       })
-      c.timeAgo.value // trigger
+      expect(c.timeAgo.value).toBe('2h')
       expect(mockTimeagoShort).toHaveBeenCalledWith('2026-05-14T10:00:00Z')
     })
 
@@ -344,13 +403,13 @@ describe('useMessageDisplay', () => {
         groups: [{ arrival: '2026-05-16T10:00:00Z' }],
         arrival: '2026-05-15T10:00:00Z',
       })
-      c.timeAgoExpanded.value
+      expect(c.timeAgoExpanded.value).toBe('2 hours')
       expect(mockTimeagoMedium).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
     })
 
     it('falls back to arrival when groups arrival is absent', () => {
       const c = make({ id: 1, groups: [{}], arrival: '2026-05-15T10:00:00Z' })
-      c.timeAgoExpanded.value
+      expect(c.timeAgoExpanded.value).toBe('2 hours')
       expect(mockTimeagoMedium).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })
 
@@ -396,13 +455,13 @@ describe('useMessageDisplay', () => {
         groups: [{ arrival: '2026-05-16T10:00:00Z' }],
         arrival: '2026-05-15T10:00:00Z',
       })
-      c.fullTimeAgo.value // trigger
+      expect(c.fullTimeAgo.value).toBe('Posted 2 hours ago')
       expect(mockTimeago).toHaveBeenCalledWith('2026-05-16T10:00:00Z')
     })
 
     it('falls back to arrival when groups arrival is absent', () => {
       const c = make({ id: 1, groups: [{}], arrival: '2026-05-15T10:00:00Z' })
-      c.fullTimeAgo.value
+      expect(c.fullTimeAgo.value).toBe('Posted 2 hours ago')
       expect(mockTimeago).toHaveBeenCalledWith('2026-05-15T10:00:00Z')
     })
   })
@@ -428,7 +487,7 @@ describe('useMessageDisplay', () => {
   describe('isOffer / isWanted / successfulText / placeholderClass / categoryIcon', () => {
     it.each([
       ['Offer', true, false, 'Taken', 'offer-gradient', 'gift'],
-      ['Wanted', false, true, 'Received', 'wanted-gradient', 'search'],
+      ['Wanted', false, true, 'Received', 'wanted-gradient', 'shopping-cart'],
       ['Other', false, false, 'Received', 'wanted-gradient', 'gift'],
     ])(
       'type=%s → isOffer=%s isWanted=%s successfulText=%s placeholder=%s icon=%s',
@@ -499,6 +558,54 @@ describe('useMessageDisplay', () => {
       const c = make({ id: 1, lat: 51.6, lng: -0.1 })
       expect(c.distanceText.value).toBe('6mi')
     })
+
+    it('prefers the server distance from the nearby store when present', () => {
+      mockNearbyDistances.set(7, 8.3)
+      mockMe.value = { lat: 51.5, lng: -0.1 }
+      // area / lat-lng would give a different answer; the server value wins.
+      const c = make({ id: 7, lat: 51.9, lng: -0.5, area: 'Ignored' })
+      expect(c.distanceText.value).toBe('8mi')
+      expect(mockMilesAway).not.toHaveBeenCalled()
+    })
+
+    it('shows "<1mi" for a sub-mile server distance', () => {
+      mockNearbyDistances.set(7, 0.4)
+      const c = make({ id: 7, lat: 51.9, lng: -0.5 })
+      expect(c.distanceText.value).toBe('<1mi')
+    })
+
+    it('falls back to the client calc when no server distance for this id', () => {
+      mockNearbyDistances.set(999, 3) // a different post's distance
+      mockMilesAway.mockReturnValue(5.7)
+      mockMe.value = { lat: 51.5, lng: -0.1 }
+      const c = make({ id: 7, lat: 51.6, lng: -0.1 })
+      expect(c.distanceText.value).toBe('6mi')
+    })
+  })
+
+  describe('isPinned', () => {
+    it('is true when this id is in the nearby store pinned set', () => {
+      mockNearbyPinned.add(7)
+      const c = make({ id: 7 })
+      expect(c.isPinned.value).toBe(true)
+    })
+
+    it('is false for a post that is not pinned', () => {
+      mockNearbyPinned.add(999)
+      const c = make({ id: 7 })
+      expect(c.isPinned.value).toBe(false)
+    })
+
+    it('is false off the feed (empty pinned set)', () => {
+      const c = make({ id: 7 })
+      expect(c.isPinned.value).toBe(false)
+    })
+
+    it('matches a string id against the numeric pinned set', () => {
+      mockNearbyPinned.add(7)
+      const c = make({ id: '7' })
+      expect(c.isPinned.value).toBe(true)
+    })
   })
 
   describe('distanceTextExpanded', () => {
@@ -533,6 +640,22 @@ describe('useMessageDisplay', () => {
       mockMe.value = { lat: 51.5, lng: -0.1 }
       const c = make({ id: 1, lat: 51.6, lng: -0.1 })
       expect(c.distanceTextExpanded.value).toBe('7 miles')
+    })
+
+    it('prefers the server distance (plural miles) when present', () => {
+      mockNearbyDistances.set(7, 7.4)
+      mockMe.value = { lat: 51.5, lng: -0.1 }
+      const c = make({ id: 7, lat: 51.9, lng: -0.5 })
+      expect(c.distanceTextExpanded.value).toBe('7 miles')
+      expect(mockMilesAway).not.toHaveBeenCalled()
+    })
+
+    it('server distance renders singular and sub-mile wording', () => {
+      mockNearbyDistances.set(7, 1.0)
+      expect(make({ id: 7 }).distanceTextExpanded.value).toBe('1 mile')
+      mockNearbyDistances.set(8, 0.3)
+      const subMile = make({ id: 8 }).distanceTextExpanded.value
+      expect(subMile).toBe('less than 1 mile')
     })
   })
 

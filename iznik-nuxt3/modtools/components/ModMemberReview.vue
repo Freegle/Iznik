@@ -50,6 +50,14 @@
           This freegler recently active on groups
           {{ user.activedistance }} miles apart.
         </NoticeMessage>
+        <NoticeMessage
+          v-if="user && user.locationchanges >= 3"
+          variant="warning"
+          class="mb-2"
+        >
+          This freegler has changed location
+          {{ user.locationchanges }} times in the last 90 days.
+        </NoticeMessage>
         <ModBouncing v-if="user && user.bouncing" :userid="member.userid" />
         <NoticeMessage v-if="member.bandate">
           Banned
@@ -277,8 +285,8 @@ const hiddenmemberofs = computed(() => {
   return allmemberships.value
     ? 0
     : allmemberof.value.length > MEMBERSHIPS_SHOW
-    ? allmemberof.value.length - MEMBERSHIPS_SHOW
-    : 0
+      ? allmemberof.value.length - MEMBERSHIPS_SHOW
+      : 0
 })
 
 const userEmails = computed(() => {

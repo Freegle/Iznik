@@ -40,31 +40,17 @@
           v-if="message.attachments[0]?.ouruid"
           :src="message.attachments[0].ouruid"
           :modifiers="message.attachments[0].externalmods"
-          alt="Item Photo"
+          :alt="photoAlt"
           class="photo-image"
           :width="400"
           fit="inside"
           sizes="(orientation: landscape) and (max-width: 991px) 100px, 200px"
           :preload="preload"
-        />
-        <NuxtPicture
-          v-else-if="message.attachments[0]?.externaluid"
-          format="webp"
-          provider="uploadcare"
-          :src="message.attachments[0].externaluid"
-          :modifiers="message.attachments[0].externalmods"
-          alt="Item Photo"
-          class="photo-image"
-          :width="400"
-          fit="inside"
-          sizes="(orientation: landscape) and (max-width: 991px) 100px, 200px"
-          :preload="preload"
-          :loading="preload ? 'eager' : 'lazy'"
         />
         <ProxyImage
           v-else-if="message.attachments[0]?.path"
           class-name="photo-image"
-          alt="Item picture"
+          :alt="photoAlt"
           :src="message.attachments[0].path"
           :width="400"
           fit="inside"
@@ -85,6 +71,12 @@
         />
       </div>
 
+      <!-- Pinned (paid bulk-offer clearance) indicator. On the photo so it shows in every
+           layout - mobile portrait, tablet/desktop and mobile-landscape. -->
+      <div v-if="isPinned" class="pinned-badge">
+        <v-icon icon="thumbtack" class="pinned-icon" />Pinned
+      </div>
+
       <!-- Title/info overlay at bottom of photo (mobile only) -->
       <div class="title-overlay title-overlay-mobile">
         <div class="info-row">
@@ -100,6 +92,9 @@
         </div>
         <div class="title-row">
           <span class="title-subject">{{ strippedSubject }}</span>
+          <b-badge v-if="bulkCount" variant="info" class="ms-1 bulk-badge"
+            >{{ bulkAvailable }} available</b-badge
+          >
         </div>
       </div>
     </div>
@@ -110,6 +105,9 @@
         <MessageTag :id="id" :inline="true" class="content-tag" />
         <div class="content-title-location">
           <span class="content-subject">{{ subjectItemName }}</span>
+          <b-badge v-if="bulkCount" variant="info" class="ms-1 bulk-badge"
+            >{{ bulkAvailable }} available</b-badge
+          >
           <span v-if="subjectLocation" class="content-location">
             {{ subjectLocation }}
           </span>
@@ -127,11 +125,14 @@
         </span>
       </div>
     </div>
+    <!-- Empty by default; callers (e.g. WantedMatches) can put actions inside the card. -->
+    <slot name="footer" />
   </div>
 </template>
 
 <script setup>
 import { computed, toRef } from 'vue'
+import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
 import { useMiscStore } from '~/stores/misc'
 import { useOrientation } from '~/composables/useOrientation'
@@ -172,12 +173,32 @@ const {
   timeAgoExpanded,
   distanceText,
   distanceTextExpanded,
+  isPinned,
   isOffer,
   isWanted,
   successfulText,
   placeholderClass,
   categoryIcon,
 } = useMessageDisplay(idRef)
+
+/* Name the item in the alt text rather than the literal "Item Photo" that used to be
+on every photo on the site. */
+const photoAlt = computed(() => subjectItemName.value || 'Item photo')
+
+// Bulk offer ("clearance") indicator. bulkCount only gates the badge (is this a
+// bulk offer?); the badge itself shows the TOTAL quantity available, matching the
+// post's "N available" (message.availablenow), not the number of catalogue rows.
+const bulkCount = computed(() => message.value?.bulkitems?.length || 0)
+const bulkAvailable = computed(() => {
+  const m = message.value
+  if (!m?.bulkitems?.length) return 0
+  // Prefer availablenow (sum of quantities across items still available); fall
+  // back to summing the catalogue quantities if the list payload omits it.
+  return (
+    m.availablenow ||
+    m.bulkitems.reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
+  )
+})
 
 const miscStore = useMiscStore()
 const { isLandscape } = useOrientation()
@@ -210,6 +231,13 @@ const locationText = computed(() => {
 })
 
 const displayTimeAgo = computed(() => {
+  // The badge and the feed order read the SAME clock (visibleSince): how long this has been
+  // available to you. When the post was first written materially earlier - reposted, or
+  // rippled to you late - the badge says so, short on a phone and spelled out from lg up.
+  // Falls back to the plain age when the server has not supplied the field.
+  const badge = postAgeBadge(message.value, { wide: isLgPlus.value })
+  if (badge) return badge
+
   return isLgPlus.value ? timeAgoExpanded.value : timeAgo.value
 })
 
@@ -251,6 +279,7 @@ function expand(e) {
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
+@import 'assets/css/_feed-card.scss';
 
 /* Use very specific selectors to override MessageList.vue's deep selectors */
 .message-summary-mobile {
@@ -269,7 +298,8 @@ function expand(e) {
     display: flex;
     flex-direction: row;
     align-items: stretch;
-    max-height: 200px;
+    /* The square photo sets the row height - see assets/css/_feed-card.scss. */
+    max-height: var(--summary-row-size, #{$feed-card-max});
     border: 1px solid $color-gray--light;
     box-shadow: var(
       --shadow-md,
@@ -310,10 +340,11 @@ function expand(e) {
     padding-bottom: 75%;
   }
 
-  /* Horizontal layout on lg+ - fixed square photo */
+  /* Horizontal layout on lg+ - square photo sized from the viewport height so that a
+     short screen still shows a useful number of posts. */
   @include media-breakpoint-up(lg) {
-    width: 200px;
-    height: 200px;
+    width: var(--summary-row-size, #{$feed-card-max});
+    height: var(--summary-row-size, #{$feed-card-max});
     padding-bottom: 0;
     flex-shrink: 0;
   }
@@ -375,6 +406,36 @@ function expand(e) {
   height: auto;
 }
 
+/* Pinned (paid clearance) badge - top-left of the photo, above the image but below the
+   "freegled"/"promised" stamp. Solid gold reads as "featured" and stays distinct from
+   the green OFFER / blue WANTED tags. Deliberately uses only background/shadow (no
+   filters or transforms) so it renders identically with GPU acceleration disabled. */
+.pinned-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: $color-white;
+  background: $color-gold;
+  border-radius: var(--radius-sm, 0.375rem);
+  box-shadow: 0 1px 3px $color-black-opacity-50;
+  text-shadow: 0 1px 1px $color-black-opacity-30;
+  pointer-events: none;
+
+  .pinned-icon {
+    font-size: 0.72rem;
+  }
+}
+
 .status-overlay-image {
   position: absolute;
   z-index: 20;
@@ -386,11 +447,12 @@ function expand(e) {
   pointer-events: none;
   height: auto;
 
-  /* In list view (lg+), photo is 200px wide on left - position badge within that area */
+  /* In list view (lg+) the photo is a square on the left whose side varies with the
+     viewport height, so centre the stamp on that square rather than on a fixed 200px. */
   @include media-breakpoint-up(lg) {
-    left: 100px; /* Center of 200px photo area */
-    top: 100px; /* Center of 200px photo area */
-    width: 120px;
+    left: calc(var(--summary-row-size, #{$feed-card-max}) / 2);
+    top: calc(var(--summary-row-size, #{$feed-card-max}) / 2);
+    width: calc(var(--summary-row-size, #{$feed-card-max}) * 0.6);
     max-width: 120px;
   }
 
@@ -522,7 +584,18 @@ function expand(e) {
   }
 
   @include media-breakpoint-up(lg) {
-    padding: 1rem 1.5rem;
+    /* Padding shrinks with the row so that the title, location and meta line still fit
+       beside a small photo; at the 200px maximum it lands back on 1rem 1.5rem. */
+    padding: clamp(
+        0.25rem,
+        calc((var(--summary-row-size, #{$feed-card-max}) - 64px) / 6),
+        1rem
+      )
+      clamp(
+        0.75rem,
+        calc(var(--summary-row-size, #{$feed-card-max}) * 0.12),
+        1.5rem
+      );
     border: none;
     border-left: 1px solid $color-gray--light;
     box-shadow: none;
@@ -550,6 +623,13 @@ function expand(e) {
   gap: 0.5rem;
   margin-bottom: 0.35rem;
   align-items: center;
+
+  /* Compact rows have no description underneath, so don't reserve the gap for one. */
+  @include media-breakpoint-up(lg) {
+    @media (max-height: $feed-card-compact-max) {
+      margin-bottom: 0;
+    }
+  }
 }
 
 .content-tag {
@@ -599,6 +679,13 @@ function expand(e) {
   text-overflow: ellipsis;
 }
 
+/* Bulk-offer count pill. Uses the standard "N available" pill styling
+   (variant="info", as on the post); the only layout fix is align-self so it hugs
+   its own text instead of stretching to the flex-column's full width. */
+.bulk-badge {
+  align-self: flex-start;
+}
+
 .content-description {
   font-size: 0.8rem;
   font-weight: 500;
@@ -628,6 +715,30 @@ function expand(e) {
       height: 1.5em;
       background: linear-gradient(transparent, $color-white);
       pointer-events: none;
+    }
+  }
+
+  /* Only one line fits, so ellipsise it - the fade would just grey out the only line there
+     is. Line clamping can't be used here because flex: 1 stretches the box past the line it
+     is meant to cap, so this is a plain single-line ellipsis with the box sized to its
+     content. See assets/css/_feed-card.scss for where these heights come from. */
+  @include media-breakpoint-up(lg) {
+    @media (max-height: $feed-card-oneline-max) {
+      display: block;
+      flex: 0 0 auto;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+
+      &::after {
+        content: none;
+      }
+    }
+  }
+
+  /* Not even one line fits, so drop it. Subject, location, distance and age all stay. */
+  @include media-breakpoint-up(lg) {
+    @media (max-height: $feed-card-compact-max) {
+      display: none;
     }
   }
 }

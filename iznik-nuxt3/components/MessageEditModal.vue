@@ -34,7 +34,11 @@
         <!-- What is it? -->
         <div class="form-card">
           <label class="form-label">
-            {{ type === 'Offer' ? 'What is it?' : 'What are you looking for?' }}
+            {{
+              type === 'Offer'
+                ? 'What is it?'
+                : "Tell other freeglers what you'd like"
+            }}
           </label>
           <PostItem
             :id="id"
@@ -61,6 +65,9 @@
           />
           <p class="invalid-feedback">
             Please provide either a description or a photo.
+          </p>
+          <p v-if="invalidBody" class="invalid-feedback d-block mt-1">
+            {{ bodyMessage }}
           </p>
         </div>
 
@@ -100,7 +107,7 @@
             @start="dragging = true"
             @end="dragging = false"
           >
-            <template #item="{ element }">
+            <template #item="{ element, index }">
               <PostPhoto
                 :id="element.id"
                 :key="element.id"
@@ -110,6 +117,7 @@
                 :externalmods="element.externalmods"
                 class="photo-item"
                 @remove="removePhoto"
+                @click="viewPhoto(index)"
               />
             </template>
             <template #footer>
@@ -123,6 +131,12 @@
               </div>
             </template>
           </draggable>
+          <MessagePhotosModal
+            v-if="viewingPhoto !== null"
+            :attachments="attachments"
+            :initial-index="viewingPhoto"
+            @hidden="viewingPhoto = null"
+          />
         </div>
       </div>
 
@@ -159,11 +173,19 @@ import { uid } from '~/composables/useId'
 import PostCode from '~/components/PostCode'
 import { useOurModal } from '~/composables/useOurModal'
 import { MESSAGE_EXPIRE_TIME } from '~/constants'
+import {
+  isUnpostableItem,
+  isNumericOnlyBody,
+  invalidBodyMessage,
+} from '~/composables/useItemValidation'
 
-const OurUploader = defineAsyncComponent(() =>
-  import('~/components/OurUploader')
+const OurUploader = defineAsyncComponent(
+  () => import('~/components/OurUploader')
 )
 const PostItem = defineAsyncComponent(() => import('./PostItem'))
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('./MessagePhotosModal')
+)
 
 const props = defineProps({
   id: {
@@ -197,6 +219,20 @@ const attachments = ref(message.attachments || [])
 const dragging = ref(false)
 const triedToSave = ref(false)
 const item = ref(null)
+
+// Tapping a photo opens the same full-screen zoomable viewer as elsewhere, so
+// you can see what you are about to keep or delete.
+const viewingPhoto = ref(null)
+
+function viewPhoto(index) {
+  if (dragging.value) {
+    // A drag that finishes over the image also fires a click. Reordering is
+    // not a request to zoom.
+    return
+  }
+
+  viewingPhoto.value = index
+}
 
 const defaultDeadline = new Date(
   Date.now() + MESSAGE_EXPIRE_TIME * 24 * 60 * 60 * 1000
@@ -258,8 +294,22 @@ const typeOptions = computed(() => {
   ]
 })
 
+// A purely-numeric description ("24") tells nobody what the item is; flag it.
+const invalidBody = computed(() => isNumericOnlyBody(edittextbody.value))
+const bodyMessage = computed(() => invalidBodyMessage(type.value))
+
 const isSaveButtonDisabled = computed(() => {
-  return !edittextbody.value && !attachments.value?.length
+  // Block saving an unpostable item — a bare number or a content-free catch-all
+  // ("anything"). PostItem shows the reason inline.
+  if (isUnpostableItem(edititem.value)) {
+    return true
+  }
+  // A purely-numeric description doesn't count as a real description.
+  const hasBody =
+    edittextbody.value &&
+    edittextbody.value.trim() &&
+    !isNumericOnlyBody(edittextbody.value)
+  return !hasBody && !attachments.value?.length
 })
 
 async function save(finishSpinner) {
@@ -276,6 +326,7 @@ async function save(finishSpinner) {
 
     const params = {
       id: props.id,
+      groupid: groupid.value,
       msgtype: type.value,
       item: edititem.value,
       location: postcode.value?.name,

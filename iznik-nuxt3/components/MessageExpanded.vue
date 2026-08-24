@@ -67,18 +67,7 @@
                 v-if="attachment.ouruid"
                 :src="attachment.ouruid"
                 :modifiers="attachment.externalmods"
-                alt="Thumbnail"
-                class="thumbnail-image"
-                :width="80"
-                :height="80"
-              />
-              <NuxtPicture
-                v-else-if="attachment.externaluid"
-                format="webp"
-                provider="uploadcare"
-                :src="attachment.externaluid"
-                :modifiers="attachment.externalmods"
-                alt="Thumbnail"
+                :alt="thumbnailAlt(index)"
                 class="thumbnail-image"
                 :width="80"
                 :height="80"
@@ -86,7 +75,7 @@
               <ProxyImage
                 v-else-if="attachment.path"
                 class-name="thumbnail-image"
-                alt="Thumbnail"
+                :alt="thumbnailAlt(index)"
                 :src="attachment.path"
                 :width="80"
                 :height="80"
@@ -105,18 +94,7 @@
               v-if="currentAttachment?.ouruid"
               :src="currentAttachment.ouruid"
               :modifiers="currentAttachment.externalmods"
-              alt="Item Photo"
-              class="photo-image"
-              :width="640"
-              :height="480"
-            />
-            <NuxtPicture
-              v-else-if="currentAttachment?.externaluid"
-              format="webp"
-              provider="uploadcare"
-              :src="currentAttachment.externaluid"
-              :modifiers="currentAttachment.externalmods"
-              alt="Item Photo"
+              :alt="photoAlt"
               class="photo-image"
               :width="640"
               :height="480"
@@ -124,7 +102,7 @@
             <ProxyImage
               v-else-if="currentAttachment?.path"
               class-name="photo-image"
-              alt="Item picture"
+              :alt="photoAlt"
               :src="currentAttachment.path"
               :width="640"
               :height="480"
@@ -177,7 +155,7 @@
                     >•</span
                   >
                   <span v-if="poster.info?.wanteds" class="poster-overlay-stat">
-                    <v-icon icon="search" />{{ poster.info.wanteds }}
+                    <v-icon icon="shopping-cart" />{{ poster.info.wanteds }}
                   </span>
                 </div>
               </div>
@@ -210,7 +188,7 @@
                     class="time"
                     @click.stop
                   >
-                    <v-icon icon="clock" />{{ timeAgo }}
+                    <v-icon icon="clock" />{{ ageBadge }}
                   </span>
                   <span
                     v-b-tooltip.hover.click.blur="{
@@ -314,6 +292,7 @@
                 </div>
               </div>
               <div
+                v-if="!hideGeneratedBulkBody"
                 class="description-content"
                 :class="{
                   'description-content--promised':
@@ -324,14 +303,22 @@
               </div>
             </div>
 
+            <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
+            <BulkItemsInterest
+              v-if="isBulk"
+              :id="id"
+              ref="bulkInterestRef"
+              @can-register="bulkCanRegister = $event"
+              @submitted="bulkSubmitted = $event"
+              @had-interest="bulkHadInterest = $event"
+              @validation="bulkPickError = $event"
+            />
+
             <!-- Posted by divider and section (shown on taller screens, after description) -->
             <client-only>
               <div v-if="poster" class="section-header section-header--poster">
                 <span>
                   <span class="section-header-text">POSTED BY</span>
-                  <span class="section-header-name">{{
-                    poster.displayname
-                  }}</span>
                 </span>
                 <span
                   class="section-id-link"
@@ -373,7 +360,7 @@
                       >•</span
                     >
                     <span v-if="poster.info?.wanteds" class="poster-stat">
-                      <v-icon icon="search" />{{ poster.info.wanteds
+                      <v-icon icon="shopping-cart" />{{ poster.info.wanteds
                       }}<span class="poster-stat-label">WANTEDs</span>
                     </span>
                   </div>
@@ -391,12 +378,31 @@
                 />
                 <v-icon icon="chevron-right" class="poster-chevron" />
               </div>
+              <div v-if="messageGroups.length" class="posted-on-groups">
+                On:
+                <ShowMore :items="messageGroups" :limit="3" inline>
+                  <template #item="{ item }"
+                    ><v-icon
+                      v-if="item.isHome"
+                      icon="home"
+                      class="me-1 text-muted"
+                      title="Home community (where this was originally posted)"
+                    /><NuxtLink
+                      no-prefetch
+                      :to="'/explore/' + item.nameshort"
+                      class="posted-on-group-link"
+                      @click.stop
+                      >{{ item.namedisplay }}</NuxtLink
+                    ></template
+                  >
+                </ShowMore>
+              </div>
             </client-only>
           </div>
 
           <!-- Inline reply section for two-column layout -->
           <div v-if="isTwoColumnLayout" class="inline-reply-section">
-            <div v-if="!replyExpanded">
+            <div>
               <!-- Promised notice -->
               <div
                 v-if="
@@ -412,10 +418,43 @@
                   message.promisedtome ? 'Promised to you' : 'Already promised'
                 }}
               </div>
+              <NoticeMessage
+                v-if="
+                  reachBlocked && replyable && !replied && !message.successful
+                "
+                variant="info"
+                class="mb-2"
+              >
+                <span v-if="reachNotice" data-testid="reach-blocked-eta">
+                  This hasn't reached your area yet, but go ahead and reply.
+                  {{ reachNotice }}
+                </span>
+                <span v-else>
+                  This hasn't reached your area yet — but go ahead and reply.
+                  We'll pass it on to the owner as soon as it does.
+                </span>
+              </NoticeMessage>
               <div
                 v-if="replyable && !replied && !message.successful"
                 class="footer-buttons"
               >
+                <NoticeMessage
+                  v-if="isBulk && bulkSubmitted"
+                  variant="success"
+                  class="mb-0"
+                  data-testid="bulk-submitted"
+                >
+                  Thanks! We've let the giver know which items you're interested
+                  in.
+                </NoticeMessage>
+                <NoticeMessage
+                  v-if="isBulk && bulkTriedRegister && bulkPickError"
+                  variant="danger"
+                  class="register-error mb-0"
+                  data-testid="register-error"
+                >
+                  {{ bulkPickError }}
+                </NoticeMessage>
                 <b-button
                   v-if="inModal || fullscreenOverlay"
                   variant="secondary"
@@ -430,13 +469,20 @@
                   variant="primary"
                   size="lg"
                   class="reply-button"
-                  @click="expandReply"
+                  :data-testid="isBulk ? 'register-interest' : undefined"
+                  @click="isBulk ? registerBulkInterest() : expandReply()"
                 >
-                  Reply
+                  {{
+                    isBulk
+                      ? bulkHadInterest
+                        ? 'Update my interest'
+                        : 'Register interest'
+                      : 'Reply'
+                  }}
                 </b-button>
               </div>
               <b-alert
-                v-else-if="replied"
+                v-if="replied"
                 variant="info"
                 :model-value="true"
                 class="mb-0"
@@ -444,24 +490,6 @@
                 Message sent! Check your
                 <nuxt-link to="/chats">Chats</nuxt-link>.
               </b-alert>
-            </div>
-
-            <!-- Expanded reply section -->
-            <div v-else class="reply-expanded-section">
-              <NoticeMessage
-                v-if="message.promised && !message.promisedtome"
-                variant="warning"
-                class="mb-2"
-              >
-                Already promised - you might not get it.
-              </NoticeMessage>
-              <client-only>
-                <MessageReplySection
-                  :id="id"
-                  @close="replyExpanded = false"
-                  @sent="sent"
-                />
-              </client-only>
             </div>
           </div>
         </div>
@@ -472,9 +500,9 @@
     <div
       v-if="!isTwoColumnLayout"
       class="app-footer"
-      :class="{ expanded: replyExpanded, stickyAdRendered }"
+      :class="{ stickyAdRendered }"
     >
-      <div v-if="!replyExpanded" class="w-100">
+      <div class="w-100">
         <!-- Promised notice -->
         <div
           v-if="message.promised && !message.successful && replyable && !fromme"
@@ -483,10 +511,40 @@
           <v-icon icon="handshake" />
           {{ message.promisedtome ? 'Promised to you' : 'Already promised' }}
         </div>
+        <NoticeMessage
+          v-if="reachBlocked && replyable && !replied && !message.successful"
+          variant="info"
+          class="mb-2"
+        >
+          <span v-if="reachNotice" data-testid="reach-blocked-eta">
+            This hasn't reached your area yet, but go ahead and reply.
+            {{ reachNotice }}
+          </span>
+          <span v-else>
+            This hasn't reached your area yet — but go ahead and reply. We'll
+            pass it on to the owner as soon as it does.
+          </span>
+        </NoticeMessage>
         <div
           v-if="replyable && !replied && !message.successful"
           class="footer-buttons"
         >
+          <NoticeMessage
+            v-if="isBulk && bulkSubmitted"
+            variant="success"
+            class="mb-0"
+            data-testid="bulk-submitted"
+          >
+            Thanks! We've let the giver know which items you're interested in.
+          </NoticeMessage>
+          <NoticeMessage
+            v-if="isBulk && bulkTriedRegister && bulkPickError"
+            variant="danger"
+            class="register-error mb-0"
+            data-testid="register-error"
+          >
+            {{ bulkPickError }}
+          </NoticeMessage>
           <b-button
             v-if="inModal || fullscreenOverlay"
             variant="secondary"
@@ -501,39 +559,37 @@
             variant="primary"
             size="lg"
             class="reply-button"
-            @click="expandReply"
+            :data-testid="isBulk ? 'register-interest' : undefined"
+            @click="isBulk ? registerBulkInterest() : expandReply()"
           >
-            Reply
+            {{
+              isBulk
+                ? bulkHadInterest
+                  ? 'Update my interest'
+                  : 'Register interest'
+                : 'Reply'
+            }}
           </b-button>
         </div>
-        <b-alert
-          v-else-if="replied"
-          variant="info"
-          :model-value="true"
-          class="mb-0"
-        >
+        <b-alert v-if="replied" variant="info" :model-value="true" class="mb-0">
           Message sent! Check your <nuxt-link to="/chats">Chats</nuxt-link>.
         </b-alert>
       </div>
-
-      <!-- Expanded reply section -->
-      <div v-else class="reply-expanded-section">
-        <NoticeMessage
-          v-if="message.promised && !message.promisedtome"
-          variant="warning"
-          class="mb-2"
-        >
-          Already promised - you might not get it.
-        </NoticeMessage>
-        <client-only>
-          <MessageReplySection
-            :id="id"
-            @close="replyExpanded = false"
-            @sent="sent"
-          />
-        </client-only>
-      </div>
     </div>
+
+    <!-- Chat-style reply pane, shown as a full-screen overlay on every
+         breakpoint. Wrapped in its own Suspense so its async setup doesn't
+         suspend the whole page when it opens. -->
+    <Teleport to="body">
+      <Suspense v-if="showReplyOverlay">
+        <ChatReplyPane
+          :message-id="id"
+          :stay-on-send="inModal || fullscreenOverlay"
+          @close="showReplyOverlay = false"
+          @sent="sent"
+        />
+      </Suspense>
+    </Teleport>
 
     <!-- Map Modal - Full Screen -->
     <Teleport v-if="showMapModal" to="body">
@@ -593,30 +649,35 @@ import {
   defineAsyncComponent,
   onMounted,
   onUnmounted,
+  watch,
 } from 'vue'
 import { useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
+import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
+import { postAgeBadge } from '~/composables/usePostAgeBadge'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
+import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
+import { reachNoticeSentence } from '~/composables/reachArrival'
 import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
-import NoticeMessage from '~/components/NoticeMessage'
-import MessageReplySection from '~/components/MessageReplySection'
+import ChatReplyPane from '~/components/ChatReplyPane'
+import BulkItemsInterest from '~/components/BulkItemsInterest'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
 
 const MessageMap = defineAsyncComponent(() => import('~/components/MessageMap'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
-const MessageShareModal = defineAsyncComponent(() =>
-  import('~/components/MessageShareModal')
+const MessageShareModal = defineAsyncComponent(
+  () => import('~/components/MessageShareModal')
 )
-const MessageReportModal = defineAsyncComponent(() =>
-  import('~/components/MessageReportModal')
+const MessageReportModal = defineAsyncComponent(
+  () => import('~/components/MessageReportModal')
 )
 
 const props = defineProps({
@@ -646,10 +707,11 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['zoom', 'close'])
+const emit = defineEmits(['zoom', 'close', 'replied'])
 
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
+const groupStore = useGroupStore()
 const { me, loggedIn } = useMe()
 
 // Use shared composable for common message display logic
@@ -674,11 +736,107 @@ const {
   poster,
 } = useMessageDisplay(props.id)
 
+// The same badge the summary card shows, so a post reads identically before and after you
+// click it: how long it has been available to YOU, plus "first posted N days" when it was
+// written materially earlier (reposted, or rippled to you late). Falls back to the plain age
+// when the server has not supplied visibleSince.
+const ageBadge = computed(
+  () => postAgeBadge(message.value, { wide: true }) || timeAgo.value
+)
+
+/* Alt text for the item photos. It used to be the literal "Item Photo" / "Thumbnail"
+on every image on the site, which tells a screen reader nothing and gives Google Images
+nothing to match a search against. */
+const photoAlt = computed(() => subjectItemName.value || 'Item photo')
+
+function thumbnailAlt(index) {
+  const name = subjectItemName.value || 'Item'
+
+  return attachmentCount.value > 1
+    ? `${name} - photo ${index + 1} of ${attachmentCount.value}`
+    : name
+}
+
+// All the communities this post is on (it can be on several once it has rippled
+// out or been cross-posted). Resolve each to the group record for its display
+// name + explore link; drop any not yet in the group store.
+const messageGroups = computed(() => {
+  const raw = message.value?.groups
+  if (!raw?.length) return []
+  // List the home/origin group first: the list is truncated (ShowMore), so otherwise
+  // the home group could be hidden behind "more". Flag it so the template can show a
+  // home icon next to it.
+  return homeGroupFirst(raw)
+    .map((g) => {
+      const grp = groupStore.get(g.groupid)
+      return grp ? { ...grp, isHome: isHomeGroup(g, raw) } : null
+    })
+    .filter(Boolean)
+})
+
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+
+// Reply-eligibility (#2): the API returns replyeligible === false when the post hasn't rippled
+// out to the viewer's area yet (or they're banned from every group it's on). We no longer block
+// replying — the reply is accepted and HELD server-side, then delivered when the post ripples to
+// them. reachBlocked now just drives an informational notice above the Reply button / composer
+// ("we'll pass it on when it reaches you"). Never set for the poster's own post; inert (false)
+// until the reach engine populates rippling_reach.
+const reachBlocked = computed(
+  () => message.value?.replyeligible === false && !fromme.value
+)
+
+// When the post is due to reach here, as a sentence. Null when the API sent no
+// estimate (routing unavailable, or the block is a ban rather than the reach), and
+// the notice then falls back to saying only that we'll pass it on.
+const reachNotice = computed(() =>
+  reachNoticeSentence(
+    message.value?.reachesyouat,
+    message.value?.reachesyoufully
+  )
+)
+
+// For a bulk offer the catalogue below (BulkItemsInterest) lists the items and
+// collection times structurally. The server also stores a plain-text summary as
+// the body (so digests/search/non-bulk clients still have something), but on the
+// web page that just duplicates the catalogue — so suppress it. A giver's own
+// free-text description doesn't start with this generated marker, so it still
+// shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
+const isBulk = computed(
+  () => (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
+)
+const hideGeneratedBulkBody = computed(() => {
+  const body = message.value?.textbody || ''
+  return isBulk.value && body.startsWith('Items available in this offer:')
+})
+
+// A bulk offer is replied to by registering per-item interest, not by opening a
+// reply box — so the main reply button becomes "Register interest". These mirror
+// the BulkItemsInterest child's state (emitted up) so the button can reflect it.
+const bulkInterestRef = ref(null)
+const bulkCanRegister = ref(false)
+const bulkSubmitted = ref(false)
+// Interest already existed when the page loaded — drives the "Update my interest"
+// button label. A fresh reply this visit sets bulkSubmitted (thanks note) but NOT
+// this, so we don't flip the button to "Update my interest" right after replying.
+const bulkHadInterest = ref(false)
+// Red error shown above the reply button when a "Register interest" click can't
+// go through yet (e.g. no item chosen) — otherwise the click silently no-ops.
+// The child's live "why you can't register yet" message ('' once ready), and
+// whether the user has actually pressed the button. We only show the red error
+// after a try, so an empty "Register interest" click gives feedback instead of
+// silently no-opping — and it clears itself the moment the reply becomes valid.
+const bulkPickError = ref('')
+const bulkTriedRegister = ref(false)
+function registerBulkInterest() {
+  bulkTriedRegister.value = true
+  if (bulkPickError.value) return
+  bulkInterestRef.value?.submit()
+}
 
 // State
 const replied = ref(false)
-const replyExpanded = ref(false)
+const showReplyOverlay = ref(false)
 const mountTime = ref(null)
 const showMapModal = ref(false)
 const showShareModal = ref(false)
@@ -860,24 +1018,30 @@ function stopThumbnailAutoScroll() {
 }
 
 function expandReply() {
-  console.log(
-    'DEBUG expandReply called, replyable:',
-    props.replyable,
-    'replied:',
-    replied.value,
-    'fromme:',
-    fromme.value
-  )
-  replyExpanded.value = true
+  // Open the chat-style reply pane as a full-screen overlay on every
+  // breakpoint. It sits on top of wherever you are, so closing it returns you
+  // to exactly where you were, and after sending you land in the real chat.
+  showReplyOverlay.value = true
 }
 
 function sent() {
-  replyExpanded.value = false
+  showReplyOverlay.value = false
   replied.value = true
-  // Close after a brief delay so user sees confirmation
-  setTimeout(() => {
-    emit('close')
-  }, 1500)
+
+  // Tell the page a reply went through, so on mobile it can surface the
+  // "more like this" recommendations as a modal (they're clutter inline there).
+  emit('replied')
+
+  // When we're a message inside a list (browse / explore), the reply was sent
+  // WITHOUT navigating to the chat. Show the "Message sent" confirmation
+  // briefly, then close this message so the user is back on the list and can
+  // reply to more items. On the standalone message page the state machine has
+  // already navigated to the chat, so we leave navigation alone.
+  if (props.inModal || props.fullscreenOverlay) {
+    setTimeout(() => {
+      emit('close')
+    }, 1500)
+  }
 }
 
 // Handle browser back button/swipe
@@ -924,13 +1088,23 @@ onMounted(() => {
   // Start auto-scroll hint for thumbnail carousel
   startThumbnailAutoScroll()
 
-  // If the user arrived via a "Reply" CTA in an email (?reply=1), open
-  // the compose form straight away so they don't need to click Reply
-  // again. expandReply() only sets the ref — the template still gates
-  // the actual MessageReplySection render on replyable/replied/etc.,
-  // so this is safe to call unconditionally.
+  // If the user arrived via a "Reply" CTA in an email (?reply=1), open the
+  // chat-style reply pane straight away so they don't need to click Reply again.
+  // We open it even when the post is reach-blocked (rippling-out #5): the reply is
+  // now accepted and HELD server-side, then delivered when the post ripples to
+  // them, so there is no longer a gate for the deep link to bypass. message may
+  // still be loading, so wait for it first.
   if (useRoute().query.reply) {
-    expandReply()
+    if (message.value) {
+      expandReply()
+    } else {
+      const stop = watch(message, (m) => {
+        if (m) {
+          stop()
+          expandReply()
+        }
+      })
+    }
   }
 })
 
@@ -1419,7 +1593,8 @@ onUnmounted(() => {
   overflow: hidden;
   border: 2px solid $color-white-opacity-50;
   cursor: pointer;
-  transition: border-color var(--transition-normal),
+  transition:
+    border-color var(--transition-normal),
     transform var(--transition-normal);
 
   &.active {
@@ -1947,6 +2122,24 @@ onUnmounted(() => {
   }
 }
 
+/* "On: <communities>" line under the poster box - greyed, with clickable group links. */
+.posted-on-groups {
+  margin-top: 0.5rem;
+  padding: 0 1rem;
+  font-size: 0.85rem;
+  color: #6c757d;
+}
+
+.posted-on-group-link {
+  color: #6c757d;
+  text-decoration: underline;
+
+  &:hover {
+    color: #495057;
+    text-decoration: underline;
+  }
+}
+
 /* Poster aboutme - hidden on mobile, shown on tablet */
 .poster-aboutme {
   display: none;
@@ -2127,7 +2320,12 @@ onUnmounted(() => {
     }
   }
 
-  /* Sticky ad adjustment - add bottom padding instead of positioning */
+  /* Sticky ad adjustment - add bottom padding instead of positioning.
+     Mirrors the width+height matrix used by .navbar-bottom and .modal-content:
+     from md up the desktop ad creative renders ($sticky-banner-height-desktop,
+     -tall), so branching on height alone under-reserved by 40px in short-but-
+     wide windows (e.g. ~820x420, an email client's embedded browser) and the
+     fixed ad zone swallowed real clicks on Cancel/Reply. */
   &.stickyAdRendered {
     padding-bottom: calc(1rem + $sticky-banner-height-mobile);
 
@@ -2135,18 +2333,92 @@ onUnmounted(() => {
       padding-bottom: calc(1rem + $sticky-banner-height-mobile-tall);
     }
 
-    @media (min-height: $desktop-tall) {
-      padding-bottom: calc(1rem + $sticky-banner-height-desktop-tall);
+    @include media-breakpoint-up(md) {
+      padding-bottom: calc(1rem + $sticky-banner-height-desktop);
+
+      @media (min-height: $desktop-tall) {
+        padding-bottom: calc(1rem + $sticky-banner-height-desktop-tall);
+      }
+    }
+  }
+
+  /* In the centered desktop modal (xl+, where b-modal is NOT fullscreen) the
+     dialog floats with margin around it and the fixed sticky ad sits on the
+     page below it - they don't overlap, so reserving a full ad-height of
+     clearance just leaves a large empty band inside the modal that reads as a
+     second, blank ad slot. Drop it back to normal padding there. The clearance
+     is still needed for the fullscreen modal (lg-down) and the mobile
+     fullscreen-overlay, where the buttons genuinely sit over the fixed ad. */
+  .in-modal &.stickyAdRendered {
+    @media (min-width: 1200px) {
+      padding-bottom: 1rem;
+    }
+  }
+
+  /* On the standalone message page (wrapper has neither .in-modal nor
+     .fullscreen-overlay) the footer used to scroll with the page, so below xl
+     the Reply button could start hidden under the fixed bottom nav, the
+     sticky ad zone or the floating New Post button - a natural tap silently
+     hit those instead, or nothing. Pin the footer sticky above that fixed
+     chrome so the page's primary action is always visible and clickable.
+     The bottom nav is d-xl-none (67px, 76px from md), and the ad zone adds
+     the same height matrix as .navbar-bottom's --ad-offset. When pinned, the
+     ad-clearance padding above is unnecessary - reset to normal padding. */
+  @media (max-width: 1199.98px) {
+    .message-expanded-wrapper:not(.in-modal):not(.fullscreen-overlay) & {
+      position: sticky;
+      z-index: 1031;
+      box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.15);
+      bottom: calc(67px + env(safe-area-inset-bottom, 0px));
+
+      @include media-breakpoint-up(md) {
+        bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+      }
+    }
+
+    .message-expanded-wrapper:not(.in-modal):not(.fullscreen-overlay)
+      &.stickyAdRendered {
+      padding-bottom: 1rem;
+      bottom: calc(
+        67px + $sticky-banner-height-mobile + env(safe-area-inset-bottom, 0px)
+      );
+
+      @media (min-height: $mobile-tall) {
+        bottom: calc(
+          67px + $sticky-banner-height-mobile-tall +
+            env(safe-area-inset-bottom, 0px)
+        );
+      }
+
+      @include media-breakpoint-up(md) {
+        bottom: calc(
+          76px + $sticky-banner-height-desktop +
+            env(safe-area-inset-bottom, 0px)
+        );
+
+        @media (min-height: $desktop-tall) {
+          bottom: calc(
+            76px + $sticky-banner-height-desktop-tall +
+              env(safe-area-inset-bottom, 0px)
+          );
+        }
+      }
     }
   }
 }
 
 .footer-buttons {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   width: 100%;
   max-width: 600px;
   margin: 0 auto;
+
+  /* The empty-submit error spans the full width and sits above the buttons. */
+  .register-error {
+    flex: 0 0 100%;
+  }
 
   .cancel-button,
   .reply-button {
@@ -2172,11 +2444,6 @@ onUnmounted(() => {
 .footer-buttons:has(.cancel-button:only-child) .cancel-button {
   flex: 1;
   width: 100% !important;
-}
-
-.reply-expanded-section {
-  max-height: 70vh;
-  overflow-y: auto;
 }
 
 .promised-notice {

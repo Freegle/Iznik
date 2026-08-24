@@ -9,9 +9,13 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
 {
     private function createGroup(bool $microvolunteering = true): int
     {
+        $nameshort = 'TestGroup' . uniqid();
+
         return DB::table('groups')->insertGetId([
-            'nameshort'         => 'TestGroup' . uniqid(),
-            'namefull'          => 'Test Group',
+            'nameshort'         => $nameshort,
+            // namefull carries a unique key, so it must vary per group - the
+            // cross-group hold test creates two groups in one test.
+            'namefull'          => 'Test Group ' . $nameshort,
             'type'              => 'Freegle',
             'publish'           => 1,
             'onhere'            => 1,
@@ -52,7 +56,7 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
         ]);
     }
 
-    private function createMessage(int $groupId, int $fromuser, string $collection = 'Approved'): int
+    private function createMessage(int $groupId, int $fromuser, string $collection = 'Approved', ?int $heldBy = null): int
     {
         $msgId = DB::table('messages')->insertGetId([
             'subject'  => 'OFFER: Test item (Test Area)',
@@ -60,7 +64,6 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
             'type'     => 'Offer',
             'fromuser' => $fromuser,
             'deleted'  => null,
-            'heldby'   => null,
         ]);
 
         DB::table('messages_groups')->insert([
@@ -68,6 +71,9 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
             'groupid'    => $groupId,
             'collection' => $collection,
             'arrival'    => now(),
+            // Per-group hold - the real source of truth. messages.heldby is a
+            // dead column nothing writes any more; don't seed it.
+            'heldby'     => $heldBy,
         ]);
 
         return $msgId;
@@ -199,6 +205,180 @@ class MicrovolunteeringNotifyCommandTest extends TestCase
             'touser' => $reviewer,
             'type'   => 'Exhort',
             'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+    }
+
+    public function test_does_not_renotify_user_who_already_reviewed_message(): void
+    {
+        // Root cause of Discourse 9856: the notify cron re-notifies a user about a
+        // message they have already reviewed (it never consults microactions), so a
+        // rippling post whose messages_groups.arrival keeps refreshing keeps
+        // re-lighting the "post to check" badge for the same person for ever.
+        $groupId  = $this->createGroup(microvolunteering: true);
+        $fromUser = $this->createUser('Basic');
+        $reviewer = $this->createUser('Moderate');
+
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewer, $groupId);
+
+        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+
+        // The reviewer has already checked this message.
+        DB::table('microactions')->insert([
+            'actiontype'     => 'CheckMessage',
+            'userid'         => $reviewer,
+            'msgid'          => $msgId,
+            'result'         => 'Approve',
+            'score_negative' => 0,
+        ]);
+
+        $this->artisan('microvolunteering:notify')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseMissing('users_notifications', [
+            'touser' => $reviewer,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+    }
+
+    public function test_still_notifies_a_different_user_who_has_not_reviewed(): void
+    {
+        // The microactions exclusion must be per-user: one reviewer having checked
+        // the message must not suppress notifications to a different eligible reviewer.
+        $groupId    = $this->createGroup(microvolunteering: true);
+        $fromUser   = $this->createUser('Basic');
+        $reviewed   = $this->createUser('Moderate');
+        $unreviewed = $this->createUser('Moderate');
+
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewed, $groupId);
+        $this->addMembership($unreviewed, $groupId);
+
+        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+
+        DB::table('microactions')->insert([
+            'actiontype'     => 'CheckMessage',
+            'userid'         => $reviewed,
+            'msgid'          => $msgId,
+            'result'         => 'Approve',
+            'score_negative' => 0,
+        ]);
+
+        $this->artisan('microvolunteering:notify')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseMissing('users_notifications', [
+            'touser' => $reviewed,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $unreviewed,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+    }
+
+    public function test_hold_on_one_group_does_not_suppress_notification_for_unheld_group(): void
+    {
+        // A hold is per-group (messages_groups.heldby). A post rippled to two
+        // groups and held on only one of them must still notify a reviewer on
+        // the OTHER group's unheld copy, and must not notify a reviewer whose
+        // only route to this message is the held group. The message-wide
+        // messages.heldby column is dead (nothing writes it) and must not
+        // gate this any more.
+        $groupA    = $this->createGroup(microvolunteering: true);
+        $groupB    = $this->createGroup(microvolunteering: true);
+        $fromUser  = $this->createUser('Basic');
+        // Separate reviewers per group, each a member of only their own group:
+        // if group B's held row is still let into the candidate set, reviewerB
+        // gets notified too, which is exactly the bug being fixed.
+        $reviewerA = $this->createUser('Moderate');
+        $reviewerB = $this->createUser('Moderate');
+        $holder    = $this->createUser('Moderate');
+
+        $this->addMembership($fromUser, $groupA);
+        $this->addMembership($reviewerA, $groupA);
+        $this->addMembership($reviewerB, $groupB);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'subject'  => 'OFFER: Test item (Test Area)',
+            'message'  => 'Test item description.',
+            'type'     => 'Offer',
+            'fromuser' => $fromUser,
+            'deleted'  => null,
+        ]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $groupA,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'heldby'     => null,
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgId,
+            'groupid'    => $groupB,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'heldby'     => $holder,
+        ]);
+
+        $this->artisan('microvolunteering:notify')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $reviewerA,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+        $this->assertDatabaseMissing('users_notifications', [
+            'touser' => $reviewerB,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+    }
+
+    public function test_stale_notification_for_already_reviewed_message_is_cleared(): void
+    {
+        // Second surface of Discourse 9856: pickCandidates only stops NEW duplicate
+        // notifications from being created. It does nothing for an Exhort
+        // notification that already exists (e.g. inserted before this exclusion
+        // existed, or via any other race) - that row stays seen=0 forever, so the
+        // badge never clears and its link keeps re-presenting the reviewed post.
+        // Confirmed against production: 81 such stuck rows currently exist.
+        $groupId  = $this->createGroup(microvolunteering: true);
+        $fromUser = $this->createUser('Basic');
+        $reviewer = $this->createUser('Moderate');
+
+        $this->addMembership($fromUser, $groupId);
+        $this->addMembership($reviewer, $groupId);
+
+        $msgId = $this->createMessage($groupId, $fromUser, 'Pending');
+
+        // The reviewer has already checked this message...
+        DB::table('microactions')->insert([
+            'actiontype'     => 'CheckMessage',
+            'userid'         => $reviewer,
+            'msgid'          => $msgId,
+            'result'         => 'Approve',
+            'score_negative' => 0,
+        ]);
+
+        // ...but a stale unseen notification for it is still sitting there.
+        $notifId = DB::table('users_notifications')->insertGetId([
+            'touser' => $reviewer,
+            'type'   => 'Exhort',
+            'url'    => '/microvolunteering/message/' . $msgId,
+        ]);
+
+        $this->artisan('microvolunteering:notify')
+            ->assertExitCode(0);
+
+        $this->assertDatabaseHas('users_notifications', [
+            'id'   => $notifId,
+            'seen' => 1,
         ]);
     }
 

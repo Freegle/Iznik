@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useAuthorityStore = defineStore({
-  id: 'authority',
+export const useAuthorityStore = defineStore('authority', {
   state: () => ({
     list: {},
   }),

@@ -1,13 +1,33 @@
 package alert
 
 import (
+	"encoding/json"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
+
+var htmlTagRE = regexp.MustCompile(`(?s)<[^>]*>`)
+
+// htmlIsBlank reports whether an HTML fragment carries no visible text. The ModTools alert
+// composer has a plain-text textarea AND a separate Quill editor, and only the textarea is
+// required. An untouched Quill editor does not serialise to "" — it emits an empty-document
+// sentinel like "<p><br></p>". A bare `html == ""` check therefore lets that through, and the
+// alert mails out with the boilerplate wrapper and no message in it (hit live 2026-07-13 on a
+// Freegle-wide alert to every mod). Strip tags and blank entities and see if anything is left,
+// so any editor's flavour of "empty" falls back to the text body.
+func htmlIsBlank(s string) bool {
+	t := htmlTagRE.ReplaceAllString(s, "")
+	t = strings.ReplaceAll(t, "&nbsp;", " ")
+	t = strings.ReplaceAll(t, "&#160;", " ")
+	t = strings.ReplaceAll(t, "\u00a0", " ")
+	return strings.TrimSpace(t) == ""
+}
 
 type Alert struct {
 	ID        uint64  `json:"id" gorm:"primary_key"`
@@ -38,7 +58,6 @@ type AlertResponseStat struct {
 	Count    int64  `json:"count"`
 }
 
-
 // GetAlert handles GET /alert/:id - public access.
 //
 // @Summary Get alert by ID
@@ -59,7 +78,10 @@ func GetAlert(c *fiber.Ctx) error {
 	}
 
 	var a Alert
-	db.Raw("SELECT id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created FROM alerts WHERE id = ?", id).Scan(&a)
+	db.Table("alerts").
+		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Where("id = ?", id).
+		Scan(&a)
 
 	if a.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Alert not found")
@@ -77,14 +99,18 @@ func GetAlert(c *fiber.Ctx) error {
 
 		// Get response counts.
 		var responseCounts []AlertResponseStat
-		db.Raw("SELECT response, COUNT(*) AS count FROM alerts_tracking WHERE alertid = ? AND response IS NOT NULL GROUP BY response", id).Scan(&responseCounts)
+		db.Table("alerts_tracking").
+			Select("response, COUNT(*) AS count").
+			Where("alertid = ? AND response IS NOT NULL", id).
+			Group("response").
+			Scan(&responseCounts)
 		if responseCounts == nil {
 			responseCounts = make([]AlertResponseStat, 0)
 		}
 		stats.Responses = responseCounts
 
 		// Get reached (total tracking entries).
-		db.Raw("SELECT COUNT(*) FROM alerts_tracking WHERE alertid = ?", id).Scan(&stats.Reached)
+		db.Table("alerts_tracking").Where("alertid = ?", id).Count(&stats.Reached)
 
 		// Merge stats into the alert map in the response.
 		alertMap := response["alert"].(Alert)
@@ -131,7 +157,10 @@ func ListAlerts(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	var alerts []Alert
-	db.Raw("SELECT id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created FROM alerts ORDER BY created DESC").Scan(&alerts)
+	db.Table("alerts").
+		Select("id, createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, complete, created").
+		Order("created DESC").
+		Scan(&alerts)
 
 	if alerts == nil {
 		alerts = make([]Alert, 0)
@@ -167,14 +196,14 @@ func CreateAlert(c *fiber.Ctx) error {
 	}
 
 	type CreateRequest struct {
-		From     string  `json:"from"`
-		To       string  `json:"to"`
-		Subject  string  `json:"subject"`
-		Text     string  `json:"text"`
-		Html     string  `json:"html"`
-		Groupid  *uint64 `json:"groupid"`
-		Askclick *int    `json:"askclick"`
-		Tryhard  *int    `json:"tryhard"`
+		From     string          `json:"from"`
+		To       string          `json:"to"`
+		Subject  string          `json:"subject"`
+		Text     string          `json:"text"`
+		Html     string          `json:"html"`
+		Groupid  json.RawMessage `json:"groupid"`
+		Askclick *int            `json:"askclick"`
+		Tryhard  *int            `json:"tryhard"`
 	}
 
 	var req CreateRequest
@@ -182,11 +211,25 @@ func CreateAlert(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
+	// groupid is optional and loosely typed by the caller: a numeric id targets
+	// one group, while null, absent, an empty string, or the sentinel
+	// "AllFreegle" all mean "all Freegle groups" and are stored as NULL. The
+	// ModTools "Contact group" composer sends the string "AllFreegle" for its
+	// all-groups option, so accept it rather than 400ing on the type mismatch.
+	var groupid *uint64
+	if raw := strings.TrimSpace(string(req.Groupid)); raw != "" && raw != "null" && raw != `""` && raw != `"AllFreegle"` {
+		var n uint64
+		if err := json.Unmarshal(req.Groupid, &n); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid groupid")
+		}
+		groupid = &n
+	}
+
 	// Defaults.
 	if req.To == "" {
 		req.To = "Mods"
 	}
-	if req.Html == "" {
+	if htmlIsBlank(req.Html) {
 		req.Html = strings.ReplaceAll(req.Text, "\n", "<br>")
 	}
 
@@ -201,25 +244,27 @@ func CreateAlert(c *fiber.Ctx) error {
 
 	db := database.DBConn
 
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback. "from"/"to" are
+	// MySQL reserved words, but the MySQL dialect's QuoteTo backtick-quotes every
+	// identifier unconditionally, so no special-casing is needed here.
+	row := map[string]interface{}{
+		"createdby": myid,
+		"groupid":   groupid,
+		"from":      req.From,
+		"to":        req.To,
+		"subject":   req.Subject,
+		"text":      req.Text,
+		"html":      req.Html,
+		"askclick":  askclick,
+		"tryhard":   tryhard,
+		"created":   gorm.Expr("NOW()"),
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO alerts (createdby, groupid, `from`, `to`, subject, text, html, askclick, tryhard, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
-		myid, req.Groupid, req.From, req.To, req.Subject, req.Text, req.Html, askclick, tryhard)
-
-	if err != nil {
+	if err := db.Table("alerts").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create alert")
 	}
-
-	var alertID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		alertID = uint64(lastID)
-	}
+	alertIDInt, _ := row["@id"].(int64)
+	alertID := uint64(alertIDInt)
 
 	return c.JSON(fiber.Map{
 		"ret":    0,
@@ -248,7 +293,8 @@ func RecordAlert(c *fiber.Ctx) error {
 
 	if req.Action == "clicked" && req.Trackid > 0 {
 		db := database.DBConn
-		db.Exec("UPDATE alerts_tracking SET responded = NOW(), response = 'Clicked' WHERE id = ?", req.Trackid)
+		db.Table("alerts_tracking").Where("id = ?", req.Trackid).
+			Updates(map[string]interface{}{"responded": gorm.Expr("NOW()"), "response": gorm.Expr("'Clicked'")})
 	}
 
 	return c.JSON(fiber.Map{

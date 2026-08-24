@@ -14,7 +14,10 @@
           :rules="validateEmail"
           type="email"
           name="email"
-          :class="'email form-control input-' + size + ' ' + inputClass"
+          :class="[
+            'email form-control input-' + size + ' ' + inputClass,
+            { 'is-invalid': invalid },
+          ]"
           :center="center"
           autocomplete="username email"
           :placeholder="'Email address ' + (required ? '' : '(Optional)')"
@@ -94,6 +97,10 @@ const domainStore = useDomainStore()
 const currentEmail = ref(props.email)
 const suggestedDomains = ref([])
 const form = ref(null)
+// Drives the red invalid border. Set whenever validateEmail runs so the field
+// turns red as soon as validation fails (including when the parent calls
+// validate() on submit without the user having touched the field).
+const invalid = ref(false)
 
 // Create a domain validation cache outside of the component instance
 const domainValidationCache = new Map()
@@ -246,21 +253,20 @@ async function checkValidDomain(value) {
 }
 
 async function validateEmail(value) {
-  console.log('Validating', value)
   if (!value && !props.required) {
-    console.log('No value and not required')
+    invalid.value = false
     emit('update:valid', true)
     return
   }
 
   if (!value) {
-    console.log('No value')
+    invalid.value = true
     emit('update:valid', false)
     return 'Please enter an email address.'
   }
 
   if (!new RegExp(EMAIL_REGEX).test(value)) {
-    console.log('Invalid email')
+    invalid.value = true
     emit('update:valid', false)
     return 'Please enter a valid email address.'
   }
@@ -271,12 +277,8 @@ async function validateEmail(value) {
       value,
       checkValidDomain
     )
-    if (isValidDomain) {
-      console.log('Valid domain')
-    } else {
-      console.log('Invalid domain')
-    }
 
+    invalid.value = !isValidDomain
     emit('update:valid', isValidDomain)
     return (
       isValidDomain ||
@@ -284,6 +286,7 @@ async function validateEmail(value) {
     )
   } catch (error) {
     console.warn('Domain validation failed:', error)
+    invalid.value = true
     emit('update:valid', false)
     return 'Unable to validate email domain - please check your connection.'
   }
@@ -312,5 +315,34 @@ defineExpose({
 .email {
   width: 100%;
   max-width: 480px;
+}
+
+/* On wide but short viewports (e.g. 820×420 — an email client's embedded
+   browser or a phone in landscape), lay the label and input side by side
+   so the composer fits on screen without scrolling. */
+@media (min-width: 768px) and (max-height: 500px) {
+  /* BFormGroup renders its root as div[role="group"] containing label + div. */
+  :deep(div[role='group']) {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 0.5rem;
+  }
+
+  :deep(div[role='group'] > label) {
+    flex-shrink: 0;
+    white-space: nowrap;
+    margin-bottom: 0;
+  }
+
+  :deep(div[role='group'] > div) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Remove the capped width so the input grows to fill the remaining row space. */
+  .email {
+    max-width: none;
+  }
 }
 </style>

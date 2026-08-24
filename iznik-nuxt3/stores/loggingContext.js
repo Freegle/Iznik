@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import { nextTick } from 'vue'
 import { getSessionId } from '~/composables/useTrace'
 
-export const useLoggingContextStore = defineStore({
-  id: 'loggingContext',
+export const useLoggingContextStore = defineStore('loggingContext', {
   state: () => ({
     pageId: null,
     pageUrl: null,

@@ -338,7 +338,7 @@
                     :options="memberOptions"
                   />
                   <div v-else class="text-center text-muted small p-3">
-                    Member counts are only visible to moderators.
+                    No member count data available for this period.
                   </div>
                 </b-col>
               </b-row>
@@ -426,8 +426,8 @@ import {
   CO2_PER_TONNE,
 } from '~/composables/useReuseBenefit'
 
-const GroupMarker = defineAsyncComponent(() =>
-  import('~/components/GroupMarker.vue')
+const GroupMarker = defineAsyncComponent(
+  () => import('~/components/GroupMarker.vue')
 )
 
 // Benefit of reuse per tonne and CO2 impact based on WRAP figures.
@@ -517,7 +517,7 @@ const mapWidth = computed(() => {
 const mapHeight = computed(() => {
   let height = 0
 
-  if (process.client) {
+  if (import.meta.client) {
     height = Math.floor(window.innerHeight / 2)
     height = height < 200 ? 200 : height
   }

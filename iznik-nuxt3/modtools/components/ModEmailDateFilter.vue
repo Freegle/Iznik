@@ -62,6 +62,7 @@ const datePresetOptions = [
   { text: 'Last 24 hours', value: 'day' },
   { text: 'Last 7 days', value: '7days' },
   { text: 'Last 30 days', value: '30days' },
+  { text: 'Last 90 days', value: '90days' },
   { text: 'Custom dates', value: 'custom' },
 ]
 
@@ -71,6 +72,7 @@ const presetToLoki = {
   day: '24h',
   '7days': '7d',
   '30days': '30d',
+  '90days': '90d',
 }
 
 const datePreset = ref(props.defaultPreset)
@@ -123,6 +125,13 @@ function resolvePresetDates(preset) {
     case '30days':
       start = new Date(now)
       start.setDate(start.getDate() - 30)
+      return {
+        start: start.toISOString().split('T')[0],
+        end: now.toISOString().split('T')[0],
+      }
+    case '90days':
+      start = new Date(now)
+      start.setDate(start.getDate() - 90)
       return {
         start: start.toISOString().split('T')[0],
         end: now.toISOString().split('T')[0],

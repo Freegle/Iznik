@@ -2,8 +2,8 @@ package test
 
 import (
 	"bytes"
-	json2 "encoding/json"
 	"encoding/json"
+	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"net/url"
@@ -120,6 +120,43 @@ func TestBounds(t *testing.T) {
 	assert.Equal(t, len(msgs), 0)
 }
 
+// TestBoundsDedupsMultiGroup verifies that a message cross-posted to two groups
+// shows as a single pin on the public map, even though messages_spatial now holds
+// one row per group (both within the viewport).
+func TestBoundsDedupsMultiGroup(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("bounds_dedup")
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupA, "Member")
+
+	lat, lng := 55.9533, -3.1883
+	msgID := CreateTestMessage(t, userID, groupA, "Test MultiGroup Bounds Item", lat, lng)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
+		"VALUES (?, ST_GeomFromText(?, %d), 0, ?, NOW(), 'Offer')", utils.SRID),
+		msgID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupB)
+
+	// Logged out: only the spatial subquery contributes, so a missing dedup would
+	// surface the message twice (one row per group).
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/inbounds?swlat=55&swlng=-3.5&nelat=56&nelng=-3", nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	count := 0
+	for _, m := range msgs {
+		if m.ID == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "cross-posted message should appear once on the map, not once per group")
+}
+
 func TestMyGroups(t *testing.T) {
 	// Get logged out - should return 401
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups", nil))
@@ -141,6 +178,422 @@ func TestMyGroups(t *testing.T) {
 	var msgs []message.MessageSummary
 	json2.Unmarshal(rsp(resp), &msgs)
 	// We expect at least some messages (could be from other tests too)
+}
+
+// TestMyGroupsDedupsMultiGroup verifies that a message cross-posted to two groups
+// the viewer is a member of appears exactly once in the mygroups browse, even
+// though messages_spatial now holds one row per group.
+func TestMyGroupsDedupsMultiGroup(t *testing.T) {
+	db := database.DBConn
+
+	prefix := uniquePrefix("mygroups_dedup")
+	viewerID, token := CreateFullTestUser(t, prefix+"_viewer")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	CreateTestMembership(t, viewerID, groupA, "Member")
+	CreateTestMembership(t, viewerID, groupB, "Member")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+
+	// Message posted on group A (CreateTestMessage adds the messages_groups +
+	// messages_spatial rows for A), then cross-posted to group B.
+	lat, lng := 55.9533, -3.1883
+	msgID := CreateTestMessage(t, posterID, groupA, "Test MultiGroup MyGroups Item", lat, lng)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	db.Exec(fmt.Sprintf("INSERT INTO messages_spatial (msgid, point, successful, groupid, arrival, msgtype) "+
+		"VALUES (?, ST_GeomFromText(?, %d), 0, ?, NOW(), 'Offer')", utils.SRID),
+		msgID, fmt.Sprintf("POINT(%f %f)", lng, lat), groupB)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	count := 0
+	for _, m := range msgs {
+		if m.ID == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "cross-posted message should appear exactly once in mygroups, not once per group")
+}
+
+// TestCrossPost_FullReadSurface threads a single message cross-posted to two groups
+// through the whole public + mod read surface, asserting it is visible on BOTH groups
+// (the messages_spatial per-group fix, audit §G1/H1) and deduplicated to exactly one
+// row everywhere it should collapse. End-to-end companion to the per-component unit
+// tests (multi-group plan §I).
+func TestCrossPost_FullReadSurface(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("crosspost_readsurface")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	viewerID, viewerToken := CreateFullTestUser(t, prefix+"_viewer")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, viewerID, groupA, "Member")
+	CreateTestMembership(t, viewerID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Rare, short (<=10 char) coined word so the search index hit is deterministic and
+	// our message stays within the SEARCH_LIMIT top results in the shared test DB.
+	searchWord := fmt.Sprintf("zq%d", time.Now().UnixNano()%100000)
+	subject := fmt.Sprintf("OFFER: %s sofa (EH1)", searchWord)
+	lat, lng := 55.9533, -3.1883
+
+	// Posted + approved on group A (helper adds messages_groups/spatial/index for A).
+	msgID := CreateTestMessage(t, posterID, groupA, subject, lat, lng)
+
+	// Cross-post to group B: approved messages_groups + per-group word index. Under the
+	// one-row spatial model messages_spatial keeps a single row per message (UNIQUE(msgid));
+	// the cross-post's group membership lives in messages_groups, which browse/search join through.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	indexMessageWords(t, db, msgID, groupB, subject)
+
+	defer func() {
+		db.Exec("DELETE FROM messages_index WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	// 1. One-row spatial: a cross-post keeps a single messages_spatial row; both groups'
+	//    membership is recorded in messages_groups (which the read queries join through).
+	var spatialCount, approvedGroups int64
+	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = 'Approved'", msgID).Scan(&approvedGroups)
+	assert.Equal(t, int64(1), spatialCount, "one-row spatial: a cross-post has a single messages_spatial row")
+	assert.Equal(t, int64(2), approvedGroups, "cross-post is approved on both groups (messages_groups)")
+
+	// 2. Combined ModTools list (groupid=0, covers all the mod's groups) returns the
+	//    cross-post exactly once, not once per group.
+	mtURL := fmt.Sprintf("/api/modtools/messages?collection=Approved&fromuser=%d&jwt=%s", posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", mtURL, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var mtBody map[string]interface{}
+	json2.NewDecoder(resp.Body).Decode(&mtBody)
+	mtCount := 0
+	if ids, ok := mtBody["messages"].([]interface{}); ok {
+		for _, id := range ids {
+			if uint64(id.(float64)) == msgID {
+				mtCount++
+			}
+		}
+	}
+	assert.Equal(t, 1, mtCount, "cross-post should appear once in the combined mod queue")
+
+	// 3. mygroups browse for a viewer in BOTH groups: exactly once (read-side dedup).
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/message/mygroups?jwt="+viewerToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var browse []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &browse)
+	browseCount := 0
+	for _, m := range browse {
+		if m.ID == msgID {
+			browseCount++
+		}
+	}
+	assert.Equal(t, 1, browseCount, "cross-post should appear once in mygroups browse")
+
+	// 4. Search must find the cross-post when filtering by EITHER group — this is the
+	//    crux of the per-group spatial fix: before it, only one group had a spatial row,
+	//    so a search filtered to the OTHER group returned nothing. The endpoint dedups by
+	//    msgid (across its exact + starts-with passes and across per-group spatial rows),
+	//    so the message must be returned exactly once each time.
+	searchCount := func(groupid uint64) int {
+		u := fmt.Sprintf("/api/message/search/%s?groupids=%d&jwt=%s", searchWord, groupid, viewerToken)
+		r, e := getApp().Test(httptest.NewRequest("GET", u, nil))
+		require.NoError(t, e)
+		require.Equal(t, 200, r.StatusCode)
+		var results []message.SearchResult
+		json2.Unmarshal(rsp(r), &results)
+		c := 0
+		for _, res := range results {
+			if res.Msgid == msgID {
+				c++
+			}
+		}
+		return c
+	}
+	assert.Equal(t, 1, searchCount(groupA), "cross-post must be searchable on group A exactly once")
+	assert.Equal(t, 1, searchCount(groupB), "cross-post must be searchable on group B exactly once (via the messages_groups join)")
+}
+
+// TestCrossPost_SingleGroupBrowse verifies a message cross-posted to group B still appears in
+// group B's single-group browse (/message/mygroups/:id, the gid>0 path) even though its single
+// messages_spatial row stores group A. Group membership is resolved via the messages_groups
+// EXISTS join, not messages_spatial.groupid.
+func TestCrossPost_SingleGroupBrowse(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("crosspost_singlegroup")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	viewerID, viewerToken := CreateFullTestUser(t, prefix+"_viewer")
+	CreateTestMembership(t, viewerID, groupB, "Member")
+
+	lat, lng := 55.9533, -3.1883
+	// Approved on A (helper writes the single messages_spatial row, groupid=A); cross-posted
+	// to B via messages_groups only (one-row spatial keeps A's row).
+	msgID := CreateTestMessage(t, posterID, groupA, "OFFER cross-post single-group browse", lat, lng)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	defer func() {
+		db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/mygroups/%d?jwt=%s", groupB, viewerToken), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var browse []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &browse)
+	found := 0
+	for _, m := range browse {
+		if m.ID == msgID {
+			found++
+		}
+	}
+	assert.Equal(t, 1, found, "cross-post appears in group B's single-group browse via the messages_groups join, though its spatial row stores group A")
+}
+
+// TestCrossPost_HeldOnOneGroupReadSurface holds a pending cross-post on one group only
+// via the real Hold endpoint, then asserts the mod read surface reflects it per-group:
+// held on A, still plain-pending on B, and deduplicated to one row in the combined
+// queue. Exercises the write->read path through the live HTTP handlers (multi-group
+// plan §I), unlike the unit tests that pre-seed heldby in SQL.
+func TestCrossPost_HeldOnOneGroupReadSurface(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("crosspost_held")
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Pending cross-post on both groups.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())",
+		msgID, groupB)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	// Hold on group A only, via the real endpoint.
+	holdBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold", "groupid": groupA})
+	holdReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(holdBody))
+	holdReq.Header.Set("Content-Type", "application/json")
+	holdResp, err := getApp().Test(holdReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, holdResp.StatusCode)
+
+	// 1. Hold is per-group: A held by the mod, B untouched.
+	var heldByA *uint64
+	var heldByB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldByA)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldByB)
+	require.NotNil(t, heldByA, "group A copy should be held")
+	assert.Equal(t, modID, *heldByA, "group A copy should be held by the acting mod")
+	assert.Nil(t, heldByB, "group B copy must NOT be held (per-group hold)")
+
+	// 2. group/work splits it correctly: A counts it as held (pendingother), B as plain
+	//    pending. Fresh groups, so these counts are isolated to our message.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+modToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var work []struct {
+		Groupid      uint64 `json:"groupid"`
+		Pending      int64  `json:"pending"`
+		Pendingother int64  `json:"pendingother"`
+	}
+	json2.Unmarshal(rsp(resp), &work)
+	var gA, gB *struct {
+		Groupid      uint64 `json:"groupid"`
+		Pending      int64  `json:"pending"`
+		Pendingother int64  `json:"pendingother"`
+	}
+	for i := range work {
+		if work[i].Groupid == groupA {
+			gA = &work[i]
+		}
+		if work[i].Groupid == groupB {
+			gB = &work[i]
+		}
+	}
+	require.NotNil(t, gA, "group A should be in group/work results")
+	require.NotNil(t, gB, "group B should be in group/work results")
+	assert.Equal(t, int64(0), gA.Pending, "held-on-A copy must not be in group A 'pending'")
+	assert.GreaterOrEqual(t, gA.Pendingother, int64(1), "held-on-A copy must be in group A 'pendingother'")
+	assert.GreaterOrEqual(t, gB.Pending, int64(1), "unheld-on-B copy must be in group B 'pending'")
+	assert.Equal(t, int64(0), gB.Pendingother, "unheld-on-B copy must not be in group B 'pendingother'")
+
+	// 3. The combined Pending mod queue still returns the cross-post exactly once.
+	mtURL := fmt.Sprintf("/api/modtools/messages?collection=Pending&fromuser=%d&jwt=%s", posterID, modToken)
+	mtResp, err := getApp().Test(httptest.NewRequest("GET", mtURL, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, mtResp.StatusCode)
+	var mtBody map[string]interface{}
+	json2.NewDecoder(mtResp.Body).Decode(&mtBody)
+	mtCount := 0
+	if ids, ok := mtBody["messages"].([]interface{}); ok {
+		for _, id := range ids {
+			if uint64(id.(float64)) == msgID {
+				mtCount++
+			}
+		}
+	}
+	assert.Equal(t, 1, mtCount, "held cross-post should appear once in the combined pending queue")
+}
+
+// A hold belongs to a (message, group) pair, so groups[].heldby carries the truth: there
+// is no correct message-wide value for a post that reached several groups. A mod of BOTH
+// groups is the case no message-wide value can serve - the old field said "held" while she
+// was administering the unheld copy, which hid every action button on it (Discourse 9970/2).
+// Up-to-date consumers read groups[].heldby for the group they are acting on.
+//
+// The message-level heldby remains in the payload for BUNDLED APP CLIENTS ONLY - see
+// TestMessagePayloadKeepsMessageLevelHeldbyForBundledApps. This test pins the per-group
+// truth, which is what the 9970/2 fix depends on.
+func TestMessagePayloadCarriesHoldPerGroupNotMessageWide(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("heldpayload")
+
+	groupHeld := CreateTestGroup(t, prefix+"_held")
+	groupUnheld := CreateTestGroup(t, prefix+"_unheld")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupHeld, "Member")
+	CreateTestMembership(t, posterID, groupUnheld, "Member")
+	// The mod moderates BOTH groups — the multi-group mod this bug is about.
+	CreateTestMembership(t, modID, groupHeld, "Moderator")
+	CreateTestMembership(t, modID, groupUnheld, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupHeld, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())",
+		msgID, groupUnheld)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	// Hold on one group only, through the real endpoint.
+	holdBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold", "groupid": groupHeld})
+	holdReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(holdBody))
+	holdReq.Header.Set("Content-Type", "application/json")
+	holdResp, err := getApp().Test(holdReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, holdResp.StatusCode)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var payload map[string]interface{}
+	require.NoError(t, json2.Unmarshal(rsp(resp), &payload))
+
+	// The per-group rows carry the truth, and only the held group is held.
+	groups, ok := payload["groups"].([]interface{})
+	require.True(t, ok, "payload should carry groups[]")
+	seen := map[uint64]interface{}{}
+	for _, g := range groups {
+		gm := g.(map[string]interface{})
+		seen[uint64(gm["groupid"].(float64))] = gm["heldby"]
+	}
+	require.Contains(t, seen, groupHeld)
+	require.Contains(t, seen, groupUnheld)
+	assert.NotNil(t, seen[groupHeld], "the group the hold was placed on reports the holder")
+	assert.Nil(t, seen[groupUnheld], "the group with no hold must not report one")
+}
+
+// The ModTools app bundles its web build into the binary (capacitor.config.modtools.js
+// sets webDir with no server.url), and the production APK ships on a weekly-at-best
+// cadence, so an installed app runs frontend code that is days or weeks old. That code
+// renders held state from the MESSAGE-level heldby: `v-if="message.heldby"` for the
+// "Held by X" notice and `v-if="!message.heldby"` for the Hold button.
+//
+// When the message-level field was dropped, every installed app stopped showing holds at
+// all, and Hold appeared to do nothing: the POST succeeded, the client re-fetched, and
+// with no heldby in the payload the button never became Release (Discourse 9481/636 -
+// "I press the button, it whirls for a few seconds and doesn't hold").
+//
+// So the field stays, computed from the per-group rows, until the app floor has moved
+// past the per-group frontend. Removing it again breaks every un-updated app.
+func TestMessagePayloadKeepsMessageLevelHeldbyForBundledApps(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("heldcompat")
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+	}()
+
+	fetch := func() map[string]interface{} {
+		resp, err := getApp().Test(httptest.NewRequest("GET",
+			fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.StatusCode)
+		var payload map[string]interface{}
+		require.NoError(t, json2.Unmarshal(rsp(resp), &payload))
+		return payload
+	}
+
+	// Before the hold the app must see an unheld post, so the Hold button shows.
+	before := fetch()
+	_, present := before["heldby"]
+	require.True(t, present, "message payload must carry a message-level heldby for bundled apps")
+	assert.Nil(t, before["heldby"], "an unheld post reports no holder")
+
+	holdBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Hold", "groupid": groupID})
+	holdReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(holdBody))
+	holdReq.Header.Set("Content-Type", "application/json")
+	holdResp, err := getApp().Test(holdReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, holdResp.StatusCode)
+
+	// This is the re-fetch the client does straight after a successful hold. Without a
+	// message-level heldby here the app's UI is byte-identical to before the hold.
+	after := fetch()
+	require.NotNil(t, after["heldby"], "after a hold the app must see the post as held")
+	assert.Equal(t, float64(modID), after["heldby"], "the message-level heldby names the holder")
+
+	// Releasing clears it again, so the app returns to showing Hold.
+	releaseBody, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Release", "groupid": groupID})
+	releaseReq := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(releaseBody))
+	releaseReq.Header.Set("Content-Type", "application/json")
+	releaseResp, err := getApp().Test(releaseReq)
+	require.NoError(t, err)
+	require.Equal(t, 200, releaseResp.StatusCode)
+
+	assert.Nil(t, fetch()["heldby"], "after a release the app must see the post as unheld again")
 }
 
 func TestMessagesByUser(t *testing.T) {
@@ -167,6 +620,44 @@ func TestMessagesByUser(t *testing.T) {
 	// Invalid user
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/user/z/message", nil))
 	assert.Equal(t, 404, resp.StatusCode)
+}
+
+// Regression: rippling-out writes a messages_groups row (rippled_in=1) per group a post ripples
+// into, so the same post has many messages_groups rows. My Posts must still show the post ONCE
+// (at its origin group), not once per group — the join must restrict to the origin (rippled_in=0)
+// membership. Before the fix this returned the post once per group.
+func TestMyPostsRippledMessageAppearsOnce(t *testing.T) {
+	prefix := uniquePrefix("ripplededup")
+	originGroup := CreateTestGroup(t, prefix+"orig")
+	rippledGroupA := CreateTestGroup(t, prefix+"ripA")
+	rippledGroupB := CreateTestGroup(t, prefix+"ripB")
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, originGroup, "Member")
+	msgID := CreateTestMessage(t, userID, originGroup, "OFFER: Rippled Downlighter", 51.5, -0.1)
+
+	// Simulate ExpandService::rippleIntoNewGroups: the post gains a messages_groups row
+	// (rippled_in=1) in each rippled-into group, exactly as the live rippler does.
+	db := database.DBConn
+	for _, g := range []uint64{rippledGroupA, rippledGroupB} {
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
+			"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, g)
+	}
+
+	_, token := CreateTestSession(t, userID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	require.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	count := 0
+	for _, m := range msgs {
+		if m.ID == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "a post rippled into multiple groups must appear exactly once in My Posts")
 }
 
 func TestActiveQueryExcludesExpiredMessages(t *testing.T) {
@@ -214,6 +705,79 @@ func TestActiveQueryExcludesExpiredMessages(t *testing.T) {
 		}
 		if m.ID == oldID {
 			assert.True(t, m.Hasoutcome, "Expired message should have hasoutcome=true in non-active query")
+		}
+	}
+}
+
+// A returned/rejected post is aged against the same expiry as any other post
+// (maxagetoshow / EXPIRE_TIME, 90 days for the default group — matching V1's
+// own-posts age cap), but by its ORIGINAL date rather than arrival. A rejected
+// post's arrival can be recent while the post itself is years old, which would
+// otherwise keep a long-dead rejected message in the member's active posts.
+// Reporter: Discourse topic 9481/561.
+func TestOldRejectedMessageClassifiedAsOld(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("oldrej")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+
+	// createRejected inserts a Rejected post (no spatial row, as rejected posts
+	// aren't public) with a given original date and a RECENT arrival.
+	createRejected := func(subject string, dateDaysAgo int) uint64 {
+		db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL 1 DAY), DATE_SUB(NOW(), INTERVAL ? DAY))",
+			userID, subject, locationID, dateDaysAgo)
+		var id uint64
+		db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+			userID, subject).Scan(&id)
+		require.NotZero(t, id)
+		db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+			"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 1 DAY), 'Rejected', 0)", id, groupID)
+		t.Cleanup(func() {
+			db.Exec("DELETE FROM messages_groups WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages WHERE id = ?", id)
+		})
+		return id
+	}
+
+	oldRejID := createRejected("OFFER: Ancient Rejected Lamp", 400) // years-old → Old
+	// 60 days: past the reporter's "month" suggestion but within the 90-day
+	// expiry — under V1 parity this is still active (not a separate shorter rule).
+	midRejID := createRejected("OFFER: Two-Month Rejected Chair", 60)
+
+	// active=true: old rejected excluded, mid-age (within expiry) still present.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	foundOld, foundMid := false, false
+	for _, m := range msgs {
+		if m.ID == oldRejID {
+			foundOld = true
+		}
+		if m.ID == midRejID {
+			foundMid = true
+		}
+	}
+	assert.False(t, foundOld, "Years-old rejected post should NOT appear in active")
+	assert.True(t, foundMid, "Rejected post within the 90-day expiry should still appear in active (V1 parity)")
+
+	// active=false: old rejected marked hasoutcome=true (Old); mid one not.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=false&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	json2.Unmarshal(rsp(resp), &msgs)
+	for _, m := range msgs {
+		if m.ID == oldRejID {
+			assert.True(t, m.Hasoutcome, "Years-old rejected post should be hasoutcome=true (Old) in non-active query")
+		}
+		if m.ID == midRejID {
+			assert.False(t, m.Hasoutcome, "Rejected post within expiry should not be marked Old")
 		}
 	}
 }
@@ -289,6 +853,55 @@ func TestExpiredMessageWithRecentChatKeptActive(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "Old message with recent chat should remain active")
+}
+
+func TestExpiredMessageHeldActiveByUnrelatedRoomChatAgedOut(t *testing.T) {
+	// An old post must NOT be kept in active My Posts merely because the chat ROOM
+	// that once referenced it has had recent UNRELATED activity. Freegle user-to-user
+	// rooms are one long-lived room per pair of people, so chat_rooms.latestmessage
+	// tracks any conversation between them. Recency must be judged by the chat message
+	// that actually references the post (refmsgid), not the room's overall last
+	// message — otherwise old posts get pinned active whenever the two users chat
+	// about anything else (Discourse 9481/583). Companion to
+	// TestExpiredMessageWithRecentChatKeptActive: same shape, but the reference is OLD
+	// while the room is recent, so this one must age out.
+	db := database.DBConn
+	prefix := uniquePrefix("roomchat")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	otherID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Old message (200 days) — past expiry.
+	msgID := CreateTestMessageWithArrival(t, userID, groupID, "OFFER: "+prefix+" stale shared-room item", 55.9533, -3.1883, 200)
+
+	// Long-lived room whose LATEST message is recent (unrelated chat), but the chat
+	// message that references THIS post is old — the discussion of this post ended
+	// long ago.
+	var chatID uint64
+	db.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, 'User2User', NOW())", userID, otherID)
+	db.Raw("SELECT id FROM chat_rooms WHERE user1 = ? AND user2 = ? AND chattype = 'User2User'", userID, otherID).Scan(&chatID)
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, type, refmsgid, date, processingsuccessful, reviewrequired, reviewrejected) VALUES (?, ?, 'interested long ago', 'Default', ?, DATE_SUB(NOW(), INTERVAL 200 DAY), 1, 0, 0)",
+		chatID, otherID, msgID)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+		db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
+	})
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user/"+fmt.Sprint(userID)+"/message?active=true&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msgs []message.MessageSummary
+	json2.Unmarshal(rsp(resp), &msgs)
+
+	found := false
+	for _, m := range msgs {
+		if m.ID == msgID {
+			found = true
+		}
+	}
+	assert.False(t, found, "Old post must age out of active My Posts despite recent UNRELATED chat in the shared room (Discourse 9481/583)")
 }
 
 func TestNonSpatialMessageMarkedOldInInactiveQuery(t *testing.T) {
@@ -644,6 +1257,64 @@ func TestMessageModOnlyFields(t *testing.T) {
 	assert.Nil(t, anonMsg.Fromcountry, "Anonymous user should NOT see fromcountry")
 }
 
+// Why a post was held names the keyword that flagged it, which tells a spammer
+// exactly what to avoid next time. It is moderator information (Discourse #9988).
+func TestMessageContentCheckReasonsAreModOnly(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("msg_ccreasons")
+
+	groupID := CreateTestGroup(t, prefix)
+	regularUserID := CreateTestUser(t, prefix+"_reg", "User")
+	modUserID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, regularUserID, groupID, "Member")
+	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	_, regularToken := CreateTestSession(t, regularUserID)
+	_, modToken := CreateTestSession(t, modUserID)
+
+	msgID := CreateTestMessage(t, regularUserID, groupID, "Test ContentCheck Reasons Item", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NOW(), contentcheck_reasons = ? WHERE msgid = ?",
+		`[{"check":"ConcernKeyword","category":"substance_medicine","action":"flag","keyword":"mineral","detail":"Matched concern keyword 'mineral'"}]`,
+		msgID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var modMsg message.Message
+	json2.Unmarshal(rsp(resp), &modMsg)
+	assert.NotEmpty(t, modMsg.MessageGroups, "mod should get the groups block")
+	foundReasons := false
+	for _, mg := range modMsg.MessageGroups {
+		if mg.ContentcheckReasons != nil {
+			foundReasons = true
+			assert.Contains(t, string(*mg.ContentcheckReasons), "mineral",
+				"a mod needs the word that flagged the post")
+		}
+	}
+	assert.True(t, foundReasons, "mod should see contentcheck_reasons")
+
+	resp, err = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, regularToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var regMsg message.Message
+	json2.Unmarshal(rsp(resp), &regMsg)
+	for _, mg := range regMsg.MessageGroups {
+		assert.Nil(t, mg.ContentcheckReasons, "a member must NOT see why their post was held")
+		assert.Nil(t, mg.ContentcheckCheckedAt, "nor when it was checked")
+	}
+
+	resp, err = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d", msgID), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var anonMsg2 message.Message
+	json2.Unmarshal(rsp(resp), &anonMsg2)
+	for _, mg := range anonMsg2.MessageGroups {
+		assert.Nil(t, mg.ContentcheckReasons, "logged out must NOT see why a post was held")
+	}
+}
+
 // --- Mod action helpers ---
 
 // createPendingMessage creates a message in Pending collection for mod tests.
@@ -711,9 +1382,9 @@ func TestPostMessageApprove(t *testing.T) {
 	db.Raw("SELECT COALESCE(approvedby, 0) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&approvedby)
 	assert.Equal(t, modID, approvedby)
 
-	// Verify heldby cleared.
+	// Verify the hold on this group's copy is cleared (holds are per-group).
 	var heldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&heldby)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
 	assert.Nil(t, heldby)
 
 	// Verify background task queued.
@@ -865,6 +1536,96 @@ func TestPostMessageRejectCreatesLog(t *testing.T) {
 	// Log creation is now handled by the batch processor (not synchronously in the Go API).
 }
 
+// A mod reply must write its "Replied" log synchronously, exactly once. Previously the log
+// was written only by the batch, whose unconditional INSERT re-ran on task retry and
+// duplicated the row in the mod history (Discourse 9672/6). The batch now skips it.
+func TestPostMessageReplyCreatesLogSynchronously(t *testing.T) {
+	prefix := uniquePrefix("msgmod_reply_log")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reply",
+		"groupid": groupID,
+		"subject": "Re: your post",
+		"body":    "Thanks for posting!",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Exactly one Replied log, written synchronously by the Go handler.
+	var logCount int
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'Message' AND subtype = 'Replied' AND msgid = ? AND byuser = ?",
+		msgID, modID).Scan(&logCount)
+	assert.Equal(t, 1, logCount, "Reply should create exactly one Replied log synchronously")
+
+	// The reply email is still queued via the background task.
+	var taskCount int
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_message_reply' AND data LIKE ?",
+		fmt.Sprintf("%%\"msgid\": %d%%", msgID)).Scan(&taskCount)
+	assert.GreaterOrEqual(t, taskCount, 1, "Reply should still queue the email task")
+}
+
+// A reject that lands on a message which is no longer Pending (e.g. it was
+// re-approved/promoted to live before the mod's click arrived) must NOT silently
+// queue a rejection email/log nor claim success - otherwise the mod and the poster
+// both get told it was rejected while the post stays live (Discourse 9815).
+func TestPostMessageRejectNonPendingDoesNotEmailOrLog(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_nonpending")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+	// The message is live (Approved) by the time the reject lands.
+	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": groupID,
+		"subject": "Sorry",
+		"body":    "Not suitable for this group.",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// No rejection email/log task must be queued — nothing was actually rejected.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_message_rejected' AND data LIKE ?",
+		fmt.Sprintf("%%\"msgid\": %d%%", msgID)).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "Must not queue a rejection email when the message was not Pending")
+
+	// Collection must be unchanged (still live), not falsely Rejected.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Approved", collection, "A non-pending message must not be silently rejected")
+}
+
 func TestPostMessageRejectNoSubjectDeletes(t *testing.T) {
 	prefix := uniquePrefix("msgmod_rej_del")
 	db := database.DBConn
@@ -911,8 +1672,10 @@ func TestPostMessageApproveMarksHam(t *testing.T) {
 
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
-	// Set spamtype on message to simulate it being flagged.
-	db.Exec("UPDATE messages SET spamtype = 'Spam' WHERE id = ?", msgID)
+	// Set spamtype on message to simulate it being flagged. Must be a value from
+	// the production ENUM - 'Spam' is not one of them, and only worked while the
+	// migrations declared this column as a varchar.
+	db.Exec("UPDATE messages SET spamtype = 'SpamAssassin' WHERE id = ?", msgID)
 
 	body := map[string]interface{}{
 		"id":     msgID,
@@ -1291,9 +2054,9 @@ func TestPostMessageHold(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Verify heldby set to mod.
+	// Verify this group's copy is held by the mod (holds are per-group).
 	var heldby uint64
-	db.Raw("SELECT COALESCE(heldby, 0) FROM messages WHERE id = ?", msgID).Scan(&heldby)
+	db.Raw("SELECT COALESCE(heldby, 0) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
 	assert.Equal(t, modID, heldby)
 
 	// Verify push_notify_group_mods background task was queued.
@@ -1319,7 +2082,6 @@ func TestPostMessageRelease(t *testing.T) {
 	msgID := createPendingMessage(t, posterID, groupID, prefix)
 
 	// First hold the message.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
 
 	body := map[string]interface{}{
 		"id":     msgID,
@@ -1333,9 +2095,9 @@ func TestPostMessageRelease(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Verify heldby cleared.
+	// Verify the hold on this group's copy is cleared (holds are per-group).
 	var heldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&heldby)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
 	assert.Nil(t, heldby)
 
 	// Verify push_notify_group_mods background task was queued.
@@ -1605,6 +2367,97 @@ func TestPostMessageJoinAndPost(t *testing.T) {
 	assert.Equal(t, int64(1), logCount, "JoinAndPost should create a Joined log entry")
 }
 
+// A web/app Offer created without a locationid must still get a discoverable
+// location: the create path falls back to the user's last known location and
+// denormalises lat/lng onto the message. Otherwise the post has NULL lat/lng and
+// is invisible in browse/search (which read messages.lat/lng directly) — the
+// Discourse 9865 "why is this outside the UK?" bug, where NULL lat/lng blurred to
+// Null Island (0.004, 0). Live: 4+ Platform Offers reached this state.
+func TestPutMessageBackfillsLocationFromUserWhenNoLocationid(t *testing.T) {
+	prefix := uniquePrefix("msg_noloc_backfill")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Give the user a last known location (a real postcode with lat/lng).
+	var locID uint64
+	var locLat, locLng float64
+	db.Raw("SELECT id, lat, lng FROM locations WHERE lat IS NOT NULL AND lng IS NOT NULL AND lat <> 0 LIMIT 1").
+		Row().Scan(&locID, &locLat, &locLng)
+	require.NotZero(t, locID, "test DB needs a location with lat/lng")
+	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", locID, userID)
+
+	// Create a draft WITHOUT a locationid — the client omitted it (the 9865 bug).
+	body := map[string]interface{}{
+		"messagetype": "Offer",
+		"item":        "Located Chair",
+		"collection":  "Draft",
+		"groupid":     groupID,
+	}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgID := uint64(result["id"].(float64))
+	require.NotZero(t, msgID)
+
+	// The post must be discoverable: lat/lng backfilled from the user's lastlocation.
+	var gotLat, gotLng *float64
+	db.Raw("SELECT lat, lng FROM messages WHERE id = ?", msgID).Row().Scan(&gotLat, &gotLng)
+	require.NotNil(t, gotLat, "message lat must be backfilled from user location, not left NULL (9865)")
+	require.NotNil(t, gotLng, "message lng must be backfilled from user location, not left NULL (9865)")
+	assert.InDelta(t, locLat, *gotLat, 0.0001)
+	assert.InDelta(t, locLng, *gotLng, 0.0001)
+}
+
+// A location-only edit (client sends locationid but no lat/lng) must denormalise
+// lat/lng from the chosen location, not leave them stale/NULL. Otherwise the post
+// becomes undiscoverable - browse/search read messages.lat/lng directly. This is
+// the live msg 119554658 shape: a valid locationid, but NULL lat/lng (Discourse 9865).
+func TestPatchMessageLocationOnlyEditDenormalisesLatLng(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("patch_locdenorm")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	token := getToken(t, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" chair", 55.95, -3.18)
+
+	// A real location (postcode) with its own lat/lng.
+	var locID uint64
+	var locLat, locLng float64
+	db.Raw("SELECT id, lat, lng FROM locations WHERE lat IS NOT NULL AND lng IS NOT NULL AND lat <> 0 LIMIT 1").
+		Row().Scan(&locID, &locLat, &locLng)
+	require.NotZero(t, locID, "test DB needs a location with lat/lng")
+
+	// Edit ONLY the location - send locationid, deliberately no lat/lng.
+	body := map[string]interface{}{"id": msgID, "locationid": locID}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+token, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// lat/lng must now match the chosen location, derived server-side.
+	var gotLat, gotLng *float64
+	var gotLoc *uint64
+	db.Raw("SELECT lat, lng, locationid FROM messages WHERE id = ?", msgID).Row().Scan(&gotLat, &gotLng, &gotLoc)
+	require.NotNil(t, gotLoc)
+	assert.Equal(t, locID, *gotLoc)
+	require.NotNil(t, gotLat, "location-only edit must derive lat from the location, not leave it NULL (9865)")
+	require.NotNil(t, gotLng, "location-only edit must derive lng from the location, not leave it NULL (9865)")
+	assert.InDelta(t, locLat, *gotLat, 0.0001)
+	assert.InDelta(t, locLng, *gotLng, 0.0001)
+}
+
 func TestJoinAndPostSavesDeadline(t *testing.T) {
 	prefix := uniquePrefix("msgmod_jap_dl")
 	db := database.DBConn
@@ -1638,6 +2491,46 @@ func TestJoinAndPostSavesDeadline(t *testing.T) {
 	var deadline *string
 	db.Raw("SELECT DATE_FORMAT(deadline, '%Y-%m-%d') FROM messages WHERE id = ?", msgID).Scan(&deadline)
 	assert.NotNil(t, deadline, "Deadline should be saved during JoinAndPost")
+	assert.Equal(t, "2026-07-15", *deadline)
+}
+
+// Bundled apps (pre-fix webview bundles) send the deadline as a full ISO
+// datetime. messages.deadline is a DATE column: under STRICT_TRANS_TABLES the
+// datetime literal is rejected outright and, with the Exec error unchecked,
+// the deadline was silently lost (Discourse #9481). The handler must
+// normalise to the date part so both client generations save correctly.
+func TestJoinAndPostSavesDeadlineISODatetime(t *testing.T) {
+	prefix := uniquePrefix("msgmod_jap_dliso")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Create a draft message.
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Deadline ISO test', 'Item with deadline', 'Item with deadline', NOW(), NOW(), 'Platform')",
+		userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, userID)
+
+	// JoinAndPost with an ISO datetime deadline, as bundled apps send it.
+	body := map[string]interface{}{
+		"id":       msgID,
+		"action":   "JoinAndPost",
+		"deadline": "2026-07-15T00:00:00.000Z",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var deadline *string
+	db.Raw("SELECT DATE_FORMAT(deadline, '%Y-%m-%d') FROM messages WHERE id = ?", msgID).Scan(&deadline)
+	require.NotNil(t, deadline, "ISO datetime deadline must not be silently lost")
 	assert.Equal(t, "2026-07-15", *deadline)
 }
 
@@ -2239,6 +3132,60 @@ func TestPatchMessageLogEntry(t *testing.T) {
 
 // --- Test: DELETE /message/:id ---
 
+func TestPatchMessageSubjectUsesContextualGroupKeyword(t *testing.T) {
+	// When a multi-group message's subject is rebuilt during an edit, the
+	// keyword prefix (OFFER vs a group-specific override) must come from the
+	// group supplied in the request, not an arbitrary first group.
+	prefix := uniquePrefix("msgpatch_kw")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	// Different OFFER keyword per group.
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('keywords', JSON_OBJECT('OFFER', 'GIVING')) WHERE id = ?", groupA)
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('keywords', JSON_OBJECT('OFFER', 'FREEBIE')) WHERE id = ?", groupB)
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupA, "Member")
+	CreateTestMembership(t, ownerID, groupB, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupA, prefix+" Test Item", 53.0, -1.0)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// Edit supplying an item name (triggers subject rebuild) and groupB context.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"item":    "Wooden Chair",
+		"groupid": groupB,
+	})
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var subject string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+	assert.True(t, strings.HasPrefix(subject, "FREEBIE:"), "Subject should use groupB's keyword, got: "+subject)
+	assert.False(t, strings.HasPrefix(subject, "GIVING:"), "Subject must not use groupA's keyword")
+
+	// Now edit with groupA context — keyword should switch to GIVING.
+	body2, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"item":    "Wooden Chair",
+		"groupid": groupA,
+	})
+	req2 := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := getApp().Test(req2)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+	assert.True(t, strings.HasPrefix(subject, "GIVING:"), "Subject should use groupA's keyword, got: "+subject)
+}
+
 func TestPatchMessageLocationName(t *testing.T) {
 	prefix := uniquePrefix("msgmod_patchloc")
 	db := database.DBConn
@@ -2281,6 +3228,67 @@ func TestPatchMessageLocationName(t *testing.T) {
 	var msgLocID uint64
 	db.Raw("SELECT COALESCE(locationid, 0) FROM messages WHERE id = ?", msgID).Scan(&msgLocID)
 	assert.Equal(t, locID, msgLocID, "locationid should be resolved from location name")
+}
+
+// A moderator editing a Pending post must not lose it. The content check has to run
+// again on the new text, but the stamp that records the last check is also what makes
+// the post visible to mods at all - the Pending list and the work counts both hide
+// rows that have never been checked. Clearing it on edit therefore took the post out
+// of the queue of the moderator who had just edited it, list and badge together, until
+// the batch re-stamped it half a minute later (Discourse 10001). The edit now stamps
+// messages.editedat instead (the batch re-checks rows whose editedat is newer than
+// their check stamp), and leaves the stamp alone.
+func TestPatchMessageEditKeepsPendingVisibleAndQueuesRecheck(t *testing.T) {
+	prefix := uniquePrefix("msgpatch_recheck")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+
+	// The content check has run: stamped (in the past, so a fresh edit is strictly
+	// newer even at TIMESTAMP's one-second resolution), with a reason recorded.
+	db.Exec("UPDATE messages_groups SET contentcheck_checked_at = NOW() - INTERVAL 5 MINUTE, contentcheck_reasons = ? WHERE msgid = ? AND groupid = ?",
+		`["worryword"]`, msgID, groupID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":       msgID,
+		"textbody": "Edited by the moderator to take the worrying bit out",
+	})
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+modToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var stillChecked, recheckQueued, staleReasons int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND contentcheck_checked_at IS NOT NULL", msgID, groupID).Scan(&stillChecked)
+	db.Raw("SELECT COUNT(*) FROM messages m JOIN messages_groups mg ON mg.msgid = m.id WHERE m.id = ? AND mg.groupid = ? AND m.editedat > mg.contentcheck_checked_at", msgID, groupID).Scan(&recheckQueued)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND contentcheck_reasons IS NOT NULL", msgID, groupID).Scan(&staleReasons)
+	assert.EqualValues(t, 1, stillChecked, "Editing must not clear the check stamp - that is what makes the post visible")
+	assert.EqualValues(t, 1, recheckQueued, "Editing must stamp editedat past the check, queueing a fresh content check")
+	assert.EqualValues(t, 0, staleReasons, "The reason the mod has just edited out must not stay on the card")
+
+	// The point of all that: the moderator can still see the post they just edited.
+	url := fmt.Sprintf("/api/modtools/messages?collection=Pending&jwt=%s", modToken)
+	listResp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, listResp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(listResp.Body).Decode(&result)
+	found := false
+	for _, id := range result["messages"].([]interface{}) {
+		if uint64(id.(float64)) == msgID {
+			found = true
+		}
+	}
+	assert.True(t, found, "An edited Pending message must stay in the mod's Pending list")
 }
 
 func TestPatchMessageExtendDeadlineClearsExpiredOutcome(t *testing.T) {
@@ -2493,7 +3501,7 @@ func TestPutMessageRecordsFromIP(t *testing.T) {
 // TestPutMessageGeneratesSyntheticMessageID verifies that PUT /message
 // populates messages.messageid with a synthetic value in the form
 // "<microtime>@users.ilovefreegle.org-<groupid>" (V1 parity — see
-// iznik-server/include/message/Message.php lines 2708 and 2717).
+// the legacy V1 PHP Message implementation).
 // Before this fix, Go left messageid NULL, breaking dedupe and
 // cross-reference lookups that rely on the column being populated.
 func TestPutMessageGeneratesSyntheticMessageID(t *testing.T) {
@@ -2888,10 +3896,10 @@ func TestPostMessageBackToPending(t *testing.T) {
 	db.Raw("SELECT approvedby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&approvedby)
 	assert.Nil(t, approvedby)
 
-	// Verify heldby is set to the mod before moving to Pending).
+	// Verify this group's copy is held by the mod before moving to Pending.
 	var heldby uint64
-	db.Raw("SELECT COALESCE(heldby, 0) FROM messages WHERE id = ?", msgID).Scan(&heldby)
-	assert.Equal(t, modID, heldby, "BackToPending should set heldby to the mod")
+	db.Raw("SELECT COALESCE(heldby, 0) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&heldby)
+	assert.Equal(t, modID, heldby, "BackToPending should set heldby to the mod on this group's copy")
 
 	// Verify a log entry was created.
 	var logCount int64
@@ -4062,6 +5070,47 @@ func TestApproveMessageQueuesFreebieAlertsAdd(t *testing.T) {
 	assert.Equal(t, int64(1), taskCount, "freebie_alerts_add task should be queued when Offer is approved")
 }
 
+func TestApproveMessageClearanceDoesNotQueueFreebieAlertsAdd(t *testing.T) {
+	// Approving a clearance (bulk-offer) Offer must NOT queue a freebie_alerts_add task —
+	// the concierge manages those posts and freebiealerts.app is not the right channel.
+	prefix := uniquePrefix("msgw_fa_clr")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	groupID := CreateTestGroup(t, prefix)
+
+	// Add mod as moderator of the group.
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Moderator', 'Approved')", modID, groupID)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
+
+	// Create a pending Offer and mark it as a clearance via messages_bulk_items.
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" clearance offer", 52.5, -1.8)
+	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+	db.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`) VALUES (?, 0, 'Office desk', 1, 'Good')", msgID)
+	defer db.Exec("DELETE FROM messages_bulk_items WHERE msgid = ?", msgID)
+
+	// Clean any pre-existing freebie_alerts_add tasks for this message.
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Approve",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'freebie_alerts_add' AND JSON_EXTRACT(data, '$.msgid') = ?", msgID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "freebie_alerts_add must NOT be queued when the approved Offer is a clearance")
+}
+
 func TestDeleteMessageQueuesFreebieAlertsRemove(t *testing.T) {
 	// User-deleting a message should queue freebie_alerts_remove.
 	prefix := uniquePrefix("msgw_fa_del")
@@ -4141,6 +5190,193 @@ func TestPostMessageViewDedup(t *testing.T) {
 	var viewCount int
 	db.Raw("SELECT count FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&viewCount)
 	assert.Equal(t, 1, viewCount)
+}
+
+// TestMessagePageviewSemantics verifies the pageview flag distinguishes a genuine
+// page-open (handleView => 1) from a list-scroll impression (MarkSeen => 0), that a
+// scroll-then-open is upgraded to 1, and that an open-then-scroll is never downgraded.
+func TestMessagePageviewSemantics(t *testing.T) {
+	db := database.DBConn
+
+	// Returns (exists, pageview) where pageview is -1 for NULL (legacy/unknown).
+	getPageview := func(msgID, userID uint64) (bool, int) {
+		var cnt int
+		db.Raw("SELECT COUNT(*) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&cnt)
+		if cnt == 0 {
+			return false, -1
+		}
+		var pv int
+		db.Raw("SELECT COALESCE(pageview, -1) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&pv)
+		return true, pv
+	}
+	doView := func(token string, msgID uint64) {
+		body, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "View"})
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	doMarkSeen := func(token string, msgID uint64) {
+		req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+token, bytes.NewBufferString(fmt.Sprintf(`{"ids": [%d]}`, msgID)))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	// Distinct viewer (not the owner) so MarkSeen records against a real recipient.
+	setup := func(label string) (msgID uint64, token string, viewerID uint64) {
+		prefix := uniquePrefix(label)
+		groupID := CreateTestGroup(t, prefix)
+		ownerID := CreateTestUser(t, prefix+"_owner", "User")
+		CreateTestMembership(t, ownerID, groupID, "Member")
+		viewerID = CreateTestUser(t, prefix+"_viewer", "User")
+		CreateTestMembership(t, viewerID, groupID, "Member")
+		_, token = CreateTestSession(t, viewerID)
+		msgID = CreateTestMessage(t, ownerID, groupID, prefix+" item", 55.9533, -3.1883)
+		return
+	}
+
+	// genuine page-open => pageview = 1
+	msgID, token, viewerID := setup("pv_open")
+	doView(token, msgID)
+	exists, pv := getPageview(msgID, viewerID)
+	assert.True(t, exists, "page-open should create a View row")
+	assert.Equal(t, 1, pv, "page-open => pageview=1")
+
+	// list-scroll impression => pageview = 0
+	msgID, token, viewerID = setup("pv_seen")
+	doMarkSeen(token, msgID)
+	exists, pv = getPageview(msgID, viewerID)
+	assert.True(t, exists, "impression should create a View row")
+	assert.Equal(t, 0, pv, "scroll impression => pageview=0")
+
+	// scroll THEN open => upgraded to 1
+	msgID, token, viewerID = setup("pv_seen_open")
+	doMarkSeen(token, msgID)
+	doView(token, msgID)
+	_, pv = getPageview(msgID, viewerID)
+	assert.Equal(t, 1, pv, "open after scroll => upgraded to pageview=1")
+
+	// open THEN scroll => stays 1 (never downgraded)
+	msgID, token, viewerID = setup("pv_open_seen")
+	doView(token, msgID)
+	doMarkSeen(token, msgID)
+	_, pv = getPageview(msgID, viewerID)
+	assert.Equal(t, 1, pv, "scroll after open must not downgrade pageview")
+}
+
+// TestMessagePageviewSource verifies a notification-tagged page-open records its source
+// (e.g. ripple_notify), and that a later untagged (organic) open never clears that
+// attribution - the key property for distinguishing notification-click from organic browse.
+func TestMessagePageviewSource(t *testing.T) {
+	db := database.DBConn
+
+	getSource := func(msgID, userID uint64) string {
+		var s string
+		db.Raw("SELECT COALESCE(source, '') FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Scan(&s)
+		return s
+	}
+	doView := func(token string, msgID uint64, source string) {
+		body := map[string]interface{}{"id": msgID, "action": "View"}
+		if source != "" {
+			body["source"] = source
+		}
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	// notification-tagged open records the source; a later organic open does not clear it
+	{
+		prefix := uniquePrefix("pv_src_notify")
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
+
+		doView(token, msgID, "ripple_notify")
+		assert.Equal(t, "ripple_notify", getSource(msgID, userID), "tagged open records source")
+		doView(token, msgID, "") // organic, within dedup window -> UPDATE path
+		assert.Equal(t, "ripple_notify", getSource(msgID, userID), "organic open must not clear notification source")
+	}
+
+	// organic-only open leaves source unset (NULL)
+	{
+		prefix := uniquePrefix("pv_src_organic")
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		msgID := CreateTestMessage(t, userID, groupID, prefix+" item", 52.5, -1.8)
+
+		doView(token, msgID, "")
+		assert.Equal(t, "", getSource(msgID, userID), "organic open leaves source NULL")
+	}
+}
+
+// TestMarkSeenSource verifies a source-tagged impression (MarkSeen with a source,
+// e.g. from the similar-posts widget) records pageview=0 + the source on the
+// fresh row, that a later genuine open upgrades pageview to 1 while PRESERVING
+// the source, and that a subsequent differently-tagged impression does not
+// overwrite the first-touch source.
+func TestMarkSeenSource(t *testing.T) {
+	db := database.DBConn
+
+	get := func(msgID, userID uint64) (pv int, source string) {
+		db.Raw("SELECT COALESCE(pageview, -1), COALESCE(source, '') FROM messages_likes "+
+			"WHERE msgid = ? AND userid = ? AND type = 'View'", msgID, userID).Row().Scan(&pv, &source)
+		return
+	}
+	doMarkSeen := func(token string, msgID uint64, source string) {
+		var body string
+		if source != "" {
+			body = fmt.Sprintf(`{"ids": [%d], "source": "%s"}`, msgID, source)
+		} else {
+			body = fmt.Sprintf(`{"ids": [%d]}`, msgID)
+		}
+		req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+token, bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+	doView := func(token string, msgID uint64) {
+		b, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "View"})
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(b))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	prefix := uniquePrefix("markseen_src")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, viewerID, groupID, "Member")
+	_, token := CreateTestSession(t, viewerID)
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" item", 55.9533, -3.1883)
+
+	// Source-tagged impression: pageview=0 + source recorded.
+	doMarkSeen(token, msgID, "similar_posts")
+	pv, src := get(msgID, viewerID)
+	assert.Equal(t, 0, pv, "impression => pageview=0")
+	assert.Equal(t, "similar_posts", src, "impression records its source")
+
+	// Genuine open (untagged): pageview upgraded to 1, source preserved.
+	doView(token, msgID)
+	pv, src = get(msgID, viewerID)
+	assert.Equal(t, 1, pv, "open after impression => pageview upgraded to 1")
+	assert.Equal(t, "similar_posts", src, "genuine open must not clear the impression source")
+
+	// A later differently-tagged impression must not overwrite first-touch source.
+	doMarkSeen(token, msgID, "wanted_match")
+	_, src = get(msgID, viewerID)
+	assert.Equal(t, "similar_posts", src, "first-touch source wins; later impressions do not overwrite")
 }
 
 // --- Adversarial tests ---
@@ -5077,6 +6313,80 @@ func TestMessagesMarkSeenIdempotent(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 }
 
+// TestMessagesMarkSeenBatchPreservesSemantics marks MANY messages in a single call (the batched
+// multi-row INSERT path that replaced the per-id loop) and verifies the per-message semantics are
+// unchanged: every message ends up with a View row (seen), a brand-new one gets pageview=0 (a
+// scroll impression), and a message that already has a genuine page-open (pageview=1) keeps
+// pageview=1 and has its count incremented - i.e. batching never downgrades an existing view.
+func TestMessagesMarkSeenBatchPreservesSemantics(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("markseen_batch")
+	groupID := CreateTestGroup(t, prefix)
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, viewerID, groupID, "Member")
+	_, viewerToken := CreateTestSession(t, viewerID)
+
+	// A batch of messages (enough to exercise the multi-row INSERT).
+	const n = 12
+	ids := make([]uint64, n)
+	for i := 0; i < n; i++ {
+		ids[i] = CreateTestMessage(t, ownerID, groupID, fmt.Sprintf("%s item %d", prefix, i), 55.9533, -3.1883)
+	}
+
+	// Give the FIRST message a genuine page-open first (pageview=1), so we can prove the batch
+	// mark-seen does not downgrade it.
+	openBody, _ := json.Marshal(map[string]interface{}{"id": ids[0], "action": "View"})
+	openReq := httptest.NewRequest("POST", "/api/message?jwt="+viewerToken, bytes.NewBuffer(openBody))
+	openReq.Header.Set("Content-Type", "application/json")
+	openResp, _ := getApp().Test(openReq)
+	assert.Equal(t, 200, openResp.StatusCode)
+
+	var pvBefore, countBefore int
+	db.Raw("SELECT COALESCE(pageview, -1), count FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[0], viewerID).Row().Scan(&pvBefore, &countBefore)
+	assert.Equal(t, 1, pvBefore, "page-open should set pageview=1 before the batch mark-seen")
+
+	// Mark ALL of them seen in one batched call.
+	idParts := make([]string, n)
+	for i, id := range ids {
+		idParts[i] = fmt.Sprint(id)
+	}
+	body := fmt.Sprintf(`{"ids": [%s]}`, strings.Join(idParts, ","))
+	req := httptest.NewRequest("POST", "/api/messages/markseen?jwt="+viewerToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Every message now has a View row.
+	var seenCount int
+	placeholders := make([]string, n)
+	args := make([]interface{}, 0, n+2)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, viewerID)
+	db.Raw("SELECT COUNT(*) FROM messages_likes WHERE msgid IN ("+strings.Join(placeholders, ",")+
+		") AND userid = ? AND type = 'View'", args...).Scan(&seenCount)
+	assert.Equal(t, n, seenCount, "every message in the batch has a View row")
+
+	// A brand-new message (ids[1]) got pageview=0 (scroll impression).
+	var pvNew int
+	db.Raw("SELECT COALESCE(pageview, -1) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[1], viewerID).Scan(&pvNew)
+	assert.Equal(t, 0, pvNew, "a newly-seen message gets pageview=0")
+
+	// The pre-opened message (ids[0]) keeps pageview=1 (NOT downgraded) and its count incremented.
+	var pvAfter, countAfter int
+	db.Raw("SELECT COALESCE(pageview, -1), count FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View'",
+		ids[0], viewerID).Row().Scan(&pvAfter, &countAfter)
+	assert.Equal(t, 1, pvAfter, "batch mark-seen must not downgrade an existing genuine view")
+	assert.Greater(t, countAfter, countBefore, "the ON DUPLICATE KEY UPDATE increments count on the existing row")
+}
+
 // --- Tests: Subject reconstruction from item + location ---
 
 func TestPatchMessageReconstructsSubjectFromItemLocation(t *testing.T) {
@@ -5342,6 +6652,127 @@ func TestRejectToDraftOwner(t *testing.T) {
 	var logCount int64
 	db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND type = 'Message' AND subtype = 'Repost'", msgID).Scan(&logCount)
 	assert.Equal(t, int64(1), logCount, "Repost log entry should exist")
+}
+
+func TestRejectToDraftPerGroup(t *testing.T) {
+	prefix := uniquePrefix("msg_r2d_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupA, "Member")
+	CreateTestMembership(t, userID, groupB, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Message on both groups (groupA via CreateTestMessage, groupB added).
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" item", 52.5, -1.8)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// Give it global state we can check is preserved while still live elsewhere.
+	db.Exec("UPDATE messages SET availableinitially = 3, availablenow = 1 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", msgID)
+
+	// RejectToDraft on groupA only.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"action":  "RejectToDraft",
+		"groupid": groupA,
+	})
+	req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// groupA row gone, groupB still live.
+	var countA, countB int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&countA)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&countB)
+	assert.Equal(t, int64(0), countA, "groupA row should be removed")
+	assert.Equal(t, int64(1), countB, "groupB row should remain live")
+
+	// Draft created for groupA.
+	var draftCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_drafts WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&draftCount)
+	assert.Equal(t, int64(1), draftCount, "Draft should be created for groupA")
+
+	// Global state must be UNTOUCHED while the message is still live on groupB.
+	var outcomeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcomeCount)
+	assert.Equal(t, int64(1), outcomeCount, "Outcomes must not be cleared while still live on another group")
+	var availablenow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availablenow)
+	assert.Equal(t, 1, availablenow, "availablenow must not be reset while still live on another group")
+
+	// Now RejectToDraft on groupB — the last group. The message becomes a
+	// fresh draft and its global state is reset.
+	body2, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"action":  "RejectToDraft",
+		"groupid": groupB,
+	})
+	req2 := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := getApp().Test(req2)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&countB)
+	assert.Equal(t, int64(0), countB, "No groups should remain")
+
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcomeCount)
+	assert.Equal(t, int64(0), outcomeCount, "Outcomes should be cleared once fully redrafted")
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availablenow)
+	assert.Equal(t, 3, availablenow, "availablenow should reset to availableinitially once fully redrafted")
+}
+
+func TestRejectToDraftOwnerWithdrawsAllGroups(t *testing.T) {
+	// When the owner withdraws their own message and no groupid is given, the
+	// message is taken back to draft for ALL groups it's on.
+	prefix := uniquePrefix("msg_r2d_all")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupA, "Member")
+	CreateTestMembership(t, userID, groupB, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" item", 52.5, -1.8)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	db.Exec("UPDATE messages SET availableinitially = 2, availablenow = 1 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", msgID)
+
+	// RejectToDraft with NO groupid — owner withdrawing the whole message.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":     msgID,
+		"action": "RejectToDraft",
+	})
+	req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// All groups removed.
+	var mgCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgCount)
+	assert.Equal(t, int64(0), mgCount, "All groups should be removed when withdrawing without a groupid")
+
+	// messages_drafts is unique per msgid, so exactly one draft row results.
+	var draftCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_drafts WHERE msgid = ?", msgID).Scan(&draftCount)
+	assert.Equal(t, int64(1), draftCount, "Exactly one draft row should exist (unique per msgid)")
+
+	// Global state reset, since the message is no longer live anywhere.
+	var outcomeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcomeCount)
+	assert.Equal(t, int64(0), outcomeCount, "Outcomes cleared on full withdrawal")
+	var availablenow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availablenow)
+	assert.Equal(t, 2, availablenow, "availablenow reset to availableinitially on full withdrawal")
 }
 
 func TestRejectToDraftClearsExpiredDeadline(t *testing.T) {
@@ -6442,6 +7873,125 @@ func TestPatchMessageEditReviewRequiredGroupModerated(t *testing.T) {
 	assert.Equal(t, 1, reviewRequired, "Group-moderated edit of approved message should set reviewrequired=1")
 }
 
+// TestPatchMessageTextEditResetsContentCheck: a message that has already passed the
+// automated content-check (contentcheck_checked_at stamped, e.g. because it was
+// approved) must be re-queued for a fresh check when the owner edits its textbody.
+// Without this, content added via an edit (worry words, phone numbers, banned
+// keywords, ...) is never scanned by ContentCheckService.processUnprocessed() and
+// the automated moderation filters silently skip edited content forever, catchable
+// only by a mod noticing it manually.
+//
+// The re-queue is a stamp on messages.editedat, not a wipe of the check stamp,
+// which is what it used to be. The check stamp is also what makes a Pending post
+// visible to moderators, so clearing it took a post out of the queue of the
+// moderator who had just edited it until the batch pass re-stamped it (Discourse
+// 10001). What the batch picks up is now "never checked OR edited since checked"
+// (editedat > contentcheck_checked_at), so the re-check still happens.
+func TestPatchMessageTextEditResetsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_text")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	// Stamped in the past, so the edit is strictly newer even at TIMESTAMP's
+	// one-second resolution.
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW() - INTERVAL 5 MINUTE, contentcheck_reasons = ? WHERE msgid = ? AND groupid = ?",
+		`[{"check":"Vague","detail":"stale reason from the original check"}]`, msgID, groupID)
+
+	var checkedAtSet bool
+	db.Raw("SELECT contentcheck_checked_at IS NOT NULL FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&checkedAtSet)
+	require.True(t, checkedAtSet, "test setup: message should start already content-checked")
+
+	body := map[string]interface{}{
+		"id":       msgID,
+		"textbody": prefix + " edited body with newly added content",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet, recheckQueued bool
+	var reasons *string
+	db.Raw("SELECT mg.contentcheck_checked_at IS NOT NULL, m.editedat > mg.contentcheck_checked_at, mg.contentcheck_reasons FROM messages m JOIN messages_groups mg ON mg.msgid = m.id WHERE m.id = ? AND mg.groupid = ?", msgID, groupID).
+		Row().Scan(&checkedAtStillSet, &recheckQueued, &reasons)
+	assert.True(t, recheckQueued, "editing the textbody should stamp editedat past the check so the batch job re-checks the new content")
+	assert.True(t, checkedAtStillSet, "the check stamp must survive the edit - it is what keeps a Pending post visible to mods")
+	assert.Nil(t, reasons, "stale contentcheck_reasons from the pre-edit check should be cleared too")
+}
+
+// TestPatchMessageSubjectEditResetsContentCheck mirrors the textbody case for the
+// subject field, which checkMessage() also scans (Vague/NotAnItem/SubjectRepeat).
+func TestPatchMessageSubjectEditResetsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_subj")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW() - INTERVAL 5 MINUTE WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"subject": prefix + " edited subject",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet, recheckQueued bool
+	db.Raw("SELECT mg.contentcheck_checked_at IS NOT NULL, m.editedat > mg.contentcheck_checked_at FROM messages m JOIN messages_groups mg ON mg.msgid = m.id WHERE m.id = ? AND mg.groupid = ?", msgID, groupID).
+		Row().Scan(&checkedAtStillSet, &recheckQueued)
+	assert.True(t, recheckQueued, "editing the subject should stamp editedat past the check so the batch job re-checks the new content")
+	assert.True(t, checkedAtStillSet, "the check stamp must survive the edit - it is what keeps a Pending post visible to mods")
+}
+
+// TestPatchMessageNonContentEditKeepsContentCheck: editing a field that
+// ContentCheckService::checkMessage() never inspects (availablenow) must NOT
+// discard the existing content-check stamp — only subject/textbody/item edits
+// should trigger a re-check.
+func TestPatchMessageNonContentEditKeepsContentCheck(t *testing.T) {
+	prefix := uniquePrefix("msgedit_recheck_noop")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := createPendingMessage(t, ownerID, groupID, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved', contentcheck_checked_at = NOW() - INTERVAL 5 MINUTE WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	body := map[string]interface{}{
+		"id":           msgID,
+		"availablenow": 1,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Edit should succeed")
+
+	var checkedAtStillSet, recheckQueued bool
+	db.Raw("SELECT mg.contentcheck_checked_at IS NOT NULL, COALESCE(m.editedat > mg.contentcheck_checked_at, FALSE) FROM messages m JOIN messages_groups mg ON mg.msgid = m.id WHERE m.id = ? AND mg.groupid = ?", msgID, groupID).
+		Row().Scan(&checkedAtStillSet, &recheckQueued)
+	assert.True(t, checkedAtStillSet, "a non-content edit should not discard the existing content-check stamp")
+	assert.False(t, recheckQueued, "a non-content edit should not stamp editedat either - nothing it changed is scanned")
+}
+
 // --- tnpostid and expiresat tests ---
 
 func TestGetMessageTnpostid(t *testing.T) {
@@ -6816,7 +8366,11 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
-	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
+	// tnuserid is UNIQUE in production. 77710 is not used by any other test -
+	// 77701-77704, 77801-77804 and 77901-77903 all are. Release it from any user
+	// left by an earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77710)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77710, ownerID)
 
 	// Create message at original lat/lng.
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -6831,7 +8385,7 @@ func TestPatchMessagePartnerLatLng(t *testing.T) {
 		"lng": newLng,
 	}
 	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77701&email=%s@test.com", key, prefix)
+	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77710&email=%s@test.com", key, prefix)
 	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
@@ -6913,7 +8467,6 @@ func TestPostMessageReleasePerGroup(t *testing.T) {
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
 
 	// Release on group A only.
 	body := map[string]interface{}{
@@ -6940,10 +8493,11 @@ func TestPostMessageReleasePerGroup(t *testing.T) {
 	assert.NotNil(t, heldbyB)
 	assert.Equal(t, modID, *heldbyB)
 
-	// messages.heldby should still be set (still held on group B).
-	var msgHeldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
-	assert.NotNil(t, msgHeldby)
+	// Group A's copy is released; B's stays held. There is no message-wide hold to
+	// check - that is the point: releasing A cannot describe B.
+	var heldbyAAfter *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldbyAAfter)
+	assert.Nil(t, heldbyAAfter)
 }
 
 func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
@@ -6959,7 +8513,6 @@ func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
 
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
 
 	// Release on the only group.
 	body := map[string]interface{}{
@@ -6975,10 +8528,56 @@ func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
 	assert.NoError(t, err2)
 	assert.Equal(t, 200, resp2.StatusCode)
 
-	// messages.heldby should be cleared (no groups still held).
+	// The released group's copy is no longer held.
 	var msgHeldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&msgHeldby)
 	assert.Nil(t, msgHeldby)
+}
+
+// Regression: a soft-deleted crosspost copy that still carries a stale heldby (e.g. the
+// member withdrew the message from another group while it was held there) must not stop
+// the live group being released. Originally the stale row pinned a message-wide hold, so
+// Release returned Success but the message stayed stuck showing "Held" and no number of
+// retries could clear it (prod msg 120888286, "Fob Watch"). Holds are now per-group, so
+// the deleted row cannot reach the live copy at all - pinned here so it stays that way.
+func TestPostMessageReleaseIgnoresDeletedGroupHold(t *testing.T) {
+	prefix := uniquePrefix("rel_deleted_hold")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a") // live group the mod moderates
+	groupB := CreateTestGroup(t, prefix+"_b") // withdrawn crosspost copy, still held
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	otherModID := CreateTestUser(t, prefix+"_othermod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+
+	// Orphaned hold: a soft-deleted messages_groups row on groupB still carrying heldby,
+	// set by a mod (otherModID) on a group our releasing mod has no rights to.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, heldby, deleted) VALUES (?, ?, NOW(), 'Pending', 0, ?, 1)", msgID, groupB, otherModID)
+
+	// Release on the live group.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Release",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// The live group's copy is released. A stale hold on the soft-deleted row cannot
+	// affect it: holds are per-group, so there is nothing for it to pin.
+	var msgHeldby *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&msgHeldby)
+	assert.Nil(t, msgHeldby, "the live group's copy must be released")
 }
 
 func TestPostMessageDeletePerGroup(t *testing.T) {
@@ -7108,7 +8707,7 @@ func TestPostMessageSpamPerGroup(t *testing.T) {
 	assert.Equal(t, 0, isDeleted, "Message should not be soft-deleted when still on another group")
 }
 
-func TestPostMessageBackToPendingPerGroup(t *testing.T) {
+func TestPostMessageBackToPendingPullsAllGroups(t *testing.T) {
 	prefix := uniquePrefix("btp_pg")
 	db := database.DBConn
 
@@ -7127,7 +8726,10 @@ func TestPostMessageBackToPendingPerGroup(t *testing.T) {
 	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupA)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
 
-	// BackToPending on group A only.
+	// BackToPending on group A now pulls the WHOLE post back to Pending (every group it
+	// is on), so a rippled post is never left stranded and still visible elsewhere. The
+	// acting mod holds their acted-on group (A); other groups go Pending awaiting their
+	// own mods.
 	body := map[string]interface{}{
 		"id":      msgID,
 		"action":  "BackToPending",
@@ -7151,10 +8753,11 @@ func TestPostMessageBackToPendingPerGroup(t *testing.T) {
 	assert.NotNil(t, heldbyA)
 	assert.Equal(t, modID, *heldbyA)
 
-	// Group B should still be Approved and not held.
+	// Group B is ALSO pulled to Pending (the whole post is taken off the board), but is
+	// NOT held by this mod — they acted on group A, so only A carries their heldby.
 	var collectionB string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collectionB)
-	assert.Equal(t, "Approved", collectionB)
+	assert.Equal(t, "Pending", collectionB)
 
 	var heldbyB *uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)
@@ -7218,7 +8821,6 @@ func TestPostMessageApproveAllGroupsReleasesAllHolds(t *testing.T) {
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
 	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
 
 	// Approve WITHOUT specifying a groupid (global approve).
 	body := map[string]interface{}{
@@ -7241,11 +8843,6 @@ func TestPostMessageApproveAllGroupsReleasesAllHolds(t *testing.T) {
 	var heldbyB *uint64
 	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)
 	assert.Nil(t, heldbyB, "Group B hold should be released on global approve")
-
-	// messages.heldby should also be cleared.
-	var msgHeldby *uint64
-	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
-	assert.Nil(t, msgHeldby, "messages.heldby should be cleared")
 }
 
 func TestPostMessageDeleteAfterSpamExcludesSoftDeleted(t *testing.T) {
@@ -7352,6 +8949,180 @@ func TestListMessagesMultiGroupNoDuplicates(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, count, "Multi-group message should appear exactly once in list")
+}
+
+func TestMessageRepostPerGroupArrival(t *testing.T) {
+	// Repost eligibility is per-group and ORed across groups, matching V1
+	// (Message::canRepost): the message is repostable as soon as ANY group has
+	// passed its own repost interval, measured from that group's own arrival.
+	// repostAt is the earliest per-group repost time: when the message first
+	// becomes repostable.
+	prefix := uniquePrefix("repost_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	// Give both groups a real reposts config (offer interval 3 days).
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5, 'chaseups', 5)) WHERE id IN (?, ?)", groupA, groupB)
+
+	// CreateTestMessage adds the message to groupA with arrival NOW.
+	msgID := CreateTestMessage(t, posterID, groupA, "OFFER: Repost per-group test", 55.9533, -3.1883)
+
+	// Add groupB with an arrival 30 days in the past — eligible for repost.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 30 DAY), 'Approved', 0)", msgID, groupB)
+
+	// groupA arrived now (not yet eligible), groupB 30 days ago (eligible).
+	// One eligible group is enough, so the message IS repostable, and repostAt
+	// is groupB's time, which is in the past.
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.True(t, msg.Canrepost, "Message should be repostable when groupB is past its repost interval, even though groupA is not")
+	assert.NotNil(t, msg.Repostat, "Repostat should be set")
+	if msg.Repostat != nil {
+		assert.True(t, msg.Repostat.Before(time.Now()), "Earliest repost time should be in the past (groupB is eligible)")
+	}
+
+	// Now bring groupB's arrival forward too, so NO group has passed its
+	// interval. Only then is the message not repostable, and repostAt is the
+	// earliest of the two future times.
+	db.Exec("UPDATE messages_groups SET arrival = NOW() WHERE msgid = ? AND groupid = ?", msgID, groupB)
+
+	resp, err = getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.False(t, msg.Canrepost, "Message should not be repostable when no group has passed its repost interval")
+	assert.NotNil(t, msg.Repostat, "Repostat should be set")
+	if msg.Repostat != nil {
+		assert.True(t, msg.Repostat.After(time.Now()), "Earliest repost time should be in the future when no group is eligible")
+	}
+}
+
+func TestMessageRepostNotBlockedByLaterRippledGroup(t *testing.T) {
+	// Regression: a post that ripples out to a new group gets a fresh
+	// messages_groups row with arrival=NOW(). That must not reset the repost
+	// gate for the whole post: the member's own group passed its interval days
+	// ago and the Repost button has to stay available. Real case: msg 121232945
+	// sat on Croydon from 2026-07-29 (4-day interval, eligible 08-02) but
+	// rippled into Lewisham on 08-03, which hid the button until 08-07.
+	prefix := uniquePrefix("repost_ripple")
+	db := database.DBConn
+
+	homeGroup := CreateTestGroup(t, prefix+"_home")
+	rippledGroup := CreateTestGroup(t, prefix+"_rippled")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, homeGroup, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	// Both groups use a 4-day offer interval, as the London groups do.
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 4, 'wanted', 4, 'max', 3, 'chaseups', 6)) WHERE id IN (?, ?)", homeGroup, rippledGroup)
+
+	msgID := CreateTestMessage(t, posterID, homeGroup, "OFFER: Repost ripple test", 55.9533, -3.1883)
+
+	// Home group: posted 7 days ago, so past its 4-day interval.
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 7 DAY) WHERE msgid = ? AND groupid = ?", msgID, homeGroup)
+
+	// Rippled in 2 days ago, still inside its own 4-day interval.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 2 DAY), 'Approved', 0, 1)", msgID, rippledGroup)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.Len(t, msg.MessageGroups, 2, "Message should be on both groups")
+	assert.True(t, msg.Canrepost, "A later ripple into another group must not hide the Repost option on the home group")
+}
+
+func TestMessageRepostDisabledOnOneGroupDoesNotBlockOthers(t *testing.T) {
+	// A group can turn reposting off by setting a very high interval (>= 365).
+	// V1 treats that as "this group never becomes eligible", not "nobody can
+	// repost this post".
+	prefix := uniquePrefix("repost_off")
+	db := database.DBConn
+
+	openGroup := CreateTestGroup(t, prefix+"_open")
+	disabledGroup := CreateTestGroup(t, prefix+"_disabled")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, openGroup, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5, 'chaseups', 5)) WHERE id = ?", openGroup)
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3650, 'wanted', 3650, 'max', 5, 'chaseups', 5)) WHERE id = ?", disabledGroup)
+
+	msgID := CreateTestMessage(t, posterID, openGroup, "OFFER: Repost disabled-group test", 55.9533, -3.1883)
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE msgid = ? AND groupid = ?", msgID, openGroup)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 30 DAY), 'Approved', 0)", msgID, disabledGroup)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.True(t, msg.Canrepost, "A group with reposting disabled must not block reposting on the other groups")
+}
+
+func TestMessageRepostDefaultsWhenGroupHasNoRepostSettings(t *testing.T) {
+	// A group with no `reposts` entry falls back to V1's defaults
+	// (offer 3 / wanted 7). Previously the SQL fallback emitted a PHP hash
+	// literal that failed to parse as JSON, giving interval 0 and making every
+	// such group instantly eligible.
+	prefix := uniquePrefix("repost_def")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix+"_nosettings")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	// No reposts key at all.
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT() WHERE id = ?", groupID)
+
+	// Arrival now, inside the 3-day default offer interval.
+	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: Repost default settings test", 55.9533, -3.1883)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.False(t, msg.Canrepost, "A just-posted message should not be repostable under the default 3-day offer interval")
+	assert.NotNil(t, msg.Repostat, "Repostat should be set")
+	if msg.Repostat != nil {
+		assert.True(t, msg.Repostat.After(time.Now()), "Default repost time should be 3 days after arrival")
+	}
+
+	// Age it past the default interval and it becomes repostable.
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 5 DAY) WHERE msgid = ?", msgID)
+
+	resp, err = getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	json2.Unmarshal(rsp(resp), &msg)
+	assert.True(t, msg.Canrepost, "Message older than the default 3-day offer interval should be repostable")
 }
 
 func TestPostMessageSpamLastGroupSoftDeletesMessage(t *testing.T) {
@@ -7551,6 +9322,67 @@ func TestListMessagesMT_MultiGroupGlobalArrivalOrder(t *testing.T) {
 	}
 	assert.Equal(t, expectedDesc[3:], got2,
 		"Second page must continue the global arrival DESC ordering")
+}
+
+// TestListMessagesMT_PaginationCursorUsesMaxArrival verifies that when the last
+// message of a page is cross-posted to several queried groups, the pagination
+// cursor uses its MAX(arrival) across those groups — matching the list's
+// MAX(arrival) ordering — rather than an arbitrary group's arrival.
+func TestListMessagesMT_PaginationCursorUsesMaxArrival(t *testing.T) {
+	prefix := uniquePrefix("listmt_cursor")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Two single-group messages (newest), then a cross-posted message whose two
+	// group arrivals straddle: older on A (10d), newer on B (6d). Its sort key is
+	// MAX(arrival) = the 6-day-ago B arrival, so it is the oldest of the three.
+	m0 := CreateTestMessageWithArrival(t, posterID, groupA, prefix+" m0", 52.0, -1.0, 2)
+	m1 := CreateTestMessageWithArrival(t, posterID, groupA, prefix+" m1", 52.0, -1.0, 4)
+	m2 := CreateTestMessageWithArrival(t, posterID, groupA, prefix+" m2", 52.0, -1.0, 10)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted, arrival, autoreposts) "+
+		"VALUES (?, ?, 'Approved', 0, DATE_SUB(NOW(), INTERVAL 6 DAY), 0)", m2, groupB)
+	defer func() {
+		for _, id := range []uint64{m0, m1, m2} {
+			db.Exec("DELETE FROM messages_groups WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages WHERE id = ?", id)
+		}
+	}()
+
+	// Full page of 3 (all mod groups, fromuser-isolated) → cursor present, last = m2.
+	pageURL := fmt.Sprintf("/api/modtools/messages?collection=Approved&fromuser=%d&limit=3&jwt=%s",
+		posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", pageURL, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	page := body["messages"].([]interface{})
+	require.Equal(t, 3, len(page))
+	assert.Equal(t, m2, uint64(page[2].(float64)), "cross-posted message sorts last by MAX(arrival)")
+
+	ctxObj, ok := body["context"].(map[string]interface{})
+	require.True(t, ok, "pagination context should be present on a full page")
+
+	// Cursor must equal m2's MAX(arrival) across the queried groups (the 6-day B
+	// arrival), not the older 10-day A arrival.
+	var maxArr, minArr time.Time
+	db.Raw("SELECT MAX(arrival) FROM messages_groups WHERE msgid = ? AND groupid IN (?) AND deleted = 0",
+		m2, []uint64{groupA, groupB}).Scan(&maxArr)
+	db.Raw("SELECT MIN(arrival) FROM messages_groups WHERE msgid = ? AND groupid IN (?) AND deleted = 0",
+		m2, []uint64{groupA, groupB}).Scan(&minArr)
+	assert.Equal(t, maxArr.Unix(), int64(ctxObj["Date"].(float64)), "cursor should be MAX(arrival)")
+	assert.NotEqual(t, minArr.Unix(), int64(ctxObj["Date"].(float64)), "cursor must not be the older group's arrival")
 }
 
 func TestListMessagesGroupsIncludesHeldby(t *testing.T) {
@@ -7944,6 +9776,9 @@ func TestPostMessagePartnerAuthPromise(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77701)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -7970,6 +9805,9 @@ func TestPostMessagePartnerAuthByTnPostid(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	ownerID := CreateTestUser(t, prefix+"_owner", "User")
 	CreateTestMembership(t, ownerID, groupID, "Member")
+	// tnuserid is UNIQUE in production, so release it from any user left by an
+	// earlier run before claiming it.
+	db.Exec("UPDATE users SET tnuserid = NULL WHERE tnuserid = ?", 77702)
 	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77702, ownerID)
 
 	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
@@ -8071,6 +9909,62 @@ func TestPatchMessageByTnPostidNotFound(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
+// TestPatchMessageByTnPostidUpdatesLocationFromCoordinates verifies that a TN edit
+// carrying fresh lat/lng but no Freegle location/locationid (TN only ever knows GPS
+// coordinates for a post, never Freegle's internal location rows) re-derives
+// locationid from the new coordinates - and therefore the subject's derived "vague
+// postcode" - instead of leaving it pinned to whatever it was before the edit.
+// Regression test for Discourse 9908: a TN post's postcode could never be corrected
+// because locationid never followed a coordinates-only edit.
+func TestPatchMessageByTnPostidUpdatesLocationFromCoordinates(t *testing.T) {
+	prefix := uniquePrefix("msg_patchtn_loc")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77705, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 52.006292, -4.939858)
+	tnpostid := fmt.Sprintf("tn-loc-%d", msgID)
+
+	// Give the message a matched item (as every TN message has - confirmed against
+	// production), and pin it to the OLD test-fixture postcode/coords (SA65 9ET) so
+	// locationid and lat/lng agree before the edit, as a real pre-edit message would.
+	itemName := prefix + " Item"
+	db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", itemName)
+	var itemID uint64
+	db.Raw("SELECT id FROM items WHERE name = ?", itemName).Scan(&itemID)
+	db.Exec("INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)", msgID, itemID)
+	db.Exec("UPDATE messages SET tnpostid = ?, locationid = ?, lat = ?, lng = ? WHERE id = ?",
+		tnpostid, 1687412, 52.006292, -4.939858, msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// TN edits the post with new coordinates only - no location/locationid, since TN
+	// doesn't know Freegle's internal location rows.
+	body := map[string]interface{}{
+		"lat": 55.957571,
+		"lng": -3.205333,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77705&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var locationID uint64
+	var subject string
+	db.Raw("SELECT locationid FROM messages WHERE id = ?", msgID).Scan(&locationID)
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+
+	assert.Equal(t, uint64(1000001), locationID, "locationid should follow the new coordinates, not stay pinned to the old postcode")
+	assert.Equal(t, "OFFER: "+itemName+" (Edinburgh EH3)", subject, "subject should be rebuilt from the new location, not the stale one")
+}
+
 // TestPatchMessageByTnPostidUpdatesAllMessages verifies that PATCH /message/tn/:tnpostid
 // updates ALL Freegle messages sharing the same tnpostid (not just the first one).
 func TestPatchMessageByTnPostidUpdatesAllMessages(t *testing.T) {
@@ -8106,6 +10000,74 @@ func TestPatchMessageByTnPostidUpdatesAllMessages(t *testing.T) {
 	db.Raw("SELECT subject FROM messages WHERE id = ?", msg2ID).Scan(&subject2)
 	assert.Equal(t, "TN Multi Updated Subject", subject1, "first message should be updated")
 	assert.Equal(t, "TN Multi Updated Subject", subject2, "second message should also be updated")
+}
+
+// TestPatchMessageByTnPostidScrapesPhotosForAllMessages verifies that when a tnpostid
+// maps to several crossposted FD messages, the TN photo scrape runs for EVERY copy, not
+// just the first.  Regression test: the pic-link extraction used to strip req.Textbody
+// inside the per-message loop, so the second copy read an already-stripped body, found no
+// links, had its attachments deleted but never re-scraped, and ended up with no photo.
+func TestPatchMessageByTnPostidScrapesPhotosForAllMessages(t *testing.T) {
+	prefix := uniquePrefix("patchtn_multiscrape")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, group1ID, "Member")
+	CreateTestMembership(t, ownerID, group2ID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88811, ownerID)
+
+	tnpostid := fmt.Sprintf("tn-multiscrape-%s", prefix)
+	msg1ID := CreateTestMessage(t, ownerID, group1ID, prefix+" Offer G1", 55.9533, -3.1883)
+	msg2ID := CreateTestMessage(t, ownerID, group2ID, prefix+" Offer G2", 55.9533, -3.1883)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, msg1ID, msg2ID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Stub out the network steps so the scrape is deterministic.
+	origFetcher := message.TNPageFetcher
+	message.TNPageFetcher = func(pageURL string) []string {
+		return []string{"https://img.trashnothing.com/fake/photo.jpg"}
+	}
+	defer func() { message.TNPageFetcher = origFetcher }()
+
+	origImageFetcher := message.TNImageFetcher
+	message.TNImageFetcher = func(imageURL string) ([]byte, string, error) {
+		return []byte("fake-image-data"), "image/jpeg", nil
+	}
+	defer func() { message.TNImageFetcher = origImageFetcher }()
+
+	// Distinct externaluid per upload so both rows survive INSERT IGNORE.
+	uploadCount := 0
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
+		uploadCount++
+		return fmt.Sprintf("freegletusd-multiscrape-%s-%d", prefix, uploadCount), nil
+	}
+	defer func() { aiimage.ImageUploader = origUploader }()
+
+	origScrapeRunner := message.TNPhotoScrapeRunner
+	message.TNPhotoScrapeRunner = message.ScrapeTNPhotosSync
+	defer func() { message.TNPhotoScrapeRunner = origScrapeRunner }()
+
+	textbody := "I have a sofa to give away.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/abc123\n"
+	body := map[string]interface{}{"textbody": textbody}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=88811&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// BOTH crossposted copies must have a scraped photo.
+	var count1, count2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msg1ID).Scan(&count1)
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msg2ID).Scan(&count2)
+	assert.Equal(t, int64(1), count1, "first crossposted copy should have the scraped photo")
+	assert.Equal(t, int64(1), count2, "second crossposted copy should also have the scraped photo")
 }
 
 // TestPostMessageByTnPostidUpdatesAllMessages verifies that POST /message with tnpostid
@@ -8601,10 +10563,113 @@ func TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent(t *t
 	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
 }
 
-// TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit verifies that when a
-// TN user edits only the text of their post (no photo links in textbody) and there is no
-// AI attachment, any existing real attachment is left untouched.
-func TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit(t *testing.T) {
+// TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped verifies the fix for the
+// TN multi-photo race.  TN polls /api/changes, which reports a message as "Edited" based
+// on the existence of a messages_edits row.  TN then fetches the full message to read its
+// attachments.  If the messages_edits row (the change signal) is written BEFORE the TN
+// photos have been scraped into messages_attachments, TN can fetch in the gap and get a
+// partial photo set — the reported "only 1 photo back, all of them on a forced re-fetch" bug.
+//
+// The fix scrapes TN photos SYNCHRONOUSLY and BEFORE applyPatchMessageCore (which writes
+// messages_edits), matching V1 (http/api/message.php scrapes + saves attachments before
+// calling Message::edit()).  So the change signal only becomes visible once every photo is in.
+//
+// This test deliberately does NOT swap TNPhotoScrapeRunner: it exercises the real production
+// runner, so an asynchronous or wrong-order implementation fails it.
+func TestPatchMessageByTN_ChangeSignalNotWrittenUntilPhotosScraped(t *testing.T) {
+	prefix := uniquePrefix("patchtn_signalorder")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77804, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-signalorder-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Set up a clean slate for the change signal and attachments we assert on.
+	db.Exec("DELETE FROM messages_edits WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Fake the TN fetch chain so no real HTTP happens.
+	fakeImageURL := "https://img.trashnothing.com/fake/signalorder.jpg"
+	origFetcher := message.TNPageFetcher
+	message.TNPageFetcher = func(pageURL string) []string { return []string{fakeImageURL} }
+	defer func() { message.TNPageFetcher = origFetcher }()
+
+	origImageFetcher := message.TNImageFetcher
+	message.TNImageFetcher = func(imageURL string) ([]byte, string, error) {
+		return []byte("fake-image-data"), "image/jpeg", nil
+	}
+	defer func() { message.TNImageFetcher = origImageFetcher }()
+
+	// The uploader runs at the moment a photo is about to be stored.  Capture how many
+	// messages_edits rows (the /api/changes signal) exist AT THAT MOMENT.  With the fix
+	// this must be 0: the signal is only written after every photo is in.
+	fakeExternalUID := fmt.Sprintf("freegletusd-tn-signalorder-%d", msgID)
+	editsAtUploadTime := int64(-1)
+	uploaded := make(chan struct{}, 1)
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
+		db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ?", msgID).Scan(&editsAtUploadTime)
+		select {
+		case uploaded <- struct{}{}:
+		default:
+		}
+		return fakeExternalUID, nil
+	}
+	defer func() { aiimage.ImageUploader = origUploader }()
+
+	textbody := "Sofa for collection.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/sigorder1\n"
+	bodyBytes, _ := json.Marshal(map[string]interface{}{"textbody": textbody})
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77804&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Wait for the upload to have happened (covers a still-asynchronous implementation).
+	// The channel receive synchronises with the uploader goroutine, so the subsequent read
+	// of editsAtUploadTime is race-free.
+	select {
+	case <-uploaded:
+	case <-time.After(10 * time.Second):
+		t.Fatal("TN photo was never uploaded/scraped")
+	}
+
+	// Core assertion: the change signal must NOT have existed while the photo was being stored.
+	assert.Equal(t, int64(0), editsAtUploadTime,
+		"messages_edits (the /api/changes signal) must not be written until all TN photos are scraped — otherwise TN can fetch a partial photo set")
+
+	// After the handler completes, both the photo and the change signal must exist.
+	var tnCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externaluid = ?", msgID, fakeExternalUID).Scan(&tnCount)
+	assert.Equal(t, int64(1), tnCount, "scraped TN photo should be stored as attachment")
+
+	var editsCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_edits WHERE msgid = ?", msgID).Scan(&editsCount)
+	assert.True(t, editsCount >= 1, "an edit (change signal) should be recorded after the photos are in")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_edits WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+}
+
+// TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit verifies that when a
+// TN user edits a post by sending a textbody (even with no pic links), ALL existing
+// attachments — including non-AI ones — are deleted.  TN's textbody is the authoritative
+// photo set: if TN sends no pic links, the correct state is zero attachments.
+//
+// This test was formerly named TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit
+// and asserted the opposite (preservation).  That was the bug: fix #2 corrects it.
+func TestPatchMessageByTnPostid_NonAIAttachmentRemovedOnTextEdit(t *testing.T) {
 	prefix := uniquePrefix("patchtn_noai")
 	db := database.DBConn
 
@@ -8617,34 +10682,560 @@ func TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit(t *testin
 	tnpostid := fmt.Sprintf("tn-noai-%d", msgID)
 	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
 
-	// Insert a regular (non-AI) attachment.
+	// Insert a regular (non-AI) attachment — the one that must be removed.
 	realAttachID := CreateTestAttachment(t, msgID)
 
 	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
-	// PATCH with a textbody containing no TN photo links — pure text edit.
+	// PATCH with textbody containing no TN pic links.
 	body := map[string]interface{}{
 		"textbody": "Updated description with no photos.",
 	}
 	bodyBytes, _ := json.Marshal(body)
-	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77803&email=%s@tn.com", tnpostid, key, prefix+"_owner")
-	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77803&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Real attachment must still exist.
+	// BUG #2 FIX: the non-AI attachment must be gone — textbody with no pic links
+	// means TN is asserting "no photos", so we clear all existing attachments.
 	var attachCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", realAttachID).Scan(&attachCount)
-	assert.Equal(t, int64(1), attachCount, "non-AI attachment must not be deleted on a text-only TN edit")
-
-	// No AI declined flag should be set (no AI attachment was present).
-	var declinedCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declinedCount)
-	assert.Equal(t, int64(0), declinedCount, "messages_ai_declined must not be set when no AI attachment existed")
+	assert.Equal(t, int64(0), attachCount, "non-AI attachment must be deleted when TN sends textbody with no pic links (fix #2)")
 
 	// Cleanup.
-	db.Exec("DELETE FROM messages_attachments WHERE id = ?", realAttachID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+}
+
+// --- BUG FIX REGRESSION TESTS (must FAIL on master, PASS with fix) ---
+
+// TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype verifies that when a caller sends
+// both an explicit subject AND a msgtype, the explicit subject is persisted and NOT
+// overwritten by the "reconstruct from type+item+location" block.
+// Bug #1: passing msgtype set req.Type, which triggered reconstruction that clobbered
+// the caller's subject.
+func TestPatchMessageByTN_ExplicitSubjectWinsOverMsgtype(t *testing.T) {
+	prefix := uniquePrefix("patchtn_subjfix")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77901, ownerID)
+
+	// Create a message that already has an item and location so reconstruction is possible.
+	msgID := CreateTestMessage(t, ownerID, groupID, "OFFER: old item (old location)", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-subjfix-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ?, type = 'Offer' WHERE id = ?", tnpostid, msgID)
+
+	// Wire up an item and a location so that subject reconstruction would produce a
+	// different string if it fires.
+	db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE name=name", prefix+"_widget")
+	var itemID uint64
+	db.Raw("SELECT id FROM items WHERE name = ?", prefix+"_widget").Scan(&itemID)
+	if itemID > 0 {
+		db.Exec("DELETE FROM messages_items WHERE msgid = ?", msgID)
+		db.Exec("INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)", msgID, itemID)
+	}
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// PATCH with explicit subject AND msgtype — the explicit subject must win.
+	wantSubject := "WANTED: new title 3 (location 3)"
+	body := map[string]interface{}{
+		"subject": wantSubject,
+		"msgtype": "Wanted",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77901&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	httpReq := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(httpReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var gotSubject string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&gotSubject)
+	assert.Equal(t, wantSubject, gotSubject,
+		"explicit subject must not be overwritten by reconstruct-from-type block (bug #1)")
+}
+
+// TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments verifies that PATCH with
+// textbody="" (empty string, i.e. a non-nil *string pointer to "") deletes all
+// existing attachments (including non-AI ones) because TN is asserting "no photos".
+// Bug #2: only AI attachments were deleted; non-AI TN-scraped photos survived.
+func TestPatchMessageByTN_EmptyTextbodyRemovesAllAttachments(t *testing.T) {
+	prefix := uniquePrefix("patchtn_emptytb")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77902, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-emptytb-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Insert a regular (non-AI) attachment to simulate a previously-scraped TN photo.
+	attach1ID := CreateTestAttachment(t, msgID)
+	attach2ID := CreateTestAttachment(t, msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// PATCH with textbody="" — no pic links, TN is asserting "no photos".
+	emptyBody := ""
+	body := map[string]interface{}{
+		"textbody": emptyBody,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77902&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	httpReq := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(httpReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Both non-AI attachments must be gone (fix #2).
+	var count1, count2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", attach1ID).Scan(&count1)
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", attach2ID).Scan(&count2)
+	assert.Equal(t, int64(0), count1, "first non-AI attachment must be deleted when textbody='' (fix #2)")
+	assert.Equal(t, int64(0), count2, "second non-AI attachment must be deleted when textbody='' (fix #2)")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+}
+
+// TestPatchMessageByTN_NewPicLinkReplacesOldAttachments verifies that PATCH with a
+// textbody containing new trashnothing.com/pics/ links removes OLD non-AI attachments
+// before adding the newly-scraped ones.
+// Bug #3: old non-AI photos survived alongside newly-scraped ones.
+func TestPatchMessageByTN_NewPicLinkReplacesOldAttachments(t *testing.T) {
+	prefix := uniquePrefix("patchtn_replace")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77903, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-replace-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Insert two old non-AI attachments (simulating previously-scraped TN photos).
+	oldAttach1 := CreateTestAttachment(t, msgID)
+	oldAttach2 := CreateTestAttachment(t, msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Inject fake fetchers so we don't do real HTTP.
+	origFetcher := message.TNPageFetcher
+	message.TNPageFetcher = func(pageURL string) []string {
+		return []string{"https://img.trashnothing.com/fake/new-photo.jpg"}
+	}
+	defer func() { message.TNPageFetcher = origFetcher }()
+
+	origImageFetcher := message.TNImageFetcher
+	message.TNImageFetcher = func(imageURL string) ([]byte, string, error) {
+		return []byte("fake-image-data"), "image/jpeg", nil
+	}
+	defer func() { message.TNImageFetcher = origImageFetcher }()
+
+	fakeExternalUID := fmt.Sprintf("freegletusd-tn-replace-%d", msgID)
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
+		return fakeExternalUID, nil
+	}
+	defer func() { aiimage.ImageUploader = origUploader }()
+
+	origScrapeRunner := message.TNPhotoScrapeRunner
+	message.TNPhotoScrapeRunner = message.ScrapeTNPhotosSync
+	defer func() { message.TNPhotoScrapeRunner = origScrapeRunner }()
+
+	// PATCH with textbody containing one new TN pic link.
+	textbody := "Nice sofa.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/newxyz\n"
+	body := map[string]interface{}{
+		"textbody": textbody,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77903&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	httpReq := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(httpReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Both OLD non-AI attachments must be gone (fix #3).
+	var old1, old2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", oldAttach1).Scan(&old1)
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", oldAttach2).Scan(&old2)
+	assert.Equal(t, int64(0), old1, "first old non-AI attachment must be deleted when new pic links are present (fix #3)")
+	assert.Equal(t, int64(0), old2, "second old non-AI attachment must be deleted when new pic links are present (fix #3)")
+
+	// The new scraped attachment must be present.
+	var newCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externaluid = ?", msgID, fakeExternalUID).Scan(&newCount)
+	assert.Equal(t, int64(1), newCount, "newly-scraped TN photo must be stored as attachment (fix #3)")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+}
+
+// TestListMessagesMT_SpamInPendingList verifies that Spam-collection messages
+// are returned by the /modtools/messages?collection=Pending endpoint.
+//
+// Root cause (Discourse #9654): the badge work-count includes spam messages
+// but the ModTools Pending review list filtered only mg.collection = 'Pending',
+// so the spam message was counted in the badge but had no visible home in the
+// UI — a spurious "+1 over visible".  V1 parity: V1 included Spam messages in
+// the review queue alongside Pending.
+func TestListMessagesMT_SpamInPendingList(t *testing.T) {
+	prefix := uniquePrefix("lstmt_spam")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a message in the Spam collection (as the spam handler would do).
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" spam item", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	// The Pending review endpoint should return the Spam-collection message.
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+
+	found := false
+	for _, id := range msgs {
+		if id == float64(msgID) {
+			found = true
+		}
+	}
+	assert.True(t, found, "Spam-collection message should appear in modtools Pending review list (Discourse #9654)")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+}
+
+// TestListMessagesMT_OldSpamExcludedFromPendingList verifies that Spam-collection
+// messages older than 30 days are NOT returned by the Pending review endpoint.
+// Spam shown in the Pending queue should age out rather than accumulate forever;
+// Pending-collection messages are never aged out this way.
+func TestListMessagesMT_OldSpamExcludedFromPendingList(t *testing.T) {
+	prefix := uniquePrefix("lstmt_oldspam")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Recent spam (within 30 days) — should appear in the queue.
+	recentID := CreateTestMessage(t, posterID, groupID, prefix+" recent spam", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam', arrival = NOW() - INTERVAL 5 DAY WHERE msgid = ? AND groupid = ?", recentID, groupID)
+
+	// Old spam (older than 30 days) — should be excluded.
+	oldID := CreateTestMessage(t, posterID, groupID, prefix+" old spam", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam', arrival = NOW() - INTERVAL 40 DAY WHERE msgid = ? AND groupid = ?", oldID, groupID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+
+	foundRecent, foundOld := false, false
+	for _, id := range msgs {
+		if id == float64(recentID) {
+			foundRecent = true
+		}
+		if id == float64(oldID) {
+			foundOld = true
+		}
+	}
+	assert.True(t, foundRecent, "Recent (<30d) Spam-collection message should appear in the Pending review list")
+	assert.False(t, foundOld, "Old (>30d) Spam-collection message should be excluded from the Pending review list")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", recentID, oldID)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", recentID, oldID)
+}
+
+func TestPostMessagePromisePartner(t *testing.T) {
+	// Partner Promise should work with only a partner key (no email/tnuserid),
+	// acting as the message's fromuser when fromaddr is in the partner domain.
+	prefix := uniquePrefix("msgp_prm_ptnr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Promise",
+		"userid": otherID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?partner=%s", key)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Partner Promise should succeed without email/tnuserid")
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&count)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestPostMessageRenegePartner(t *testing.T) {
+	// Partner Renege should work with only a partner key (no email/tnuserid).
+	prefix := uniquePrefix("msgp_rng_ptnr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
+	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", msgID, otherID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Renege",
+		"userid": otherID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?partner=%s", key)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "Partner Renege should succeed without email/tnuserid")
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&count)
+	assert.Equal(t, int64(0), count, "Promise should be deleted after Renege")
+}
+
+func TestPostMessagePromiseRenegePromisePartner(t *testing.T) {
+	// Reproduces the TN bug: Promise -> Renege -> Promise should all succeed.
+	// The 2nd Promise was previously failing with 403 when using only a partner key.
+	prefix := uniquePrefix("msgp_prp_ptnr")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@test.com", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	postAction := func(action string) int {
+		body := map[string]interface{}{
+			"id":     msgID,
+			"action": action,
+			"userid": otherID,
+		}
+		bodyBytes, _ := json.Marshal(body)
+		postURL := fmt.Sprintf("/api/message?partner=%s", key)
+		postReq := httptest.NewRequest("POST", postURL, bytes.NewBuffer(bodyBytes))
+		postReq.Header.Set("Content-Type", "application/json")
+		postResp, postErr := getApp().Test(postReq, -1)
+		assert.NoError(t, postErr)
+		return postResp.StatusCode
+	}
+
+	assert.Equal(t, 200, postAction("Promise"), "1st Promise should succeed")
+	assert.Equal(t, 200, postAction("Renege"), "Renege should succeed")
+	assert.Equal(t, 200, postAction("Promise"), "2nd Promise after Renege should succeed")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, otherID).Scan(&count)
+	assert.Equal(t, int64(1), count, "Promise should be recorded after 2nd Promise")
+}
+
+func TestPostMessagePromisePartnerWrongDomain(t *testing.T) {
+	// Partner Promise should fail if message fromaddr is not in the partner domain.
+	prefix := uniquePrefix("msgp_prm_wdom")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" offer item", 52.5, -1.8)
+	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", prefix+"_owner@other-domain.com", msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Promise",
+		"userid": otherID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?partner=%s", key)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode, "Partner Promise should fail if fromaddr not in partner domain")
+}
+
+// A moderator holding a message is only advisory in the UI, which hides the
+// Approve/Reject buttons - but the UI can be arbitrarily stale (Discourse #9946:
+// a mod rejected a post 27 minutes after another mod held it, off a list his
+// browser had fetched 90 minutes earlier). Enforce the hold server-side so it
+// means something regardless of what any client believes.
+func heldByOtherSetup(t *testing.T, prefix string) (uint64, uint64, uint64, string, string) {
+	db := database.DBConn
+	group := CreateTestGroup(t, prefix+"_g")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modA := CreateTestUser(t, prefix+"_moda", "User")
+	modB := CreateTestUser(t, prefix+"_modb", "User")
+	CreateTestMembership(t, posterID, group, "Member")
+	CreateTestMembership(t, modA, group, "Moderator")
+	CreateTestMembership(t, modB, group, "Moderator")
+	_, tokenA := CreateTestSession(t, modA)
+	_, tokenB := CreateTestSession(t, modB)
+
+	msgID := createPendingMessage(t, posterID, group, prefix)
+
+	// Mod A holds it.
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", modA, msgID, group)
+
+	return group, msgID, modA, tokenA, tokenB
+}
+
+func postMessageAction(t *testing.T, token string, body map[string]interface{}) int {
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	return resp.StatusCode
+}
+
+func TestModerationBlockedWhenHeldByAnotherMod(t *testing.T) {
+	db := database.DBConn
+
+	// Every moderation action that changes moderation state must be refused.
+	for _, action := range []string{
+		"Approve", "Reject", "Delete", "Spam", "Hold",
+		"ApproveEdits", "RevertEdits", "BackToPending",
+	} {
+		t.Run(action, func(t *testing.T) {
+			group, msgID, _, _, tokenB := heldByOtherSetup(t, uniquePrefix("heldother"))
+
+			status := postMessageAction(t, tokenB, map[string]interface{}{
+				"id":      msgID,
+				"action":  action,
+				"groupid": group,
+			})
+			assert.Equal(t, 409, status, action+" by another mod must be refused while held")
+
+			// The hold and the collection must both be untouched.
+			var heldby *uint64
+			db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&heldby)
+			assert.NotNil(t, heldby, action+" must not clear another mod's hold")
+
+			var collection string
+			db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
+			assert.Equal(t, utils.COLLECTION_PENDING, collection, action+" must leave the message pending")
+
+			// Reject and Delete without a subject take a soft-delete branch that
+			// leaves the collection alone, so check deleted too or those two would
+			// pass whether or not the block worked.
+			var deleted int
+			db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&deleted)
+			assert.Equal(t, 0, deleted, action+" must not soft-delete the message")
+		})
+	}
+}
+
+func TestReleaseAllowedWhenHeldByAnotherMod(t *testing.T) {
+	db := database.DBConn
+	group, msgID, _, _, tokenB := heldByOtherSetup(t, uniquePrefix("heldrel"))
+
+	// Release is the designed escape hatch - it must stay available, otherwise a
+	// post is stranded when the holding mod goes away.
+	status := postMessageAction(t, tokenB, map[string]interface{}{
+		"id":      msgID,
+		"action":  "Release",
+		"groupid": group,
+	})
+	assert.Equal(t, 200, status, "Release must remain allowed against another mod's hold")
+
+	var heldby *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&heldby)
+	assert.Nil(t, heldby, "Release must clear the hold")
+}
+
+func TestModerationAllowedWhenHeldBySelf(t *testing.T) {
+	db := database.DBConn
+	group, msgID, _, tokenA, _ := heldByOtherSetup(t, uniquePrefix("heldself"))
+
+	// Holding then acting yourself is the normal flow and must not be blocked. Send
+	// a subject so this takes the reject-with-explanation branch (the no-subject
+	// branch is a soft delete, which leaves the collection alone).
+	status := postMessageAction(t, tokenA, map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": group,
+		"subject": "MODERATOR MESSAGE -: test",
+		"body":    "Please repost with more detail.",
+	})
+	assert.Equal(t, 200, status, "the holding mod must still be able to act")
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group).Scan(&collection)
+	assert.Equal(t, utils.COLLECTION_REJECTED, collection)
 }

@@ -35,9 +35,10 @@ import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { useNearbyStore } from '~/stores/nearby'
 import { useComposeStore } from '~/stores/compose'
 import { useChatStore } from '~/stores/chat'
+import { useReactiveTabBadge } from '~/composables/useTitleBadge'
 import { useAddressStore } from '~/stores/address'
 import { useTrystStore } from '~/stores/tryst'
 import { useNotificationStore } from '~/stores/notification'
@@ -56,7 +57,6 @@ import { useStatsStore } from '~/stores/stats'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
 import { useImageStore } from '~/stores/image'
 import { useDomainStore } from '~/stores/domain'
-import { useLogoStore } from '~/stores/logo'
 import { useLocationStore } from '~/stores/location'
 import { useShortlinkStore } from '~/stores/shortlinks'
 import { useMiscStore } from '~/stores/misc'
@@ -77,6 +77,7 @@ import { computed } from '#imports'
 import { useModGroupStore } from '~/stores/modgroup'
 import { useSystemConfigStore } from '~/stores/systemconfig'
 import { useEmailTrackingStore } from '~/modtools/stores/emailtracking'
+import { usePartnershipsStore } from '~/modtools/stores/partnerships'
 
 // We're having trouble accessing the Nuxt config from within a Pinia store.  So instead we access it here, then
 // pass it in to each store via an init() action.
@@ -97,7 +98,7 @@ const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
 const userStore = useUserStore()
-const isochroneStore = useIsochroneStore()
+const nearbyStore = useNearbyStore()
 const composeStore = useComposeStore()
 const chatStore = useChatStore()
 const addressStore = useAddressStore()
@@ -119,7 +120,6 @@ const statsStore = useStatsStore()
 const microVolunteeringStore = useMicroVolunteeringStore()
 const imageStore = useImageStore()
 const domainStore = useDomainStore()
-const logoStore = useLogoStore()
 const locationStore = useLocationStore()
 const shortlinkStore = useShortlinkStore()
 const configStore = useConfigStore()
@@ -134,13 +134,14 @@ const spammerStore = useSpammerStore()
 const stdmsgStore = useStdmsgStore()
 const systemConfigStore = useSystemConfigStore()
 const emailTrackingStore = useEmailTrackingStore()
+const partnershipsStore = usePartnershipsStore()
 
 miscStore.init(runtimeConfig)
 groupStore.init(runtimeConfig)
 messageStore.init(runtimeConfig)
 authStore.init(runtimeConfig)
 userStore.init(runtimeConfig)
-isochroneStore.init(runtimeConfig)
+nearbyStore.init(runtimeConfig)
 composeStore.init(runtimeConfig)
 chatStore.init(runtimeConfig)
 addressStore.init(runtimeConfig)
@@ -162,7 +163,6 @@ statsStore.init(runtimeConfig)
 microVolunteeringStore.init(runtimeConfig)
 imageStore.init(runtimeConfig)
 domainStore.init(runtimeConfig)
-logoStore.init(runtimeConfig)
 locationStore.init(runtimeConfig)
 shortlinkStore.init(runtimeConfig)
 configStore.init(runtimeConfig)
@@ -177,6 +177,7 @@ spammerStore.init(runtimeConfig)
 stdmsgStore.init(runtimeConfig)
 systemConfigStore.init(runtimeConfig)
 emailTrackingStore.init(runtimeConfig)
+partnershipsStore.init(runtimeConfig)
 
 miscStore.modtools = true
 mobileStore.init(runtimeConfig)
@@ -189,7 +190,7 @@ mobileStore.init(runtimeConfig)
 // The previous reloadNuxtApp mechanism caused race conditions with Playwright
 // navigation because the async reload fired after waitForLoadState('load').
 
-if (process.client) {
+if (import.meta.client) {
   if (typeof window !== 'undefined') {
     // There's a bug https://github.com/nuxt/framework/issues/3141 which causes route to stop working.
     const messages = [
@@ -239,6 +240,12 @@ if (process.client) {
       }
     },
   })
+
+  // useHead's titleTemplate is not reactive to the count refs read inside it, and
+  // the work poll only refreshes the title every 30s, so the badge lagged behind
+  // incoming chats (Discourse 9806/9). Watch the count and update document.title
+  // directly so it stays live.
+  useReactiveTabBadge(() => menuCount.value + chatCount.value)
 }
 </script>
 

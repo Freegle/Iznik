@@ -40,8 +40,11 @@ class NotificationChaseUpService
 
     /**
      * Spam-user collection types — notifications from these users are excluded.
+     *
+     * Public: also reused by PushNotificationService::consumerUnreadCounts() so the
+     * push-computed app badge excludes the same senders as the in-app bell/chaseup mail.
      */
-    private const SPAM_COLLECTIONS = ['Spammer', 'PendingAdd'];
+    public const SPAM_COLLECTIONS = ['Spammer', 'PendingAdd'];
 
     /**
      * Send chaseup emails for unmailed, unseen notifications.

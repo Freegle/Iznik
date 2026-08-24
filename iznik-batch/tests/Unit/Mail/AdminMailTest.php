@@ -3,6 +3,7 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Admin\AdminMail;
+use App\Mail\Admin\ChaseAdminMail;
 use App\Models\User;
 use Tests\TestCase;
 
@@ -47,14 +48,14 @@ class AdminMailTest extends TestCase
     {
         $user = $this->createTestUser();
         $admin = $this->makeAdmin([
-            'subject' => 'Little Free Shops - Help us make it happen!',
+            'subject' => 'Help us make it happen!',
             'template' => 'fundraising',
         ]);
 
         $mail = new AdminMail($user, $admin, 'Test Group');
         $envelope = $mail->envelope();
 
-        $this->assertEquals('Little Free Shops - Help us make it happen!', $envelope->subject);
+        $this->assertEquals('Help us make it happen!', $envelope->subject);
         $this->assertTrue($mail->isMarketing);
     }
 
@@ -227,5 +228,66 @@ class AdminMailTest extends TestCase
         $envelope = $mail->envelope();
 
         $this->assertEquals(config('freegle.mail.noreply_addr'), $envelope->from->address);
+    }
+
+    public function test_chase_admin_preheader_shows_group_subject_and_pending_time(): void
+    {
+        // The inbox preview should tell the moderator which group needs attention,
+        // which admin is waiting, and how long it has been pending — all without
+        // opening the email.
+        $html = view('emails.mjml.admin.chase', [
+            'groupName'       => 'Freegle Testington',
+            'adminSubject'    => 'Welcome post for new members',
+            'pendingTimeText' => '3 days',
+            'pendingHours'    => 72,
+            'modToolsUrl'     => 'https://modtools.org/admins',
+            'adminId'         => 1,
+            'userName'        => 'Test Mod',
+            'siteName'        => config('freegle.branding.name', 'Freegle'),
+            'trackingPixelMjml' => null,
+        ])->render();
+
+        $this->assertStringContainsString('Freegle Testington', $html,
+            'Preheader must contain the group name');
+        $this->assertStringContainsString('Welcome post for new members', $html,
+            'Preheader must contain the admin subject');
+        $this->assertStringContainsString('3 days', $html,
+            'Preheader must state how long the admin has been pending');
+    }
+
+    public function test_admin_mail_tracking_pixel_is_wrapped_in_section_and_column(): void
+    {
+        // A bare <mj-image> as a direct child of <mj-body> violates the MJML
+        // schema (mj-image must live inside mj-column > mj-section). mrml
+        // renders that malformed nesting without the Outlook-conditional
+        // wrapper table every other section gets, which is what left the
+        // reported admin email blank on reopen in Outlook (topic 9925). Every
+        // other mailable (welcome, chase, digest siblings, etc.) wraps its
+        // tracking pixel in its own <mj-section padding="0"><mj-column> - this
+        // pins admin.blade.php to the same pattern.
+        $pixel = '<mj-image src="https://example.com/pixel.png" width="1px" height="1px" alt="" padding="0" />';
+
+        $html = view('emails.mjml.admin.admin', [
+            'user' => (object) ['email_preferred' => 'test@example.com', 'displayname' => 'Test User'],
+            'userSite' => config('freegle.sites.user'),
+            'adminSubject' => 'Test Subject',
+            'adminText' => 'Test body text',
+            'ctaLink' => null,
+            'ctaText' => null,
+            'groupName' => 'Test Group',
+            'modsEmail' => null,
+            'essential' => true,
+            'settingsUrl' => 'https://www.ilovefreegle.org/settings',
+            'marketingOptOutUrl' => null,
+            'unsubscribeUrl' => 'https://www.ilovefreegle.org/unsubscribe',
+            'volunteers' => [],
+            'trackingPixelMjml' => $pixel,
+        ])->render();
+
+        $this->assertMatchesRegularExpression(
+            '#<mj-section[^>]*>\s*<mj-column>\s*'.preg_quote($pixel, '#').'\s*</mj-column>\s*</mj-section>#',
+            $html,
+            'Tracking pixel must be wrapped in its own mj-section/mj-column, not a bare mj-body child.'
+        );
     }
 }

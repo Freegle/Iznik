@@ -28,7 +28,7 @@ type ssoSession struct {
 }
 
 // DiscourseSSO handles the Discourse SSO login flow.
-// This is the Go equivalent of iznik-server/http/discourse_sso.php.
+// This is the Go equivalent of the legacy V1 PHP Discourse SSO handler.
 //
 // Discourse sends GET with `sso` and `sig` query params. We validate the signature,
 // look up the user from the Iznik-Discourse-SSO cookie, verify they are a Freegle moderator,
@@ -99,21 +99,39 @@ func DiscourseSSO(c *fiber.Ctx) error {
 
 // validateDiscourseSession validates the cookie against the sessions table.
 // The user must be a Freegle moderator.
+//
+// Authentication uses id+token only. The series field is intentionally ignored:
+// PR #679 (2026-06-09) changed the session emitter to output series as a JSON
+// number (uint64) rather than a string, which caused json.Unmarshal to error
+// when trying to decode a number into a string field — producing an infinite
+// ModTools ⇄ Discourse redirect loop for all moderators. Authenticating by
+// id+token alone (matching the approach in auth/auth.go WhoAmI) fixes the loop
+// and is sufficient because token is a cryptographically random secret.
+// parseSSOCookie extracts the session id and token from the Iznik-Discourse-SSO
+// cookie. Series is deliberately ignored: PR #679 changed it from a JSON string
+// to a JSON number, so a struct field of either type would break on the other —
+// dropping it from the parse struct makes the cookie format-agnostic. Pure (no
+// DB), so the numeric-series regression is unit-testable without a connection.
+func parseSSOCookie(cookieValue string) (id uint64, token string, err error) {
+	var cookie struct {
+		ID    uint64 `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(cookieValue), &cookie); err != nil {
+		return 0, "", fmt.Errorf("invalid cookie JSON: %w", err)
+	}
+	if cookie.ID == 0 || cookie.Token == "" {
+		return 0, "", fmt.Errorf("incomplete cookie data")
+	}
+	return cookie.ID, cookie.Token, nil
+}
+
 func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	db := database.DBConn
 
-	var cookie struct {
-		ID     uint64 `json:"id"`
-		Series string `json:"series"`
-		Token  string `json:"token"`
-	}
-
-	if err := json.Unmarshal([]byte(cookieValue), &cookie); err != nil {
-		return nil, fmt.Errorf("invalid cookie JSON: %w", err)
-	}
-
-	if cookie.ID == 0 || cookie.Series == "" || cookie.Token == "" {
-		return nil, fmt.Errorf("incomplete cookie data")
+	cookieID, cookieToken, err := parseSSOCookie(cookieValue)
+	if err != nil {
+		return nil, err
 	}
 
 	// Look up session — user must have a moderator/admin/support systemrole.
@@ -122,11 +140,12 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 	}
 
 	var sessions []SessionRow
-	db.Raw(`SELECT sessions.userid FROM sessions
-		INNER JOIN users ON sessions.userid = users.id
-		WHERE users.systemrole IN ('Admin', 'Support', 'Moderator')
-		AND sessions.id = ? AND sessions.series = ? AND sessions.token = ?`,
-		cookie.ID, cookie.Series, cookie.Token).Scan(&sessions)
+	db.Table("sessions").
+		Select("sessions.userid").
+		Joins("INNER JOIN users ON sessions.userid = users.id").
+		Where("users.systemrole IN ('Admin', 'Support', 'Moderator') AND sessions.id = ? AND sessions.token = ?",
+			cookieID, cookieToken).
+		Scan(&sessions)
 
 	if len(sessions) == 0 {
 		return nil, fmt.Errorf("no valid moderator session found")
@@ -136,10 +155,10 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 
 	// Check they are a mod on a Freegle group.
 	var freegleGroupCount int64
-	db.Raw(`SELECT COUNT(*) FROM memberships
-		INNER JOIN ` + "`groups`" + ` ON memberships.groupid = ` + "`groups`" + `.id
-		WHERE memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator')
-		AND ` + "`groups`" + `.type = 'Freegle'`, userID).Scan(&freegleGroupCount)
+	db.Table("memberships").
+		Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
+		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Count(&freegleGroupCount)
 
 	if freegleGroupCount == 0 {
 		return nil, fmt.Errorf("user %d is not a moderator of a Freegle group", userID)
@@ -147,17 +166,17 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 
 	// Get user details.
 	var fullname string
-	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", userID).Scan(&fullname)
+	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", userID).Scan(&fullname)
 
 	var email string
-	db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", userID).Scan(&email)
+	db.Table("users_emails").Select("email").Where("userid = ?", userID).Order("preferred DESC").Limit(1).Scan(&email)
 
 	var profileURL string
-	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&profileURL)
+	db.Table("users_images").Select("url").Where("userid = ?", userID).Order("id DESC").Limit(1).Scan(&profileURL)
 
 	var isAdmin bool
 	var systemrole string
-	db.Raw("SELECT systemrole FROM users WHERE id = ?", userID).Scan(&systemrole)
+	db.Table("users").Select("systemrole").Where("id = ?", userID).Scan(&systemrole)
 	isAdmin = systemrole == "Admin"
 
 	// Get group list — try active mod groups first, fall back to all moderatorships.
@@ -183,10 +202,11 @@ func getModGroupList(userID uint64) string {
 	}
 
 	var groups []GroupName
-	db.Raw(`SELECT COALESCE(namefull, nameshort) AS namedisplay FROM `+"`groups`"+`
-		INNER JOIN memberships ON memberships.groupid = `+"`groups`"+`.id
-		WHERE memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator')
-		AND `+"`groups`"+`.type = 'Freegle'`, userID).Scan(&groups)
+	db.Table("`groups`").
+		Select("COALESCE(namefull, nameshort) AS namedisplay").
+		Joins("INNER JOIN memberships ON memberships.groupid = `groups`.id").
+		Where("memberships.userid = ? AND memberships.role IN ('Owner', 'Moderator') AND `groups`.type = 'Freegle'", userID).
+		Scan(&groups)
 
 	names := make([]string, 0, len(groups))
 	for _, g := range groups {

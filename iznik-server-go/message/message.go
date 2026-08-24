@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,25 +24,31 @@ import (
 	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/location"
 	flog "github.com/freegle/iznik-server-go/log"
-	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/microvolunteering"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"gorm.io/plugin/dbresolver"
 )
 
 // Pre-compiled regexps to avoid recompiling on every message fetch.
 var emailRegexp = regexp.MustCompile(utils.EMAIL_REGEXP)
 var phoneRegexp = regexp.MustCompile(utils.PHONE_REGEXP)
 var tnRegexp = regexp.MustCompile(utils.TN_REGEXP)
+
 // tnPicPageURLRegexp finds each TN "pics" page link embedded in a textbody.
 var tnPicPageURLRegexp = regexp.MustCompile(`(?m)https://trashnothing\.com/pics/\S+`)
+
 // tnPicHeaderRegexp strips the "Check out the pictures…" intro line.
 var tnPicHeaderRegexp = regexp.MustCompile(`(?m)^Check out the pictures[^\n]*\n?`)
+
 // tnPicURLLineRegexp strips individual trashnothing.com/pics/ URL lines.
 var tnPicURLLineRegexp = regexp.MustCompile(`(?m)^https://trashnothing\.com/pics/[^\n]*\n?`)
 
@@ -138,9 +145,14 @@ func extractTNImageURLsFromPage(pageURL string) []string {
 	return found
 }
 
-// TNPhotoScrapeRunner launches TN photo scraping.  Swappable in tests to run synchronously.
+// TNPhotoScrapeRunner scrapes TN photos and stores them as attachments.  It runs
+// SYNCHRONOUSLY so the photos are fully in place before the caller writes the edit's
+// change signal (the messages_edits row).  TN polls /api/changes — which reports a
+// message as "Edited" via messages_edits — and then fetches the message to read its
+// attachments; if the signal were visible before the photos landed, TN would get a
+// partial photo set.  Swappable in tests.
 var TNPhotoScrapeRunner = func(db *gorm.DB, msgID uint64, picPageURLs []string) {
-	go scrapeTNPhotosToAttachments(db, msgID, picPageURLs)
+	scrapeTNPhotosToAttachments(db, msgID, picPageURLs)
 }
 
 // scrapeTNPhotosToAttachments downloads TN images from pic-page URLs and inserts
@@ -174,8 +186,11 @@ func scrapeTNPhotosToAttachments(db *gorm.DB, msgID uint64, picPageURLs []string
 				primary = 1
 				isPrimary = false
 			}
-			db.Exec("INSERT IGNORE INTO messages_attachments (msgid, externaluid, `primary`) VALUES (?, ?, ?)",
-				msgID, externaluid, primary)
+			db.Table("messages_attachments").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"msgid":       msgID,
+				"externaluid": externaluid,
+				"primary":     primary,
+			})
 		}
 	}
 }
@@ -191,8 +206,17 @@ func (Message) TableName() string {
 // Message represents a posting (offer or wanted)
 // swagger:model Message
 type Message struct {
-	ID                 uint64              `json:"id" gorm:"primary_key"`
-	Arrival            time.Time           `json:"arrival"`
+	ID      uint64    `json:"id" gorm:"primary_key"`
+	Arrival time.Time `json:"arrival"`
+	// VisibleSince is the earliest this post could have been seen: the oldest arrival across
+	// the groups it is live on. The feed orders by it and the card dates by it, so the list
+	// cannot contradict the dates printed on it.
+	//
+	// Arrival above is messages.arrival - when it was first written - which is NOT the same
+	// thing once a post has been reposted or has rippled: this browse view was ordering by
+	// Arrival while the card showed a group arrival, so a 20-day-old post displaying "5 days"
+	// sat above a 3-hour-old one.
+	VisibleSince       time.Time           `json:"visibleSince"`
 	Date               time.Time           `json:"date"`
 	Fromuser           uint64              `json:"fromuser"`
 	Subject            string              `json:"subject"`
@@ -218,22 +242,61 @@ type Message struct {
 	Locationid         uint64              `json:"-"`
 	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
 	Item               *item.Item          `json:"item" gorm:"-"`
-	Heldby           *uint64    `json:"heldby"`
-	Source           *string    `json:"source"`
-	Sourceheader     *string    `json:"sourceheader"`
-	Fromaddr         *string    `json:"fromaddr"`
-	Fromip           *string    `json:"fromip"`
-	Fromcountry      *string    `json:"fromcountry"`
-	Repostat           *time.Time          `json:"repostat"`
-	Canrepost        bool       `json:"canrepost"`
-	Deliverypossible bool       `json:"deliverypossible"`
-	Deadline         *time.Time `json:"deadline"`
+	// DEPRECATED, for bundled app clients only. A hold belongs to a (message, group)
+	// pair (messages_groups.heldby, exposed as groups[].heldby); there is no correct
+	// message-wide value for a post that reached several groups, and supplying one
+	// leaks one group's hold onto the others (Discourse 9970/2). Up-to-date clients
+	// read the per-group row for the group they are acting on — see MessageGroup.Heldby.
+	//
+	// It stays in the payload because the ModTools app bundles its web build, so
+	// installed apps render held state from this field and lost holds entirely when it
+	// was removed (Discourse 9481/636). Computed per viewer by effectiveHeldby; there is
+	// no messages.heldby column behind it any more. Remove once the app floor has moved
+	// past the per-group frontend.
+	Heldby           *uint64          `json:"heldby"`
+	Source           *string          `json:"source"`
+	Sourceheader     *string          `json:"sourceheader"`
+	Fromaddr         *string          `json:"fromaddr"`
+	Fromip           *string          `json:"fromip"`
+	Fromcountry      *string          `json:"fromcountry"`
+	Repostat         *time.Time       `json:"repostat"`
+	Canrepost        bool             `json:"canrepost"`
+	Deliverypossible bool             `json:"deliverypossible"`
+	Deadline         *time.Time       `json:"deadline"`
 	Edits            []MessageEdit    `json:"edits,omitempty" gorm:"-"`
 	RawMessage       *string          `json:"message,omitempty" gorm:"column:message"`
 	Worry            []WorryMatch     `json:"worry,omitempty" gorm:"-"`
 	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
 	Tnpostid         *string          `json:"tnpostid"`
 	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
+	// ReplyEligible: rippling-out (#2). nil/omitted = eligible (the post isn't rippling,
+	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
+	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
+	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
+	// ReachesYouAt: when this post's rippling reach is expected to arrive at the
+	// viewer, for a post they can see but which has not rippled to them yet. Set only
+	// alongside ReplyEligible=false and only for the reach reason - a viewer blocked
+	// by a ban is not waiting for the ripple, so it stays nil there.
+	//
+	// ReachesYouFully says which question was answered. True: a tick of the post's own
+	// schedule grows far enough to include them, and this is when. False: no tick ever
+	// does, so this is instead when the reach stops expanding - the point their held
+	// reply is passed on regardless. Both are real answers; the second is the common
+	// one, and it is an upper bound rather than a prediction, because a reach also
+	// finishes early when the post gathers enough repliers or is taken.
+	ReachesYouAt    *time.Time `json:"reachesyouat,omitempty" gorm:"-"`
+	ReachesYouFully *bool      `json:"reachesyoufully,omitempty" gorm:"-"`
+	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
+	// (and omitted) for ordinary single-item posts. Bulkcount is len(BulkItems),
+	// exposed so list/summary views can flag a bulk offer cheaply.
+	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
+	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
+	// Bulkslots are the offerer-defined collection windows a replier picks from.
+	Bulkslots []string `json:"bulkslots,omitempty" gorm:"-"`
+	// Accessinstructions is the offerer's private note (address / gate code /
+	// intercom). Only returned to the offerer or a moderator — never to general
+	// viewers — and sent to a replier only once they're promised an item.
+	Accessinstructions *string `json:"accessinstructions,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -260,13 +323,13 @@ type WorryWord struct {
 }
 
 type MessageEdit struct {
-	ID              uint64     `json:"id"`
-	Oldsubject      *string    `json:"oldsubject"`
-	Newsubject      *string    `json:"newsubject"`
-	Oldtext         *string    `json:"oldtext"`
-	Newtext         *string    `json:"newtext"`
-	Reviewrequired  int        `json:"reviewrequired"`
-	Timestamp       *time.Time `json:"timestamp"`
+	ID             uint64     `json:"id"`
+	Oldsubject     *string    `json:"oldsubject"`
+	Newsubject     *string    `json:"newsubject"`
+	Oldtext        *string    `json:"oldtext"`
+	Newtext        *string    `json:"newtext"`
+	Reviewrequired int        `json:"reviewrequired"`
+	Timestamp      *time.Time `json:"timestamp"`
 }
 
 // computeExpiresat calculates when a message expires based on group settings.
@@ -289,7 +352,11 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 		Settings string `gorm:"column:settings"`
 	}
 	var groups []groupSettings
-	db.Raw("SELECT id, settings FROM `groups` WHERE id IN (?)", groupIDs).Scan(&groups)
+	// Converted together with its
+	// identical sibling in applyExpiry below: leaving one of two textually
+	// identical statements raw is the configuration that renumbers the
+	// survivor's site ID (ratchet gate h).
+	db.Table("groups").Select("id, settings").Where("id IN ?", groupIDs).Scan(&groups)
 
 	var latest *time.Time
 
@@ -299,7 +366,7 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 			continue
 		}
 
-		// Mirror V1 Message::getPublic() (iznik-server Message.php:1106-1110):
+		// Mirror the legacy V1 PHP Message::getPublic() behaviour:
 		//   $maxagetoshow = $g->getSetting('maxagetoshow', 90);
 		//   $reposts      = $g->getSetting('reposts', ['offer'=>3,'wanted'=>14,'max'=>10,...]);
 		//   $repost       = $type == Offer ? $reposts['offer'] : $reposts['wanted'];
@@ -380,6 +447,28 @@ func GetMessages(c *fiber.Ctx) error {
 	}
 }
 
+// rippleEnabled reports whether the rippling-out feature is switched on. Mirrors the Laravel
+// config('freegle.ripple.enabled') / RIPPLE_ENABLED env so the whole feature ships dark and is
+// flipped on with one env var (default off). While off, the reach/reply-eligibility path below is
+// skipped entirely, so the API is byte-for-byte identical to pre-rippling.
+func rippleEnabled() bool {
+	v := os.Getenv("RIPPLE_ENABLED")
+	return v == "true" || v == "1"
+}
+
+// defaultSearchMode returns the searchmode used when the caller doesn't specify
+// one. Vector-hybrid is the default for every caller (public site, ModTools,
+// apps). VECTOR_SEARCH_DEFAULT=keyword is the no-deploy rollback lever that
+// reverts the whole site to the legacy keyword cascade. Both this env var and
+// the ?searchmode param are scheduled for removal once the keyword machinery is
+// retired.
+func defaultSearchMode() string {
+	if os.Getenv("VECTOR_SEARCH_DEFAULT") == "keyword" {
+		return "keyword"
+	}
+	return "vector"
+}
+
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	db := database.DBConn
 	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
@@ -411,21 +500,46 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				userDeletedFilter := "AND users.deleted IS NULL"
-				rawMessageField := ""
+				// isMod
+				// is the only toggle (it drives the deleted-sender filter and
+				// the raw message field together) - 2 possible rendered forms,
+				// both proven by the retired ormharness (shapes.json /
+				// TestTier3Shapes_08bb471351a0, removed in d22ba1d6c).
+				selectCols := "messages.id, messages.arrival, messages.date, messages.fromuser, " +
+					// Oldest live-group arrival: when this first became available to anyone. A repost
+					// bumps that row, so this follows it, which is what makes a repost lift the post.
+					"COALESCE((SELECT MIN(mgv.arrival) FROM messages_groups mgv WHERE mgv.msgid = messages.id AND mgv.deleted = 0), messages.arrival) AS visible_since, " +
+					"messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid, " +
+					"deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, "
 				if isMod {
-					userDeletedFilter = ""
-					rawMessageField = "messages.message, "
+					selectCols += "messages.message, "
 				}
-				err := db.Raw("SELECT messages.id, messages.arrival, messages.date, messages.fromuser, "+
-					"messages.subject, messages.type, textbody, lat, lng, availablenow, availableinitially, locationid,"+
-					"deliverypossible, deadline, heldby, messages.source, messages.sourceheader, messages.fromaddr, messages.fromip, messages.fromcountry, messages.tnpostid, "+
-					rawMessageField+
-					"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen FROM messages "+
-					"LEFT JOIN users ON users.id = messages.fromuser "+
-					"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-					"WHERE messages.id = ? AND messages.deleted IS NULL " + userDeletedFilter, myid, utils.MESSAGE_LIKES_VIEW, id).First(&message).Error
-				found = !errors.Is(err, gorm.ErrRecordNotFound)
+				selectCols += "CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen"
+
+				whereSQL := "messages.id = ? AND messages.deleted IS NULL"
+				whereArgs := []interface{}{id}
+				if !isMod {
+					whereSQL += " AND users.deleted IS NULL"
+				}
+
+				// Find, not First: First unconditionally adds an implicit
+				// "ORDER BY <primary key>" + LIMIT 1 and raises
+				// ErrRecordNotFound, but this is a Table()-only query with
+				// no registered Model, so Schema stays nil and resolving
+				// that ORDER BY's primary key column fails outright with
+				// "model value required" (gorm's statement.go, the
+				// clause.Column PrimaryKey case). See group/group.go's
+				// GetGroup (site 2811b4d3acf7) for the established fix:
+				// Find() never adds those clauses, so the caller checks
+				// RowsAffected instead of comparing the error to
+				// ErrRecordNotFound.
+				tx := db.Table("messages").
+					Select(selectCols).
+					Joins("LEFT JOIN users ON users.id = messages.fromuser").
+					Joins("LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+					Where(whereSQL, whereArgs...).
+					Find(&message)
+				found = tx.RowsAffected > 0
 			}()
 
 			var messageGroups []MessageGroup
@@ -441,7 +555,32 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Both APPROVED and PENDING messages are visible to all users. This is not a privacy
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
-				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				db.Table("messages_groups").
+					Select("groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons, rippled_in").
+					Where("msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+
+				// Moderator-only "quicker to get to" P/Q note, kept in its own rippling_proximity
+				// table (off the hot messages_groups path). Best-effort: only for mods, and a
+				// missing table / query error just means no note — so apiv2 can ship before the
+				// table exists without affecting message loading.
+				if isMod && len(messageGroups) > 0 {
+					var notes []struct {
+						Groupid uint64
+						P       string
+						Q       string
+					}
+					if err := db.Table("rippling_proximity").Select("groupid, p, q").Where("msgid = ?", id).Scan(&notes).Error; err == nil {
+						for _, nt := range notes {
+							for i := range messageGroups {
+								if messageGroups[i].Groupid == nt.Groupid {
+									p, q := nt.P, nt.Q
+									messageGroups[i].RippleProximityP = &p
+									messageGroups[i].RippleProximityQ = &q
+								}
+							}
+						}
+					}
+				}
 			}()
 
 			var messageAttachments []MessageAttachment
@@ -450,15 +589,17 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			go func() {
 				defer wg.Done()
 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
-			// that is no longer active, return an empty externaluid so the frontend shows
-			// a placeholder instead of the rejected illustration.
-			db.Raw(`SELECT ma.id, ma.msgid, ma.archived,
-				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
-				ma.externalmods
-				FROM messages_attachments ma
-				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating')
-				WHERE ma.msgid = ?
-				ORDER BY ma.`+"`primary`"+` DESC, ma.id ASC`, id).Scan(&messageAttachments)
+				// that is no longer active, return an empty externaluid so the frontend shows
+				// a placeholder instead of the rejected illustration.
+				db.Table("messages_attachments ma").
+					Select("ma.id, ma.msgid, bia.bulkitemid, ma.archived, "+
+						"CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid, "+
+						"ma.externalmods").
+					Joins("LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating', 'suppressed')").
+					Joins("LEFT JOIN messages_bulk_item_attachments bia ON bia.attachmentid = ma.id").
+					Where("ma.msgid = ?", id).
+					Order("ma.`primary` DESC, ma.id ASC").
+					Scan(&messageAttachments)
 			}()
 
 			var messageReply []MessageReply
@@ -473,16 +614,28 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				//
 				// Check that the reply isn't too long ago compared to the most recent post of it.  That can happen
 				// very occasionally if someone posts, an item for a long time, and there is a reply
-				db.Raw("SELECT DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
-					"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname "+
-					"FROM chat_messages "+
-					"INNER JOIN messages ON messages.id = chat_messages.refmsgid "+
-					"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-					"INNER JOIN users ON users.id = chat_messages.userid "+
-					"WHERE refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
-					"AND reviewrequired = 0 AND reviewrejected = 0 "+
-					"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ? "+
-					"GROUP BY userid;", id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).Scan(&messageReply)
+				//
+				// Gate rippling held replies: an email/TN reply from outside the post's current reach is
+				// held (rippling_held_replies, status <> 'released') so it doesn't reach the poster before
+				// the post ripples to the replier. Every delivery channel honours this - the in-app chat
+				// list/count and message fetch (chat/chatmessage.go), the poster-notification email and
+				// push, and the chat-list badge/snippet/roster (PR #927). This own-posts reply list feeds
+				// the "My Posts" replies + replycount, so it must gate too or the poster sees a held reply
+				// there (name + snippet + count) while it's still hidden everywhere else. Unconditional
+				// (no mod exemption), matching the #927 count-surface gates.
+				db.Table("chat_messages").
+					Select("DISTINCT chat_messages.id, refmsgid, chat_messages.date, userid, fromuser, "+
+						"CASE WHEN users.fullname IS NOT NULL THEN users.fullname ELSE CONCAT(users.firstname, ' ', users.lastname) END AS displayname").
+					Joins("INNER JOIN messages ON messages.id = chat_messages.refmsgid").
+					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+					Joins("INNER JOIN users ON users.id = chat_messages.userid").
+					Where("refmsgid = ? AND chat_messages.type = ? AND (messages.fromuser != ? OR chat_messages.userid != ?) "+
+						"AND reviewrequired = 0 AND reviewrejected = 0 "+
+						"AND NOT EXISTS (SELECT 1 FROM rippling_held_replies rhr WHERE rhr.chatmsgid = chat_messages.id AND rhr.status <> 'released') "+
+						"AND DATEDIFF(chat_messages.date, messages_groups.arrival) < ?",
+						id, utils.MESSAGE_INTERESTED, myid, myid, utils.OPEN_AGE).
+					Group("userid").
+					Scan(&messageReply)
 
 				tnre := tnRegexp
 
@@ -515,7 +668,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT DISTINCT(chatid) FROM chat_messages WHERE refmsgid = ?;", id).Pluck("id", &refchatids)
+				db.Table("chat_messages").Select("DISTINCT(chatid)").Where("refmsgid = ?", id).Pluck("chatid", &refchatids)
 			}()
 
 			// Fetch pending edits (mod-only, for edit review page).
@@ -524,9 +677,10 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					db.Raw("SELECT id, oldsubject, newsubject, oldtext, newtext, reviewrequired, `timestamp` AS `timestamp` "+
-						"FROM messages_edits WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL "+
-						"ORDER BY id DESC", id).Scan(&messageEdits)
+					db.Table("messages_edits").
+						Select("id, oldsubject, newsubject, oldtext, newtext, reviewrequired, `timestamp` AS `timestamp`").
+						Where("msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL", id).
+						Order("id DESC").Scan(&messageEdits)
 				}()
 			}
 
@@ -542,13 +696,34 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 			// Postings (history of which groups this message was on) are public information,
 			// returned to all callers — matching V1 behaviour.
 			var messagePostings []MessagePosting
-			db.Raw("SELECT mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, "+
-				"COALESCE(g.namefull, g.nameshort) AS namedisplay "+
-				"FROM messages_postings mp "+
-				"INNER JOIN `groups` g ON mp.groupid = g.id "+
-				"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
+			db.Table("messages_postings mp").
+				Select("mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, COALESCE(g.namefull, g.nameshort) AS namedisplay").
+				Joins("INNER JOIN `groups` g ON mp.groupid = g.id").
+				Where("mp.msgid = ?", id).
+				Order("mp.date ASC").
+				Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
+
+			// Holds are carried per-group on messageGroups (groups[].heldby); that is the
+			// truth, and what up-to-date clients read. The message-level Heldby below is a
+			// compatibility value for bundled app clients that predate the per-group change
+			// — see effectiveHeldby. Resolve it to a hold on a group the viewer actually
+			// moderates; non-mods see none.
+			message.Heldby = nil
+			if isGroupMod {
+				var myModGroups []uint64
+				db.Table("memberships").Select("groupid").
+					Where("userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
+					Scan(&myModGroups)
+				if len(myModGroups) > 0 {
+					viewer := make(map[uint64]bool, len(myModGroups))
+					for _, g := range myModGroups {
+						viewer[g] = true
+					}
+					message.Heldby = effectiveHeldby(messageGroups, viewer)
+				}
+			}
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
 			message.MessageAttachments = messageAttachments
 			message.MessageReply = messageReply
@@ -594,6 +769,15 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					message.Fromaddr = nil
 					message.Fromip = nil
 					message.Fromcountry = nil
+
+					// Why a post was held is moderator information: it names the
+					// keyword that flagged it, which tells a spammer exactly what
+					// to avoid next time. The row is selected for everyone because
+					// collection/arrival are public, so strip the check fields here.
+					for i := range message.MessageGroups {
+						message.MessageGroups[i].ContentcheckReasons = nil
+						message.MessageGroups[i].ContentcheckCheckedAt = nil
+					}
 				}
 
 				// Convert 2-letter country code to full name for frontend display.
@@ -702,35 +886,81 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				wgExtra.Add(1)
 				go func() {
 					defer wgExtra.Done()
-					var repostStr []string
-					db.Raw("SELECT CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Pluck("reposts", &repostStr)
 
-					var reposts []group.RepostSettings
+					// Reposting is per-group: each group has its own arrival and
+					// its own repost settings. Fetch the settings keyed by group
+					// so we can pair each group's interval with that group's
+					// arrival rather than collapsing onto the first group.
+					type repostRow struct {
+						Groupid uint64
+						Reposts *string
+					}
+					var rows []repostRow
+					db.Table("`groups`").
+						Select("messages_groups.groupid AS groupid, JSON_EXTRACT(settings, '$.reposts') AS reposts").
+						Joins("INNER JOIN messages_groups ON messages_groups.groupid = groups.id").
+						Where("msgid = ? AND messages_groups.deleted = 0", message.ID).
+						Scan(&rows)
 
-					for _, r := range repostStr {
-						var rs group.RepostSettings
-						json.Unmarshal([]byte(r), &rs)
-						reposts = append(reposts, rs)
+					settingsByGroup := make(map[uint64]group.RepostSettings, len(rows))
+					for _, r := range rows {
+						// A group with no `reposts` setting gets V1's defaults.
+						// Keeping the fallback in Go rather than in the SQL
+						// matters: the old CASE WHEN emitted a PHP hash literal
+						// that didn't parse as JSON, silently yielding interval 0
+						// (always eligible).
+						rs := group.DefaultRepostSettings()
+						if r.Reposts != nil {
+							if err := json.Unmarshal([]byte(*r.Reposts), &rs); err != nil {
+								rs = group.DefaultRepostSettings()
+							}
+						}
+						settingsByGroup[r.Groupid] = rs
 					}
 
-					for _, r := range reposts {
-						var interval int
-
-						if message.Type == utils.OFFER {
-							interval = r.Offer
-						} else {
-							interval = r.Wanted
+					// The message is repostable as soon as ANY group it's on has
+					// passed that group's own repost interval, measured from that
+					// group's own arrival. This matches V1 (Message::canRepost),
+					// which ORs across groups, and matches how reposting actually
+					// works: AutoRepostService bumps each group's arrival
+					// independently, so eligibility is a per-group property.
+					//
+					// Requiring EVERY group to be eligible is wrong for rippled
+					// posts. Each ripple expansion inserts a messages_groups row
+					// with a fresh arrival, which under an AND rule pushes the
+					// gate back every time the post reaches somewhere new, so a
+					// widely-rippling post can stay un-repostable indefinitely
+					// even though its home group passed the interval days ago.
+					//
+					// repostAt is the EARLIEST per-group repost time: the point at
+					// which the message first becomes repostable, and the point at
+					// which auto-repost next fires on some group.
+					canRepost = false
+					for _, mg := range message.MessageGroups {
+						rs, ok := settingsByGroup[mg.Groupid]
+						if !ok {
+							rs = group.DefaultRepostSettings()
 						}
 
-						if interval < 365 {
-							if len(message.MessageGroups) > 0 {
-								ra := message.MessageGroups[0].Arrival.AddDate(0, 0, interval)
-								repostAt = &ra
+						interval := rs.Wanted
+						if message.Type == utils.OFFER {
+							interval = rs.Offer
+						}
 
-								if repostAt.Before(time.Now()) {
-									canRepost = true
-								}
-							}
+						if interval >= 365 {
+							// Some groups set a very high value as a way of
+							// turning reposting off. That switches it off for
+							// this group only; it doesn't block the others.
+							continue
+						}
+
+						ra := mg.Arrival.AddDate(0, 0, interval)
+						if repostAt == nil || ra.Before(*repostAt) {
+							raCopy := ra
+							repostAt = &raCopy
+						}
+						if ra.Before(time.Now()) {
+							canRepost = true
 						}
 					}
 				}()
@@ -747,6 +977,23 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 					message.Location = loc
 				}
 
+				// Bulk-offer catalogue: group the (now path-resolved) attachments by
+				// item and attach per-item interest. The full per-user interest list
+				// is only visible to the offerer or a moderator.
+				canSeeInterest := message.Fromuser == myid || isGroupMod
+				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
+				message.Bulkcount = len(message.BulkItems)
+				if message.Bulkcount > 0 {
+					message.Bulkslots = LoadBulkSlots(db, message.ID)
+					// Access instructions are private — only the offerer/mod sees them.
+					if canSeeInterest {
+						ai := loadAccessInstructions(db, message.ID)
+						if ai != "" {
+							message.Accessinstructions = &ai
+						}
+					}
+				}
+
 				mu.Lock()
 				messages = append(messages, message)
 				mu.Unlock()
@@ -760,9 +1007,201 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	// Any group-level mod sees worry words, not just system mods.
 	if myid > 0 && len(messages) > 0 {
 		var modCount int64
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ? LIMIT 1", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Scan(&modCount)
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?) AND collection = ?", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).Limit(1).Count(&modCount)
 		if modCount > 0 || auth.IsAdminOrSupport(myid) {
 			checkWorryWords(db, messages)
+		}
+	}
+
+	// Reply-eligibility (#2): a post is view-only (replyeligible=false) when the viewer
+	// cannot reply to it yet. Two reasons:
+	//   - rippling-out: the post has rippled out (has a rippling_reach row) but not yet to
+	//     the viewer's location; or
+	//   - the viewer is banned from every group the post is on, so they must not interact
+	//     with it (mirrors the digest ban exclusion, but for the location-based reach path).
+	// Posts with no reach row and no ban stay eligible (the field is omitted). The queries
+	// only run when there's something to find (a known location / an actual ban), keeping
+	// them off the hot path for the common case.
+	//
+	// Activation is DATA-DRIVEN, mirroring the write-path reach gate in
+	// chat.CreateChatMessage: the section runs when EITHER the RIPPLE_ENABLED master switch
+	// is on, OR at least one fetched post is actually rippling (it has a rippling_reach row).
+	// The per-group trial (RIPPLE_WITHIN_GROUPS) ripples posts WITHOUT the master switch, and
+	// the write gate is not switch-gated either — so keying the read path on the master switch
+	// alone left the UI offering a Reply button on trial posts that the write path then
+	// rejected with 403 not_in_reach (Discourse: dejavu / msg 120820564). The EXISTS probe
+	// runs only when the switch is off, so the fully-disabled case stays a single cheap
+	// indexed lookup and otherwise matches pre-rippling exactly.
+	active := rippleEnabled()
+	if !active && myid > 0 && len(messages) > 0 {
+		probeIDs := make([]uint64, 0, len(messages))
+		for _, m := range messages {
+			probeIDs = append(probeIDs, m.ID)
+		}
+		var anyReach int
+		// rippling_reach may not exist until the reach engine (PR A) ships → treat as inactive.
+		//
+		// A bare SELECT EXISTS(...) with no
+		// top-level FROM - one scalar expression. GORM's query callback always
+		// registers a FROM clause, but Statement.Build only renders the clause
+		// NAMES it is given, so restricting BuildClauses to {"SELECT"} emits the
+		// SELECT alone and leaves the registered-but-unwalked FROM out.
+		// Proven by the retired ormharness's bareexists_test.go (removed in
+		// d22ba1d6c) and used by the other sites in this
+		// category (amp.go, chatmessage.go's rippled-in probes).
+		//
+		// An earlier version of this conversion selected from a one-row derived
+		// table instead ("FROM (SELECT 1) AS d") and recorded the added FROM as an
+		// approved diff. It worked, but it was the worse answer: it changed the
+		// executed SQL to avoid a limitation that turned out not to exist, and an
+		// approved diff should record a divergence we could not avoid, not one we
+		// chose. This renders byte-identically to the original, so the site needs
+		// no approved diff at all.
+		tx := db.Table("rippling_reach").
+			Select("EXISTS(SELECT 1 FROM rippling_reach WHERE msgid IN ?)", probeIDs)
+		tx.Statement.BuildClauses = []string{"SELECT"}
+		_ = tx.Scan(&anyReach).Error
+		active = anyReach == 1
+	}
+
+	if active && myid > 0 && len(messages) > 0 {
+		ids := make([]uint64, 0, len(messages))
+		for _, m := range messages {
+			ids = append(ids, m.ID)
+		}
+		blockedSet := make(map[uint64]bool)
+
+		// Reach-blocked: rippled out but not yet to the viewer's location.
+		// LIMITATION (multi-location, deferred): this tests only the viewer's primary
+		// location. A member with several saved locations (e.g. home + relatives) should
+		// be reach-eligible if ANY of them is within the post's reach. Extending this to
+		// iterate the member's full location set is future work.
+		latlng := user.GetLatLng(myid)
+		reachBlocked := ReachBlockedOrigins(myid, ids, float64(latlng.Lat), float64(latlng.Lng))
+
+		// When the reach is expected to arrive at this viewer. Worked out here rather
+		// than left to the client because it needs the post's BLURRED ripple origin
+		// and its stored schedule, neither of which the feed ships - only the
+		// resulting date crosses the wire.
+		//
+		// One budget-bounded routing search per blocked post (~40ms at a 30-minute
+		// budget on the UK graph), run concurrently so a feed with several blocked
+		// posts costs one search's latency rather than the sum. Only blocked posts
+		// pay it, which is a small minority of any feed.
+		coverage := make(map[uint64]rippling.Coverage, len(reachBlocked))
+		if len(reachBlocked) > 0 {
+			hazard := rippling.LoadHazardHours(db)
+
+			// Per-request backstop on top of FetchDriveTime's process-wide cap, cache
+			// and breaker: "blocked posts are a small minority of any feed" is false for
+			// a viewer outside the reach of many rippling posts (2026-08-13: one viewer's
+			// polls drove ~600 routing searches/min and a load-31 spike on the routing
+			// host). Past the cap the remaining blocked posts simply carry no ETA — the
+			// hold itself is still reported.
+			const maxCoverageLookups = 24
+			lookups := 0
+
+			var covMu sync.Mutex
+			var covWg sync.WaitGroup
+			for msgid, origin := range reachBlocked {
+				if !origin.Ok || origin.Arrival == nil || len(origin.Schedule) == 0 {
+					continue
+				}
+				if lookups >= maxCoverageLookups {
+					break
+				}
+				lookups++
+				covWg.Add(1)
+				go func(msgid uint64, origin ReachOrigin) {
+					defer covWg.Done()
+
+					// Search no further than this post's own widest budget: beyond it
+					// the answer is "no tick ever covers you" however far they are, and
+					// the search cost scales with the budget.
+					budget := origin.Schedule[len(origin.Schedule)-1].DriveMin
+					dt, ok := rippling.FetchDriveTime(
+						origin.Lat, origin.Lng,
+						float64(latlng.Lat), float64(latlng.Lng),
+						budget,
+					)
+					if !ok {
+						// Routing unavailable: no estimate, rather than a guess.
+						return
+					}
+
+					cov, ok := rippling.CoverageAt(origin.Schedule, hazard, *origin.Arrival, dt.Minutes, dt.Reachable)
+					if !ok {
+						return
+					}
+
+					covMu.Lock()
+					coverage[msgid] = cov
+					covMu.Unlock()
+				}(msgid, origin)
+			}
+			covWg.Wait()
+		}
+
+		for msgid := range reachBlocked {
+			blockedSet[msgid] = true
+		}
+		if n := len(reachBlocked); n > 0 {
+			// Q5 (§15): count reply-blocked-by-reach events (one per post the member
+			// can't reply to yet). Best-effort — errors ignored so it never affects the
+			// response.
+			db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"count": gorm.Expr("count + ?", n),
+				}),
+			}).Create(map[string]interface{}{
+				"day":   gorm.Expr("CURDATE()"),
+				"event": gorm.Expr("'reply_blocked'"),
+				"count": n,
+			})
+		}
+
+		// Banned-blocked: the viewer is banned from every group the post is on. Only run
+		// the per-message check when the viewer actually has a ban somewhere.
+		var banCount int64
+		db.Table("users_banned").Where("userid = ?", myid).Count(&banCount)
+		if banCount > 0 {
+			var bannedBlocked []struct {
+				Msgid uint64 `gorm:"column:msgid"`
+			}
+			db.Table("messages_groups mg").
+				Select("mg.msgid").
+				Joins("LEFT JOIN users_banned ub ON ub.groupid = mg.groupid AND ub.userid = ?", myid).
+				Where("mg.msgid IN (?) AND mg.deleted = 0", ids).
+				Group("mg.msgid").
+				Having("COUNT(mg.groupid) = COUNT(ub.groupid)").
+				Scan(&bannedBlocked)
+			for _, b := range bannedBlocked {
+				blockedSet[b.Msgid] = true
+
+				// A banned viewer is not waiting for the ripple, they are not
+				// getting through at all. Telling them when it would arrive would
+				// be a promise we have no intention of keeping, so drop any
+				// estimate the reach check produced for the same post.
+				delete(coverage, b.Msgid)
+			}
+		}
+
+		if len(blockedSet) > 0 {
+			notEligible := false
+			for ix := range messages {
+				if blockedSet[messages[ix].ID] {
+					messages[ix].ReplyEligible = &notEligible
+
+					// Only the reach reason carries an arrival. A ban also lands in
+					// blockedSet and has no coverage entry, so it stays nil.
+					if cov, found := coverage[messages[ix].ID]; found {
+						at := cov.At
+						fully := cov.Covered
+						messages[ix].ReachesYouAt = &at
+						messages[ix].ReachesYouFully = &fully
+					}
+				}
+			}
 		}
 	}
 
@@ -773,17 +1212,16 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 // keywords (fuzzy match mode).  Matches are stored in Message.Worry.
 func checkWorryWords(db *gorm.DB, messages []Message) {
 	var globalWords []WorryWord
-	db.Raw(`SELECT id, keyword,
-		CASE category
-			WHEN 'substance_regulated' THEN 'Regulated'
-			WHEN 'substance_reportable' THEN 'Reportable'
-			WHEN 'substance_medicine' THEN 'Medicine'
-			WHEN 'review' THEN 'Review'
-			WHEN 'allowed' THEN 'Allowed'
-			ELSE 'Review'
-		END AS type
-	FROM concern_keywords
-	WHERE match_mode = 'fuzzy' AND scope = 'global'`).Scan(&globalWords)
+	db.Table("concern_keywords").
+		Select("id, keyword, CASE category " +
+			"WHEN 'substance_regulated' THEN 'Regulated' " +
+			"WHEN 'substance_reportable' THEN 'Reportable' " +
+			"WHEN 'substance_medicine' THEN 'Medicine' " +
+			"WHEN 'review' THEN 'Review' " +
+			"WHEN 'allowed' THEN 'Allowed' " +
+			"ELSE 'Review' END AS type").
+		Where("match_mode = 'fuzzy' AND scope = 'global'").
+		Scan(&globalWords)
 
 	// Collect unique group IDs from all messages so we can load group-specific
 	// worry words in one pass.
@@ -798,7 +1236,7 @@ func checkWorryWords(db *gorm.DB, messages []Message) {
 	groupWords := map[uint64][]WorryWord{}
 	for gid := range groupIDs {
 		var raw *string
-		db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(settings, '$.spammers.worrywords')) FROM `groups` WHERE id = ?", gid).Scan(&raw)
+		db.Table("groups").Select("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.spammers.worrywords'))").Where("id = ?", gid).Scan(&raw)
 		if raw != nil && *raw != "" && *raw != "null" {
 			parts := strings.Split(*raw, ",")
 			for _, p := range parts {
@@ -847,7 +1285,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 		if strings.Contains(scan, "\u00a3") {
 			if !found["\u00a3"] {
 				matches = append(matches, WorryMatch{
-					Word: "\u00a3",
+					Word:      "\u00a3",
 					Worryword: WorryWord{Keyword: "\u00a3", Type: "Review"},
 				})
 				found["\u00a3"] = true
@@ -873,7 +1311,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 			}
 			if strings.Contains(subjectLower, kw) || strings.Contains(textbodyLower, kw) {
 				matches = append(matches, WorryMatch{
-					Word: w.Keyword,
+					Word:      w.Keyword,
 					Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},
 				})
 				found[kw] = true
@@ -896,7 +1334,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 				ratio := float64(len(token)) / float64(len(kw))
 				if ratio >= 0.75 && ratio <= 1.25 && strings.EqualFold(token, kw) {
 					matches = append(matches, WorryMatch{
-						Word: w.Keyword,
+						Word:      w.Keyword,
 						Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},
 					})
 					found[kw] = true
@@ -925,7 +1363,6 @@ func splitOnWordBoundary(text string) []string {
 	return re.Split(text, -1)
 }
 
-
 func GetMessagesForUser(c *fiber.Ctx) error {
 	db := database.DBConn
 
@@ -938,54 +1375,64 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 		if err1 == nil && err2 == nil {
 			msgs := []MessageSummary{}
 
-			sql := "SELECT messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, " +
+			selectCols := "messages.lat, messages.lng, messages.id, messages_groups.groupid, messages_groups.collection, messages.type, messages_groups.arrival, messages.date, " +
 				"messages_spatial.id AS spatialid, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id) AS hasoutcome, " +
 				"EXISTS(SELECT id FROM messages_outcomes WHERE messages_outcomes.msgid = messages.id AND outcome IN (?, ?)) AS successful, " +
 				"EXISTS(SELECT id FROM messages_promises WHERE messages_promises.msgid = messages.id) AS promised, "
 
+			whereTail := "fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND " +
+				// Rippling-out adds a messages_groups row (rippled_in=1) per group a post ripples
+				// into, so without this a rippled post appears once PER GROUP in My Posts. Restrict
+				// to the origin membership (rippled_in=0) so each of the user's own posts shows
+				// exactly once; the rippled-in copies are system propagation, not separate posts.
+				"messages_groups.rippled_in = 0 AND messages.type IN (?, ?)"
+
 			if myid > 0 && id == myid {
 				// Own messages are always treated as seen.
-				sql += "0 AS unseen "
+				//
+				// `active` is the only toggle - 2 possible rendered forms, both
+				// proven by the retired ormharness (shapes.json /
+				// TestTier3Shapes_2de07c2af78b, removed in d22ba1d6c).
+				tx := db.Table("messages").
+					Select(selectCols+"0 AS unseen", utils.TAKEN, utils.RECEIVED).
+					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+					Joins("INNER JOIN users ON users.id = messages.fromuser").
+					Joins("LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id").
+					Where(whereTail, id, utils.OFFER, utils.WANTED)
+				if active {
+					// The original spliced these as literal quoted text, not
+					// binds ("... IN ('"+COLLECTION_PENDING+"', '"+COLLECTION_REJECTED+"'))"),
+					// so the conversion matches that exactly here.
+					tx = tx.Having("((hasoutcome = 0 AND spatialid IS NOT NULL) OR messages_groups.collection IN ('" +
+						utils.COLLECTION_PENDING + "', '" + utils.COLLECTION_REJECTED + "'))")
+				}
+				tx.Order("unseen DESC, messages_groups.arrival DESC").Scan(&msgs)
 			} else {
-				sql += "NOT EXISTS(SELECT msgid FROM messages_likes WHERE messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?) AS unseen "
-			}
-
-			sql += "FROM messages " +
-				"INNER JOIN messages_groups ON messages_groups.msgid = messages.id " +
-				"INNER JOIN users ON users.id = messages.fromuser "
-
-			if active {
-				if myid > 0 && id == myid {
+				// Another user - we are only interested in active and public messages.
+				//
+				// Same
+				// `active` toggle as 2de07c2af78b above (the other-user twin) -
+				// 2 possible rendered forms, both proven by the retired
+				// ormharness (shapes.json / TestTier3Shapes_bca1186d1ea4,
+				// removed in d22ba1d6c).
+				tx := db.Table("messages").
+					Select(selectCols+"NOT EXISTS(SELECT msgid FROM messages_likes WHERE messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ?) AS unseen",
+						utils.TAKEN, utils.RECEIVED, myid, utils.MESSAGE_LIKES_VIEW).
+					Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+					Joins("INNER JOIN users ON users.id = messages.fromuser")
+				if active {
 					// For our own user, we might have messages which are not public yet because they're pending,
 					// and we still want to show those.
-					sql += "LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id "
+					tx = tx.Joins("INNER JOIN messages_spatial ON messages_spatial.msgid = messages.id")
 				} else {
-					// Another user - we are only interested in active and public messages.
-					sql += "INNER JOIN messages_spatial ON messages_spatial.msgid = messages.id "
+					tx = tx.Joins("LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id")
 				}
-			} else {
-				sql += "LEFT JOIN messages_spatial ON messages_spatial.msgid = messages.id "
-			}
-
-			sql += "WHERE fromuser = ? AND messages.deleted IS NULL AND users.deleted IS NULL AND messages_groups.deleted = 0 AND " +
-				"messages.type IN (?, ?)"
-
-			if active {
-				if myid > 0 && id == myid {
-					sql += " HAVING ((hasoutcome = 0 AND spatialid IS NOT NULL) OR messages_groups.collection IN ('" + utils.COLLECTION_PENDING + "', '" + utils.COLLECTION_REJECTED + "'))"
-				} else {
-					sql += " HAVING hasoutcome = 0"
+				tx = tx.Where(whereTail, id, utils.OFFER, utils.WANTED)
+				if active {
+					tx = tx.Having("hasoutcome = 0")
 				}
-			}
-
-			sql += " ORDER BY unseen DESC, messages_groups.arrival DESC"
-
-			if myid > 0 && id == myid {
-				// Own messages - no unseen userid parameter needed.
-				db.Raw(sql, utils.TAKEN, utils.RECEIVED, id, utils.OFFER, utils.WANTED).Scan(&msgs)
-			} else {
-				db.Raw(sql, utils.TAKEN, utils.RECEIVED, myid, utils.MESSAGE_LIKES_VIEW, id, utils.OFFER, utils.WANTED).Scan(&msgs)
+				tx.Order("unseen DESC, messages_groups.arrival DESC").Scan(&msgs)
 			}
 
 			if active {
@@ -1053,7 +1500,10 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 	settingsMap := map[uint64]groupSettings{}
 	if len(ids) > 0 {
 		var groups []groupRow
-		db.Raw("SELECT id, settings FROM `groups` WHERE id IN (?)", ids).Scan(&groups)
+		// Identical sibling of
+		// 340a0eccf392 above in computeExpiresat; converted together
+		// (ratchet gate h).
+		db.Table("groups").Select("id, settings").Where("id IN ?", ids).Scan(&groups)
 
 		for _, g := range groups {
 			var s groupSettings
@@ -1101,7 +1551,17 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 			expireTime = maxReposts
 		}
 
-		daysAgo := int(now.Sub(m.Arrival).Hours() / 24)
+		// Age the post against the same expireTime V1 uses (maxagetoshow /
+		// EXPIRE_TIME = 90 days, or the repost window). For Rejected posts age by
+		// the ORIGINAL date (messages.date) rather than arrival: a rejected post's
+		// arrival can be recent while the post itself is years old, which would
+		// otherwise keep a long-dead rejected message in the member's active posts
+		// (Discourse topic 9481/561). V1 capped a member's own posts by age too.
+		ageBasis := m.Arrival
+		if m.Collection == utils.COLLECTION_REJECTED && !m.Date.IsZero() {
+			ageBasis = m.Date
+		}
+		daysAgo := int(now.Sub(ageBasis).Hours() / 24)
 		if daysAgo > expireTime {
 			candidateIDs = append(candidateIDs, m.ID)
 			candidateIndices[m.ID] = append(candidateIndices[m.ID], i)
@@ -1113,14 +1573,23 @@ func applyExpiry(db *gorm.DB, msgs []MessageSummary) []int {
 	}
 
 	// Batch query: latest chat activity for all candidate messages.
+	//
+	// Recency is measured by the latest chat message that actually REFERENCES the
+	// post (chat_messages.date where refmsgid = the post), NOT chat_rooms.latestmessage.
+	// Freegle user-to-user rooms are one long-lived room per pair of people, so the
+	// room's overall latest message reflects any conversation between them. Using it
+	// pinned years-old posts in the member's active My Posts whenever the two users
+	// had chatted about anything else recently (Discourse 9481/583): the reported
+	// posts' own chat reference was from 2020, but the shared room had a message 3
+	// days ago, so the room-level check kept them "active" indefinitely. The per-post
+	// reference date is the real "is this post still being discussed" signal.
 	type chatLatest struct {
 		Refmsgid uint64     `gorm:"column:refmsgid"`
 		Latest   *time.Time `gorm:"column:latest"`
 	}
 	var chatResults []chatLatest
-	db.Raw("SELECT chat_messages.refmsgid, MAX(latestmessage) AS latest "+
-		"FROM chat_rooms INNER JOIN chat_messages ON chat_rooms.id = chat_messages.chatid "+
-		"WHERE chat_messages.refmsgid IN (?) GROUP BY chat_messages.refmsgid", candidateIDs).Scan(&chatResults)
+	db.Table("chat_messages").Select("refmsgid, MAX(date) AS latest").
+		Where("refmsgid IN ?", candidateIDs).Group("refmsgid").Scan(&chatResults)
 
 	recentChat := map[uint64]bool{}
 	for _, cr := range chatResults {
@@ -1155,6 +1624,17 @@ func filterExpiredMessages(db *gorm.DB, msgs []MessageSummary) []MessageSummary 
 		}
 	}
 	return result
+}
+
+// FilterExpiredSummaries applies the same age-based expiry the My Posts endpoint
+// uses (filterExpiredMessages/applyExpiry) and returns only the still-active
+// summaries. The browse feeds' "own posts" arms — which query the messages table
+// directly and so bypass the messages_spatial pruning that removes expired posts
+// for everyone else — use this so a poster's own post drops off the feed at the
+// same moment it drops off My Posts, instead of lingering (within the 90-day
+// window) until the daily batch inserts an outcome row.
+func FilterExpiredSummaries(db *gorm.DB, msgs []MessageSummary) []MessageSummary {
+	return filterExpiredMessages(db, msgs)
 }
 
 // markExpiredMessages sets Hasoutcome=true on expired messages in-place (for active=false).
@@ -1209,7 +1689,7 @@ func Search(c *fiber.Ctx) error {
 			groupids = nil
 		} else {
 			var userGroupIDs []uint64
-			db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
+			db.Table("memberships").Select("groupid").Where("userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
 			if len(userGroupIDs) > 0 {
 				groupids = userGroupIDs
 			}
@@ -1224,36 +1704,163 @@ func Search(c *fiber.Ctx) error {
 	go func() {
 		defer wg.Done()
 
-		var ID int64
-
 		if myid > 0 {
-			db.Raw("INSERT INTO search_history (userid, term, locationid, `groups`) VALUES (?, ?, ?, ?);",
-				myid,
-				term,
-				nil,
-				c.Query("groupids", ""),
-			).Scan(&ID)
+			db.Table("search_history").Create(map[string]interface{}{
+				"userid": myid, "term": term, "locationid": nil, "groups": c.Query("groupids", ""),
+			})
 
-			db.Raw("INSERT INTO users_searches (userid, term, locationid) VALUES (?, ?, ?);",
-				myid,
-				term,
-				nil,
-			).Scan(&ID)
+			db.Table("users_searches").Create(map[string]interface{}{
+				"userid": myid, "term": term, "locationid": nil,
+			})
 		} else {
-			db.Raw("INSERT INTO search_history (userid, term, locationid, `groups`) VALUES (NULL, ?, ?, ?);",
-				term,
-				nil,
-				c.Query("groupids", ""),
-			).Scan(&ID)
+			db.Table("search_history").Create(map[string]interface{}{
+				"userid": gorm.Expr("NULL"), "term": term, "locationid": nil, "groups": c.Query("groupids", ""),
+			})
 		}
 	}()
+
+	// A purely-numeric search term (optionally "#"-prefixed) is a message id:
+	// return that exact message rather than word-matching the digits against
+	// message subjects/text. Reported on Discourse (topic 9585): searching
+	// "#120975040" surfaced unrelated posts whose title merely contained those
+	// digits. strconv.ParseUint succeeds only for an all-digits term, so ordinary
+	// searches fall through to the word search below. Access stays restricted by
+	// groupFilter, so a mod only gets the message if it is in their groups.
+	if idStr := strings.TrimPrefix(term, "#"); idStr != "" {
+		if msgid, err := strconv.ParseUint(idStr, 10, 64); err == nil {
+			byID := SearchByMsgID(db, msgid, groupids)
+			if len(byID) > 0 {
+				wg.Wait()
+				return c.JSON(byID)
+			}
+		}
+	}
 
 	nelat, _ := strconv.ParseFloat(c.Query("nelat", "0"), 32)
 	nelng, _ := strconv.ParseFloat(c.Query("nelng", "0"), 32)
 	swlat, _ := strconv.ParseFloat(c.Query("swlat", "0"), 32)
 	swlng, _ := strconv.ParseFloat(c.Query("swlng", "0"), 32)
 
-	searchmode := c.Query("searchmode", "keyword")
+	// --- Browse-scoped search (Discourse group-listings 9933). When the client passes
+	// browse=1, the universe searched must be EXACTLY the set of posts the member would see
+	// scrolling to the bottom of their browse feed for their current filters:
+	//   Nearby             -> posts whose rippling reach covers the member (+ their own posts)
+	//   All my communities -> their member groups (the client sends the groupids)
+	//   A specific group   -> that group (the client sends the groupid)
+	// plus their "How far away" slider cap and "Sort by" order. Previously search applied no
+	// location scope at all, so the vector store returned nationwide semantic matches while
+	// genuinely-in-feed posts were crowded out. Without the flag (ModTools, explore pages,
+	// map-viewport searches) behaviour is unchanged.
+	const browseDistanceUnlimited = 9007199254740991.0 // Number.MAX_SAFE_INTEGER: slider at max ("no limit")
+
+	browseScoped := c.Query("browse", "") == "1" && myid > 0
+	var memberLat, memberLng float64
+	browseMaxMiles := float64(browseDistanceUnlimited)
+	var browseSort string
+
+	if browseScoped {
+		if ll := user.GetLatLng(myid); ll.Lat != 0 || ll.Lng != 0 {
+			memberLat, memberLng = float64(ll.Lat), float64(ll.Lng)
+		}
+		// Same two-key resolution as isochrone.resolveMaxDistance: the member's own
+		// choice, else their density band default (browseReachMaxDistance, written by
+		// browse:backfill-max-distance). Browse-scoped search shares the feed's universe
+		// (Discourse 9933), so missing the fallback here would surface posts in search
+		// that the feed itself hides.
+		var rawDist, rawDefaultDist, rawSort string
+		db.Table("users").
+			Select("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseMaxDistance')), ''), "+
+				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseReachMaxDistance')), ''), "+
+				"COALESCE(JSON_UNQUOTE(JSON_EXTRACT(settings, '$.browseSort')), '')").
+			Where("id = ?", myid).
+			Row().Scan(&rawDist, &rawDefaultDist, &rawSort)
+		for _, raw := range []string{rawDist, rawDefaultDist} {
+			if raw == "" {
+				continue
+			}
+			// An unparseable value is treated as no value and falls through to the
+			// next key, matching isochrone.resolveMaxDistance and the Laravel
+			// DistancePreferenceFilter - all three must agree or the feed, its badge
+			// and search would disagree about the same member.
+			if v, err := strconv.ParseFloat(raw, 64); err == nil && v > 0 {
+				browseMaxMiles = v
+
+				break
+			}
+		}
+		browseSort = rawSort
+	}
+
+	// Nearby view (browse-scoped, no group selected): compute the feed's msgid universe up
+	// front and give it to BOTH search arms, so their internal LIMIT/top-K cuts happen WITHIN
+	// the feed universe. Filtering afterwards does not work: for a common term the capped
+	// candidate sets fill up with out-of-feed posts first (measured live: only 4 of the 16
+	// in-feed "table" posts survived to the candidate pool).
+	var universeIDs []uint64
+	var universeSet map[uint64]bool
+
+	if browseScoped && len(groupids) == 0 && (memberLat != 0 || memberLng != 0) {
+		universeIDs = nearbyFeedMsgIDs(db, myid, memberLat, memberLng)
+
+		if len(universeIDs) == 0 {
+			// An empty feed means there is nothing to search.
+			wg.Wait()
+			return c.JSON([]SearchResult{})
+		}
+
+		universeSet = make(map[uint64]bool, len(universeIDs))
+		for _, id := range universeIDs {
+			universeSet[id] = true
+		}
+	}
+
+	// applyBrowseFilters completes feed parity for browse-scoped searches: stamp each result's
+	// distance from the member, apply the "How far away" slider cap, and order by "Sort by".
+	// (The universe itself is enforced at candidate selection above.) Applied at every return.
+	applyBrowseFilters := func(rs []SearchResult) []SearchResult {
+		if !browseScoped || (memberLat == 0 && memberLng == 0) {
+			return rs
+		}
+		for i := range rs {
+			rs[i].Distance = utils.Haversine(memberLat, memberLng, rs[i].Lat, rs[i].Lng)
+		}
+		if browseMaxMiles < browseDistanceUnlimited {
+			kept := rs[:0]
+			for _, r := range rs {
+				if r.Distance <= browseMaxMiles {
+					kept = append(kept, r)
+				}
+			}
+			rs = kept
+		}
+		switch browseSort {
+		case "Nearby": // the client's "Closest" option
+			sort.SliceStable(rs, func(i, j int) bool { return rs[i].Distance < rs[j].Distance })
+		case "Newest":
+			// Sort by ORIGINAL post time (messages.arrival), not SearchResult.Arrival, which is
+			// the ripple-bumped messages_spatial arrival - ordering by that floats days-old posts
+			// to the top whenever their reach grows (same trap as Discourse 9844 on the feed).
+			if len(rs) > 0 {
+				ids := make([]uint64, 0, len(rs))
+				for _, r := range rs {
+					ids = append(ids, r.Msgid)
+				}
+				var rows []struct {
+					ID      uint64    `gorm:"column:id"`
+					Arrival time.Time `gorm:"column:arrival"`
+				}
+				db.Table("messages").Select("id, arrival").Where("id IN ?", ids).Scan(&rows)
+				posted := make(map[uint64]time.Time, len(rows))
+				for _, row := range rows {
+					posted[row.ID] = row.Arrival
+				}
+				sort.SliceStable(rs, func(i, j int) bool { return posted[rs[i].Msgid].After(posted[rs[j].Msgid]) })
+			}
+		}
+		return rs
+	}
+
+	searchmode := c.Query("searchmode", defaultSearchMode())
 
 	// We've seen problems with crashes inside Gorm.  Best I can tell, it looks like a Gorm bug exposed when an
 	// array is resized.  So as a workaround we create slices with capacity, then filter out the empty ones at
@@ -1282,16 +1889,16 @@ func Search(c *fiber.Ctx) error {
 
 			go func() {
 				defer hybridWg.Done()
-				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
+				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, universeSet, msgtype,
 					float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			go func() {
 				defer hybridWg.Done()
 				if len(expandedWords) > 0 {
-					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
 						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, universeIDs, msgtype,
 						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 				}
 			}()
@@ -1311,7 +1918,7 @@ func Search(c *fiber.Ctx) error {
 
 			if len(merged) > 0 {
 				wg.Wait()
-				return c.JSON(merged)
+				return c.JSON(applyBrowseFilters(merged))
 			}
 			// Both vector and keyword exact/starts returned nothing; fall through to
 			// typo and soundex cascade.
@@ -1325,13 +1932,13 @@ func Search(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				res = GetWordsExact(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsExact(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			go func() {
 				defer wg.Done()
 				// Add in prefix matches, which helps with plurals.
-				res2 = GetWordsStarts(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res2 = GetWordsStarts(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}()
 
 			wg.Wait()
@@ -1339,11 +1946,11 @@ func Search(c *fiber.Ctx) error {
 			res = append(res, res2...)
 
 			if len(res) == 0 {
-				res = GetWordsTypo(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsTypo(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}
 
 			if len(res) == 0 {
-				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}
 
 			// Blur
@@ -1353,18 +1960,26 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 
-	// Return results where Msgid is not 0
+	// Return results where Msgid is not 0, deduplicated by msgid. The keyword path
+	// merges an exact-match pass with a starts-with pass (res2); any exact match is
+	// also a starts-with match, so without this dedup essentially every match would be
+	// returned twice. A message cross-posted to several of the searched groups likewise
+	// yields one spatial row per group and must collapse to a single result. We keep the
+	// first occurrence (exact matches are appended first, so they win). This mirrors the
+	// dedup mergeHybrid already applies on the vector path.
 	filtered := []SearchResult{}
+	seen := make(map[uint64]bool, len(res))
 
 	for _, r := range res {
-		if r.Msgid != 0 {
+		if r.Msgid != 0 && !seen[r.Msgid] {
+			seen[r.Msgid] = true
 			filtered = append(filtered, r)
 		}
 	}
 
 	wg.Wait()
 
-	return c.JSON(filtered)
+	return c.JSON(applyBrowseFilters(filtered))
 }
 
 // Activity represents a recent activity in groups
@@ -1414,16 +2029,16 @@ func GetRecentActivity(c *fiber.Ctx) error {
 
 	start := time.Now().Add(-time.Hour * 24).Format("2006-01-02 15:04:05")
 
-	db.Raw("SELECT messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, "+
-		"groups.nameshort, groups.namefull, groups.lat, groups.lng "+
-		"FROM messages "+
-		"INNER JOIN messages_groups ON messages.id = messages_groups.msgid "+
-		"INNER JOIN `groups` ON messages_groups.groupid = groups.id "+
-		"INNER JOIN users ON messages.fromuser = users.id "+
-		"WHERE messages_groups.arrival > ? AND collection = ? "+
-		"ORDER BY messages_groups.arrival ASC LIMIT 100;",
-		start,
-		utils.COLLECTION_APPROVED).Scan(&activity)
+	db.Table("messages").
+		Select("messages.id, messages_groups.arrival, messages_groups.groupid, messages.subject, "+
+			"groups.nameshort, groups.namefull, groups.lat, groups.lng").
+		Joins("INNER JOIN messages_groups ON messages.id = messages_groups.msgid").
+		Joins("INNER JOIN `groups` ON messages_groups.groupid = groups.id").
+		Joins("INNER JOIN users ON messages.fromuser = users.id").
+		Where("messages_groups.arrival > ? AND collection = ?", start, utils.COLLECTION_APPROVED).
+		Order("messages_groups.arrival ASC").
+		Limit(100).
+		Scan(&activity)
 
 	last := int64(0)
 
@@ -1475,11 +2090,15 @@ func GetRecentActivity(c *fiber.Ctx) error {
 func logModAction(db *gorm.DB, logType string, subtype string, groupid uint64, userid uint64, byuser uint64, msgid uint64, stdmsgid uint64, text string) {
 	// `user` is a reserved word in MySQL — backtick to match V1's Log::log().
 	if stdmsgid > 0 {
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, stdmsgid, text) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
-			logType, subtype, groupid, userid, byuser, msgid, stdmsgid, text)
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"), "type": logType, "subtype": subtype, "groupid": groupid,
+			"user": userid, "byuser": byuser, "msgid": msgid, "stdmsgid": stdmsgid, "text": text,
+		})
 	} else {
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, text) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)",
-			logType, subtype, groupid, userid, byuser, msgid, text)
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"), "type": logType, "subtype": subtype, "groupid": groupid,
+			"user": userid, "byuser": byuser, "msgid": msgid, "text": text,
+		})
 	}
 }
 
@@ -1491,20 +2110,27 @@ func logModAction(db *gorm.DB, logType string, subtype string, groupid uint64, u
 // re-runs — the unique-by-msgid check is deferred to the caller context).
 func logMessageReceived(db *gorm.DB, groupid uint64, fromuser uint64, msgid uint64) {
 	var messageid string
-	db.Raw("SELECT COALESCE(messageid, '') FROM messages WHERE id = ?", msgid).Scan(&messageid)
-	result := db.Exec(
-		"INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, text) VALUES (NOW(), ?, ?, ?, ?, NULL, ?, ?)",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupid, fromuser, msgid, messageid,
-	)
+	db.Table("messages").Select("COALESCE(messageid, '')").Where("id = ?", msgid).Scan(&messageid)
+	result := db.Table("logs").Create(map[string]interface{}{
+		"timestamp": gorm.Expr("NOW()"), "type": flog.LOG_TYPE_MESSAGE, "subtype": flog.LOG_SUBTYPE_RECEIVED,
+		"groupid": groupid, "user": fromuser, "byuser": gorm.Expr("NULL"), "msgid": msgid, "text": messageid,
+	})
 	if result.Error != nil {
 		log.Printf("Failed to log Message/Received for msg %d group %d: %v", msgid, groupid, result.Error)
 	}
 }
 
-// getPrimaryGroupForMessage returns the first groupid for a message.
+// getPrimaryGroupForMessage returns one groupid for a message.
+//
+// Deprecated: use a request-supplied groupid when available. Multi-group
+// messages have N groups; this function picks one arbitrarily. For per-group
+// moderation actions (hold/release/spam/delete) always use the groupid the
+// mod is acting on. Remaining legitimate callers are owner-initiated global
+// paths (draft conversion, JoinAndPost), mod context bootstrap, and submit
+// subject reconstruction — contexts where no explicit group is available.
 func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 	var groupid uint64
-	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? LIMIT 1", msgid).Scan(&groupid)
+	db.Table("messages_groups").Select("groupid").Where("msgid = ?", msgid).Limit(1).Scan(&groupid)
 	return groupid
 }
 
@@ -1513,7 +2139,7 @@ func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 // messages even after the poster has deleted them.
 func getAllGroupsForMessage(db *gorm.DB, msgid uint64) []uint64 {
 	var groupids []uint64
-	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ?", msgid).Scan(&groupids)
+	db.Table("messages_groups").Select("groupid").Where("msgid = ?", msgid).Scan(&groupids)
 	return groupids
 }
 
@@ -1527,8 +2153,11 @@ func constructLocationString(db *gorm.DB, msgid uint64) string {
 		Areaid uint64
 	}
 	var loc locInfo
-	db.Raw("SELECT l.name, l.type, COALESCE(l.areaid, 0) as areaid FROM locations l "+
-		"INNER JOIN messages m ON m.locationid = l.id WHERE m.id = ?", msgid).Scan(&loc)
+	db.Table("locations l").
+		Select("l.name, l.type, COALESCE(l.areaid, 0) as areaid").
+		Joins("INNER JOIN messages m ON m.locationid = l.id").
+		Where("m.id = ?", msgid).
+		Scan(&loc)
 
 	if loc.Name == "" {
 		return ""
@@ -1537,7 +2166,7 @@ func constructLocationString(db *gorm.DB, msgid uint64) string {
 	if loc.Type == "Postcode" && loc.Areaid > 0 {
 		// Get the area name.
 		var areaName string
-		db.Raw("SELECT name FROM locations WHERE id = ?", loc.Areaid).Scan(&areaName)
+		db.Table("locations").Select("name").Where("id = ?", loc.Areaid).Scan(&areaName)
 
 		// Vague postcode: take only the outward code (before the space).
 		vaguePC := loc.Name
@@ -1566,8 +2195,7 @@ func getGroupKeyword(db *gorm.DB, groupid uint64, msgType string) string {
 		// Build the JSON path directly (safe — key is always a known value like "OFFER").
 		jsonPath := "$.keywords." + key
 		var keyword *string
-		db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(settings, ?)) FROM `groups` WHERE id = ?",
-			jsonPath, groupid).Scan(&keyword)
+		db.Table("groups").Select("JSON_UNQUOTE(JSON_EXTRACT(settings, ?))", jsonPath).Where("id = ?", groupid).Scan(&keyword)
 		if keyword != nil && *keyword != "" && *keyword != "null" {
 			return *keyword
 		}
@@ -1587,9 +2215,10 @@ func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	// Check if mod of any group the message is on.
 	// Don't filter on mg.deleted = 0 so mods can still moderate after poster deletes.
 	var count int64
-	result := db.Raw(`SELECT COUNT(*) FROM messages_groups mg
-		JOIN memberships m ON m.groupid = mg.groupid
-		WHERE mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)`, msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	result := db.Table("messages_groups mg").
+		Joins("JOIN memberships m ON m.groupid = mg.groupid").
+		Where("mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&count)
 	if result.Error != nil {
 		log.Printf("Failed to check mod permission for user %d message %d: %v", myid, msgid, result.Error)
 		return false
@@ -1656,7 +2285,7 @@ func getMessageModContext(db *gorm.DB, myid uint64, msgid uint64) *MessageModCon
 		return nil
 	}
 	ctx := &MessageModContext{}
-	row := db.Raw("SELECT fromuser, subject FROM messages WHERE id = ?", msgid).Row()
+	row := db.Table("messages").Select("fromuser, subject").Where("id = ?", msgid).Row()
 	if err := row.Scan(&ctx.Fromuser, &ctx.Subject); err != nil {
 		log.Printf("Failed to fetch mod context for message %d: %v", msgid, err)
 		return nil
@@ -1681,42 +2310,93 @@ func logAndNotifyMods(db *gorm.DB, subtype string, ctx *MessageModContext, myid 
 	}
 }
 
-// addApprovedMessageToSpatialIndex inserts/updates the messages_spatial row for a
+// addApprovedMessageToSpatialIndex inserts/updates the messages_spatial rows for a
 // message that has just become Approved, so it appears in browse/search immediately
 // instead of waiting for the every-5-minute reconciler (MessageSpatialService).
 // messages_spatial backs the public browse/map, so it must only contain Approved
 // messages with a location — Pending/Spam/Rejected must never be added here. The
 // query re-checks collection=Approved so this is a safe no-op if called otherwise.
+//
+// messages_spatial is keyed on (msgid, groupid): a cross-posted message gets one row
+// per group it is approved on, so it shows in browse/search on each of those groups.
 func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
-	var row struct {
+	type spatialRow struct {
 		Lat     float64
 		Lng     float64
 		Msgtype string
 		Groupid uint64
 		Arrival string
 	}
-	db.Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
-		"messages_groups.groupid AS groupid, "+
-		"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival "+
-		"FROM messages "+
-		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
-		"WHERE messages.id = ? AND messages_groups.collection = ? "+
-		"AND messages_groups.deleted = 0 AND messages.deleted IS NULL "+
-		"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
-		"AND messages_outcomes.id IS NULL "+
-		"ORDER BY messages_groups.arrival DESC LIMIT 1",
-		msgid, utils.COLLECTION_APPROVED).Scan(&row)
+	var rows []spatialRow
+	// Pin to the write host: the caller has just UPDATEd messages_groups.collection
+	// to Approved on the source. Under the read/write split a plain SELECT would be
+	// routed to the read replica, which may not have applied that write yet (Galera
+	// apply-lag), so the row would be missed and the post left out of the spatial
+	// index until the periodic reconciler runs.
+	db.Clauses(dbresolver.Write).Table("messages").
+		Select("messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
+			"messages_groups.groupid AS groupid, "+
+			"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival").
+		Joins("INNER JOIN messages_groups ON messages_groups.msgid = messages.id").
+		Joins("LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id").
+		Where("messages.id = ? AND messages_groups.collection = ? "+
+			"AND messages_groups.deleted = 0 AND messages.deleted IS NULL "+
+			"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
+			"AND messages_outcomes.id IS NULL",
+			msgid, utils.COLLECTION_APPROVED).
+		Scan(&rows)
 
-	if row.Groupid == 0 || (row.Lat == 0 && row.Lng == 0) {
-		return
+	for _, row := range rows {
+		if row.Groupid == 0 || (row.Lat == 0 && row.Lng == 0) {
+			continue
+		}
+
+		// groupid is part of the unique key, so it is never updated on conflict.
+		db.Table("messages_spatial").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "point"}, Value: clause.Column{Table: "excluded", Name: "point"}},
+				{Column: clause.Column{Name: "msgtype"}, Value: clause.Column{Table: "excluded", Name: "msgtype"}},
+				{Column: clause.Column{Name: "arrival"}, Value: clause.Column{Table: "excluded", Name: "arrival"}},
+			},
+		}).Create(map[string]interface{}{
+			"msgid":   msgid,
+			"point":   gorm.Expr("ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)", row.Lng, row.Lat),
+			"groupid": row.Groupid,
+			"msgtype": row.Msgtype,
+			"arrival": row.Arrival,
+		})
 	}
+}
 
-	db.Exec("INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) "+
-		"VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), ?, ?, ?) "+
-		"ON DUPLICATE KEY UPDATE point = VALUES(point), groupid = VALUES(groupid), "+
-		"msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
-		msgid, row.Lng, row.Lat, row.Groupid, row.Msgtype, row.Arrival)
+// invalidateMessageSearchIndexes drops the keyword-index (messages_index) and/or vector
+// embedding (messages_embeddings) rows for a message whose subject/body has just changed.
+// Both are populated ONCE for messages "missing" from those tables
+// (MessageSearchService.indexUnindexedMessages / GenerateEmbeddingsCommand) and are never
+// refreshed on edit, so a search for a term the edit introduced would never match.
+// Deleting the stale rows lets those background jobs re-index and re-embed from the new
+// text. Discourse 9954: a Wanted edited to add "Moulinex" was unfindable by that word.
+//
+// The two stores are driven by different fields, so they take independent invalidation
+// flags: messages_index is derived from the message SUBJECT only (indexString is only ever
+// called with subject text), while messages_embeddings is derived from subject+textbody. A
+// body-only edit must not drop the keyword index - those rows still accurately reflect the
+// unchanged subject, and dropping them would make the message unsearchable by keyword for
+// no reason until the next background run.
+//
+// Deleting the messages_embeddings row is necessary but not sufficient for vector search:
+// apiv2 serves vector search entirely from an in-process store (embedding.Global) that
+// Refresh()es every ~2 min and is presence-keyed, so a delete+re-embed landing between two
+// ticks would leave the STALE embedding in memory (see Store.Refresh's "Known limitation").
+// We therefore also Evict the msgid from that store so the next Refresh reloads the
+// regenerated blob.
+func invalidateMessageSearchIndexes(db *gorm.DB, msgid uint64, subjectChanged bool, textChanged bool) {
+	if subjectChanged {
+		db.Table("messages_index").Where("msgid = ?", msgid).Delete(nil)
+	}
+	if subjectChanged || textChanged {
+		db.Table("messages_embeddings").Where("msgid = ?", msgid).Delete(nil)
+		embedding.Global.Evict(msgid)
+	}
 }
 
 // handleApprove approves a pending message.
@@ -1742,20 +2422,23 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Move to Approved with arrival=NOW() so immediate-email recipients get it.
 	// Guard against double-approve by requiring collection != Approved.
 	// Restrict to groups the caller is authorised for.
-	if result := db.Exec("UPDATE messages_groups SET collection = ?, approvedby = ?, approvedat = NOW(), arrival = NOW() WHERE msgid = ? AND groupid IN ? AND collection != ?",
-		utils.COLLECTION_APPROVED, myid, req.ID, authorizedGroups, utils.COLLECTION_APPROVED); result.Error != nil {
+	if result := db.Table("messages_groups").
+		Where("msgid = ? AND groupid IN ? AND collection != ?", req.ID, authorizedGroups, utils.COLLECTION_APPROVED).
+		Updates(map[string]interface{}{
+			"collection": utils.COLLECTION_APPROVED, "approvedby": myid,
+			"approvedat": gorm.Expr("NOW()"), "arrival": gorm.Expr("NOW()"),
+		}); result.Error != nil {
 		log.Printf("Failed to approve message %d: %v", req.ID, result.Error)
 	}
 
 	// Release hold on the same authorised groups.
-	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
+	// Identical to cc381d7c669b
+	// (handleRelease); converted together per gate (h).
+	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+		Update("heldby", gorm.Expr("NULL"))
 
-	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
-	var stillHeldCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
-	if stillHeldCount == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// Clearing this group's messages_groups.heldby above is the whole job: holds are
+	// per-group, so there is no message-wide flag to recompute and clear.
 
 	// Now Approved — add to the spatial index so the post appears in browse/search
 	// immediately rather than waiting for the periodic reconciler.
@@ -1763,12 +2446,15 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Mark as ham if it was flagged as spam on any authorised group (fall back to messages table).
 	var spamtype *string
-	db.Raw("SELECT spamtype FROM messages_groups WHERE msgid = ? AND groupid IN ? AND spamtype IS NOT NULL LIMIT 1", req.ID, authorizedGroups).Scan(&spamtype)
+	db.Table("messages_groups").Select("spamtype").
+		Where("msgid = ? AND groupid IN ? AND spamtype IS NOT NULL", req.ID, authorizedGroups).
+		Limit(1).Scan(&spamtype)
 	if spamtype == nil {
-		db.Raw("SELECT spamtype FROM messages WHERE id = ?", req.ID).Scan(&spamtype)
+		db.Table("messages").Select("spamtype").Where("id = ?", req.ID).Scan(&spamtype)
 	}
 	if spamtype != nil && *spamtype != "" {
-		db.Exec("REPLACE INTO messages_spamham (msgid, spamham) VALUES (?, 'Ham')", req.ID)
+		db.Table("messages_spamham").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{"msgid": req.ID, "spamham": gorm.Expr("'Ham'")})
 	}
 
 	subject := ""
@@ -1788,14 +2474,23 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// The batch processor will also create the mod log entry and notify group moderators.
 	// One task per authorised group so per-group logging and notifications are correct.
 	for _, gid := range authorizedGroups {
-		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-			"email_message_approved", req.ID, gid, myid, subject, body, stdmsgid, "Approve")
+		// Identical golden to
+		// 02b3821ea3b9, 7603ee833330 and e1f780721381; converted together per gate (h).
+		db.Table("background_tasks").Create(map[string]interface{}{
+			"task_type": "email_message_approved",
+			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+				req.ID, gid, myid, subject, body, stdmsgid, "Approve"),
+		})
 	}
 
 	// Notify freebiealerts.app about newly approved Offer posts.
+	// Clearance/bulk-offer posts are excluded — the concierge manages their
+	// fulfilment directly and freebiealerts.app is not the right channel for them.
 	var approvedMsgType string
-	db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&approvedMsgType)
-	if approvedMsgType == "Offer" {
+	db.Table("messages").Select("type").Where("id = ?", req.ID).Scan(&approvedMsgType)
+	var isClearance int64
+	db.Table("messages_bulk_items").Where("msgid = ?", req.ID).Count(&isClearance)
+	if approvedMsgType == "Offer" && isClearance == 0 {
 		if err := queue.QueueTask(queue.TaskFreebieAlertsAdd, map[string]interface{}{
 			"msgid": req.ID,
 		}); err != nil {
@@ -1807,6 +2502,41 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 }
 
 // handleReject rejects a pending message.
+// MessageOriginGroup returns the group a message was first posted to — the group whose
+// messages_groups.arrival matches the message's own arrival. With rippling-out a post is
+// added to nearby groups later (at ripple time), so the origin is the earliest-arriving
+// group AND its arrival must be at/near messages.arrival. Only that group's rejection
+// notifies the poster (#6); a secondary (rippled-in) group's rejection stays silent.
+//
+// Returns 0 when the origin cannot be determined — including when the origin group's row
+// was HARD-deleted (handleDeleteMessage / handleMove), leaving only later rippled-in
+// rows: those fail the arrival-match, so we return 0 and the caller falls back to
+// notifying all groups (the safe direction — notify rather than silently drop).
+// Soft-deleted (deleted=1) origin rows from a plain-delete rejection still persist and
+// are matched correctly, so a later secondary rejection stays silent as intended.
+//
+// messages_groups has no surrogate id column (its key is the composite (msgid, groupid)),
+// so groupid is the tiebreak when two groups share the same arrival second: lowest groupid
+// wins, deterministically. Manual cross-posting is retired by #10, so same-second ties are
+// rare (TN same-second import order).
+func MessageOriginGroup(db *gorm.DB, msgid uint64) uint64 {
+	var res struct {
+		Groupid  uint64
+		IsOrigin bool
+	}
+	db.Table("messages_groups mg").
+		Select("mg.groupid AS groupid, (mg.arrival <= m.arrival + INTERVAL 10 MINUTE) AS is_origin").
+		Joins("JOIN messages m ON m.id = mg.msgid").
+		Where("mg.msgid = ?", msgid).
+		Order("mg.arrival ASC, mg.groupid ASC").
+		Limit(1).
+		Scan(&res)
+	if !res.IsOrigin {
+		return 0
+	}
+	return res.Groupid
+}
+
 func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
@@ -1838,25 +2568,52 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 	ctx.Groupid = authorizedGroups[0]
 
+	// Only groups where this message is still awaiting moderation - Pending, or
+	// auto-flagged into Spam (which ModTools presents in the same queue with the
+	// same Reject action) - can be rejected/deleted here. If it has since been
+	// (re-)approved to live, this click is a no-op (Discourse 9815): we must not
+	// move a non-pending row and - for a reject-with-explanation - must not log
+	// a phantom rejection or email the poster a "rejected" notice while the post
+	// stays live. Spam was originally omitted, which made Reject on a
+	// spam-flagged post a SILENT no-op: the API answered ret=1, ModTools
+	// swallowed it, and mods concluded the button was broken (Vale of White
+	// Horse, msgid 121384453 - ten identical attempts across three browsers).
+	moderatable := []string{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
+	var pendingGroups []uint64
+	db.Table("messages_groups").Select("groupid").
+		Where("msgid = ? AND groupid IN ? AND collection IN ? AND deleted = 0",
+			req.ID, authorizedGroups, moderatable).Scan(&pendingGroups)
+
+	if subject != "" && len(pendingGroups) == 0 {
+		return c.JSON(fiber.Map{"ret": 1, "status": "Message is no longer pending and was not rejected"})
+	}
+
 	// With a subject (stdmsg), move to Rejected collection (user can edit and resubmit).
 	// Without a subject (plain delete), mark as deleted.
 	if subject != "" {
-		if result := db.Exec("UPDATE messages_groups SET collection = ?, rejectedat = NOW() WHERE msgid = ? AND groupid IN ? AND collection = ?",
-			utils.COLLECTION_REJECTED, req.ID, authorizedGroups, utils.COLLECTION_PENDING); result.Error != nil {
+		if result := db.Table("messages_groups").
+			Where("msgid = ? AND groupid IN ? AND collection IN ?", req.ID, pendingGroups, moderatable).
+			Updates(map[string]interface{}{"collection": utils.COLLECTION_REJECTED, "rejectedat": gorm.Expr("NOW()"), "heldby": gorm.Expr("NULL")}); result.Error != nil {
 			log.Printf("Failed to reject message %d: %v", req.ID, result.Error)
 		}
 	} else {
-		if result := db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid IN ? AND collection = ?",
-			req.ID, authorizedGroups, utils.COLLECTION_PENDING); result.Error != nil {
+		if result := db.Table("messages_groups").
+			Where("msgid = ? AND groupid IN ? AND collection IN ?", req.ID, authorizedGroups, moderatable).
+			Updates(map[string]interface{}{"deleted": gorm.Expr("1"), "heldby": gorm.Expr("NULL")}); result.Error != nil {
 			log.Printf("Failed to delete pending message %d: %v", req.ID, result.Error)
 		}
 
 		// Cascade soft-delete: if no non-deleted groups remain, mark messages.deleted
 		// so list queries filtering `messages.deleted IS NULL` don't see an orphan row.
 		var remainingGroups int64
-		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+		// Pin to the write host: this gates the parent-message soft-delete on rows we
+		// just modified, so it must read the source, not a possibly-lagging replica.
+		db.Clauses(dbresolver.Write).Table("messages_groups").Where("msgid = ? AND deleted = 0", req.ID).Count(&remainingGroups)
 		if remainingGroups == 0 {
-			if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
+			// Identical golden to
+			// ef364ece98ef and 22ed790e0691; converted together per gate (h).
+			if result := db.Table("messages").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "messageid": gorm.Expr("NULL")}); result.Error != nil {
 				log.Printf("Failed to soft-delete rejected message %d: %v", req.ID, result.Error)
 			}
 			if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
@@ -1867,13 +2624,127 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// Queue rejection email per authorised group (batch processor creates one log+push per group).
-	for _, gid := range authorizedGroups {
-		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-			"email_message_rejected", req.ID, gid, myid, subject, body, stdmsgid, "Reject")
+	// A rejected or deleted copy is no longer held, and the UPDATEs above clear its
+	// per-group heldby. Holds being per-group, a stale hold on one copy can no longer
+	// keep the whole post showing "Held" and strand a mod on another group the post
+	// rippled into (Discourse 9894).
+
+	// Determine the message's ORIGIN group — the first group it was posted to (the
+	// earliest messages_groups arrival). With rippling-out, a post is added to nearby
+	// groups over time; a rejection by a SECONDARY (non-origin) group just stops it
+	// showing in that group's area and must NOT be sent back to the poster (#6): they
+	// posted it on their origin group and it remains available there, so a secondary
+	// "out of area" rejection is not their concern.
+	originGid := MessageOriginGroup(db, req.ID)
+
+	// Queue the rejection email only for the origin group (the batch processor creates
+	// one log+push per group). Secondary-group rejections are silent to the poster and
+	// logged for #9 observability (how often rippling pushes a post somewhere a group
+	// rejects it). Iterate only the groups actually rejected here (Pending at the time)
+	// so a group where the post had already gone live gets no phantom email/log (#9815).
+	for _, gid := range pendingGroups {
+		if originGid != 0 && gid != originGid {
+			log.Printf("ripple: secondary-group reject msgid=%d groupid=%d byuser=%d (poster not notified)", req.ID, gid, myid)
+			RecordRippleEvent(db, "secondary_reject")
+			ClipReachForRejectedGroup(db, req.ID, gid)
+			continue
+		}
+		// Identical golden to
+		// b25ea3ba4ade, 7603ee833330 and e1f780721381; converted together per gate (h).
+		db.Table("background_tasks").Create(map[string]interface{}{
+			"task_type": "email_message_rejected",
+			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+				req.ID, gid, myid, subject, body, stdmsgid, "Reject"),
+		})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// ClipReachForRejectedGroup removes a rejecting secondary group's area from a post's
+// rippling reach polygon, so the post stops showing — and stops being reply-eligible —
+// in that group's area (#6). The post's reach (rippling_reach.polygon, GEOMETRY SRID
+// 3857) is trimmed by the group's DPA-or-CGA area (groups.polyindex). If the reach lies
+// wholly within the rejected group, nothing valid remains, so the reach row is dropped.
+//
+// Errors are ignored on purpose: until the reach engine (PR A) is live there is no
+// rippling_reach table/row to clip, in which case this is a harmless no-op.
+func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
+	// Record the rejected group BEFORE clipping the polygon, so the expander
+	// (ExpandService::advanceDue) re-subtracts it on every tick — otherwise the next tick
+	// overwrites `polygon` from the cached schedule and silently undoes this rejection.
+	// Dedup the id; ignored (best-effort) if the rejected_groups column is not present yet.
+	db.Table("rippling_reach").
+		Where("msgid = ? AND (rejected_groups IS NULL OR JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) = 0)", msgid, gid).
+		Update("rejected_groups", gorm.Expr("JSON_ARRAY_APPEND(COALESCE(rejected_groups, JSON_ARRAY()), '$', ?)", gid))
+
+	// Trim where the reach extends beyond the rejected group (skip the wholly-within
+	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
+	// The polygon SHRINKS: a stale sandwich inner bound could keep cheap-accepting
+	// viewers inside the clipped-out area, so it is NULLed in the SAME statement. The
+	// outer bound is left stale-loose (safe) and the next expander tick re-derives both.
+	// ORM migration site 7653c7a2e4ed (Tier 3 shapes / wave 5 runtime-varying
+	// review). The optional ", mr.inner_bound = NULL" SET fragment gives this
+	// statement exactly 2 real rendered forms - "NoInnerBound" and
+	// "WithInnerBound" below, both proved in TestOrmWave5_7653c7a2e4ed
+	// (AssertGoldenShapes; declared shapes lived in the retired ormharness's
+	// shapes.json; removed in d22ba1d6c). An
+	// explicit ordered clause.Set (not a map) keeps mr.polygon ahead of
+	// mr.inner_bound the same way the source text did, even though the two
+	// assignments are independent and the order is not actually load-bearing.
+	// `groups` needs its own backticks: GORM only quotes identifiers it
+	// constructs itself, not identifiers inside a raw Table()/Where() string,
+	// and "groups" is a MySQL reserved word.
+	set := clause.Set{
+		{Column: clause.Column{Table: "mr", Name: "polygon"}, Value: gorm.Expr("ST_Difference(mr.polygon, g.polyindex)")},
+	}
+	if rippling.ReachBoundsReady(db) {
+		set = append(set, clause.Assignment{
+			Column: clause.Column{Table: "mr", Name: "inner_bound"}, Value: gorm.Expr("NULL"),
+		})
+	}
+	db.Table("rippling_reach mr JOIN `groups` g ON g.id = ?", gid).
+		Clauses(set).
+		Where("mr.msgid = ? AND g.polyindex IS NOT NULL "+
+			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
+			"AND ST_Intersects(mr.polygon, g.polyindex) "+
+			"AND NOT ST_Within(mr.polygon, g.polyindex)", msgid).
+		Updates(map[string]interface{}{})
+
+	// Reach wholly inside the rejected group → no area remains: drop the reach row.
+	// GORM's Delete
+	// callback (callbacks/delete.go) only calls AddClauseIfNotExists(clause.From{})
+	// - it never reads Statement.Joins the way the SELECT query callback does -
+	// so a plain .Joins() call before .Delete() is silently dropped. Supplying our
+	// own non-empty clause.From{} (via .Clauses, before .Delete runs) makes
+	// AddClauseIfNotExists a no-op, so the join we set on it survives. The join's
+	// Expression is a raw gorm.Expr so its bind lands inside the FROM clause,
+	// ahead of the WHERE's own bind - matching the original (gid, msgid) order.
+	// clause.Delete{Modifier: "mr"} supplies the "DELETE mr" alias prefix;
+	// .Table("rippling_reach mr") keeps the base table's own alias unquoted,
+	// the same TableExpr mechanism join_test.go pins for "users u".
+	db.Table("rippling_reach mr").
+		Clauses(
+			clause.Delete{Modifier: "mr"},
+			clause.From{Joins: []clause.Join{{Expression: gorm.Expr("JOIN `groups` g ON g.id = ?", gid)}}},
+		).
+		Where("mr.msgid = ? AND g.polyindex IS NOT NULL "+
+			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
+			"AND ST_Within(mr.polygon, g.polyindex)", msgid).
+		Delete(nil)
+}
+
+// RecordRippleEvent bumps the per-day counter for a rippling-out event (design §15/§16 —
+// "instrument from day one"), surfaced read-only in sysadmin. Best-effort: errors are
+// ignored so instrumentation never affects the request (e.g. before the table ships).
+func RecordRippleEvent(db *gorm.DB, event string) {
+	db.Table("rippling_event_metrics").Clauses(clause.OnConflict{
+		DoUpdates: clause.Assignments(map[string]interface{}{"count": gorm.Expr("count + 1")}),
+	}).Create(map[string]interface{}{
+		"day":   gorm.Expr("CURDATE()"),
+		"event": event,
+		"count": gorm.Expr("1"),
+	})
 }
 
 // handleDeleteMessage deletes a message (mod action).
@@ -1897,15 +2768,23 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	ctx.Groupid = authorizedGroups[0]
 
 	// Per-group delete: remove only the authorized groups' rows.
-	if result := db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups); result.Error != nil {
+	// Identical golden to f90b6df0a3bb
+	// (handleRejectToDraft); converted together per gate (h).
+	if result := db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+		Delete(nil); result.Error != nil {
 		log.Printf("Failed to delete messages_groups for message %d groups %v: %v", req.ID, authorizedGroups, result.Error)
 	}
 
 	// If no non-deleted groups remain, soft-delete the message itself.
 	var remainingGroups int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+	// Pin to the write host: this gates the parent-message soft-delete on rows we
+	// just modified, so it must read the source, not a possibly-lagging replica.
+	db.Clauses(dbresolver.Write).Table("messages_groups").Where("msgid = ? AND deleted = 0", req.ID).Count(&remainingGroups)
 	if remainingGroups == 0 {
-		if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
+		// Identical golden to
+		// 522c1e7c91cf and 22ed790e0691; converted together per gate (h).
+		if result := db.Table("messages").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "messageid": gorm.Expr("NULL")}); result.Error != nil {
 			log.Printf("Failed to soft-delete message %d: %v", req.ID, result.Error)
 		}
 
@@ -1933,8 +2812,13 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	// Queue email+log+push via background task for each authorized group.
 	// The batch processor will create the mod log entry and notify group moderators.
 	for _, gid := range authorizedGroups {
-		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-			"email_message_rejected", req.ID, gid, myid, subject, body, stdmsgid, "Delete Approved Message")
+		// Identical golden to
+		// b25ea3ba4ade, 02b3821ea3b9 and e1f780721381; converted together per gate (h).
+		db.Table("background_tasks").Create(map[string]interface{}{
+			"task_type": "email_message_rejected",
+			"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+				req.ID, gid, myid, subject, body, stdmsgid, "Delete Approved Message"),
+		})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1959,16 +2843,22 @@ func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Record for spam training.
-	db.Exec("REPLACE INTO messages_spamham (msgid, spamham) VALUES (?, ?)", req.ID, utils.COLLECTION_SPAM)
+	db.Table("messages_spamham").Clauses(clause.Insert{Modifier: "REPLACE"}).
+		Create(map[string]interface{}{"msgid": req.ID, "spamham": utils.COLLECTION_SPAM})
 
 	// Per-group spam: soft-delete only the authorized groups' rows.
-	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
+	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+		Update("deleted", gorm.Expr("1"))
 
 	// If no non-deleted groups remain, soft-delete the message itself.
 	var remainingGroups int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+	// Pin to the write host: this gates the parent-message soft-delete on rows we
+	// just modified, so it must read the source, not a possibly-lagging replica.
+	db.Clauses(dbresolver.Write).Table("messages_groups").Where("msgid = ? AND deleted = 0", req.ID).Count(&remainingGroups)
 	if remainingGroups == 0 {
-		db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", req.ID)
+		// Identical golden to
+		// 499057e391e9 (DeleteMessageEndpoint); converted together per gate (h).
+		db.Table("messages").Where("id = ?", req.ID).Update("deleted", gorm.Expr("NOW()"))
 
 		// Remove from freebiealerts.app — post is no longer available on any group.
 		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
@@ -2000,10 +2890,10 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Per-group hold: set heldby on the authorized groups' rows.
-	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
-
-	// Also update messages.heldby for backwards compatibility during migration.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
+	// Identical golden to
+	// 1a12de474647 (handleBackToPending); converted together per gate (h).
+	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+		Update("heldby", myid)
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -2033,14 +2923,25 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 	}
 
 	// Per-group hold for re-review.
-	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
+	// Identical golden to
+	// 8c1766162f86 (handleHold); converted together per gate (h).
+	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+		Update("heldby", myid)
 
-	// Also update messages.heldby for backwards compatibility.
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
+	// Pull the WHOLE post back to Pending, not just this mod's groups: a moderator moving
+	// any copy back to pending takes the post off the board on EVERY community it is on
+	// (home + rippled-out copies), so it is never left stranded and still visible on the
+	// neighbouring communities. Each community then approves or rejects its own copy
+	// independently. Clear approvedby/approvedat on every live copy first, then flip to
+	// Pending.
+	db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_APPROVED).
+		Updates(map[string]interface{}{"approvedby": gorm.Expr("NULL"), "approvedat": gorm.Expr("NULL")})
+	microvolunteering.SendForReviewAllGroups(db, req.ID, "A moderator moved this post back to pending for review.")
 
-	// Move from Approved back to Pending for authorized groups.
-	db.Exec("UPDATE messages_groups SET collection = ?, approvedby = NULL, approvedat = NULL WHERE msgid = ? AND groupid IN ? AND collection = ?",
-		utils.COLLECTION_PENDING, req.ID, authorizedGroups, utils.COLLECTION_APPROVED)
+	// Freeze the ripple once the origin is Pending: the copies persist for per-group
+	// moderation and a later re-approval brings a copy back without re-rippling or
+	// re-notifying members.
+	microvolunteering.FreezeReachIfOriginPending(db, req.ID)
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -2070,14 +2971,13 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// Per-group release.
-	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
+	// Identical golden to
+	// 6180dc848f02 (handleApprove); converted together per gate (h).
+	db.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, authorizedGroups).
+		Update("heldby", gorm.Expr("NULL"))
 
-	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
-	var stillHeldCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
-	if stillHeldCount == 0 {
-		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
-	}
+	// Clearing the per-group heldby above is the whole job: a hold belongs to a
+	// (message, group) pair, so there is no message-wide flag left to recompute.
 
 	// Log to each group we acted on.
 	for _, gid := range authorizedGroups {
@@ -2097,7 +2997,9 @@ func handleApproveEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	}
 
 	// Clear the editedby flag.
-	db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
+	// Identical golden to
+	// 83ab41e7c9ac (handleRevertEdits); converted together per gate (h).
+	db.Table("messages").Where("id = ?", req.ID).Update("editedby", gorm.Expr("NULL"))
 
 	// Find the latest pending edit to apply its changes.
 	type editRecord struct {
@@ -2106,22 +3008,27 @@ func handleApproveEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		Newtext    *string
 	}
 	var edit editRecord
-	db.Raw("SELECT id, newsubject, newtext FROM messages_edits WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL ORDER BY id DESC LIMIT 1",
-		req.ID).Scan(&edit)
+	db.Table("messages_edits").Select("id, newsubject, newtext").
+		Where("msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL", req.ID).
+		Order("id DESC").Limit(1).Scan(&edit)
 
 	if edit.ID > 0 {
 		// Apply the changes from the latest edit.
 		if edit.Newsubject != nil {
-			db.Exec("UPDATE messages SET subject = ? WHERE id = ?", *edit.Newsubject, req.ID)
+			db.Table("messages").Where("id = ?", req.ID).Update("subject", *edit.Newsubject)
 		}
 		if edit.Newtext != nil {
-			db.Exec("UPDATE messages SET textbody = ? WHERE id = ?", *edit.Newtext, req.ID)
+			db.Table("messages").Where("id = ?", req.ID).Update("textbody", *edit.Newtext)
 		}
+		// Applied an edit → whichever of the keyword index / vector embedding depend on
+		// the field(s) just written are now stale.
+		invalidateMessageSearchIndexes(db, req.ID, edit.Newsubject != nil, edit.Newtext != nil)
 	}
 
 	// Mark ALL pending edits as approved.
-	db.Exec("UPDATE messages_edits SET reviewrequired = 0, approvedat = NOW() WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL",
-		req.ID)
+	db.Table("messages_edits").
+		Where("msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL", req.ID).
+		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "approvedat": gorm.Expr("NOW()")})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2142,28 +3049,45 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		Oldtext    *string
 	}
 	var old editOldValues
-	db.Raw("SELECT oldsubject, oldtext FROM messages_edits WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL ORDER BY id DESC LIMIT 1", req.ID).Scan(&old)
+	db.Table("messages_edits").Select("oldsubject, oldtext").
+		Where("msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL", req.ID).
+		Order("id DESC").Limit(1).Scan(&old)
 	if old.Oldsubject != nil || old.Oldtext != nil {
-		clauses := []string{"editedby = NULL"}
-		args := []interface{}{}
+		// The guard
+		// above means at least one of Oldsubject/Oldtext is set, so this is a
+		// genuine 3-shape site (SubjectOnly, TextbodyOnly, Both), not an
+		// N-independent-fields one - small enough for the retired harness's
+		// shapes.json, unlike
+		// applyPatchMessageCore's 8-field SET a few hundred lines down (site
+		// e9f2c662be69), which stays raw. All 3 shapes were proven by the
+		// retired ormharness (shapes.json /
+		// TestTier1BatchShapes_99713f48c505, removed in d22ba1d6c).
+		assignments := clause.Set{
+			{Column: clause.Column{Name: "editedby"}, Value: gorm.Expr("NULL")},
+		}
 		if old.Oldsubject != nil {
-			clauses = append(clauses, "subject = ?")
-			args = append(args, *old.Oldsubject)
+			assignments = append(assignments, clause.Assignment{Column: clause.Column{Name: "subject"}, Value: *old.Oldsubject})
 		}
 		if old.Oldtext != nil {
-			clauses = append(clauses, "textbody = ?")
-			args = append(args, *old.Oldtext)
+			assignments = append(assignments, clause.Assignment{Column: clause.Column{Name: "textbody"}, Value: *old.Oldtext})
 		}
-		args = append(args, req.ID)
-		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+		db.Table("messages").Clauses(assignments).Where("id = ?", req.ID).Updates(map[string]interface{}{})
+
+		// Reverting restored the previous subject/body, so whichever of the keyword index
+		// / vector embedding depend on the restored field(s) are out of sync again - drop
+		// them to be rebuilt.
+		invalidateMessageSearchIndexes(db, req.ID, old.Oldsubject != nil, old.Oldtext != nil)
 	} else {
 		// No recorded old values — just clear the editedby flag.
-		db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
+		// Identical golden to
+		// 06b3d2e46af9 (handleApproveEdits); converted together per gate (h).
+		db.Table("messages").Where("id = ?", req.ID).Update("editedby", gorm.Expr("NULL"))
 	}
 
 	// Mark all pending edits as reverted.
-	db.Exec("UPDATE messages_edits SET reviewrequired = 0, revertedat = NOW() WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL",
-		req.ID)
+	db.Table("messages_edits").
+		Where("msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL", req.ID).
+		Updates(map[string]interface{}{"reviewrequired": gorm.Expr("0"), "revertedat": gorm.Expr("NOW()")})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2183,13 +3107,16 @@ func handlePartnerConsent(c *fiber.Ctx, myid uint64, req PostMessageRequest) err
 
 	// Look up partner in partners_keys.
 	var partnerID uint64
-	db.Raw("SELECT id FROM partners_keys WHERE partner = ?", *req.Partner).Scan(&partnerID)
+	db.Table("partners_keys").Select("id").Where("partner = ?", *req.Partner).Scan(&partnerID)
 	if partnerID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Partner not found")
 	}
 
 	// Record consent in partners_messages.
-	db.Exec("INSERT IGNORE INTO partners_messages (partnerid, msgid) VALUES (?, ?)", partnerID, req.ID)
+	db.Table("partners_messages").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"partnerid": partnerID,
+		"msgid":     req.ID,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2221,10 +3148,21 @@ func handleReply(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		ctx.Groupid = *req.Groupid
 	}
 
-	// Queue email+log via background task.
-	// The batch processor will also create the mod log entry.
-	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-		"email_message_reply", req.ID, ctx.Groupid, myid, subject, body, stdmsgid, "Leave Approved Message")
+	// Write the mod log entry synchronously, exactly once, like the other mod actions
+	// (hold/release/repost/edit). Previously the log was written by the batch processor,
+	// but that INSERT is unconditional and runs again whenever the task is retried (e.g.
+	// after a transient email-spool failure), producing duplicate "Replied" rows in the
+	// mod history (Discourse 9672/6). The batch now skips the log for this action.
+	logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, ctx.Groupid, ctx.Fromuser, myid, req.ID, stdmsgid, subject)
+
+	// Queue the email via background task (the log is already written above).
+	// Identical golden to
+	// b25ea3ba4ade, 02b3821ea3b9 and 7603ee833330; converted together per gate (h).
+	db.Table("background_tasks").Create(map[string]interface{}{
+		"task_type": "email_message_reply",
+		"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?)",
+			req.ID, ctx.Groupid, myid, subject, body, stdmsgid, "Leave Approved Message"),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2238,7 +3176,7 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Verify the message exists and check ownership/mod permission.
 	var fromuser uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&fromuser)
+	db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&fromuser)
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
@@ -2249,42 +3187,91 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to convert this message to draft")
 	}
 
-	// Use a transaction: insert draft then delete from groups.
+	// Determine which groups to take back to draft.
+	//   - groupid in the request (a moderator acting on their own group):
+	//     that group only.
+	//   - no groupid (the owner withdrawing their own message): ALL groups
+	//     the message is on — a withdrawal is global to the poster.
+	var groupids []uint64
+	if req.Groupid != nil && *req.Groupid > 0 {
+		groupids = []uint64{*req.Groupid}
+	} else {
+		db.Table("messages_groups").Select("groupid").Where("msgid = ?", req.ID).Scan(&groupids)
+	}
+	// Fallback for a message with no live group rows (e.g. already partially
+	// drafted): keep V1's behaviour of always producing a draft.
+	if len(groupids) == 0 {
+		if pg := getPrimaryGroupForMessage(db, req.ID); pg > 0 {
+			groupids = []uint64{pg}
+		}
+	}
+
+	// Use a transaction: insert draft(s) then remove the targeted group rows.
 	tx := db.Begin()
 	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction failed")
 	}
 
-	// Determine the group for the draft (use first group the message is in).
-	groupid := getPrimaryGroupForMessage(db, req.ID)
-
-	// Insert into messages_drafts (ignore if already a draft).
-	if err := tx.Exec("INSERT IGNORE INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
-		req.ID, groupid, myid).Error; err != nil {
-		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
+	// messages_drafts is unique per msgid, so a message has at most one draft
+	// row. Record it against the first targeted group; on re-post via
+	// JoinAndPost the owner picks the destination group(s) again. INSERT IGNORE
+	// keeps an existing draft row intact.
+	if len(groupids) > 0 {
+		if err := tx.Table("messages_drafts").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"msgid":   req.ID,
+			"groupid": groupids[0],
+			"userid":  myid,
+		}).Error; err != nil {
+			tx.Rollback()
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
+		}
 	}
 
-	// Remove from messages_groups.
-	if err := tx.Exec("DELETE FROM messages_groups WHERE msgid = ?", req.ID).Error; err != nil {
+	// Remove the targeted group rows. With a groupid this is just that group;
+	// without one it's every group the message was on. Any groups not in the
+	// set keep their live posting.
+	// Identical golden to 3a50dbee0fa0
+	// (handleDeleteMessage); converted together per gate (h). Runs on tx (a
+	// *gorm.DB transaction), which the retired harness's dry-run build
+	// function rendered identically to the plain connection - same reasoning
+	// as the retired orm_wave2_pilot_test.go's handleMerge note (removed in
+	// d22ba1d6c).
+	if err := tx.Table("messages_groups").Where("msgid = ? AND groupid IN ?", req.ID, groupids).
+		Delete(nil).Error; err != nil {
 		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to remove from groups")
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to remove from group")
 	}
 
-	// Clear any previous outcome so the reposted message starts fresh.
-	// Without this, a message that was withdrawn still shows as "withdrawn"
-	// in posting history after reposting — the same wrong behaviour as V1.
-	if err := tx.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID).Error; err != nil {
+	// If the message is still live on other groups, leave its global state
+	// (outcomes, availability, deadline) alone — those are shared across all
+	// groups and the message is still active elsewhere. Only when this was the
+	// last group does the message become a fresh draft and need a full reset.
+	var remainingGroups int64
+	if err := tx.Table("messages_groups").Where("msgid = ?", req.ID).Count(&remainingGroups).Error; err != nil {
 		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to clear outcome")
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to count remaining groups")
 	}
-	tx.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
 
-	// Reset availablenow to availableinitially — if the item was promised to
-	// someone who never collected, the repost should offer the full quantity again.
-	// Also clear messages_by so there are no stale promise records.
-	tx.Exec("UPDATE messages SET availablenow = availableinitially WHERE id = ?", req.ID)
-	tx.Exec("DELETE FROM messages_by WHERE msgid = ?", req.ID)
+	if remainingGroups == 0 {
+		// Clear any previous outcome so the reposted message starts fresh.
+		// Without this, a message that was withdrawn still shows as "withdrawn"
+		// in posting history after reposting — the same wrong behaviour as V1.
+		// Identical golden to
+		// dc8914d8b9d5 and a08c7f4426c7; converted together per gate (h).
+		if err := tx.Table("messages_outcomes").Where("msgid = ?", req.ID).Delete(nil).Error; err != nil {
+			tx.Rollback()
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to clear outcome")
+		}
+		// Identical golden to
+		// ce1d968cff70 and 4064113639bf; converted together per gate (h).
+		tx.Table("messages_outcomes_intended").Where("msgid = ?", req.ID).Delete(nil)
+
+		// Reset availablenow to availableinitially — if the item was promised to
+		// someone who never collected, the repost should offer the full quantity again.
+		// Also clear messages_by so there are no stale promise records.
+		tx.Table("messages").Where("id = ?", req.ID).Update("availablenow", gorm.Expr("availableinitially"))
+		tx.Table("messages_by").Where("msgid = ?", req.ID).Delete(nil)
+	}
 
 	if err := tx.Commit().Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction commit failed")
@@ -2292,12 +3279,16 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Clear deadline if it's in the past or today — an old deadline is no longer
 	// relevant when reposting and would cause the message to appear expired.
-	var deadline *string
-	db.Raw("SELECT deadline FROM messages WHERE id = ?", req.ID).Scan(&deadline)
-	if deadline != nil && *deadline != "" {
-		today := time.Now().Format("2006-01-02")
-		if *deadline <= today {
-			db.Exec("UPDATE messages SET deadline = NULL WHERE id = ?", req.ID)
+	// Only when fully redrafted: while still live elsewhere the deadline applies
+	// to the active posting.
+	if remainingGroups == 0 {
+		var deadline *string
+		db.Table("messages").Select("deadline").Where("id = ?", req.ID).Scan(&deadline)
+		if deadline != nil && *deadline != "" {
+			today := time.Now().Format("2006-01-02")
+			if *deadline <= today {
+				db.Table("messages").Where("id = ?", req.ID).Update("deadline", gorm.Expr("NULL"))
+			}
 		}
 	}
 
@@ -2306,13 +3297,54 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Return the message type (the client uses this).
 	var msgType string
-	db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
+	db.Table("messages").Select("type").Where("id = ?", req.ID).Scan(&msgType)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "messagetype": msgType})
 }
 
+// deadlineDate reduces a client-supplied deadline to its date part.
+// messages.deadline is a DATE column; bundled apps send a full ISO datetime
+// ("2026-07-15T00:00:00.000Z"), which strict sql_mode rejects as a DATE
+// literal. Current clients send plain YYYY-MM-DD, which passes through.
+func deadlineDate(deadline string) string {
+	if len(deadline) > 10 {
+		return deadline[:10]
+	}
+	return deadline
+}
+
 // handleJoinAndPost joins a group and posts a message in one action.
 func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	db := database.DBConn
+
+	// A member may only submit their own draft. A ChitChat moderator converting
+	// a ChitChat post submits the draft they just created for that member, so
+	// they submit as the member via ?onbehalfof=.
+	author, err := onBehalfOf(c, myid)
+	if err != nil {
+		return err
+	}
+
+	var owner uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&owner)
+	if owner == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found")
+	}
+	if owner != author {
+		return fiber.NewError(fiber.StatusForbidden, "Not your message")
+	}
+
+	return JoinAndPostAs(c, author, req)
+}
+
+// JoinAndPostAs joins author to the destination group and submits the draft as
+// them. The ownership check lives in the caller: handleJoinAndPost enforces
+// "your own draft" for the member route, while the ChitChat convert-to-post
+// path instead requires the caller to be a ChitChat moderator or support/admin
+// (newsfeed.canHidePost) and passes the member as author.
+//
+// No other caller should pass an author other than the caller.
+func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
 	// Look up the existing draft message.
@@ -2321,12 +3353,9 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		Type     string
 	}
 	var msg msgInfo
-	db.Raw("SELECT fromuser, type FROM messages WHERE id = ?", req.ID).Scan(&msg)
+	db.Table("messages").Select("fromuser, type").Where("id = ?", req.ID).Scan(&msg)
 	if msg.Fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
-	}
-	if msg.Fromuser != myid {
-		return fiber.NewError(fiber.StatusForbidden, "Not your message")
 	}
 
 	// Find the group — from request, then messages_drafts, then messages_groups.
@@ -2334,10 +3363,29 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	if req.Groupid != nil && *req.Groupid > 0 {
 		groupid = *req.Groupid
 	} else {
-		db.Raw("SELECT groupid FROM messages_drafts WHERE msgid = ? LIMIT 1", req.ID).Scan(&groupid)
+		db.Table("messages_drafts").Select("groupid").Where("msgid = ?", req.ID).Limit(1).Scan(&groupid)
 	}
 	if groupid == 0 {
 		groupid = getPrimaryGroupForMessage(db, req.ID)
+	}
+	if groupid == 0 {
+		// The compose client normally resolves the member's location to a
+		// group and sends groupid; some clients fail to (observed live:
+		// WANTED posts whose draft stored a location but whose submit carried
+		// no group - the member was then stuck at "groupid is required" for
+		// good). The message knows where it is, so derive what the client
+		// should have sent: the closest group to the post's own coordinates
+		// (polygon containment is authoritative inside ClosestGroups).
+		var loc struct {
+			Lat float64 `gorm:"column:lat"`
+			Lng float64 `gorm:"column:lng"`
+		}
+		db.Table("messages").Select("lat, lng").Where("id = ?", req.ID).Scan(&loc)
+		if loc.Lat != 0 || loc.Lng != 0 {
+			if g := location.ClosestSingleGroup(loc.Lat, loc.Lng, location.NEARBY); g != nil {
+				groupid = g.ID
+			}
+		}
 	}
 	if groupid == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "groupid is required")
@@ -2347,26 +3395,32 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// V1 parity: a ban deletes the memberships row and inserts into users_banned —
 	// there is no memberships.collection='Banned' row, so the check must hit users_banned.
 	var bannedCount int64
-	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&bannedCount)
+	db.Table("users_banned").Where("userid = ? AND groupid = ?", myid, groupid).Count(&bannedCount)
 	if bannedCount > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "You are banned from this group")
 	}
 
 	// Join group if not already a member.
-	result := db.Exec("INSERT IGNORE INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
-		myid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
+	result := db.Table("memberships").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"userid":     myid,
+		"groupid":    groupid,
+		"role":       utils.ROLE_MEMBER,
+		"collection": utils.COLLECTION_APPROVED,
+	})
 
 	// Log the join event when a new membership row was created.
 	if result.RowsAffected > 0 {
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
-			flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, groupid, myid, myid)
+		db.Table("logs").Create(map[string]interface{}{
+			"timestamp": gorm.Expr("NOW()"), "type": flog.LOG_TYPE_GROUP, "subtype": flog.LOG_SUBTYPE_JOINED,
+			"groupid": groupid, "user": myid, "byuser": myid,
+		})
 	}
 
 	// All messages start Pending — the content check batch job runs content checks
 	// and promotes clean messages from non-moderated users to Approved.
 	collection := utils.COLLECTION_PENDING
 	var ourPostingStatus *string
-	db.Raw("SELECT ourPostingStatus FROM memberships WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&ourPostingStatus)
+	db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, groupid).Scan(&ourPostingStatus)
 
 	if ourPostingStatus != nil && strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_PROHIBITED) {
 		return fiber.NewError(fiber.StatusForbidden, "You are not allowed to post on this group")
@@ -2378,11 +3432,20 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	locStr := constructLocationString(db, req.ID)
 	if locStr != "" {
 		var itemName *string
-		db.Raw("SELECT i.name FROM items i INNER JOIN messages_items mi ON mi.itemid = i.id WHERE mi.msgid = ? LIMIT 1", req.ID).Scan(&itemName)
+		db.Table("items i").
+			Select("i.name").
+			Joins("INNER JOIN messages_items mi ON mi.itemid = i.id").
+			Where("mi.msgid = ?", req.ID).
+			Limit(1).
+			Scan(&itemName)
 		if itemName != nil {
 			keyword := getGroupKeyword(db, groupid, msg.Type)
 			newSubject := keyword + ": " + *itemName + " (" + locStr + ")"
-			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, req.ID)
+			// Identical golden to
+			// 2f30762bf955 (applyPatchMessageCore) and b53892a17f40 (PutMessageAs);
+			// converted together per gate (h).
+			db.Table("messages").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"subject": newSubject, "suggestedsubject": newSubject})
 		}
 	}
 
@@ -2390,48 +3453,75 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// This catches pre-validation drafts created before PUT /message required
 	// item, and any other path that leaves subject empty by submit time.
 	var finalSubject string
-	db.Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&finalSubject)
+	// Pin to the write host: we may have just UPDATEd messages.subject above, and this
+	// read gates a hard validation error. A lagging replica could see the old/empty
+	// subject and wrongly reject a valid post.
+	db.Clauses(dbresolver.Write).Table("messages").Select("COALESCE(subject, '')").Where("id = ?", req.ID).Scan(&finalSubject)
 	if strings.TrimSpace(finalSubject) == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
 	}
 
 	// Save deadline and deliverypossible if provided.
 	if req.Deadline != nil && *req.Deadline != "" {
-		db.Exec("UPDATE messages SET deadline = ? WHERE id = ?", *req.Deadline, req.ID)
+		// messages.deadline is a DATE column and bundled apps send a full ISO
+		// datetime, which strict sql_mode rejects outright - and with the error
+		// unchecked the deadline was silently lost (Discourse #9481).
+		if err := db.Table("messages").Where("id = ?", req.ID).Update("deadline", deadlineDate(*req.Deadline)).Error; err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid deadline")
+		}
 	}
 	if req.Deliverypossible != nil {
-		db.Exec("UPDATE messages SET deliverypossible = ? WHERE id = ?", *req.Deliverypossible, req.ID)
+		db.Table("messages").Where("id = ?", req.ID).Update("deliverypossible", *req.Deliverypossible)
 	}
 
 	// Submit: insert into messages_groups and clean up draft.
-	db.Exec("INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
-		req.ID, groupid, collection)
+	db.Table("messages_groups").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"msgid":      req.ID,
+		"groupid":    groupid,
+		"collection": collection,
+		"arrival":    gorm.Expr("NOW()"),
+	})
 
 	// Clear any previous outcomes (V1 parity: submit() always deletes outcomes before re-posting).
-	db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID)
-	db.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
+	// Identical golden to 854c7e93efe3
+	// and a08c7f4426c7; converted together per gate (h).
+	db.Table("messages_outcomes").Where("msgid = ?", req.ID).Delete(nil)
+	// Identical golden to 0486830f6eda
+	// and 4064113639bf; converted together per gate (h).
+	db.Table("messages_outcomes_intended").Where("msgid = ?", req.ID).Delete(nil)
 
 	// Record posting (V1 parity: submit() inserts into messages_postings each time a message is submitted).
-	db.Exec("INSERT INTO messages_postings (msgid, groupid) VALUES (?, ?)", req.ID, groupid)
+	db.Table("messages_postings").Create(map[string]interface{}{"msgid": req.ID, "groupid": groupid})
 
 	// Record history entry for spam checking (V1 parity: Message::save() inserts into messages_history).
 	// We fetch user email/name from the DB since platform messages don't have envelope headers.
 	var histSubject string
-	db.Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&histSubject)
+	// Pin to the write host: this is the subject we may have just UPDATEd, written here
+	// into messages_history. A lagging replica read would persist a stale/empty subject.
+	db.Clauses(dbresolver.Write).Table("messages").Select("COALESCE(subject, '')").Where("id = ?", req.ID).Scan(&histSubject)
 	var histFromname string
-	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&histFromname)
+	db.Table("users").Select("COALESCE(fullname, '')").Where("id = ?", myid).Scan(&histFromname)
 	// V1 parity: submit() calls inventEmail() to get/create the user's @users.ilovefreegle.org
 	// proxy email, then sets messages.fromaddr to it. This address is checked by auto-repost,
 	// chase-up, and other cron jobs via Mail::ourDomain().
 	fromaddr := user.GetOrCreateInternalEmail(db, myid)
 
-	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", fromaddr, req.ID)
+	db.Table("messages").Where("id = ?", req.ID).Update("fromaddr", fromaddr)
 
 	// V1 parity: messages_history.fromaddr also uses the invented @users email, not the preferred email.
-	db.Exec("INSERT IGNORE INTO messages_history (msgid, groupid, source, fromuser, fromname, fromaddr, subject, arrival, fromip) VALUES (?, ?, 'Platform', ?, ?, ?, ?, NOW(), ?)",
-		req.ID, groupid, myid, histFromname, fromaddr, histSubject, c.IP())
+	db.Table("messages_history").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+		"msgid":    req.ID,
+		"groupid":  groupid,
+		"source":   gorm.Expr("'Platform'"),
+		"fromuser": myid,
+		"fromname": histFromname,
+		"fromaddr": fromaddr,
+		"subject":  histSubject,
+		"arrival":  gorm.Expr("NOW()"),
+		"fromip":   c.IP(),
+	})
 
-	db.Exec("DELETE FROM messages_drafts WHERE msgid = ?", req.ID)
+	db.Table("messages_drafts").Where("msgid = ?", req.ID).Delete(nil)
 
 	// V1 parity: Message::submit() logs Message/Received with byuser=NULL
 	// and text=messageid (RFC822 Message-Id header).
@@ -2447,7 +3537,7 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 
 	// Check if user has a password (to determine if they're a new user).
 	var hasPassword int64
-	db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?", myid, utils.LOGIN_TYPE_NATIVE).Scan(&hasPassword)
+	db.Table("users_logins").Where("userid = ? AND type = ?", myid, utils.LOGIN_TYPE_NATIVE).Count(&hasPassword)
 
 	resp := fiber.Map{
 		"ret":     0,
@@ -2463,8 +3553,18 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		hashed := auth.HashPassword(password, salt)
 
 		// uid must be the user ID (not email) so that VerifyPassword can find the row.
-		db.Exec("INSERT INTO users_logins (userid, type, uid, credentials, salt) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE credentials = VALUES(credentials), salt = VALUES(salt)",
-			myid, utils.LOGIN_TYPE_NATIVE, myid, hashed, salt)
+		db.Table("users_logins").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "credentials"}, Value: clause.Column{Table: "excluded", Name: "credentials"}},
+				{Column: clause.Column{Name: "salt"}, Value: clause.Column{Table: "excluded", Name: "salt"}},
+			},
+		}).Create(map[string]interface{}{
+			"userid":      myid,
+			"type":        utils.LOGIN_TYPE_NATIVE,
+			"uid":         myid,
+			"credentials": hashed,
+			"salt":        salt,
+		})
 		resp["newuser"] = true
 		resp["newpassword"] = password
 	}
@@ -2474,31 +3574,36 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 
 // patchMessageRequest is the body for PATCH /message and PATCH /message/tn/:tnpostid.
 type patchMessageRequest struct {
-	ID           uint64   `json:"id"`
-	Subject      *string  `json:"subject"`
-	Textbody     *string  `json:"textbody"`
-	Type         *string  `json:"type"`
-	Msgtype      *string  `json:"msgtype"`
-	Messagetype  *string  `json:"messagetype"`
-	Item         *string  `json:"item"`
-	Availablenow *int     `json:"availablenow"`
-	Lat          *float64 `json:"lat"`
-	Lng          *float64 `json:"lng"`
-	Location     *string  `json:"location"`
-	Locationid   *uint64  `json:"locationid"`
-	Groupid      *uint64  `json:"groupid"`
-	Attachments  []uint64 `json:"attachments"`
-	BadAIImages  []uint64 `json:"badAIImages"`
-	Deadline     *string  `json:"deadline"`
+	ID                 uint64          `json:"id"`
+	Subject            *string         `json:"subject"`
+	Textbody           *string         `json:"textbody"`
+	Type               *string         `json:"type"`
+	Msgtype            *string         `json:"msgtype"`
+	Messagetype        *string         `json:"messagetype"`
+	Item               *string         `json:"item"`
+	Availablenow       *int            `json:"availablenow"`
+	Lat                *float64        `json:"lat"`
+	Lng                *float64        `json:"lng"`
+	Location           *string         `json:"location"`
+	Locationid         *uint64         `json:"locationid"`
+	Groupid            *uint64         `json:"groupid"`
+	Attachments        AttachmentIDs   `json:"attachments"`
+	BadAIImages        []uint64        `json:"badAIImages"`
+	Deadline           *string         `json:"deadline"`
+	Bulkitems          []BulkItemInput `json:"bulkitems"`
+	Bulkslots          []string        `json:"bulkslots"`
+	Accessinstructions *string         `json:"accessinstructions"`
 }
 
-// resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
-// Returns the resolved user ID (0 on failure) and an error to return to the client.
-func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
+// resolvePartnerAuth reads a ?partner= query param and resolves the acting user
+// ID plus every candidate identity the partner's identifiers map to (a TN
+// member can own two Freegle accounts - see user.FindTNCandidates). Returns
+// (primary id, all candidates, error).
+func resolvePartnerAuth(c *fiber.Ctx) (uint64, []uint64, error) {
 	db := database.DBConn
 	_, _, domain, err := user.ValidatePartnerKey(db, c.Query("partner"))
 	if err != nil {
-		return 0, fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+		return 0, nil, fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
 	}
 
 	email := c.Query("email")
@@ -2513,25 +3618,126 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 	if email != "" {
 		parts := strings.SplitN(email, "@", 2)
 		if len(parts) != 2 || parts[1] != domain {
-			return 0, fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+			return 0, nil, fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
 		}
 	}
 
-	myid := user.FindByTNIdOrEmail(db, tnuserid, email)
-	if myid == 0 {
-		return 0, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+	candidates := user.FindTNCandidates(db, tnuserid, email)
+	if len(candidates) == 0 {
+		return 0, nil, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
 	}
-	return myid, nil
+	// Two candidates = the member's identity has diverged across two accounts.
+	// The sync's job is to STOP divergence, not tolerate it: merge the twins
+	// (falls back to the split candidates if the merge fails).
+	candidates = user.HealTNDivergence(db, candidates)
+	return candidates[0], candidates, nil
+}
+
+// actAsOwnerCandidate returns the message owner's id when the owner is one of
+// the partner-resolved candidate identities, else the primary id. The
+// partner's action on a message is legitimately the member's under whichever
+// of their identities owns it.
+func actAsOwnerCandidate(db *gorm.DB, primary uint64, candidates []uint64, msgID uint64) uint64 {
+	if len(candidates) < 2 {
+		return primary
+	}
+	var fromuser uint64
+	db.Table("messages").Select("fromuser").Where("id = ?", msgID).Scan(&fromuser)
+	for _, cand := range candidates {
+		if cand == fromuser {
+			return fromuser
+		}
+	}
+	return primary
+}
+
+// effLat/effLng are the CALLER's already-resolved coordinates, i.e. after
+// the Locationid-driven DB lookup at site 5b7a006dd0a5 has already run (if
+// it was going to) - this function only assembles the SET list from
+// whatever the caller resolved, it does not decide whether that lookup
+// happens. Locationid/Lat/Lng's cluster of 3 booleans (each present or not
+// in the final SET list) has 8 combinations; the 7 non-empty ones are all
+// reachable and are exactly what the retired message_fieldwise_tier9_test.go
+// (removed in d22ba1d6c) declared as the group's forms:
+//
+//	LocationidOnly, LatOnly, LngOnly, LocationidLat, LocationidLng, LatLng,
+//	LocationidLatLng
+//
+// (the 8th, all-absent, coincides with the site's "empty" case when no
+// other field is set either, so it needs no form of its own).
+//
+// buildApplyPatchMessageCoreUpdateSet assembles the messages UPDATE's SET
+// list as a clause.Set (a slice of clause.Assignment, gorm.io/gorm/clause),
+// one assignment appended per field the request actually supplies - the same
+// field-by-field branching the string-concatenation version this replaced
+// used, just emitting an assignment instead of a "col = ?" text fragment +
+// bound arg. clause.Set is order-preserving (it is a plain slice; Build()
+// walks it in slice order, see gorm.io/gorm/clause/set.go), so the
+// left-to-right assignment order MySQL evaluates a SET list in is exactly
+// the order fields are appended below - unchanged from the string version.
+//
+// Previously kept raw with
+// the reasoning that a dynamic SET list built by string concatenation has
+// 2^n possible shapes and so cannot be a fixed GORM chain - true for a FIXED
+// chain, but irrelevant here: the chain itself is fixed
+// (.Table("messages").Where(...).Clauses(set).Updates(...)), only the
+// PRE-BUILT clause.Set slice varies at runtime, exactly the way the SQL
+// string used to. Proven against the identical fieldwise.json goldens
+// already recorded for the string version (message_fieldwise_tier9_test.go),
+// via the retired ormharness's AssertGoldenFieldwise (all removed in
+// d22ba1d6c) - same n+2 cases, same golden SQL per
+// case, now rendered by GORM instead of by hand.
+func buildApplyPatchMessageCoreUpdateSet(subject, textbody, msgType, deadline *string, availablenow *int, locationid *uint64, effLat, effLng *float64) clause.Set {
+	var set clause.Set
+
+	if subject != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "subject"}, Value: *subject})
+	}
+	if textbody != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "textbody"}, Value: *textbody})
+	}
+	if msgType != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "type"}, Value: *msgType})
+	}
+	if availablenow != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "availablenow"}, Value: *availablenow})
+	}
+	if deadline != nil {
+		if *deadline == "" || *deadline == "null" {
+			set = append(set, clause.Assignment{Column: clause.Column{Name: "deadline"}, Value: gorm.Expr("NULL")})
+		} else {
+			// messages.deadline is a DATE column and bundled apps send a full ISO
+			// datetime, which strict sql_mode rejects outright, silently losing the
+			// deadline (Discourse #9481). Narrow it to a date before assigning.
+			set = append(set, clause.Assignment{Column: clause.Column{Name: "deadline"}, Value: deadlineDate(*deadline)})
+		}
+	}
+	if locationid != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "locationid"}, Value: *locationid})
+	}
+	if effLat != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "lat"}, Value: *effLat})
+	}
+	if effLng != nil {
+		set = append(set, clause.Assignment{Column: clause.Column{Name: "lng"}, Value: *effLng})
+	}
+
+	return set
 }
 
 // applyPatchMessageCore performs the edit on a message without writing the HTTP response.
 // Returns non-nil on failure. Callers are responsible for writing the success response.
-func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
+func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest, fromPartner bool) error {
 	db := database.DBConn
+
+	// Editing a clearance (bulk offer) is gated on the Clearance permission.
+	if req.Bulkitems != nil && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to edit a clearance")
+	}
 
 	// Check ownership or mod permission.
 	var fromuser uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&fromuser)
+	db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&fromuser)
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
@@ -2551,12 +3757,12 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		Locationid *uint64
 	}
 	var old msgValues
-	db.Raw("SELECT subject, COALESCE(textbody, '') as textbody, COALESCE(type, '') as type, locationid FROM messages WHERE id = ?", req.ID).Scan(&old)
+	db.Table("messages").Select("subject, COALESCE(textbody, '') as textbody, COALESCE(type, '') as type, locationid").Where("id = ?", req.ID).Scan(&old)
 
 	// Snapshot old item IDs as JSON (V1 stores item IDs array in olditems/newitems).
 	type itemRow struct{ ID uint64 }
 	var oldItemRows []itemRow
-	db.Raw("SELECT itemid AS id FROM messages_items WHERE msgid = ? ORDER BY itemid", req.ID).Scan(&oldItemRows)
+	db.Table("messages_items").Select("itemid AS id").Where("msgid = ?", req.ID).Order("itemid").Scan(&oldItemRows)
 	oldItemIDs := make([]uint64, len(oldItemRows))
 	for i, r := range oldItemRows {
 		oldItemIDs[i] = r.ID
@@ -2571,7 +3777,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// Snapshot old attachment IDs as JSON (V1 stores attachment IDs in oldimages/newimages).
 	type attachRow struct{ ID uint64 }
 	var oldAttachRows []attachRow
-	db.Raw("SELECT id FROM messages_attachments WHERE msgid = ? ORDER BY id", req.ID).Scan(&oldAttachRows)
+	db.Table("messages_attachments").Select("id").Where("msgid = ?", req.ID).Order("id").Scan(&oldAttachRows)
 	oldAttachIDs := make([]uint64, len(oldAttachRows))
 	for i, r := range oldAttachRows {
 		oldAttachIDs[i] = r.ID
@@ -2583,69 +3789,78 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		oldImagesJSON = &s
 	}
 
-	// Build a single UPDATE with all changed fields.
-	setClauses := []string{}
-	args := []interface{}{}
-
-	if req.Subject != nil {
-		setClauses = append(setClauses, "subject = ?")
-		args = append(args, *req.Subject)
-	}
-	if req.Textbody != nil {
-		setClauses = append(setClauses, "textbody = ?")
-		args = append(args, *req.Textbody)
-	}
+	// Build a single UPDATE with all changed fields - see
+	// buildApplyPatchMessageCoreUpdateSet above (site 2de07c2af78b /
+	// e9f2c662be69) for the SET list assembly itself, factored out for
+	// fieldwise proof and built as a dynamic clause.Set.
 	if req.Type != nil {
-		setClauses = append(setClauses, "type = ?")
-		args = append(args, *req.Type)
 		// also update messages_groups.msgtype.
-		db.Exec("UPDATE messages_groups SET msgtype = ? WHERE msgid = ?", *req.Type, req.ID)
+		db.Table("messages_groups").Where("msgid = ?", req.ID).Update("msgtype", *req.Type)
 	}
-	if req.Availablenow != nil {
-		setClauses = append(setClauses, "availablenow = ?")
-		args = append(args, *req.Availablenow)
-	}
-	if req.Deadline != nil {
-		if *req.Deadline == "" || *req.Deadline == "null" {
-			setClauses = append(setClauses, "deadline = NULL")
-		} else {
-			setClauses = append(setClauses, "deadline = ?")
-			args = append(args, *req.Deadline)
-		}
-	}
+	// Master's availablenow/deadline SET entries are not repeated here: this
+	// branch assembles the whole SET list in
+	// buildApplyPatchMessageCoreUpdateSet, which already covers both columns
+	// with the same NULL-on-empty rule. Master's deadlineDate() conversion is
+	// applied there rather than at this call site.
 	// Resolve location name to locationid if provided.
 	if req.Location != nil && *req.Location != "" && (req.Locationid == nil || *req.Locationid == 0) {
 		var locID uint64
-		db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", *req.Location).Scan(&locID)
+		db.Table("locations").Select("id").Where("name = ?", *req.Location).Limit(1).Scan(&locID)
 		if locID > 0 {
 			req.Locationid = &locID
 		}
 	}
-	if req.Locationid != nil {
-		setClauses = append(setClauses, "locationid = ?")
-		args = append(args, *req.Locationid)
+	// A caller that supplies fresh coordinates without an explicit location name/id
+	// (the TN partner only ever knows GPS coordinates for a post, never Freegle's
+	// internal location rows) would otherwise leave locationid untouched. Since the
+	// subject's derived "vague postcode" (constructLocationString) and the mod/owner
+	// -facing location object are both read from locationid rather than lat/lng, that
+	// left the displayed postcode pinned to whatever it was before the edit, and
+	// uncorrectable, because every subsequent TN edit repeats the same gap. On
+	// production, edited TN posts are ~17x more likely than never-edited ones to
+	// have a locationid disagreeing with their own coordinates. Re-derive the
+	// nearest postcode from the new coordinates,
+	// mirroring the same lat/lng fallback already used when reading a message back.
+	// Scoped to partner callers. The Freegle web client resolves its postcode
+	// picker to a locationid before submitting, and ModTools edits a location by
+	// name, so an unscoped derivation would only fire for a caller that sent
+	// coordinates and no location at all - silently overwriting what they meant.
+	if fromPartner && req.Lat != nil && req.Lng != nil && (req.Locationid == nil || *req.Locationid == 0) {
+		nearest := location.ClosestPostcode(float32(*req.Lat), float32(*req.Lng))
+		if nearest.ID > 0 {
+			req.Locationid = &nearest.ID
+		}
 	}
-	if req.Lat != nil {
-		setClauses = append(setClauses, "lat = ?")
-		args = append(args, *req.Lat)
-	}
-	if req.Lng != nil {
-		setClauses = append(setClauses, "lng = ?")
-		args = append(args, *req.Lng)
+	// Effective coordinates for this edit. Use the coords the client sent; but if the
+	// location changed without matching coords, derive lat/lng from the chosen location.
+	// Without this a location-only edit sets locationid yet leaves lat/lng stale or NULL,
+	// making the post undiscoverable — browse/search read messages.lat/lng directly
+	// (Discourse 9865). Locations are static reference data, so this lookup returns the
+	// row reliably; it is not a timing/race concern.
+	effLat, effLng := req.Lat, req.Lng
+	if req.Locationid != nil && (effLat == nil || effLng == nil) {
+		var llat, llng *float64
+		db.Table("locations").Select("lat, lng").Where("id = ?", *req.Locationid).Row().Scan(&llat, &llng)
+		if effLat == nil {
+			effLat = llat
+		}
+		if effLng == nil {
+			effLng = llng
+		}
 	}
 
-	if len(setClauses) > 0 {
-		args = append(args, req.ID)
-		db.Exec("UPDATE messages SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...)
+	if set := buildApplyPatchMessageCoreUpdateSet(req.Subject, req.Textbody, req.Type, req.Deadline, req.Availablenow, req.Locationid, effLat, effLng); len(set) > 0 {
+		db.Table("messages").Where("id = ?", req.ID).Clauses(set).Updates(map[string]interface{}{})
 	}
 
 	// Keep the spatial index point in sync when an already-indexed message's location
 	// changes. We deliberately UPDATE only — never INSERT — so editing a Pending
 	// message's location cannot leak it into messages_spatial (which backs the public
 	// browse). Only Approved messages have a spatial row; the approval path inserts.
-	if req.Lat != nil && req.Lng != nil {
-		db.Exec("UPDATE messages_spatial SET point = ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857) WHERE msgid = ?",
-			*req.Lng, *req.Lat, req.ID)
+	if effLat != nil && effLng != nil {
+		db.Table("messages_spatial").
+			Where("msgid = ?", req.ID).
+			Update("point", gorm.Expr("ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)", *effLng, *effLat))
 	}
 
 	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to
@@ -2655,9 +3870,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// The UPDATE is a no-op when the message is not in draft state (0 rows affected).
 	if req.Groupid != nil && *req.Groupid > 0 {
 		var groupExists int64
-		db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", *req.Groupid).Scan(&groupExists)
+		db.Table("groups").Where("id = ?", *req.Groupid).Count(&groupExists)
 		if groupExists > 0 {
-			db.Exec("UPDATE messages_drafts SET groupid = ? WHERE msgid = ?", *req.Groupid, req.ID)
+			db.Table("messages_drafts").Where("msgid = ?", req.ID).Update("groupid", *req.Groupid)
 		}
 	}
 
@@ -2674,18 +3889,31 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	if req.Deadline != nil && *req.Deadline != "" && *req.Deadline != "null" {
 		today := time.Now().Format("2006-01-02")
 		if *req.Deadline > today {
-			db.Exec("DELETE FROM messages_outcomes WHERE msgid = ? AND outcome = 'Expired'", req.ID)
+			db.Table("messages_outcomes").Where("msgid = ? AND outcome = 'Expired'", req.ID).Delete(nil)
 		}
 	}
 
 	// Update item if provided.
 	if req.Item != nil && *req.Item != "" {
 		var itemID uint64
-		db.Raw("SELECT id FROM items WHERE name = ?", *req.Item).Scan(&itemID)
+		db.Table("items").Select("id").Where("name = ?", *req.Item).Scan(&itemID)
 		if itemID == 0 {
-			// Genuinely new item — insert it.
-			db.Exec("INSERT INTO items (name) VALUES (?)", *req.Item)
-			db.Raw("SELECT id FROM items WHERE name = ?", *req.Item).Scan(&itemID)
+			// Genuinely new item — insert it. ON DUPLICATE KEY handles a concurrent/lagged
+			// insert; read the id from the write result, not a read-split-routable SELECT (9832).
+			// See 3cbad581b884
+			// (PutMessageAs) for why gorm.WithResult() rather than "@id" is
+			// needed for the LAST_INSERT_ID(id) idiom.
+			itemRes := gorm.WithResult()
+			db.Table("items").Clauses(itemRes, clause.OnConflict{
+				DoUpdates: clause.Set{
+					{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+				},
+			}).Create(map[string]interface{}{"name": *req.Item})
+			if itemRes.Result != nil {
+				if id, idErr := itemRes.Result.LastInsertId(); idErr == nil {
+					itemID = uint64(id)
+				}
+			}
 		}
 		// Do NOT update items.name when found by case-insensitive match.
 		// items is a shared canonical dictionary; normalising the casing from a single
@@ -2694,41 +3922,61 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		// explicitly-provided req.Item string, so the desired casing is preserved in
 		// messages.subject without touching the shared dictionary.
 		if itemID > 0 {
-			db.Exec("DELETE FROM messages_items WHERE msgid = ?", req.ID)
-			db.Exec("INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)", req.ID, itemID)
+			db.Table("messages_items").Where("msgid = ?", req.ID).Delete(nil)
+			db.Table("messages_items").Create(map[string]interface{}{"msgid": req.ID, "itemid": itemID})
 		}
 	}
 
-	// Reconstruct subject from type + item + location when item/type/location changed
-	//.
-	if req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil {
+	// Reconstruct subject from type + item + location when item/type/location changed,
+	// but ONLY when the caller did not supply an explicit subject.  An explicit subject
+	// always wins — passing msgtype alongside a new subject must not silently clobber it.
+	if req.Subject == nil && (req.Item != nil || req.Type != nil || req.Location != nil || req.Locationid != nil) {
 		var msgType string
 		var itemName *string
-		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
+		db.Table("messages").Select("type").Where("id = ?", req.ID).Scan(&msgType)
 		if req.Item != nil && *req.Item != "" {
 			// Use the submitted name directly so the moderator's desired casing is
 			// preserved in the subject without altering the shared items dictionary.
 			itemName = req.Item
 		} else {
-			db.Raw("SELECT i.name FROM items i INNER JOIN messages_items mi ON mi.itemid = i.id WHERE mi.msgid = ? LIMIT 1", req.ID).Scan(&itemName)
+			db.Table("items i").
+				Select("i.name").
+				Joins("INNER JOIN messages_items mi ON mi.itemid = i.id").
+				Where("mi.msgid = ?", req.ID).
+				Limit(1).
+				Scan(&itemName)
 		}
 
 		// Build the location string using area + vague postcode.
 		locStr := constructLocationString(db, req.ID)
 
 		if itemName != nil && locStr != "" {
-			// Use the group keyword for the type (V1: group settings, defaults to uppercase).
-			groupid := getPrimaryGroupForMessage(db, req.ID)
+			// Use the group keyword for the type (V1: group settings, defaults to
+			// uppercase). Prefer the contextual group from the request — keywords
+			// can differ per group — falling back to the primary group for legacy
+			// callers that don't supply one.
+			groupid := uint64(0)
+			if req.Groupid != nil && *req.Groupid > 0 {
+				groupid = *req.Groupid
+			}
+			if groupid == 0 {
+				groupid = getPrimaryGroupForMessage(db, req.ID)
+			}
 			keyword := getGroupKeyword(db, groupid, msgType)
 			newSubject := keyword + ": " + *itemName + " (" + locStr + ")"
-			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, req.ID)
+			// Identical golden to
+			// a218fb801dd5 (JoinAndPostAs) and b53892a17f40 (PutMessageAs);
+			// converted together per gate (h).
+			db.Table("messages").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"subject": newSubject, "suggestedsubject": newSubject})
 		}
 	}
 
 	// Issue 1: If the message OWNER edits a rejected message, move back to Pending for re-review.
 	// Mods editing a rejected message should NOT auto-resubmit it.
 	if fromuser == myid {
-		db.Exec("UPDATE messages_groups SET collection = ? WHERE msgid = ? AND collection = ?", utils.COLLECTION_PENDING, req.ID, utils.COLLECTION_REJECTED)
+		db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_REJECTED).
+			Update("collection", utils.COLLECTION_PENDING)
 	}
 
 	// Issue 2: Log the edit (type='Message', subtype='Edit').
@@ -2748,7 +3996,8 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 				Externalmods string
 			}
 			var attRows []attachExtern
-			db.Raw("SELECT id, COALESCE(externalmods, '') AS externalmods FROM messages_attachments WHERE id IN (?) AND msgid = ?", req.Attachments, req.ID).Scan(&attRows)
+			db.Table("messages_attachments").Select("id, COALESCE(externalmods, '') AS externalmods").
+				Where("id IN ? AND msgid = ?", req.Attachments, req.ID).Scan(&attRows)
 			externByID := make(map[uint64]string, len(attRows))
 			for _, r := range attRows {
 				externByID[r.ID] = r.Externalmods
@@ -2772,13 +4021,16 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 
 			for i, attid := range req.Attachments {
 				primary := i == 0
-				db.Exec("UPDATE messages_attachments SET msgid = ?, `primary` = ? WHERE id = ?", req.ID, primary, attid)
+				db.Table("messages_attachments").Where("id = ?", attid).
+					Updates(map[string]interface{}{"msgid": req.ID, "primary": primary})
 			}
 			// Delete any attachments not in the new list.
-			db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)", req.ID, req.Attachments)
+			db.Table("messages_attachments").Where("msgid = ? AND id NOT IN (?)", req.ID, req.Attachments).Delete(nil)
 		} else {
 			// Empty array — remove all attachments.
-			db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", req.ID)
+			// Identical golden to
+			// cebe07bfb873 (PatchMessageByTN); converted together per gate (h).
+			db.Table("messages_attachments").Where("msgid = ?", req.ID).Delete(nil)
 		}
 	}
 
@@ -2786,11 +4038,11 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	// Re-read the current subject from DB — it may have been reconstructed from type/item/location
 	// changes above (line 1830-1846), so req.Subject alone is insufficient.
 	var current msgValues
-	db.Raw("SELECT subject, COALESCE(textbody, '') as textbody, COALESCE(type, '') as type, locationid FROM messages WHERE id = ?", req.ID).Scan(&current)
+	db.Table("messages").Select("subject, COALESCE(textbody, '') as textbody, COALESCE(type, '') as type, locationid").Where("id = ?", req.ID).Scan(&current)
 
 	// Snapshot new item IDs as JSON (after item update).
 	var newItemRows []itemRow
-	db.Raw("SELECT itemid AS id FROM messages_items WHERE msgid = ? ORDER BY itemid", req.ID).Scan(&newItemRows)
+	db.Table("messages_items").Select("itemid AS id").Where("msgid = ?", req.ID).Order("itemid").Scan(&newItemRows)
 	newItemIDs := make([]uint64, len(newItemRows))
 	for i, r := range newItemRows {
 		newItemIDs[i] = r.ID
@@ -2804,7 +4056,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 
 	// Snapshot new attachment IDs as JSON (after attachment update).
 	var newAttachRows []attachRow
-	db.Raw("SELECT id FROM messages_attachments WHERE msgid = ? ORDER BY id", req.ID).Scan(&newAttachRows)
+	db.Table("messages_attachments").Select("id").Where("msgid = ?", req.ID).Order("id").Scan(&newAttachRows)
 	newAttachIDs := make([]uint64, len(newAttachRows))
 	for i, r := range newAttachRows {
 		newAttachIDs[i] = r.ID
@@ -2822,6 +4074,52 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	locationChanged := !locationIDsEqual(old.Locationid, current.Locationid)
 	itemsChanged := !stringPtrEqual(oldItemsJSON, newItemsJSON)
 	imagesChanged := !stringPtrEqual(oldImagesJSON, newImagesJSON)
+
+	// Subject, textbody, and item name are exactly the fields
+	// ContentCheckService::checkMessage() scans (concern keywords, per-group
+	// worry words, phone numbers, vague-item, not-an-item, URLs, ...). A row
+	// that has already been checked is never re-scanned on its own, so editing
+	// in new content would otherwise leave the automated moderation filters
+	// silently skipped, catchable only by a mod noticing by hand. Stamp
+	// messages.editedat: the batch derives "checked, then edited" from
+	// editedat > contentcheck_checked_at and re-scans, for both mods and
+	// owners - a mod stripping the issue that triggered a flag also needs the
+	// clean edit re-verified. Deriving from the edit audit stamp rather than
+	// keeping a separate mark means the state cannot drift, and needs no
+	// schema beyond columns that already exist.
+	//
+	// Stamping, NOT clearing contentcheck_checked_at. That stamp doubles as
+	// "safe to show a moderator": the Pending list (message_list.go) and the
+	// work counts (groupWork.go, session.go) hide rows that have never been
+	// checked, so a brand-new post is not shown before the checks have had
+	// their say. Clearing it on edit made the post the moderator had just
+	// edited vanish out of their own queue - card and badge together - until
+	// the batch re-stamped it half a minute later, reappearing only on a
+	// manual reload (Discourse 10001).
+	//
+	// The stored reasons still go, as they always did: they are what ModTools
+	// shows as "why is this pending", and a reason the mod has just edited out
+	// is worse than no reason at all - another mod could reject a post over a
+	// problem that is no longer there. The recheck writes the true set back.
+	if subjectChanged || textChanged || itemsChanged {
+		db.Table("messages").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{
+				"editedat": gorm.Expr("NOW()"),
+				"editedby": myid,
+			})
+		db.Table("messages_groups").Where("msgid = ?", req.ID).
+			Updates(map[string]interface{}{
+				"contentcheck_reasons": gorm.Expr("NULL"),
+			})
+	}
+
+	// The subject/body drive the search indexes (messages_index keyword search and
+	// messages_embeddings vector search), which are each populated once for "missing"
+	// messages and never refreshed on edit. Drop the stale rows for ANY editor (owner or
+	// mod) so the background indexer/embedder rebuild from the new text. Discourse 9954.
+	if subjectChanged || textChanged {
+		invalidateMessageSearchIndexes(db, req.ID, subjectChanged, textChanged)
+	}
 
 	if (subjectChanged || textChanged || typeChanged || locationChanged || itemsChanged || imagesChanged) && !isMod {
 		// Store oldtype/newtype only when type actually changed.
@@ -2875,12 +4173,12 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		for _, gid := range groupIDs {
 			// Check if the message is currently Approved on this group.
 			var collection string
-			db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", req.ID, gid).Scan(&collection)
+			db.Table("messages_groups").Select("collection").Where("msgid = ? AND groupid = ?", req.ID, gid).Scan(&collection)
 
 			if strings.EqualFold(collection, "Approved") {
 				// Check if the group is set to moderate all posts.
 				var groupModerated, groupClosed int
-				db.Raw("SELECT COALESCE(JSON_EXTRACT(settings, '$.moderated'), 0), COALESCE(JSON_EXTRACT(settings, '$.closed'), 0) FROM `groups` WHERE id = ?", gid).Row().Scan(&groupModerated, &groupClosed)
+				db.Table("groups").Select("COALESCE(JSON_EXTRACT(settings, '$.moderated'), 0), COALESCE(JSON_EXTRACT(settings, '$.closed'), 0)").Where("id = ?", gid).Row().Scan(&groupModerated, &groupClosed)
 
 				if groupModerated == 1 || groupClosed == 1 {
 					// Group moderates all posts — this edit needs review.
@@ -2888,7 +4186,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 				} else {
 					// Check the member's individual posting status.
 					var postingStatus *string
-					db.Raw("SELECT ourPostingStatus FROM memberships WHERE userid = ? AND groupid = ?", myid, gid).Scan(&postingStatus)
+					db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, gid).Scan(&postingStatus)
 
 					// NULL, empty, or MODERATED → member is moderated → review required.
 					if postingStatus == nil || *postingStatus == "" || strings.EqualFold(*postingStatus, "MODERATED") || strings.EqualFold(*postingStatus, "PROHIBITED") {
@@ -2898,9 +4196,13 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 			}
 		}
 
-		db.Exec("INSERT INTO messages_edits (msgid, byuser, oldsubject, newsubject, oldtype, newtype, oldtext, newtext, olditems, newitems, oldimages, newimages, oldlocation, newlocation, reviewrequired) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			req.ID, myid, oldSubject, newSubject, oldType, newType, oldText, newText, oldItemsVal, newItemsVal, oldImagesVal, newImagesVal, oldLocationVal, newLocationVal, reviewRequired)
-		db.Exec("UPDATE messages SET editedby = ? WHERE id = ?", myid, req.ID)
+		db.Table("messages_edits").Create(map[string]interface{}{
+			"msgid": req.ID, "byuser": myid, "oldsubject": oldSubject, "newsubject": newSubject,
+			"oldtype": oldType, "newtype": newType, "oldtext": oldText, "newtext": newText,
+			"olditems": oldItemsVal, "newitems": newItemsVal, "oldimages": oldImagesVal, "newimages": newImagesVal,
+			"oldlocation": oldLocationVal, "newlocation": newLocationVal, "reviewrequired": reviewRequired,
+		})
+		db.Table("messages").Where("id = ?", req.ID).Update("editedby", myid)
 
 		// Only notify mods when review is required.
 		if reviewRequired == 1 {
@@ -2914,12 +4216,41 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		}
 	}
 
+	// Bulk offer: rebuild the structured catalogue (attachments are already
+	// relinked above) and keep availableinitially/availablenow in sync with the
+	// total quantity. A nil slice leaves the catalogue untouched; an explicit
+	// (possibly empty) slice rebuilds it, including resetting availability to 0
+	// when all items are removed. The textbody summary is rebuilt too unless the
+	// caller supplied their own textbody.
+	if req.Bulkitems != nil {
+		total := upsertBulkItems(db, req.ID, req.Bulkitems)
+		// Identical golden to
+		// 9d1cfd7098bc (PutMessageAs); converted together per gate (h).
+		db.Table("messages").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"availableinitially": total, "availablenow": total})
+		if req.Textbody == nil {
+			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+				// Identical golden to
+				// 9beaa0265ff1 (PutMessageAs); converted together per gate (h).
+				db.Table("messages").Where("id = ?", req.ID).
+					Updates(map[string]interface{}{"textbody": summary, "message": summary})
+			}
+		}
+		go ingestBulkItemPhotos(db, req.ID)
+	}
+	if req.Bulkslots != nil {
+		upsertBulkSlots(db, req.ID, req.Bulkslots)
+	}
+	if req.Accessinstructions != nil {
+		saveAccessInstructions(db, req.ID, *req.Accessinstructions)
+	}
+
 	return nil
 }
 
 // applyPatchMessage performs the edit on a message after auth and ID are resolved.
 func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
-	if err := applyPatchMessageCore(c, myid, req); err != nil {
+	if err := applyPatchMessageCore(c, myid, req, false); err != nil {
 		return err
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -2936,9 +4267,10 @@ func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error
 func PatchMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
+	var partnerCandidates []uint64
 	if c.Query("partner") != "" {
 		var err error
-		myid, err = resolvePartnerAuth(c)
+		myid, partnerCandidates, err = resolvePartnerAuth(c)
 		if err != nil {
 			return err
 		}
@@ -2964,6 +4296,8 @@ func PatchMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
 	}
 
+	myid = actAsOwnerCandidate(database.DBConn, myid, partnerCandidates, req.ID)
+
 	return applyPatchMessage(c, myid, req)
 }
 
@@ -2971,9 +4305,10 @@ func PatchMessage(c *fiber.Ctx) error {
 func PatchMessageByTN(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
+	var partnerCandidates []uint64
 	if c.Query("partner") != "" {
 		var err error
-		myid, err = resolvePartnerAuth(c)
+		myid, partnerCandidates, err = resolvePartnerAuth(c)
 		if err != nil {
 			return err
 		}
@@ -2990,7 +4325,7 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 
 	db := database.DBConn
 	var msgIDs []uint64
-	db.Raw("SELECT id FROM messages WHERE tnpostid = ?", tnpostid).Scan(&msgIDs)
+	db.Table("messages").Select("id").Where("tnpostid = ?", tnpostid).Scan(&msgIDs)
 	if len(msgIDs) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found for that TN post ID")
 	}
@@ -3007,46 +4342,70 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		req.Type = req.Messagetype
 	}
 
+	// TN never sends an explicit attachments array.  We detect photo changes
+	// through the textbody:
+	//   • No trashnothing.com/pics/ links → user removed all photos → remove AI.
+	//   • Links present → scrape+store TN photos AND remove AI (TN photos replace it).
+	// In both cases the AI attachment must go; in the second case we also strip the
+	// "Check out the pictures…" block from the stored textbody and kick off scraping.
+	//
+	// This MUST be computed once, from the original textbody, BEFORE the per-message
+	// loop below.  A tnpostid can map to several crossposted FD messages; if we
+	// extracted the links and stripped req.Textbody inside the loop, the first
+	// iteration would remove the pic links from req.Textbody, so every subsequent
+	// crossposted copy would read an already-stripped body, find no links, and have
+	// its attachments deleted but never re-scraped — leaving all but the first copy
+	// with no photo.
+	var picPageURLs []string
+	if req.Textbody != nil {
+		picPageURLs = tnPicPageURLRegexp.FindAllString(*req.Textbody, -1)
+		if len(picPageURLs) > 0 {
+			// Strip the photo-link block before persisting the textbody.
+			stripped := tnPicHeaderRegexp.ReplaceAllString(*req.Textbody, "")
+			stripped = tnPicURLLineRegexp.ReplaceAllString(stripped, "")
+			stripped = strings.TrimSpace(stripped)
+			req.Textbody = &stripped
+		}
+	}
+
 	for _, msgID := range msgIDs {
 		req.ID = msgID
+		// A crossposted TN post's copies all belong to the same TN member, but
+		// that member may own two Freegle accounts - act as whichever owns
+		// this copy.
+		actingid := actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
 
-		// TN never sends an explicit attachments array.  We detect photo changes
-		// through the textbody:
-		//   • No trashnothing.com/pics/ links → user removed all photos → remove AI.
-		//   • Links present → scrape+store TN photos AND remove AI (TN photos replace it).
-		// In both cases the AI attachment must go; in the second case we also strip the
-		// "Check out the pictures…" block from the stored textbody and kick off scraping.
-		var picPageURLs []string
+		// Attachments must reach their final state BEFORE the edit's change signal is
+		// written.  applyPatchMessageCore writes the messages_edits row that /api/changes
+		// reports as "Edited"; TN then fetches the message to read its attachments.  If we
+		// scraped after the signal (or asynchronously), TN could poll in the gap and get a
+		// partial photo set — the "only 1 photo back, all of them on a forced re-fetch" bug.
+		// So we delete the old attachments and synchronously scrape the new ones first, then
+		// call the core.  This matches V1, which scrapes + saves attachments before edit()
+		// (http/api/message.php).
+		//
+		// TN's textbody is the authoritative photo set for its posts.  Whenever TN sends a
+		// textbody (even an empty one) we delete ALL existing attachments and then let the
+		// scraper add the new set (if pic links were present).  This fixes two further bugs:
+		//   #2 — textbody with no pic links: old non-AI photos were left behind.
+		//   #3 — textbody with new pic links: old non-AI photos coexisted with the new ones.
+		//
+		// recordAIDeletions is called with an empty keep-list so any AI attachment is
+		// properly logged (microaction + messages_ai_declined) before deletion.
 		if req.Textbody != nil {
-			picPageURLs = tnPicPageURLRegexp.FindAllString(*req.Textbody, -1)
-			if len(picPageURLs) > 0 {
-				// Strip the photo-link block before persisting the textbody.
-				stripped := tnPicHeaderRegexp.ReplaceAllString(*req.Textbody, "")
-				stripped = tnPicURLLineRegexp.ReplaceAllString(stripped, "")
-				stripped = strings.TrimSpace(stripped)
-				req.Textbody = &stripped
-			}
+			recordAIDeletions(db, actingid, msgID, []uint64{}, nil)
+			// Identical golden to
+			// 8ef16859487a (applyPatchMessageCore); converted together per gate (h).
+			db.Table("messages_attachments").Where("msgid = ?", msgID).Delete(nil)
 		}
 
-		if err := applyPatchMessageCore(c, myid, req); err != nil {
-			return err
-		}
-
-		// Remove any AI attachment whenever textbody is updated (both cases).
-		if req.Textbody != nil {
-			var aiCount int64
-			db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
-				msgID, `%"ai":true%`).Scan(&aiCount)
-			if aiCount > 0 {
-				recordAIDeletions(db, myid, msgID, []uint64{}, nil)
-				db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
-					msgID, `%"ai":true%`)
-			}
-		}
-
-		// If TN photos were present, scrape them and store as attachments.
+		// If TN photos were present, scrape them and store as attachments (synchronously).
 		if len(picPageURLs) > 0 {
 			TNPhotoScrapeRunner(db, msgID, picPageURLs)
+		}
+
+		if err := applyPatchMessageCore(c, actingid, req, true); err != nil {
+			return err
 		}
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -3076,7 +4435,7 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 
 	// Check ownership.
 	var fromuser uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ?", msgid).Scan(&fromuser)
+	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&fromuser)
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
@@ -3086,11 +4445,18 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to delete this message")
 	}
 
-	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", msgid)
+	// Identical golden to 73672934d660
+	// (handleSpam); converted together per gate (h).
+	db.Table("messages").Where("id = ?", msgid).Update("deleted", gorm.Expr("NOW()"))
 
-	// Write audit-log entry when a moderator deletes a message.
+	// Write audit-log entry when a moderator deletes a message. Log against the
+	// group the mod acted on when supplied (?groupid=), else fall back to the
+	// primary group.
 	if isMod {
-		groupid := getPrimaryGroupForMessage(db, msgid)
+		groupid := uint64(c.QueryInt("groupid", 0))
+		if groupid == 0 {
+			groupid = getPrimaryGroupForMessage(db, msgid)
+		}
 		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupid, fromuser, myid, msgid, 0, "")
 	}
 
@@ -3121,7 +4487,7 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 
 	// Look up existing user by email.
 	var existingUID uint64
-	db.Raw("SELECT userid FROM users_emails WHERE email = ? LIMIT 1", email).Scan(&existingUID)
+	db.Table("users_emails").Select("userid").Where("email = ?", email).Limit(1).Scan(&existingUID)
 
 	if existingUID > 0 {
 		// Existing user — return their ID so the draft is linked to them,
@@ -3130,41 +4496,58 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	}
 
 	// New user — create user, email, session, JWT.
-	// Use raw database/sql to get LastInsertId() from the same result —
-	// avoids the GORM connection-pool race where a separate
-	// SELECT LAST_INSERT_ID() query could land on a different connection.
-	sqlDB, err := db.DB()
-	if err != nil {
-		return 0, "", nil, fmt.Errorf("failed to get DB connection: %w", err)
-	}
-
-	sqlResult, err := sqlDB.Exec("INSERT INTO users (added) VALUES (NOW())")
-	if err != nil {
+	// Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback, which reads the
+	// id back from the very connection that ran the INSERT (proven in
+	// test/insertid_gorm_writeback_test.go).
+	userRow := map[string]interface{}{"added": gorm.Expr("NOW()")}
+	if err := db.Table("users").Create(userRow).Error; err != nil {
 		return 0, "", nil, fmt.Errorf("failed to create user: %w", err)
 	}
-
-	newUserIDInt, err := sqlResult.LastInsertId()
-	if err != nil || newUserIDInt == 0 {
+	newUserIDInt, _ := userRow["@id"].(int64)
+	if newUserIDInt == 0 {
 		return 0, "", nil, fmt.Errorf("failed to get new user ID")
 	}
 	newUserID := uint64(newUserIDInt)
 
 	// Add email.
+	// Plain, isolated, literal single-row
+	// INSERT; no id readback needed here.
 	canon := user.CanonicalizeEmail(email)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
-		newUserID, email, canon, user.ReverseString(canon))
+	db.Table("users_emails").Create(map[string]interface{}{
+		"userid":    newUserID,
+		"email":     email,
+		"preferred": gorm.Expr("1"),
+		"validated": gorm.Expr("NOW()"),
+		"canon":     canon,
+		"backwards": user.ReverseString(canon),
+	})
 
 	// Create session. series must be a random numeric value (bigint
 	// unsigned); using userID collided across every session for the same
 	// user and defeated UNIQUE KEY (id, series, token).
 	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
-	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, series, token)
-
-	// Use token to find our specific session (avoids race with concurrent requests).
-	var sessionID uint64
-	db.Raw("SELECT id FROM sessions WHERE userid = ? AND token = ? ORDER BY id DESC LIMIT 1", newUserID, token).Scan(&sessionID)
+	// Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback, which reads the
+	// id back from the write connection that ran the INSERT (proven in
+	// test/insertid_gorm_writeback_test.go), same guarantee ExecInsertGetID
+	// gave. A
+	// "SELECT id ... ORDER BY id DESC" here would be routed to a read replica
+	// under the read/write split and could return a stale/0 id (Discourse 9832
+	// class), embedding a wrong sessionid in the JWT below - which is why this
+	// stays on the id-writeback mechanism rather than a separate lookup.
+	sessionRow := map[string]interface{}{
+		"userid":     newUserID,
+		"series":     series,
+		"token":      token,
+		"lastactive": gorm.Expr("NOW()"),
+	}
+	if err := db.Table("sessions").Create(sessionRow).Error; err != nil {
+		return 0, "", nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	sessionIDInt, _ := sessionRow["@id"].(int64)
+	sessionID := uint64(sessionIDInt)
 
 	// Generate JWT.
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
@@ -3196,27 +4579,149 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 // @Produce json
 // @Success 200 {object} map[string]interface{}
 // @Router /api/message [put]
+// PutMessage creates a message for the caller, or for another member when a
+// ChitChat moderator is converting their ChitChat post into a real OFFER/WANTED.
 func PutMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
+	author, err := onBehalfOf(c, myid)
+	if err != nil {
+		return err
+	}
+
+	return PutMessageAs(c, author)
+}
+
+// onBehalfOf resolves the ?onbehalfof= parameter to the member a post belongs
+// to. Absent (the normal case) it is the caller.
+//
+// Posting as someone else is restricted to ChitChat moderators and
+// support/admin, and the check lives here rather than in each caller so no
+// route can acquire the capability by omission.
+// OnBehalfPosting is where a post made on someone else's behalf would land:
+// their own postcode and their own community, never the moderator's.
+type OnBehalfPosting struct {
+	Locationid   uint64 `json:"locationid"`
+	Locationname string `json:"locationname"`
+	Groupid      uint64 `json:"groupid"`
+	Groupname    string `json:"groupname"`
+}
+
+// ResolveOnBehalfPosting works out the location and group a post for `author`
+// would use. PutMessageAs calls it when it actually posts, and the convert
+// preview calls it to show the moderator the same answer beforehand - one
+// function so the preview cannot promise a postcode the post then ignores.
+//
+// The location is the one the member CHOSE, settings.mylocation - the same
+// postcode their own posts carry. Deliberately not derived from lastlocation or
+// a nearest-postcode lookup: those say where they last were, not where they say
+// they are, so they would stamp a postcode on a member's post that the member
+// never picked. If they have not set one, we refuse rather than guess.
+//
+// The error text is shown to the moderator, so it says what to do about it.
+func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
+	db := database.DBConn
+
+	var chosen struct {
+		Locationid   uint64
+		Locationname string
+		Lat          float64
+		Lng          float64
+	}
+
+	db.Table("users").
+		Select("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.id')) AS locationid, "+
+			"JSON_UNQUOTE(JSON_EXTRACT(settings, '$.mylocation.name')) AS locationname, "+
+			"JSON_EXTRACT(settings, '$.mylocation.lat') AS lat, "+
+			"JSON_EXTRACT(settings, '$.mylocation.lng') AS lng").
+		Where("id = ?", author).Scan(&chosen)
+
+	if chosen.Locationid == 0 || chosen.Locationname == "" {
+		return nil, errors.New("That member hasn't set their location, so we can't post for them - ask them to set it first")
+	}
+
+	// The group must be one they are ALREADY in. Submitting joins the author to
+	// the destination group, so an arbitrary group would quietly sign a member
+	// up to a community they never chose. Default to their nearest membership.
+	var groupid uint64
+	// Order() itself takes no bind
+	// args (clause/order_by.go's OrderByColumn has no Vars field), so the two
+	// binds in ST_Distance_Sphere(...) go through clause.OrderBy{Expression:
+	// gorm.Expr(...)} instead, which Order() passes straight to AddClause.
+	db.Table("memberships m").
+		Select("m.groupid").
+		Joins("INNER JOIN `groups` g ON g.id = m.groupid").
+		Where("m.userid = ? AND m.collection = ?", author, utils.COLLECTION_APPROVED).
+		Order(clause.OrderBy{Expression: gorm.Expr("ST_Distance_Sphere(POINT(g.lng, g.lat), POINT(?, ?))", chosen.Lng, chosen.Lat)}).
+		Limit(1).
+		Scan(&groupid)
+
+	if groupid == 0 {
+		return nil, errors.New("That member isn't in any community, so we can't post for them")
+	}
+
+	var groupname string
+	db.Table("groups").Select("COALESCE(NULLIF(namefull, ''), nameshort)").Where("id = ?", groupid).Scan(&groupname)
+
+	return &OnBehalfPosting{
+		Locationid:   chosen.Locationid,
+		Locationname: chosen.Locationname,
+		Groupid:      groupid,
+		Groupname:    groupname,
+	}, nil
+}
+
+func onBehalfOf(c *fiber.Ctx, myid uint64) (uint64, error) {
+	obo := uint64(c.QueryInt("onbehalfof", 0))
+	if obo == 0 || obo == myid {
+		return myid, nil
+	}
+
+	if !auth.IsChitChatMod(myid) {
+		return 0, fiber.NewError(fiber.StatusForbidden, "Permission denied")
+	}
+
+	return obo, nil
+}
+
+// PutMessageAs creates a message attributed to author, which is normally the
+// caller. It differs only for the ChitChat convert-to-post path, where a
+// ChitChat moderator turns someone's ChitChat post into a real OFFER/WANTED and
+// the post must belong to that member rather than to the moderator.
+//
+// Passing an author other than the caller is restricted to ChitChat moderators
+// and support/admin (newsfeed.canHidePost). That caller is responsible for the
+// permission check and for logging the mod action; no other caller should pass
+// a different author.
+func PutMessageAs(c *fiber.Ctx, author uint64) error {
+	myid := author
+
 	type PutMessageRequest struct {
-		Groupid            uint64   `json:"groupid"`
-		Type               string   `json:"type"`
-		Messagetype        string   `json:"messagetype"` // Client sends this; alias for Type.
-		Subject            string   `json:"subject"`
-		Item               string   `json:"item"`
-		Textbody           string   `json:"textbody"`
-		Collection         string   `json:"collection"` // Draft (default) or Pending.
-		Locationid         *uint64  `json:"locationid"`
-		Availableinitially *int     `json:"availableinitially"`
-		Availablenow       *int     `json:"availablenow"`
-		Attachments        []uint64 `json:"attachments"`
-		Email              string   `json:"email"`
+		Groupid            uint64          `json:"groupid"`
+		Type               string          `json:"type"`
+		Messagetype        string          `json:"messagetype"` // Client sends this; alias for Type.
+		Subject            string          `json:"subject"`
+		Item               string          `json:"item"`
+		Textbody           string          `json:"textbody"`
+		Collection         string          `json:"collection"` // Draft (default) or Pending.
+		Locationid         *uint64         `json:"locationid"`
+		Availableinitially *int            `json:"availableinitially"`
+		Availablenow       *int            `json:"availablenow"`
+		Attachments        AttachmentIDs   `json:"attachments"`
+		Email              string          `json:"email"`
+		Bulkitems          []BulkItemInput `json:"bulkitems"`
+		Bulkslots          []string        `json:"bulkslots"`
+		Accessinstructions string          `json:"accessinstructions"`
 	}
 
 	var req PutMessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	// Posting a clearance (bulk offer) is gated on the Clearance permission.
+	if len(req.Bulkitems) > 0 && !auth.HasPermission(myid, auth.PERM_CLEARANCE) {
+		return fiber.NewError(fiber.StatusForbidden, "You do not have permission to post a clearance")
 	}
 
 	// Handle messagetype alias from client.
@@ -3262,6 +4767,31 @@ func PutMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
 	}
 
+	// Posting on someone's behalf: pin the post to THEIR location, never to
+	// whatever the moderator's client sent. A moderator moderates from wherever
+	// they happen to be, so trusting the client here would stamp their postcode
+	// on a member's post and put it in front of the wrong people.
+	if author != user.WhoAmI(c) {
+		// Same resolution the convert preview showed the moderator - see
+		// ResolveOnBehalfPosting.
+		posting, err := ResolveOnBehalfPosting(author)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+
+		req.Locationid = &posting.Locationid
+
+		if req.Groupid == 0 {
+			req.Groupid = posting.Groupid
+		} else {
+			var memberCount int64
+			db.Table("memberships").Where("userid = ? AND groupid = ?", author, req.Groupid).Count(&memberCount)
+			if memberCount == 0 {
+				return fiber.NewError(fiber.StatusBadRequest, "That member isn't in that community")
+			}
+		}
+	}
+
 	// For non-Draft, check membership and fetch posting status in one query.
 	var ourPostingStatus *string
 	var isMember bool
@@ -3270,7 +4800,7 @@ func PutMessage(c *fiber.Ctx) error {
 			OurPostingStatus *string
 		}
 		var info MembershipInfo
-		result := db.Raw("SELECT ourPostingStatus FROM memberships WHERE userid = ? AND groupid = ? LIMIT 1", myid, req.Groupid).Scan(&info)
+		result := db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", myid, req.Groupid).Limit(1).Scan(&info)
 		if result.RowsAffected == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Not a member of this group")
 		}
@@ -3294,31 +4824,75 @@ func PutMessage(c *fiber.Ctx) error {
 
 	// Create message.
 	fromip := c.IP()
+	// Geolocate the IP to a country so ModTools can flag posts from outside the
+	// UK (MessageHistory.vue). V1 (Message.php) did this at receive time; the
+	// web submit path lost it when it moved to Go. Store the ISO code (NULL when
+	// unknown); the read path expands it to a full name for display.
+	var fromcountry *string
+	if cc := utils.CountryCodeForIP(fromip); cc != "" {
+		fromcountry = &cc
+	}
 	// V1 parity (Message.php:2708/2717): invent a unique messageid because
 	// downstream dedupe/cross-reference joins assume it's populated.
 	messageid := fmt.Sprintf("%.6f@%s", float64(time.Now().UnixNano())/1e9, utils.USER_DOMAIN)
 	if req.Groupid > 0 {
 		messageid = fmt.Sprintf("%s-%d", messageid, req.Groupid)
 	}
-	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
-		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
-
-	if result.Error != nil {
+	// Use the INSERT's own auto-increment id. A "SELECT id ... ORDER BY id DESC
+	// LIMIT 1" here is unsafe under the read/write split: the SELECT is routed to
+	// a read replica that may not yet have applied this INSERT, so it can return
+	// the user's PREVIOUS message - causing the new post (and its photos) to be
+	// grafted onto an existing one (Discourse 9832 "mixed up offers"). Read the id
+	// back from the write connection via LastInsertId, as CreateGroup does.
+	// Table()+map Create
+	// reads the generated id back from the same sql.Result the INSERT
+	// returned, under the map key "@id" - see
+	// test/insertid_gorm_writeback_test.go.
+	row := map[string]interface{}{
+		"fromuser":           myid,
+		"type":               req.Type,
+		"subject":            req.Subject,
+		"textbody":           req.Textbody,
+		"message":            req.Textbody,
+		"arrival":            gorm.Expr("NOW()"),
+		"date":               gorm.Expr("NOW()"),
+		"source":             gorm.Expr("'Platform'"),
+		"availableinitially": availInit,
+		"availablenow":       availNow,
+		"locationid":         req.Locationid,
+		"fromip":             fromip,
+		"fromcountry":        fromcountry,
+		"messageid":          messageid,
+	}
+	if err := db.Table("messages").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
 	}
 
-	var newMsgID uint64
-	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", myid).Scan(&newMsgID)
-
-	if newMsgID == 0 {
+	lastID, _ := row["@id"].(int64)
+	if lastID <= 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to retrieve message ID")
 	}
+	newMsgID := uint64(lastID)
 
 	// For Draft collection, store in messages_drafts.
 	// For other collections, add to messages_groups.
 	if req.Collection == "Draft" {
-		db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
-			newMsgID, req.Groupid, myid)
+		// A draft can legitimately have no group yet (compose starts before a
+		// group is chosen) and the schema says so: messages_drafts.groupid is
+		// nullable with ON DELETE SET NULL. Passing the client's 0 straight
+		// through failed the groups FK - and the error went unchecked, so the
+		// draft silently didn't exist while the messages row survived as an
+		// orphan, and the client's submit then 400'd and retried, minting
+		// another orphan each time.
+		var draftGroupid interface{}
+		if req.Groupid > 0 {
+			draftGroupid = req.Groupid
+		}
+		if err := db.Table("messages_drafts").Create(map[string]interface{}{
+			"msgid": newMsgID, "groupid": draftGroupid, "userid": myid,
+		}).Error; err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
+		}
 	} else if req.Groupid > 0 && isMember {
 		// Determine collection based on user's posting status,
 		// ignoring whatever the client sent. This prevents moderated users from
@@ -3339,8 +4913,9 @@ func PutMessage(c *fiber.Ctx) error {
 			collection = utils.COLLECTION_APPROVED
 		}
 
-		db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
-			newMsgID, req.Groupid, collection)
+		db.Table("messages_groups").Create(map[string]interface{}{
+			"msgid": newMsgID, "groupid": req.Groupid, "collection": collection, "arrival": gorm.Expr("NOW()"),
+		})
 
 		// V1 parity: log Message/Received when a post is submitted directly (non-draft).
 		logMessageReceived(db, req.Groupid, myid, newMsgID)
@@ -3348,48 +4923,121 @@ func PutMessage(c *fiber.Ctx) error {
 
 	// Link attachments.
 	for _, attID := range req.Attachments {
-		db.Exec("UPDATE messages_attachments SET msgid = ? WHERE id = ?", newMsgID, attID)
+		db.Table("messages_attachments").Where("id = ?", attID).Update("msgid", newMsgID)
 	}
 
 	// Create item record.
 	if req.Item != "" {
-		db.Exec("INSERT INTO items (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)", req.Item)
+		// ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id) already lets the write report the id for
+		// both new and existing rows; take it from the result, not a read-split-routable SELECT.
+		// GORM's own "@id"
+		// map writeback is skipped when RowsAffected is 0, which MySQL
+		// reports on a no-op duplicate hit - exactly the common case here.
+		// Clauses(gorm.WithResult()) hands back the raw sql.Result instead,
+		// which has no such condition (proven in
+		// test/insertid_gorm_writeback_test.go's
+		// WithResultBeatsTheRowsAffectedZeroTrap).
+		itemRes := gorm.WithResult()
+		db.Table("items").Clauses(itemRes, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+			},
+		}).Create(map[string]interface{}{"name": req.Item})
 		var itemID uint64
-		db.Raw("SELECT id FROM items WHERE name = ? LIMIT 1", req.Item).Scan(&itemID)
+		if itemRes.Result != nil {
+			if id, idErr := itemRes.Result.LastInsertId(); idErr == nil {
+				itemID = uint64(id)
+			}
+		}
 		if itemID > 0 {
-			db.Exec("INSERT IGNORE INTO messages_items (msgid, itemid) VALUES (?, ?)", newMsgID, itemID)
+			db.Table("messages_items").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+				"msgid":  newMsgID,
+				"itemid": itemID,
+			})
 		}
 	}
 
-	// Add spatial data if locationid is provided, and update the user's last known location
-	// (so that GET /isochrone can auto-create an isochrone for the user).
-	if req.Locationid != nil && *req.Locationid > 0 {
-		db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", *req.Locationid, myid)
-
-		var lat, lng float64
-		db.Raw("SELECT lat, lng FROM locations WHERE id = ?", *req.Locationid).Row().Scan(&lat, &lng)
-		if lat != 0 || lng != 0 {
-			db.Exec("UPDATE messages SET locationid = ?, lat = ?, lng = ? WHERE id = ?",
-				*req.Locationid, lat, lng, newMsgID)
-			// Do NOT insert into messages_spatial here — drafts must not appear
-			// in browse/search results. Spatial index is populated by handleJoinAndPost
-			// after the message is submitted to a group (matching V1 behaviour).
+	// Bulk offer: create the structured catalogue. Total quantity drives
+	// availableinitially/availablenow, and the textbody falls back to a
+	// readable summary so non-bulk-aware consumers still show the items.
+	if len(req.Bulkitems) > 0 {
+		total := upsertBulkItems(db, newMsgID, req.Bulkitems)
+		if total > 0 {
+			// Identical golden to
+			// 01bedb9d631d (applyPatchMessageCore); converted together per gate (h).
+			db.Table("messages").Where("id = ?", newMsgID).
+				Updates(map[string]interface{}{"availableinitially": total, "availablenow": total})
 		}
-
-		// Reconstruct subject with location.
-		// The initial subject was set as "Type: Item" without location.
-		// Now that locationid is set, rebuild as "KEYWORD: Item (Area PC)".
-		locStr := constructLocationString(db, newMsgID)
-		if locStr != "" && req.Item != "" {
-			groupid := req.Groupid
-			if groupid == 0 {
-				// Draft may not have a group yet; use item name without location keyword.
-				groupid = getPrimaryGroupForMessage(db, newMsgID)
+		if strings.TrimSpace(req.Textbody) == "" {
+			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
+				// Identical golden to
+				// b560d268dc4e (applyPatchMessageCore); converted together per gate (h).
+				db.Table("messages").Where("id = ?", newMsgID).
+					Updates(map[string]interface{}{"textbody": summary, "message": summary})
 			}
-			keyword := getGroupKeyword(db, groupid, req.Type)
-			newSubject := keyword + ": " + req.Item + " (" + locStr + ")"
-			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, newMsgID)
 		}
+		// Download any spreadsheet-supplied photo URLs into real attachments.
+		go ingestBulkItemPhotos(db, newMsgID)
+	}
+	if req.Bulkslots != nil {
+		upsertBulkSlots(db, newMsgID, req.Bulkslots)
+	}
+	if strings.TrimSpace(req.Accessinstructions) != "" {
+		saveAccessInstructions(db, newMsgID, req.Accessinstructions)
+	}
+
+	// If the user explicitly chose a location, remember it (GET /isochrone
+	// auto-creates an isochrone for the user from lastlocation).
+	if req.Locationid != nil && *req.Locationid > 0 {
+		db.Table("users").Where("id = ?", myid).Update("lastlocation", *req.Locationid)
+	}
+
+	// Denormalise the post's location onto the message so it is discoverable in
+	// browse/search, which read messages.lat/lng directly (see bounds.go). Prefer
+	// the chosen locationid; if the client didn't send one, fall back to the user's
+	// last known location so the post is still findable (parity with the email path,
+	// IncomingMailService). Resolve lat/lng with a JOIN on the WRITE connection in a
+	// single statement. The previous code only denormalised when the client sent a
+	// locationid, and did it via a separate best-effort SELECT whose Scan error was
+	// unchecked and whose !=0 guard silently skipped the UPDATE on any miss — so a post
+	// could go live with no lat/lng and be undiscoverable (Discourse 9865). If nothing
+	// resolves (no locationid and no lastlocation), lat/lng stay NULL and
+	// ContentCheckService holds the post for a moderator to add a postcode.
+	// Table()'s argument
+	// passes through unquoted once it contains a space, so the verbatim JOIN
+	// text travels with it; the column-to-column assignments go through an
+	// explicit clause.Set, the same shape pinned by the retired ormharness's
+	// updatejoin_replace_test.go TestUpdateJoin_TwoJoinsWithColumnValues
+	// (removed in d22ba1d6c).
+	db.Table("messages m JOIN users u ON u.id = ? JOIN locations l ON l.id = COALESCE(m.locationid, u.lastlocation)", myid).
+		Clauses(clause.Set{
+			{Column: clause.Column{Table: "m", Name: "locationid"}, Value: clause.Column{Table: "l", Name: "id"}},
+			{Column: clause.Column{Table: "m", Name: "lat"}, Value: clause.Column{Table: "l", Name: "lat"}},
+			{Column: clause.Column{Table: "m", Name: "lng"}, Value: clause.Column{Table: "l", Name: "lng"}},
+		}).
+		Where("m.id = ? AND (m.lat IS NULL OR m.lng IS NULL)", newMsgID).
+		Updates(map[string]interface{}{})
+	// Do NOT insert into messages_spatial here — drafts must not appear in
+	// browse/search results. Spatial index is populated by handleJoinAndPost
+	// after the message is submitted to a group (matching V1 behaviour).
+
+	// Reconstruct subject with location, now that locationid is set.
+	// The initial subject was set as "Type: Item" without location; rebuild as
+	// "KEYWORD: Item (Area PC)". Skipped when no location could be resolved.
+	locStr := constructLocationString(db, newMsgID)
+	if locStr != "" && req.Item != "" {
+		groupid := req.Groupid
+		if groupid == 0 {
+			// Draft may not have a group yet; use item name without location keyword.
+			groupid = getPrimaryGroupForMessage(db, newMsgID)
+		}
+		keyword := getGroupKeyword(db, groupid, req.Type)
+		newSubject := keyword + ": " + req.Item + " (" + locStr + ")"
+		// Identical golden to
+		// a218fb801dd5 (JoinAndPostAs) and 2f30762bf955 (applyPatchMessageCore);
+		// converted together per gate (h).
+		db.Table("messages").Where("id = ?", newMsgID).
+			Updates(map[string]interface{}{"subject": newSubject, "suggestedsubject": newSubject})
 	}
 
 	resp := fiber.Map{"ret": 0, "status": "Success", "id": newMsgID}
@@ -3406,26 +5054,43 @@ func PutMessage(c *fiber.Ctx) error {
 
 // PostMessageRequest handles action-based POST to /message.
 type PostMessageRequest struct {
-	ID        uint64  `json:"id"`
-	Action    string  `json:"action"`
-	Userid    *uint64 `json:"userid"`
-	Count     *int    `json:"count"`
-	Outcome   string  `json:"outcome"`
-	Happiness *string `json:"happiness"`
-	Comment   *string `json:"comment"`
-	Message   *string `json:"message"`
-	Subject   *string `json:"subject"`
-	Body      *string `json:"body"`
-	Stdmsgid  *uint64 `json:"stdmsgid"`
-	Groupid   *uint64 `json:"groupid"`
-	Type      string  `json:"type"`
-	Textbody  *string `json:"textbody"`
-	Item      *string `json:"item"`
+	ID               uint64  `json:"id"`
+	Action           string  `json:"action"`
+	Userid           *uint64 `json:"userid"`
+	Count            *int    `json:"count"`
+	Outcome          string  `json:"outcome"`
+	Happiness        *string `json:"happiness"`
+	Comment          *string `json:"comment"`
+	Message          *string `json:"message"`
+	Subject          *string `json:"subject"`
+	Body             *string `json:"body"`
+	Stdmsgid         *uint64 `json:"stdmsgid"`
+	Groupid          *uint64 `json:"groupid"`
+	Type             string  `json:"type"`
+	Textbody         *string `json:"textbody"`
+	Item             *string `json:"item"`
 	Partner          *string `json:"partner"`
 	Deadline         *string `json:"deadline"`
 	Deliverypossible *bool   `json:"deliverypossible"`
 	ForcePending     *bool   `json:"forcepending"`
 	Tnpostid         *string `json:"tnpostid"`
+	Source           *string `json:"source"`
+	// Bulk-offer interest (action "BulkInterest").
+	BulkInterest []BulkInterestInput `json:"bulkinterest"`
+	// Whose interest to record/edit (action "BulkInterest"). Nil = the caller.
+	// Only the offerer may pass another user's id — e.g. to record a replier's
+	// verbally-expressed interest against the structured catalogue.
+	Interestuserid *uint64 `json:"interestuserid"`
+	// Bulk-offer interest state change (action "BulkInterestState").
+	Bulkitemid *uint64 `json:"bulkitemid"`
+	State      *string `json:"state"`
+}
+
+// BulkInterestInput is one item the caller is expressing interest in.
+type BulkInterestInput struct {
+	Bulkitemid uint64  `json:"bulkitemid"`
+	Quantity   int     `json:"quantity"`
+	Cancollect *string `json:"cancollect"`
 }
 
 // PostMessage dispatches POST /message actions.
@@ -3435,6 +5100,9 @@ func PostMessage(c *fiber.Ctx) error {
 	// Partner auth: if partner query param is present, authenticate via partner key
 	// instead of JWT. The partner acts on behalf of the identified user.
 	partnerKey := c.Query("partner")
+	var partnerDomain string
+	var partnerCandidates []uint64
+	partnerOwnerMode := false
 	if partnerKey != "" {
 		db := database.DBConn
 		_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
@@ -3458,13 +5126,28 @@ func PostMessage(c *fiber.Ctx) error {
 			}
 		}
 
-		myid = user.FindByTNIdOrEmail(db, tnuserid, email)
-		if myid == 0 {
-			return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+		if email == "" && tnuseridStr == "" {
+			// Partner-key-only auth (e.g. Trash Nothing): the partner acts as the
+			// message's owner, provided the message fromaddr is in the partner
+			// domain. Resolved per message id below. This mirrors V1
+			// getRolesForMessages, where a partner with a valid key acquires owner
+			// rights on a message from its domain and then acts as its fromuser.
+			partnerDomain = domain
+			partnerOwnerMode = true
+		} else {
+			partnerCandidates = user.FindTNCandidates(db, tnuserid, email)
+			if len(partnerCandidates) == 0 {
+				return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+			}
+			// Two candidates = diverged twin accounts; the sync's job is to
+			// STOP divergence - merge them (falls back to the split
+			// candidates for per-message arbitration if the merge fails).
+			partnerCandidates = user.HealTNDivergence(db, partnerCandidates)
+			myid = partnerCandidates[0]
 		}
 	}
 
-	if myid == 0 {
+	if myid == 0 && !partnerOwnerMode {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
@@ -3477,13 +5160,29 @@ func PostMessage(c *fiber.Ctx) error {
 	if req.ID == 0 && req.Tnpostid != nil && *req.Tnpostid != "" {
 		db := database.DBConn
 		var msgIDs []uint64
-		db.Raw("SELECT id FROM messages WHERE tnpostid = ?", *req.Tnpostid).Scan(&msgIDs)
+		db.Table("messages").Select("id").Where("tnpostid = ?", *req.Tnpostid).Scan(&msgIDs)
 		if len(msgIDs) == 0 {
 			return fiber.NewError(fiber.StatusNotFound, "Message not found for that TN post ID")
 		}
 		for i, msgID := range msgIDs {
 			req.ID = msgID
-			if err := dispatchPostMessageAction(c, myid, req); err != nil {
+			actingid := myid
+			if partnerOwnerMode {
+				// Act as each message's owner, but only for messages whose
+				// fromaddr is in the partner domain.
+				actingid = user.FindPartnerOwnerForMessage(db, partnerDomain, msgID)
+				if actingid == 0 {
+					if i == 0 {
+						return fiber.NewError(fiber.StatusForbidden, "Message not in partner domain")
+					}
+					continue
+				}
+			} else {
+				// The member may own two Freegle accounts (see
+				// user.FindTNCandidates) - act as whichever owns this copy.
+				actingid = actAsOwnerCandidate(db, myid, partnerCandidates, msgID)
+			}
+			if err := dispatchPostMessageAction(c, actingid, req); err != nil {
 				if i == 0 {
 					return err
 				}
@@ -3497,11 +5196,102 @@ func PostMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
 	}
 
+	// In partner-key-only mode, act as the message owner if its fromaddr is in the
+	// partner domain; otherwise the partner has no rights to this message.
+	if partnerOwnerMode {
+		myid = user.FindPartnerOwnerForMessage(database.DBConn, partnerDomain, req.ID)
+		if myid == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "Message not in partner domain")
+		}
+	} else if len(partnerCandidates) > 1 {
+		myid = actAsOwnerCandidate(database.DBConn, myid, partnerCandidates, req.ID)
+	}
+
 	return dispatchPostMessageAction(c, myid, req)
+}
+
+// moderationActionsBlockedByHold are the moderator actions that change moderation
+// state and so must not run while a DIFFERENT moderator holds the message.
+//
+// A hold used to be advisory: ModTools hides Approve/Reject when someone else
+// holds a post (ModMessage.vue), but nothing on the server enforced it, so a mod
+// whose screen was stale acted anyway. In Discourse #9946 a mod rejected a post
+// 27 minutes after a colleague held it and opened a modmail conversation, off a
+// pending list his browser had fetched 90 minutes earlier. No amount of client
+// refreshing closes that race - the check has to be here.
+//
+// Release is deliberately absent: it is the designed escape hatch for taking a
+// post off someone else's hold, so it must stay available or a post is stranded
+// when the holding mod goes away. Member-facing actions (Promise, Outcome, View,
+// Reply, ...) are absent too - a mod hold must not stop the owner using their own
+// post.
+var moderationActionsBlockedByHold = map[string]bool{
+	"Approve":       true,
+	"Reject":        true,
+	"Delete":        true,
+	"Spam":          true,
+	"Hold":          true,
+	"ApproveEdits":  true,
+	"RevertEdits":   true,
+	"Move":          true,
+	"BackToPending": true,
+	"RejectToDraft": true,
+	"BackToDraft":   true,
+}
+
+// heldByAnotherMod returns the id and name of a DIFFERENT moderator holding this
+// message on any of the groups the action would touch, or 0 if it is free to act
+// on.
+func heldByAnotherMod(myid uint64, req PostMessageRequest) (uint64, string) {
+	db := database.DBConn
+
+	ctx := getMessageModContext(db, myid, req.ID)
+	if ctx == nil {
+		// Not a moderator for this message - let the handler produce its own
+		// (403) error rather than masking it with a confusing 409.
+		return 0, ""
+	}
+
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return 0, ""
+	}
+
+	// Holds are per-group: a message held on one group must not block moderation on
+	// another group it is also pending on.
+	var holder uint64
+	db.Table("messages_groups").Select("heldby").
+		Where("msgid = ? AND groupid IN ? AND heldby IS NOT NULL AND heldby != ? AND deleted = 0",
+			req.ID, authorizedGroups, myid).
+		Limit(1).Scan(&holder)
+	if holder == 0 {
+		return 0, ""
+	}
+
+	var holderName string
+	db.Table("users").Select("fullname").Where("id = ?", holder).Scan(&holderName)
+	return holder, holderName
 }
 
 // dispatchPostMessageAction routes a POST /message action to the correct handler.
 func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+	// Enforced centrally rather than per-handler so a new moderation action
+	// cannot silently skip the check by forgetting to call it.
+	if moderationActionsBlockedByHold[req.Action] {
+		if holder, holderName := heldByAnotherMod(myid, req); holder != 0 {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"ret":        1,
+				"status":     "Held by another moderator",
+				"heldby":     holder,
+				"heldbyname": holderName,
+			})
+		}
+	}
+
 	switch req.Action {
 	case "Promise":
 		return handlePromise(c, myid, req)
@@ -3545,6 +5335,12 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBackToPending(c, myid, req)
 	case "RejectToDraft", "BackToDraft":
 		return handleRejectToDraft(c, myid, req)
+	case "BulkInterest":
+		return handleBulkInterest(c, myid, req)
+	case "BulkInterestState":
+		return handleBulkInterestState(c, myid, req)
+	case "BulkEditLink":
+		return handleBulkEditLink(c, myid, req)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 	}
@@ -3558,7 +5354,7 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Verify message exists and is owned by the current user.
 	var msgUserid uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&msgUserid)
+	db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&msgUserid)
 	if msgUserid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
@@ -3572,7 +5368,8 @@ func handlePromise(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	// REPLACE INTO - idempotent.
-	db.Exec("REPLACE INTO messages_promises (msgid, userid) VALUES (?, ?)", req.ID, promisedTo)
+	db.Table("messages_promises").Clauses(clause.Insert{Modifier: "REPLACE"}).
+		Create(map[string]interface{}{"msgid": req.ID, "userid": promisedTo})
 
 	// Create a chat message of type Promised if promising to another user.
 	if req.Userid != nil && *req.Userid > 0 && *req.Userid != myid {
@@ -3587,7 +5384,7 @@ func handleRenege(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
 	var msgUserid uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&msgUserid)
+	db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&msgUserid)
 	if msgUserid == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
@@ -3602,11 +5399,11 @@ func handleRenege(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Record renege for reliability tracking (only if not reneging on self).
 	if promisedTo != myid {
-		db.Exec("INSERT INTO messages_reneged (userid, msgid) VALUES (?, ?)", promisedTo, req.ID)
+		db.Table("messages_reneged").Create(map[string]interface{}{"userid": promisedTo, "msgid": req.ID})
 	}
 
 	// Delete the promise.
-	db.Exec("DELETE FROM messages_promises WHERE msgid = ? AND userid = ?", req.ID, promisedTo)
+	db.Table("messages_promises").Where("msgid = ? AND userid = ?", req.ID, promisedTo).Delete(nil)
 
 	// Create a chat message of type Reneged if reneging on another user.
 	if req.Userid != nil && *req.Userid > 0 && *req.Userid != myid {
@@ -3635,8 +5432,14 @@ func handleOutcomeIntended(c *fiber.Ctx, myid uint64, req PostMessageRequest) er
 	}
 
 	// Simple insert-or-update.
-	db.Exec("INSERT INTO messages_outcomes_intended (msgid, outcome) VALUES (?, ?) ON DUPLICATE KEY UPDATE outcome = VALUES(outcome)",
-		req.ID, req.Outcome)
+	db.Table("messages_outcomes_intended").Clauses(clause.OnConflict{
+		DoUpdates: clause.Set{
+			{Column: clause.Column{Name: "outcome"}, Value: clause.Column{Table: "excluded", Name: "outcome"}},
+		},
+	}).Create(map[string]interface{}{
+		"msgid":   req.ID,
+		"outcome": req.Outcome,
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -3657,7 +5460,7 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Get message type and verify existence.
 	var msgType string
-	db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
+	db.Table("messages").Select("type").Where("id = ?", req.ID).Scan(&msgType)
 	if msgType == "" {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
@@ -3683,19 +5486,23 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// now-absent messages row.
 	if req.Outcome == utils.OUTCOME_WITHDRAWN {
 		var pendingCount int64
-		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Scan(&pendingCount)
+		db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Count(&pendingCount)
 		if pendingCount > 0 {
 			// Capture the groups the post is actively pending on *before* the
 			// soft-delete, so we can write a per-group audit log below.
 			var pendingGroups []uint64
-			db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_PENDING).Scan(&pendingGroups)
+			db.Table("messages_groups").Select("groupid").Where("msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_PENDING).Scan(&pendingGroups)
 
 			// V1 parity (Message::delete()): soft-delete messages_groups first, then the
 			// message itself.  Without this, the orphaned Pending row (deleted=0) gets
 			// picked up by AutoApproveService 48 hours later and auto-approved as if the
 			// member never withdrew it — making the message reappear in ModTools.
-			db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING)
-			db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID)
+			db.Table("messages_groups").Where("msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).
+				Update("deleted", gorm.Expr("1"))
+			// Identical golden to
+			// 522c1e7c91cf and ef364ece98ef; converted together per gate (h).
+			db.Table("messages").Where("id = ?", req.ID).
+				Updates(map[string]interface{}{"deleted": gorm.Expr("NOW()"), "messageid": gorm.Expr("NULL")})
 
 			// V1 parity (Message::delete() logs SUBTYPE_DELETED per group): without an
 			// audit-log entry the post silently vanishes from the mod pending queue while
@@ -3704,7 +5511,7 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			// group: `user` is the message author, `byuser` the actor (the member
 			// withdrawing), and text notes that it was a withdrawal.
 			var fromuser uint64
-			db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&fromuser)
+			db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&fromuser)
 			for _, gid := range pendingGroups {
 				logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, fromuser, myid, req.ID, 0, "Withdrawn")
 			}
@@ -3733,20 +5540,24 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// batch before the iznik-batch fix) returned a non-deterministic row to
 	// the check and 409'd valid Taken requests.
 	var existingTotal, autoExpiredCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&existingTotal)
-	db.Raw(`SELECT COUNT(*) FROM messages_outcomes
-	        WHERE msgid = ?
-	          AND (outcome = ? OR (outcome = ? AND comments = 'Auto-expired'))`,
-		req.ID, utils.OUTCOME_EXPIRED, utils.OUTCOME_WITHDRAWN).Scan(&autoExpiredCount)
+	db.Table("messages_outcomes").Where("msgid = ?", req.ID).Count(&existingTotal)
+	db.Table("messages_outcomes").
+		Where("msgid = ? AND (outcome = ? OR (outcome = ? AND comments = 'Auto-expired'))",
+			req.ID, utils.OUTCOME_EXPIRED, utils.OUTCOME_WITHDRAWN).
+		Count(&autoExpiredCount)
 	if existingTotal > 0 && existingTotal != autoExpiredCount {
 		return fiber.NewError(fiber.StatusConflict, "Outcome already recorded")
 	}
 
 	// Clear any intended outcome.
-	db.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
+	// Identical golden to
+	// 0486830f6eda and ce1d968cff70; converted together per gate (h).
+	db.Table("messages_outcomes_intended").Where("msgid = ?", req.ID).Delete(nil)
 
 	// Clear any existing outcome (for expired overwrite).
-	db.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID)
+	// Identical golden to
+	// 854c7e93efe3 and dc8914d8b9d5; converted together per gate (h).
+	db.Table("messages_outcomes").Where("msgid = ?", req.ID).Delete(nil)
 
 	// Record the outcome.
 	happiness := ""
@@ -3759,19 +5570,22 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 
 	if happiness != "" {
-		db.Exec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments) VALUES (?, ?, ?, ?)",
-			req.ID, req.Outcome, happiness, comment)
+		db.Table("messages_outcomes").Create(map[string]interface{}{
+			"msgid": req.ID, "outcome": req.Outcome, "happiness": happiness, "comments": comment,
+		})
 	} else {
-		db.Exec("INSERT INTO messages_outcomes (msgid, outcome, comments) VALUES (?, ?, ?)",
-			req.ID, req.Outcome, comment)
+		db.Table("messages_outcomes").Create(map[string]interface{}{
+			"msgid": req.ID, "outcome": req.Outcome, "comments": comment,
+		})
 	}
 
 	// Record who took/received the item.
 	if (req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED) && req.Userid != nil && *req.Userid > 0 {
 		var availNow int
-		db.Raw("SELECT availablenow FROM messages WHERE id = ?", req.ID).Scan(&availNow)
-		db.Exec("INSERT INTO messages_by (msgid, userid, count) VALUES (?, ?, ?)",
-			req.ID, *req.Userid, availNow)
+		db.Table("messages").Select("availablenow").Where("id = ?", req.ID).Scan(&availNow)
+		db.Table("messages_by").Create(map[string]interface{}{
+			"msgid": req.ID, "userid": *req.Userid, "count": availNow,
+		})
 	}
 
 	// Mark successful in spatial index so that:
@@ -3779,7 +5593,35 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// - dashboard heatmap includes it (it filters on successful = 1)
 	// V1 parity: markSuccessfulInSpatial() in Message.php.
 	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED {
-		db.Exec("UPDATE messages_spatial SET successful = 1 WHERE msgid = ?", req.ID)
+		db.Table("messages_spatial").Where("msgid = ?", req.ID).Update("successful", gorm.Expr("1"))
+	}
+
+	// When a post is collected while still Pending in some groups - chiefly the rippling-out
+	// case, where it was rippled into a neighbouring group and is awaiting that group's approval,
+	// but also ordinary cross-posts - retire those Pending appearances so the now-taken item
+	// leaves those mod queues (and is never auto-approved/mailed into them later). We do this
+	// ONLY when the post is Approved on some other group, so the post and its Taken record
+	// survive and a post pending only on its single group is never stranded. Mirrors the
+	// Withdrawn-while-pending cleanup above, but keeps the message.
+	if req.Outcome == utils.OUTCOME_TAKEN || req.Outcome == utils.OUTCOME_RECEIVED {
+		var approvedElsewhere int64
+		db.Table("messages_groups").Where("msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_APPROVED).Count(&approvedElsewhere)
+		if approvedElsewhere > 0 {
+			var pendingGroups []uint64
+			db.Table("messages_groups").Select("groupid").Where("msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_PENDING).Scan(&pendingGroups)
+			if len(pendingGroups) > 0 {
+				db.Table("messages_groups").
+					Where("msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_PENDING).
+					Update("deleted", gorm.Expr("1"))
+				// V1 parity: log a Deleted entry per group so the post's disappearance from
+				// that pending queue is audited (matches the Withdrawn-pending path).
+				var fromuser uint64
+				db.Table("messages").Select("fromuser").Where("id = ?", req.ID).Scan(&fromuser)
+				for _, gid := range pendingGroups {
+					logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, fromuser, myid, req.ID, 0, req.Outcome)
+				}
+			}
+		}
 	}
 
 	// Remove from freebiealerts.app — post is no longer available regardless of outcome type.
@@ -3801,8 +5643,11 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		userid = *req.Userid
 	}
 
-	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'outcome', ?, 'happiness', ?, 'comment', ?, 'userid', ?, 'byuser', ?, 'message', ?))",
-		"message_outcome", req.ID, req.Outcome, happiness, comment, userid, myid, messageForOthers)
+	db.Table("background_tasks").Create(map[string]interface{}{
+		"task_type": "message_outcome",
+		"data": gorm.Expr("JSON_OBJECT('msgid', ?, 'outcome', ?, 'happiness', ?, 'comment', ?, 'userid', ?, 'byuser', ?, 'message', ?)",
+			req.ID, req.Outcome, happiness, comment, userid, myid, messageForOthers),
+	})
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -3810,15 +5655,17 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 // canModifyMessage checks if the user is the message poster or a moderator/owner of a group the message is on.
 func canModifyMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	var msgUserid uint64
-	db.Raw("SELECT fromuser FROM messages WHERE id = ?", msgid).Scan(&msgUserid)
+	db.Table("messages").Select("fromuser").Where("id = ?", msgid).Scan(&msgUserid)
 	if msgUserid == myid {
 		return true
 	}
 
 	// Check if user is a moderator/owner of any group the message is on.
 	var modCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_groups mg JOIN memberships m ON mg.groupid = m.groupid WHERE mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)",
-		msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+	db.Table("messages_groups mg").
+		Joins("JOIN memberships m ON mg.groupid = m.groupid").
+		Where("mg.msgid = ? AND m.userid = ? AND m.role IN (?, ?)", msgid, myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&modCount)
 	return modCount > 0
 }
 
@@ -3849,28 +5696,27 @@ func handleAddBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 	var existing byEntry
 	if userid != nil {
-		db.Raw("SELECT id, count FROM messages_by WHERE msgid = ? AND userid = ?",
-			req.ID, *userid).Scan(&existing)
+		db.Table("messages_by").Select("id, count").Where("msgid = ? AND userid = ?", req.ID, *userid).Scan(&existing)
 	} else {
-		db.Raw("SELECT id, count FROM messages_by WHERE msgid = ? AND userid IS NULL",
-			req.ID).Scan(&existing)
+		db.Table("messages_by").Select("id, count").Where("msgid = ? AND userid IS NULL", req.ID).Scan(&existing)
 	}
 	existingID := existing.ID
 	existingCount := existing.Count
 
 	if existingID > 0 {
 		// Restore old count before updating.
-		db.Exec("UPDATE messages SET availablenow = LEAST(availableinitially, availablenow + ?) WHERE id = ?",
-			existingCount, req.ID)
-		db.Exec("UPDATE messages_by SET count = ? WHERE id = ?", count, existingID)
+		// Identical golden to
+		// 228b6b678e0c (handleRemoveBy); converted together per gate (h).
+		db.Table("messages").Where("id = ?", req.ID).
+			Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", existingCount))
+		db.Table("messages_by").Where("id = ?", existingID).Update("count", count)
 	} else {
-		db.Exec("INSERT INTO messages_by (userid, msgid, count) VALUES (?, ?, ?)",
-			userid, req.ID, count)
+		db.Table("messages_by").Create(map[string]interface{}{"userid": userid, "msgid": req.ID, "count": count})
 	}
 
 	// Reduce available count.
-	db.Exec("UPDATE messages SET availablenow = GREATEST(LEAST(availableinitially, availablenow - ?), 0) WHERE id = ?",
-		count, req.ID)
+	db.Table("messages").Where("id = ?", req.ID).
+		Update("availablenow", gorm.Expr("GREATEST(LEAST(availableinitially, availablenow - ?), 0)", count))
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -3891,20 +5737,20 @@ func handleRemoveBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	}
 	var entry byEntry
 	if req.Userid != nil && *req.Userid > 0 {
-		db.Raw("SELECT id, count FROM messages_by WHERE msgid = ? AND userid = ?",
-			req.ID, *req.Userid).Scan(&entry)
+		db.Table("messages_by").Select("id, count").Where("msgid = ? AND userid = ?", req.ID, *req.Userid).Scan(&entry)
 	} else {
-		db.Raw("SELECT id, count FROM messages_by WHERE msgid = ? AND userid IS NULL",
-			req.ID).Scan(&entry)
+		db.Table("messages_by").Select("id, count").Where("msgid = ? AND userid IS NULL", req.ID).Scan(&entry)
 	}
 	entryID := entry.ID
 	entryCount := entry.Count
 
 	if entryID > 0 {
 		// Restore count and delete entry.
-		db.Exec("UPDATE messages SET availablenow = LEAST(availableinitially, availablenow + ?) WHERE id = ?",
-			entryCount, req.ID)
-		db.Exec("DELETE FROM messages_by WHERE id = ?", entryID)
+		// Identical golden to
+		// 98534528cf3e (handleAddBy); converted together per gate (h).
+		db.Table("messages").Where("id = ?", req.ID).
+			Update("availablenow", gorm.Expr("LEAST(availableinitially, availablenow + ?)", entryCount))
+		db.Table("messages_by").Where("id = ?", entryID).Delete(nil)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -3914,14 +5760,48 @@ func handleRemoveBy(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 func handleView(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
-	// Check for a recent view within 30 minutes to avoid redundant writes.
-	var recentCount int64
-	db.Raw("SELECT COUNT(*) FROM messages_likes WHERE msgid = ? AND userid = ? AND type = 'View' AND timestamp >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)",
-		req.ID, myid).Scan(&recentCount)
+	// Optional source tag (e.g. "ripple_notify" from a notification link's ?src=), recording
+	// HOW a genuine page-open arrived so notification-click opens are distinguishable from
+	// organic browse. nil when absent; COALESCE below means it never clears a known source.
+	var src interface{}
+	if req.Source != nil && *req.Source != "" {
+		src = *req.Source
+	}
 
+	// Check for a recent view within 30 minutes to avoid double-counting.
+	var recentCount int64
+	db.Table("messages_likes").Where("msgid = ? AND userid = ? AND type = 'View' AND timestamp >= DATE_SUB(NOW(), INTERVAL 30 MINUTE)", req.ID, myid).Count(&recentCount)
+
+	// pageview=1 marks a genuine page-open (a real eyeball), as opposed to a list-scroll
+	// impression (MarkSeen writes 0) or a legacy row (NULL). The 'View' type still marks
+	// "seen" for list de-duplication. source records the arrival path; COALESCE keeps any
+	// existing source so a later organic view never clears the notification attribution.
 	if recentCount == 0 {
-		db.Exec("INSERT INTO messages_likes (msgid, userid, type) VALUES (?, ?, 'View') ON DUPLICATE KEY UPDATE timestamp = NOW(), count = count + 1",
-			req.ID, myid)
+		// First view in the window: create/refresh the row as a genuine page-open.
+		db.Table("messages_likes").Clauses(clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "timestamp"}, Value: gorm.Expr("NOW()")},
+				{Column: clause.Column{Name: "count"}, Value: gorm.Expr("count + 1")},
+				{Column: clause.Column{Name: "pageview"}, Value: gorm.Expr("1")},
+				{Column: clause.Column{Name: "source"}, Value: gorm.Expr("COALESCE(?, source)", src)},
+			},
+		}).Create(map[string]interface{}{
+			"msgid":    req.ID,
+			"userid":   myid,
+			"type":     gorm.Expr("'View'"),
+			"pageview": gorm.Expr("1"),
+			"source":   src,
+		})
+	} else {
+		// A recent 'View' row already exists, so we de-duplicate the count - but that row
+		// may be a list-scroll impression (pageview=0) or legacy (NULL). A real page-open
+		// must still upgrade it to a genuine view; otherwise a scroll immediately before an
+		// open would suppress the open and the eyeball would never be recorded.
+		db.Table("messages_likes").Where("msgid = ? AND userid = ? AND type = 'View'", req.ID, myid).
+			Updates(map[string]interface{}{
+				"pageview": gorm.Expr("1"),
+				"source":   gorm.Expr("COALESCE(?, source)", src),
+			})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -3932,24 +5812,26 @@ func handleView(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 func createSystemChatMessage(db *gorm.DB, fromUser uint64, toUser uint64, refmsgid uint64, msgType string) {
 	// Find existing chat room between these users.
 	var chatID uint64
-	db.Raw("SELECT id FROM chat_rooms WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?) LIMIT 1",
-		fromUser, toUser, toUser, fromUser).Scan(&chatID)
+	db.Table("chat_rooms").Select("id").Where("(user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)", fromUser, toUser, toUser, fromUser).Limit(1).Scan(&chatID)
 
 	if chatID == 0 {
 		// Create a User2User chat room. ON DUPLICATE KEY handles race conditions
-		// (unique key on user1, user2, chattype).
-		// Use raw database/sql to get LastInsertId() from the same result —
-		// avoids the GORM connection-pool race.
-		sqlDB, err := db.DB()
-		if err != nil {
+		// (unique key on user1, user2, chattype). Clauses(gorm.WithResult()) reads
+		// the id from the same sql.Result the write returned — avoids the GORM
+		// connection-pool race a separate SELECT LAST_INSERT_ID() would have.
+		res := gorm.WithResult()
+		tx := db.Table("chat_rooms").Clauses(res, clause.OnConflict{
+			DoUpdates: clause.Set{
+				{Column: clause.Column{Name: "id"}, Value: gorm.Expr("LAST_INSERT_ID(id)")},
+				{Column: clause.Column{Name: "latestmessage"}, Value: gorm.Expr("NOW()")},
+			},
+		}).Create(map[string]interface{}{
+			"user1": fromUser, "user2": toUser, "chattype": utils.CHAT_TYPE_USER2USER, "latestmessage": gorm.Expr("NOW()"),
+		})
+		if tx.Error != nil || res.Result == nil {
 			return
 		}
-		sqlResult, err := sqlDB.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id), latestmessage = NOW()",
-			fromUser, toUser, utils.CHAT_TYPE_USER2USER)
-		if err != nil {
-			return
-		}
-		chatIDInt, err := sqlResult.LastInsertId()
+		chatIDInt, err := res.Result.LastInsertId()
 		if err != nil || chatIDInt == 0 {
 			return
 		}
@@ -3957,8 +5839,10 @@ func createSystemChatMessage(db *gorm.DB, fromUser uint64, toUser uint64, refmsg
 	}
 
 	// Insert chat message.
-	db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, '', 1)",
-		chatID, fromUser, msgType, refmsgid, time.Now())
+	db.Table("chat_messages").Create(map[string]interface{}{
+		"chatid": chatID, "userid": fromUser, "type": msgType, "refmsgid": refmsgid,
+		"date": time.Now(), "message": gorm.Expr("''"), "processingrequired": gorm.Expr("1"),
+	})
 }
 
 // handleMove moves a message from its current group to a different group.
@@ -3984,7 +5868,12 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	// Use a transaction to ensure DELETE + INSERT are atomic.
 	// Without this, a failure after DELETE would orphan the message.
 	err := db.Transaction(func(tx *gorm.DB) error {
-		result := tx.Exec("DELETE FROM messages_groups WHERE msgid = ?", req.ID)
+		// Runs on tx (a *gorm.DB
+		// transaction), which the retired harness's dry-run build function
+		// rendered identically to the plain connection - same reasoning as
+		// the retired orm_wave2_pilot_test.go's handleMerge note (removed in
+		// d22ba1d6c).
+		result := tx.Table("messages_groups").Where("msgid = ?", req.ID).Delete(nil)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -3992,8 +5881,17 @@ func handleMove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			return fmt.Errorf("message not found in any group")
 		}
 
-		result = tx.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, msgtype) VALUES (?, ?, ?, NOW(), (SELECT type FROM messages WHERE id = ?))",
-			req.ID, *req.Groupid, utils.COLLECTION_PENDING, req.ID)
+		// VALUES(...) with one
+		// scalar-subquery element, not INSERT ... SELECT: the row source is
+		// still an explicit VALUES list, so a normal Create keeps it one
+		// statement.
+		result = tx.Table("messages_groups").Create(map[string]interface{}{
+			"msgid":      req.ID,
+			"groupid":    *req.Groupid,
+			"collection": utils.COLLECTION_PENDING,
+			"arrival":    gorm.Expr("NOW()"),
+			"msgtype":    gorm.Expr("(SELECT type FROM messages WHERE id = ?)", req.ID),
+		})
 		return result.Error
 	})
 
@@ -4039,9 +5937,10 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 
 	var candidates []aiCandidate
 	if len(keepList) > 0 {
-		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)", msgID, keepList).Scan(&candidates)
+		db.Table("messages_attachments").Select("id, COALESCE(externaluid, '') AS externaluid, externalmods").
+			Where("msgid = ? AND id NOT IN ?", msgID, keepList).Scan(&candidates)
 	} else {
-		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ?", msgID).Scan(&candidates)
+		db.Table("messages_attachments").Select("id, COALESCE(externaluid, '') AS externaluid, externalmods").Where("msgid = ?", msgID).Scan(&candidates)
 	}
 
 	foundAI := false
@@ -4051,7 +5950,7 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		}
 		foundAI = true
 		var aiImageID uint64
-		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
+		db.Table("ai_images").Select("id").Where("externaluid = ?", att.Externaluid).Limit(1).Scan(&aiImageID)
 		if aiImageID > 0 {
 			if containsUint64(badAttachmentIDs, att.ID) {
 				microvolunteering.ForceRejectAIImage(db, userID, aiImageID)
@@ -4063,7 +5962,9 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 	// Mirror V1 (Message.php:3974–3989): whenever an AI attachment is removed,
 	// protect the message from the illustrations cron re-injecting a cached image.
 	if foundAI {
-		db.Exec("INSERT IGNORE INTO messages_ai_declined (msgid) VALUES (?)", msgID)
+		db.Table("messages_ai_declined").Clauses(clause.Insert{Modifier: "IGNORE"}).Create(map[string]interface{}{
+			"msgid": msgID,
+		})
 	}
 }
 

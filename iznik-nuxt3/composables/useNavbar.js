@@ -3,15 +3,16 @@ import { useMiscStore } from '~/stores/misc'
 import { useNewsfeedStore } from '~/stores/newsfeed'
 import { useMessageStore } from '~/stores/message'
 import { useNotificationStore } from '~/stores/notification'
-import { useLogoStore } from '~/stores/logo'
 import { useChatStore } from '~/stores/chat'
 import { useAuthStore } from '~/stores/auth'
 import { fetchMe } from '~/composables/useMe'
 import { useRuntimeConfig } from '#app'
 import { TYPING_TIME_INVERVAL } from '~/constants'
+import { classifyStaleBuild } from '~/composables/useStaleBuild'
 import { useCommunityEventStore } from '~/stores/communityevent'
 import { useVolunteeringStore } from '~/stores/volunteering'
 import { useMobileStore } from '~/stores/mobile'
+import { combinedBadgeCount } from '~/composables/useBadgeCount'
 
 export const navBarHidden = ref(false)
 
@@ -87,7 +88,6 @@ export function useNavbar() {
   const messageStore = useMessageStore()
   const notificationStore = useNotificationStore()
   const chatStore = useChatStore()
-  const logoStore = useLogoStore()
   const communityEventStore = useCommunityEventStore()
   const volunteeringStore = useVolunteeringStore()
   const route = useRoute()
@@ -96,14 +96,14 @@ export function useNavbar() {
   const online = computed(() => miscStore.online)
   const myid = computed(() => authStore.user?.id)
   const distance = ref(1000)
-  const logo = ref('/icon.png')
-  const logoFormat = ref('webp')
   const unreadNotificationCount = ref(0)
   const mobileStore = useMobileStore()
   const chatCount = computed(() => {
     const count = Math.min(99, chatStore.unreadCount)
     if (mobileStore.isApp) {
-      mobileStore.setBadgeCount(count)
+      mobileStore.setBadgeCount(
+        combinedBadgeCount(chatStore.unreadCount, notificationStore.count)
+      )
     }
     return count
   })
@@ -153,7 +153,13 @@ export function useNavbar() {
       return chatCount.value - chat?.unseen
     }
 
-    return 0
+    // Everywhere else the back button REPLACES the notification bell - NavbarMobile
+    // only renders NotificationOptions when there's no back button. So on any
+    // sub-page (an individual post, an event, Volunteering) a notification arriving
+    // has nowhere to show itself, and you'd only find it by happening to navigate
+    // back. Put the count on the back button instead: it's the way back to the bell,
+    // so the badge is both the news and the route to it.
+    return Math.min(99, notificationStore.count || 0)
   })
 
   const newsCount = computed(() => {
@@ -169,7 +175,7 @@ export function useNavbar() {
   })
 
   const browseCountPlural = computed(() => {
-    return pluralize('unseen post', messageStore.count, true)
+    return pluralize('new post', messageStore.count, true)
   })
 
   const activePostsCountPlural = computed(() => {
@@ -199,17 +205,6 @@ export function useNavbar() {
   })
 
   onMounted(() => {
-    setTimeout(async () => {
-      // Look for a custom logo.
-      const ret = await logoStore.fetch()
-
-      // v2 API returns data directly without ret/status wrapper
-      if (ret?.logo) {
-        logo.value = ret.logo.path.replace(/.*logos/, '/logos')
-        logoFormat.value = 'gif'
-      }
-    }, 500000)
-
     // Only fetch counts once, even if multiple components use useNavbar().
     if (!countsInitialized) {
       countsInitialized = true
@@ -253,10 +248,10 @@ export function useNavbar() {
       router.push('/')
     } else if (
       currentPath === '/give/mobile/photos' ||
-      currentPath === '/find/mobile/photos'
+      currentPath === '/ask/mobile/photos'
     ) {
       // From mobile photos page, go to home to avoid redirect loop.
-      // The /give and /find pages redirect to mobile/photos on mobile, so router.back() would loop.
+      // The /give and /ask pages redirect to mobile/photos on mobile, so router.back() would loop.
       router.push('/')
     } else {
       try {
@@ -282,7 +277,11 @@ export function useNavbar() {
           throw new Error('Not logged in')
         }
 
-        await messageStore.fetchCount(me?.settings?.browseView, false)
+        await messageStore.fetchCount(
+          me?.settings?.browseView,
+          me?.settings?.browseMaxDistance,
+          false
+        )
 
         if (!myid.value) {
           throw new Error('Not logged in')
@@ -337,12 +336,18 @@ export function useNavbar() {
 
             if (data?.deploy_id) {
               if (data.deploy_id !== runtimeConfig.public.NETLIFY_DEPLOY_ID) {
-                const deployDate = new Date(data.published_deploy.published_at)
+                // We're not on the latest deploy. Soft-nag once the new deploy has
+                // been live a while, but escalate to a forced reload once the build
+                // we're running is over a week stale (people who never refresh).
+                const verdict = classifyStaleBuild(
+                  runtimeConfig.public.BUILD_DATE,
+                  data.published_deploy.published_at,
+                  Date.now()
+                )
 
-                // Check it's not too soon to nag.  This stops annoyances when we have lots of releases in a short
-                // time.
-                if (deployDate.getTime() < Date.now() - 12 * 60 * 60 * 1000) {
-                  // We're not on the latest deploy, so show a warning.
+                if (verdict === 'hard') {
+                  useMiscStore().needToReloadHard = true
+                } else if (verdict === 'soft') {
                   useMiscStore().needToReload = true
                 }
               }
@@ -376,8 +381,6 @@ export function useNavbar() {
   return {
     online,
     distance,
-    logo,
-    logoFormat,
     unreadNotificationCount,
     chatCount,
     activePostsCount,

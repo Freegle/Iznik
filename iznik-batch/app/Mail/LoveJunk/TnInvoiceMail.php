@@ -8,6 +8,14 @@ use Illuminate\Mail\Mailables\Envelope;
 
 class TnInvoiceMail extends MjmlMailable
 {
+    /**
+     * Transactional - a partner invoice - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public readonly string $recipientEmail,
         public readonly string $tnAmount,
@@ -26,12 +34,16 @@ class TnInvoiceMail extends MjmlMailable
 
     public function envelope(): Envelope
     {
+        // V1 (lovejunk_tn_invoice.php) CC'd the audit log address.
+        $cc = config('freegle.mail.donation_cc_addr');
+
         return new Envelope(
             from: new Address(
                 config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org'),
                 config('freegle.branding.name', 'Freegle')
             ),
             to: [new Address($this->recipientEmail)],
+            cc: $cc ? [new Address($cc)] : [],
             subject: $this->getSubject(),
         );
     }

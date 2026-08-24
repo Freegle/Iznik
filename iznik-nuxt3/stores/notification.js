@@ -2,8 +2,7 @@ import { defineStore } from 'pinia'
 import api from '~/api'
 import { APIError } from '~/api/APIErrors'
 
-export const useNotificationStore = defineStore({
-  id: 'notification',
+export const useNotificationStore = defineStore('notification', {
   state: () => ({
     list: [],
     listById: {},
@@ -37,8 +36,17 @@ export const useNotificationStore = defineStore({
         this.list = await api(this.config).notification.list()
 
         this.list.forEach((item) => {
-          // Notifications are immutable so we can avoid triggering a re-render.
-          if (!this.listById[item.id]) {
+          const existing = this.listById[item.id]
+          if (existing) {
+            // A notification's content is immutable, so we keep the same object
+            // reference to avoid needless re-renders. But `seen` flips
+            // false->true once the user reviews what the notification points at
+            // (e.g. a microvolunteering "post to check"). Refresh it in place so
+            // components rendering via byId() reflect the latest seen status
+            // instead of the frozen unread state from the first fetch
+            // (Discourse 9856).
+            existing.seen = item.seen
+          } else {
             this.listById[item.id] = item
           }
         })

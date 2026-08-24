@@ -51,8 +51,14 @@ const job = ref(await jobStore.fetchOne(id.value))
 onMounted(async () => {
   // Log the view and redirect to the job link.
   if (id.value && job.value?.id === id.value) {
+    // Tag the billable click with its placement (this redirect page is reached
+    // from digest-email job links) and source, so email-driven clicks are
+    // attributable in logs_jobs alongside the website placements.
     await jobStore.log({
+      id: job.value.id,
       link: job.value.url,
+      placement: 'email_redirect',
+      source,
     })
 
     // Log to Loki for analytics.

@@ -15,10 +15,13 @@
       </span>
       <span v-if="volunteering.groups?.length" class="meta-item">
         on
-        <span v-for="(groupid, index) in volunteering.groups" :key="groupid">
-          <span v-if="index > 0">, </span>
-          <span v-if="group(groupid)">{{ group(groupid).namedisplay }}</span>
-        </span>
+        <ShowMore
+          :items="volunteering.groups.map((id) => group(id)).filter(Boolean)"
+          :limit="3"
+          inline
+        >
+          <template #item="{ item }">{{ item.namedisplay }}</template>
+        </ShowMore>
       </span>
     </div>
 
@@ -42,15 +45,6 @@
         <OurUploadedImage
           v-if="volunteering.image?.ouruid"
           :src="volunteering.image?.ouruid"
-          :modifiers="volunteering.image?.externalmods"
-          alt="Volunteering Opportunity Photo"
-        />
-        <NuxtPicture
-          v-else-if="volunteering.image?.externaluid"
-          fit="cover"
-          format="webp"
-          provider="uploadcare"
-          :src="volunteering.image?.externaluid"
           :modifiers="volunteering.image?.externalmods"
           alt="Volunteering Opportunity Photo"
         />
@@ -108,8 +102,8 @@ const props = defineProps({
 
 const emit = defineEmits(['focus-comment', 'hide'])
 
-const VolunteerOpportunityModal = defineAsyncComponent(() =>
-  import('./VolunteerOpportunityModal')
+const VolunteerOpportunityModal = defineAsyncComponent(
+  () => import('./VolunteerOpportunityModal')
 )
 
 // Store setup

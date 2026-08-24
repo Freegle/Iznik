@@ -93,7 +93,6 @@ Generated 2026-02-07. Updated as part of Phase 0B of the V1-to-V2 API migration 
 | /latestmessage | GET | misc.LatestMessage | No auth/error tests (public) |
 | /location/latlng | GET | location.LatLng | Minimal tests |
 | /location/{id}/addresses | GET | location.GetLocationAddresses | Minimal tests |
-| /logo | GET | logo.Get | No auth/error tests (public) |
 | /message/count | GET | isochrone.Count | No error tests |
 | /newsfeedcount | GET | newsfeed.Count | No additional error tests needed (auth tested) |
 | /online | GET | misc.Online | No auth/error tests (public) |
@@ -153,7 +152,6 @@ Generated 2026-02-07. Updated as part of Phase 0B of the V1-to-V2 API migration 
 | ConfigAPI.js | 4 |
 | EmailTrackingAPI.js | 7 |
 | JobAPI.js | 3 |
-| LogoAPI.js | 1 |
 | NotificationAPI.js | 4 |
 | SystemLogsAPI.js | 4 |
 | UserSearchAPI.js | 1 |

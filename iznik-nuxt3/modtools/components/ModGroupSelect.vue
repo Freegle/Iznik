@@ -6,13 +6,26 @@
       :class="labelSrOnly ? 'visually-hidden' : ''"
       >{{ label }}</label
     >
+    <!-- Options are rendered as children rather than via :options so each
+         row can carry a colour class. An <option> can't contain markup, so
+         the whole row is coloured, not just the count; browsers that use
+         the OS-native picker (e.g. Safari) ignore option colours and fall
+         back to the plain text, which still has the " - backup" suffix. -->
     <b-form-select
       id="communitieslist"
       v-model="selectedGroup"
       :size="size"
-      :options="groupOptions"
       :disabled="disabled"
-    />
+    >
+      <b-form-select-option
+        v-for="option in groupOptions"
+        :key="option.value"
+        :value="option.value"
+        :class="option.class"
+      >
+        {{ option.text }}
+      </b-form-select-option>
+    </b-form-select>
   </div>
 </template>
 <script setup>
@@ -202,8 +215,8 @@ const groupOptions = computed(() => {
       text: props.active
         ? '-- My active communities --'
         : props.allMy
-        ? '-- All my communities --'
-        : '-- All communities --',
+          ? '-- All my communities --'
+          : '-- All communities --',
       selected: selectedGroup.value === 0,
     })
   } else {
@@ -236,15 +249,19 @@ const groupOptions = computed(() => {
       group.role === 'Moderator'
     ) {
       let text = group.namedisplay
+      let hasWork = false
 
       if (props.work) {
         props.work.forEach((type) => {
           if (group.work && group.work[type]) {
             text += ' (' + group.work[type] + ')'
+            hasWork = true
           }
         })
       }
-      if (group.mysettings && group.mysettings.active === 0) {
+
+      const backup = group.mysettings && group.mysettings.active === 0
+      if (backup) {
         text += ' - backup'
       }
 
@@ -252,6 +269,9 @@ const groupOptions = computed(() => {
         value: group.id,
         text,
         selected: selectedGroup.value === group.id,
+        // Rows with work use the same palette as the menu badges: red for
+        // active groups, blue for backup groups.
+        class: hasWork ? (backup ? 'text-info' : 'text-danger') : null,
       })
     }
   }

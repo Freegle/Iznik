@@ -97,7 +97,7 @@ describe('MessageEditModal', () => {
             emits: ['hidden'],
           },
           PostPhoto: {
-            template: '<div class="post-photo" />',
+            template: '<div class="post-photo" @click="$emit(\'click\')" />',
             props: [
               'id',
               'path',
@@ -108,7 +108,7 @@ describe('MessageEditModal', () => {
               'externalmods',
               'primary',
             ],
-            emits: ['remove'],
+            emits: ['remove', 'click'],
           },
           OurUploader: {
             template: '<div class="our-uploader" />',
@@ -557,6 +557,45 @@ describe('MessageEditModal', () => {
       const wrapper = createWrapper()
       expect(wrapper.find('.photo-grid').exists()).toBe(true)
       expect(wrapper.findAll('.post-photo').length).toBe(0)
+    })
+
+    // You should be able to see a photo properly before deciding to delete it.
+    it('opens the full-screen viewer on the photo you clicked', async () => {
+      mockMessageStore.byId.mockReturnValue({
+        id: 1,
+        subject: 'Test Subject',
+        textbody: 'Test description',
+        type: 'Offer',
+        availablenow: 1,
+        deadline: null,
+        location: { name: 'AB1 2CD' },
+        item: { name: 'Test Item' },
+        attachments: [
+          { id: 1, path: '/test1.jpg' },
+          { id: 2, path: '/test2.jpg' },
+        ],
+        groups: [{ groupid: 1 }],
+      })
+      const wrapper = createWrapper()
+
+      // The viewer teleports to the body, so it is not inside the wrapper.
+      const viewer = () => document.body.querySelector('.fullscreen-viewer')
+      expect(viewer()).toBeNull()
+
+      await wrapper.findAll('.post-photo')[1].trigger('click')
+      // Loaded on demand, so give the import a moment.
+      await vi.waitFor(() => expect(viewer()).not.toBeNull(), { timeout: 5000 })
+
+      expect(viewer().querySelectorAll('.image-slide')).toHaveLength(2)
+      expect(viewer().querySelector('.image-counter').textContent.trim()).toBe(
+        '2 / 2'
+      )
+
+      viewer().querySelector('.back-button').click()
+      await flushPromises()
+      expect(viewer()).toBeNull()
+
+      wrapper.unmount()
     })
 
     it('wraps photos in draggable component for reordering', () => {

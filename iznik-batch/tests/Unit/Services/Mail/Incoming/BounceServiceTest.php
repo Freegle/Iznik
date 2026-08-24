@@ -312,6 +312,95 @@ DSN;
         $this->assertTrue($this->service->shouldIgnoreBounce($code));
     }
 
+    // ===================================================================
+    // Deferral Tests
+    //
+    // 2026-08-15: Yahoo started 421-ing every message from bulk2's IP with
+    // "[TSS04] ... temporarily deferred due to unexpected volume or user
+    // complaints". Those messages sit in the queue until
+    // maximal_queue_lifetime, then Postfix emits one DSN per message
+    // carrying the original 421 text (or "delivery time expired"). Without
+    // these ignore patterns each affected user - who held ~9 queued
+    // messages - would sail past SOFT_BOUNCE_THRESHOLD and be suspended for
+    // a problem that is ours, not theirs.
+    // ===================================================================
+
+    public function test_classifies_yahoo_tss04_deferral_as_ignorable(): void
+    {
+        $code = 'smtp; 421 4.7.0 [TSS04] Messages from 185.53.57.161 temporarily deferred due to '
+            . 'unexpected volume or user complaints - 4.16.55.1; see '
+            . 'https://postmaster.yahooinc.com/error-codes';
+
+        $this->assertTrue($this->service->shouldIgnoreBounce($code));
+    }
+
+    public function test_classifies_yahoo_tss05_deferral_as_ignorable(): void
+    {
+        // TSS05 is the same throttle against our SECOND sending ip. It only
+        // appeared once we routed the Yahoo family there on 2026-08-19 to get
+        // round the block on the first, and it arrived within two minutes of
+        // real volume. Matched on its own name rather than relying on the
+        // "temporarily deferred" wording that happens to accompany it.
+        $code = 'smtp; 421 4.7.0 [TSS05] Messages from 77.72.7.253 temporarily deferred due to '
+            . 'unexpected volume or user complaints - 4.16.55.1; see '
+            . 'https://postmaster.yahooinc.com/error-codes';
+
+        $this->assertTrue($this->service->shouldIgnoreBounce($code));
+    }
+
+    public function test_classifies_postfix_relay_deferral_as_ignorable(): void
+    {
+        // Postfix's wording when the remote said 421 during the SMTP
+        // conversation rather than when the destination is in backoff -
+        // note it does NOT contain "delivery temporarily suspended".
+        $code = 'X-Postfix; host mta7.am0.yahoodns.net[98.136.96.92] refused to talk to me: '
+            . '421 4.7.0 [TSS04] Messages temporarily deferred';
+
+        $this->assertTrue($this->service->shouldIgnoreBounce($code));
+    }
+
+    public function test_classifies_queue_lifetime_expiry_as_ignorable(): void
+    {
+        $code = 'X-Postfix; delivery time expired';
+
+        $this->assertTrue($this->service->shouldIgnoreBounce($code));
+    }
+
+    public function test_deferral_expiry_dsn_does_not_record_a_bounce(): void
+    {
+        $user = $this->createTestUser(['bouncing' => 0]);
+        $userEmail = UserEmail::where('userid', $user->id)->where('preferred', 1)->first();
+
+        // Envelope sender on our bulk mail is noreply@, not VERP, so
+        // attribution falls back to the DSN's Original-Recipient header.
+        $rawBounce = <<<DSN
+Reporting-MTA: dns; bulk2.ilovefreegle.org
+Action: failed
+Status: 4.7.0
+Diagnostic-Code: X-Postfix; delivery time expired: host mta7.am0.yahoodns.net said: 421 4.7.0 [TSS04] Messages from 185.53.57.161 temporarily deferred due to unexpected volume or user complaints
+Original-Recipient: rfc822;{$userEmail->email}
+DSN;
+
+        $parsedEmail = $this->createParsedEmail([
+            'rawMessage' => $rawBounce,
+            'envelopeTo' => 'noreply@ilovefreegle.org',
+            'bounceRecipient' => $userEmail->email,
+            'bounceStatus' => '4.7.0',
+        ]);
+
+        $result = $this->service->processBounce($parsedEmail);
+
+        $this->assertTrue($result['success']);
+        $this->assertTrue($result['ignored'] ?? false, 'A queue-expiry deferral DSN must be ignored');
+
+        $this->assertDatabaseMissing('bounces_emails', [
+            'emailid' => $userEmail->id,
+        ]);
+
+        $user->refresh();
+        $this->assertEquals(0, $user->bouncing, 'Our IP reputation must never suspend the member');
+    }
+
     public function test_classifies_421_temporary_error_as_not_permanent(): void
     {
         $code = '421 Try again later';

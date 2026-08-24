@@ -9,6 +9,7 @@ use App\Models\ChatRoster;
 use App\Models\Membership;
 use App\Models\User;
 use App\Services\ChatNotificationService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -63,6 +64,49 @@ class ChatNotificationServiceTest extends TestCase
 
         // Recipient should be notified.
         $this->assertGreaterThanOrEqual(0, $count);
+    }
+
+    public function test_notify_by_email_deduplicates_identical_rows_from_single_send(): void
+    {
+        // A single chat send occasionally inserts two identical chat_messages
+        // rows ~1s apart (double-submit / retry with no dedup guard at insert).
+        // We email once per row, so without dedup the recipient gets two copies
+        // of the same message seconds apart. Only one notification should go out.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $sender->id,
+            'lastmsgemailed' => null,
+        ]);
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $recipient->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        // Two identical rows for a single logical send (same body/type/refmsgid).
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Are these still available?',
+            'date' => now()->subMinutes(5),
+        ]);
+        $this->createTestChatMessage($room, $sender, [
+            'message' => 'Are these still available?',
+            'date' => now()->subMinutes(5)->addSecond(),
+        ]);
+
+        $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        // The recipient must receive exactly one notification, not one per row.
+        $toRecipient = Mail::sent(ChatNotification::class)->filter(
+            fn (ChatNotification $mail) => $mail->hasTo($recipient->email_preferred)
+        );
+        $this->assertCount(1, $toRecipient);
     }
 
     public function test_notify_by_email_with_specific_chat(): void
@@ -267,6 +311,108 @@ class ChatNotificationServiceTest extends TestCase
         $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
 
         $this->assertEquals(0, $count);
+    }
+
+    public function test_get_unmailed_messages_applies_rippling_delivery_gate(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($sender, $group); // the post P (msgid FK)
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'date' => now()->subMinutes(5),
+        ]);
+
+        // Is our chat message returned by the selection query (i.e. would be emailed)?
+        $present = function () use ($room, $msg): bool {
+            $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+            $method->setAccessible(true);
+            $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+            return $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id);
+        };
+
+        // No held reply yet → the delivery gate is always true, so the message is selected.
+        $this->assertTrue($present(), 'message is selectable when nothing is held');
+
+        // A non-released rippling row → the delivery gate excludes the message.
+        $rowId = (int) DB::table('rippling_held_replies')->insertGetId([
+            'chatid' => $room->id,
+            'chatmsgid' => $msg->id,
+            'msgid' => $post->id,
+            'replieruserid' => $sender->id,
+            'lat' => 51.5,
+            'lng' => -0.1,
+            'status' => 'held',
+            'created_at' => now(),
+        ]);
+        $this->assertFalse($present(), 'held reply is gated out of the email selection');
+
+        // Released → the gate no longer matches, so the message is selectable again.
+        DB::table('rippling_held_replies')->where('id', $rowId)->update(['status' => 'released']);
+        $this->assertTrue($present(), 'released reply is delivered (selectable) again');
+    }
+
+    public function test_released_reply_older_than_window_is_delivered_by_releasedat(): void
+    {
+        // Regression: a rippling-held reply is released when the post finally ripples to the
+        // replier — typically hours/days after the reply was written, so its chat_messages.date
+        // is long outside the notification look-back window. Keying delivery on date alone
+        // meant a released reply was never selected and the poster was never notified. The
+        // selection must also admit messages whose hold was released within the window,
+        // keyed on releasedat.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $post = $this->createTestMessage($sender, $group);
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        // Reply written 3 days ago — well outside the 24h look-back window.
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'date' => now()->subDays(3),
+        ]);
+
+        $present = function () use ($room, $msg): bool {
+            $method = new \ReflectionMethod($this->service, 'getUnmailedMessages');
+            $method->setAccessible(true);
+            $rows = $method->invoke($this->service, ChatRoom::TYPE_USER2USER, $room->id, 0, 24, false);
+
+            return $rows->contains(fn ($r) => (int) $r->id === (int) $msg->id);
+        };
+
+        // A held row on an old message keeps it out (both by the gate and the old date).
+        $rowId = (int) DB::table('rippling_held_replies')->insertGetId([
+            'chatid' => $room->id,
+            'chatmsgid' => $msg->id,
+            'msgid' => $post->id,
+            'replieruserid' => $sender->id,
+            'lat' => 51.5,
+            'lng' => -0.1,
+            'status' => 'held',
+            'created_at' => now()->subDays(3),
+        ]);
+        $this->assertFalse($present(), 'old held reply is not selectable');
+
+        // Released just now → even though the message date is 3 days old, it is selectable
+        // because the release fell within the look-back window (keyed on releasedat).
+        DB::table('rippling_held_replies')->where('id', $rowId)->update([
+            'status' => 'released',
+            'releasedat' => now()->subMinutes(5),
+        ]);
+        $this->assertTrue($present(), 'reply released within the window is delivered despite an old date');
+
+        // Released long ago (outside the window) → aged out, not re-selected on every run.
+        DB::table('rippling_held_replies')->where('id', $rowId)->update([
+            'releasedat' => now()->subDays(3),
+        ]);
+        $this->assertFalse($present(), 'a release older than the window is not re-selected');
     }
 
     public function test_notify_by_email_skips_deleted_messages(): void
@@ -1567,7 +1713,7 @@ class ChatNotificationServiceTest extends TestCase
      * 4. One of the users replies
      * 5. The moderator should NOT be notified about that reply
      *
-     * This matches the original iznik-server getMembersStatus() which filtered:
+     * This matches the original legacy V1 PHP getMembersStatus() which filtered:
      * "chat_roster.userid IN (chat_rooms.user1, chat_rooms.user2)"
      */
     public function test_notify_by_email_user2user_excludes_moderators_in_roster(): void

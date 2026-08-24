@@ -1,54 +1,34 @@
-import { Readable } from 'stream'
-import { SitemapStream, streamToPromise } from 'sitemap'
+import { chunk, renderSitemapIndex, SITEMAP_CHUNK_SIZE } from '../utils/sitemap'
 
-// We want to return a sitemap which has the normal page routes, but also our dynamic routes.
-// So far as I can tell Nuxt3 isn't evolved enough for use with a sitemap, so we have to do this
-// manually.
+// The top-level sitemap is an index pointing at the child sitemaps, because the post
+// list is far too big to sit alongside everything else in one file. Google reads this
+// first (it's what robots.txt advertises) and then fetches each child.
+//
+// Until this change the sitemap listed only the 496 community pages and 26 static
+// pages, and nothing at all told Google that an individual post existed.
 
 export default defineEventHandler(async (event) => {
   const runtimeConfig = useRuntimeConfig()
 
-  // eslint-disable-next-line no-undef
   appendResponseHeader(event, 'Content-Type', 'text/xml')
 
-  const links = [
-    { url: '/', changefreq: 'monthly', priority: 1.0 },
-    { url: '/give', changefreq: 'monthly', priority: 1.0 },
-    { url: '/find', changefreq: 'monthly', priority: 1.0 },
-    { url: '/explore', changefreq: 'weekly', priority: 0.8 },
-    { url: '/unsubscribe', changefreq: 'monthly', priority: 0.7 },
-    { url: '/donate', changefreq: 'monthly', priority: 0.7 },
-    { url: '/help', changefreq: 'monthly', priority: 0.5 },
-    { url: '/stories', changefreq: 'weekly', priority: 0.5 },
-    { url: '/communityevents', changefreq: 'monthly', priority: 0.1 },
-    { url: '/volunteerings', changefreq: 'monthly', priority: 0.1 },
-    { url: '/mobile', changefreq: 'monthly', priority: 0.3 },
-    { url: '/about', changefreq: 'monthly', priority: 0.3 },
-    { url: '/disclaimer', changefreq: 'monthly', priority: 0.1 },
-    { url: '/terms', changefreq: 'monthly', priority: 0.1 },
-    { url: '/privacy', changefreq: 'monthly', priority: 0.1 },
-    { url: '/forgot', changefreq: 'monthly', priority: 0.1 },
-    { url: '/giftaid', changefreq: 'monthly', priority: 0.1 },
-    { url: '/stories/summary', changefreq: 'weekly', priority: 0.1 },
-  ]
+  const site = runtimeConfig.public.USER_SITE
+  const children = [site + '/sitemap-pages.xml']
 
-  // Fetch all the groups.
+  // Ask how many live posts there are, so we know how many post sitemaps to declare.
+  // If the API is unreachable we still serve a valid index covering the pages rather
+  // than failing the sitemap altogether.
   try {
-    const rsp = await fetch(runtimeConfig.public.APIv2 + '/group')
-    const groups = await rsp.json()
+    const rsp = await fetch(runtimeConfig.public.APIv2 + '/message/sitemap')
+    const messages = await rsp.json()
+    const chunks = chunk(messages || [], SITEMAP_CHUNK_SIZE)
 
-    groups.forEach((group) => {
-      links.push({
-        url: '/explore/' + group.nameshort,
-        changefreq: 'daily',
-        priority: 0.8,
-      })
-    })
-  } catch (e) {}
+    for (let i = 0; i < chunks.length; i++) {
+      children.push(site + '/sitemap-posts/' + i)
+    }
+  } catch (e) {
+    console.log('Failed to size post sitemaps', e)
+  }
 
-  const stream = new SitemapStream({ hostname: runtimeConfig.public.USER_SITE })
-
-  return streamToPromise(Readable.from(links).pipe(stream)).then((data) =>
-    data.toString()
-  )
+  return renderSitemapIndex(children, new Date().toISOString())
 })

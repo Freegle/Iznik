@@ -128,7 +128,10 @@ describe('shouldWarnBrightness', () => {
 
   it('returns warn=true for critical severity (boundary check)', () => {
     // Exactly 'critical' string must trigger warn=true
-    expect(shouldWarnBrightness({ analysis: { severity: 'critical', message: '' } }).warn).toBe(true)
+    expect(
+      shouldWarnBrightness({ analysis: { severity: 'critical', message: '' } })
+        .warn
+    ).toBe(true)
   })
 
   it('returns warn=false for "info" severity (not a warning level)', () => {
@@ -251,10 +254,12 @@ describe('analyzeBrightness', () => {
 
   it('respects the sampleSize parameter by resizing proportionally', async () => {
     // Canvas dimensions should reflect scaled-down image
-    const spy = vi.spyOn(document, 'createElement').mockImplementation((tag) => {
-      if (tag === 'canvas') return makeMockCanvas([[128, 128, 128]])
-      return originalCreateElement(tag)
-    })
+    const spy = vi
+      .spyOn(document, 'createElement')
+      .mockImplementation((tag) => {
+        if (tag === 'canvas') return makeMockCanvas([[128, 128, 128]])
+        return originalCreateElement(tag)
+      })
     // 256×256 image with sampleSize=64: scale = 64/256 = 0.25, canvas = 64×64
     const result = await analyzeBrightness({ width: 256, height: 256 }, 64)
     expect(result).toBeDefined()
@@ -288,10 +293,15 @@ describe('analyzeBrightness', () => {
       }
 
       set src(_v) {
+        this._src = _v
         // Trigger onload asynchronously, simulating a loaded image
         setTimeout(() => {
           if (this.onload) this.onload()
         }, 0)
+      }
+
+      get src() {
+        return this._src
       }
     }
 
@@ -333,6 +343,39 @@ describe('useBrightnessDetector composable', () => {
     expect(api.shouldWarnBrightness(input)).toEqual(shouldWarnBrightness(input))
 
     const input2 = { analysis: { severity: 'none', message: 'good' } }
-    expect(api.shouldWarnBrightness(input2)).toEqual(shouldWarnBrightness(input2))
+    expect(api.shouldWarnBrightness(input2)).toEqual(
+      shouldWarnBrightness(input2)
+    )
+  })
+})
+
+// Mirror of the useBlurDetector timeout test: the loader must reject rather
+// than hang when a capacitor:// URL fires neither onload nor onerror, or the
+// whole photo-quality check - and the upload behind it - stalls forever.
+describe('analyzeBrightness image-load timeout', () => {
+  it('rejects instead of hanging when the image never loads or errors', async () => {
+    vi.useFakeTimers()
+    const RealImage = globalThis.Image
+    globalThis.Image = class {
+      get src() {
+        return undefined
+      }
+
+      set src(_) {
+        // Never calls back.
+      }
+    }
+
+    try {
+      const pending = analyzeBrightness(
+        'capacitor://localhost/_capacitor_file_/x.jpg'
+      )
+      const assertion = expect(pending).rejects.toThrow(/timed out/i)
+      await vi.advanceTimersByTimeAsync(8001)
+      await assertion
+    } finally {
+      globalThis.Image = RealImage
+      vi.useRealTimers()
+    }
   })
 })

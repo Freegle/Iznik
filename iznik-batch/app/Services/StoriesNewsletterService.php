@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Group;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -20,7 +21,7 @@ class StoriesNewsletterService
     /**
      * Generate the stories newsletter and send to all eligible members.
      *
-     * Mirrors the logic from iznik-server Story::generateNewsletter() + Newsletter::send().
+     * Mirrors the logic from the legacy V1 PHP Story::generateNewsletter() + Newsletter::send().
      *
      * @return array{stories: int, sent: int}
      */
@@ -93,7 +94,7 @@ class StoriesNewsletterService
                 }
             }
 
-            $userRecord = DB::table('users')->where('id', $story->userid)->first();
+            $userRecord = User::find($story->userid);
             $userName = null;
             if ($userRecord) {
                 $userName = $userRecord->fullname
@@ -101,19 +102,10 @@ class StoriesNewsletterService
                     ?: null;
             }
 
-            $profileImg = DB::table('users_images')
-                ->where('userid', $story->userid)
-                ->orderByDesc('default')
-                ->orderBy('id')
-                ->first(['id', 'url']);
-            $profileUrl = null;
-            if ($profileImg) {
-                if (!empty($profileImg->url) && !str_contains($profileImg->url, 'defaultprofile.png')) {
-                    $profileUrl = $profileImg->url;
-                } elseif (empty($profileImg->url)) {
-                    $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-                    $profileUrl = "{$imagesDomain}/tuimg_{$profileImg->id}.jpg";
-                }
+            // getProfileImageUrl respects the user's useprofile (anonymous) setting.
+            $profileUrl = $userRecord?->getProfileImageUrl();
+            if ($profileUrl && str_contains($profileUrl, 'defaultprofile.png')) {
+                $profileUrl = null;
             }
 
             $storyData[] = [
@@ -157,7 +149,7 @@ class StoriesNewsletterService
         // CTAs with tracking source param.
         $tellUrl = "{$userSite}/stories?src=storynewsletter";
         $giveUrl = "{$userSite}/give?src=storynewsletter";
-        $findUrl = "{$userSite}/find?src=storynewsletter";
+        $askUrl = "{$userSite}/ask?src=storynewsletter";
 
         // Find all eligible members:
         //   - in a published Freegle group
@@ -209,7 +201,7 @@ class StoriesNewsletterService
                 headerImageUrl: $headerImageUrl,
                 tellUrl: $tellUrl,
                 giveUrl: $giveUrl,
-                findUrl: $findUrl,
+                askUrl: $askUrl,
                 previewText: $preview,
                 unsubscribeUrl: "{$userSite}/unsubscribe",
                 settingsUrl: "{$userSite}/settings",

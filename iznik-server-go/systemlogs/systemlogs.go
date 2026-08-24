@@ -98,7 +98,12 @@ func RequireModeratorMiddleware() fiber.Handler {
 			Systemrole string `json:"systemrole"`
 		}
 
-		db.Raw("SELECT users.id, users.systemrole FROM sessions INNER JOIN users ON users.id = sessions.userid WHERE sessions.id = ? AND users.id = ? LIMIT 1", sessionID, userID).Scan(&userInfo)
+		db.Table("sessions").
+			Select("users.id, users.systemrole").
+			Joins("INNER JOIN users ON users.id = sessions.userid").
+			Where("sessions.id = ? AND users.id = ?", sessionID, userID).
+			Limit(1).
+			Scan(&userInfo)
 
 		if userInfo.ID == 0 {
 			return fiber.NewError(fiber.StatusUnauthorized, "Invalid session")
@@ -113,7 +118,7 @@ func RequireModeratorMiddleware() fiber.Handler {
 
 		// Check if user is a moderator of any group.
 		var modCount int64
-		db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)", userID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modCount)
+		db.Table("memberships").Where("userid = ? AND role IN (?, ?)", userID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Count(&modCount)
 
 		if modCount == 0 {
 			return fiber.NewError(fiber.StatusForbidden, "Moderator role required")
@@ -460,8 +465,34 @@ func buildLogQLQuery(sources, types, subtypes, levels, search, userID, groupID, 
 
 	query := "{" + strings.Join(labelParts, ", ") + "}"
 
-	// Add JSON parsing pipeline.
-	query += " | json"
+	// Line-filter prefilters BEFORE any `| json`: the parser is the expensive
+	// stage (it decompresses and parses every line the selector matches -
+	// minutes against a production day), and every one of these values appears
+	// verbatim in the raw line, so a cheap substring filter first means only
+	// candidate lines get parsed. The exact `| json | field = …` post-filters
+	// stay because a bare substring has false positives.
+	if msgID != "" {
+		query += fmt.Sprintf(` |= "%s"`, msgID)
+	}
+	if traceID != "" {
+		query += fmt.Sprintf(` |= "%s"`, traceID)
+	}
+	if sessionID != "" {
+		query += fmt.Sprintf(` |= "%s"`, sessionID)
+	}
+	if ipAddress != "" {
+		query += fmt.Sprintf(` |= "%s"`, ipAddress)
+	}
+	if email != "" {
+		// Case-sensitive prefilter on the lowercased address; the (?i) regex
+		// below keeps recall for any odd-cased line among the matches.
+		query += fmt.Sprintf(` |= "%s"`, strings.ToLower(email))
+	}
+
+	// Only pay for the JSON parse when a JSON-field post-filter needs it.
+	if msgID != "" || traceID != "" || sessionID != "" || ipAddress != "" {
+		query += " | json"
+	}
 
 	if msgID != "" {
 		query += fmt.Sprintf(` | msgid = %s or msg_id = %s`, msgID, msgID)
@@ -545,6 +576,14 @@ func parseTimeRange(start, end string) (int64, int64) {
 		} else {
 			startTs = now.Add(-1 * time.Minute).UnixNano()
 		}
+	}
+
+	// Production Loki enforces a 30d1h maximum query range and 400-rejects
+	// anything longer - a wider request is not "get less back", it is "get
+	// nothing back". Same clamp as userdump's clampLokiStart.
+	const maxLokiRange = 30 * 24 * time.Hour
+	if oldest := endTs - int64(maxLokiRange); startTs < oldest {
+		startTs = oldest
 	}
 
 	return startTs, endTs
@@ -826,12 +865,11 @@ func canViewUserLogs(currentUserID, targetUserID uint64, systemRole string) bool
 
 	// Check if current user moderates any group that target user is a member of.
 	var count int64
-	db.Raw(`
-		SELECT COUNT(*) FROM memberships m1
-		INNER JOIN memberships m2 ON m1.groupid = m2.groupid
-		WHERE m1.userid = ? AND m1.role IN (?, ?)
-		AND m2.userid = ?
-	`, currentUserID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, targetUserID).Scan(&count)
+	db.Table("memberships m1").
+		Joins("INNER JOIN memberships m2 ON m1.groupid = m2.groupid").
+		Where("m1.userid = ? AND m1.role IN (?, ?) AND m2.userid = ?",
+			currentUserID, utils.ROLE_MODERATOR, utils.ROLE_OWNER, targetUserID).
+		Count(&count)
 
 	return count > 0
 }
@@ -846,10 +884,9 @@ func canViewGroupLogs(currentUserID, targetGroupID uint64, systemRole string) bo
 
 	// Check if current user moderates the target group.
 	var count int64
-	db.Raw(`
-		SELECT COUNT(*) FROM memberships
-		WHERE userid = ? AND groupid = ? AND role IN (?, ?)
-	`, currentUserID, targetGroupID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&count)
+	db.Table("memberships").
+		Where("userid = ? AND groupid = ? AND role IN (?, ?)", currentUserID, targetGroupID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).
+		Count(&count)
 
 	return count > 0
 }

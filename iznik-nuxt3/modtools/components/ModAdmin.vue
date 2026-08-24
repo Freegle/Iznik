@@ -30,6 +30,9 @@
         </b-row>
       </b-card-header>
       <b-card-body v-if="expanded">
+        <NoticeMessage v-if="heldError" variant="warning" class="mb-2">
+          {{ heldError }}
+        </NoticeMessage>
         <NoticeMessage v-if="admin.heldby" variant="warning" class="mb-2">
           Held
           <span v-if="holder"> by {{ holder.displayname }} </span>. Please check
@@ -111,9 +114,6 @@
             group.
           </NoticeMessage>
           <p><strong>Subject:</strong> {{ admin.subject }}</p>
-          <ModAdminPreviewLittleFreeShop2026
-            v-if="admin.template === 'little-free-shop-2026'"
-          />
         </template>
         <template v-else>
           <b-form-group
@@ -211,6 +211,7 @@ import { useUserStore } from '~/stores/user'
 import { useGroupStore } from '~/stores/group'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import { useHeldNotice } from '~/composables/useHeldNotice'
 
 const props = defineProps({
   id: {
@@ -230,6 +231,7 @@ const groupStore = useGroupStore()
 const userStore = useUserStore()
 const { myid } = useMe()
 const { checkWork } = useModMe()
+const { heldError, guardHold } = useHeldNotice()
 
 const expanded = ref(false)
 const saving = ref(false)
@@ -278,12 +280,14 @@ function deleteConfirmed() {
 async function save() {
   saving.value = true
 
-  await adminsStore.edit({
-    id: admin.value.id,
-    subject: admin.value.subject,
-    text: admin.value.text,
-    pending: true,
-  })
+  await guardHold(() =>
+    adminsStore.edit({
+      id: admin.value.id,
+      subject: admin.value.subject,
+      text: admin.value.text,
+      pending: true,
+    })
+  )
 
   saving.value = false
   saved.value = true
@@ -293,7 +297,7 @@ async function save() {
 }
 
 function hold() {
-  adminsStore.hold({ id: admin.value.id })
+  guardHold(() => adminsStore.hold({ id: admin.value.id }))
   checkWork(true)
 }
 
@@ -307,7 +311,7 @@ async function approve() {
     await save()
   }
 
-  await adminsStore.approve({ id: admin.value.id })
+  await guardHold(() => adminsStore.approve({ id: admin.value.id }))
 
   checkWork(true)
 }

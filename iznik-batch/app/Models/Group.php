@@ -68,9 +68,13 @@ class Group extends Model implements Auditable
         'businesscards' => 1,
         'autoadmins' => 1,
         'mentored' => 0,
-        'nearbygroups' => 5,
         'showjoin' => 0,
         'engagement' => 1,
+        // Community News: ON by default — opt-OUT per community (2026-08-07;
+        // launched opt-in, flipped once the ChitChat trial and first weekly
+        // email proved out). A community that doesn't want the round-up sets
+        // the flag to 0 in ModTools.
+        'communitynews' => 1,
     ];
 
     protected $table = 'groups';
@@ -126,14 +130,6 @@ class Group extends Model implements Auditable
     }
 
     /**
-     * Get group's digest records.
-     */
-    public function digests(): HasMany
-    {
-        return $this->hasMany(GroupDigest::class, 'groupid');
-    }
-
-    /**
      * Scope to only Freegle groups.
      */
     public function scopeFreegle(Builder $query): Builder
@@ -179,6 +175,24 @@ class Group extends Model implements Auditable
                 ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') IS NULL")
                 ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = false")
                 ->orWhereRaw("JSON_EXTRACT(settings, '$.closed') = 0");
+        });
+    }
+
+    /**
+     * Scope to groups taking part in Community News.
+     *
+     * Community News is ON by default (opt-OUT per community, like
+     * newsletter/newsfeed): a group is in unless the flag is present and
+     * explicitly falsy. Mirrors scopeNotClosed's int/bool JSON handling
+     * (0 != false in MySQL JSON).
+     */
+    public function scopeCommunityNewsEnabled(Builder $query): Builder
+    {
+        return $query->where(function ($q) {
+            $q->whereNull('settings')
+                ->orWhereRaw("JSON_EXTRACT(settings, '$.communitynews') IS NULL")
+                ->orWhereRaw("JSON_EXTRACT(settings, '$.communitynews') = 1")
+                ->orWhereRaw("JSON_EXTRACT(settings, '$.communitynews') = true");
         });
     }
 
@@ -255,7 +269,7 @@ class Group extends Model implements Auditable
     /**
      * Get work counts for a set of groups.
      *
-     * Ported from iznik-server Group::getWorkCounts().
+     * Ported from the legacy V1 PHP Group::getWorkCounts().
      *
      * @param  User   $me          The moderator user requesting work counts.
      * @param  array  $mysettings  Per-group settings indexed by groupid; each entry may have an 'active' boolean.
@@ -609,7 +623,7 @@ class Group extends Model implements Auditable
     /**
      * SQL fragment to filter out auto-generated/boilerplate happiness comments.
      *
-     * Ported from iznik-server Group::getHappinessFilter().
+     * Ported from the legacy V1 PHP Group::getHappinessFilter().
      * Note that this does NOT include a leading " AND" since it's intended for use inside a whereRaw() call.
      */
     private static function getHappinessFilter(): string
@@ -626,7 +640,7 @@ class Group extends Model implements Auditable
               AND messages_outcomes.comments != 'Auto-Expired'";
     }
 
-    // Fields exposed by getPublic() - mirrors iznik-server Group::$publicatts.
+    // Fields exposed by getPublic() - mirrors the legacy V1 PHP Group::$publicatts.
     private const PUBLIC_ATTS = [
         'id',
         'nameshort',
@@ -662,7 +676,6 @@ class Group extends Model implements Auditable
         'defaultlocation',
         'moderationstatus',
         'maxagetoshow',
-        'nearbygroups',
         'microvolunteering',
         'microvolunteeringoptions',
         'autofunctionoverride',
@@ -674,7 +687,7 @@ class Group extends Model implements Auditable
     /**
      * Get the public representation of this group.
      *
-     * Ported from iznik-server Group::getPublic().
+     * Ported from the legacy V1 PHP Group::getPublic().
      *
      * @param  bool  $summary  If true, omits settings, description, and welcomemail.
      */

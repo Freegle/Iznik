@@ -8,7 +8,6 @@ This is the monorepo for Iznik, the platform for [Freegle](https://www.ilovefree
 |-----------|-----------|
 | `iznik-nuxt3/` | Nuxt 3 frontend — user site (ilovefreegle.org) and moderator tools (modtools.org) |
 | `iznik-server-go/` | Go API (v2) — the primary API |
-| `iznik-server/` | Legacy PHP API (v1) — being retired |
 | `iznik-batch/` | Laravel batch processing — digests, notifications, scheduled tasks |
 | `status-nuxt/` | Development status dashboard and test runner |
 | `freegle-mobile/` | Capacitor mobile app (Android/iOS) |
@@ -137,7 +136,6 @@ docker compose up -d
 Tests run from the status page at [http://status.localhost:8081](http://status.localhost:8081):
 
 - **Go tests** for iznik-server-go (v2 API)
-- **PHPUnit tests** for iznik-server (v1 API)
 - **Laravel tests** for iznik-batch (batch processing)
 - **Vitest** unit tests for iznik-nuxt3 (frontend stores and components)
 - **Playwright** end-to-end tests for the user-facing site
@@ -170,5 +168,5 @@ Multiple isolated development environments can run in parallel using git worktre
 ./freegle worktree remove feature-x    # Cleanup
 ```
 
-See [WORKTREE-GUIDE.md](WORKTREE-GUIDE.md) for details.
+See [./docs/developers/reference/worktrees.md](./docs/developers/reference/worktrees.md) for details.
 </details>

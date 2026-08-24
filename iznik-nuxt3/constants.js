@@ -54,12 +54,62 @@ export const DAY_WORDS = [
 
 export const MAX_MAP_ZOOM = 14
 
+// Tooltips for the freegler chips shown in chat - in the header, in the mobile
+// profile card and in the reply-from-browse pane. Last seen and reply time both
+// render as a bare duration, so say plainly which is which.
+export const LAST_SEEN_TOOLTIP = 'When they were last on Freegle'
+export const REPLY_TIME_TOOLTIP =
+  'How long they usually take to reply to a message'
+export const DISTANCE_TOOLTIP =
+  'Roughly how far away they are, as the crow flies rather than by road'
+
 export const RECENT_MESSAGES = 31
 export const OWN_POSTS_AGE = 120
 export const MESSAGE_EXPIRE_TIME = 90
 export const GROUP_REPOSTS = { offer: 3, wanted: 14, max: 10, chaseups: 2 }
 
+// Sentinel for settings.browseMaxDistance meaning "no distance limit" - the default for
+// the Nearby browse distance slider. A MAXINT sentinel (rather than null) means every
+// caller can do a plain numeric comparison against the current limit without a null
+// check, and the far-right ("Further") position of the slider stores this rather than
+// the feed's current max distance, so the server's own reach limit keeps governing and
+// newly-arriving distant posts keep showing.
+export const BROWSE_DISTANCE_UNLIMITED = Number.MAX_SAFE_INTEGER
+
+// The "How far away" slider is TIME-based: a travel-time budget in MINUTES, matching the reach
+// system (drive-time isochrones), not miles. The far-right stop means "no limit" - it stores
+// BROWSE_DISTANCE_UNLIMITED, deferring to the server's own reach. The chosen minutes are converted
+// to a crow-flies mile radius by real routing (location-aware) and stored as
+// settings.browseMaxDistance for the fast distance filter; the minutes themselves are stored as
+// settings.browseMaxMinutes so the slider restores.
+//
+// The TOP of the slider is not fixed: the reach engine sizes a post's budget from how thinly
+// freeglers are spread around it (20 minutes dense, 30 medium, 45 sparse), so the slider asks the
+// server for the member's own cap (town/near cap_minutes) and uses that. A fixed 5-30 was too short
+// in the country, where a member could not ask for the 45 minutes they now receive, and too long in
+// the city, where the last stops described travel the reach engine no longer honours.
+//   MIN          the closest anyone can ask for.
+//   FALLBACK_MAX the flat cap, used until the server answers or when density cannot be measured.
+//   MAX          the ceiling across all bands - the widest the slider can ever go.
+export const BROWSE_MINUTES_MIN = 5
+export const BROWSE_MINUTES_FALLBACK_MAX = 30
+export const BROWSE_MINUTES_MAX = 45
+export const BROWSE_MINUTES_STEP = 5
+
+// Colour for the reach/isochrone-style map polygons (the former per-user
+// isochrone fill, now reused for the browse "coverage" hull). Kept as a
+// constant so the map overlays don't hardcode the hex in several places.
+export const ISOCHRONE_COLOR = '#3388cc'
+
 export const TYPING_TIME_INVERVAL = 10000
+
+// Stale-build warning thresholds. When a newer production deploy exists we either
+// softly nag (newer deploy older than SOFT, so we don't pester right after a
+// release) or, once the bundle we're actually running is older than HARD, escalate
+// to a forced auto-reload. HARD_RELOAD_COUNTDOWN_SECS is the grace before that reload.
+export const STALE_BUILD_SOFT_MS = 12 * 60 * 60 * 1000 // 12 hours
+export const STALE_BUILD_HARD_MS = 7 * 24 * 60 * 60 * 1000 // 1 week
+export const HARD_RELOAD_COUNTDOWN_SECS = 20
 
 // The 37 miles figure comes from research from someone we shall call Clement.
 export const FAR_AWAY = 37

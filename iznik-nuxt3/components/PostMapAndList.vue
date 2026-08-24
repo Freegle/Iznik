@@ -25,6 +25,8 @@
       :can-hide="canHide"
       :isochrone-override="isochroneOverride"
       :authorityid="authorityid"
+      :selected-max-distance="selectedMaxDistance"
+      :browse-search="browseSearch"
       @searched="searched"
       @messages="messagesChanged($event)"
       @groups="groupsChanged($event)"
@@ -70,14 +72,17 @@
           class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
         >
           <!-- eslint-disable-next-line -->
-          Need help?  Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
+          Need help? Go <nuxt-link no-prefetch to="/help">here</nuxt-link>.
         </p>
         <p
           v-if="showStartMessage"
           class="text-center mt-2 header--size5 text--medium-large-highlight community__text"
         >
           <!-- eslint-disable-next-line -->
-          If there's no community for your area, would you like to start one? <ExternalLink href="mailto:newgroups@ilovefreegle.org">Get in touch!</ExternalLink>
+          If there's no community for your area, would you like to start one?
+          <ExternalLink href="mailto:newgroups@ilovefreegle.org"
+            >Get in touch!</ExternalLink
+          >
         </p>
       </div>
       <div v-else>
@@ -128,8 +133,11 @@ import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { getDistance } from '~/composables/useMap'
-import { MAX_MAP_ZOOM } from '~/constants'
-import { useIsochroneStore } from '~/stores/isochrone'
+import { filterMessagesByDistance } from '~/composables/useDistance'
+import { sortBrowseMessages } from '~/composables/useMessageSort'
+import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
+import { useMessageStore } from '~/stores/message'
+import { useNearbyStore } from '~/stores/nearby'
 
 import JoinWithConfirm from '~/components/JoinWithConfirm'
 import MessageList from '~/components/MessageList'
@@ -231,6 +239,23 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  // Set by the Browse page: searches pass browse=1 so the server scopes the
+  // search universe to the member's browse feed for their current filters
+  // (see PostMap's prop of the same name).
+  browseSearch: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  // Rippling-out relevance ordering + distance slider: the member's current maximum
+  // distance preference (miles), or BROWSE_DISTANCE_UNLIMITED (the default) to defer to
+  // the server's own reach limit. Filtered locally against each post's blurred
+  // `distance` field for an instant response as the slider moves.
+  selectedMaxDistance: {
+    type: Number,
+    required: false,
+    default: BROWSE_DISTANCE_UNLIMITED,
+  },
 })
 
 const emit = defineEmits([
@@ -243,7 +268,8 @@ const emit = defineEmits([
 const miscStore = useMiscStore()
 const groupStore = useGroupStore()
 const authStore = useAuthStore()
-const isochroneStore = useIsochroneStore()
+const messageStore = useMessageStore()
+const nearbyStore = useNearbyStore()
 const me = computed(() => authStore.user)
 
 // Refs from setup
@@ -256,7 +282,7 @@ const loading = ref(false)
 const bounds = ref(null)
 const zoom = ref(null)
 const centre = ref(null)
-const mapready = ref(process.server)
+const mapready = ref(import.meta.server)
 const mapVisible = ref(true)
 const postsVisible = ref(true)
 const mapMoved = ref(false)
@@ -271,22 +297,23 @@ const lastFilteredIds = ref(null)
 const lockedSortOrder = ref(null)
 
 // Computed properties
-const showIsochrones = computed(() => {
-  if (props.isochroneOverride) {
-    return true
-  } else {
-    return browseView.value === 'nearby'
-  }
-})
-
-const mapHidden = computed(() => {
-  return miscStore?.get('hidepostmap')
-})
-
 const browseView = computed(() => {
   return me.value?.settings?.browseView
     ? me.value.settings.browseView
     : 'nearby'
+})
+
+// Whether PostMap should use its "nearby" data path (the server-computed reach feed). The
+// name is historical - there's no longer a per-user isochrone POLYGON for plain nearby
+// browsing (reach is worked out server-side) - but this flag still selects the nearby feed
+// in PostMap.getMessages, so it must be true for the nearby view, not just for an explicit
+// polygon override (e.g. the fixed Essex boundary on the Essex landing page).
+const showIsochrones = computed(() => {
+  return !!props.isochroneOverride || browseView.value === 'nearby'
+})
+
+const mapHidden = computed(() => {
+  return miscStore?.get('hidepostmap')
 })
 
 const messagesOnMap = computed({
@@ -295,8 +322,8 @@ const messagesOnMap = computed({
       // We have been told by the map to show a specific set of messages.
       return updatedMessagesOnMap.value
     } else {
-      // See if we have some from the isochrone, which we will have fetched in browse/index.
-      return isochroneStore?.messageList ?? []
+      // See if we have some from the nearby feed, which we will have fetched in browse/index.
+      return nearbyStore?.messageList ?? []
     }
   },
   set(newVal) {
@@ -334,6 +361,13 @@ const messagesForList = computed(() => {
   if (props.selectedGroup) {
     msgs = msgs.filter((m) => m.groupid === props.selectedGroup)
   }
+
+  // Distance slider: the feed already returns the full reach set, so this is a local,
+  // instant filter rather than a refetch. Posts with no distance (e.g. an older feed
+  // response before the API returned it) always pass, so we don't hide anything on a
+  // stale/partial response. Shared with PostMap's own marker/coverage filtering so the
+  // list and the map can never disagree about which posts are within range.
+  msgs = filterMessagesByDistance(msgs, props.selectedMaxDistance)
 
   return msgs
 })
@@ -376,27 +410,23 @@ const filteredMessages = computed(() => {
   return ret
 })
 
-// Helper function to sort messages
+// Helper function to sort messages. Delegates to the pure sortBrowseMessages, which
+// computes each message's distance and arrival sort key ONCE (a Schwartzian transform).
+// "Closest" now orders by the server's per-post distance (the value shown on each badge),
+// so the map centre is no longer needed here.
 function sortMessages(messages) {
-  return messages.slice().sort((a, b) => {
-    if (props.selectedSort === 'Unseen') {
-      // Unseen messages first, then by descending date/time. But we don't want to treat successful posts as
-      // unseen otherwise they bob up to the top.
-      const aunseen = a.unseen && !a.successful
-      const bunseen = b.unseen && !b.successful
-
-      if (aunseen && !bunseen) {
-        return -1
-      } else if (!aunseen && bunseen) {
-        return 1
-      } else {
-        return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
-      }
-    } else {
-      // Descending date/time.
-      return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
-    }
+  // The list we sort here is the nearby-feed SUMMARY, which does not carry visibleSince - the
+  // full message fetched for each card does. Without this the badge and the order came from
+  // different clocks again: cards showed 16, 8, 10, 5 days while the sort quietly ordered them
+  // 28 Jul, 26 Jul, 25 Jul, 25 Jul by the original arrival. Only old, rippled or reposted posts
+  // diverge, which is why the top of the feed looked right and the tail did not.
+  const enriched = (messages || []).map((m) => {
+    if (m?.visibleSince) return m
+    const full = messageStore.byId(m?.id)
+    return full?.visibleSince ? { ...m, visibleSince: full.visibleSince } : m
   })
+
+  return sortBrowseMessages(enriched, props.selectedSort)
 }
 
 const sortedMessagesOnMap = computed(() => {
@@ -420,13 +450,13 @@ const sortedMessagesOnMap = computed(() => {
 
 const showRegions = computed(() => {
   // We want to show the regions if we're zoomed out, or for SSR = SEO.
-  return process.server || zoom.value < 7
+  return import.meta.server || zoom.value < 7
 })
 
 const showGroupList = computed(() => {
   // We want to show the list of groups for SSR = SEO, or if we are not showing the regions (because we're
   // zoomed out)
-  return process.server || !showRegions.value
+  return import.meta.server || !showRegions.value
 })
 
 const closestGroups = computed(() => {
@@ -517,7 +547,7 @@ watch(
 )
 
 watch(
-  () => isochroneStore.messageList,
+  () => nearbyStore.messageList,
   (newList) => {
     if (updatedMessagesOnMap.value && newList?.length) {
       const unseenMap = new Map(newList.map((m) => [m.id, m.unseen]))

@@ -77,6 +77,17 @@ func main() {
 	if !strings.Contains(os.Getenv("USER_SITE"), ".localhost") {
 		app.Use(compress.New(compress.Config{
 			Level: compress.LevelBestSpeed,
+			// The framed user dump is a STREAMED response whose heartbeat
+			// frames must reach the wire as they are written - the LB cuts
+			// silent connections at 50s. The compress middleware reads
+			// Response().Body(), which drains a stream writer into memory
+			// and turns streaming into buffering, so it must never touch
+			// this route. (Same reason the Loki middleware skips stream
+			// bodies - see misc/lokiMiddleware.go.)
+			Next: func(c *fiber.Ctx) bool {
+				path := c.Path()
+				return strings.HasPrefix(path, "/api/modtools/user/") && strings.HasSuffix(path, "/dump")
+			},
 		}))
 	}
 

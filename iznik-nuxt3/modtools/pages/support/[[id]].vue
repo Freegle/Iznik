@@ -99,11 +99,10 @@
             </template>
             <NoticeMessage variant="warning" class="mb-2">
               <b>Work in Progress:</b> This is the AI Support Helper. It can
-              help diagnose problems using device type, screen size, browser,
-              and a detailed trace of user actions. Please report bugs or
-              usability issues to
+              help diagnose problems using screen size, browser, and a detailed
+              trace. Please report bugs or usability issues to
               <ExternalLink href="mailto:geeks@ilovefreegle.org">
-                geeks@ilovefreegle.org </ExternalLink
+                geeks@ilovefreegle.org</ExternalLink
               >.
             </NoticeMessage>
             <ModSupportAIAssistant
@@ -288,13 +287,13 @@ function onAITab() {
 }
 
 function onAIAssistantTab() {
-  // Initialize AI assistant when tab is clicked.
-  aiAssistantBump.value = Date.now()
+  // Mount the assistant on first open and then LEAVE it mounted. Bumping the
+  // :key here (as it used to) remounted the component on every tab click, which
+  // wiped the whole conversation, the Claude session id and the device panel.
   showAIAssistant.value = true
 }
 
-function onSpamTab() {
-}
+function onSpamTab() {}
 </script>
 
 <style scoped>

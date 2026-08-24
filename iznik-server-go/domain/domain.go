@@ -24,7 +24,7 @@ func GetDomain(c *fiber.Ctx) error {
 
 	// Check if domain exists.
 	var id uint64
-	db.Raw("SELECT id FROM domains_common WHERE domain LIKE ?", domainName).Scan(&id)
+	db.Table("domains_common").Select("id").Where("domain LIKE ?", domainName).Scan(&id)
 
 	if id > 0 {
 		// Domain found - return empty success.
@@ -36,8 +36,12 @@ func GetDomain(c *fiber.Ctx) error {
 
 	// Domain not found - suggest similar domains using damlevlim().
 	var suggestions []string
-	db.Raw("SELECT domain FROM domains_common WHERE damlevlim(domain, ?, LENGTH(?)) < 3 ORDER BY count DESC LIMIT 5",
-		domainName, domainName).Scan(&suggestions)
+	db.Table("domains_common").
+		Select("domain").
+		Where("damlevlim(domain, ?, LENGTH(?)) < 3", domainName, domainName).
+		Order("count DESC").
+		Limit(5).
+		Scan(&suggestions)
 
 	if suggestions == nil {
 		suggestions = make([]string, 0)

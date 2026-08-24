@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 
-export const useEmailTrackingStore = defineStore({
-  id: 'emailtracking',
+export const useEmailTrackingStore = defineStore('emailtracking', {
   state: () => ({
     // Aggregate statistics.
     stats: null,
@@ -33,6 +32,13 @@ export const useEmailTrackingStore = defineStore({
     userEmailsTotal: 0,
     userEmailsLoading: false,
     userEmailsError: null,
+
+    // Deferral suppressions: providers refusing our mail right now.
+    deferralSuppressions: [],
+    deferralMembers: [],
+    deferralMemberLimit: 0,
+    deferralsLoading: false,
+    deferralsError: null,
 
     // Email types for filtering.
     emailTypes: [],
@@ -68,6 +74,17 @@ export const useEmailTrackingStore = defineStore({
     bounceEntries: [],
     bounceLoading: false,
     bounceError: null,
+
+    // Digest click-through rate by post position.
+    digestPositions: [],
+    digestPositionsLoading: false,
+    digestPositionsError: null,
+
+    // Reengagement effectiveness: send/open/click/reengage funnel, plus
+    // breakdowns by stage, experiment arm, and post segment.
+    reengageStats: null,
+    reengageLoading: false,
+    reengageError: null,
   }),
   actions: {
     init(config) {
@@ -87,6 +104,10 @@ export const useEmailTrackingStore = defineStore({
       this.clickedLinksError = null
       this.showAllClickedLinks = false
       this.aggregateClickedLinks = true
+      this.digestPositions = []
+      this.digestPositionsError = null
+      this.reengageStats = null
+      this.reengageError = null
       this.userEmails = []
       this.userEmailsTotal = 0
       this.userEmailsError = null
@@ -112,6 +133,22 @@ export const useEmailTrackingStore = defineStore({
 
     setFilters(filters) {
       this.filters = { ...this.filters, ...filters }
+    },
+
+    async fetchDeferrals() {
+      this.deferralsLoading = true
+      this.deferralsError = null
+
+      try {
+        const response = await api(this.config).emailtracking.fetchDeferrals()
+        this.deferralSuppressions = response?.suppressions || []
+        this.deferralMembers = response?.members || []
+        this.deferralMemberLimit = response?.memberlimit || 0
+      } catch (e) {
+        this.deferralsError = e.message
+      } finally {
+        this.deferralsLoading = false
+      }
     },
 
     async fetchStats() {
@@ -192,6 +229,61 @@ export const useEmailTrackingStore = defineStore({
         console.error('Stats by type fetch error:', e)
       } finally {
         this.statsByTypeLoading = false
+      }
+    },
+
+    async fetchDigestPositions() {
+      this.digestPositionsLoading = true
+      this.digestPositionsError = null
+
+      try {
+        const params = {}
+        if (this.filters.type) {
+          params.type = this.filters.type
+        }
+        if (this.filters.start) {
+          params.start = this.filters.start
+        }
+        if (this.filters.end) {
+          params.end = this.filters.end
+        }
+
+        const response = await api(
+          this.config
+        ).emailtracking.fetchDigestPositions(params)
+        this.digestPositions = response.data || []
+      } catch (e) {
+        this.digestPositionsError =
+          e.message || 'Failed to fetch digest position stats'
+        console.error('Digest positions fetch error:', e)
+      } finally {
+        this.digestPositionsLoading = false
+      }
+    },
+
+    async fetchReengageEffectiveness({ start, end } = {}) {
+      this.reengageLoading = true
+      this.reengageError = null
+
+      try {
+        const params = {}
+        if (start) {
+          params.start = start
+        }
+        if (end) {
+          params.end = end
+        }
+
+        const response = await api(
+          this.config
+        ).emailtracking.fetchReengageEffectiveness(params)
+        this.reengageStats = response || null
+      } catch (e) {
+        this.reengageError =
+          e.message || 'Failed to fetch reengagement effectiveness stats'
+        console.error('Reengagement effectiveness fetch error:', e)
+      } finally {
+        this.reengageLoading = false
       }
     },
 
@@ -685,6 +777,28 @@ export const useEmailTrackingStore = defineStore({
       state.timeSeries.forEach((day) => {
         const date = new Date(day.date)
         data.push([date, day.sent])
+      })
+
+      return data
+    },
+
+    hasDigestPositions: (state) => state.digestPositions.length > 0,
+
+    hasReengageStats: (state) => state.reengageStats !== null,
+
+    // Digest position data formatted for Google Charts (ComboChart). Bars show
+    // the click-through rate at each position; the line shows the sample size
+    // (how many digests displayed a post at that position) for context.
+    digestPositionsChartData: (state) => {
+      if (!state.digestPositions.length) return null
+
+      const data = [['Position', 'Click-through rate (%)', 'Emails shown']]
+
+      state.digestPositions.forEach((p) => {
+        // Positions are zero-based internally; show a 1-based label to humans.
+        const label = String((p.position ?? 0) + 1)
+        const ctr = Math.round((p.ctr || 0) * 10) / 10
+        data.push([label, ctr, p.shown || 0])
       })
 
       return data

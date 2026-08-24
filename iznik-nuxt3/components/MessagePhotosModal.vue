@@ -41,7 +41,7 @@
           :class="{ transitioning: isTransitioning }"
         >
           <div
-            v-for="(attachment, index) in message?.attachments"
+            v-for="(attachment, index) in photos"
             :key="attachment.id || index"
             class="image-slide"
           >
@@ -66,7 +66,7 @@
       <!-- Navigation dots -->
       <div v-if="attachmentCount > 1" class="nav-dots">
         <span
-          v-for="(_, index) in message?.attachments"
+          v-for="(_, index) in photos"
           :key="index"
           class="dot"
           :class="{ active: index === currentIndex }"
@@ -113,9 +113,18 @@ import PinchMe from '~/components/PinchMe.vue'
 import 'zoompinch/style.css'
 
 const props = defineProps({
+  // A posted message, whose photos we read from the store.
   id: {
     type: Number,
-    required: true,
+    required: false,
+    default: null,
+  },
+  // Photos that are not (yet) a message - the ones you have just uploaded while
+  // composing a post. Takes precedence over id when both are given.
+  attachments: {
+    type: Array,
+    required: false,
+    default: null,
   },
   initialIndex: {
     type: Number,
@@ -128,11 +137,15 @@ const emit = defineEmits(['hidden'])
 const messageStore = useMessageStore()
 
 // Handle browser back button/swipe to close modal
-useModalHistory(`photos-${props.id}`, () => emit('hidden'))
+useModalHistory(`photos-${props.id ?? 'compose'}`, () => emit('hidden'))
 
-const message = computed(() => messageStore?.byId(props.id))
+const message = computed(() => (props.id ? messageStore?.byId(props.id) : null))
 
-const attachmentCount = computed(() => message.value?.attachments?.length || 0)
+const photos = computed(
+  () => props.attachments ?? message.value?.attachments ?? []
+)
+
+const attachmentCount = computed(() => photos.value.length)
 
 // Current image index - start at initialIndex prop
 const currentIndex = ref(props.initialIndex)
@@ -423,6 +436,11 @@ function handleBackgroundClick(e) {
 
 function handleKeydown(e) {
   if (e.key === 'Escape') {
+    // We are on top of whatever opened us, which may itself be a modal that
+    // closes on Escape - the edit-post form, for instance, where that would
+    // throw away someone's edits. Escape belongs to the topmost thing only,
+    // hence the capture-phase listener below and this stopPropagation.
+    e.stopPropagation()
     close()
   } else if (e.key === 'ArrowLeft' && currentIndex.value > 0) {
     goToImage(currentIndex.value - 1)
@@ -448,15 +466,15 @@ onMounted(() => {
   // Prevent body scroll
   document.body.style.overflow = 'hidden'
 
-  // Listen for keyboard events
-  window.addEventListener('keydown', handleKeydown)
+  // Capture phase, so Escape reaches us before the modal we are covering.
+  window.addEventListener('keydown', handleKeydown, true)
 })
 
 onUnmounted(() => {
   // Restore body scroll
   document.body.style.overflow = ''
 
-  window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('keydown', handleKeydown, true)
 })
 </script>
 
@@ -557,7 +575,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity var(--transition-normal),
+  transition:
+    opacity var(--transition-normal),
     background var(--transition-normal);
   font-size: 1.25rem;
 
@@ -612,7 +631,8 @@ onUnmounted(() => {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.4);
   cursor: pointer;
-  transition: background var(--transition-normal),
+  transition:
+    background var(--transition-normal),
     transform var(--transition-normal);
 
   &.active {

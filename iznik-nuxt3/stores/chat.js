@@ -7,8 +7,66 @@ import { useMessageStore } from '~/stores/message'
 import { useMiscStore } from '~/stores/misc'
 import { useUserStore } from '~/stores/user'
 
-export const useChatStore = defineStore({
-  id: 'chat',
+// A chat send goes through useFetchRetry, which retries the POST on a network
+// error or a 5xx - neither of which proves the write failed. If the original
+// POST actually reached the server but its response was lost, the retry inserts
+// a SECOND, genuinely-persisted chat_messages row (different id, identical
+// content). The batch `cleanup:chat-duplicates` cron removes one eventually, but
+// until then the sender briefly sees two copies of their message (Discourse
+// 9913). We filter these out on read so the duplicate never shows.
+//
+// A duplicate is the SAME author with byte-identical CONTENT - not just the
+// message text: the type, refmsgid, refchatid, imageid, addressid and modnote
+// must all match too, so two genuinely-different messages that happen to share
+// text are never merged. We also require the rows to be within the retry window
+// of each other, so a member deliberately repeating a message much later is left
+// alone. The `sending` guard means a member can't interleave their own messages
+// during a retry; only the other party's message can fall between the two rows,
+// so we scan back over recently-kept messages (bounded by the window) rather than
+// only comparing adjacent ones.
+const DUP_WINDOW_MS = 15 * 1000
+
+function chatMessageContentKey(m) {
+  return JSON.stringify([
+    m.userid ?? null,
+    m.type ?? '',
+    m.message ?? '',
+    m.refmsgid ?? null,
+    m.refchatid ?? null,
+    m.imageid ?? null,
+    m.addressid ?? null,
+    m.modnote ?? false,
+  ])
+}
+
+export function dedupeRetriedChatMessages(messages) {
+  if (!Array.isArray(messages) || messages.length < 2) return messages
+  const out = []
+  for (const m of messages) {
+    const mDate = new Date(m.date).getTime()
+    const key = chatMessageContentKey(m)
+    let dup = false
+    // A retry duplicate must be within the retry window, so we can only dedupe
+    // when both rows have a valid timestamp. A message with a missing/invalid
+    // date is never treated as a duplicate (keep both).
+    if (!Number.isNaN(mDate)) {
+      // messages arrive oldest-first, so walk back only while inside the window.
+      for (let j = out.length - 1; j >= 0; j--) {
+        const kDate = new Date(out[j].date).getTime()
+        if (Number.isNaN(kDate)) continue
+        if (mDate - kDate > DUP_WINDOW_MS) break
+        if (chatMessageContentKey(out[j]) === key) {
+          dup = true
+          break
+        }
+      }
+    }
+    if (!dup) out.push(m)
+  }
+  return out
+}
+
+export const useChatStore = defineStore('chat', {
   state: () => ({
     list: [],
     listByChatId: {},
@@ -200,7 +258,7 @@ export const useChatStore = defineStore({
         since = dayjs(this.searchSince).toISOString()
       }
 
-      let chats = []
+      let chats
       const miscStore = useMiscStore() // MT
       if (miscStore.modtools) {
         const { chatrooms } = await api(this.config).chat.listChatsMT({
@@ -262,6 +320,10 @@ export const useChatStore = defineStore({
       const miscStore = useMiscStore() // MT
       const params = miscStore.modtools ? { modtools: true } : {}
       messages = await api(this.config).chat.fetchMessages(id, params)
+
+      // Drop retry-duplicate rows (see dedupeRetriedChatMessages) so a message
+      // sent once over a flaky connection never shows twice.
+      messages = dedupeRetriedChatMessages(messages)
 
       const update = () => {
         this.messages[id] = messages
@@ -332,10 +394,31 @@ export const useChatStore = defineStore({
       await api(this.config).chat.nudge(id)
       this.fetchMessages(id)
     },
+    async answerPrompt(chatid, chatmsgid, answer) {
+      const ret = await api(this.config).chat.answerPrompt(
+        chatid,
+        chatmsgid,
+        answer
+      )
+
+      // Refetch so the prompt comes back in its answered state rather than us
+      // guessing what the server did with it.
+      await this.fetchMessages(chatid, true)
+
+      return ret
+    },
     async typing(chatid) {
       await api(this.config).chat.typing(chatid)
     },
-    async send(chatid, message, addressid, imageid, refmsgid, modnote) {
+    async send(
+      chatid,
+      message,
+      addressid,
+      imageid,
+      refmsgid,
+      modnote,
+      replysource
+    ) {
       const data = {
         roomid: chatid,
       }
@@ -359,6 +442,13 @@ export const useChatStore = defineStore({
 
       if (modnote) {
         data.modnote = true
+      }
+
+      // Advisory reply provenance (which surface the reply came from) - only
+      // meaningful alongside refmsgid; the server sanitises and stores it with
+      // the rippling reply attribution.
+      if (refmsgid && replysource) {
+        data.replysource = replysource
       }
 
       await api(this.config).chat.send(data)
@@ -385,6 +475,12 @@ export const useChatStore = defineStore({
       })
       this.fetchMessages(chatid)
     },
+    async commonGroups(chatid) {
+      return await api(this.config).chat.commonGroups(chatid)
+    },
+    async reportNoGroup(chatid, reason, comment) {
+      await api(this.config).chat.reportNoGroup(chatid, reason, comment)
+    },
     // Chat review moderation actions (approve/reject/hold/release/redact).
     async _sendChatMT(data) {
       // 404 means the message was already acted on (race condition with another mod).
@@ -406,6 +502,25 @@ export const useChatStore = defineStore({
     },
     async holdChat(id) {
       await this._sendChatMT({ id, action: 'Hold' })
+
+      // Patch the held message in place instead of making the caller reload the
+      // whole review queue (Discourse #9879/1) - a full reload cleared/refetched
+      // every message, resetting scroll to the top just to pick up one held
+      // flag. Mirrors messageStore.hold()'s in-place update for pending posts.
+      const authStore = useAuthStore()
+      const me = authStore.user
+      const existing = this.listByChatMessageId[id]
+      if (existing && me) {
+        this.listByChatMessageId[id] = {
+          ...existing,
+          held: {
+            id: me.id,
+            name: me.displayname,
+            email: me.email,
+            timestamp: new Date().toISOString(),
+          },
+        }
+      }
     },
     async releaseChat(id) {
       await this._sendChatMT({ id, action: 'Release' })
@@ -492,9 +607,6 @@ export const useChatStore = defineStore({
       if (this.listByChatId[id]) {
         this.listByChatId[id].status = 'Online'
       }
-
-      // Switch back to showing visible chats since this chat is now visible.
-      this.showClosed = false
 
       await this.fetchChat(id)
       await this.fetchChats(null, false, id)

@@ -9,6 +9,12 @@ const mockSave = vi.fn()
 const mockFetch = vi.fn()
 const mockSearch = vi.fn()
 const mockFetchMessages = vi.fn()
+const mockView = vi.fn()
+const mockMarkSeen = vi.fn()
+const mockCount = vi.fn()
+const mockNearbyMarkSeen = vi.fn()
+const mockHold = vi.fn()
+const mockRelease = vi.fn()
 const mockFetchMT = vi.fn()
 
 vi.mock('~/api', () => ({
@@ -19,6 +25,12 @@ vi.mock('~/api', () => ({
       fetch: mockFetch,
       search: mockSearch,
       fetchMessages: mockFetchMessages,
+      view: mockView,
+      markSeen: mockMarkSeen,
+      count: mockCount,
+      hold: mockHold,
+      release: mockRelease,
+      fetchMT: mockFetchMT,
     },
   }),
 }))
@@ -35,14 +47,34 @@ vi.mock('~/stores/user', () => ({
   useUserStore: () => ({}),
 }))
 
-vi.mock('~/stores/isochrone', () => ({
-  useIsochroneStore: () => ({}),
+const mockNearbyStore = { markSeen: mockNearbyMarkSeen, messageList: [] }
+vi.mock('~/stores/nearby', () => ({
+  useNearbyStore: () => mockNearbyStore,
 }))
 
 const mockMiscStore = { modtools: false }
 vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
 }))
+
+describe('message store - view()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('forwards a browse source to the API', async () => {
+    const store = useMessageStore()
+    await store.view(1234, 'browse')
+    expect(mockView).toHaveBeenCalledWith(1234, 'browse')
+  })
+
+  it('forwards a message_page source to the API', async () => {
+    const store = useMessageStore()
+    await store.view(99, 'message_page')
+    expect(mockView).toHaveBeenCalledWith(99, 'message_page')
+  })
+})
 
 describe('message store - patch()', () => {
   beforeEach(() => {
@@ -270,10 +302,7 @@ describe('message store - searchMT()', () => {
 
   it('handles fetchMT failure for individual results gracefully', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockSearch.mockResolvedValue([
-      { id: 201 },
-      { id: 202 },
-    ])
+    mockSearch.mockResolvedValue([{ id: 201 }, { id: 202 }])
 
     const store = useMessageStore()
     store.fetchMT = vi.fn().mockImplementation(({ id }) => {
@@ -295,11 +324,12 @@ describe('message store - searchMT()', () => {
     expect(ids).toEqual([202])
   })
 
-  it('uses keyword search when searchmode is not vector', async () => {
+  it('always uses vector search even when no searchmode is passed (keyword path retired)', async () => {
     useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockFetchMessages.mockResolvedValue({
-      messages: [301, 302],
-    })
+    mockSearch.mockResolvedValue([
+      { id: 301, msgid: 301 },
+      { id: 302, msgid: 302 },
+    ])
 
     const store = useMessageStore()
     store.fetchMT = vi.fn().mockImplementation(({ id }) => {
@@ -313,27 +343,16 @@ describe('message store - searchMT()', () => {
       groupid: 50,
     })
 
-    expect(mockFetchMessages).toHaveBeenCalledWith(
-      expect.objectContaining({
-        subaction: 'searchall',
-        search: 'bike',
-        exactonly: true,
-        groupid: 50,
-      })
-    )
+    // The V2 vector endpoint is used regardless of searchmode; the old keyword
+    // fetchMessages(subaction:'searchall') path has been removed.
+    expect(mockSearch).toHaveBeenCalledWith({
+      search: 'bike',
+      messagetype: 'All',
+      groupids: '50',
+      searchmode: 'vector',
+    })
+    expect(mockFetchMessages).not.toHaveBeenCalled()
     expect(store.fetchMT).toHaveBeenCalledTimes(2)
-  })
-
-  it('handles empty keyword search results', async () => {
-    useAuthStore.mockReturnValue({ user: { id: 1 } })
-    mockFetchMessages.mockResolvedValue({ messages: [] })
-
-    const store = useMessageStore()
-    store.fetchMT = vi.fn()
-
-    await store.searchMT({ term: 'nothing' })
-
-    expect(store.fetchMT).not.toHaveBeenCalled()
   })
 })
 
@@ -426,5 +445,240 @@ describe('message store - fetchMessagesMT() pagination context', () => {
     })
 
     expect(mockFetchMessages.mock.calls[0][0].context).toBeNull()
+  })
+})
+
+describe('message store - markSeen()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockCount.mockResolvedValue({ count: 0 })
+  })
+
+  it('marks only the given ids as seen in the local cache', async () => {
+    const store = useMessageStore()
+    store.init({})
+    store.list = {
+      1: { id: 1, unseen: true },
+      2: { id: 2, unseen: true },
+      3: { id: 3, unseen: true },
+    }
+
+    await store.markSeen([1, 3])
+
+    expect(mockMarkSeen).toHaveBeenCalledWith([1, 3], undefined)
+    expect(mockNearbyMarkSeen).toHaveBeenCalledWith([1, 3])
+    expect(store.list[1].unseen).toBe(false)
+    expect(store.list[2].unseen).toBe(true) // untouched
+    expect(store.list[3].unseen).toBe(false)
+  })
+
+  it('ignores ids that are not in the cache', async () => {
+    const store = useMessageStore()
+    store.init({})
+    store.list = { 1: { id: 1, unseen: true } }
+
+    await store.markSeen([1, 999])
+
+    expect(store.list[1].unseen).toBe(false)
+    expect(store.list[999]).toBeUndefined()
+  })
+
+  it('refreshes the count for the member browse view and distance, not the default', async () => {
+    useAuthStore.mockReturnValue({
+      user: {
+        id: 1,
+        settings: { browseView: 'mygroups', browseMaxDistance: 10 },
+      },
+    })
+    const store = useMessageStore()
+    store.init({})
+    store.list = { 1: { id: 1, unseen: true } }
+
+    await store.markSeen([1])
+
+    // fetchCount -> api.message.count(browseView, maxDistance, log): the badge must be
+    // recomputed for the member's actual view, else a mygroups/slider member sees a
+    // different view's number and it never drops to zero.
+    expect(mockCount).toHaveBeenCalledWith('mygroups', 10, true)
+  })
+})
+
+describe('message store - markSeenSiblings()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockNearbyStore.messageList = []
+  })
+
+  it('marks only the still-unseen sibling copies and does not refetch the count', async () => {
+    mockNearbyStore.messageList = [
+      { id: 10, unseen: true },
+      { id: 11, unseen: true },
+      { id: 12, unseen: false }, // already seen - must be skipped
+    ]
+    const store = useMessageStore()
+    store.init({})
+    store.list = {
+      10: { id: 10, unseen: true },
+      11: { id: 11, unseen: true },
+      12: { id: 12, unseen: false },
+    }
+
+    await store.markSeenSiblings([11, 12])
+
+    expect(mockMarkSeen).toHaveBeenCalledWith([11])
+    expect(mockNearbyMarkSeen).toHaveBeenCalledWith([11])
+    expect(store.list[11].unseen).toBe(false)
+    expect(store.list[12].unseen).toBe(false) // unchanged
+    // Unlike markSeen(), the light sibling path leaves the count refresh to scroll/poll.
+    expect(mockCount).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when no sibling is still unseen', async () => {
+    mockNearbyStore.messageList = [{ id: 20, unseen: false }]
+    const store = useMessageStore()
+    store.init({})
+
+    await store.markSeenSiblings([20])
+
+    expect(mockMarkSeen).not.toHaveBeenCalled()
+    expect(mockNearbyMarkSeen).not.toHaveBeenCalled()
+  })
+
+  it('ignores an empty id list', async () => {
+    const store = useMessageStore()
+    store.init({})
+
+    await store.markSeenSiblings([])
+
+    expect(mockMarkSeen).not.toHaveBeenCalled()
+  })
+})
+
+// hold()/release() re-fetch the whole message after the API call and replace
+// this.list[id] with the fresh copy - which naturally carries the correct,
+// per-group messages_groups.heldby row. Since every component reads the
+// message via the reactive byId getter, this refetch is what keeps the
+// Hold/Release toggle and the held-by banner in sync with the server
+// (Discourse 9904/9481/642) - no separate optimistic patch of groups[] is
+// needed or attempted, and the store never adds a message-level heldby of
+// its own.
+describe('message store - hold()/release() update the matching per-group row', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('replaces the message with a refetch whose groups[] row reflects the new hold', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetchMT.mockResolvedValue({
+      id: 42,
+      groups: [
+        { groupid: 10, collection: 'Pending', heldby: 999 },
+        { groupid: 20, collection: 'Approved', heldby: null },
+      ],
+    })
+
+    await store.hold({ id: 42, groupid: 10 })
+
+    expect(mockHold).toHaveBeenCalledWith(42, 10)
+    expect(mockFetchMT).toHaveBeenCalledWith({ id: 42 })
+    const row = store.byId(42).groups.find((g) => g.groupid === 10)
+    expect(row.heldby).toBe(999)
+    // The other group's row is unaffected - it was never held.
+    expect(
+      store.byId(42).groups.find((g) => g.groupid === 20).heldby
+    ).toBeNull()
+    // The store replaces list[id] wholesale with the server's payload; it
+    // never invents a message-level heldby of its own.
+    expect(store.byId(42).heldby).toBeUndefined()
+  })
+
+  it('replaces the message with a refetch whose groups[] row reflects the release', async () => {
+    const store = useMessageStore()
+    store.init({})
+    mockFetchMT.mockResolvedValue({
+      id: 42,
+      groups: [{ groupid: 10, collection: 'Pending', heldby: null }],
+    })
+
+    await store.release({ id: 42, groupid: 10 })
+
+    expect(mockRelease).toHaveBeenCalledWith(42, 10)
+    expect(mockFetchMT).toHaveBeenCalledWith({ id: 42 })
+    const row = store.byId(42).groups.find((g) => g.groupid === 10)
+    expect(row.heldby).toBeNull()
+    expect(store.byId(42).heldby).toBeUndefined()
+  })
+})
+
+// After a per-group approve/reject, a reported post that's pending on several of a mod's groups
+// must stay in the pending list so the next group's copy can be actioned without reloading
+// (Discourse 9862). refreshOrRemoveFromMTList re-fetches and keeps-or-drops it accordingly.
+describe('message store - refreshOrRemoveFromMTList()', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+  })
+
+  it('keeps the (refreshed) message when a group copy is still pending', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500, subject: 'stale' }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      subject: 'fresh',
+      groups: [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 2, collection: 'Pending' },
+      ],
+    })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeDefined()
+    expect(store.list[500].subject).toBe('fresh')
+  })
+
+  it('removes the message once no group copy is still in the review queue', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500, subject: 'stale' }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 2, collection: 'Rejected' },
+      ],
+    })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeUndefined()
+  })
+
+  it('treats Spam and PendingOther as still in the review queue', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi.fn().mockResolvedValue({
+      id: 500,
+      groups: [{ groupid: 1, collection: 'Spam' }],
+    })
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeDefined()
+  })
+
+  it('removes the message if the re-fetch fails', async () => {
+    const store = useMessageStore()
+    store.list[500] = { id: 500 }
+    store.fetchMT = vi.fn().mockRejectedValue(new Error('gone'))
+
+    await store.refreshOrRemoveFromMTList(500)
+
+    expect(store.list[500]).toBeUndefined()
   })
 })

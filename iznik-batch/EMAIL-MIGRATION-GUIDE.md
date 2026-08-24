@@ -1,6 +1,6 @@
-# Email Migration Guide: iznik-server to iznik-batch
+# Email Migration Guide: Legacy V1 PHP to iznik-batch
 
-This guide documents lessons learned from migrating the Welcome Email and Chat Notification Email from iznik-server to iznik-batch. Follow this guide to avoid common mistakes.
+This guide documents lessons learned from migrating the Welcome Email and Chat Notification Email from the legacy V1 PHP implementation to iznik-batch. Follow this guide to avoid common mistakes.
 
 ## Table of Contents
 
@@ -20,7 +20,7 @@ This guide documents lessons learned from migrating the Welcome Email and Chat N
 
 ## Architecture Overview
 
-### Old Architecture (iznik-server)
+### Old Architecture (legacy V1 PHP)
 - Synchronous processing within cron scripts
 - Twig templating with PHP string building
 - Direct SMTP sending via SwiftMailer
@@ -49,14 +49,11 @@ This guide documents lessons learned from migrating the Welcome Email and Chat N
 Before starting migration, complete these steps:
 
 ### 1. Study the Original Implementation
-```bash
-# Find the original code in iznik-server
-grep -r "function nameOfEmail" iznik-server/include/
-grep -r "email_type_name" iznik-server/scripts/cron/
 
-# Find related tests
-grep -r "testEmailFunction" iznik-server/test/ut/php/
-```
+The original implementation lived in the legacy V1 PHP codebase (removed from
+this repo — check git history from before its removal if you need to consult
+it). Look for the equivalent function, cron script, and PHPUnit test for the
+email type you are migrating.
 
 ### 2. Document Original Behaviour
 - [ ] Subject line generation logic
@@ -128,13 +125,13 @@ iznik-batch/
 **Note:** Only use raw output in TEXT templates. HTML templates should still escape user content for security.
 
 ### Mistake 2: Subject Line Logic Mismatch
-**Commit:** `7a82798 - Restore chat notification subject logic from iznik-server`
+**Commit:** `7a82798` - Restore chat notification subject logic to match the legacy V1 PHP implementation
 
-**Problem:** Implementing new subject line logic instead of copying the exact logic from iznik-server.
+**Problem:** Implementing new subject line logic instead of copying the exact logic from the legacy V1 PHP implementation.
 
 **Fix:** Always copy the EXACT subject line logic. For chat notifications:
 ```php
-// From iznik-server ChatRoom::getChatEmailSubject()
+// From the legacy V1 PHP ChatRoom::getChatEmailSubject()
 // Query for the last TYPE_INTERESTED message in the chat
 $sql = "SELECT subject, nameshort, namefull FROM messages
         INNER JOIN chat_messages ON chat_messages.refmsgid = messages.id
@@ -220,7 +217,7 @@ $displayText = EmojiUtils::decode($message->message);
 
 ## Subject Line Generation
 
-### Pattern from iznik-server
+### Pattern from the legacy V1 PHP implementation
 
 Always follow the original subject line logic exactly. Common patterns:
 
@@ -516,24 +513,24 @@ class SendYourEmailCommand extends Command
 | Chat notifications (U2U) | `mail:chat:user2user` |
 | Chat notifications (U2M) | `mail:chat:user2mod` |
 | Welcome email | `mail:welcome:send` |
-| Digest | `mail:digest` |
+| Digest | `mail:digest:unified` |
 | Donations | `mail:donations:ask` |
 
 ---
 
-## Quick Reference: Copying from iznik-server
+## Quick Reference: Copying from the Legacy V1 PHP Implementation
 
 When migrating, copy these elements EXACTLY:
 
 ### 1. Subject Line Query
-Find in iznik-server: `getChatEmailSubject()` or similar.
+Find in the legacy V1 PHP implementation: `getChatEmailSubject()` or similar.
 
 ### 2. Recipient Query
 Find the main SQL query that determines who to email.
 
 ### 3. Message Type Constants
 ```php
-// Must match iznik-server ChatMessage constants
+// Must match the legacy V1 PHP ChatMessage constants
 const TYPE_DEFAULT = 'Default';
 const TYPE_INTERESTED = 'Interested';
 const TYPE_PROMISED = 'Promised';
@@ -565,7 +562,7 @@ public function envelope(): Envelope
 
 ### 5. Reply-To Format
 ```php
-// Standard format from iznik-server - used for routing replies
+// Standard format from the legacy V1 PHP implementation - used for routing replies
 $replyTo = 'notify-' . $chatId . '-' . $userId . '@' . USER_DOMAIN;
 ```
 
@@ -648,7 +645,7 @@ When adding a new email type:
 7. **Decode emojis** - they may be stored as escape sequences
 8. **Test text fallback** - many users don't see HTML
 9. **Validate AMP** - use the playground before deploying
-10. **Write tests first** - based on iznik-server behavior
+10. **Write tests first** - based on the legacy V1 PHP implementation's behavior
 11. **Add feature flag check** - respect FREEGLE_MAIL_ENABLED_TYPES setting
 12. **Include footer in ALL templates** - MJML, text, AND AMP must have consistent footers
 13. **Use noreply as From address** - required for AMP email whitelisting; use Reply-To for routing

@@ -148,6 +148,14 @@ const finishSpinner = () => {
     if (props.doneIcon) {
       done.value = true
       setTimeout(() => {
+        // Resets the transient "done" check icon props.timeout (5s) after the
+        // action completes. Playwright e2e only covers this line when a test
+        // happens to stay on the page for the full timeout, so it flips in and
+        // out of coverage run-to-run — it is the sole source of Playwright
+        // coverage non-determinism, which trips Coveralls on unrelated PRs.
+        // Excluded from V8/Playwright coverage only; vitest (istanbul, which
+        // ignores v8 comments) still counts it.
+        /* v8 ignore next */
         done.value = false
       }, props.timeout)
     }
@@ -196,6 +204,13 @@ const confirmed = () => {
 }
 
 const onConfirmClosed = () => {
+  // Whether any Playwright run covers this line depends on a test happening
+  // to dismiss (rather than confirm) a SpinButton confirm dialog, so it flips
+  // in and out of e2e coverage run-to-run and trips Coveralls on unrelated
+  // PRs - same class as the timeout reset in finishSpinner above. Excluded
+  // from V8/Playwright coverage only; vitest (istanbul, which ignores v8
+  // comments) still counts it, and the unit spec covers it deterministically.
+  /* v8 ignore next */
   showConfirm.value = false
 }
 

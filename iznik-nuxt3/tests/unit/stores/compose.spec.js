@@ -121,6 +121,78 @@ describe('compose store', () => {
     })
   })
 
+  describe('createDraft — bulk offer (clearance)', () => {
+    it('forwards bulkitems/bulkslots/accessinstructions and filters blank-name items', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 5 }
+      store.group = 10
+      mockMessagePut.mockResolvedValueOnce({ id: 999 })
+
+      const id = await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Office clearance',
+          description: 'desc',
+          availablenow: 1,
+          attachments: [],
+          bulkitems: [
+            {
+              name: 'Desk',
+              quantity: 2,
+              condition: 'Good',
+              attachments: [7, 9],
+            },
+            { name: '   ', quantity: 1 }, // blank name — must be dropped
+          ],
+          bulkslots: ['Tue 10am'],
+          accessinstructions: 'Side gate',
+        },
+        'me@example.com'
+      )
+
+      expect(id).toBe(999)
+      expect(mockMessagePut).toHaveBeenCalledTimes(1)
+      const sent = mockMessagePut.mock.calls[0][0]
+      expect(sent.bulkitems).toEqual([
+        {
+          name: 'Desk',
+          quantity: 2,
+          condition: 'Good',
+          dimensions: null,
+          photourl: null,
+          description: null,
+          attachments: [7, 9],
+        },
+      ])
+      expect(sent.bulkslots).toEqual(['Tue 10am'])
+      expect(sent.accessinstructions).toBe('Side gate')
+    })
+
+    it('omits the bulk fields entirely for an ordinary single-item post', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 5 }
+      mockMessagePut.mockResolvedValueOnce({ id: 1 })
+
+      await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Chair',
+          description: '',
+          availablenow: 1,
+          attachments: [],
+        },
+        'me@example.com'
+      )
+
+      const sent = mockMessagePut.mock.calls[0][0]
+      expect(sent.bulkitems).toBeUndefined()
+      expect(sent.bulkslots).toBeUndefined()
+      expect(sent.accessinstructions).toBeUndefined()
+    })
+  })
+
   describe('add / ensureMessage', () => {
     it('adds a new message and returns its id', () => {
       const store = useComposeStore()
@@ -261,6 +333,98 @@ describe('compose store', () => {
     })
   })
 
+  // A photo is pushed into the attachments with uploading:true BEFORE the
+  // upload finishes, and this store persists to localStorage - so an
+  // interrupted upload (reload, navigation, abort) leaves uploading:true on
+  // disk with nothing left running to clear it. On the mobile give flow that
+  // permanently disabled Next, hid the delete control and hid Skip, locking
+  // the member out of posting on that device until they cleared site data.
+  describe('sanitiseRestoredAttachments', () => {
+    let store
+
+    beforeEach(() => {
+      store = useComposeStore()
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      store.add()
+      logSpy.mockRestore()
+    })
+
+    it('drops an attachment left mid-upload with no server id', () => {
+      // Its preview is a blob: URL that died with the previous page, and it
+      // has no server id, so there is nothing recoverable to show.
+      store.messages[0].attachments = [
+        {
+          tempId: 'temp-1',
+          preview: 'blob:https://www.ilovefreegle.org/dead',
+          uploading: true,
+          progress: 100,
+          error: false,
+        },
+      ]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.messages[0].attachments).toEqual([])
+    })
+
+    it('clears uploading on an attachment that did reach the server', () => {
+      store.messages[0].attachments = [
+        {
+          id: 45447044,
+          path: 'https://x/img.jpg',
+          uploading: true,
+          progress: 100,
+        },
+      ]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.messages[0].attachments).toHaveLength(1)
+      expect(store.messages[0].attachments[0].uploading).toBe(false)
+      expect(store.messages[0].attachments[0].id).toBe(45447044)
+    })
+
+    it('leaves completed attachments untouched', () => {
+      const done = [
+        { id: 1, path: 'a.jpg' },
+        { id: 2, path: 'b.jpg' },
+      ]
+      store.messages[0].attachments = [...done]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.messages[0].attachments).toEqual(done)
+    })
+
+    it('keeps the good photos when only one was mid-upload', () => {
+      store.messages[0].attachments = [
+        { id: 1, path: 'a.jpg' },
+        { tempId: 'temp-9', preview: 'blob:dead', uploading: true },
+        { id: 2, path: 'b.jpg' },
+      ]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.messages[0].attachments.map((a) => a.id)).toEqual([1, 2])
+    })
+
+    it('bumps attachmentBump so the UI re-reads', () => {
+      const before = store.attachmentBump
+      store.messages[0].attachments = [{ tempId: 't', uploading: true }]
+
+      store.sanitiseRestoredAttachments()
+
+      expect(store.attachmentBump).toBeGreaterThan(before)
+    })
+
+    it('copes with messages that have no attachments', () => {
+      store.messages[0].attachments = undefined
+      store.messages.push(null)
+
+      expect(() => store.sanitiseRestoredAttachments()).not.toThrow()
+    })
+  })
+
   describe('deleteMessage', () => {
     it('removes message by id', () => {
       const store = useComposeStore()
@@ -280,6 +444,41 @@ describe('compose store', () => {
       store.messages = [{ id: 0 }, { id: 1 }]
       store.clearMessages()
       expect(store.messages).toEqual([])
+    })
+  })
+
+  describe('clearMessage', () => {
+    it('resets one message to empty, keeping its id and type', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'bed and chair',
+          description: 'oak',
+          attachments: [{ id: 1 }],
+        },
+        { id: 1, type: 'Wanted', item: 'a bench' },
+      ]
+      store.clearMessage(0)
+      // Message 0 is reset to just id + type; others are untouched.
+      expect(store.messages[0].id).toBe(0)
+      expect(store.messages[0].type).toBe('Offer')
+      expect(store.messages[0].item).toBeUndefined()
+      expect(store.messages[0].description).toBeUndefined()
+      expect(store.messages[0].attachments).toBeUndefined()
+      expect(store.messages[1]).toEqual({
+        id: 1,
+        type: 'Wanted',
+        item: 'a bench',
+      })
+    })
+
+    it('does nothing when the id is not present', () => {
+      const store = useComposeStore()
+      store.messages = [{ id: 0, type: 'Offer', item: 'x' }]
+      store.clearMessage(99)
+      expect(store.messages[0].item).toBe('x')
     })
   })
 
@@ -490,6 +689,41 @@ describe('compose store', () => {
     })
   })
 
+  describe('submit', () => {
+    it('sends the deadline as a plain date, not an ISO datetime', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      mockMessagePut.mockResolvedValue({ id: 77 })
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+
+      store.setEmail('test@a.com')
+      store.setPostcode({
+        id: 5,
+        name: 'SW1A 1AA',
+        groupsnear: [
+          { id: 10, nameshort: 'Westminster', namedisplay: 'Westminster' },
+        ],
+      })
+      const id = store.add()
+      store.setType({ id, type: 'Offer' })
+      store.setItem({ id, item: 'Table' })
+      store.setDeadline(id, '2026-09-03')
+
+      await store.submit({ type: 'Offer' })
+
+      // messages.deadline is a DATE column: under strict sql_mode MySQL
+      // rejects an ISO datetime ("2026-09-03T00:00:00.000Z") outright, and
+      // the give-flow deadline was silently lost (Discourse #9481).
+      expect(mockJoinAndPost).toHaveBeenCalledWith(
+        77,
+        'test@a.com',
+        expect.objectContaining({ deadline: '2026-09-03' })
+      )
+      logSpy.mockRestore()
+    })
+  })
+
   describe('backToDraft', () => {
     it('calls RejectToDraft and increments progress', async () => {
       const store = useComposeStore()
@@ -655,6 +889,49 @@ describe('compose store', () => {
       const store = useComposeStore()
       expect(store.messageValid({ value: 'Offer' })).toBe(false)
     })
+
+    it('returns false when the item is purely numeric', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: '123', description: 'Good condition' },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('allows an item that merely contains a number', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: '3 chairs', description: 'Good condition' },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(true)
+    })
+
+    it('returns false when the item is a content-free catch-all', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: 'anything', description: 'Good condition' },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('returns false when the description is purely numeric and there are no photos', () => {
+      const store = useComposeStore()
+      store.messages = [{ type: 'Offer', item: 'Sofa', description: '24' }]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('allows a purely-numeric description when there are real photos', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: '24',
+          attachments: [{ id: 1 }],
+        },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(true)
+    })
   })
 
   describe('postcodeValid getter', () => {
@@ -697,9 +974,7 @@ describe('compose store', () => {
       mockImagePost.mockResolvedValue({ id: 77 })
       mockMessagePut.mockResolvedValue({ id: 99 })
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      const errSpy = vi
-        .spyOn(console, 'error')
-        .mockImplementation(() => {})
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       await store.createDraft(
         {
@@ -767,6 +1042,94 @@ describe('compose store', () => {
       expect(patchArgs.attachments).toEqual([5])
 
       logSpy.mockRestore()
+    })
+  })
+
+  describe('AI illustration preserved in repost path (no real photo)', () => {
+    it('converts AI illustration to real attachment via image.post() when reposting with no real photo', async () => {
+      // Regression: repost path (message.repostof set) silently drops AI illustrations
+      // when there is no real user photo. The PATCH payload ends up with no attachments,
+      // so the AI image is permanently lost. The fix: call image.post(ouruid) in the
+      // repost path, just as createDraft already does.
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Old sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [
+            {
+              id: null,
+              ouruid: 'ai-uid-xyz',
+              externalmods: { ai: true },
+              isAiIllustration: true,
+            },
+          ],
+        },
+      ]
+
+      mockImagePost.mockResolvedValue({ id: 88 })
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // image.post() must be called to create a real server-side attachment
+      expect(mockImagePost).toHaveBeenCalledWith({
+        externaluid: 'ai-uid-xyz',
+        externalmods: { ai: true },
+      })
+      // The resulting real numeric id must appear in the PATCH payload
+      const patchArgs = mockMessagePatch.mock.calls[0][0]
+      expect(patchArgs.attachments).toContain(88)
+      // No non-numeric strings in attachments
+      patchArgs.attachments.forEach((id) => {
+        expect(typeof id).toBe('number')
+      })
+
+      logSpy.mockRestore()
+    })
+
+    it('uses pre-created numeric id directly when AI attachment already has one (no double image.post())', async () => {
+      // When details.vue calls image.post() eagerly and stores the real numeric id,
+      // createDraft should use that id directly without calling image.post() again.
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessagePut.mockResolvedValue({ id: 99 })
+
+      await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Test',
+          attachments: [
+            {
+              id: 55, // real numeric id already created by details.vue
+              ouruid: 'abc123',
+              externalmods: { ai: true },
+              isAiIllustration: true,
+            },
+          ],
+        },
+        'test@example.com'
+      )
+
+      // image.post() must NOT be called again (would double-create the attachment)
+      expect(mockImagePost).not.toHaveBeenCalled()
+      // The existing numeric id must be in the PUT payload
+      expect(mockMessagePut).toHaveBeenCalledWith(
+        expect.objectContaining({ attachments: [55] })
+      )
     })
   })
 })

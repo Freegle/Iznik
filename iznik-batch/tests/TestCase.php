@@ -51,6 +51,13 @@ abstract class TestCase extends BaseTestCase
 
         parent::setUp();
 
+        // MailSuppressionService is a singleton that caches the active
+        // suppression set in-process for a minute, which is right in a batch
+        // job over tens of thousands of members and wrong here: a test that
+        // inserts a suppression would leave it visible to the next test in
+        // the same process, long after its transaction rolled back, and mail
+        // in an unrelated test would silently stop being generated.
+        app(\App\Services\Mail\MailSuppressionService::class)->flushCache();
         // Force mail driver to 'array' for testing.
         // Docker's MAIL_MAILER=smtp would otherwise override phpunit.xml's setting.
         config(['mail.default' => 'array']);
@@ -62,11 +69,11 @@ abstract class TestCase extends BaseTestCase
         // file-based spooling via the parent implementation.
         $this->app->bind(EmailSpoolerService::class, function ($app) {
             return new class ($app->make(LokiService::class)) extends EmailSpoolerService {
-                public function spool(Mailable $mailable, $to = null, ?string $emailType = null): string
+                public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null, bool $autoRetry = true): string
                 {
                     if (config('mail.default') === 'smtp') {
                         // Integration tests (Mailpit): use real file spooling.
-                        return parent::spool($mailable, $to, $emailType);
+                        return parent::spool($mailable, $to, $emailType, $autoRetry);
                     }
                     // Unit/Feature tests: route through Mail facade so Mail::assertSent() works.
                     $toArr = is_string($to) ? [$to] : (is_array($to) ? array_filter($to) : []);

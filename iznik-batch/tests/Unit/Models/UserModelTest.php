@@ -5,6 +5,8 @@ namespace Tests\Unit\Models;
 use App\Models\Membership;
 use App\Models\User;
 use App\Models\UserEmail;
+use App\Models\UserImage;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class UserModelTest extends TestCase
@@ -427,6 +429,39 @@ class UserModelTest extends TestCase
         $this->assertNull($result['location']);
     }
 
+    public function test_get_job_ads_suppressed_for_recent_donor(): void
+    {
+        // A located user who donated recently is ad-free, matching the website.
+        $locId = DB::table('locations')->insertGetId([
+            'name' => 'EH1 1AA',
+            'type' => 'Postcode',
+            'lat' => 55.9533,
+            'lng' => -3.1883,
+        ]);
+        $user = User::create(['fullname' => 'Donor', 'added' => now(), 'lastlocation' => $locId]);
+        DB::table('users_donations')->insert([
+            'userid' => $user->id,
+            'timestamp' => now()->subDays(5),
+            'GrossAmount' => 10,
+        ]);
+
+        $this->assertTrue($user->isAdFree());
+        $this->assertTrue($user->getJobAds()['jobs']->isEmpty());
+    }
+
+    public function test_is_ad_free_false_for_old_or_no_donation(): void
+    {
+        $user = User::create(['fullname' => 'Old donor', 'added' => now()]);
+        $this->assertFalse($user->isAdFree(), 'no donation → not ad-free');
+
+        DB::table('users_donations')->insert([
+            'userid' => $user->id,
+            'timestamp' => now()->subDays(60), // beyond the 31-day window
+            'GrossAmount' => 10,
+        ]);
+        $this->assertFalse($user->isAdFree(), 'old donation → not ad-free');
+    }
+
     public function test_get_profile_image_url_returns_null_without_image(): void
     {
         $user = $this->createTestUser();
@@ -434,6 +469,64 @@ class UserModelTest extends TestCase
         $result = $user->getProfileImageUrl();
 
         $this->assertNull($result);
+    }
+
+    public function test_get_profile_image_url_returns_image_by_default(): void
+    {
+        $user = $this->createTestUser();
+        UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://example.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $this->assertEquals('https://example.com/harvested.jpg', $user->getProfileImageUrl());
+    }
+
+    public function test_get_profile_image_url_returns_image_when_useprofile_true(): void
+    {
+        $user = $this->createTestUser();
+        $user->settings = ['useprofile' => true];
+        $user->save();
+        UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://example.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $this->assertEquals('https://example.com/harvested.jpg', $user->getProfileImageUrl());
+    }
+
+    public function test_get_profile_image_url_null_when_useprofile_false(): void
+    {
+        // Matches iznik-server-go GetProfileRecord: a user who has turned off
+        // "use profile picture" (an anonymous profile on the website) must not
+        // have their image used in emails either.
+        $user = $this->createTestUser();
+        $user->settings = ['useprofile' => false];
+        $user->save();
+        UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://example.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $this->assertNull($user->getProfileImageUrl());
+    }
+
+    public function test_get_profile_image_url_null_when_user_deleted(): void
+    {
+        // Matches iznik-server-go: deleted users' profiles are suppressed.
+        $user = $this->createTestUser();
+        $user->deleted = now();
+        $user->save();
+        UserImage::create([
+            'userid' => $user->id,
+            'url' => 'https://example.com/harvested.jpg',
+            'default' => 0,
+        ]);
+
+        $this->assertNull($user->getProfileImageUrl());
     }
 
     public function test_get_user_key_creates_new_key(): void
@@ -456,14 +549,12 @@ class UserModelTest extends TestCase
         $this->assertEquals($key1, $key2);
     }
 
-    public function test_list_unsubscribe_returns_formatted_url(): void
+    public function test_list_unsubscribe_url_returns_the_account_unsubscribe_link(): void
     {
         $user = $this->createTestUser();
 
-        $result = $user->listUnsubscribe();
+        $result = $user->listUnsubscribeUrl();
 
-        $this->assertStringStartsWith('<', $result);
-        $this->assertStringEndsWith('>', $result);
         $this->assertStringContainsString('/one-click-unsubscribe/', $result);
         $this->assertStringContainsString((string) $user->id, $result);
     }
@@ -482,7 +573,7 @@ class UserModelTest extends TestCase
 
     /**
      * Tests for internal email filtering in getEmailPreferred.
-     * These verify that iznik-batch matches iznik-server's behavior.
+     * These verify that iznik-batch matches the legacy V1 PHP implementation's behavior.
      */
 
     public function test_email_preferred_excludes_users_ilovefreegle_domain(): void
@@ -659,6 +750,20 @@ class UserModelTest extends TestCase
     public function test_is_internal_email_detects_republisher_domain(): void
     {
         $this->assertTrue(User::isInternalEmail('feed@republisher.freegle.in'));
+    }
+
+    public function test_is_internal_email_detects_modtools(): void
+    {
+        // modtools.org is our own site: no MX, and an A record pointing at a
+        // static web host. Postfix falls back to that per RFC, tries port 25
+        // against a web server and times out - transient by SMTP rules, so it
+        // retried for the full queue lifetime and expired without ever marking
+        // anyone bouncing. On 2026-08-19 that was 551 queued messages to 67
+        // addresses, and one bot account had been accumulating them since
+        // February.
+        $this->assertTrue(User::isInternalEmail('modbot@modtools.org'));
+        $this->assertTrue(User::isInternalEmail('confirmmod-be79042a7595c01@modtools.org'));
+        $this->assertTrue(User::isInternalEmail('MODBOT@MODTOOLS.ORG'));
     }
 
     public function test_is_internal_email_detects_yahoogroups(): void

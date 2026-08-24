@@ -277,6 +277,17 @@ func TestBlur_ZeroDistanceNoChange(t *testing.T) {
 	assert.InDelta(t, -0.1, lng, 0.001)
 }
 
+func TestBlur_ZeroZeroIsNotFabricated(t *testing.T) {
+	// (0,0) is an unset/unresolved location (e.g. an email post whose subject
+	// location couldn't be geocoded, stored NULL and read back as 0), not a real
+	// point. Blurring must leave it at exactly (0,0) rather than stepping off Null
+	// Island to ~(0.004, 0) - which would fabricate a fake location that then reads
+	// as "outside the UK" and hides the "add a postcode" prompt (Discourse #9865).
+	lat, lng := Blur(0, 0, BLUR_USER)
+	assert.Equal(t, 0.0, lat)
+	assert.Equal(t, 0.0, lng)
+}
+
 // ---------------------------------------------------------------------------
 // Haversine
 // ---------------------------------------------------------------------------
@@ -796,6 +807,20 @@ func TestTidyName_AllNumbers(t *testing.T) {
 func TestTidyName_TNSuffixMultiple(t *testing.T) {
 	// Multiple TN suffixes should all be stripped
 	assert.Equal(t, "Name", TidyName("Name-g123-g456"))
+}
+
+func TestTidyName_DoubleTNOnlyBecomesFreegler(t *testing.T) {
+	// A name that is only double TN suffixes (no real prefix): first tnRegexp strips
+	// the outer suffix leaving "-g123"; second tnRegexp strips that leaving ""; the
+	// final len==0 fallback kicks in. Covers the last-resort "A freegler" branch.
+	assert.Equal(t, "A freegler", TidyName("-g123-g456"))
+}
+
+func TestTidyName_TripleTNOnlyBecomesFreegler(t *testing.T) {
+	// A name that is only triple TN suffixes: first tnRegexp strips the outermost
+	// suffix leaving "-g123-g456"; second tnRegexp strips that leaving "-g123";
+	// tnOnlyRegexp matches "-g123" directly. Covers the tnOnlyRegexp "A freegler" branch.
+	assert.Equal(t, "A freegler", TidyName("-g123-g456-g789"))
 }
 
 func TestTidyName_ComplexChain(t *testing.T) {

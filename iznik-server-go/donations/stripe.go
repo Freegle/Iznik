@@ -146,11 +146,11 @@ func CreateSubscription(c *fiber.Ctx) error {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT email FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", myid).Scan(&email)
+		db.Table("users_emails").Select("email").Where("userid = ?", myid).Order("preferred DESC").Limit(1).Scan(&email)
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT fullname FROM users WHERE id = ?", myid).Scan(&fullname)
+		db.Table("users").Select("fullname").Where("id = ?", myid).Scan(&fullname)
 	}()
 	wg.Wait()
 

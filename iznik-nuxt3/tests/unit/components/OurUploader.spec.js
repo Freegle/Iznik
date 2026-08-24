@@ -4,11 +4,11 @@ import { defineComponent, h, Suspense, ref } from 'vue'
 import OurUploader from '~/components/OurUploader.vue'
 
 // Mock polyfill check functions
-vi.mock('@formatjs/intl-locale/should-polyfill', () => ({
+vi.mock('@formatjs/intl-locale/should-polyfill.js', () => ({
   shouldPolyfill: vi.fn(() => false),
 }))
 
-vi.mock('@formatjs/intl-pluralrules/should-polyfill', () => ({
+vi.mock('@formatjs/intl-pluralrules/should-polyfill.js', () => ({
   shouldPolyfill: vi.fn(() => false),
 }))
 
@@ -40,7 +40,8 @@ const mockTusUpload = {
 }
 
 vi.mock('tus-js-client', () => ({
-  Upload: vi.fn().mockImplementation((file, options) => {
+  // vitest 4 requires constructor mocks to be constructible (no arrows).
+  Upload: vi.fn(function (file, options) {
     mockTusUpload.options = options
     return mockTusUpload
   }),
@@ -50,18 +51,22 @@ vi.mock('tus-js-client', () => ({
 const mockUppy = {
   use: vi.fn().mockReturnThis(),
   on: vi.fn().mockReturnThis(),
+  addPreProcessor: vi.fn(),
   getPlugin: vi.fn(),
   retryAll: vi.fn(),
   clear: vi.fn(),
 }
 
 vi.mock('@uppy/core', () => ({
-  default: vi.fn(() => mockUppy),
+  // vitest 4 requires constructor mocks to be constructible (no arrows).
+  default: vi.fn(function () {
+    return mockUppy
+  }),
 }))
 
 // Mock Uppy plugins
-vi.mock('@uppy/vue', () => ({
-  DashboardModal: defineComponent({
+vi.mock('@uppy/vue/dashboard-modal', () => ({
+  default: defineComponent({
     name: 'DashboardModal',
     props: ['uppy', 'open', 'props'],
     template: '<div class="uppy-dashboard-modal" />',
@@ -75,6 +80,14 @@ vi.mock('@uppy/tus', () => ({
 vi.mock('@uppy/compressor', () => ({
   default: vi.fn(),
 }))
+
+// Spy on the Loki action() logger so we can assert the upload/compression
+// telemetry payloads. Keep the module's other exports real.
+const mockAction = vi.hoisted(() => vi.fn())
+vi.mock('~/composables/useClientLog', async (importOriginal) => {
+  const actual = await importOriginal()
+  return { ...actual, action: (...args) => mockAction(...args) }
+})
 
 // Mock Capacitor Camera
 vi.mock('@capacitor/camera', () => ({
@@ -139,6 +152,7 @@ describe('OurUploader', () => {
     // Reset Uppy mock
     mockUppy.use.mockClear().mockReturnThis()
     mockUppy.on.mockClear().mockReturnThis()
+    mockUppy.addPreProcessor.mockClear()
     mockUppy.getPlugin.mockReset()
     mockUppy.clear.mockClear()
     mockUppy.retryAll.mockClear()
@@ -198,6 +212,11 @@ describe('OurUploader', () => {
           DashboardModal: {
             template: '<div class="uppy-dashboard-modal" :data-open="open" />',
             props: ['uppy', 'open', 'props'],
+          },
+          'b-alert': {
+            template:
+              '<div v-if="modelValue" class="alert" :class="variant"><slot /></div>',
+            props: ['variant', 'modelValue'],
           },
         },
       },
@@ -450,6 +469,24 @@ describe('OurUploader', () => {
       mockIsApp.value = false
       await createWrapper()
       expect(mockUppy.use).toHaveBeenCalled()
+    })
+
+    it('registers the HEIC pre-processor', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      expect(mockUppy.addPreProcessor).toHaveBeenCalledTimes(1)
+      expect(mockUppy.addPreProcessor.mock.calls[0][0]).toBeInstanceOf(Function)
+    })
+
+    it('registers the HEIC pre-processor before the Compressor plugin', async () => {
+      // Uppy runs pre-processors in registration order, and Compressor cannot
+      // read HEIC through a canvas - so HEIC has to become JPEG first.
+      mockIsApp.value = false
+      await createWrapper()
+      const compressorRegistered = mockUppy.use.mock.invocationCallOrder.at(-1)
+      const heicRegistered =
+        mockUppy.addPreProcessor.mock.invocationCallOrder[0]
+      expect(heicRegistered).toBeLessThan(compressorRegistered)
     })
 
     it('registers event listeners on Uppy', async () => {
@@ -1194,6 +1231,157 @@ describe('OurUploader', () => {
     })
   })
 
+  // AssertFlip test — declining the OS camera/photos permission must show a
+  // human-readable error instead of silently doing nothing. Verified against
+  // the pre-fix code: all tests in this block fail red without the fix (the
+  // catch blocks only console.log the error) and pass once photoError is
+  // surfaced via a b-alert.
+  describe('camera/gallery permission denied (app mode)', () => {
+    beforeEach(() => {
+      mockIsApp.value = true
+    })
+
+    it('shows a human-readable error when the camera permission is declined', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User denied access to camera')
+      )
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      await uploaderComp.vm.openModal()
+      await flushPromises()
+
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text().toLowerCase()).toContain('permission')
+    })
+
+    it('shows a human-readable error when the gallery/photos permission is declined', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.pickImages.mockRejectedValueOnce(
+        new Error('User denied access to photos')
+      )
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      await uploaderComp.vm.choosePhoto()
+      await flushPromises()
+
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+      expect(alert.text().toLowerCase()).toContain('permission')
+    })
+
+    it('stays silent when the user simply cancels (not a permission error)', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User cancelled photos app')
+      )
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      await uploaderComp.vm.openModal()
+      await flushPromises()
+
+      expect(wrapper.find('.alert').exists()).toBe(false)
+    })
+
+    it('clears a previous permission error as soon as a new attempt starts', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User denied access to camera')
+      )
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      await uploaderComp.vm.openModal()
+      await flushPromises()
+      expect(wrapper.find('.alert').exists()).toBe(true)
+
+      // A fresh attempt (even one the user then cancels) should not leave the
+      // stale error from the previous attempt on screen.
+      Camera.getPhoto.mockRejectedValueOnce(
+        new Error('User cancelled photos app')
+      )
+      await uploaderComp.vm.openModal()
+      await flushPromises()
+
+      expect(wrapper.find('.alert').exists()).toBe(false)
+    })
+  })
+
+  // AssertFlip test — Camera.pickImages()/getPhoto() can hand back a webPath
+  // for a photo that isn't fully local yet (e.g. a Photos-library asset still
+  // downloading from iCloud). fetch()-ing that webPath then hangs forever:
+  // no resolve, no reject, no console output - the picker just "does
+  // nothing", matching topic 9875/1. Verified against the pre-fix code: both
+  // tests here fail red (loading stays stuck on 'Uploading' and no error is
+  // ever shown, even after waiting far longer than any real network call)
+  // because the un-raced fetch() never settles; they pass once the fetch is
+  // raced against a timeout.
+  describe('picked-photo fetch never resolves (app mode)', () => {
+    beforeEach(() => {
+      mockIsApp.value = true
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      delete global.fetch
+    })
+
+    it('choosePhoto surfaces an error and resets loading instead of hanging forever', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.pickImages.mockResolvedValueOnce({
+        photos: [{ webPath: 'capacitor://photo1.jpeg' }],
+      })
+      // Simulates an iCloud-backed gallery photo that never finishes
+      // downloading - the fetch never resolves or rejects.
+      global.fetch = vi.fn(() => new Promise(() => {}))
+
+      const wrapper = await createWrapper({
+        multiple: true,
+        modelValue: [{ id: 1 }],
+      })
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      const choosePromise = uploaderComp.vm.choosePhoto()
+      await flushPromises()
+
+      // Advance far past any reasonable network wait.
+      await vi.advanceTimersByTimeAsync(60000)
+      await choosePromise
+      await flushPromises()
+
+      expect(uploaderComp.vm.loading).toBe('')
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+    })
+
+    it('openModal surfaces an error and resets loading instead of hanging forever', async () => {
+      const { Camera } = await import('@capacitor/camera')
+      Camera.getPhoto.mockResolvedValueOnce({
+        webPath: 'capacitor://camera1.jpeg',
+      })
+      global.fetch = vi.fn(() => new Promise(() => {}))
+
+      const wrapper = await createWrapper()
+      const uploaderComp = wrapper.findComponent(OurUploader)
+
+      const openPromise = uploaderComp.vm.openModal()
+      await flushPromises()
+
+      await vi.advanceTimersByTimeAsync(60000)
+      await openPromise
+      await flushPromises()
+
+      expect(uploaderComp.vm.loading).toBe('')
+      const alert = wrapper.find('.alert')
+      expect(alert.exists()).toBe(true)
+    })
+  })
+
   describe('TUS plugin retryDelays', () => {
     it('configures retryDelays on the Uppy TUS plugin', async () => {
       mockIsApp.value = false
@@ -1375,6 +1563,201 @@ describe('OurUploader', () => {
 
       consoleError.mockRestore()
       vi.useRealTimers()
+    })
+  })
+
+  describe('compression telemetry', () => {
+    function getHandler(name) {
+      return mockUppy.on.mock.calls.find((c) => c[0] === name)?.[1]
+    }
+
+    it('registers the per-file compression bracket listeners', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      const names = mockUppy.on.mock.calls.map((c) => c[0])
+      expect(names).toContain('preprocess-progress')
+      expect(names).toContain('compressor:complete')
+      expect(names).toContain('preprocess-complete')
+    })
+
+    it('logs upload_compress_started with the original size on preprocess-progress', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      mockAction.mockClear()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith('upload_compress_started', {
+        uploader: 'our',
+        file_size: 5000,
+      })
+    })
+
+    it('does not double-log when preprocess-progress fires twice for one file', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      const onProgress = getHandler('preprocess-progress')
+      mockAction.mockClear()
+      onProgress({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      onProgress({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      const started = mockAction.mock.calls.filter(
+        (c) => c[0] === 'upload_compress_started'
+      )
+      expect(started).toHaveLength(1)
+    })
+
+    it('logs upload_compress_finished with sizes, elapsed and compressed=true after a successful compress', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/jpeg',
+      })
+      // compressor:complete carries only successfully-compressed files.
+      getHandler('compressor:complete')([{ id: 'f1' }])
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 1000,
+        type: 'image/jpeg',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({
+          uploader: 'our',
+          file_type: 'image/jpeg',
+          original_size: 5000,
+          compressed_size: 1000,
+          elapsed_ms: expect.any(Number),
+          compressed: true,
+          shrunk: true,
+        })
+      )
+    })
+
+    it('records a silent compression failure (compressed=false, unchanged size) when compressor:complete omits the file', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      getHandler('preprocess-progress')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      // No compressor:complete for f1 — compressor swallowed the error and the
+      // file uploads uncompressed, so its size is unchanged at preprocess-complete.
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({
+        id: 'f1',
+        size: 5000,
+        type: 'image/heic',
+      })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.objectContaining({ compressed: false, shrunk: false })
+      )
+    })
+
+    it('ignores preprocess-complete for a file with no open bracket', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      mockAction.mockClear()
+      getHandler('preprocess-complete')({ id: 'unknown', size: 100 })
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.anything()
+      )
+    })
+
+    it('clears any open compression brackets on modal close', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      getHandler('preprocess-progress')({ id: 'f1', size: 5000 })
+      getHandler('dashboard:modal-closed')()
+      mockAction.mockClear()
+      // The bracket was dropped, so a late preprocess-complete logs nothing.
+      getHandler('preprocess-complete')({ id: 'f1', size: 1000 })
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_compress_finished',
+        expect.anything()
+      )
+    })
+
+    it('tags the existing funnel events with uploader=our', async () => {
+      mockIsApp.value = false
+      await createWrapper()
+      mockAction.mockClear()
+      getHandler('file-added')({ id: 'f1', size: 5000, type: 'image/jpeg' })
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_file_selected',
+        expect.objectContaining({ uploader: 'our' })
+      )
+    })
+  })
+
+  describe('upload failure telemetry', () => {
+    function getHandler(name) {
+      return mockUppy.on.mock.calls.find((c) => c[0] === name)?.[1]
+    }
+
+    it('logs enriched upload_failed on upload-error, not on the retry-only error event', async () => {
+      mockIsApp.value = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      await createWrapper()
+      mockAction.mockClear()
+      // Global error event drives retry only — must not log upload_failed.
+      getHandler('error')(new Error('boom'))
+      expect(mockAction).not.toHaveBeenCalledWith(
+        'upload_failed',
+        expect.anything()
+      )
+      // upload-error carries file + response → diagnosable payload.
+      getHandler('upload-error')(
+        { id: 'f1', size: 5900000, type: 'image/jpeg' },
+        new Error('Failed to upload big.jpg'),
+        { status: 413, body: 'Request Entity Too Large' }
+      )
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({
+          uploader: 'our',
+          reason: 'Failed to upload big.jpg',
+          status: 413,
+          is_network_error: false,
+          file_size: 5900000,
+          file_type: 'image/jpeg',
+          attempt: 1,
+        })
+      )
+      consoleError.mockRestore()
+    })
+
+    it('flags a network error (no HTTP status) and counts the attempt', async () => {
+      mockIsApp.value = false
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      await createWrapper()
+      getHandler('upload-retry')('f2')
+      mockAction.mockClear()
+      getHandler('upload-error')(
+        { id: 'f2', size: 120000, type: 'image/jpeg' },
+        new Error('Failed to fetch'),
+        undefined
+      )
+      expect(mockAction).toHaveBeenCalledWith(
+        'upload_failed',
+        expect.objectContaining({
+          status: null,
+          is_network_error: true,
+          attempt: 2,
+        })
+      )
+      consoleError.mockRestore()
     })
   })
 })

@@ -49,15 +49,13 @@ describe('useClientLog', () => {
       expect(mod.getPageLoadPhase()).toBe('idle')
     })
 
-    it.each([
-      ['loading'],
-      ['interactive'],
-      ['idle'],
-      ['user_action'],
-    ])('setPageLoadPhase("%s") updates getPageLoadPhase', (phase) => {
-      mod.setPageLoadPhase(phase)
-      expect(mod.getPageLoadPhase()).toBe(phase)
-    })
+    it.each([['loading'], ['interactive'], ['idle'], ['user_action']])(
+      'setPageLoadPhase("%s") updates getPageLoadPhase',
+      (phase) => {
+        mod.setPageLoadPhase(phase)
+        expect(mod.getPageLoadPhase()).toBe(phase)
+      }
+    )
 
     it('setPageLoadPhase("loading") records start time (no throw)', () => {
       expect(() => mod.setPageLoadPhase('loading')).not.toThrow()
@@ -190,11 +188,33 @@ describe('useClientLog', () => {
     })
 
     it('action() queues without throwing', () => {
-      expect(() => mod.action('button_clicked', { target: 'submit' })).not.toThrow()
+      expect(() =>
+        mod.action('button_clicked', { target: 'submit' })
+      ).not.toThrow()
     })
 
     it('sessionStart() queues without throwing (no appDeviceInfo)', () => {
       expect(() => mod.sessionStart()).not.toThrow()
+    })
+
+    it('sessionStart() does not throw when navigator.languages is not an array', () => {
+      // Regression: some environments expose navigator.languages as a non-array
+      // (e.g. a spoofed string). getEnvironmentInfo did `navigator.languages
+      // ?.join(',')`, whose optional chaining still reached a .join that is not a
+      // function, throwing "e.languages?.join is not a function" and crashing the
+      // page render into a 500.
+      const original = Object.getOwnPropertyDescriptor(navigator, 'languages')
+      Object.defineProperty(navigator, 'languages', {
+        value: 'en-GB',
+        configurable: true,
+      })
+      try {
+        expect(() => mod.sessionStart()).not.toThrow()
+      } finally {
+        if (original) {
+          Object.defineProperty(navigator, 'languages', original)
+        }
+      }
     })
 
     it('sessionStart() queues without throwing (with appDeviceInfo)', () => {
@@ -211,7 +231,9 @@ describe('useClientLog', () => {
 
     it('sentryError() queues without throwing', () => {
       expect(() =>
-        mod.sentryError('Something broke', 'sentry-event-id-123', { extra: true })
+        mod.sentryError('Something broke', 'sentry-event-id-123', {
+          extra: true,
+        })
       ).not.toThrow()
     })
   })
@@ -225,18 +247,24 @@ describe('useClientLog', () => {
       ['GET', '/api/resource', 150, 200],
       ['POST', '/api/resource', 80, 201],
       ['GET', '/api/resource', 50, 304],
-    ])('%s %s (status %i < 400) queues without throwing', (method, path, dur, status) => {
-      expect(() => mod.apiRequest(method, path, dur, status)).not.toThrow()
-    })
+    ])(
+      '%s %s (status %i < 400) queues without throwing',
+      (method, path, dur, status) => {
+        expect(() => mod.apiRequest(method, path, dur, status)).not.toThrow()
+      }
+    )
 
     it.each([
       ['GET', '/api/missing', 30, 404],
       ['POST', '/api/fail', 200, 500],
       ['GET', '/api/auth', 20, 401],
       ['GET', '/api/forbidden', 20, 403],
-    ])('%s %s (status %i >= 400) queues without throwing', (method, path, dur, status) => {
-      expect(() => mod.apiRequest(method, path, dur, status)).not.toThrow()
-    })
+    ])(
+      '%s %s (status %i >= 400) queues without throwing',
+      (method, path, dur, status) => {
+        expect(() => mod.apiRequest(method, path, dur, status)).not.toThrow()
+      }
+    )
 
     it('apiRequest triggers resetIdleTimeout when in interactive phase', () => {
       mod.setPageLoadPhase('loading')

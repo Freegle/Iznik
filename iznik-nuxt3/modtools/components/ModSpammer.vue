@@ -8,9 +8,7 @@
         <span v-if="spammer.byuser">
           {{ spammer.byuser.displayname }}
           <span
-            v-if="
-              spammer.collection === 'PendingAdd' && hasPermissionSpamAdmin
-            "
+            v-if="spammer.collection === 'PendingAdd' && hasPermissionSpamAdmin"
           >
             (<ExternalLink
               :href="

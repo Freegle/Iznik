@@ -246,7 +246,7 @@ class User extends Model implements Auditable
      * Get the user's preferred email address.
      *
      * Excludes internal Freegle domains (users.ilovefreegle.org, groups.ilovefreegle.org, etc.)
-     * and Yahoo Groups addresses, matching iznik-server's getEmailPreferred() behavior.
+     * and Yahoo Groups addresses, matching the legacy V1 PHP implementation's getEmailPreferred() behavior.
      */
     public function getEmailPreferredAttribute(): ?string
     {
@@ -266,7 +266,7 @@ class User extends Model implements Auditable
     /**
      * Check if an email address is an internal Freegle domain that shouldn't receive external mail.
      *
-     * Matches iznik-server's Mail::ourDomain() + GROUP_DOMAIN + yahoogroups filtering.
+     * Matches the legacy V1 PHP implementation's Mail::ourDomain() + GROUP_DOMAIN + yahoogroups filtering.
      */
     public static function isInternalEmail(string $email): bool
     {
@@ -278,6 +278,9 @@ class User extends Model implements Auditable
             'groups.ilovefreegle.org',
             'direct.ilovefreegle.org',
             'republisher.freegle.in',
+            // Keep in step with config/freegle.php - see the note there on why
+            // modtools.org belongs in this list.
+            'modtools.org',
         ]);
 
         foreach ($internalDomains as $domain) {
@@ -419,7 +422,7 @@ class User extends Model implements Auditable
 
     /**
      * Canonical form of an email address for duplicate detection.
-     * Mirrors User::canonMail() in iznik-server.
+     * Mirrors User::canonMail() in the legacy V1 PHP implementation.
      */
     public static function canonMail(string $email): string
     {
@@ -610,6 +613,20 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Whether this user wants "encouragement" mail: donation asks, gift-aid chase-ups
+     * and re-engagement nudges.
+     *
+     * Backs the "Encouragement emails" toggle in Settings (users.settings.engagement) and
+     * the `engagement` unsubscribe category. Absent means on, as for the other settings.
+     */
+    public function wantsEngagementMail(): bool
+    {
+        $settings = $this->settings ?? [];
+
+        return ($settings['engagement'] ?? TRUE) !== FALSE;
+    }
+
+    /**
      * Check if a notification type is enabled for this user.
      *
      * @param string $type The notification type (email, emailmine, push)
@@ -646,14 +663,14 @@ class User extends Model implements Auditable
     }
 
     /**
-     * Notification type constants matching iznik-server.
+     * Notification type constants matching the legacy V1 PHP implementation.
      */
     public const NOTIFS_EMAIL = 'email';
     public const NOTIFS_EMAIL_MINE = 'emailmine';
     public const NOTIFS_PUSH = 'push';
 
     /**
-     * Simple mail setting constants matching iznik-server.
+     * Simple mail setting constants matching the legacy V1 PHP implementation.
      *
      * SIMPLE_MAIL_NONE: Completely disables all emails.
      * SIMPLE_MAIL_BASIC: Daily digest, chat replies only.
@@ -748,7 +765,7 @@ class User extends Model implements Auditable
     /**
      * Whether we should send our mails to this user.
      *
-     * Ported from iznik-server/include/user/User.php::sendOurMails().
+     * Ported from the legacy V1 PHP User::sendOurMails().
      *
      * @param bool $checkHoliday Whether to check if user is on holiday
      * @param bool $checkBouncing Whether to check if user's email is bouncing
@@ -841,7 +858,10 @@ class User extends Model implements Auditable
     {
         [$lat, $lng] = $this->getLatLng();
 
-        if (!$lat || !$lng) {
+        // Suppress job ads for recent donors, matching the website (recentDonor
+        // in useMe.js / ADFREE_PERIOD in iznik-server-go): ad-free for 31 days
+        // after a donation, 41 for External (bank-transfer) ones that arrive late.
+        if (!$lat || !$lng || $this->isAdFree()) {
             return [
                 'jobs' => collect(),
                 'location' => NULL,
@@ -857,6 +877,27 @@ class User extends Model implements Auditable
     }
 
     /**
+     * True when the user is within their ad-free period after a donation,
+     * mirroring iznik-server-go ADFREE_PERIOD (31 days) + ADFREE_GRACE_PERIOD
+     * (10 extra days for External / bank-transfer donations).
+     */
+    public function isAdFree(): bool
+    {
+        $latest = DB::table('users_donations')
+            ->where('userid', $this->id)
+            ->orderByDesc('timestamp')
+            ->first(['timestamp', 'type']);
+
+        if (!$latest || !$latest->timestamp) {
+            return false;
+        }
+
+        $days = ($latest->type === 'External') ? 41 : 31;
+
+        return strtotime($latest->timestamp) > (time() - $days * 86400);
+    }
+
+    /**
      * Get the user's profile image URL.
      *
      * Profile images are stored in users_images table with the image ID used in the URL.
@@ -867,6 +908,16 @@ class User extends Model implements Auditable
      */
     public function getProfileImageUrl(bool $thumbnail = TRUE): ?string
     {
+        // Users can turn off "use profile picture" (settings.useprofile), which the
+        // website honours by showing a generated avatar instead.  Emails must honour
+        // it too — the stored image is often harvested from their Google/Gravatar
+        // account, which an anonymous user never chose to publish.  Deleted users'
+        // profiles are suppressed as well, matching iznik-server-go.
+        $settings = $this->settings ?? [];
+        if (!($settings['useprofile'] ?? TRUE) || $this->deleted) {
+            return NULL;
+        }
+
         // Find the user's profile image, preferring the default one.
         $profileImage = UserImage::where('userid', $this->id)
             ->orderByDesc('default')
@@ -895,6 +946,11 @@ class User extends Model implements Auditable
     public const LOGIN_LINK = 'Link';
 
     /**
+     * Memo for getUserKey(). Not an attribute — must never be persisted.
+     */
+    protected ?string $cachedUserKey = null;
+
+    /**
      * Get user's key for one-click unsubscribe/login links.
      * Creates one if it doesn't exist.
      *
@@ -902,39 +958,55 @@ class User extends Model implements Auditable
      */
     public function getUserKey(): string
     {
-        // Check for existing LOGIN_LINK credential.
-        $login = UserLogin::where('userid', $this->id)
-            ->where('type', self::LOGIN_LINK)
-            ->first(['credentials']);
-
-        if ($login && $login->credentials) {
-            return $login->credentials;
+        // Memoised on the instance: an email can want the key more than once
+        // (the unsubscribe footer and now the donate link), and the key never
+        // changes within the life of one model. Instance-scoped rather than
+        // static so a long-running digest worker doesn't accumulate keys for
+        // every user it has ever rendered.
+        if ($this->cachedUserKey !== null) {
+            return $this->cachedUserKey;
         }
 
-        // Create a new key.
-        $key = bin2hex(random_bytes(16));
-
-        UserLogin::create([
-            'userid' => $this->id,
-            'type' => self::LOGIN_LINK,
-            'credentials' => $key,
-        ]);
-
-        return $key;
+        // Delegates to LoginLinkService so there is exactly one implementation of
+        // get-or-create: this used to be a second copy, which both drifted (it never
+        // set uid) and raced the service's copy on the (userid, type) unique key.
+        return $this->cachedUserKey = app(\App\Services\LoginLinkService::class)
+            ->getOrCreateKey((int) $this->id);
     }
 
     /**
-     * Generate List-Unsubscribe header value for RFC 8058 one-click unsubscribe.
+     * Build an auto-login link, mirroring the legacy V1 PHP User::loginLink($auto=TRUE).
      *
-     * @return string The unsubscribe URL in angle brackets
+     * Produces `https://{userSite}{url}?u={id}&k={key}&src={src}` using the same
+     * users_logins (type='Link') 32-char key the Go API validates for ?u=&k= links.
+     *
+     * @param  string  $url   Path on the user site (may already contain a query string).
+     * @param  string|null  $src  Optional source tag (V1 src= param).
+     * @param  bool  $auto  When true (default) include the login key for passwordless login.
      */
-    public function listUnsubscribe(): string
+    public function loginLink(string $url = '/', ?string $src = NULL, bool $auto = TRUE): string
     {
-        return "<{$this->listUnsubscribeUrl()}>";
+        $userSite = rtrim(config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
+        $sep = str_contains($url, '?') ? '&' : '?';
+
+        $query = 'u=' . $this->id;
+        if ($auto) {
+            $query .= '&k=' . $this->getUserKey();
+        }
+        if ($src) {
+            $query .= '&src=' . $src;
+        }
+
+        return $userSite . $url . $sep . $query;
     }
 
     /**
-     * Generate the one-click unsubscribe URL for use in email links.
+     * The account-level unsubscribe link used in email bodies: it lands on the page that
+     * offers leaving communities and deleting the account.
+     *
+     * This is NOT what goes in the List-Unsubscribe header - that is built by
+     * MjmlMailable::addListUnsubscribeHeaders() and turns off one category of email
+     * rather than removing the account. See docs/developers/reference/unsubscribe.md.
      *
      * @return string The unsubscribe URL
      */
@@ -1024,7 +1096,7 @@ class User extends Model implements Auditable
      * chat rooms, user attributes, logs, gift aid, and 40+ foreign key tables.
      * The secondary user ($id2) is deleted after a successful merge.
      *
-     * Ported from iznik-server/include/user/User.php::merge().
+     * Ported from the legacy V1 PHP User::merge().
      *
      * @param int $id1 The user ID to keep (merge target)
      * @param int $id2 The user ID to absorb and delete
@@ -1071,6 +1143,14 @@ class User extends Model implements Auditable
             // --- Merge memberships ---
             $id2Memberships = Membership::where('userid', $id2)->get();
 
+            // Conflict memberships (id1 was already a member, so id2's row is merged
+            // into id1's and then removed) are collected here and deleted AFTER commit.
+            // We keep the in-memory models rather than re-querying by userid post-commit:
+            // under the read/write split that re-query hits a possibly-lagging replica,
+            // where a just-reparented membership can still show userid=$id2 and would be
+            // wrongly deleted, silently dropping a membership that should survive on id1.
+            $membershipsToDelete = [];
+
             # Merge the top-level memberships
             foreach ($id2Memberships as $id2Memb) {
                 $id1Memb = Membership::where('userid', $id1)
@@ -1109,6 +1189,9 @@ class User extends Model implements Auditable
                     if (!$dryRun) {
                         $id1Memb->save();
                     }
+
+                    // id2's row for this group is now redundant — delete it after commit.
+                    $membershipsToDelete[] = $id2Memb;
                 }
             }
 
@@ -1472,12 +1555,16 @@ class User extends Model implements Auditable
         # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
         try {
             Logger::info("Merged {$id1} < {$id2}, {$reason}");
-            Membership::where('userid', $id2)->get()->each(function ($m) use ($dryRun) {
+            // Delete the conflict memberships collected during the merge loop above.
+            // These are in-memory models, so $m->delete() removes them by primary key
+            // (firing model events for auditing) WITHOUT a fresh SELECT — avoiding the
+            // read-split replica-lag hazard described where $membershipsToDelete is built.
+            foreach ($membershipsToDelete as $m) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$m->userid},groupid={$m->groupid}");
                 if (!$dryRun) {
                     $m->delete();
                 }
-            });
+            }
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=delete where=id={$id2}");
             if (!$dryRun) {
                 User::find($id2)?->delete();
@@ -1509,7 +1596,7 @@ class User extends Model implements Auditable
      * - Sessions deleted
      * - Deletion logged
      *
-     * Ported from iznik-server/include/user/User.php::forget().
+     * Ported from the legacy V1 PHP User::forget().
      *
      * @param string $reason Human-readable reason for the deletion (e.g. 'GDPR request')
      */
@@ -1680,6 +1767,12 @@ class User extends Model implements Auditable
         if (!$dryRun) {
             $log->save();
         }
+
+        // --- Tell partners, who mirror our users and can only find out by polling ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_deletions op=insert set=userid={$this->id},type=Forgotten");
+        if (!$dryRun) {
+            UserDeletion::record($this->id, UserDeletion::TYPE_FORGOTTEN, $reason);
+        }
     }
 
     /**
@@ -1688,7 +1781,7 @@ class User extends Model implements Auditable
      * When banning, also inserts into users_banned and withdraws any active
      * Offer/Wanted messages the user has on the group.
      *
-     * Ported from iznik-server/include/user/User.php::removeMembership().
+     * Ported from the legacy V1 PHP User::removeMembership().
      *
      * @param int $groupId The group to remove the user from
      * @param bool $ban If TRUE, also ban the user from the group and withdraw their messages
@@ -1706,6 +1799,17 @@ class User extends Model implements Auditable
             if (!$dryRun) {
                 $group = Group::find($groupId);
                 $preferredEmail = $this->email_preferred;
+
+                // The one send path left that reaches a member's own mailbox
+                // without going through EmailSpoolerService, so it needs the
+                // deferral gate applied by hand. Not counted for catch-up:
+                // there is nothing to catch up on, since by the time a
+                // provider recovers they have already left the group.
+                if ($group && $preferredEmail
+                    && app(\App\Services\Mail\MailSuppressionService::class)->isSuppressed($preferredEmail)) {
+                    Logger::info("Skipping farewell email for user {$this->id} on group {$groupId}: their provider is deferring our mail");
+                    $group = NULL;
+                }
 
                 if ($group && $preferredEmail) {
                     try {
@@ -1780,7 +1884,7 @@ class User extends Model implements Auditable
     /**
      * Return the group IDs where this user is a Moderator or Owner.
      *
-     * Ported from iznik-server/include/user/User.php::getModeratorships().
+     * Ported from the legacy V1 PHP User::getModeratorships().
      *
      * @param bool $activeOnly When TRUE, only include groups where the user is actively modding
      *                         (i.e. their membership settings have active=1 or showmessages=1).
@@ -1807,7 +1911,7 @@ class User extends Model implements Auditable
      * Uses the 'active' flag in membership settings if present; falls back to the legacy
      * 'showmessages' flag; defaults to TRUE (active) if neither is set.
      *
-     * Ported from iznik-server/include/user/User.php::activeModForGroup().
+     * Ported from the legacy V1 PHP User::activeModForGroup().
      *
      * @param int $groupId
      * @return bool
@@ -1830,7 +1934,7 @@ class User extends Model implements Auditable
      * Returns TRUE if the user is an active moderator on at least one group that has
      * the 'widerchatreview' group setting enabled.
      *
-     * Ported from iznik-server/include/user/User.php::widerReview().
+     * Ported from the legacy V1 PHP User::widerReview().
      *
      * @return bool
      */
@@ -1852,7 +1956,7 @@ class User extends Model implements Auditable
     /**
      * Get the user's per-group membership settings.
      *
-     * Ported from iznik-server/include/user/User.php::getGroupSettings().
+     * Ported from the legacy V1 PHP User::getGroupSettings().
      *
      * @param int $groupId
      * @param int|null $configId Optional mod config ID (used for mod config lookup)
@@ -1907,7 +2011,7 @@ class User extends Model implements Auditable
      * configid, mysettings). This is distinct from the memberships() Eloquent relationship
      * which returns Membership models.
      *
-     * Ported from iznik-server/include/user/User.php::getMemberships().
+     * Ported from the legacy V1 PHP User::getMemberships().
      *
      * @param bool $modOnly Only return groups where user is Moderator or Owner
      * @param string|null $groupType Filter by group type (e.g. Group::TYPE_FREEGLE)

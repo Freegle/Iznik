@@ -84,9 +84,7 @@ describe('debug store', () => {
 
     it('uses console.error for error level', () => {
       const store = useDebugStore()
-      const errorSpy = vi
-        .spyOn(console, 'error')
-        .mockImplementation(() => {})
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       store.log('error', 'oops')
       expect(errorSpy).toHaveBeenCalled()
@@ -124,9 +122,7 @@ describe('debug store', () => {
 
     it('error logs at ERROR level', () => {
       const store = useDebugStore()
-      const errorSpy = vi
-        .spyOn(console, 'error')
-        .mockImplementation(() => {})
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       store.error('test')
       expect(store.logs[0].level).toBe('ERROR')

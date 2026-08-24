@@ -463,3 +463,43 @@ func TestDeployWatchIsInactive(t *testing.T) {
 		}
 	}
 }
+
+// TestFinalV1CronMigrationsRegistered verifies the last batch of V1 crontab
+// migrations appear in the SysAdmin cron registry as active jobs.
+func TestFinalV1CronMigrationsRegistered(t *testing.T) {
+	prefix := uniquePrefix("v1cron")
+	userID := CreateTestUser(t, prefix+"_admin", "Admin")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Moderator")
+	_, token := CreateTestSession(t, userID)
+
+	req := httptest.NewRequest("GET", "/api/housekeeper/cronjobs?jwt="+token, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	respBody, _ := io.ReadAll(resp.Body)
+	var jobs []map[string]interface{}
+	err = json.Unmarshal(respBody, &jobs)
+	assert.NoError(t, err)
+
+	expected := map[string]bool{
+		"notifications:exhort":       false,
+		"locations:update-postcodes": false,
+		"donations:paypal-download":  false,
+		"discourse:not-signed-up":    false,
+	}
+
+	for _, job := range jobs {
+		cmd, _ := job["command"].(string)
+		if _, ok := expected[cmd]; ok {
+			expected[cmd] = true
+			active, _ := job["active"].(bool)
+			assert.True(t, active, cmd+" should be active in the registry")
+		}
+	}
+
+	for cmd, found := range expected {
+		assert.True(t, found, cmd+" should be present in the cron registry")
+	}
+}

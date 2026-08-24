@@ -23,12 +23,23 @@ const props = defineProps({
 
 const emit = defineEmits(['markSeen'])
 
+// The nav badge caps at this and has no room for a trailing "+", so a member
+// sitting on a four-figure backlog reads it as a number that will not move
+// however much they clear (Discourse 10055). The divider has the room, so it
+// shows the cap AS a cap rather than either lying or quoting a demoralising
+// five-figure total.
+const BROWSE_COUNT_CAP = 99
+
 const browseCount = computed(() => {
-  return Math.min(99, props.count)
+  return Math.min(BROWSE_COUNT_CAP, props.count)
 })
 
 const browseCountPlural = computed(() => {
-  return pluralize('unread post', props.count, true)
+  if (props.count > BROWSE_COUNT_CAP) {
+    return BROWSE_COUNT_CAP + '+ ' + pluralize('new post', props.count)
+  }
+
+  return pluralize('new post', props.count, true)
 })
 
 function markSeen() {

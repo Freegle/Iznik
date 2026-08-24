@@ -22,4 +22,8 @@ export default class AIImagesAPI extends BaseAPI {
   keep(id) {
     return this.$postv2(`/admin/ai-images/${id}/keep`, {})
   }
+
+  suppress(id) {
+    return this.$postv2(`/admin/ai-images/${id}/suppress`, {})
+  }
 }

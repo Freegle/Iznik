@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'Please review your welcome mail'])
+  @include('emails.mjml.partials.head', ['preview' => 'Check the welcome mail for ' . $groupName . ' is still up to date'])
 
   <mj-body background-color="#f4f4f4">
 
@@ -26,7 +26,7 @@
 
     <mj-section background-color="#ffffff" padding="0 20px 20px">
       <mj-column>
-        <mj-button href="{{ $modSite }}/modtools/settings/" mj-class="btn-modtools" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $modSite }}/settings" mj-class="btn-modtools" border-radius="3px" font-size="16px">
           Edit Welcome Mail
         </mj-button>
       </mj-column>

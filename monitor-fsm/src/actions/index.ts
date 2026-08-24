@@ -2,9 +2,10 @@ import type { ActionDefinition } from 'ai-flower'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
-import { DISCOURSE_BASE } from '../discourse.js'
+import { DISCOURSE_BASE, formatReplyRaw, hasNonEmptyQuote } from '../discourse.js'
+import { partitionFailedChecks } from '../coverage-checks.js'
 import {
   getDb,
   getTopicCursor,
@@ -13,6 +14,7 @@ import {
   kvGet,
   kvSet,
   queueDiscourseDraft,
+  recordPostedReply,
   cancelDraftsForBug,
   insertReviewerFeedback,
   listUnprocessedFeedback,
@@ -25,6 +27,7 @@ import {
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
 import { modelForAdversarialReview } from '../policy.js'
+import { groundingActions } from '../grounding.js'
 
 const exec = promisify(execFile)
 
@@ -62,7 +65,7 @@ const CLAUDE_BIN = resolveClaudeBin()
 function redactSecrets(s: string): string {
   if (!s) return s
   return s
-    .replace(/\b(CIRCLECI_TOKEN|GITHUB_TOKEN|SENTRY_AUTH_TOKEN|SMTP_PASS|OPENAI_API_KEY|ANTHROPIC_API_KEY)=\S+/g, '$1=<redacted>')
+    .replace(/\b(CIRCLECI_TOKEN|GITHUB_TOKEN|SENTRY_AUTH_TOKEN|SMTP_PASS|OPENAI_API_KEY|ANTHROPIC_API_KEY|LIVE_DB_RO_PASSWORD|LIVE_DB_PASSWORD|MYSQL_PWD)=\S+/g, '$1=<redacted>')
     .replace(/(Authorization:\s*(?:bearer|token)\s+)\S+/gi, '$1<redacted>')
     .replace(/(-u\s+[^:\s]+:)\S+/g, '$1<redacted>')
     .replace(/\bCCIPAT_[A-Za-z0-9_-]+/g, 'CCIPAT_<redacted>')
@@ -84,9 +87,504 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
   }
 }
 
+/**
+ * The most recently taken picture of open-PR CI in this context.
+ *
+ * Two actions read CI. `check_my_open_pr_ci` writes `_action_check_my_open_pr_ci`;
+ * `coverage_gate_decide` calls the same handler and nests the answer under its own
+ * `_action_coverage_gate_decide.red`, leaving the other key untouched. Which of the
+ * two is current depends on the path taken into the router: CHECK_TESTS refreshes
+ * the first, COVERAGE_GATE the second. A router that always preferred one of them
+ * would read a 40-minute-old list on the other path.
+ *
+ * That is not hypothetical. On 2026-08-12 iteration 1, CI_ROUTER read the fixed key
+ * and picked #658 as its focus PR at 17:53:45 — a PR that had gone green, and which
+ * the gate had just correctly excluded from a red list containing only #1201. The
+ * counter that limits attempts per PR was reset each lap precisely because #658 was
+ * green, so nothing stopped the re-pick, and the iteration burned 25 of its 40 steps
+ * going round WORK_ROUTER → COVERAGE_GATE → CI_ROUTER → analyse → collate.
+ *
+ * So compare `checkedAt` and take the newer. A result with no stamp is treated as
+ * older than any stamped one: the only unstamped returns are the error paths, whose
+ * empty PR lists must never win over a real reading.
+ */
+export function freshestCICheck(ctx: any): any {
+  const direct = ctx?._action_check_my_open_pr_ci ?? {}
+  const viaGate = ctx?._action_coverage_gate_decide?.red ?? {}
+
+  const stamp = (c: any): number => {
+    const t = c?.checkedAt ? Date.parse(c.checkedAt) : NaN
+    return Number.isNaN(t) ? -Infinity : t
+  }
+
+  // Ties (equal or both unstamped) keep the direct key, which is what every caller
+  // read before this helper existed.
+  return stamp(viaGate) > stamp(direct) ? viaGate : direct
+}
+
 const PROD_REPO = 'Freegle/Iznik'
 // Netlify site for the Freegle app (frontend). Site ID and slug both work with the public API.
 const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
+
+/**
+ * Post a reply to a Discourse topic, threaded under a specific post.
+ *
+ * Used to auto-post the verified-live "fix applied, please retest" reply once a
+ * merged PR's fix is confirmed live in production. reply_to_post_number threads
+ * the reply under the SPECIFIC reporting post (only meaningful for post > 1; a
+ * reply to the OP is a normal topic reply and Discourse normalises it).
+ */
+/**
+ * How long to wait before retrying a Discourse 429. Prefers the Retry-After
+ * header, falls back to the rate-limit body's `extras.wait_seconds`, then a
+ * sensible default. Returns seconds.
+ */
+export function parseRetryAfter(header: string | null, body: string): number {
+  const fromHeader = header ? Number(header) : NaN
+  if (Number.isFinite(fromHeader) && fromHeader > 0) return fromHeader
+  try {
+    const j = JSON.parse(body) as { extras?: { wait_seconds?: unknown } }
+    const w = Number(j?.extras?.wait_seconds)
+    if (Number.isFinite(w) && w > 0) return w
+  } catch { /* body not JSON */ }
+  return 5
+}
+
+// Bot accounts whose PR comments are never a human review signal.
+const BOT_COMMENT_LOGINS = new Set([
+  'netlify', 'github-actions', 'codecov', 'codecov-commenter', 'coderabbitai',
+  'sonarcloud', 'dependabot', 'vercel',
+])
+
+// Phrases a human uses when closing an FSM PR to mean "this is NOT an actionable
+// code bug — do not try again", as opposed to "the fix is wrong, redo it" (for
+// which they leave the PR open with changes requested). On a CLOSED PR these park
+// the bug instead of triggering the retry-once-then-escalate path.
+const WONTFIX_CLOSE_PATTERNS = [
+  'no fix required', 'no fix needed', 'no fix is required', 'no fix is needed',
+  'not a bug', 'not a code bug', "isn't a bug", 'not a real bug',
+  'no actionable', 'not actionable', 'no action required', 'no action needed',
+  'wontfix', "won't fix", 'wont fix', 'will not fix',
+  'working as designed', 'working as intended', 'by design', 'as designed',
+  'perception complaint', 'bad fix',
+]
+
+// Marker the FSM puts in its OWN auto-close comments (failed adversarial review) so
+// detectWontfixClose can tell them apart from a human "not a bug" close: the FSM's
+// auto-close means "retry then escalate", a human wontfix means "park, never retry".
+export const FSM_AUTOCLOSE_MARKER = '<!-- fsm-auto-close: failed-review -->'
+
+/**
+ * Build the comment for auto-closing an FSM fix PR that failed adversarial review.
+ * Lists the blockers and carries FSM_AUTOCLOSE_MARKER so it is not mistaken for a
+ * human wontfix close (which would wrongly park the bug instead of retrying it).
+ */
+export function buildFailedReviewCloseComment(
+  prNumber: number,
+  issues: Array<{ category?: string; description?: string; severity?: string }>,
+): string {
+  const blockers = (issues ?? []).filter((i) => i?.severity === 'error')
+  const body = blockers.length
+    ? blockers.map((b) => `- **${b.category ?? 'issue'}**: ${(b.description ?? '').slice(0, 300)}`).join('\n')
+    : '- (no specific blockers recorded)'
+  return [
+    `Auto-closed by the monitor's adversarial review (PR #${prNumber}) — this fix did not pass and is not ready to merge.`,
+    '',
+    body,
+    '',
+    'The underlying bug will be re-attempted, then escalated for human triage if it keeps failing review. Reopen if this was closed in error.',
+    FSM_AUTOCLOSE_MARKER,
+  ].join('\n')
+}
+
+// Blocker categories a follow-up commit on the SAME branch can resolve, rather than
+// throwing the PR away. Keyed by substring so the classifier tolerates the reviewer's
+// free-text category names (e.g. "partial-implementation", "Partial implementation",
+// "incomplete diff"). These are the findings where the fix is on the right track but
+// doesn't go far enough - exactly the case that used to churn: close -> re-dispatch ->
+// same partial fix -> close again. Expanding the existing fix breaks that loop.
+const COMPLETABLE_BLOCKER_PATTERNS = [
+  'partial',            // partial implementation - symptom fixed, root cause / other branches left
+  'incomplete',         // incomplete diff - claims to fix X but misses part of the path
+  'other call site',    // sibling handler / adjacent file has the same bug
+  'call sites',
+  'sibling',
+  'missing test',       // no reproduction test, or test proves nothing
+  'test proves nothing',
+  'no reproduction',
+  'coverage',           // test doesn't cover the trigger path
+  'regression',         // removed/weakened a passing test - restore it
+]
+
+// Blocker categories where completing the SAME diff is the wrong move - the approach
+// itself is unsafe or misdirected, so a corrective commit can't be trusted to fix it.
+// These still close (the human should look). Security issues are here because silently
+// bolting on more code to an unsafe change is riskier than parking it.
+const TERMINAL_BLOCKER_PATTERNS = [
+  'security',
+  'sql injection',
+  'auth bypass',
+  'path traversal',
+  'wrong', // "wrong approach", "fixes the wrong thing"
+]
+
+/**
+ * Classify a review's blocker findings into ones a follow-up commit on the same branch
+ * can resolve ("completable") and ones that mean the approach is unsound ("terminal").
+ * A blocker matching a terminal pattern is terminal even if it also matches a completable
+ * one (safety-first). Unknown categories are treated as completable, since the default
+ * response to "the fix doesn't go far enough" is to expand it, not discard it.
+ */
+export function classifyReviewBlockers(
+  blockers: Array<{ category?: string; description?: string }>,
+): { completable: typeof blockers; terminal: typeof blockers; allCompletable: boolean } {
+  const completable: typeof blockers = []
+  const terminal: typeof blockers = []
+  for (const b of blockers ?? []) {
+    const hay = `${b?.category ?? ''} ${b?.description ?? ''}`.toLowerCase()
+    if (TERMINAL_BLOCKER_PATTERNS.some((p) => hay.includes(p))) {
+      terminal.push(b)
+    } else {
+      completable.push(b)
+    }
+  }
+  return { completable, terminal, allCompletable: terminal.length === 0 && completable.length > 0 }
+}
+
+/**
+ * Decide what a failed adversarial review should DO, encoding the "expand fixes, don't
+ * close them" policy. A review that passed → 'pass'. A review that failed only on
+ * completable blockers, and hasn't already been expanded too many times → 'expand'
+ * (dispatch a follow-up commit on the same branch). Otherwise → 'close' (terminal
+ * blocker, or the expansion budget is exhausted, so hand it back for retry/human triage).
+ */
+export function decideReviewAction(
+  args: { passed: boolean; blockers: Array<{ category?: string; description?: string }>; expansionAttempts?: number; maxExpansions?: number },
+): { action: 'pass' | 'expand' | 'close'; reason: string } {
+  const { passed, blockers, expansionAttempts = 0, maxExpansions = 1 } = args
+  if (passed) return { action: 'pass', reason: 'review passed' }
+  const { terminal, allCompletable } = classifyReviewBlockers(blockers)
+  if (terminal.length > 0) {
+    return { action: 'close', reason: `terminal blocker(s): ${terminal.map((b) => b.category ?? 'issue').join(', ')}` }
+  }
+  if (!allCompletable) {
+    return { action: 'close', reason: 'no completable blockers to expand' }
+  }
+  if (expansionAttempts >= maxExpansions) {
+    return { action: 'close', reason: `expansion budget exhausted (${expansionAttempts}/${maxExpansions})` }
+  }
+  return { action: 'expand', reason: 'completable blockers — expand the fix on the same branch' }
+}
+
+/**
+ * Build the coder brief for expanding an existing fix to clear the adversarial review's
+ * completable blockers. Exported for testing. The delegate must push to the SAME branch
+ * (this is a follow-up commit, not a new PR) and emit COMMIT_PUSHED so the caller can
+ * verify the branch advanced before re-reviewing.
+ */
+export function buildFixExpansionBrief(
+  prNumber: number,
+  branch: string,
+  blockers: Array<{ category?: string; description?: string }>,
+): string {
+  const findings = (blockers ?? []).length
+    ? blockers.map((b) => `- ${b.category ?? 'issue'}: ${(b.description ?? '').slice(0, 400)}`).join('\n')
+    : '- (no specific findings recorded)'
+  return [
+    `An adversarial review of PR #${prNumber} found the fix is on the right track but does not go far enough. COMPLETE it - do not start over, do not open a new PR.`,
+    '',
+    `Check out the existing branch and push a follow-up commit that resolves EVERY finding below:`,
+    `  gh pr checkout ${prNumber} -R Freegle/Iznik   (or: git fetch origin && git checkout ${branch})`,
+    '',
+    'Findings to resolve:',
+    findings,
+    '',
+    'Rules:',
+    '- Fix the ROOT cause and EVERY sibling/other-call-site the review names, not just the one already patched.',
+    '- Keep the existing fix and tests; add to them. If a finding is about a missing or weak reproduction test, add one that fails before the fix and passes after.',
+    `- Push to the SAME branch (${branch}); do NOT open a new PR.`,
+    '- Keep the change minimal and in the style of the surrounding code.',
+  ].join('\n')
+}
+
+/**
+ * Expand an existing fix PR to clear completable review blockers by dispatching ONE
+ * headless coder delegate that pushes a follow-up commit to the SAME branch. Returns
+ * whether the branch advanced (a new commit landed on origin/<branch>). Self-contained
+ * so it doesn't perturb delegate_parallel_tasks (the hot path). Best-effort and bounded:
+ * a hung delegate is killed by the silence/hard-cap timers, and the caller only re-reviews
+ * when this reports pushed=true.
+ */
+export async function runFixExpansion(
+  prNumber: number,
+  branch: string,
+  blockers: Array<{ category?: string; description?: string }>,
+  repo = 'Freegle/Iznik',
+  repoCwd = '/home/edward/FreegleDockerWSL',
+): Promise<{ pushed: boolean; sha?: string; timedOut: boolean }> {
+  const { execFileSync, spawn } = await import('node:child_process')
+  const delegateModel = process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+  const SILENCE_TOOL_MS = 1_800_000
+  const SILENCE_IDLE_MS = 180_000
+  const HARD_CAP_MS = 1_800_000
+
+  // Record where origin/<branch> is now, so we can confirm the delegate actually advanced it.
+  let baseSha = ''
+  try {
+    const { stdout } = await exec('git', ['ls-remote', 'origin', `refs/heads/${branch}`], { cwd: repoCwd, timeout: 20_000 })
+    baseSha = (stdout || '').trim().split(/\s+/)[0] ?? ''
+  } catch { /* best effort */ }
+
+  const worktreeDir = `/tmp/monitor-fsm-expand-${process.pid}-${Date.now()}`
+  let worktreeCreated = false
+  for (const base of ['master', 'HEAD']) {
+    try {
+      execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], { cwd: repoCwd, stdio: 'pipe' })
+      worktreeCreated = true
+      break
+    } catch { /* try next base */ }
+  }
+  const spawnCwd = worktreeCreated ? worktreeDir : repoCwd
+
+  const fullPrompt = `${buildFixExpansionBrief(prNumber, branch, blockers)}
+
+==== CRITICAL EXECUTION CONSTRAINTS — READ FIRST ====
+${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here.
+` : ''}You are a HEADLESS, ONE-SHOT subprocess. Complete all work and push to origin in this single session. No wakeups, no ScheduleWakeup, no /loop.
+STAGING RULES: never \`git add -A\`. Always stage explicit paths.
+Before emitting the marker, verify the push landed: \`git log origin/${branch} -1 --format=%H\`.
+OUTPUT MARKER — emit exactly one on its own line at the very end:
+  - Pushed the follow-up commit: COMMIT_PUSHED=<sha>
+  - Could not complete:          DELEGATE_FAILED=<one-line-reason>
+`
+
+  type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
+  const result = await new Promise<{ textStream: string; stderr: string; code: number; killReason: KillReason }>((resolve) => {
+    const child = spawn(
+      CLAUDE_BIN,
+      ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+        '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
+        '--model', delegateModel],
+      { cwd: spawnCwd, stdio: ['pipe', 'pipe', 'pipe'] },
+    )
+    let stderr = '', textStream = '', lineBuffer = ''
+    let lastEventAt = Date.now()
+    let currentTool: string | null = null
+    let killReason: KillReason = null
+    const processLine = (line: string) => {
+      const trimmed = line.trim()
+      if (!trimmed) return
+      let ev: any
+      try { ev = JSON.parse(trimmed) } catch { return }
+      const content = ev?.message?.content ?? ev?.content
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'text' && typeof block.text === 'string') textStream += block.text
+          else if (block.type === 'tool_use') currentTool = block.name
+          else if (block.type === 'tool_result') currentTool = null
+        }
+      } else if (typeof content === 'string') textStream += content
+      if (ev?.type === 'result' && typeof ev.result === 'string') textStream += ev.result
+    }
+    child.stdout.on('data', (d) => {
+      lastEventAt = Date.now()
+      lineBuffer += String(d)
+      const lines = lineBuffer.split('\n'); lineBuffer = lines.pop() ?? ''
+      for (const l of lines) processLine(l)
+    })
+    child.stderr.on('data', (d) => { stderr += String(d); lastEventAt = Date.now() })
+    const silenceTick = setInterval(() => {
+      const silence = Date.now() - lastEventAt
+      if (silence > (currentTool ? SILENCE_TOOL_MS : SILENCE_IDLE_MS)) {
+        killReason = currentTool ? 'tool-silence' : 'idle-silence'
+        child.kill('SIGTERM')
+      }
+    }, 30_000)
+    const hardCap = setTimeout(() => { killReason = 'hardCap'; child.kill('SIGTERM') }, HARD_CAP_MS)
+    child.on('close', (code) => {
+      clearInterval(silenceTick); clearTimeout(hardCap)
+      if (lineBuffer) processLine(lineBuffer)
+      resolve({ textStream, stderr, code: code ?? 1, killReason })
+    })
+    child.stdin.write(fullPrompt)
+    child.stdin.end()
+  })
+
+  if (worktreeCreated) {
+    try { execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repoCwd, stdio: 'pipe' }) } catch { /* best effort */ }
+  }
+
+  const timedOut = result.killReason !== null || result.code === 143
+
+  // Trust the remote, not the delegate's self-report: confirm origin/<branch> actually moved.
+  let headSha = ''
+  try {
+    const { stdout } = await exec('git', ['ls-remote', 'origin', `refs/heads/${branch}`], { cwd: repoCwd, timeout: 20_000 })
+    headSha = (stdout || '').trim().split(/\s+/)[0] ?? ''
+  } catch { /* best effort */ }
+  const pushed = headSha !== '' && headSha !== baseSha
+  if (pushed) out(`runFixExpansion: PR #${prNumber} branch ${branch} advanced ${baseSha.slice(0, 9)} → ${headSha.slice(0, 9)}`)
+  else out(`runFixExpansion: PR #${prNumber} not advanced (${timedOut ? 'delegate timed out' : 'no new commit'})`)
+
+  return { pushed, sha: pushed ? headSha : undefined, timedOut }
+}
+
+/**
+ * Did a human leave a "this is not an actionable bug" signal on a (closed) PR?
+ * Scans non-bot comments for a WONTFIX_CLOSE_PATTERN. Returns the matched comment
+ * excerpt so the bug's reason can quote the human's decision.
+ */
+export function detectWontfixClose(
+  comments: Array<{ author?: { login?: string } | null; body?: string | null }>,
+): { wontfix: boolean; reason?: string } {
+  for (const c of comments ?? []) {
+    const login = (c?.author?.login ?? '').toLowerCase()
+    if (!login || BOT_COMMENT_LOGINS.has(login) || login.endsWith('[bot]')) continue
+    const body = c?.body ?? ''
+    // The FSM's own auto-close (failed review) means retry, not park — never treat
+    // it as a human wontfix even though it quotes blocker text that may match.
+    if (body.includes(FSM_AUTOCLOSE_MARKER)) continue
+    const hay = body.toLowerCase()
+    if (WONTFIX_CLOSE_PATTERNS.some((p) => hay.includes(p))) {
+      return { wontfix: true, reason: body.replace(/\s+/g, ' ').trim().slice(0, 200) }
+    }
+  }
+  return { wontfix: false }
+}
+
+export async function postDiscourseReply(
+  topicId: number,
+  raw: string,
+  replyToPostNumber?: number,
+  opts: { maxRetries?: number; sleepFn?: (ms: number) => Promise<void> } = {},
+): Promise<{ ok: boolean; error?: string }> {
+  // HARD INVARIANT: never post a reply without quoted text. This is the single
+  // chokepoint for the auto-post path, so the check here makes a context-less
+  // post impossible regardless of any upstream bug in how `raw` was built.
+  if (!hasNonEmptyQuote(raw)) {
+    return { ok: false, error: 'refusing to post a Discourse reply with no quoted text' }
+  }
+
+  const maxRetries = opts.maxRetries ?? 4
+  const sleepFn = opts.sleepFn ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+
+  let apiKey: string | null = null
+  try {
+    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+      auth_pairs?: Array<{ user_api_key?: string }>
+    }
+    apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
+  } catch { /* no profile / unreadable */ }
+  if (!apiKey) return { ok: false, error: 'no Discourse API key available' }
+
+  const payload: Record<string, unknown> = { topic_id: topicId, raw }
+  if (replyToPostNumber && replyToPostNumber > 1) payload.reply_to_post_number = replyToPostNumber
+
+  let lastError = ''
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const resp = await fetch(`${DISCOURSE_BASE}/posts.json`, {
+        method: 'POST',
+        headers: {
+          'Api-Key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+      if (resp.status === 200 || resp.status === 201) return { ok: true }
+
+      const text = await resp.text().catch(() => '')
+      lastError = `HTTP ${resp.status}: ${text.slice(0, 300)}`
+
+      // Discourse rate-limits writes hard. Rather than dropping the reply (and
+      // hammering on the next iteration), respect Retry-After and back off so the
+      // burst self-throttles. Cap the wait so one pathological value can't stall
+      // the whole iteration.
+      if (resp.status === 429 && attempt < maxRetries - 1) {
+        const waitSecs = Math.min(parseRetryAfter(resp.headers.get('Retry-After'), text), 60)
+        await sleepFn(waitSecs * 1000)
+        continue
+      }
+      return { ok: false, error: lastError }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
+  }
+  return { ok: false, error: lastError }
+}
+
+/**
+ * Fetch the reporter's ACTUAL words for a post so an auto-reply quotes what they
+ * wrote — not our paraphrased `excerpt`/summary. Quoting the stored summary
+ * produced replies that quoted a third-person paraphrase back at the reporter as
+ * if they'd said it (e.g. a `[quote="Derek"]` containing "Derek confirms two
+ * bugs are now fixed"). Returns a short verbatim excerpt (HTML + any nested
+ * quotes stripped), or '' when it can't be fetched so callers fall back to the
+ * stored excerpt/title.
+ */
+export async function fetchReporterQuote(topicId: number, postNumber: number, maxLen = 300): Promise<string> {
+  let apiKey: string | null = null
+  try {
+    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+      auth_pairs?: Array<{ user_api_key?: string }>
+    }
+    apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
+  } catch { /* no profile / unreadable */ }
+  if (!apiKey) return ''
+  try {
+    const resp = await fetch(`${DISCOURSE_BASE}/t/${topicId}.json`, { headers: { 'Api-Key': apiKey } })
+    if (!resp.ok) return ''
+    const j = (await resp.json()) as {
+      posts_count?: number
+      highest_post_number?: number
+      post_stream?: { posts?: Array<{ post_number: number; cooked?: string }>; stream?: number[] }
+    }
+    let cooked = j.post_stream?.posts?.find((p) => p.post_number === postNumber)?.cooked
+    if (!cooked) {
+      // The reporting post isn't on the topic's first page (~20 posts). Resolve
+      // its id from the stream (anchored from the end so mid-thread deletions
+      // don't shift the index) and fetch that specific post, rather than silently
+      // falling back to our summary.
+      const stream = j.post_stream?.stream ?? []
+      const highest = j.highest_post_number ?? j.posts_count ?? stream.length
+      const idx = stream.length - 1 - (highest - postNumber)
+      const postId = idx >= 0 && idx < stream.length ? stream[idx] : undefined
+      if (postId) {
+        const r2 = await fetch(`${DISCOURSE_BASE}/posts/${postId}.json`, { headers: { 'Api-Key': apiKey } })
+        if (r2.ok) cooked = ((await r2.json()) as { cooked?: string }).cooked
+      }
+    }
+    if (!cooked) return ''
+    let text = cooked
+      .replace(/<aside[\s\S]*?<\/aside>/gi, ' ') // drop nested quote blocks — never quote a quote
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (text.length > maxLen) text = text.slice(0, maxLen).replace(/\s+\S*$/, '') + '…'
+    return text
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * A "retest" post can either CONFIRM a fix works ("showing now, thanks") or
+ * report it is STILL BROKEN. Only the latter, against an already-fixed bug, is a
+ * regression; a positive confirmation is success feedback. Misreading a
+ * confirmation as a regression creates a bogus bug that then draws a nonsensical
+ * "please retest" auto-reply on the very post that confirmed the fix (topic
+ * 9932/8). "still broken" wins if both are present ("thanks but still not
+ * working").
+ */
+export function retestConfirmsFix(text: string): boolean {
+  const t = (text || '').toLowerCase()
+  const stillBroken = /\b(still|not working|does ?n'?t work|no better|same (problem|issue|thing)|not fixed|worse|broken|spoke too soon|back again|happening again)\b/.test(t)
+  if (stillBroken) return false
+  return /\b(works? now|working now|now works?|fixed|resolved|sorted|all good|thank(s| you)|great|perfect|now (showing|shows|working)|takes me to|no longer|can now)\b/.test(t)
+}
 
 /**
  * Compare a commit SHA against a reference SHA using the GitHub compare API.
@@ -100,75 +598,257 @@ async function githubBehindBy(baseSha: string, headSha: string): Promise<number>
   return isNaN(n) ? -1 : n
 }
 
+// Which separately-deployed production areas does a change touch? A change
+// touching NONE of them (monitor-fsm, docs, CI, …) has nothing a reporter could
+// retest, so no reporter-facing "please retest" reply may be posted for it.
+// Pure + exported for unit testing.
+export function classifyTouchedAreas(paths: string[]): {
+  frontend: boolean
+  go: boolean
+  php: boolean
+  deployable: boolean
+} {
+  const frontend = paths.some((p) => p.startsWith('iznik-nuxt3/'))
+  const go = paths.some((p) => p.startsWith('iznik-server-go/'))
+  const php = paths.some((p) => p.startsWith('iznik-batch/') || p.startsWith('iznik-server/'))
+  return { frontend, go, php, deployable: frontend || go || php }
+}
+
 async function checkPrDeployed(prNumber: number): Promise<{
   deployed: boolean
-  frontendDeployed: boolean | null   // null if not a frontend-only PR
+  frontendDeployed: boolean | null   // null if PR doesn't touch the frontend
   backendDeployed: boolean
   mergeCommitSha: string | null
   productionSha: string | null
   netlifyCommitSha: string | null
+  touched: { frontend: boolean; go: boolean; php: boolean }
+  filesKnown: boolean                // false when the PR file list couldn't be fetched
   reason: string
 }> {
-  // Get PR merge commit SHA and whether it's frontend-only
+  const notDeployed = (reason: string) => ({
+    deployed: false, frontendDeployed: null, backendDeployed: false,
+    mergeCommitSha: null, productionSha: null, netlifyCommitSha: null,
+    touched: { frontend: false, go: false, php: false }, filesKnown: false, reason,
+  })
+
+  // Get PR merge commit SHA.
   const prRes = await sh('gh', ['api', `repos/${PROD_REPO}/pulls/${prNumber}`, '--jq', '{merge_commit_sha, merged_at}'])
-  if (prRes.code !== 0) {
-    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Could not fetch PR info' }
-  }
+  if (prRes.code !== 0) return notDeployed('Could not fetch PR info')
   let prInfo: { merge_commit_sha: string | null; merged_at: string | null }
-  try { prInfo = JSON.parse(prRes.stdout) } catch {
-    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Failed to parse PR info' }
-  }
+  try { prInfo = JSON.parse(prRes.stdout) } catch { return notDeployed('Failed to parse PR info') }
   const mergeCommitSha = prInfo.merge_commit_sha
-  if (!mergeCommitSha || mergeCommitSha === 'null') {
-    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'PR not merged yet' }
+  if (!mergeCommitSha || mergeCommitSha === 'null') return notDeployed('PR not merged yet')
+
+  // --- Which production areas does this PR touch? ---
+  // Go, Laravel (PHP), and the frontend deploy SEPARATELY and via different
+  // mechanisms, so we gate each touched area on its OWN live signal. We must NOT
+  // use one area's commit as a proxy for another's (Laravel and Go don't deploy
+  // together, so laravel_commit says nothing about the live Go build).
+  let paths: string[] = []
+  let filesKnown = false
+  const filesRes = await sh('gh', ['pr', 'view', String(prNumber), '--repo', PROD_REPO, '--json', 'files', '--jq', '[.files[].path]'])
+  if (filesRes.code === 0) { try { paths = JSON.parse(filesRes.stdout) as string[]; filesKnown = true } catch { /* leave empty */ } }
+  const areas = classifyTouchedAreas(paths)
+  const touchesGo = areas.go
+  const touchesPhp = areas.php
+  const touchesFrontend = areas.frontend
+
+  // --- Live backend commits from /api/version ---
+  // commit         = the Go build commit (baked in at build via ldflags)
+  // laravel_commit = the deployed Laravel checkout commit (config, refreshed
+  //                  every 15 min by deploy:record-commit)
+  let goSha: string | null = null
+  let laravelSha: string | null = null
+  const verRes = await sh('curl', ['-s', '--max-time', '12', 'https://api.ilovefreegle.org/api/version'])
+  if (verRes.code === 0) {
+    try {
+      const v = JSON.parse(verRes.stdout) as { commit?: string; laravel_commit?: string }
+      goSha = v.commit && v.commit !== 'unknown' ? v.commit : null
+      laravelSha = v.laravel_commit && v.laravel_commit !== 'unknown' ? v.laravel_commit : null
+    } catch { /* /api/version returned non-JSON */ }
   }
-
-  // --- Backend check: GitHub production branch ---
-  // The production branch is updated by auto-promote after CI passes on master.
-  // The Go and Laravel servers are rebuilt from this branch.
-  // NOTE: Go API /api/version returns "commit":"unknown" in production (BUILD_INFO not set),
-  // so we can only check if the production branch has been updated, not if the containers were rebuilt.
-  const prodRes = await sh('gh', ['api', `repos/${PROD_REPO}/branches/production`, '--jq', '.commit.sha'])
-  const productionSha = (prodRes.code === 0) ? prodRes.stdout.trim() : null
-  const backendBehindBy = productionSha ? await githubBehindBy(mergeCommitSha, productionSha) : -1
-  const backendDeployed = backendBehindBy === 0
-
-  // --- Frontend check: Netlify published deploy ---
-  // Netlify deploys from the production branch but has its own build queue.
-  // The published_deploy.commit_ref shows what is actually live in the browser.
-  let netlifyCommitSha: string | null = null
-  let frontendDeployed: boolean | null = null
-  try {
-    const netlifyRes = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
-    if (netlifyRes.code === 0) {
-      const netlify = JSON.parse(netlifyRes.stdout)
-      netlifyCommitSha = netlify?.published_deploy?.commit_ref ?? null
-      if (netlifyCommitSha) {
-        const netlifyBehindBy = await githubBehindBy(mergeCommitSha, netlifyCommitSha)
-        frontendDeployed = netlifyBehindBy === 0
-      }
-    }
-  } catch { /* Netlify API unavailable — skip frontend check */ }
-
-  // Overall deployed = backend AND frontend (if checked) are both live
-  const deployed = backendDeployed && (frontendDeployed === null || frontendDeployed === true)
 
   const parts: string[] = []
-  if (backendDeployed) parts.push(`backend: production branch includes merge (${backendBehindBy} behind)`)
-  else parts.push(`backend: production branch missing ${backendBehindBy} commits from PR merge`)
-  if (frontendDeployed === true) parts.push(`Netlify: published deploy includes PR`)
-  else if (frontendDeployed === false) parts.push(`Netlify: published deploy (${netlifyCommitSha?.slice(0,8)}) does not include PR yet`)
-  else parts.push(`Netlify: could not check published deploy`)
+
+  // Each touched backend area must report a live commit that includes the merge.
+  let backendDeployed = true
+  if (touchesGo) {
+    if (goSha) {
+      const behind = await githubBehindBy(mergeCommitSha, goSha)
+      const ok = behind === 0
+      backendDeployed = backendDeployed && ok
+      parts.push(ok
+        ? `Go: live ${goSha.slice(0, 8)} includes merge`
+        : `Go: live ${goSha.slice(0, 8)} missing ${behind} commits from merge`)
+    } else {
+      backendDeployed = false
+      parts.push('Go: /api/version commit unknown — cannot confirm live deploy')
+    }
+  }
+  if (touchesPhp) {
+    if (laravelSha) {
+      const behind = await githubBehindBy(mergeCommitSha, laravelSha)
+      const ok = behind === 0
+      backendDeployed = backendDeployed && ok
+      parts.push(ok
+        ? `Laravel: live ${laravelSha.slice(0, 8)} includes merge`
+        : `Laravel: live ${laravelSha.slice(0, 8)} missing ${behind} commits from merge`)
+    } else {
+      backendDeployed = false
+      parts.push('Laravel: laravel_commit unknown — cannot confirm live deploy')
+    }
+  }
+
+  // --- Frontend check: Netlify published deploy ---
+  // Netlify has its own build queue; published_deploy.commit_ref is what's live.
+  let netlifyCommitSha: string | null = null
+  let frontendDeployed: boolean | null = null
+  if (touchesFrontend) {
+    frontendDeployed = false
+    try {
+      const netlifyRes = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
+      if (netlifyRes.code === 0) {
+        const netlify = JSON.parse(netlifyRes.stdout)
+        netlifyCommitSha = netlify?.published_deploy?.commit_ref ?? null
+        if (netlifyCommitSha) {
+          const netlifyBehindBy = await githubBehindBy(mergeCommitSha, netlifyCommitSha)
+          frontendDeployed = netlifyBehindBy === 0
+          parts.push(frontendDeployed
+            ? 'Netlify: published deploy includes PR'
+            : `Netlify: published deploy (${netlifyCommitSha.slice(0, 8)}) does not include PR yet`)
+        } else {
+          parts.push('Netlify: no published deploy commit — cannot confirm')
+        }
+      } else {
+        parts.push('Netlify: API unavailable — cannot confirm')
+      }
+    } catch { parts.push('Netlify: API error — cannot confirm') }
+  }
+
+  // Overall: every touched, deployable area must be live. If the PR touches none
+  // of the three (e.g. monitor-fsm / docs / CI only), there's nothing to verify
+  // in production, so treat the merge itself as "deployed".
+  const checks: boolean[] = []
+  if (touchesGo || touchesPhp) checks.push(backendDeployed)
+  if (touchesFrontend) checks.push(frontendDeployed === true)
+  if (checks.length === 0) parts.push('no deployable (frontend/Go/PHP) files touched — nothing to verify')
+  const deployed = checks.length === 0 ? true : checks.every(Boolean)
 
   return {
     deployed,
     frontendDeployed,
     backendDeployed,
     mergeCommitSha,
-    productionSha,
+    productionSha: null,
     netlifyCommitSha,
+    touched: { frontend: touchesFrontend, go: touchesGo, php: touchesPhp },
+    filesKnown,
     reason: parts.join('; '),
   }
+}
+
+// Live-deploy gate for a RAW commit SHA (a direct-to-master fix has no PR).
+// Mirrors checkPrDeployed's per-area logic but sources the touched areas from the
+// commit's own file list: Go gated on /api/version.commit, Laravel on
+// laravel_commit, frontend on the Netlify published deploy. Used by
+// reconcile_direct_master_fixes so we only reply once the fix is actually live.
+const MONITOR_REPO_DIR = '/home/edward/FreegleDockerWSL'
+async function checkCommitLive(sha: string): Promise<{ deployed: boolean; touchesFrontend: boolean; touchesDeployable: boolean; filesKnown: boolean; reason: string }> {
+  const statRes = await sh('git', ['show', sha, '--name-only', '--format='], MONITOR_REPO_DIR)
+  const paths = statRes.stdout.split('\n').map((s) => s.trim()).filter(Boolean)
+  const filesKnown = statRes.code === 0
+  const areas = classifyTouchedAreas(paths)
+  const touchesGo = areas.go
+  const touchesPhp = areas.php
+  const touchesFrontend = areas.frontend
+
+  let goSha: string | null = null
+  let laravelSha: string | null = null
+  const verRes = await sh('curl', ['-s', '--max-time', '12', 'https://api.ilovefreegle.org/api/version'])
+  if (verRes.code === 0) {
+    try {
+      const v = JSON.parse(verRes.stdout) as { commit?: string; laravel_commit?: string }
+      goSha = v.commit && v.commit !== 'unknown' ? v.commit : null
+      laravelSha = v.laravel_commit && v.laravel_commit !== 'unknown' ? v.laravel_commit : null
+    } catch { /* /api/version returned non-JSON */ }
+  }
+  const parts: string[] = []
+  let backendDeployed = true
+  if (touchesGo) {
+    if (goSha) { const ok = (await githubBehindBy(sha, goSha)) === 0; backendDeployed = backendDeployed && ok; parts.push(`Go ${ok ? 'live' : 'pending'}`) }
+    else { backendDeployed = false; parts.push('Go commit unknown') }
+  }
+  if (touchesPhp) {
+    if (laravelSha) { const ok = (await githubBehindBy(sha, laravelSha)) === 0; backendDeployed = backendDeployed && ok; parts.push(`Laravel ${ok ? 'live' : 'pending'}`) }
+    else { backendDeployed = false; parts.push('Laravel commit unknown') }
+  }
+  let frontendDeployed: boolean | null = null
+  if (touchesFrontend) {
+    frontendDeployed = false
+    try {
+      const n = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
+      if (n.code === 0) {
+        const netlify = JSON.parse(n.stdout)
+        const ref = netlify?.published_deploy?.commit_ref ?? null
+        if (ref) { frontendDeployed = (await githubBehindBy(sha, ref)) === 0; parts.push(`Netlify ${frontendDeployed ? 'live' : 'pending'}`) }
+        else parts.push('Netlify no published commit')
+      } else parts.push('Netlify unavailable')
+    } catch { parts.push('Netlify error') }
+  }
+  const checks: boolean[] = []
+  if (touchesGo || touchesPhp) checks.push(backendDeployed)
+  if (touchesFrontend) checks.push(frontendDeployed === true)
+  if (checks.length === 0) parts.push('no deployable files touched')
+  const deployed = checks.length === 0 ? true : checks.every(Boolean)
+  return { deployed, touchesFrontend, touchesDeployable: areas.deployable, filesKnown, reason: parts.join('; ') }
+}
+
+// Match recent master commits to tracked-but-unfixed bugs by EXPLICIT Discourse
+// reference only — a deliberate human-written link in the commit message, never
+// keyword overlap (the bag-of-words checkGitAlreadyFixed was disabled at ~75% FP).
+// Precision rules:
+//   - `topic/post` (or `topic#post`) → match that exact bug (highest precision).
+//   - bare `topic` → match ONLY when the topic has exactly one unfixed bug
+//     (unambiguous); otherwise skipped.
+//   - test/chore/docs/build/ci/revert/merge commits are excluded entirely, so a
+//     non-fix commit that merely contains a 4-digit number can't match.
+// Pure + exported for unit testing.
+export function matchDirectMasterFixCommits(
+  commits: Array<{ sha: string; subj: string; body?: string }>,
+  bugs: Array<{ topic: number; post: number }>,
+): Array<{ topic: number; post: number; sha: string; subj: string }> {
+  const NON_FIX = /^(test|chore|docs|build|ci|revert|merge)\b|\((test|ci|docs)\)/i
+  const tpRefs = new Map<string, { sha: string; subj: string }>()
+  const topicRefs = new Map<number, { sha: string; subj: string }>()
+  for (const c of commits) {
+    if (!c.sha || !c.subj || NON_FIX.test(c.subj)) continue
+    const msg = `${c.subj} ${c.body || ''}`
+    for (const m of msg.matchAll(/\b(9\d{3})\s*[/#]\s*(\d{1,4})\b/g)) {
+      const key = `${m[1]}/${m[2]}`
+      if (!tpRefs.has(key)) tpRefs.set(key, { sha: c.sha, subj: c.subj })
+    }
+    // Topic-only ref, used by the single-unfixed-bug fallback below. A topic
+    // number that is immediately followed by a post reference ("(9808 #585)")
+    // is SCOPED to that post, not the whole topic — registering it as a
+    // topic-only ref let a reach-slider commit that mentioned "(9808 #585/#600)"
+    // get matched to an unrelated open bug (9808/633) via the fallback, marking
+    // it fixed and posting a bogus retest (Neville, 2026-07-22). The negative
+    // lookahead keeps scoped references out of topicRefs.
+    for (const m of msg.matchAll(/(?:\(|discourse\s+|#)(9\d{3})\b(?!\s*[/#]\s*\d)/gi)) {
+      const t = Number(m[1])
+      if (!topicRefs.has(t)) topicRefs.set(t, { sha: c.sha, subj: c.subj })
+    }
+  }
+  const unfixedPerTopic = new Map<number, number>()
+  for (const b of bugs) unfixedPerTopic.set(b.topic, (unfixedPerTopic.get(b.topic) ?? 0) + 1)
+
+  const out: Array<{ topic: number; post: number; sha: string; subj: string }> = []
+  for (const b of bugs) {
+    let ref = tpRefs.get(`${b.topic}/${b.post}`)
+    if (!ref && (unfixedPerTopic.get(b.topic) ?? 0) === 1) ref = topicRefs.get(b.topic)
+    if (ref) out.push({ topic: b.topic, post: b.post, sha: ref.sha, subj: ref.subj })
+  }
+  return out
 }
 
 const STOP_WORDS = new Set([
@@ -227,6 +907,87 @@ export function selectExtraPrsToClose(
     if (!pr.headRefName.includes(bugSuffix)) return false
     return true
   })
+}
+
+/**
+ * Read a balanced JSON array out of `s` starting at the `[` at index `open`,
+ * respecting string literals (so `]` inside a string value does not close the
+ * array). Returns the array substring, or null if the brackets never balance.
+ */
+function readBalancedArray(s: string, open: number): string | null {
+  let depth = 0
+  let inStr = false
+  let esc = false
+  for (let i = open; i < s.length; i++) {
+    const c = s[i]
+    if (inStr) {
+      if (esc) esc = false
+      else if (c === '\\') esc = true
+      else if (c === '"') inStr = false
+      continue
+    }
+    if (c === '"') inStr = true
+    else if (c === '[') depth++
+    else if (c === ']') {
+      depth--
+      if (depth === 0) return s.slice(open, i + 1)
+    }
+  }
+  return null
+}
+
+/**
+ * Extract a single-line JSON-array marker (CLASSIFICATIONS=[...] /
+ * SENTRY_ISSUES=[...]) from the FULL delegate output stream.
+ *
+ * Why this exists: the driver used to leave these markers for the collate brain
+ * to scrape out of `stdoutTail` — only the last ~1500 chars of the stream. A
+ * verbose delegate (heavy grounding output, then a prose summary) pushes the
+ * marker out of that window, so its bugs were silently dropped while the topic
+ * cursor still advanced inside the delegate — making the loss unrecoverable.
+ * Topic 9808 posts 622 & 633 were lost exactly this way on 2026-07-22. Parsing
+ * from the whole stream here (like ANALYSIS_COMPLETE already is) removes the
+ * dependence on where the marker happens to land.
+ *
+ * Returns the parsed array, the LAST valid occurrence if emitted more than once
+ * (retries echo the marker), or null when the marker is absent or unparseable.
+ * A null return lets callers fall back to an empty list / the stdoutTail scrape.
+ */
+export function extractJsonArrayMarker(combined: string, marker: string): unknown[] | null {
+  const token = `${marker}=`
+  let searchFrom = 0
+  let last: unknown[] | null = null
+  for (;;) {
+    const at = combined.indexOf(token, searchFrom)
+    if (at === -1) break
+    const open = combined.indexOf('[', at + token.length)
+    // Only accept a '[' that immediately follows '=' (whitespace allowed) — do
+    // not grab a stray bracket from prose after a non-array emission.
+    if (open === -1 || combined.slice(at + token.length, open).trim() !== '') {
+      searchFrom = at + token.length
+      continue
+    }
+    const arr = readBalancedArray(combined, open)
+    if (arr !== null) {
+      try {
+        const parsed = JSON.parse(arr)
+        if (Array.isArray(parsed)) last = parsed
+      } catch { /* malformed — keep any earlier valid value, try next occurrence */ }
+    }
+    searchFrom = at + token.length
+  }
+  return last
+}
+
+// Seam for unit tests: queue_deployed_reply_drafts reaches its network/file
+// dependencies through this object so tests can substitute fakes (the functions
+// themselves shell out to gh/curl or POST to Discourse). Production behaviour
+// is unchanged — these are the real implementations.
+export const deployedReplyDeps = {
+  checkPrDeployed,
+  postDiscourseReply,
+  fetchReporterQuote,
+  renderAllViews,
 }
 
 export const actions: ActionDefinition[] = [
@@ -291,7 +1052,7 @@ import json, urllib.request, re, sys, time
 
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
+headers = {'Api-Key': api_key}
 
 CONFIRM_RE = re.compile(
     r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
@@ -544,7 +1305,33 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
               `SELECT topic, post, pr_rejections FROM discourse_bug
                WHERE pr_number = ? AND state NOT IN ('fixed','confirmed','deferred','off-topic','duplicate')`
             ).all(pr.number) as Array<{ topic: number; post: number; pr_rejections: number }>
+
+            // Distinguish "the human closed this because it is NOT a code bug" (park it,
+            // never retry) from "the fix was wrong, try again" (retry-once-then-escalate).
+            // Re-attempting after a wontfix close just churns out duplicate bad PRs —
+            // exactly what happened with #9753 (#631 closed "no actionable code bug" → the
+            // FSM produced #660). A wontfix signal in a human close comment means STOP.
+            let wontfix: { wontfix: boolean; reason?: string } = { wontfix: false }
+            if (bugs.length > 0) {
+              const cres = await sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'comments'])
+              if (cres.code === 0) {
+                try {
+                  const parsed = JSON.parse(cres.stdout) as { comments?: Array<{ author?: { login?: string } | null; body?: string | null }> }
+                  wontfix = detectWontfixClose(parsed.comments ?? [])
+                } catch { /* malformed comments json — fall through to reopen */ }
+              }
+            }
+
             for (const bug of bugs) {
+              if (wontfix.wontfix) {
+                db.prepare(
+                  `UPDATE discourse_bug SET state='deferred', pr_number=NULL,
+                     reason=?, last_seen_at=datetime('now')
+                   WHERE topic=? AND post=?`
+                ).run(`Human closed PR #${pr.number} as not-a-bug: ${wontfix.reason ?? 'no fix required'}`, bug.topic, bug.post)
+                out(`sync_pr_states: PR #${pr.number} CLOSED as wontfix — parked bug ${bug.topic}/${bug.post} (no retry)`)
+                continue
+              }
               reopenBugAfterRejection(db, bug.topic, bug.post, pr.number)
               insertReviewerFeedback(db, {
                 kind: 'pr_rejected',
@@ -567,7 +1354,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
   {
     name: 'check_pr_deployed',
-    description: 'Check whether a merged PR\'s fix is live in production. Checks three signals: (1) GitHub production branch ancestry (backend gate — auto-promoted after CI), (2) Netlify published deploy commit (frontend gate — actual live build), (3) /api/version endpoint for Go and Laravel deployed commit SHAs. Returns {deployed, frontendDeployed, backendDeployed, mergeCommitSha, productionSha, netlifyCommitSha, reason}.',
+    description: 'Check whether a merged PR\'s fix is LIVE in production. Determines which areas the PR touches (Go / Laravel-PHP / frontend) from its file list and gates each touched area on its OWN live signal — they deploy separately: Go on /api/version.commit (build-time ldflags), Laravel on /api/version.laravel_commit (config, refreshed by deploy:record-commit), frontend on the Netlify published-deploy commit. A PR is deployed only when every touched, deployable area includes the merge commit (or it touches none). Returns {deployed, frontendDeployed, backendDeployed, mergeCommitSha, productionSha, netlifyCommitSha, touched:{frontend,go,php}, reason}.',
     paramsSchema: {
       type: 'object',
       properties: { prNumber: { type: 'number' } },
@@ -580,16 +1367,16 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
   {
     name: 'queue_deployed_reply_drafts',
-    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
+    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks via check_pr_deployed whether the fix is LIVE (per-area: Go build commit, Laravel checked-out commit, and Netlify published deploy). Once confirmed live, AUTO-POSTS the verbatim "AI Edward: possible fix applied, please retest and report back" reply to the specific reporting Discourse post (no human review), appending the app-release caveat when the fix touches iznik-nuxt3/. A tooling-only PR (touches no frontend/Go/PHP files — e.g. monitor-fsm, docs, CI) is marked deployed WITHOUT a reply: there is nothing the reporter could retest. Records each posted reply (dedup: one per reporting post). Updates pr.deploy_state to "deployed" or "pending_deploy"; a FAILED post resets deploy_state to pending_deploy so the reply is retried next iteration. Returns {posted, pendingDeploy, alreadyPosted, skippedToolingOnly, postFailed}.',
     handler: async () => {
       const db = getDb()
 
       // Bugs with MERGED PRs still awaiting confirmed deployment.
       // Include fix-queued (PR merged, bug not yet advanced) AND fixed (bug
-      // advanced before production branch was updated — deploy_state stays
+      // advanced before the live build caught up — deploy_state stays
       // pending_deploy until we confirm the commit is live).
       const bugs = db.prepare(`
-        SELECT b.topic, b.post, b.reporter, b.excerpt, b.pr_number,
+        SELECT b.topic, b.post, b.reporter, b.excerpt, b.topic_title, b.pr_number,
                p.title AS pr_title, p.frontend_only, p.preview_url, p.deploy_state
         FROM discourse_bug b
         JOIN pr p ON p.number = b.pr_number
@@ -600,22 +1387,26 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         ORDER BY b.topic, b.post
       `).all() as Array<{
         topic: number; post: number; reporter: string | null; excerpt: string | null
+        topic_title: string | null
         pr_number: number; pr_title: string
         frontend_only: number | null; preview_url: string | null; deploy_state: string | null
       }>
 
-      const queued: number[] = []
+      const posted: number[] = []
       const pendingDeploy: number[] = []
-      const alreadyDrafted: number[] = []
+      const alreadyPosted: number[] = []
+      const skippedToolingOnly: number[] = []
+      const postFailed: number[] = []
 
       for (const bug of bugs) {
-        // Check deployment
-        const deployCheck = await checkPrDeployed(bug.pr_number)
+        // Check deployment (per-area: Go / Laravel / frontend each gated on its
+        // own live signal — they deploy separately).
+        const deployCheck = await deployedReplyDeps.checkPrDeployed(bug.pr_number)
 
         // Always update deploy_state accurately
         if (deployCheck.deployed && bug.deploy_state !== 'deployed') {
           upsertPr(db, { number: bug.pr_number, deployState: 'deployed' })
-          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is now deployed to production`)
+          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is now live (${deployCheck.reason})`)
         } else if (!deployCheck.deployed && bug.deploy_state !== 'pending_deploy') {
           upsertPr(db, { number: bug.pr_number, deployState: 'pending_deploy' })
         }
@@ -625,28 +1416,59 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           continue
         }
 
-        // Draft already exists (pending, sent, or rejected) — don't duplicate
+        // A reply for this reporting post already exists (posted or queued) —
+        // never double-post.
         const existingDraft = db.prepare(
           `SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`
         ).get(bug.topic, bug.post)
         if (existingDraft) {
-          alreadyDrafted.push(bug.pr_number)
+          alreadyPosted.push(bug.pr_number)
           continue
         }
 
-        // Build body from PR title (strip conventional commit prefix)
-        const fixDesc = bug.pr_title
-          .replace(/^fix\([^)]+\):\s*/i, '')
-          .replace(/^fix:\s*/i, '')
-          .replace(/^feat\([^)]+\):\s*/i, '')
-          .replace(/^feat:\s*/i, '')
-          .trim()
+        // A tooling-only fix (monitor-fsm, docs, CI — no frontend/Go/PHP files)
+        // gives the reporter nothing to retest, and "possible fix applied" reads
+        // as if we patched the product (or Discourse itself). Mark it deployed
+        // but post nothing. Only skip when the file list was actually fetched —
+        // an empty list from a FAILED fetch must not suppress a real reply.
+        const touchedDeployable = deployCheck.touched.frontend || deployCheck.touched.go || deployCheck.touched.php
+        if (deployCheck.filesKnown && !touchedDeployable) {
+          skippedToolingOnly.push(bug.pr_number)
+          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is tooling-only — nothing for the reporter to retest, no reply posted (bug ${bug.topic}.${bug.post})`)
+          continue
+        }
+
         const prUrl = `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`
-        const body = `Fix applied for ${fixDesc} (${prUrl}). Please retest.`
-        const quote = bug.excerpt ?? ''
+        // Verbatim reply (fixed operator wording). Append the app-release caveat
+        // when the fix touches iznik-nuxt3/ — the Capacitor apps are built from
+        // it, so app users only get the fix via a store release (web users get
+        // it immediately). checkPrDeployed already determined the touched areas
+        // from the PR file list, so reuse that rather than re-querying GitHub.
+        const affectsApp = deployCheck.touched.frontend || (bug.frontend_only ?? 0) === 1
+        const APP_CAVEAT = ' (but app releases may take up to one week)'
+        const body = 'AI Edward: possible fix applied, please retest and report back'
+          + (affectsApp ? APP_CAVEAT : '')
+        // Quote the reporter's ACTUAL words (fetched verbatim) so the reply quotes
+        // what they wrote, not our paraphrased summary. Fall back to the stored
+        // excerpt/title only if the live fetch yields nothing; the posting guard
+        // still refuses a context-less reply.
+        const quote = (await deployedReplyDeps.fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
         const username = bug.reporter ?? 'there'
 
-        queueDiscourseDraft(db, {
+        // Auto-post (explicitly approved): post the verbatim reply threaded under
+        // the specific reporting post, then record it so it dedups + audits.
+        // formatReplyRaw prepends the [quote] block of the reporting post — the
+        // bare `body` was posted unquoted before, identical to the human-draft
+        // path (dashboard) which has always quoted.
+        const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
+        const postRes = await deployedReplyDeps.postDiscourseReply(bug.topic, raw, bug.post)
+        if (!postRes.ok) {
+          postFailed.push(bug.pr_number)
+          outWarn(`queue_deployed_reply_drafts: FAILED to post reply for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}): ${postRes.error}`)
+          continue
+        }
+
+        recordPostedReply(db, {
           topic: bug.topic,
           post: bug.post,
           username,
@@ -656,13 +1478,118 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           prUrl,
         })
 
-        out(`queue_deployed_reply_drafts: queued draft for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}) — fix confirmed deployed`)
-        queued.push(bug.pr_number)
+        out(`queue_deployed_reply_drafts: auto-posted verified-live reply for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number})`)
+        posted.push(bug.pr_number)
       }
 
-      if (queued.length > 0) await renderAllViews(db)
+      // Re-arm retries AFTER the loop: the candidate query only selects
+      // pending_deploy PRs, so leaving a failed post's PR at deploy_state=
+      // deployed would orphan its reply forever. Done post-loop because a PR
+      // can carry several bugs and a later sibling's success would otherwise
+      // flip the PR back to deployed, losing the earlier failure. Bugs whose
+      // replies DID post are protected on retry by the discourse_draft dedup.
+      for (const prNumber of new Set(postFailed)) {
+        upsertPr(db, { number: prNumber, deployState: 'pending_deploy' })
+      }
 
-      return { queued, pendingDeploy, alreadyDrafted }
+      if (posted.length > 0) await deployedReplyDeps.renderAllViews(db)
+
+      return { posted, pendingDeploy, alreadyPosted, skippedToolingOnly, postFailed }
+    },
+  },
+
+  {
+    name: 'reconcile_direct_master_fixes',
+    description: 'Called automatically during LOAD_STATE. Closes the blind spot where a fix pushed DIRECT TO MASTER (no PR — CI fixes, small fixes) never marks its Discourse bug fixed, so no "please retest" reply is ever sent (sync_pr_states + queue_deployed_reply_drafts only handle bugs with a pr_number). Scans recent origin/master commits for an EXPLICIT Discourse reference — `topic/post` (or `topic` alone when the topic has exactly one unfixed bug) — i.e. a deliberate human-written link in the commit message, NOT keyword overlap (the bag-of-words checkGitAlreadyFixed heuristic was disabled at ~75% false positive). For each matched open/deferred/investigating bug with NO pr_number whose fixing commit is confirmed LIVE (same per-area deploy gate as PRs), marks it fixed and auto-posts the hedged "AI Edward: possible fix applied, please retest" reply (quoted, deduped, app caveat when frontend-touched). A tooling-only commit (no frontend/Go/PHP files) is marked fixed WITHOUT a reply — nothing for the reporter to retest. A failed post leaves the bug unfixed so it is re-matched and retried next iteration. Returns {reconciled, posted, pendingDeploy, skipped}.',
+    handler: async () => {
+      const db = getDb()
+      // Only PR-LESS unfixed bugs: PR-tracked ones flow through sync_pr_states /
+      // queue_deployed_reply_drafts already.
+      const bugs = db.prepare(`
+        SELECT topic, post, reporter, excerpt, topic_title
+        FROM discourse_bug
+        WHERE state IN ('open','deferred','investigating') AND pr_number IS NULL
+      `).all() as Array<{ topic: number; post: number; reporter: string | null; excerpt: string | null; topic_title: string | null }>
+      if (bugs.length === 0) return { reconciled: [], posted: [], pendingDeploy: [], skipped: [] }
+
+      // Refresh origin/master (remote-tracking ref only — never touches the work tree),
+      // then read recent non-merge commits.
+      await sh('git', ['fetch', 'origin', 'master', '--quiet'], MONITOR_REPO_DIR)
+      const logRes = await sh('git', ['log', 'origin/master', '--no-merges', '-n', '500', '--format=%H%x1f%s%x1f%b%x1e'], MONITOR_REPO_DIR)
+      if (logRes.code !== 0) return { reconciled: [], posted: [], pendingDeploy: [], skipped: ['git log failed'] }
+
+      // Parse commits and match to bugs by explicit Discourse reference. The
+      // matching (the precision-critical step) is a pure, unit-tested function.
+      const commits = logRes.stdout.split('\x1e').map((rec) => {
+        const [sha, subj, body] = rec.trim().split('\x1f')
+        return { sha, subj, body: body || '' }
+      })
+      const matches = matchDirectMasterFixCommits(commits, bugs)
+      const bugByKey = new Map(bugs.map((b) => [`${b.topic}/${b.post}`, b]))
+
+      const reconciled: string[] = []
+      const posted: number[] = []
+      const pendingDeploy: string[] = []
+      const skipped: string[] = []
+
+      for (const match of matches) {
+        const bug = bugByKey.get(`${match.topic}/${match.post}`)!
+        const live = await checkCommitLive(match.sha)
+        const tag = `${match.topic}/${match.post} ${match.sha.slice(0, 8)}`
+        if (!live.deployed) {
+          pendingDeploy.push(tag)
+          out(`reconcile_direct_master_fixes: ${tag} matched but not live yet (${live.reason})`)
+          continue
+        }
+
+        // Mark fixed only once the reply outcome is decided: the candidate query
+        // selects open/deferred/investigating bugs, so marking fixed BEFORE a
+        // post that then fails would orphan the reply forever (never re-matched).
+        const markFixed = () => {
+          db.prepare(`UPDATE discourse_bug SET state='fixed', fixed_at=datetime('now'), deployed_at=datetime('now'), reason=? WHERE topic=? AND post=?`)
+            .run(`direct-master ${match.sha.slice(0, 8)}: ${match.subj}`, bug.topic, bug.post)
+          reconciled.push(tag)
+        }
+
+        // One reply per reporting post (dedup, same guard as queue_deployed_reply_drafts).
+        const existing = db.prepare(`SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`).get(bug.topic, bug.post)
+        if (existing) { markFixed(); skipped.push(`${tag} (reply already exists)`); continue }
+
+        // Tooling-only commit (no frontend/Go/PHP files): nothing the reporter
+        // could retest, so mark fixed without a reply. Only when the file list
+        // is actually known — never suppress a reply on missing data.
+        if (live.filesKnown && !live.touchesDeployable) {
+          markFixed()
+          skipped.push(`${tag} (tooling-only — nothing for the reporter to retest, no reply)`)
+          out(`reconcile_direct_master_fixes: ${tag} is tooling-only — marked fixed, no reply posted`)
+          continue
+        }
+
+        const quote = (await fetchReporterQuote(bug.topic, bug.post)) || (bug.excerpt || bug.topic_title || '').trim()
+        if (!quote) { markFixed(); skipped.push(`${tag} (no quote text — marked fixed, no reply)`); continue }
+        const body = 'AI Edward: possible fix applied, please retest and report back'
+          + (live.touchesFrontend ? ' (but app releases may take up to one week)' : '')
+        const username = bug.reporter ?? 'there'
+        const raw = formatReplyRaw({ username, post: bug.post, topic: bug.topic, quote, body })
+        const postRes = await postDiscourseReply(bug.topic, raw, bug.post)
+        if (!postRes.ok) {
+          // Bug left unfixed on purpose: next iteration re-matches it and
+          // retries the post.
+          skipped.push(`${tag} (post failed — will retry next iteration: ${postRes.error})`)
+          outWarn(`reconcile_direct_master_fixes: post failed for ${tag}: ${postRes.error}`)
+          continue
+        }
+        markFixed()
+        recordPostedReply(db, {
+          topic: bug.topic, post: bug.post, username, quote, body,
+          prUrl: `https://github.com/${PROD_REPO}/commit/${match.sha}`,
+        })
+        out(`reconcile_direct_master_fixes: marked ${tag} fixed + posted reply`)
+        posted.push(bug.topic)
+      }
+
+      if (posted.length > 0) await renderAllViews(db)
+      return { reconciled, posted, pendingDeploy, skipped }
     },
   },
 
@@ -690,7 +1617,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 import json, urllib.request, re, html, sys, time
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-headers = {'User-Api-Key': api_key}
+headers = {'Api-Key': api_key}
 
 tracked_cursors = json.loads('''${cursorsJson.replace(/'/g, "\\'")}''')
 
@@ -757,6 +1684,13 @@ for i, tid in enumerate(sorted(topic_ids)):
     for post in posts:
         pn = post.get('post_number', 0)
         if pn <= effective_cursor:
+            continue
+        # Skip the monitor's OWN account (AI_Edward). Its posts are our diagnostic /
+        # "possible fix, please retest" replies, not member bug reports; classifying them
+        # re-opens bugs we just fixed and dispatches duplicate fix delegates (the feedback
+        # loop that produced duplicate PRs #1165/#1166 for topic 9954). The cursor still
+        # advances past them (latestPostNumber above), so they are marked seen.
+        if post.get('username', '') == 'AI_Edward':
             continue
         cooked = post.get('cooked', '')
         text = re.sub(r'<[^>]+>', '', cooked)
@@ -887,20 +1821,53 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
 
   {
     name: 'discover_active_topics',
-    description: 'Light pre-check: fetches Discourse /latest.json (one API call) and compares post counts against DB cursors to find topics with new posts. Used to decide which topics need a triage delegate. Returns {topics: [{id, title, cursor, postsCount, hasNew}]}.',
-    paramsSchema: { type: 'object', properties: { recentLimit: { type: 'number' } } },
+    description: 'Pre-check: fetches several pages of Discourse /latest.json (activity order) and compares post counts against DB cursors to find topics with new posts. Paginated so slow-but-recurring catch-all threads that fell below the first page of activity between runs are still discovered — a single page silently dropped their new member reports and their cursor never advanced (seen with topic 9481, cursor stuck at 630 while members posted to 635). Used to decide which topics need a triage delegate. Returns {topics: [{id, title, cursor, postsCount, hasNew}]}.',
+    paramsSchema: { type: 'object', properties: { recentLimit: { type: 'number' }, latestPages: { type: 'number', description: 'How many pages of /latest.json (activity order) to scan. Default 4 (~120 most-recently-active topics).' } } },
     handler: async (params) => {
-      const recentLimit = (params.recentLimit as number) ?? 30
+      const latestPages = (params.latestPages as number) ?? 4
+      // Discourse rate-limits aggressively, and this GET runs in the same iteration
+      // as a burst of reply POSTs — so a raw urlopen here regularly 429'd and the
+      // step silently returned zero topics (missing genuinely-active bug reports).
+      // Use the same retry-with-backoff helper as fetch_topic_updates so a 429 is
+      // ridden out (respecting Retry-After) instead of dropping the pre-check.
       const script = `
-import json, urllib.request, sys
+import json, urllib.request, sys, time
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-req = urllib.request.Request(
-    '${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}',
-    headers={'User-Api-Key': api_key}
-)
-d = json.load(urllib.request.urlopen(req, timeout=15))
-topics = [{'id': t['id'], 'title': t['title'], 'postsCount': t['posts_count']} for t in d['topic_list']['topics']]
+headers = {'Api-Key': api_key}
+
+def fetch(url, retries=4):
+    """GET a Discourse URL with rate-limit backoff for 429."""
+    delay = 2.0
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            return json.load(urllib.request.urlopen(req, timeout=20))
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries - 1:
+                retry_after = e.headers.get('Retry-After')
+                sleep_s = float(retry_after) if retry_after else delay
+                sys.stderr.write(f'429 on {url} — backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
+                time.sleep(sleep_s)
+                delay *= 2
+                continue
+            raise
+
+# Paginate the activity-ordered latest list. A single page (~30) misses slow-but-
+# recurring catch-all threads (e.g. "Testing please") that dropped below the first
+# page between runs, so their new reports were never triaged. De-dupe by id across
+# pages; stop early once a page is empty.
+seen = {}
+for page in range(${latestPages}):
+    d = fetch(f'${DISCOURSE_BASE}/latest.json?order=activity&page={page}')
+    batch = d.get('topic_list', {}).get('topics', [])
+    if not batch:
+        break
+    for t in batch:
+        seen[t['id']] = {'id': t['id'], 'title': t['title'], 'postsCount': t['posts_count']}
+    if page + 1 < ${latestPages}:
+        time.sleep(0.5)
+topics = list(seen.values())
 print(json.dumps(topics))
 `
       const { stdout, stderr, code } = await sh('python3', ['-c', script])
@@ -1158,27 +2125,33 @@ print(json.dumps(out))
     },
     handler: async (params) => {
       const pattern = params.pattern as string
-      const path = (params.path as string) ?? '/home/edward/FreegleDockerWSL'
-      // -l alone only returned filenames, so the diagnosing model got "1 file
-      // matched" with no code to read and re-searched forever (the diagnose
-      // loop). Return the matching lines with 3 lines of context on each side
-      // so a diagnosisBrief can be written from one search.
-      const { stdout } = await sh(
-        'rg',
-        ['-n', '-C', '3', '--max-columns', '300', '--max-count', '20', pattern, path],
-        undefined,
-      )
-      const raw = stdout.trim()
-      // Also collect the distinct file list for a quick overview.
+      const repo = '/home/edward/FreegleDockerWSL'
+      // ROOT CAUSE of the diagnose loop: this used execFile('rg', ...), but `rg`
+      // is NOT an execFile-resolvable binary here — ripgrep only exists as a
+      // Claude Code *shell function*, so execFile got ENOENT and search_code
+      // ALWAYS returned empty. The diagnosing model saw "0 files matched", had
+      // no code to read, and re-searched forever. Use `git grep` instead: git
+      // is a real binary (/usr/bin/git) and grep returns lines + context. The
+      // optional `path` param is treated as a pathspec scope under the repo.
+      const path = (params.path as string) ?? ''
+      const rel = path ? path.replace(/^\/home\/edward\/FreegleDockerWSL\/?/, '') : ''
+      const pathspec = rel ? [rel.endsWith('/') || !rel.includes('.') ? `${rel.replace(/\/$/, '')}/**` : rel] : []
+      // -I skip binary, -n line numbers, -C 3 context, fixed-string off (regex).
+      const args = ['grep', '-n', '-I', '-C', '3', '-e', pattern]
+      if (pathspec.length) args.push('--', ...pathspec)
+      const { stdout, code } = await sh('git', args, repo)
+      // git grep exits 1 when there are no matches — that's not an error.
+      const raw = (stdout ?? '').trim()
       const fileSet = new Set<string>()
       const matches: Array<{ file: string; line: number; text: string }> = []
       for (const ln of raw.split('\n')) {
-        // rg context format: path:line:text (match) or path-line-text (context)
+        if (!ln || ln === '--') continue
+        // git grep -C format: path:line:text (match) or path-line-text (context)
         const m = ln.match(/^(.+?)[:-](\d+)[:-](.*)$/)
         if (m) {
-          const file = m[1].replace('/home/edward/FreegleDockerWSL/', '')
+          const file = m[1]
           fileSet.add(file)
-          if (ln.includes(`:${m[2]}:`)) {
+          if (ln.startsWith(`${m[1]}:${m[2]}:`)) {
             matches.push({ file, line: Number(m[2]), text: m[3].slice(0, 300) })
           }
         }
@@ -1189,6 +2162,7 @@ print(json.dumps(out))
         matches: matches.slice(0, 40),
         // Cap the raw excerpt so the context fits a reasonable token budget.
         context: raw.slice(0, 6000),
+        noMatch: code !== 0 && matches.length === 0,
       }
     },
   },
@@ -1224,7 +2198,7 @@ print(urllib.request.urlopen(req).read().decode())
 
   {
     name: 'check_my_open_pr_ci',
-    description: 'List OPEN PRs authored by @me whose CI is red or actively pending. BEHIND branches are noted but NOT auto-updated — a PR with green CI is fine to leave BEHIND until a human is ready to merge (they will click Update Branch then). The FSM must not call update-branch preemptively because doing so invalidates the CI, queues a fresh run on the single runner, and causes thrash when master keeps advancing. A PR counts as red if any required check concluded "failure"/"cancelled"/"timed_out". Pending/queued checks count as pending. Netlify noise is ignored. Returns {redPRs, pendingPRs, behindPRs, allGreen}. allGreen is true when no PR is red and none have actively running/pending CI (BEHIND with green CI does NOT block allGreen).',
+    description: 'List OPEN PRs authored by @me whose CI is red or actively pending. BEHIND branches are noted but NOT auto-updated — a PR with green CI is fine to leave BEHIND until a human is ready to merge (they will click Update Branch then). The FSM must not call update-branch preemptively because doing so invalidates the CI, queues a fresh run on the single runner, and causes thrash when master keeps advancing. A PR counts as red if any required check concluded "failure"/"cancelled"/"timed_out". Pending/queued checks count as pending. Netlify noise is ignored. A PR whose ONLY failing checks are Coveralls coverage-delta checks (tests green, just a sub-noise coverage dip) is NOT counted as red — it is returned in coverageJitterPRs so the coverage booster can add genuine coverage to its branch rather than the fix-CI path thrashing on noise. Returns {redPRs, pendingPRs, behindPRs, coverageJitterPRs, allGreen}. allGreen is true when no PR is red and none have actively running/pending CI (BEHIND with green CI does NOT block allGreen).',
     handler: async () => {
       const listRes = await sh('gh', [
         'pr', 'list',
@@ -1232,14 +2206,19 @@ print(urllib.request.urlopen(req).read().decode())
         '--author', '@me',
         '--state', 'open',
         '--limit', '30',
-        '--json', 'number,title,url,headRefOid,mergeStateStatus',
+        '--json', 'number,title,url,headRefName,headRefOid,mergeStateStatus',
       ])
       if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], behindPRs: [], allGreen: true, error: listRes.stderr }
-      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string; mergeStateStatus: string }>
+      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefName: string; headRefOid: string; mergeStateStatus: string }>
 
       const redPRs: Array<{ number: number; title: string; url: string; failedChecks: Array<{ context: string; state: string; url: string }> }> = []
       const pendingPRs: Array<{ number: number; title: string; url: string; pendingChecks: Array<{ context: string; state: string; url: string }> }> = []
       const behindPRs: Array<{ number: number; title: string; url: string }> = []
+      // PRs whose ONLY failing checks are Coveralls coverage-delta checks: tests
+      // pass, but a suite's global coverage dipped below base (often sub-0.1%
+      // noise). These are NOT red CI to fix — they're a signal to add genuine
+      // coverage to that PR's branch until the suite clears the noise floor.
+      const coverageJitterPRs: Array<{ number: number; title: string; url: string; branch: string; coverageChecks: Array<{ context: string; state: string; url: string }> }> = []
 
       for (const pr of prs) {
         // A BEHIND branch has green CI on its current HEAD — that's good enough.
@@ -1279,8 +2258,21 @@ print(urllib.request.urlopen(req).read().decode())
             pending.push({ context: name, state, url })
           }
         }
-        if (failed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
-        else if (pending.length > 0) pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
+        if (failed.length > 0) {
+          const { realFailed, coverageFailed } = partitionFailedChecks(failed)
+          if (realFailed.length > 0) {
+            // Genuine failure (and possibly coverage too) — fix the CI.
+            redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
+          } else {
+            // Coverage-jitter only: tests are green. Keep it OUT of redPRs so the
+            // fix-CI path doesn't thrash/exhaust on noise; the coverage booster
+            // (WRITE_COVERAGE) adds genuine coverage to this branch instead.
+            coverageJitterPRs.push({ number: pr.number, title: pr.title, url: pr.url, branch: pr.headRefName, coverageChecks: coverageFailed })
+            out(`check_my_open_pr_ci: PR #${pr.number} red ONLY on coverage (${coverageFailed.map(c => c.context).join(', ')}) — coverage-jitter, will boost coverage not "fix CI"`)
+          }
+        } else if (pending.length > 0) {
+          pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
+        }
       }
 
       // allGreen: no red PRs and no actively pending CI. BEHIND PRs with green CI
@@ -1290,18 +2282,96 @@ print(urllib.request.urlopen(req).read().decode())
       // This lets us attempt again if future master changes re-break the PR.
       const db = getDb()
       const redAndPendingNums = new Set([...redPRs.map(p => p.number), ...pendingPRs.map(p => p.number)])
+
+      // Build a branch → worktree-path map once, so that when a PR goes green we
+      // can release any local container stack a fix delegate spun up to test it.
+      // The fix is already validated on the cloud runner; the local worktree
+      // containers (a full ~30-service compose stack) are pure waste afterwards.
+      // We `docker stop` (NOT `down`) so nothing is lost and the user can restart
+      // instantly. The main FSM worktree's own stack is always left running.
+      const MAIN_WORKTREE = '/home/edward/FreegleDockerWSL'
+      const branchToWorktree = new Map<string, string>()
+      try {
+        const wtRes = await sh('git', ['-C', MAIN_WORKTREE, 'worktree', 'list', '--porcelain'])
+        if (wtRes.code === 0) {
+          let curPath: string | null = null
+          for (const raw of wtRes.stdout.split('\n')) {
+            if (raw.startsWith('worktree ')) curPath = raw.slice('worktree '.length).trim()
+            else if (raw.startsWith('branch ') && curPath) {
+              const b = raw.slice('branch '.length).trim().replace(/^refs\/heads\//, '')
+              if (b) branchToWorktree.set(b, curPath)
+            }
+          }
+        }
+      } catch { /* worktree listing is best-effort */ }
+
       for (const pr of prs) {
         if (!redAndPendingNums.has(pr.number)) {
           const key = `pr_fix_attempts_${pr.number}`
           const existing = kvGet(db, key)
           if (existing && existing !== '0') {
             kvSet(db, key, '0')
+            // Drop the dispatch marker too, so a PR that goes red again starts
+            // from a clean budget rather than inheriting a stale charge guard.
+            kvSet(db, `pr_fix_dispatched_${pr.number}`, null)
             out(`check_my_open_pr_ci: PR #${pr.number} is green — reset fix attempt counter (was ${existing})`)
+          }
+
+          // PR is green → release the worktree's container stack if a fix delegate
+          // left one running. Skipped when the worktree is the main FSM checkout, or
+          // when another session is actively working in it. Idempotent, best-effort.
+          const wt = pr.headRefName ? branchToWorktree.get(pr.headRefName) : undefined
+          if (wt && wt !== MAIN_WORKTREE) {
+            try {
+              // Don't disturb a worktree another session is using: a parallel Claude
+              // session (or a human) leaves live processes whose cwd is under the
+              // worktree (editors, dev servers, CI-watch loops, even a `sleep`). The
+              // FSM's own delegates run in throwaway /tmp worktrees, so they never
+              // match this. If anything is cwd'd in there, leave the stack up.
+              let inUse = false
+              try {
+                for (const ent of readdirSync('/proc')) {
+                  if (!/^\d+$/.test(ent)) continue
+                  let cwd: string
+                  try { cwd = readlinkSync(`/proc/${ent}/cwd`) } catch { continue }
+                  if (cwd === wt || cwd.startsWith(wt + '/')) { inUse = true; break }
+                }
+              } catch { /* /proc scan best-effort */ }
+
+              if (inUse) {
+                out(`check_my_open_pr_ci: PR #${pr.number} green — worktree ${wt} in active use (live process cwd'd there), leaving containers up`)
+              } else {
+                const psRes = await sh('docker', ['ps', '-q', '--filter', `label=com.docker.compose.project.working_dir=${wt}`])
+                const ids = psRes.code === 0 ? psRes.stdout.split('\n').map(s => s.trim()).filter(Boolean) : []
+                if (ids.length > 0) {
+                  const stopRes = await sh('docker', ['stop', ...ids])
+                  if (stopRes.code === 0) {
+                    out(`check_my_open_pr_ci: PR #${pr.number} green — stopped ${ids.length} worktree container(s) at ${wt}`)
+                  } else {
+                    out(`check_my_open_pr_ci: PR #${pr.number} green — failed to stop containers at ${wt}: ${stopRes.stderr.slice(-200)}`)
+                  }
+                }
+              }
+            } catch (err: any) {
+              out(`check_my_open_pr_ci: PR #${pr.number} container cleanup error: ${String(err?.message || err).slice(-200)}`)
+            }
           }
         }
       }
 
-      return { redPRs, pendingPRs, behindPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
+      // checkedAt stamps WHEN this picture of CI was taken. Two actions read CI —
+      // this one, and coverage_gate_decide, which calls this handler and nests the
+      // answer under `red` without writing this action's own context key. Routers
+      // that pick a PR to work on must therefore choose the NEWER of the two rather
+      // than a fixed one of them; see freshestCICheck().
+      return {
+        redPRs,
+        pendingPRs,
+        behindPRs,
+        coverageJitterPRs,
+        allGreen: redPRs.length === 0 && pendingPRs.length === 0,
+        checkedAt: new Date().toISOString(),
+      }
     },
   },
 
@@ -1490,7 +2560,7 @@ FORBIDDEN:
 
 PUSH VERIFICATION — Required before any push marker:
 For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
-  git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H
+  git log origin/<branch> -1 --format=%H   (from your worktree)
 If the SHA matches what you pushed, emit on its own line: PUSH_VERIFIED=<sha>
 If they don't match: emit DELEGATE_FAILED=push not verified: local <local_sha> != remote <remote_sha>
 
@@ -1661,6 +2731,9 @@ If you omit the marker, your work is considered failed regardless of what actual
       const directPushSha = directMatch ? directMatch[1] : undefined
       const commitPushedSha = commitMatch ? commitMatch[1] : undefined
       const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
+      // See extractJsonArrayMarker: parse from the full stream, not stdoutTail.
+      const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
+      const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
       // Summarise for the human watcher: what did the delegate actually do?
       let summary: string
@@ -1693,6 +2766,8 @@ If you omit the marker, your work is considered failed regardless of what actual
           lastTool,
           stdoutTail: redactSecrets(textStream.slice(-2000)),
           stderrTail: redactSecrets(stderr.slice(-2000)),
+          classifications,
+          sentryIssues,
           prNumber,
           directPushSha,
           commitPushedSha,
@@ -1776,7 +2851,7 @@ STAGING RULES: never \`git add -A\`. Always stage explicit paths.
 
 PUSH VERIFICATION — Required before any push marker:
 For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
-  git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H
+  git log origin/<branch> -1 --format=%H   (from your worktree)
 If the SHA matches what you pushed, emit on its own line: PUSH_VERIFIED=<sha>
 If they don't match: emit DELEGATE_FAILED=push not verified: local <local_sha> != remote <remote_sha>
 
@@ -1860,6 +2935,13 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         const directPushSha = directMatch ? directMatch[1] : undefined
         const commitPushedSha = commitMatch ? commitMatch[1] : undefined
         const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
+        // Parse the machine-readable markers from the FULL stream, not the
+        // truncated stdoutTail the collate brain sees — a verbose delegate
+        // buries them beyond the tail window (topic 9808/622+633 loss). Attach
+        // structurally so COLLATE_RESULTS reads result.classifications /
+        // result.sentryIssues instead of scraping stdoutTail.
+        const classifications = extractJsonArrayMarker(combined, 'CLASSIFICATIONS') ?? undefined
+        const sentryIssues = extractJsonArrayMarker(combined, 'SENTRY_ISSUES') ?? undefined
         const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
 
         let summary: string
@@ -1872,16 +2954,47 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         else summary = `[${t.id}] exited ${result.code} (${toolCount} tools)`
         out(summary)
 
+        // A timed-out agent did not complete its protocol (no OUTCOME marker, no
+        // self-review), so any PR it managed to open is incomplete/unverified work.
+        // Close it so it never reaches the operator as a "ready" fix (e.g. #666);
+        // VERIFY_DISCOURSE_BATCH defers the bug for human triage. Only FSM fix/ or
+        // fix- branches that are still OPEN; the marker keeps it out of the human
+        // wontfix path. Best-effort — a gh failure must not break result collection.
+        let autoClosedTimedOut = false
+        if (timedOut && prNumber !== undefined) {
+          try {
+            const { stdout: bo } = await exec(
+              'gh', ['pr', 'view', String(prNumber), '--repo', 'Freegle/Iznik', '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
+              { timeout: 20 * 1000 },
+            )
+            const [br, st] = (bo || '').trim().split(' ')
+            if (/^fix[/-]/.test(br ?? '') && st === 'OPEN') {
+              await exec(
+                'gh', ['pr', 'close', String(prNumber), '--repo', 'Freegle/Iznik', '--delete-branch', '--comment',
+                  `Auto-closed: the fix agent for this PR timed out before completing its protocol (no verification or self-review), so the PR is incomplete. The bug is deferred for human triage. Reopen if this was closed in error.\n${FSM_AUTOCLOSE_MARKER}`],
+                { timeout: 30 * 1000 },
+              )
+              autoClosedTimedOut = true
+              out(`delegate_parallel_tasks: auto-closed incomplete PR #${prNumber} from timed-out task ${t.id}`)
+            }
+          } catch (e: any) {
+            outWarn(`delegate_parallel_tasks: could not close timed-out PR #${prNumber}: ${e.message}`)
+          }
+        }
+
         return {
           id: t.id,
           exitCode: result.code,
           timedOut,
           timeoutReason: result.killReason,
+          autoClosedTimedOut,
           prNumber,
           directPushSha,
           commitPushedSha,
           pushed,
           analysisComplete,
+          classifications,
+          sentryIssues,
           failedReason: failedMatch ? failedMatch[1].trim() : undefined,
           stdoutTail: redactSecrets(result.textStream.slice(-1500)),
           stderrTail: redactSecrets(result.stderr.slice(-500)),
@@ -1933,7 +3046,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'coverage_gate_decide',
-    description: 'Pure-logic branch for COVERAGE_GATE. Priority: (1) red CI → CI_ROUTER; (2) dirty/needs-rebase PRs → REBASE_DIRTY_PRS; (3) PRs created this iteration → WRAP_UP; (4) else → WRITE_COVERAGE.',
+    description: 'Pure-logic branch for COVERAGE_GATE. Priority: (1) PICKABLE (non-exhausted) red CI → CI_ROUTER; (2) dirty/needs-rebase PRs → REBASE_DIRTY_PRS; (3) coverage-jitter PRs → WRITE_COVERAGE (STEP 0 boost — it pushes to an existing branch rather than creating a PR, so the WRAP_UP arms below must not pre-empt it, otherwise those PRs stay red forever); (4) CI still pending → WRAP_UP; (5) PRs created this iteration → WRAP_UP; (6) else → WRITE_COVERAGE. Red PRs whose fix-attempt budget is exhausted are NOT counted as actionable CI (otherwise they ping-pong COVERAGE_GATE↔CI_ROUTER and starve coverage/Sentry).',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const verifyDef = actions.find(a => a.name === 'verify_pr_created')!
@@ -1943,8 +3056,23 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const red = await redDef.handler({}, context)
       const v = verify as any
       const r = red as any
-      const redCount = Array.isArray(r.redPRs) ? r.redPRs.length : 0
+      const redPRs: Array<{ number: number }> = Array.isArray(r.redPRs) ? r.redPRs : []
+      const redCount = redPRs.length
       const prCount = typeof v.count === 'number' ? v.count : 0
+
+      // Exclude PRs whose fix-attempt budget is exhausted (mirrors ci_router_decide).
+      // An exhausted PR is permanently red (we've stopped trying to fix it, or it's
+      // being deliberately held) — counting it as actionable CI makes COVERAGE_GATE
+      // bounce straight back to CI_ROUTER forever, starving WRITE_COVERAGE and Sentry.
+      // Only route to CI_ROUTER when there is at least one PICKABLE red PR.
+      const MAX_FIX_ATTEMPTS = 3
+      const db = getDb()
+      const pickableRedCount = redPRs.filter(pr => {
+        const countStr = kvGet(db, `pr_fix_attempts_${pr.number}`)
+        const count = countStr ? parseInt(countStr, 10) : 0
+        return count < MAX_FIX_ATTEMPTS
+      }).length
+      const exhaustedRedCount = redCount - pickableRedCount
 
       // Check for PRs that need rebase (mergeStateStatus === 'DIRTY')
       const listRes = await sh('gh', [
@@ -1952,23 +3080,48 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         '--state', 'open', '--limit', '30', '--json', 'number,title,headRefName',
       ])
       const openPRs = listRes.code === 0 ? JSON.parse(listRes.stdout) as Array<{ number: number; title: string; headRefName: string }> : []
+      // One `gh pr view` per PR, but concurrently: these are independent network round
+      // trips and there can be 30 of them. Serially this state cost 13-21s every visit,
+      // and it is visited many times per iteration (8 times on 2026-08-12), all of it
+      // wall-clock the iteration's step budget pays for. Order is preserved because the
+      // dirty list is built by index from the settled results rather than by push order.
+      const mergeStates = await Promise.all(openPRs.map(pr =>
+        sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'mergeStateStatus'])
+      ))
       const dirtyPRs: Array<{ number: number; title: string; branch: string }> = []
-      for (const pr of openPRs) {
-        const viewRes = await sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'mergeStateStatus'])
-        if (viewRes.code === 0) {
+      openPRs.forEach((pr, i) => {
+        const viewRes = mergeStates[i]
+        if (viewRes.code !== 0) return
+        try {
           const { mergeStateStatus } = JSON.parse(viewRes.stdout)
           if (mergeStateStatus === 'DIRTY') dirtyPRs.push({ number: pr.number, title: pr.title, branch: pr.headRefName })
+        } catch {
+          // A truncated/garbled response is not evidence of a dirty branch; skip it
+          // rather than letting one bad parse abort the whole gate.
         }
-      }
+      })
 
       const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
+      const coverageJitterPRs = Array.isArray(r.coverageJitterPRs) ? r.coverageJitterPRs : []
       let target: string
-      if (redCount > 0) target = 'CI_ROUTER'
+      if (pickableRedCount > 0) target = 'CI_ROUTER'
       else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
+      // A coverage-jitter PR can ONLY be cleared by WRITE_COVERAGE's STEP 0 boost.
+      // check_my_open_pr_ci deliberately keeps these out of redPRs (their tests pass, so
+      // the fix-CI path has nothing to fix), and no other state pushes to their branch.
+      // Both WRAP_UP arms below exist to avoid *creating new PRs* — drain mode while CI
+      // is busy, and "this iteration already produced one". The boost creates no PR; it
+      // pushes to an existing branch. So neither reason applies to it, and letting them
+      // win means a jitter PR stays red indefinitely: any iteration with pending CI or a
+      // PR created wraps up before ever reaching the booster.
+      else if (coverageJitterPRs.length > 0) target = 'WRITE_COVERAGE'
       else if (pendingCount > 0) target = 'WRAP_UP'  // drain mode — CI running, don't create coverage PRs
       else if (prCount > 0) target = 'WRAP_UP'
-      else target = 'WRITE_COVERAGE'
-      return { count: prCount, redCount, pendingCount, dirtyPRs, verify, red, _transition: target }
+      else target = 'WRITE_COVERAGE'  // all red PRs exhausted/held → coverage; lets Sentry run too
+      if (coverageJitterPRs.length > 0) {
+        out(`coverage_gate_decide: ${coverageJitterPRs.length} coverage-jitter PR(s) [${coverageJitterPRs.map((p: any) => '#' + p.number).join(', ')}] — booster will add genuine coverage to clear the noise floor`)
+      }
+      return { count: prCount, redCount, pickableRedCount, exhaustedRedCount, pendingCount, dirtyPRs, coverageJitterPRs, verify, red, _transition: target }
     },
   },
 
@@ -2003,9 +3156,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const fixed = bugsFixed.filter(b => b.outcome === 'fixed')
       const deferred = bugsFixed.filter(b => b.outcome === 'deferred')
       if (fixed.length > 0) {
-        lines.push('## Discourse bugs fixed', '')
+        lines.push('## Discourse bugs: fix PRs opened', '')
+        lines.push('_These PRs have passed automated review but are not yet merged or deployed (awaiting merge + deploy)._', '')
         for (const b of fixed) {
-          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber}` : ''}`)
+          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber} (awaiting merge + deploy)` : ''}`)
         }
         lines.push('')
       }
@@ -2046,17 +3200,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const ctx = context as any
       const master = ctx?._action_check_master_ci ?? {}
       const production = ctx?._action_check_production_ci ?? {}
-      const prCheck = ctx?._action_check_my_open_pr_ci ?? {}
+      // Whichever CI reading is newer — see freshestCICheck. Reading the fixed key
+      // here is what let a green PR stay the focus for five laps.
+      const prCheck = freshestCICheck(ctx)
       const masterFailing = master.failing === true
       const productionFailing = production.failing === true
       const masterFixAttempted = ctx?.masterFixAttempted === true
       const productionFixAttempted = ctx?.productionFixAttempted === true
       const redPRs: Array<{ number: number }> = Array.isArray(prCheck.redPRs) ? prCheck.redPRs : []
-      const attempts: Array<{ prNumber: number; terminal?: boolean }> = Array.isArray(ctx?.openPRFixAttempts) ? ctx.openPRFixAttempts : []
-      // Allow re-picking a PR whose latest attempt did not push a commit —
-      // matches the original LLM prompt's "keep trying" rule. A terminal
-      // record (loop-breaker) is respected.
-      const attemptedNums = new Set(attempts.filter(a => a.terminal).map(a => a.prNumber))
+      const attempts: Array<{ prNumber: number; terminal?: boolean; pushed?: boolean }> = Array.isArray(ctx?.openPRFixAttempts) ? ctx.openPRFixAttempts : []
+      // A PR whose attempt pushed nothing has had its go for this iteration.
+      // Re-picking it re-asserts onlyFixPR, which the PARALLEL_ANALYZE_AND_FIX
+      // prompt reads as "skip Discourse triage entirely" — so the old "keep
+      // trying" rule let one unfixable PR starve triage for a whole iteration
+      // (2026-08-06: #1266's delegate exited without pushing, was re-picked
+      // twice more, and Michael's topic 10010 was never read). If an attempt
+      // fails to push, move on to the next actual task. A terminal record
+      // (loop-breaker) is respected the same way.
+      const attemptedNums = new Set(
+        attempts.filter(a => a.terminal || a.pushed !== true).map(a => a.prNumber)
+      )
 
       // Persistent per-PR fix attempt budget: if a PR has been picked >= 3 times
       // across iterations (tracked in SQLite kv) without going green, give up and
@@ -2086,17 +3249,20 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         out(`ci_router_decide: production CI failing (sha=${production.sha?.slice(0, 9) ?? '?'})`)
         return { _transition: 'FIX_PRODUCTION_CI', reason: `production CI failing on sha ${production.sha?.slice(0, 9) ?? '?'}` }
       }
-      // Priority 2: drain mode — if ANY PR has pending CI, don't push new commits.
-      // With a single self-hosted runner, pushing to multiple PRs simultaneously
-      // just grows the CI queue. The last PR waits hours. Keep the queue depth ≤ 1:
-      // only push a fix when the CI queue is empty (all PRs are either green or red,
-      // none pending). Once the pending run finishes (pass → merge, fail → fix), we
-      // push the next fix for the focus PR.
+      // Priority 2: drain mode — only when pending CI SATURATES the cloud runners.
+      // We run on ~5 Katapult cloud runners now, NOT a single self-hosted runner,
+      // so a handful of pending PRs run concurrently and do not need serialising.
+      // The old rule (drain on ANY pending PR) was catastrophic: a single in-flight
+      // PR (e.g. one with a flaky/infra-failing build that re-runs forever) would
+      // WRAP_UP every iteration and block ALL Discourse bug work indefinitely.
+      // Only drain when pending count reaches runner capacity, to avoid piling
+      // unbounded load onto the queue; below that, proceed to fix/bug work.
+      const MAX_CONCURRENT_CI = 5
       const pendingPRs: Array<any> = Array.isArray(prCheck.pendingPRs) ? prCheck.pendingPRs : []
-      if (pendingPRs.length > 0) {
+      if (pendingPRs.length >= MAX_CONCURRENT_CI) {
         return {
           _transition: 'WRAP_UP',
-          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; holding at ≤1 queue depth until CI settles`,
+          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI (>= ${MAX_CONCURRENT_CI} cloud-runner capacity); holding until CI settles`,
           drainMode: true,
           pendingCount: pendingPRs.length,
         }
@@ -2126,20 +3292,51 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
       if (focusPR) {
         const key = `pr_fix_attempts_${focusPR.number}`
-        const prev = parseInt(kvGet(db, key) ?? '0', 10)
-        kvSet(db, key, String(prev + 1))
-        out(`ci_router_decide: PR #${focusPR.number} fix attempt ${prev + 1}/${MAX_FIX_ATTEMPTS} (focus PR)`)
+        // Budget is spent per DISPATCHED attempt, not per router visit. The
+        // router is re-entered several times per iteration (COVERAGE_GATE
+        // bounces back through CI_ROUTER), and charging every visit spent
+        // #1266's entire 3-attempt budget on a single delegate run. The marker
+        // pins a charge to (iteration, attempts already reported for this PR),
+        // so a bare re-entry is free while a genuinely new dispatch is charged.
+        const dispatchKey = `pr_fix_dispatched_${focusPR.number}`
+        const iterationTs = String(ctx?.iterationStartTs ?? '')
+        const reportedForFocus = attempts.filter(a => a.prNumber === focusPR.number).length
+        const marker = `${iterationTs}:${reportedForFocus}`
+        // With no iteration stamp we cannot tell a re-entry from a new
+        // iteration, so charge — under-charging would let a PR retry forever.
+        if (iterationTs && kvGet(db, dispatchKey) === marker) {
+          const spent = kvGet(db, key) ?? '0'
+          out(`ci_router_decide: PR #${focusPR.number} already dispatched this iteration — budget unchanged at ${spent}/${MAX_FIX_ATTEMPTS}`)
+        } else {
+          const prev = parseInt(kvGet(db, key) ?? '0', 10)
+          kvSet(db, key, String(prev + 1))
+          kvSet(db, dispatchKey, marker)
+          out(`ci_router_decide: PR #${focusPR.number} fix attempt ${prev + 1}/${MAX_FIX_ATTEMPTS} (focus PR)`)
+        }
       }
 
-      // onlyFixPR: when there IS a focus PR to fix, the iteration should ONLY
-      // run the PR fix agent — no Discourse triage, no bug dispatch, no Sentry.
-      // This prevents newly-created bug PRs from flooding the CI queue and
-      // wasting tokens analysing work we couldn't act on anyway.
-      const onlyFixPR = focusPR != null
+      // onlyFixPR used to mean "run the PR fix agent and NOTHING else — no Discourse
+      // triage, no Sentry". It is now narrower: at most one PR is fixed per iteration
+      // (section A of the dispatch prompt), but the analysis-only work runs ALONGSIDE it.
+      //
+      // The old gate cost whole iterations. A red PR exists on most iterations, so the
+      // fan-out repeatedly launched exactly one agent — five of the ten dispatches on
+      // 2026-08-12 — and the machine is a serial spine: one step at a time, each paying
+      // its full latency. Triage therefore waited for a 15-27 minute PR fix instead of
+      // running next to it, for no gain, because the stated reasons do not apply to it:
+      // triage and Sentry are analysis-only ("no code changes" in both prompts), so they
+      // create no PRs and put nothing on the single CI runner. The only real cost is
+      // tokens, and paying them concurrently is what buys the wall-clock back.
+      //
+      // It also starved triage outright — the failure this file's sibling regression
+      // suite was written for (2026-08-06: topic 10010 never read for a whole iteration).
+      // Gating is now limited to drain mode, decided above, where CI capacity is the
+      // genuine constraint.
+      const onlyFixPR = false
 
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics (${phase} phase)${onlyFixPR ? ' [onlyFixPR: triage skipped]' : ''}`,
+        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics dispatched alongside it (${phase} phase)`,
         focusPRNumber: focusPR?.number ?? null,
         onlyFixPR,
         exhaustedPRNumbers: [...exhaustedPRs],
@@ -2201,7 +3398,24 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             skipped++
             continue
           }
-          // No existing open bug → treat as potential regression, fall through to persist as 'open'
+          // No OPEN bug in the topic. If there is an already-FIXED bug here and
+          // this retest is a positive confirmation ("works now"), it is success
+          // feedback, NOT a regression. Record it against the fixed bug and skip —
+          // otherwise it becomes a bogus regression bug that draws a "please
+          // retest" auto-reply on the post that just confirmed the fix (9932/8).
+          const priorFixedBug = db.prepare(
+            `SELECT topic, post FROM discourse_bug WHERE topic = ? AND state = 'fixed' ORDER BY fixed_at DESC LIMIT 1`
+          ).get(Number(c.topic)) as { topic: number; post: number } | undefined
+          const retestText = `${c.summary ?? ''} ${c.originalPostText ?? ''}`
+          if (priorFixedBug && retestConfirmsFix(retestText)) {
+            db.prepare(`UPDATE discourse_bug SET last_seen_at = datetime('now') WHERE topic = ? AND post = ?`)
+              .run(priorFixedBug.topic, priorFixedBug.post)
+            out(`persist_classifications: ${c.topic}/${post} confirms fix of ${priorFixedBug.topic}/${priorFixedBug.post} — success feedback, skipping new entry`)
+            skipped++
+            continue
+          }
+          // No existing open bug and not a positive confirmation → treat as a
+          // potential regression, fall through to persist as 'open'.
         }
         // Parse tags from classification output (TRIAGE emits symptom_tags + code_area)
         const symptomTags: string[] = Array.isArray(c.symptom_tags)
@@ -2209,23 +3423,38 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           : []
         const codeArea: string | null = typeof c.code_area === 'string' ? c.code_area : null
 
-        // Dedup level 1: same Discourse topic already has an active PR → link, don't open new
+        // Dedup level 1: same Discourse topic already has an active PR → link, don't open new.
+        // Only when the two reports aren't PROVABLY different bugs: if both have symptom_tags
+        // and share ZERO overlap, this is an independent bug that happens to share a topic, not
+        // a follow-up — linking it would make queue_deployed_reply_drafts auto-post a "possible
+        // fix applied, please retest" reply threaded under THIS post once the (unrelated) PR
+        // deploys, i.e. a reply that looks attached to the wrong post (9982/12). Mirrors the
+        // isIndependentBug check below for the already-fixed regression case. With no tag data
+        // on either side we can't tell them apart, so — as before — default to linking.
         const topicPrRow = db.prepare(
-          `SELECT pr_number FROM discourse_bug
+          `SELECT pr_number, symptom_tags FROM discourse_bug
            WHERE topic = ? AND post != ? AND pr_number IS NOT NULL
-           AND state IN ('open', 'investigating', 'fix-queued')`
-        ).get(c.topic, c.post) as { pr_number: number } | undefined
+           AND state IN ('open', 'investigating', 'fix-queued')
+           ORDER BY first_seen_at ASC LIMIT 1`
+        ).get(c.topic, c.post) as { pr_number: number; symptom_tags: string | null } | undefined
         if (topicPrRow) {
-          upsertDiscourseBug(db, {
-            topic: Number(c.topic), post: Number(c.post),
-            topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
-            excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
-            state: 'fix-queued', prNumber: topicPrRow.pr_number,
-            featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
-          })
-          out(`persist_classifications: topic ${c.topic}/${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
-          upserted++
-          continue
+          const topicPrTags: string[] = (() => {
+            try { return JSON.parse(topicPrRow.symptom_tags ?? '[]') } catch { return [] }
+          })()
+          const isIndependentBug = symptomTags.length > 0 && topicPrTags.length > 0 && tagJaccard(symptomTags, topicPrTags) === 0
+          if (!isIndependentBug) {
+            upsertDiscourseBug(db, {
+              topic: Number(c.topic), post: Number(c.post),
+              topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
+              excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+              state: 'fix-queued', prNumber: topicPrRow.pr_number,
+              featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
+            })
+            out(`persist_classifications: topic ${c.topic}/${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
+            upserted++
+            continue
+          }
+          out(`persist_classifications: topic ${c.topic}/${c.post} shares zero symptom tags with same-topic PR #${topicPrRow.pr_number} — treating as an independent bug, not linking`)
         }
 
         // Dedup level 2: cross-topic tag similarity — if an open bug in a DIFFERENT topic
@@ -2450,21 +3679,41 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         .filter(b => !isLikelyCoveredByMergedPR(b))
 
       if (allPending.length > 0) {
-        // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted
-        // CI runner, parallel bug dispatch creates a queue of N simultaneous CI jobs
-        // that all wait behind each other — zero benefit, high cost. One bug → one PR
-        // → drive it to green → then pick the next. This is the same principle as the
-        // focus PR logic in ci_router_decide.
-        const oneBug = allPending.sort((a, b) => {
+        // Dispatch a BATCH of up to MAX_PARALLEL_BUGS bugs (oldest first_seen_at
+        // first) to PARALLEL_FIX_BUGS, which runs one fully self-contained
+        // diagnose→test→fix→PR task per bug via delegate_parallel_tasks. Each
+        // task gets its own isolated git worktree + branch + PR, and CI is now
+        // Katapult cloud runners (~5 concurrent), so N PRs each get a runner
+        // rather than queueing behind one. The old one-bug-at-a-time throttle
+        // was premised on a single self-hosted runner that no longer exists.
+        const MAX_PARALLEL_BUGS = 5
+        const sorted = allPending.slice().sort((a, b) => {
           const at = typeof a.first_seen_at === 'string' ? a.first_seen_at : '9999'
           const bt = typeof b.first_seen_at === 'string' ? b.first_seen_at : '9999'
           return at < bt ? -1 : at > bt ? 1 : 0
-        })[0]
+        })
+        // One bug per topic per dispatch: two posts on the same topic are almost
+        // always the same underlying issue, so dispatching both spawns duplicate PRs
+        // (e.g. #661/#662, both rewriting the same donate link for topic 9692). Keep
+        // the oldest post per topic; a genuinely-distinct second bug is picked up a
+        // later iteration (where the first post's PR makes topicsWithActivePr skip it).
+        const seenDispatchTopics = new Set<number>()
+        const bugBatch = sorted
+          .filter((b) => {
+            const t = Number(b.topic)
+            if (seenDispatchTopics.has(t)) return false
+            seenDispatchTopics.add(t)
+            return true
+          })
+          .slice(0, MAX_PARALLEL_BUGS)
+        const batchKeys = bugBatch.map(b => `${b.topic}.${b.post}`).join(', ')
         return {
-          _transition: 'DIAGNOSE_BUG',
-          reason: `${allPending.length} unfixed bug(s) queued — beginning TDD pipeline for 1 (oldest: topic ${oneBug.topic}/${oneBug.post}); ${allPending.length - 1} deferred to next iteration`,
-          dbOpenBugs: [oneBug].filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
-          singleBug: oneBug,
+          _transition: 'PARALLEL_FIX_BUGS',
+          reason: `${allPending.length} unfixed bug(s) queued — dispatching ${bugBatch.length} in parallel (${batchKeys})${allPending.length > bugBatch.length ? `; ${allPending.length - bugBatch.length} to next iteration` : ''}`,
+          dbOpenBugs: bugBatch.filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
+          bugBatch,
+          // Keep singleBug for backward-compat with any path still reading it.
+          singleBug: bugBatch[0],
         }
       }
       const sentry = ctx?._action_check_sentry ?? {}
@@ -2561,6 +3810,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
     handler: async (params, context) => {
       const { prNumber, repo = 'Freegle/Iznik' } = params as any
       try {
+        // Review the current PR diff. Wrapped in a closure so the identical logic runs
+        // for the initial review AND the post-expansion re-review. Returns null when the
+        // diff can't be fetched (a hard fail that must never trigger expansion).
+        const reviewOnce = async (): Promise<{ passed: boolean; issues: any[]; blockers: any[]; summary: string } | null> => {
         // Fetch PR diff
         const { stdout: diff } = await exec('gh', [
           'pr', 'diff', String(prNumber),
@@ -2568,11 +3821,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         ], { maxBuffer: 50 * 1024 * 1024, timeout: 30 * 1000 })
 
         if (!diff || diff.trim().length === 0) {
-          return {
-            passed: false,
-            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
-            summary: 'Failed to fetch PR diff',
-          }
+          return null
         }
 
         // Review with Opus
@@ -2641,16 +3890,77 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
         }
 
         const passed = review.passed !== false && (!Array.isArray(review.blockers) || review.blockers.length === 0)
+        const blockers = Array.isArray(review.blockers) ? review.blockers : []
         const issues = [
-          ...(Array.isArray(review.blockers) ? review.blockers.map((b: any) => ({ ...b, severity: 'error' })) : []),
+          ...blockers.map((b: any) => ({ ...b, severity: 'error' })),
           ...(Array.isArray(review.warnings) ? review.warnings.map((w: any) => ({ ...w, severity: 'warning' })) : []),
           ...(Array.isArray(review.info) ? review.info.map((i: any) => ({ ...i, severity: 'info' })) : []),
         ]
+        return { passed, issues, blockers, summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues') }
+        } // end reviewOnce
+
+        let r = await reviewOnce()
+        if (!r) {
+          return {
+            passed: false,
+            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
+            summary: 'Failed to fetch PR diff',
+          }
+        }
+
+        // "Expand fixes, don't close them" (operator directive). A failed review whose
+        // blockers are all COMPLETABLE (partial implementation, sibling call sites, a
+        // missing/weak reproduction test, ...) gets ONE follow-up commit on the SAME branch
+        // to finish the fix, then a re-review — instead of the old
+        // close→re-dispatch→same-partial-fix churn (#1164/#1167/#1171 each hit this).
+        // We still auto-close on a TERMINAL blocker (security / wrong-approach) or when the
+        // expansion fails to land or fails to clear the blockers, so a bad PR never reaches
+        // the operator (the failure mode behind #661/#662/#663/#668/#670). Only ever touch
+        // FSM fix branches (fix/ or fix-) that are still OPEN; the close comment carries
+        // FSM_AUTOCLOSE_MARKER so it isn't mistaken for a human wontfix (which parks instead).
+        let autoClosed = false
+        let expanded = false
+        if (!r.passed) {
+          const { stdout: branchOut } = await exec(
+            'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
+            { timeout: 20 * 1000 },
+          ).catch(() => ({ stdout: '' }))
+          const [branch, state] = (branchOut || '').trim().split(' ')
+          const closePr = async (reason: string) => {
+            try {
+              await exec(
+                'gh', ['pr', 'close', String(prNumber), '--repo', repo, '--delete-branch', '--comment', buildFailedReviewCloseComment(prNumber, r!.issues)],
+                { timeout: 30 * 1000 },
+              )
+              autoClosed = true
+              out(`adversarial_review_pr: auto-closed PR #${prNumber} (${reason})`)
+            } catch (e: any) {
+              outWarn(`adversarial_review_pr: could not auto-close PR #${prNumber}: ${e.message}`)
+            }
+          }
+          if (/^fix[/-]/.test(branch ?? '') && state === 'OPEN') {
+            const decision = decideReviewAction({ passed: r.passed, blockers: r.blockers })
+            if (decision.action === 'expand') {
+              out(`adversarial_review_pr: PR #${prNumber} — ${decision.reason}; expanding on ${branch}`)
+              const exp = await runFixExpansion(prNumber, branch, r.blockers, repo)
+              if (exp.pushed) {
+                expanded = true
+                const r2 = await reviewOnce()
+                if (r2) r = r2
+              }
+              if (!r.passed) await closePr(exp.pushed ? 'expansion did not clear blockers' : 'expansion did not land')
+            } else {
+              await closePr(decision.reason)
+            }
+          }
+        }
 
         return {
-          passed,
-          issues,
-          summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues'),
+          passed: r.passed,
+          autoClosed,
+          expanded,
+          issues: r.issues,
+          summary: r.summary,
         }
       } catch (err: any) {
         outWarn(`[adversarial-review] error: ${err.message}`)
@@ -2686,4 +3996,7 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
       return { scheduled: true, delaySeconds, reason }
     },
   },
+
+  // Ground-truth read actions (prod DB over tunnel, prod Loki) — see grounding.ts.
+  ...groundingActions,
 ]

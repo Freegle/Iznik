@@ -41,6 +41,14 @@ class DonationThankYou extends MjmlMailable
     }
 
     /**
+     * Transactional - a receipt for a donation they just made - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
+    /**
      * Get the recipient's user ID for common header tracking.
      */
     protected function getRecipientUserId(): ?int

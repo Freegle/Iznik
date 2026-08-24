@@ -186,8 +186,8 @@ class WelcomeMailIntegrationTest extends TestCase
         );
 
         $this->assertTrue(
-            $this->mailpit->bodyContains($message, 'Find what you need'),
-            'Email should contain Find button text'
+            $this->mailpit->bodyContains($message, 'Ask for what you need'),
+            'Email should contain Ask button text'
         );
 
         // Verify the three rules section exists (uppercase in text version).

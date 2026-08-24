@@ -23,7 +23,63 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  freegle: freegle/tests@1.1.320
+  # 1.1.373 drops the ORM migration inventory ratchet (Gate 1) and the Go/PHP
+  # toolchain provisioning it needed. The Go migration is done - raw is at 0 -
+  # so the gate was regenerating a 5,974-entry inventory on every build to
+  # answer one question, "did someone add raw SQL back", which
+  # .claude/check-raw-sql.sh now answers at the point it happens.
+  #
+  # Publishing the orb is what makes a step take effect - CircleCI resolves
+  # freegle/tests from the registry, not from the copy in this repo - but the
+  # PIN here decides which published version runs. Leaving master on 1.1.370
+  # would not have broken anything (that step self-guarded on ci-ratchet.sh
+  # existing, so it would exit 0 once this merges) - it would just have kept
+  # provisioning a toolchain for a gate that no longer runs.
+  #
+  # 1.1.374 caches the Gradle distribution in build-android. Every Android build
+  # was fetching gradle-8.11.1-all.zip (~200MB) from services.gradle.org, so a
+  # release only shipped if that host held the connection for the whole
+  # download. Pipeline #10729 on production 4140acbb3 lost it to
+  # "java.net.SocketException: Connection reset", which failed bundleRelease and
+  # left that commit with an iOS build but no Play beta artifact.
+  #
+  # 1.1.375 makes that cache warm on the FIRST release rather than the second.
+  # build-android runs only on production and is the only writer of the
+  # gradle-dist key, so a restore keyed on it alone misses on the next release
+  # and downloads anyway; it now also falls back to the gradle-deps cache that
+  # build-android-debug/-dev keep warm from master, which already contains the
+  # unpacked distribution.
+  # 1.1.379 wraps every npm ci in a shell-level retry with backoff: codeload
+  # rate-limits (429) the GitHub tarball dependency in the lock file, which
+  # npm's own --fetch-retries does not cover, and it red-lined master twice on
+  # 2026-08-17 for commits that touched no JavaScript.
+  #
+  # 1.1.371 = master's 1.1.369 plus this branch's rename of the push-fork
+  # package in the app-build jobs, @freegle/capacitor-push-notifications-cap7
+  # -> -cap8. CircleCI resolves freegle/tests from the registry, not from the
+  # copy in this repo, so the pin is what decides: a pin published from master
+  # does not carry the rename, and the app builds here then run `npm update`
+  # against a package this branch no longer depends on - a silent no-op rather
+  # than an error.
+  #
+  # 1.1.378 adds a heartbeat to the parallel container build. Every build group
+  # redirects to a log file, so between "building in parallel" and the first
+  # "build complete" the console says nothing, and a group that legitimately
+  # ran longer than no_output_timeout was killed as if it had hung.
+  #
+  # 1.1.382 is this branch's two changes republished on top of everything
+  # master has published since (1.1.379 and 1.1.381 above). Publishing from
+  # either side alone drops the other side's steps.
+  #
+  # 1.1.383 adds master's retention of the Go coverage profile as a build
+  # artefact, which arrived here in the merge of a18ba0996. That change was
+  # authored expecting to be published as 1.1.382, but this branch had already
+  # taken that number earlier the same day, so it went out unpublished and
+  # master is still pinned to 1.1.381 without it. Republishing the merged
+  # source is what carries it, and master picks it up when this branch lands -
+  # master must not pin 1.1.383 before then, because it also carries the cap8
+  # push-fork rename that only exists on this branch.
+  freegle: freegle/tests@1.1.383
 
 jobs:
   mark-ci-passed:
@@ -40,6 +96,8 @@ jobs:
             REPO="Freegle/Iznik"
             curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
               "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
+            curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Failed" 2>/dev/null || true
             curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/json" \
               -d '{"labels":["CI: Passed"]}' \
@@ -74,6 +132,8 @@ workflows:
                   REPO="Freegle/Iznik"
                   curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
                     "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Passed" 2>/dev/null || true
+                  curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
                   curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
                     -H "Content-Type: application/json" \
                     -d '{"labels":["CI: Failed"]}' \
@@ -137,6 +197,8 @@ workflows:
                   REPO="Freegle/Iznik"
                   curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
                     "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Passed" 2>/dev/null || true
+                  curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
                   curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
                     -H "Content-Type: application/json" \
                     -d '{"labels":["CI: Failed"]}' \
@@ -216,11 +278,16 @@ workflows:
               only:
                 - production
 
-  # Manually-triggered ModTools production build and Play Store / TestFlight upload.
-  # Trigger by setting build_modtools_production: true in the CircleCI pipeline parameters UI.
-  # Does not run automatically — ModTools updates are infrequent and manually controlled.
-  # After building, attempts to submit immediately. If Apple hasn't finished processing the
-  # build yet, the submit step exits gracefully — re-trigger via manual-promote-submit later.
+  # ModTools production build and Play Store / TestFlight upload. Unlike FD, ModTools has
+  # NO per-push beta builds - this workflow is the only thing that builds it, and the
+  # Android side uploads straight to the Play production track.
+  # Runs weekly via the CircleCI scheduled pipeline "weekly-modtools-release-schedule"
+  # (Wednesday 20:00 UTC, parameters build_modtools_production: true, branch production),
+  # deliberately TWO HOURS BEFORE the FD "weekly-promote-schedule" (22:00): the inline
+  # submit below usually fires before Apple has processed the fresh build and exits
+  # gracefully, and it is the promote workflow's auto-submit-ios-modtools that then
+  # submits it the same night once processed. Can also be triggered manually by setting
+  # build_modtools_production: true in the pipeline parameters UI.
   modtools-production:
     when: << pipeline.parameters.build_modtools_production >>
     jobs:
@@ -244,12 +311,22 @@ workflows:
             branches:
               only:
                 - production
-      - freegle/auto-submit-ios:
+      - freegle/auto-release-ios:
           filters:
             branches:
               only:
                 - production
-      - freegle/auto-release-ios:
+      # MUST follow auto-release-ios. Only one version can sit in the App Store
+      # submission pipeline at a time, and auto-submit refuses to run (by
+      # design, so a stall is never silent) while a version is
+      # PENDING_DEVELOPER_RELEASE. Run in parallel these two race: on
+      # 2026-08-05 auto-submit-ios failed at 22:07:33 on blocking version
+      # 100.0.873, which auto-release-ios then released successfully at
+      # 22:09:43 — the blocker was cleared two minutes after the job that
+      # tripped over it gave up.
+      - freegle/auto-submit-ios:
+          requires:
+            - freegle/auto-release-ios
           filters:
             branches:
               only:
@@ -259,6 +336,18 @@ workflows:
             branches:
               only:
                 - production
+      # ACTIVATION (do together, after this merges to master):
+      #   1. Publish the orb from master so freegle/check-release-divergence exists:
+      #        source .env && ~/.local/bin/circleci orb publish .circleci/orb/freegle-tests.yml freegle/tests@<next>
+      #   2. Bump the `freegle: freegle/tests@…` pin above to that new version.
+      #   3. Uncomment the job below.
+      # Referencing an unpublished orb job in this ACTIVE workflow would fail the whole
+      # promote, so it stays commented until the orb version that defines it is pinned.
+      # - freegle/check-release-divergence:
+      #     filters:
+      #       branches:
+      #         only:
+      #           - production
 
   # Katapult cloud runner test — the default CI path (check-runner sets use_katapult=true
   # for all normal pushes). Branch filters here must match build-test-local/build-test-cloud
@@ -271,6 +360,57 @@ workflows:
             name: freegle/machine-executor-katapult
           post-steps:
             - run:
+                name: Regenerate doc screenshots (best effort)
+                when: on_success
+                no_output_timeout: 15m
+                command: |
+                  # Generate doc screenshots inside the seeded -playwright container,
+                  # copy them to the git top-level, and auto-commit meaningful changes
+                  # with [skip ci] so it never triggers a new pipeline. Best-effort.
+                  set +e
+                  PROJ="${COMPOSE_PROJECT_NAME:-freegle}"
+                  ROOT="$(git rev-parse --show-toplevel)"
+                  cd "$ROOT" || exit 0
+                  # The auto-merge-to-production step leaves git on the production
+                  # branch; reset to this pipeline's commit so screenshots are
+                  # committed onto master, not production.
+                  git checkout -f "${CIRCLE_SHA1:-HEAD}" 2>/dev/null || echo "checkout to CIRCLE_SHA1 failed"
+                  if ! docker ps --format '{{.Names}}' | grep -q "^${PROJ}-playwright$"; then
+                    echo "playwright container not up at post-step; skipping screenshots"
+                    exit 0
+                  fi
+                  docker exec -e DOCS_OUT=/tmp/docshots "${PROJ}-playwright" \
+                    sh -c 'cd /app && export NODE_PATH="$(npm root 2>/dev/null):$(npm root -g 2>/dev/null)"; echo "NODE_PATH=$NODE_PATH"; node tests/e2e/docs-screenshots.mjs' \
+                    || echo "generator non-zero (partial shots ok)"
+                  echo "--- container output tree ---"; docker exec "${PROJ}-playwright" sh -c 'ls -R /tmp/docshots 2>/dev/null' | head -40
+                  for aud in members moderators; do
+                    mkdir -p "$ROOT/docs/$aud/assets"
+                    docker cp "${PROJ}-playwright:/tmp/docshots/$aud/assets/." "$ROOT/docs/$aud/assets/" 2>&1 | head -3 || true
+                  done
+                  echo "--- runner assets after cp ---"; ls -la "$ROOT/docs/members/assets" "$ROOT/docs/moderators/assets" 2>&1 | head -30
+                  echo "--- git status docs ---"; git status --short docs/ | head -30
+                  mkdir -p ~/artifacts/doc-screenshots
+                  cp -r "$ROOT/docs/members/assets" "$ROOT/docs/moderators/assets" ~/artifacts/doc-screenshots/ 2>/dev/null || true
+                  if ! command -v compare >/dev/null 2>&1; then
+                    sudo apt-get update -qq >/dev/null 2>&1 && sudo apt-get install -y -qq imagemagick >/dev/null 2>&1 || echo "imagemagick unavailable (will commit all changes)"
+                  fi
+                  # Only commit + push the regenerated screenshots on master. On a PR
+                  # branch the shots are still generated and uploaded as CI artifacts
+                  # (store_artifacts below) for review, but NOT committed to the branch:
+                  # pushing a "docs: regenerate screenshots" commit onto a PR branch emails
+                  # the PR author a GitHub notification on every run, which is pure noise.
+                  # Screenshots stay current because master regenerates them on its own
+                  # build after merge; the docs-freshness gate ignores the assets dir.
+                  if [ "${CIRCLE_BRANCH:-}" = "master" ]; then
+                    DOCS_ALLOW_MASTER=1 bash docs/screenshots/regenerate-and-commit.sh --commit-only || echo "commit step non-fatal"
+                  else
+                    echo "PR branch (${CIRCLE_BRANCH:-unknown}): screenshots uploaded as artifacts only, not committed to the branch."
+                  fi
+                  exit 0
+            - store_artifacts:
+                path: ~/artifacts/doc-screenshots
+                destination: doc-screenshots
+            - run:
                 name: Mark PR as CI failed
                 when: on_fail
                 command: |
@@ -280,6 +420,8 @@ workflows:
                   REPO="Freegle/Iznik"
                   curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
                     "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Passed" 2>/dev/null || true
+                  curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+                    "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
                   curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
                     -H "Content-Type: application/json" \
                     -d '{"labels":["CI: Failed"]}' \

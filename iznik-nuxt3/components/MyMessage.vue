@@ -67,17 +67,6 @@
                     :width="400"
                     :height="200"
                   />
-                  <NuxtPicture
-                    v-else-if="message.attachments[0]?.externaluid"
-                    format="webp"
-                    provider="uploadcare"
-                    :src="message.attachments[0].externaluid"
-                    :modifiers="message.attachments[0].externalmods"
-                    alt="Item Photo"
-                    class="photo-image"
-                    :width="400"
-                    :height="200"
-                  />
                   <ProxyImage
                     v-else-if="message.attachments[0]?.path"
                     class-name="photo-image"
@@ -136,31 +125,29 @@
                     </span>
                   </div>
                   <div class="group-row">
-                    <template
-                      v-for="(mg, idx) in messageGroups"
-                      :key="mg.id"
-                    >
-                      <nuxt-link
-                        :to="'/explore/' + mg.nameshort"
-                        class="group-link"
-                        @click.stop
+                    <ShowMore :items="messageGroups" :limit="3" inline>
+                      <template #item="{ item }"
+                        ><v-icon
+                          v-if="item.isHome"
+                          icon="home"
+                          class="me-1 text-muted"
+                          title="Home community (where this was originally posted)"
+                        /><nuxt-link
+                          :to="'/explore/' + item.nameshort"
+                          class="group-link"
+                          @click.stop
+                          >{{ item.namedisplay }}</nuxt-link
+                        ></template
                       >
-                        {{ mg.namedisplay }}
-                      </nuxt-link>
-                      <span
-                        v-if="idx < messageGroups.length - 1"
-                        class="group-time-separator"
-                        >,</span
-                      >
-                    </template>
+                    </ShowMore>
                     <span
                       v-if="messageGroups.length && timeAgoExpandedDisplay"
                       class="group-time-separator"
                       >·</span
                     >
-                    <span v-if="timeAgoExpandedDisplay" class="group-time"
-                      >{{ timeAgoExpandedDisplay }}</span
-                    >
+                    <span v-if="timeAgoExpandedDisplay" class="group-time">{{
+                      timeAgoExpandedDisplay
+                    }}</span>
                     <span class="group-time-separator">·</span>
                     <nuxt-link
                       :to="'/message/' + message.id"
@@ -204,22 +191,21 @@
                     </template>
                     <template v-if="messageGroups.length">
                       <span v-if="message.area" class="desktop-sep">·</span>
-                      <template
-                        v-for="(mg, idx) in messageGroups"
-                        :key="mg.id"
-                      >
-                        <nuxt-link
-                          :to="'/explore/' + mg.nameshort"
-                          class="desktop-group-link"
-                          @click.stop
+                      <ShowMore :items="messageGroups" :limit="3" inline>
+                        <template #item="{ item }"
+                          ><v-icon
+                            v-if="item.isHome"
+                            icon="home"
+                            class="me-1 text-muted"
+                            title="Home community (where this was originally posted)"
+                          /><nuxt-link
+                            :to="'/explore/' + item.nameshort"
+                            class="desktop-group-link"
+                            @click.stop
+                            >{{ item.namedisplay }}</nuxt-link
+                          ></template
                         >
-                          {{ mg.namedisplay }}
-                        </nuxt-link>
-                        <span
-                          v-if="idx < messageGroups.length - 1"
-                          >,
-                        </span>
-                      </template>
+                      </ShowMore>
                     </template>
                     <template v-if="timeAgoExpandedDisplay">
                       <span class="desktop-sep">·</span>
@@ -533,26 +519,27 @@ import { milesAway } from '~/composables/useDistance'
 import { onMounted, ref, computed, watch, useRouter, toRef } from '#imports'
 import { useMe } from '~/composables/useMe'
 import { useMessageDisplay } from '~/composables/useMessageDisplay'
+import { homeGroupFirst, isHomeGroup } from '~/composables/rippleStatus'
 import ProfileImage from '~/components/ProfileImage'
 import MessageTag from '~/components/MessageTag'
 import OurUploadedImage from '~/components/OurUploadedImage'
 
-const MyMessageReply = defineAsyncComponent(() =>
-  import('./MyMessageReply.vue')
+const MyMessageReply = defineAsyncComponent(
+  () => import('./MyMessageReply.vue')
 )
-const MessageShareModal = defineAsyncComponent(() =>
-  import('./MessageShareModal')
+const MessageShareModal = defineAsyncComponent(
+  () => import('./MessageShareModal')
 )
-const NoticeMessage = defineAsyncComponent(() =>
-  import('~/components/NoticeMessage')
+const NoticeMessage = defineAsyncComponent(
+  () => import('~/components/NoticeMessage')
 )
 const OutcomeModal = defineAsyncComponent(() => import('./OutcomeModal'))
-const MessageEditModal = defineAsyncComponent(() =>
-  import('./MessageEditModal')
+const MessageEditModal = defineAsyncComponent(
+  () => import('./MessageEditModal')
 )
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
-const MessagePhotosModal = defineAsyncComponent(() =>
-  import('~/components/MessagePhotosModal')
+const MessagePhotosModal = defineAsyncComponent(
+  () => import('~/components/MessagePhotosModal')
 )
 
 const props = defineProps({
@@ -592,7 +579,6 @@ const {
   message,
   strippedSubject,
   gotAttachments: hasPhoto,
-  timeAgoExpanded,
   timeAgoExpandedDisplay,
   placeholderClass,
   categoryIcon,
@@ -796,28 +782,33 @@ const isPromised = computed(() => {
   return message.value?.promised && !message.value?.outcomes?.length
 })
 
+// The v2 API returns this as `repostat`; V1 called it `canrepostat`. We read the
+// v2 name - reading the V1 name meant this was always undefined, so the
+// "Will auto-repost..." hint never appeared.
 const willAutoRepost = computed(() => {
-  if (taken.value || received.value || !message.value?.canrepostat) {
+  if (taken.value || received.value || !message.value?.repostat) {
     return false
   }
-  return dayjs(message.value.canrepostat).isAfter(dayjs())
+  return dayjs(message.value.repostat).isAfter(dayjs())
 })
 
 const canrepostatago = computed(() => {
-  return message.value?.canrepostat ? timeago(message.value.canrepostat) : null
+  return message.value?.repostat ? timeago(message.value.repostat) : null
 })
 
 const messageGroups = computed(() => {
-  if (message.value?.groups?.length) {
-    return message.value.groups
-      .map((g) => groupStore?.get(g.groupid))
+  const raw = message.value?.groups
+  if (raw?.length) {
+    // List the home/origin group first: the list is truncated (ShowMore), so otherwise
+    // the home group could be hidden behind "more". Flag it for the home icon.
+    return homeGroupFirst(raw)
+      .map((g) => {
+        const grp = groupStore?.get(g.groupid)
+        return grp ? { ...grp, isHome: isHomeGroup(g, raw) } : null
+      })
       .filter(Boolean)
   }
   return []
-})
-
-const messageGroup = computed(() => {
-  return messageGroups.value.length ? messageGroups.value[0] : null
 })
 
 // Methods
@@ -938,12 +929,17 @@ const repost = async (e) => {
 
   // Set the group from the original message so the dropdown shows the correct
   // group rather than falling back to groupsnear[0] or a stale localStorage value.
+  // For multi-group originals, default to the most-recent arrival — the user
+  // can still change it in the compose dropdown.
   if (msg.groups?.length > 0) {
-    composeStore.group = msg.groups[0].groupid
+    const mostRecent = [...msg.groups].sort(
+      (a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0)
+    )[0]
+    composeStore.group = mostRecent.groupid
   }
 
   await composeStore.setAttachmentsForMessage(0, msg.attachments)
-  router.push(msg.type === 'Offer' ? '/give' : '/find')
+  router.push(msg.type === 'Offer' ? '/give' : '/ask')
 }
 
 const hidden = () => {
@@ -1254,7 +1250,8 @@ onMounted(async () => {
   justify-content: center;
 
   &.offer-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 30% 20%,
         rgba(129, 199, 132, 0.9) 0%,
         transparent 50%
@@ -1273,7 +1270,8 @@ onMounted(async () => {
   }
 
   &.wanted-gradient {
-    background: radial-gradient(
+    background:
+      radial-gradient(
         ellipse at 25% 25%,
         rgba(144, 202, 249, 0.9) 0%,
         transparent 45%

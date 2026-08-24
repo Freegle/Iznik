@@ -6,19 +6,12 @@
   >
     <nuxt-link :to="homePage" class="navbar-brand p-0" no-prefetch>
       <OfflineIndicator v-if="!online" />
-      <b-img
-        v-else-if="logoFormat === 'gif'"
-        class="logo me-2"
-        :src="logo"
-        :format="logoFormat"
-        alt="Home"
-      />
       <ProxyImage
         v-else
         preload
         class="logo me-2"
-        :src="logo"
-        :format="logoFormat"
+        src="/icon.png"
+        format="webp"
         alt="Home"
         sizes="58px"
       />
@@ -77,11 +70,11 @@
         </li>
         <li>
           <nuxt-link
-            id="menu-option-find"
+            id="menu-option-ask"
             no-prefetch
             class="nav-link text-center small p-0"
-            to="/find"
-            @mousedown="maybeReload('/find')"
+            to="/ask"
+            @mousedown="maybeReload('/ask')"
           >
             <v-icon icon="shopping-cart" class="fa-2x" />
             <br />
@@ -275,8 +268,6 @@ import { useAuthStore } from '~/stores/auth'
 const {
   online,
   distance,
-  logo,
-  logoFormat,
   unreadNotificationCount,
   chatCount,
   activePostsCount,
@@ -304,12 +295,12 @@ onMounted(() => {
   signInDisabled.value = false
 })
 
-const AboutMeModal = defineAsyncComponent(() =>
-  import('~/components/AboutMeModal')
+const AboutMeModal = defineAsyncComponent(
+  () => import('~/components/AboutMeModal')
 )
 
-const NotificationOptions = defineAsyncComponent(() =>
-  import('~/components/NotificationOptions')
+const NotificationOptions = defineAsyncComponent(
+  () => import('~/components/NotificationOptions')
 )
 
 const loggedIn = computed(() => useAuthStore().user !== null)

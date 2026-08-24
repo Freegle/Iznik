@@ -532,5 +532,4 @@ describe('ModSettingsPersonal', () => {
       await expect(wrapper.vm.saveEmail(callback)).rejects.toThrow()
     })
   })
-
 })

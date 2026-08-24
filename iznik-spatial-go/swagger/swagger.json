@@ -1,0 +1,338 @@
+{
+  "produces": [
+    "application/json"
+  ],
+  "schemes": [
+    "http"
+  ],
+  "swagger": "2.0",
+  "info": {
+    "description": "A spatial API for finding nearby geographic features using K-nearest-neighbour\nand polygon-within queries backed by an in-memory spatial index.",
+    "title": "Freegle Spatial (KNN) API",
+    "version": "1.0.0"
+  },
+  "basePath": "/",
+  "paths": {
+    "/health": {
+      "get": {
+        "description": "Returns the health status of the spatial service.",
+        "tags": [
+          "health"
+        ],
+        "summary": "Health check",
+        "operationId": "spatialHealthCheck",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          }
+        }
+      }
+    },
+    "/v1/datasets": {
+      "get": {
+        "description": "Returns all available datasets with their names, record counts, and readiness status.",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "List datasets",
+        "operationId": "listDatasets",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          }
+        }
+      }
+    },
+    "/v1/rebuild": {
+      "post": {
+        "description": "Triggers an asynchronous full rebuild of every dataset from MySQL.",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Rebuild all datasets (admin)",
+        "operationId": "rebuildAllDatasets",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          }
+        }
+      }
+    },
+    "/v1/{dataset}/knn": {
+      "get": {
+        "description": "Returns the nearest records in a dataset to a given lat/lng point.\nOptionally filtered by feature type and/or a polygon boundary.",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "K-nearest-neighbour query",
+        "operationId": "knnQuery",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Dataset name",
+            "name": "dataset",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude of query point",
+            "name": "lng",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude of query point",
+            "name": "lat",
+            "in": "query",
+            "required": true
+          },
+          {
+            "type": "integer",
+            "description": "Number of results to return (1–1000, default 1)",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "Optional feature-type filter",
+            "name": "type",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "WKT polygon to restrict results to (optional)",
+            "name": "polygon",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "503": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/v1/{dataset}/rebuild": {
+      "post": {
+        "description": "Triggers an asynchronous full rebuild of the named dataset from MySQL.",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Rebuild dataset (admin)",
+        "operationId": "rebuildDataset",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Dataset name",
+            "name": "dataset",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "409": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/v1/{dataset}/remove": {
+      "post": {
+        "description": "Performs an incremental hard-delete of specific record IDs from the spatial index.",
+        "tags": [
+          "admin"
+        ],
+        "summary": "Remove IDs from dataset (admin)",
+        "operationId": "removeDatasetIDs",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Dataset name",
+            "name": "dataset",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "503": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/v1/{dataset}/status": {
+      "get": {
+        "description": "Returns the readiness, record count and last-sync time for a named dataset.",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "Get dataset status",
+        "operationId": "getDatasetStatus",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Dataset name (e.g. locations, messages, userapproxlocs)",
+            "name": "dataset",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/v1/{dataset}/within": {
+      "get": {
+        "description": "Returns the IDs of all records whose geometry falls inside the given WKT polygon.",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "Within polygon — return IDs",
+        "operationId": "withinQuery",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Dataset name",
+            "name": "dataset",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "WKT polygon (required)",
+            "name": "polygon",
+            "in": "query",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "503": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/v1/{dataset}/within_coords": {
+      "get": {
+        "description": "Returns full item objects (including coordinates) for records inside the polygon.\nUse POST for large polygons that exceed URL length limits.",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "Within polygon — return items with coordinates (GET)",
+        "operationId": "withinCoordsGet",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Dataset name",
+            "name": "dataset",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "WKT polygon (required)",
+            "name": "polygon",
+            "in": "query",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "503": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      },
+      "post": {
+        "description": "Same as GET /within_coords but accepts the polygon in the request body to\navoid URL length limits for large isochrone polygons.\nBody may be raw WKT (Content-Type: text/plain) or form-encoded (polygon=WKT).",
+        "tags": [
+          "spatial"
+        ],
+        "summary": "Within polygon — return items with coordinates (POST)",
+        "operationId": "withinCoordsPost",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Dataset name",
+            "name": "dataset",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "503": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    }
+  },
+  "responses": {
+    "errorResponse": {
+      "description": "errorResponse is a JSON error response"
+    },
+    "genericResponse": {
+      "description": "genericResponse is a generic JSON response"
+    }
+  }
+}

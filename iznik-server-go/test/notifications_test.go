@@ -140,3 +140,20 @@ func TestNotificationListRecordsUsersActive(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM users_active WHERE userid = ?", userID).Scan(&count)
 	assert.Equal(t, int64(1), count, "GET /api/notification should insert a users_active row")
 }
+
+func TestNotificationListDoesNotBumpFreshLastaccess(t *testing.T) {
+	// The navbar polls GET /api/notification every 60s. It must NOT write
+	// users.lastaccess on every poll: the auth middleware already maintains
+	// lastaccess with a 10-minute throttle, and an unthrottled same-row UPDATE
+	// sprayed across Galera write hosts causes certification conflicts
+	// (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md, adjacent fix 1).
+	uid, token := CreateFullTestUser(t, uniquePrefix("notif_la"))
+	db := database.DBConn
+	db.Exec("UPDATE users SET lastaccess = DATE_SUB(NOW(), INTERVAL 5 MINUTE) WHERE id = ?", uid)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/notification?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	age := lastaccessAgeSecs(t, uid)
+	assert.GreaterOrEqual(t, age, int64(240), "notification poll must not bump a fresh lastaccess")
+}

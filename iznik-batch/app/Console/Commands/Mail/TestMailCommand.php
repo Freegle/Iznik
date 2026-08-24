@@ -2,17 +2,16 @@
 
 namespace App\Console\Commands\Mail;
 
-use App\Console\Commands\Mail\SendAdminCommand;
 use App\Mail\Admin\AdminMail;
 use App\Mail\Chat\ChatNotification;
 use App\Mail\Digest\UnifiedDigest;
-use App\Services\UnifiedDigestService;
 use App\Mail\Donation\AskForDonation;
 use App\Mail\Donation\DonationThankYou;
 use App\Mail\Message\AutoRepostWarning;
 use App\Mail\Message\ChaseUp;
 use App\Mail\Message\ChaseUpPromised;
 use App\Mail\Message\DeadlineReached;
+use App\Mail\Session\UnsubscribedNotice;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Welcome\WelcomeMail;
 use App\Models\ChatMessage;
@@ -22,7 +21,10 @@ use App\Models\Message;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\StoriesNewsletterService;
+use App\Services\UnifiedDigestService;
+use App\Services\UnsubscribeService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class TestMailCommand extends Command
@@ -41,8 +43,10 @@ class TestMailCommand extends Command
                             {--all-types : Send test emails for all chat message types}
                             {--amp= : Override AMP email setting (on/off, default uses config)}
                             {--as= : For User2Mod chats: "member" or "mod" perspective (default: member)}
-                            {--mode= : Digest mode: immediate (single post) or daily (all recent posts, default)}
                             {--dry-run : Preview email content without sending}
+                            {--matched-count= : For "matched": number of matched posts to preview (1 = hero layout, default 4)}
+                            {--match-reason= : For "matchmail": wanted or search (default wanted)}
+                            {--unsubscribed-type= : For "unsubscribed": which category they unsubscribed from (default digest)}
                             {--list : List available email types}';
 
     /**
@@ -50,15 +54,20 @@ class TestMailCommand extends Command
      */
     protected $description = 'Send test emails without affecting database state';
 
+    /** Recipient and posts buildDigest resolved, so buildMatchMail can reuse them. */
+    protected ?User $digestUser = null;
+
+    protected ?Collection $digestPosts = null;
+
     /**
      * Available email types.
      */
     protected array $emailTypes = [
         'admin' => 'Generic admin email (with local volunteers)',
-        'admin:marketing' => 'Marketing admin email (Little Free Shop template)',
         'chat:user2user' => 'User-to-user chat notification',
         'chat:user2mod' => 'User-to-moderator chat notification',
         'digest' => 'Unified digest email (posts from all communities)',
+        'matchmail' => 'Match mail (one post, sent because the recipient asked for that item). --match-reason sets the opening line, default wanted',
         'donations:ask' => 'Donation request email',
         'donations:thank' => 'Donation thank you email',
         'welcome' => 'Welcome email for new users',
@@ -67,6 +76,9 @@ class TestMailCommand extends Command
         'chaseup-promised' => 'Chase-up promised email (promised variant)',
         'deadline-reached' => 'Deadline reached notification',
         'stories-newsletter' => 'Monthly stories newsletter (real stories from DB, or sample data if none found)',
+        'ripple-intro' => 'Rippling Out intro email (one-off "your post is reaching more people" notice)',
+        'matched' => 'Matched-posts email (opposite-type posts near you that match your open offers/wanteds)',
+        'unsubscribed' => 'Unsubscribe acknowledgement (what we turned off, what is still on). --unsubscribed-type sets the category, default digest',
     ];
 
     /**
@@ -343,11 +355,11 @@ class TestMailCommand extends Command
     protected function buildMailable(string $type): ?\Illuminate\Mail\Mailable
     {
         return match ($type) {
-            'admin' => $this->buildAdmin(FALSE),
-            'admin:marketing' => $this->buildAdmin(TRUE),
+            'admin' => $this->buildAdmin(),
             'chat:user2user' => $this->buildChatNotification(ChatRoom::TYPE_USER2USER),
             'chat:user2mod' => $this->buildChatNotification(ChatRoom::TYPE_USER2MOD),
             'digest' => $this->buildDigest(),
+            'matchmail' => $this->buildMatchMail(),
             'donations:ask' => $this->buildDonationAsk(),
             'donations:thank' => $this->buildDonationThank(),
             'welcome' => $this->buildWelcome(),
@@ -356,18 +368,166 @@ class TestMailCommand extends Command
             'chaseup-promised' => $this->buildChaseUp(true),
             'deadline-reached' => $this->buildDeadlineReached(),
             'stories-newsletter' => $this->buildStoriesNewsletter(),
+            'ripple-intro' => $this->buildRippleIntro(),
+            'matched' => $this->buildMatched(),
+            'unsubscribed' => $this->buildUnsubscribedNotice(),
             default => null,
         };
     }
 
     /**
-     * Build an admin email (generic or marketing).
+     * Build the unsubscribe acknowledgement for preview.
+     *
+     * Shows the real thing: the category the member turned off is applied against their
+     * actual settings, so "what may still reach you" is what would really still reach them.
+     * mail:test unsubscribed --user=ID --send-to=you@... [--unsubscribed-type=digest|all|...]
      */
-    protected function buildAdmin(bool $marketing): ?AdminMail
+    protected function buildUnsubscribedNotice(): ?\Illuminate\Mail\Mailable
+    {
+        $user = $this->findUserWithEmail($this->option('user'));
+        if (! $user) {
+            $this->error('User not found');
+
+            return null;
+        }
+
+        if (empty($user->email_preferred)) {
+            $this->error("User {$user->id} has no email address - pick one who has, or use --to=");
+
+            return null;
+        }
+
+        $type = (string) ($this->option('unsubscribed-type') ?: UnsubscribeService::TYPE_DIGEST);
+
+        if (! UnsubscribeService::isValidType($type)) {
+            $this->error('Unknown category "'.$type.'". One of: '.implode(', ', UnsubscribeService::TYPES));
+
+            return null;
+        }
+
+        // Preview only: work out what this would turn off and what would be left, without
+        // actually changing the member's settings.
+        $service = app(UnsubscribeService::class);
+        $stillOn = $service->stillOn($user);
+        $wouldTurnOff = match ($type) {
+            UnsubscribeService::TYPE_ALL => $stillOn,
+            UnsubscribeService::TYPE_ALL_EXCEPT_REPLIES => array_values(array_diff($stillOn, [UnsubscribeService::TYPE_CHAT])),
+            default => array_values(array_intersect($stillOn, [$type])),
+        };
+        $wouldRemain = array_values(array_diff($stillOn, $wouldTurnOff));
+
+        $this->info("Previewing unsubscribe acknowledgement for {$user->displayname} (ID: {$user->id}), category {$type}");
+
+        return new UnsubscribedNotice(
+            (int) $user->id,
+            $user->email_preferred,
+            $user->displayname,
+            $type,
+            $wouldTurnOff,
+            $wouldRemain
+        );
+    }
+
+    /**
+     * Build the matched-posts email for preview. Uses real recent Offer/Wanted
+     * posts as stand-in "matches" (each with a synthetic reason post of the
+     * opposite type) so the layout can be reviewed in Mailpit without depending on
+     * live apiv2 vector matches. --matched-count controls how many (1 = hero).
+     * mail:test matched --user=ID --send-to=you@... [--matched-count=1]
+     */
+    protected function buildMatched(): ?\App\Mail\Matched\MatchedPosts
+    {
+        $user = $this->findUserWithEmail($this->option('user'));
+        if (! $user) {
+            $this->error('User not found');
+
+            return null;
+        }
+
+        $count = max(1, (int) ($this->option('matched-count') ?: 4));
+
+        $posts = Message::query()
+            ->approved()
+            ->notDeleted()
+            ->whereIn('type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            ->where('fromuser', '!=', $user->id)
+            ->orderByDesc('arrival')
+            ->limit($count)
+            ->with(['attachments', 'fromUser', 'groups'])
+            ->get();
+
+        if ($posts->isEmpty()) {
+            $this->error('No recent Offer/Wanted posts found to preview as matches');
+
+            return null;
+        }
+
+        $this->info("Previewing matched-posts email for {$user->displayname} (ID: {$user->id}) with {$posts->count()} match(es)");
+
+        $items = $posts->map(function (Message $m) {
+            // Synthetic "your own post" of the opposite type so the reason line
+            // reads e.g. "Matches your wanted: <item>".
+            $reason = new Message([
+                'type' => $m->type === 'Offer' ? 'Wanted' : 'Offer',
+                'subject' => ($m->type === 'Offer' ? 'WANTED' : 'OFFER').': '.\App\Services\MatchedPostsService::itemName($m),
+            ]);
+
+            return ['message' => $m, 'reason' => $reason, 'score' => 0.82];
+        })->all();
+
+        $email = $user->email_preferred ?? $user->email;
+
+        return new \App\Mail\Matched\MatchedPosts($user, $email, $items);
+    }
+
+    /**
+     * Build the Rippling Out intro email (one-off "your post is reaching more people" notice).
+     * Use to preview/review the copy in Mailpit: mail:test ripple-intro --user=ID --send-to=you@...
+     */
+    protected function buildRippleIntro(): ?\App\Mail\Ripple\RippleIntroMail
+    {
+        $user = $this->findUserWithEmail($this->option('user'));
+        if (! $user) {
+            return null;
+        }
+
+        $this->info("Generating Rippling Out intro email for user: {$user->displayname} (ID: {$user->id})");
+
+        // Optionally attach one of the user's posts for light context (subject/body only).
+        $message = \App\Models\Message::where('fromuser', $user->id)->latest('id')->first();
+
+        // For preview: show the per-community welcome section using a couple of real groups'
+        // welcome text where available, else sample text, so the layout can be reviewed.
+        $welcomeGroups = DB::table('groups')
+            ->where('onhere', 1)
+            ->whereNotNull('welcomemail')
+            ->where('welcomemail', '<>', '')
+            ->orderByDesc('id')
+            ->limit(2)
+            ->get(['namefull', 'nameshort', 'welcomemail'])
+            ->map(fn ($g) => [
+                'name' => $g->namefull ?: $g->nameshort,
+                'welcome' => $g->welcomemail,
+            ])->all();
+
+        if (empty($welcomeGroups)) {
+            $welcomeGroups = [
+                ['name' => 'Freegle Sampleton', 'welcome' => "Welcome to Freegle Sampleton!\nPlease keep posts local and be kind. Our volunteers are here to help."],
+                ['name' => 'Freegle Exampleford', 'welcome' => "Hi and welcome!\nOffers and Wanteds both welcome - thanks for helping us reuse rather than bin."],
+            ];
+        }
+
+        return new \App\Mail\Ripple\RippleIntroMail($user, $message, $welcomeGroups);
+    }
+
+    /**
+     * Build a generic admin email (with realistic local-volunteer data).
+     */
+    protected function buildAdmin(): ?AdminMail
     {
         $toEmail = $this->option('to');
 
-        if (!$toEmail) {
+        if (! $toEmail) {
             $this->error('Please specify --to=email to find a user');
 
             return null;
@@ -377,7 +537,7 @@ class TestMailCommand extends Command
             $q->where('email', $toEmail);
         })->first();
 
-        if (!$user) {
+        if (! $user) {
             $this->error("No user found with email: {$toEmail}");
 
             return null;
@@ -395,25 +555,19 @@ class TestMailCommand extends Command
 
         // Get real local volunteers for the group.
         $volunteers = $group ? SendAdminCommand::getLocalVolunteers($group->id) : [];
-        $this->info("Found " . count($volunteers) . " local volunteer(s) for {$groupName}");
+        $this->info('Found '.count($volunteers)." local volunteer(s) for {$groupName}");
 
         // Build a realistic admin record.
         $admin = [
             'id' => 0,
             'groupid' => $group->id ?? 0,
-            'subject' => $marketing
-                ? 'Could you help us start a Little Free Shop?'
-                : 'Test admin email from ' . $groupName,
-            'text' => $marketing
-                ? "Dear \$membername,\n\nImagine a place in your neighbourhood where anyone can drop off things they no longer need — and anyone can pick up what they do.\n\nThat's the idea behind the Little Free Shop: a simple, community-run space that makes reuse easy and accessible for everyone.\n\nWe'd love to pilot this in a few areas across the UK, and your donation could help make it happen."
-                : "Hello \$membername,\n\nThis is a test admin email for \$groupname.\n\nYou can contact your local volunteers at \$owneremail.\n\nThank you for freegling!",
-            'ctatext' => $marketing ? 'Donate now' : 'Visit Freegle',
-            'ctalink' => $marketing
-                ? 'https://www.ilovefreegle.org/donate'
-                : 'https://www.ilovefreegle.org',
-            'essential' => FALSE,
+            'subject' => 'Test admin email from '.$groupName,
+            'text' => "Hello \$membername,\n\nThis is a test admin email for \$groupname.\n\nYou can contact your local volunteers at \$owneremail.\n\nThank you for freegling!",
+            'ctatext' => 'Visit Freegle',
+            'ctalink' => 'https://www.ilovefreegle.org',
+            'essential' => false,
             'parentid' => null,
-            'template' => $marketing ? 'little-free-shop-2026' : null,
+            'template' => null,
         ];
 
         // Apply variable substitution like the real send does.
@@ -699,7 +853,7 @@ class TestMailCommand extends Command
             return null;
         }
 
-        $this->info('User is a member of ' . $groupIds->count() . ' groups');
+        $this->info('User is a member of '.$groupIds->count().' groups');
 
         // Get recent messages from those groups.
         $posts = Message::select('messages.*', 'messages_groups.groupid', 'messages_groups.arrival')
@@ -729,11 +883,43 @@ class TestMailCommand extends Command
 
         $this->info("After deduplication: {$deduplicatedPosts->count()} unique posts");
 
-        $mode = $this->option('mode') === 'immediate' ? UnifiedDigestService::MODE_IMMEDIATE : UnifiedDigestService::MODE_DAILY;
-        if ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
-            $deduplicatedPosts = $deduplicatedPosts->take(1);
+        $this->digestUser = $user;
+        $this->digestPosts = $deduplicatedPosts;
+
+        return new UnifiedDigest($user, $deduplicatedPosts, UnifiedDigestService::MODE_DAILY);
+    }
+
+    /**
+     * Build the match mail: one post, sent because the recipient asked for it.
+     *
+     * The same layout the digest uses, narrowed to a single post in immediate
+     * mode and carrying a match reason, which is what MatchMailService produces.
+     * --match-reason picks which line opens it, and the two are worth looking at
+     * side by side: they are the only thing separating this from the digest.
+     * mail:test matchmail --user=ID --send-to=you@... [--match-reason=search]
+     */
+    protected function buildMatchMail(): ?UnifiedDigest
+    {
+        $reason = $this->option('match-reason') ?: 'wanted';
+        if (! in_array($reason, ['wanted', 'search'], true)) {
+            $this->error('--match-reason must be "wanted" or "search"');
+
+            return null;
         }
-        return new UnifiedDigest($user, $deduplicatedPosts, $mode);
+
+        if (! $this->buildDigest()) {
+            return null;
+        }
+
+        $one = $this->digestPosts->take(1);
+        $this->info("Previewing match mail, reason \"{$reason}\": ".$one->first()['message']->subject);
+
+        return new UnifiedDigest(
+            $this->digestUser,
+            $one,
+            UnifiedDigestService::MODE_IMMEDIATE,
+            matchReason: $reason
+        );
     }
 
     /**
@@ -809,7 +995,7 @@ class TestMailCommand extends Command
     protected function buildAutoRepostWarning(): ?AutoRepostWarning
     {
         [$user, $message, $group] = $this->findUserMessageGroup();
-        if (!$user) {
+        if (! $user) {
             return null;
         }
 
@@ -832,7 +1018,7 @@ class TestMailCommand extends Command
     protected function buildChaseUp(bool $promised): ChaseUp|ChaseUpPromised|null
     {
         [$user, $message, $group] = $this->findUserMessageGroup();
-        if (!$user) {
+        if (! $user) {
             return null;
         }
 
@@ -868,7 +1054,7 @@ class TestMailCommand extends Command
     protected function buildDeadlineReached(): ?DeadlineReached
     {
         [$user, $message, $group] = $this->findUserMessageGroup();
-        if (!$user) {
+        if (! $user) {
             return null;
         }
 
@@ -884,7 +1070,7 @@ class TestMailCommand extends Command
     {
         $toEmail = $this->option('to');
 
-        if (!$toEmail) {
+        if (! $toEmail) {
             $this->error('Please specify --to=email to find a user');
 
             return [null, null, null];
@@ -894,7 +1080,7 @@ class TestMailCommand extends Command
             $q->where('email', $toEmail);
         })->first();
 
-        if (!$user) {
+        if (! $user) {
             $this->error("No user found with email: {$toEmail}");
 
             return [null, null, null];
@@ -908,7 +1094,7 @@ class TestMailCommand extends Command
             ->orderBy('arrival', 'desc')
             ->first();
 
-        if (!$message) {
+        if (! $message) {
             $this->error("No messages found for user {$user->id}");
 
             return [null, null, null];
@@ -916,12 +1102,12 @@ class TestMailCommand extends Command
 
         // Get a group the message is on.
         $group = $message->groups->first();
-        if (!$group) {
+        if (! $group) {
             $membership = DB::table('memberships')->where('userid', $user->id)->first();
             $group = $membership ? Group::find($membership->groupid) : null;
         }
 
-        if (!$group) {
+        if (! $group) {
             $this->error('No group found for message or user');
 
             return [null, null, null];
@@ -945,14 +1131,14 @@ class TestMailCommand extends Command
             return null;
         }
 
-        $userSite    = rtrim(config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
+        $userSite = rtrim(config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
         $imageDomain = rtrim(config('freegle.images.domain', ''), '/');
         $tusUploader = rtrim(config('freegle.tus_uploader', ''), '/');
 
         // Try to find the user in the DB for their ID (used for unsubscribe links etc.).
         $dbUser = User::whereHas('emails', fn ($q) => $q->where('email', $toEmail))->first();
         $userId = $dbUser?->id ?? 0;
-        $name   = $dbUser?->displayname ?? 'Freegle Member';
+        $name = $dbUser?->displayname ?? 'Freegle Member';
 
         // Attempt to pull real approved stories (including photos where available).
         $rawStories = DB::table('users_stories')
@@ -985,7 +1171,7 @@ class TestMailCommand extends Command
                 $image = DB::table('users_stories_images')->where('id', $row->photoid)->first();
                 if ($image) {
                     if (! empty($image->externaluid) && str_contains($image->externaluid, 'freegletusd-')) {
-                        $suffix   = substr($image->externaluid, strlen('freegletusd-'));
+                        $suffix = substr($image->externaluid, strlen('freegletusd-'));
                         $photoUrl = "{$tusUploader}/{$suffix}/";
                     } else {
                         $photoUrl = "{$imageDomain}/simg_{$image->id}.jpg";
@@ -994,24 +1180,24 @@ class TestMailCommand extends Command
             }
 
             $storyData[] = [
-                'id'        => $row->id,
-                'headline'  => $story->headline ?? 'A freegling story',
-                'story'     => $story->story ?? 'What a wonderful freegling experience!',
+                'id' => $row->id,
+                'headline' => $story->headline ?? 'A freegling story',
+                'story' => $story->story ?? 'What a wonderful freegling experience!',
                 'groupname' => $groupName,
-                'photo'     => $photoUrl,
+                'photo' => $photoUrl,
             ];
         }
 
         if (count($storyData) < StoriesNewsletterService::MIN_STORIES) {
             $this->warn('Fewer than '.StoriesNewsletterService::MIN_STORIES.' approved stories in DB — using sample data.');
-            $needed    = StoriesNewsletterService::MIN_STORIES - count($storyData);
-            $samples   = array_slice($this->getSampleStories(), 0, $needed);
+            $needed = StoriesNewsletterService::MIN_STORIES - count($storyData);
+            $samples = array_slice($this->getSampleStories(), 0, $needed);
             $storyData = array_merge($storyData, $samples);
         }
 
-        $imgNumber      = rand(1, 5);
+        $imgNumber = rand(1, 5);
         $headerImageUrl = "{$userSite}/images/story{$imgNumber}.png";
-        $preview        = 'This is a selection of recent stories from other freeglers. '
+        $preview = 'This is a selection of recent stories from other freeglers. '
             ."If you can't read the HTML version, have a look at {$userSite}/stories";
 
         $this->info("Building stories newsletter for {$toEmail} with ".count($storyData).' stories');
@@ -1024,7 +1210,7 @@ class TestMailCommand extends Command
             headerImageUrl: $headerImageUrl,
             tellUrl: "{$userSite}/stories?src=storynewsletter",
             giveUrl: "{$userSite}/give?src=storynewsletter",
-            findUrl: "{$userSite}/find?src=storynewsletter",
+            askUrl: "{$userSite}/ask?src=storynewsletter",
             previewText: $preview,
             unsubscribeUrl: "{$userSite}/unsubscribe",
             settingsUrl: "{$userSite}/settings",
@@ -1038,39 +1224,39 @@ class TestMailCommand extends Command
     {
         return [
             [
-                'id'         => 0,
-                'headline'   => 'A sofa found a new home',
-                'story'      => "I was dreading how to dispose of our old sofa until a neighbour on Freegle came to the rescue! Within an hour it was gone, the new owners were over the moon, and I felt great knowing it didn't go to landfill.",
-                'groupname'  => 'FreegleBristol',
-                'photo'      => null,
-                'username'   => 'Sarah M',
+                'id' => 0,
+                'headline' => 'A sofa found a new home',
+                'story' => "I was dreading how to dispose of our old sofa until a neighbour on Freegle came to the rescue! Within an hour it was gone, the new owners were over the moon, and I felt great knowing it didn't go to landfill.",
+                'groupname' => 'FreegleBristol',
+                'photo' => null,
+                'username' => 'Sarah M',
                 'profileurl' => null,
             ],
             [
-                'id'         => 0,
-                'headline'   => 'Baby clothes passed on with love',
-                'story'      => "My little one outgrew her clothes so fast. Thanks to Freegle I found a mum with a newborn who needed exactly what we had. It was so lovely to meet her and know the clothes will be used again.",
-                'groupname'  => 'FreegleManchester',
-                'photo'      => 'https://www.ilovefreegle.org/images/story1.png',
-                'username'   => 'Jo K',
+                'id' => 0,
+                'headline' => 'Baby clothes passed on with love',
+                'story' => 'My little one outgrew her clothes so fast. Thanks to Freegle I found a mum with a newborn who needed exactly what we had. It was so lovely to meet her and know the clothes will be used again.',
+                'groupname' => 'FreegleManchester',
+                'photo' => 'https://www.ilovefreegle.org/images/story1.png',
+                'username' => 'Jo K',
                 'profileurl' => 'https://www.ilovefreegle.org/icon.png',
             ],
             [
-                'id'         => 0,
-                'headline'   => 'Kitchen equipment to the rescue',
-                'story'      => "I put up a request for a slow cooker and had three offers within the day! People on here are so generous. My cooking has improved no end and I've saved loads of money too.",
-                'groupname'  => 'FreegleLondonN',
-                'photo'      => null,
-                'username'   => 'Marcus T',
+                'id' => 0,
+                'headline' => 'Kitchen equipment to the rescue',
+                'story' => "I put up a request for a slow cooker and had three offers within the day! People on here are so generous. My cooking has improved no end and I've saved loads of money too.",
+                'groupname' => 'FreegleLondonN',
+                'photo' => null,
+                'username' => 'Marcus T',
                 'profileurl' => null,
             ],
             [
-                'id'         => 0,
-                'headline'   => 'Garden tools with a second life',
-                'story'      => "Clearing out my late father's shed was emotional, but I'm glad his tools went to someone who'll use them. The new owner sent me a photo of his first vegetable patch — it was beautiful.",
-                'groupname'  => 'FreegleYork',
-                'photo'      => null,
-                'username'   => 'David R',
+                'id' => 0,
+                'headline' => 'Garden tools with a second life',
+                'story' => "Clearing out my late father's shed was emotional, but I'm glad his tools went to someone who'll use them. The new owner sent me a photo of his first vegetable patch — it was beautiful.",
+                'groupname' => 'FreegleYork',
+                'photo' => null,
+                'username' => 'David R',
                 'profileurl' => null,
             ],
         ];

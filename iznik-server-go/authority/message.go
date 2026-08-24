@@ -16,21 +16,17 @@ func Messages(c *fiber.Ctx) error {
 
 	msgs := []message.MessageSummary{}
 
-	db.Raw("SELECT ST_Y(point) AS lat, "+
-		"ST_X(point) AS lng, "+
-		"messages_spatial.msgid AS id, "+
-		"messages_spatial.successful, "+
-		"messages_spatial.promised, "+
-		"messages_spatial.groupid, "+
-		"messages_spatial.msgtype AS type, "+
-		"messages_spatial.arrival, "+
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
-		"FROM messages_spatial "+
-		"INNER JOIN authorities ON ST_Contains(authorities.polygon, point) "+
-		"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
-		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
-		"WHERE authorities.id = ? AND messages_spatial.msgid > 0 "+
-		"ORDER BY unseen DESC, messages_spatial.arrival DESC, messages_spatial.msgid DESC;", myid, utils.MESSAGE_LIKES_VIEW, id).Scan(&msgs)
+	db.Table("messages_spatial").
+		Select("ST_Y(point) AS lat, ST_X(point) AS lng, messages_spatial.msgid AS id, "+
+			"messages_spatial.successful, messages_spatial.promised, messages_spatial.groupid, "+
+			"messages_spatial.msgtype AS type, messages_spatial.arrival, "+
+			"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen").
+		Joins("INNER JOIN authorities ON ST_Contains(authorities.polygon, point)").
+		Joins("INNER JOIN `groups` ON groups.id = messages_spatial.groupid").
+		Joins("LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
+		Where("authorities.id = ? AND messages_spatial.msgid > 0", id).
+		Order("unseen DESC, messages_spatial.arrival DESC, messages_spatial.msgid DESC").
+		Scan(&msgs)
 
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.

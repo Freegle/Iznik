@@ -2,8 +2,13 @@ package test
 
 import (
 	"fmt"
+	"math"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -31,6 +36,11 @@ var app *TestApp
 func init() {
 	// Set environment variables needed for tests
 	os.Setenv("LOVEJUNK_PARTNER_KEY", "testkey123")
+	// Isolate image-delivery URL building from the environment. The apiv2
+	// container sets UPLOADS for runtime (the dev value points at local tusd);
+	// tests must not depend on that, nor on the production default. Pin an
+	// obviously-fake test host and assert image URLs against it (uploads.test).
+	os.Setenv("UPLOADS", "https://uploads.test/")
 
 	app = &TestApp{fiber.New()}
 	app.Use(user.NewAuthMiddleware(user.Config{}))
@@ -104,11 +114,56 @@ func setupLocationTestData() {
 	db.Exec(`INSERT IGNORE INTO locations_spatial (locationid, geometry)
 		VALUES (1000002, ST_GeomFromText('POINT(-3.206000 55.958000)', 3857))`)
 
+	// ClosestPostcode now queries the spatial KNN with no MySQL fallback, but the
+	// spatial server's index isn't reliably populated in the test environment (it
+	// builds from the DB at startup, before this test data exists — see
+	// jobs_test.go). Point the spatial client at a deterministic in-process mock.
+	ensureSpatialMock()
+
 	// PAF addresses for TestAddresses (linked to location 1687412)
 	db.Exec(`INSERT IGNORE INTO paf_addresses (id, postcodeid, udprn) VALUES (102367696, 1687412, 50464672)`)
 
 	// LoveJunk partner key for TestCreateChatMessageLoveJunk
 	db.Exec("INSERT IGNORE INTO partners_keys (partner, `key`) VALUES ('lovejunk', 'testkey123')")
+}
+
+var spatialMockOnce sync.Once
+
+// ensureSpatialMock points the spatial client (SPATIAL_KNN_URL) at an in-process
+// server that answers /v1/postcodes/knn with the nearest of the test postcodes
+// and returns empty for every other dataset. This keeps ClosestPostcode
+// deterministic without depending on a live, populated spatial server, which the
+// test environment doesn't provide.
+func ensureSpatialMock() {
+	spatialMockOnce.Do(func() {
+		type pc struct {
+			id       int64
+			lng, lat float64
+		}
+		pts := []pc{
+			{1000001, -3.205333, 55.957571},
+			{1000002, -3.206000, 55.958000},
+			{1687412, -4.939858, 52.006292},
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.Contains(r.URL.Path, "/postcodes/knn") {
+				lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+				lng, _ := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
+				best, bestD := int64(0), math.MaxFloat64
+				for _, p := range pts {
+					d := (p.lng-lng)*(p.lng-lng) + (p.lat-lat)*(p.lat-lat)
+					if d < bestD {
+						bestD, best = d, p.id
+					}
+				}
+				fmt.Fprintf(w, `{"results":[{"id":%d,"distance":%g}]}`, best, bestD)
+				return
+			}
+			w.Write([]byte(`{"results":[],"ids":[]}`))
+		}))
+		os.Setenv("SPATIAL_KNN_URL", srv.URL)
+	})
 }
 
 // verifyRequiredTables checks that tables created by Laravel migrations exist.

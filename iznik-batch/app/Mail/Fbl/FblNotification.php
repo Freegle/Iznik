@@ -19,6 +19,14 @@ class FblNotification extends MjmlMailable
         parent::__construct();
     }
 
+    /**
+     * Transactional - tells them we have already turned their email off - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id;

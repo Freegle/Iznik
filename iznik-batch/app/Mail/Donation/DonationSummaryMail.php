@@ -13,6 +13,14 @@ use Illuminate\Mail\Mailables\Envelope;
  */
 class DonationSummaryMail extends MjmlMailable
 {
+    /**
+     * Transactional - an internal donations report - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         public readonly string $recipientEmail,
         public readonly string $htmlContent,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -13,9 +14,12 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	geo "github.com/kellydunn/golang-geo"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const TYPE_POSTCODE = "Postcode"
@@ -41,54 +45,32 @@ type Location struct {
 	Dist       float32        `json:"dist" gorm:"-"`
 }
 
+// ClosestPostcode returns the nearest full postcode to a point via the spatial
+// server's "postcodes" KNN dataset. Returns a zero Location if the spatial
+// server has nothing nearby or is unreachable.
 func ClosestPostcode(lat float32, lng float32) Location {
-	// We use our spatial index to narrow down the locations to search through; we start off very close to the
-	// point and work outwards. That way in densely postcoded areas we have a fast query, and in less dense
-	// areas we have some queries which are quick but don't return anything.
-	var scan = float32(0.00001953125)
-	var loc Location
-
-	db := database.DBConn
-
-	for {
-		swlat := lat - scan
-		swlng := lng - scan
-		nelat := lat + scan
-		nelng := lng + scan
-
-		var locs []Location
-
-		db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, "+
-			"ST_distance(locations_spatial.geometry, ST_SRID(POINT(?, ?), ?)) AS dist "+
-			"FROM locations_spatial INNER JOIN locations l1 ON l1.id = locations_spatial.locationid "+
-			"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-			"WHERE MBRContains(ST_Envelope(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)), locations_spatial.geometry) AND "+
-			"l1.type = ? "+
-			"ORDER BY dist ASC, CASE WHEN ST_Dimension(locations_spatial.geometry) < 2 THEN 0 ELSE ST_AREA(locations_spatial.geometry) END ASC LIMIT 1;",
-			lng,
-			lat,
-			utils.SRID,
-			swlng, swlat,
-			swlng, nelat,
-			nelng, nelat,
-			nelng, swlat,
-			swlng, swlat,
-			utils.SRID,
-			utils.LOCATION_TYPE_POSTCODE,
-		).Scan(&locs)
-
-		if len(locs) > 0 {
-			loc = locs[0]
-			break
-		} else {
-			scan = scan * 2
-
-			if scan > 0.2 {
-				break
-			}
-		}
+	// (0,0) is the codebase-wide "location unknown" sentinel (e.g. GetLatLng
+	// returns it for a user with no derivable location). It sits in the Atlantic
+	// off Africa, so a UK KNN would still return *some* postcode (the nearest,
+	// however far) — the old expanding-bbox lookup returned empty here. Preserve
+	// that: no location in, no postcode out. (lng=0 alone is valid — the Greenwich
+	// meridian crosses the UK — so only the both-zero sentinel is excluded.)
+	if lat == 0 && lng == 0 {
+		return Location{}
 	}
 
+	results, err := spatial.KNN("postcodes", float64(lng), float64(lat), 1, "")
+	if err != nil || len(results) == 0 {
+		return Location{}
+	}
+
+	id := results[0].ID
+	var loc Location
+	database.DBConn.Table("locations l1").
+		Select("l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname").
+		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+		Where("l1.id = ?", id).
+		Scan(&loc)
 	return loc
 }
 
@@ -134,28 +116,56 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 	// This reduces latency significantly, even though it's a bit mean to the database server.
 	db := database.DBConn
 
+	// If this point lies inside one or more group polygons, those are the correct groups —
+	// polygon containment is authoritative and beats any centre-distance heuristic.  This
+	// matches the V1 PHP groupsNear() behaviour and fixes bug #9518, where a group with a
+	// close centre but non-containing polygon was returned instead of the large group whose
+	// polygon actually contains the point.  The radius-stepping search below filters on the
+	// group centre distance (HAVING hav < currradius), so a containing group whose centre is
+	// far away would otherwise be dropped entirely.
+	containing := []ClosestGroup{}
+	db.Table("groups").
+		Select("id, nameshort, namefull, ontn, settings, 0 AS dist, "+
+			"haversine(lat, lng, ?, ?) AS hav, "+
+			"CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2",
+			lat, lng, lat, lng).
+		Where("ST_Contains(polyindex, ST_SRID(POINT(?, ?), ?)) AND publish = 1 AND listable = 1", lng, lat, utils.SRID).
+		Order("hav ASC, external ASC").
+		Limit(limit).
+		Scan(&containing)
+
+	if len(containing) > 0 {
+		for i, r := range containing {
+			if len(r.Namefull) > 0 {
+				containing[i].Namedisplay = r.Namefull
+			} else {
+				containing[i].Namedisplay = r.Nameshort
+			}
+		}
+		return containing
+	}
+
 	var currradius = math.Round(float64(radius)/16.0 + 0.5)
 	results := []ClosestGroup{}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	count := 0
 
+	// Every band's query must complete before we can trust `results`: a group's
+	// "hav" (distance to its registered centre) gates which band can see it at
+	// all, independent of "dist" (distance to its actual polygon boundary), which
+	// is what determines "nearest" for ranking. A large or awkwardly-shaped group
+	// can have a polygon boundary very close to the point while its registered
+	// centre is comparatively far away, so it is only discoverable via a wider
+	// (and slower) band. Stopping as soon as any one band alone had accumulated
+	// `limit` candidates - as this used to do - could return before a still-running
+	// wider band completed, silently dropping a genuinely nearer group in favour of
+	// worse-but-faster-to-find ones (Discourse #9905).
 	for {
-		count++
-		currradius = currradius * 2
+		wg.Add(1)
 
-		if currradius >= radius {
-			break
-		}
-	}
-
-	currradius = math.Round(float64(radius)/16.0 + 0.5)
-	wg.Add(1)
-
-	done := false
-
-	for {
 		go func(currradius float64) {
+			defer wg.Done()
+
 			batch := []ClosestGroup{}
 			var nelat, nelng, swlat, swlng float64
 			p := geo.NewPoint(lat, lng)
@@ -166,61 +176,37 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 			swlat = sw.Lat()
 			swlng = sw.Lng()
 
-			db.Raw("SELECT id, nameshort, namefull, ontn, settings, "+
-				"ST_distance(ST_SRID(POINT(?, ?), ?), polyindex) * 111195 * 0.000621371 AS dist, "+
-				"haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 FROM `groups` WHERE "+
-				"MBRIntersects(polyindex, ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)) "+
-				"AND publish = 1 AND listable = 1 HAVING (hav IS NOT NULL AND hav < ? OR hav2 IS NOT NULL AND hav2 < ?) ORDER BY dist ASC, hav ASC, external ASC LIMIT ?;",
-				lng,
-				lat,
-				utils.SRID,
-				lat,
-				lng,
-				lat,
-				lng,
-				swlng, swlat,
-				swlng, nelat,
-				nelng, nelat,
-				nelng, swlat,
-				swlng, swlat,
-				utils.SRID,
-				currradius,
-				currradius,
-				limit).Scan(&batch)
+			// No .Group() call: clause/group_by.go's GroupBy.Build() writes
+			// nothing for an empty Columns list and Clause.Build() skips the
+			// "GROUP BY " name prefix when MergeClause left it "" (which it
+			// does for zero columns), so .Having() alone renders a bare
+			// "HAVING (...)" with no "GROUP BY" before it - matching this
+			// golden, which has none.
+			db.Table("groups").
+				Select("id, nameshort, namefull, ontn, settings, "+
+					"ST_distance(ST_SRID(POINT(?, ?), ?), polyindex) * 111195 * 0.000621371 AS dist, "+
+					"haversine(lat, lng, ?, ?) AS hav, CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2",
+					lng, lat, utils.SRID, lat, lng, lat, lng).
+				Where("MBRIntersects(polyindex, ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)) "+
+					"AND publish = 1 AND listable = 1",
+					swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat, utils.SRID).
+				Having("(hav IS NOT NULL AND hav < ? OR hav2 IS NOT NULL AND hav2 < ?)", currradius, currradius).
+				Order("dist ASC, hav ASC, external ASC").
+				Limit(limit).
+				Scan(&batch)
 
-			mu.Lock()
-			defer mu.Unlock()
-
-			count--
-
-			if len(results) < limit {
-				if len(batch) > 0 {
-					// We found some.
-					for i, r := range batch {
-						if len(r.Namefull) > 0 {
-							batch[i].Namedisplay = r.Namefull
-						} else {
-							batch[i].Namedisplay = r.Nameshort
-						}
-					}
-
-					results = append(results, batch...)
-
-					if len(results) >= limit {
-						if !done {
-							done = true
-							defer wg.Done()
-						}
+			if len(batch) > 0 {
+				for i, r := range batch {
+					if len(r.Namefull) > 0 {
+						batch[i].Namedisplay = r.Namefull
+					} else {
+						batch[i].Namedisplay = r.Nameshort
 					}
 				}
 
-				if count == 0 {
-					// We've run out of areas to search.
-					if !done {
-						done = true
-						defer wg.Done()
-					}
-				}
+				mu.Lock()
+				results = append(results, batch...)
+				mu.Unlock()
 			}
 		}(currradius)
 
@@ -269,13 +255,12 @@ func FetchSingle(id uint64) *Location {
 
 	var location Location
 
-	db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l2.name as areaname "+
-		"FROM locations l1 "+
-		"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-		"WHERE l1.id = ? "+
-		"LIMIT 1;",
-		id,
-	).Scan(&location)
+	db.Table("locations l1").
+		Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l2.name as areaname").
+		Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+		Where("l1.id = ?", id).
+		Limit(1).
+		Scan(&location)
 
 	// Return nil when location doesn't exist.
 	if location.ID == 0 {
@@ -315,7 +300,42 @@ func LatLng(c *fiber.Ctx) error {
 	lng, _ := strconv.ParseFloat(c.Query("lng"), 32)
 
 	loc := ClosestPostcode(float32(lat), float32(lng))
-	loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
+	if loc.ID > 0 {
+		loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
+	}
+
+	return c.JSON(loc)
+}
+
+// Resolve looks up a place by its EXACT name and returns the single best-matching
+// location, so a term the item search can't satisfy — a county/town/postcode such as
+// "Hertfordshire", "London" or "L30" — can be offered to the user as "search for items
+// near <place>" instead of a dead-end zero-results page.
+//
+// Prefers an area Polygon (best area centroid), then a full Postcode, then lesser
+// geometry types. Intended to be called ONLY when an item search returned nothing, so
+// item words that happen to also be place names ("Shed", "Mosaic") never reach here —
+// those return plenty of item results and so are never offered as a location. 404 when
+// the name is not a known place.
+func Resolve(c *fiber.Ctx) error {
+	name := strings.TrimSpace(c.Query("name"))
+	if name == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "No name")
+	}
+
+	db := database.DBConn
+
+	var loc Location
+	db.Table("locations").
+		Select("id, name, type, lat, lng, areaid").
+		Where("name = ?", name).
+		Order("FIELD(type, 'Polygon', 'Postcode', 'Road', 'Line', 'Point'), id").
+		Limit(1).
+		Scan(&loc)
+
+	if loc.ID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "No matching place")
+	}
 
 	return c.JSON(loc)
 }
@@ -380,11 +400,6 @@ func SearchLocations(c *fiber.Ctx) error {
 			limit = 100
 		}
 
-		pcq := ""
-		if pconly {
-			pcq = "AND l1.type = '" + TYPE_POSTCODE + "'"
-		}
-
 		locations := []Location{}
 		db := database.DBConn
 
@@ -394,13 +409,19 @@ func SearchLocations(c *fiber.Ctx) error {
 			AreaLng float32 `json:"-" gorm:"column:arealng"`
 		}
 
+		// pcq is only
+		// appended when pconly is set, so this statement has exactly 2
+		// possible rendered forms, both proven by the retired ormharness
+		// (shapes.json / TestTier3Shapes_b262bf75df3c, removed in d22ba1d6c).
 		var locs []locationWithArea
-		db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng "+
-			"FROM locations l1 "+
-			"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-			"WHERE l1.name LIKE ? "+pcq+" AND l1.name LIKE '% %' LIMIT ?;",
-			typeaheadStr+"%",
-			limit).Scan(&locs)
+		txb262bf75df3c := db.Table("locations l1").
+			Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
+			Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+			Where("l1.name LIKE ?", typeaheadStr+"%")
+		if pconly {
+			txb262bf75df3c = txb262bf75df3c.Where("l1.type = '" + TYPE_POSTCODE + "'")
+		}
+		txb262bf75df3c.Where("l1.name LIKE '% %'").Limit(int(limit)).Scan(&locs)
 
 		for i, l := range locs {
 			locations = append(locations, l.Location)
@@ -444,26 +465,33 @@ func SearchLocations(c *fiber.Ctx) error {
 			db := database.DBConn
 			var boxLocs []BoxLocation
 
-			db.Raw("SELECT DISTINCT l.id, l.name, l.type, l.lat, l.lng, l.areaid, "+
-				"ST_AsText("+
-				"CASE WHEN ST_Simplify(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END, 0.001) IS NULL "+
-				"THEN CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END "+
-				"ELSE ST_Simplify(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END, 0.001) "+
-				"END) AS polygon "+
-				"FROM (SELECT DISTINCT locationid FROM locations_spatial "+
+			// Return the full-resolution geometry (ourgeometry override if present, else geometry).
+			// This bbox query feeds ONLY the ModTools area-boundary editor (the sole caller passing a
+			// bounding box). Applying ST_Simplify(...,0.001) (~111 m) here silently dropped a freshly
+			// dragged midpoint vertex on reload, so the edit looked unsaved and adjacent vertices could
+			// vanish (Discourse #9770). The write side already stores full detail; the editor needs to
+			// read it back at full detail too. Edited areas are small neighbourhood polygons, so the
+			// payload cost of dropping simplification here is negligible.
+			// .Table() accepts args when the name has embedded "?"s (same
+			// mechanism as a plain literal table name), so the derived-table
+			// subquery and its own bind travel together in the FROM clause -
+			// before the LIMIT and the (bindless) Joins/Where that follow it.
+			db.Table("(SELECT DISTINCT locationid FROM locations_spatial "+
 				"INNER JOIN locations l2 ON l2.areaid = locations_spatial.locationid "+
 				"WHERE ST_Intersects(locations_spatial.geometry, "+
 				"ST_GeomFromText(?, ?)) "+
-				"AND l2.type = ?) ls "+
-				"INNER JOIN locations l ON l.id = ls.locationid "+
-				"LEFT JOIN locations_excluded ON ls.locationid = locations_excluded.locationid "+
-				"WHERE locations_excluded.locationid IS NULL "+
-				"LIMIT 500;",
+				"AND l2.type = ?) ls",
 				fmt.Sprintf("POLYGON((%f %f, %f %f, %f %f, %f %f, %f %f))",
 					swlng, swlat, nelng, swlat, nelng, nelat, swlng, nelat, swlng, swlat),
 				utils.SRID,
-				utils.LOCATION_TYPE_POSTCODE,
-			).Scan(&boxLocs)
+				utils.LOCATION_TYPE_POSTCODE).
+				Select("DISTINCT l.id, l.name, l.type, l.lat, l.lng, l.areaid, " +
+					"ST_AsText(CASE WHEN l.ourgeometry IS NOT NULL THEN l.ourgeometry ELSE l.geometry END) AS polygon").
+				Joins("INNER JOIN locations l ON l.id = ls.locationid").
+				Joins("LEFT JOIN locations_excluded ON ls.locationid = locations_excluded.locationid").
+				Where("locations_excluded.locationid IS NULL").
+				Limit(500).
+				Scan(&boxLocs)
 
 			// Handle POINT geometries - convert to small polygons.
 			for i, loc := range boxLocs {
@@ -486,15 +514,14 @@ func SearchLocations(c *fiber.Ctx) error {
 		if dodgyFlag {
 			db := database.DBConn
 			var dodgyLocs []DodgyLocation
-			db.Raw("SELECT ld.locationid, ld.oldlocationid, ld.newlocationid, ld.lat, ld.lng, "+
-				"l0.name AS name, l1.name AS oldname, l2.name AS newname "+
-				"FROM locations_dodgy ld "+
-				"INNER JOIN locations l0 ON l0.id = ld.locationid "+
-				"INNER JOIN locations l1 ON l1.id = ld.oldlocationid "+
-				"INNER JOIN locations l2 ON l2.id = ld.newlocationid "+
-				"WHERE ld.lat BETWEEN ? AND ? AND ld.lng BETWEEN ? AND ?;",
-				swlat, nelat, swlng, nelng,
-			).Scan(&dodgyLocs)
+			db.Table("locations_dodgy ld").
+				Select("ld.locationid, ld.oldlocationid, ld.newlocationid, ld.lat, ld.lng, "+
+					"l0.name AS name, l1.name AS oldname, l2.name AS newname").
+				Joins("INNER JOIN locations l0 ON l0.id = ld.locationid").
+				Joins("INNER JOIN locations l1 ON l1.id = ld.oldlocationid").
+				Joins("INNER JOIN locations l2 ON l2.id = ld.newlocationid").
+				Where("ld.lat BETWEEN ? AND ? AND ld.lng BETWEEN ? AND ?", swlat, nelat, swlng, nelng).
+				Scan(&dodgyLocs)
 
 			if dodgyLocs == nil {
 				dodgyLocs = []DodgyLocation{}
@@ -519,12 +546,6 @@ func Typeahead(c *fiber.Ctx) error {
 	typeahead := c.Query("q")
 	pconly := c.QueryBool("pconly", true)
 
-	pcq := ""
-
-	if pconly {
-		pcq = "AND l1.type = '" + TYPE_POSTCODE + "'"
-	}
-
 	// We want to select full postcodes (with a space in them).
 	typeahead = strings.ReplaceAll(typeahead, `\s`, "")
 
@@ -539,13 +560,20 @@ func Typeahead(c *fiber.Ctx) error {
 			AreaLng float32 `json:"-" gorm:"column:arealng"`
 		}
 
+		// Shares
+		// SearchLocations's pattern: pcq is only appended when pconly is set,
+		// so this statement has exactly 2 possible rendered forms, both
+		// proven by the retired ormharness (shapes.json /
+		// TestTier3Shapes_71f1772f4a99, removed in d22ba1d6c).
 		var locs []locationWithArea
-		db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng "+
-			"FROM locations l1 "+
-			"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
-			"WHERE l1.name LIKE ? "+pcq+" AND l1.name LIKE '% %' LIMIT ?;",
-			typeahead+"%",
-			limit64).Scan(&locs)
+		tx71f1772f4a99 := db.Table("locations l1").
+			Select("l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, l2.lat as arealat, l2.lng as arealng").
+			Joins("LEFT JOIN locations l2 ON l2.id = l1.areaid").
+			Where("l1.name LIKE ?", typeahead+"%")
+		if pconly {
+			tx71f1772f4a99 = tx71f1772f4a99.Where("l1.type = '" + TYPE_POSTCODE + "'")
+		}
+		tx71f1772f4a99.Where("l1.name LIKE '% %'").Limit(int(limit64)).Scan(&locs)
 
 		for i, l := range locs {
 			locations = append(locations, l.Location)
@@ -605,37 +633,38 @@ func GetLocationAddresses(c *fiber.Ctx) error {
 			var addresses []Address
 			db := database.DBConn
 
-			db.Raw("SELECT paf_addresses.id,"+
-				"locations.name as postcode, "+
-				"buildingname, "+
-				"buildingnumber, "+
-				"p.subbuildingname, "+
-				"departmentname, "+
-				"dependentlocality, "+
-				"doubledependentlocality, "+
-				"dependentthoroughfaredescriptor, "+
-				"organisationname, "+
-				"suorganisationindicator, "+
-				"deliverypointsuffix, "+
-				"udprn, "+
-				"posttown, "+
-				"postcodetype, "+
-				"pobox, "+
-				"thoroughfaredescriptor "+
-				"FROM paf_addresses "+
-				"INNER JOIN locations ON locations.id = paf_addresses.postcodeid "+
-				"LEFT JOIN paf_buildingname ON buildingnameid = paf_buildingname.id "+
-				"LEFT JOIN paf_subbuildingname ON subbuildingnameid = paf_subbuildingname.id "+
-				"LEFT JOIN paf_departmentname ON departmentnameid = paf_departmentname.id "+
-				"LEFT JOIN paf_dependentlocality ON dependentlocalityid = paf_dependentlocality.id "+
-				"LEFT JOIN paf_doubledependentlocality ON doubledependentlocalityid = paf_doubledependentlocality.id "+
-				"LEFT JOIN paf_dependentthoroughfaredescriptor ON dependentthoroughfaredescriptorid = paf_dependentthoroughfaredescriptor.id "+
-				"LEFT JOIN paf_organisationname ON organisationnameid = paf_organisationname.id "+
-				"LEFT JOIN paf_pobox ON poboxid = paf_pobox.id "+
-				"LEFT JOIN paf_posttown ON posttownid = paf_posttown.id "+
-				"LEFT JOIN paf_subbuildingname p ON subbuildingnameid = p.id "+
-				"LEFT JOIN paf_thoroughfaredescriptor ON thoroughfaredescriptorid = paf_thoroughfaredescriptor.id "+
-				"WHERE paf_addresses.postcodeid = ?;", id).Scan(&addresses)
+			db.Table("paf_addresses").
+				Select("paf_addresses.id,"+
+					"locations.name as postcode, "+
+					"buildingname, "+
+					"buildingnumber, "+
+					"p.subbuildingname, "+
+					"departmentname, "+
+					"dependentlocality, "+
+					"doubledependentlocality, "+
+					"dependentthoroughfaredescriptor, "+
+					"organisationname, "+
+					"suorganisationindicator, "+
+					"deliverypointsuffix, "+
+					"udprn, "+
+					"posttown, "+
+					"postcodetype, "+
+					"pobox, "+
+					"thoroughfaredescriptor").
+				Joins("INNER JOIN locations ON locations.id = paf_addresses.postcodeid").
+				Joins("LEFT JOIN paf_buildingname ON buildingnameid = paf_buildingname.id").
+				Joins("LEFT JOIN paf_subbuildingname ON subbuildingnameid = paf_subbuildingname.id").
+				Joins("LEFT JOIN paf_departmentname ON departmentnameid = paf_departmentname.id").
+				Joins("LEFT JOIN paf_dependentlocality ON dependentlocalityid = paf_dependentlocality.id").
+				Joins("LEFT JOIN paf_doubledependentlocality ON doubledependentlocalityid = paf_doubledependentlocality.id").
+				Joins("LEFT JOIN paf_dependentthoroughfaredescriptor ON dependentthoroughfaredescriptorid = paf_dependentthoroughfaredescriptor.id").
+				Joins("LEFT JOIN paf_organisationname ON organisationnameid = paf_organisationname.id").
+				Joins("LEFT JOIN paf_pobox ON poboxid = paf_pobox.id").
+				Joins("LEFT JOIN paf_posttown ON posttownid = paf_posttown.id").
+				Joins("LEFT JOIN paf_subbuildingname p ON subbuildingnameid = p.id").
+				Joins("LEFT JOIN paf_thoroughfaredescriptor ON thoroughfaredescriptorid = paf_thoroughfaredescriptor.id").
+				Where("paf_addresses.postcodeid = ?", id).
+				Scan(&addresses)
 
 			// If buildingnumber is the same as buildingname, remove buildingnumber - this happens and causes dups.
 			for i, address := range addresses {
@@ -688,38 +717,56 @@ func CreateLocation(c *fiber.Ctx) error {
 	canon := strings.ToLower(req.Name)
 
 	db := database.DBConn
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	// GORM's map-Create
+	// reads the id back from the same sql.Result the INSERT returned (under
+	// the map key "@id"), the same write-connection guarantee the old
+	// sqlDB.Exec()+LastInsertId() call had. SRID folded into the gorm.Expr
+	// string via fmt.Sprintf, the same idiom this function's own
+	// locations_spatial REPLACE a few lines below (site 25b7b92e33fd) uses.
+	row := map[string]interface{}{
+		"name":       req.Name,
+		"type":       gorm.Expr("'Polygon'"),
+		"geometry":   gorm.Expr(fmt.Sprintf("ST_GeomFromText(?, %d)", utils.SRID), req.Polygon),
+		"canon":      canon,
+		"popularity": gorm.Expr("0"),
 	}
-	sqlResult, err := sqlDB.Exec(
-		fmt.Sprintf("INSERT INTO locations (name, type, geometry, canon, popularity) VALUES (?, 'Polygon', ST_GeomFromText(?, %d), ?, 0)", utils.SRID),
-		req.Name, req.Polygon, canon,
-	)
-
-	if err != nil {
+	if err := db.Table("locations").Create(row).Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create location")
 	}
 
 	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
+	if idInt64, ok := row["@id"].(int64); ok && idInt64 > 0 {
+		id = uint64(idInt64)
 	}
 
-	// Sync to PostgreSQL spatial index (required by PostcodeRemapService).
 	if id > 0 {
-		db.Exec(
-			fmt.Sprintf("REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, %d))", utils.SRID),
-			id, req.Polygon,
-		)
-	}
+		// Sync to the spatial index table (required by PostcodeRemapService).
+		// utils.SRID is spliced as a
+		// literal into the gorm.Expr SQL text, matching exactly what the
+		// original fmt.Sprintf produced, rather than bound as "?" - the
+		// recorded golden is the literal-spliced form (manifest.json's
+		// dynamic:true "%d" placeholder resolved to utils.SRID's value).
+		db.Table("locations_spatial").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{
+				"locationid": id,
+				"geometry":   gorm.Expr(fmt.Sprintf("ST_GeomFromText(?, %d)", utils.SRID), req.Polygon),
+			})
 
-	// Queue postcode remapping for the new area.
-	if id > 0 {
+		// Cache centroid and max dimension, as UpdateLocation does. Without this a
+		// created area has NULL lat/lng, unlike every edited one.
+		db.Table("locations").Where("id = ?", id).Updates(map[string]interface{}{
+			"maxdimension": gorm.Expr("GetMaxDimension(geometry)"),
+			"lat":          gorm.Expr("ST_Y(ST_Centroid(geometry))"),
+			"lng":          gorm.Expr("ST_X(ST_Centroid(geometry))"),
+		})
+
+		// Put the new area into the spatial KNN index before the remap below runs,
+		// otherwise the remap can't find it and the area gets no postcodes.
+		if err := spatial.UpsertLocation(id, req.Polygon, req.Name, "Polygon"); err != nil {
+			log.Printf("CreateLocation: spatial upsert of %d failed, postcodes may not remap until the next delta sync: %v", id, err)
+		}
+
+		// Queue postcode remapping for the new area.
 		go queue.QueueTask(queue.TaskRemapPostcodes, map[string]interface{}{
 			"location_id": id,
 			"polygon":     req.Polygon,
@@ -760,19 +807,29 @@ func UpdateLocation(c *fiber.Ctx) error {
 	if req.Polygon != nil && *req.Polygon != "" {
 		// Validate geometry first.
 		var valid bool
-		db.Raw(fmt.Sprintf("SELECT ST_IsValid(ST_GeomFromText(?, %d)) AS valid", utils.SRID), *req.Polygon).Scan(&valid)
+		// Same bare-scalar-SELECT technique as group.go's validateGeometry
+		// (site 6d0982e798b5): Statement.BuildClauses={"SELECT"} suppresses
+		// GORM's automatic FROM. SRID is folded into the Select() string via
+		// fmt.Sprintf, matching the shipped gorm.Expr(fmt.Sprintf(...)) idiom
+		// this same function's locations_spatial REPLACE already uses below
+		// (site 6f1d6543e5c0). .Table(...) is required even though it never
+		// renders - without it GORM's schema-parse-failure branch rejects the
+		// statement for having no table set.
+		tx := db.Table("locations").Select(fmt.Sprintf("ST_IsValid(ST_GeomFromText(?, %d)) AS valid", utils.SRID), *req.Polygon)
+		tx.Statement.BuildClauses = []string{"SELECT"}
+		tx.Scan(&valid)
 
 		if !valid {
 			return fiber.NewError(fiber.StatusBadRequest, "Invalid geometry")
 		}
 
-		// Simplify the polygon to reduce complexity, matching V1 behaviour.
-		var simplified string
-		db.Raw(fmt.Sprintf("SELECT ST_AsText(ST_Simplify(ST_GeomFromText(?, %d), 0.001)) AS simplified", utils.SRID), *req.Polygon).Scan(&simplified)
-
-		if simplified != "" {
-			req.Polygon = &simplified
-		}
+		// Note: V1 PHP called ST_Simplify(polygon, 0.001) here before saving. That 0.001-degree
+		// (~111 m) Douglas-Peucker pass silently dropped any new vertex placed within ~111 m of the
+		// line between its neighbours — exactly what happens when a user drags a geoman midpoint
+		// marker (the new point starts on the original edge and may be moved only a short distance).
+		// Result: the vertex the user just placed was discarded on every Save (Discourse #9770).
+		// We deliberately skip write-time simplification here to preserve user intent.
+		// The SELECT queries above still use ST_Simplify for display-only rendering, which is fine.
 
 		// Capture old geometry and compute union with new for remap scope (matching V1).
 		// If old and new intersect, remap the union (covers both). If separate, remap both.
@@ -781,37 +838,69 @@ func UpdateLocation(c *fiber.Ctx) error {
 			Unioned     *string
 		}
 		var oldGeom OldGeom
-		db.Raw(fmt.Sprintf(`SELECT
-			ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END) AS old_geometry,
-			CASE WHEN ST_Intersects(
-				CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END,
-				ST_GeomFromText(?, %d))
-			THEN ST_AsText(ST_UNION(
-				CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END,
-				ST_GeomFromText(?, %d)))
-			ELSE NULL
-			END AS unioned
-			FROM locations WHERE id = ?`, utils.SRID, utils.SRID),
-			*req.Polygon, *req.Polygon, req.ID).Scan(&oldGeom)
+		// Not a SQL
+		// UNION - ST_UNION() is a geometry function inside one ordinary SELECT
+		// - so this needed no BuildClauses override, just the same
+		// fmt.Sprintf-folded-SRID technique as this function's other two
+		// sites (745c0a9ca82e, aa63c688e6b1).
+		db.Table("locations").
+			Select(fmt.Sprintf(`ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END) AS old_geometry,
+				CASE WHEN ST_Intersects(
+					CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END,
+					ST_GeomFromText(?, %d))
+				THEN ST_AsText(ST_UNION(
+					CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END,
+					ST_GeomFromText(?, %d)))
+				ELSE NULL
+				END AS unioned`, utils.SRID, utils.SRID),
+				*req.Polygon, *req.Polygon).
+			Where("id = ?", req.ID).
+			Scan(&oldGeom)
 
 		// Update ourgeometry (the human-edited override), not geometry (which is from OSM).
-		result := db.Exec(
-			fmt.Sprintf("UPDATE locations SET `type` = 'Polygon', ourgeometry = ST_GeomFromText(?, %d) WHERE id = ?", utils.SRID),
-			*req.Polygon, req.ID,
-		)
+		// An
+		// explicit clause.Set (not Updates(map)) keeps type before ourgeometry
+		// as the original SET list had it. `type` = 'Polygon' is a literal in
+		// the original (not a bind), so its Value is gorm.Expr("'Polygon'"),
+		// not a plain Go string - a plain string would bind it, adding a
+		// placeholder the original SQL never had.
+		result := db.Table("locations").
+			Clauses(clause.Set{
+				{Column: clause.Column{Name: "type"}, Value: gorm.Expr("'Polygon'")},
+				{Column: clause.Column{Name: "ourgeometry"}, Value: gorm.Expr(
+					fmt.Sprintf("ST_GeomFromText(?, %d)", utils.SRID), *req.Polygon)},
+			}).
+			Where("id = ?", req.ID).
+			Updates(map[string]interface{}{})
 
 		if result.Error != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to update geometry")
 		}
 
 		// Update the spatial index table.
-		db.Exec(
-			fmt.Sprintf("REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, %d))", utils.SRID),
-			req.ID, *req.Polygon,
-		)
+		// See CreateLocation's
+		// 25b7b92e33fd for why SRID is spliced into the gorm.Expr text
+		// rather than bound.
+		db.Table("locations_spatial").Clauses(clause.Insert{Modifier: "REPLACE"}).
+			Create(map[string]interface{}{
+				"locationid": req.ID,
+				"geometry":   gorm.Expr(fmt.Sprintf("ST_GeomFromText(?, %d)", utils.SRID), *req.Polygon),
+			})
 
 		// Update cached centroid and max dimensions.
-		db.Exec("UPDATE locations SET maxdimension = GetMaxDimension(ourgeometry), lat = ST_Y(ST_Centroid(ourgeometry)), lng = ST_X(ST_Centroid(ourgeometry)) WHERE id = ?", req.ID)
+		db.Table("locations").Where("id = ?", req.ID).Updates(map[string]interface{}{
+			"maxdimension": gorm.Expr("GetMaxDimension(ourgeometry)"),
+			"lat":          gorm.Expr("ST_Y(ST_Centroid(ourgeometry))"),
+			"lng":          gorm.Expr("ST_X(ST_Centroid(ourgeometry))"),
+		})
+
+		// Refresh the spatial KNN index before the remap below runs, so it remaps
+		// against the new shape rather than the one from the last delta sync.
+		var locName string
+		db.Table("locations").Select("name").Where("id = ?", req.ID).Scan(&locName)
+		if err := spatial.UpsertLocation(req.ID, *req.Polygon, locName, "Polygon"); err != nil {
+			log.Printf("UpdateLocation: spatial upsert of %d failed, postcodes may not remap until the next delta sync: %v", req.ID, err)
+		}
 
 		// Queue postcode remapping. Matching V1: remap the union if geometries overlap,
 		// or remap both old and new separately if they don't.
@@ -838,7 +927,8 @@ func UpdateLocation(c *fiber.Ctx) error {
 
 	if req.Name != nil && *req.Name != "" {
 		canon := strings.ToLower(*req.Name)
-		db.Exec("UPDATE locations SET name = ?, canon = ? WHERE id = ?", *req.Name, canon, req.ID)
+		db.Table("locations").Where("id = ?", req.ID).
+			Updates(map[string]interface{}{"name": *req.Name, "canon": canon})
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -879,21 +969,26 @@ func ExcludeLocation(c *fiber.Ctx) error {
 	db := database.DBConn
 
 	// Exclude the specified location.
-	db.Exec("INSERT IGNORE INTO locations_excluded (locationid, groupid, userid) VALUES (?, ?, ?)",
-		req.ID, req.GroupID, myid)
+	// Converted together with its
+	// identical twin below (59411a155371): a half-converted pair renumbers
+	// the survivor's site ID, so gate (h) refuses the split state.
+	db.Table("locations_excluded").Clauses(clause.Insert{Modifier: "IGNORE"}).
+		Create(map[string]interface{}{"locationid": req.ID, "groupid": req.GroupID, "userid": myid})
 
 	queueExcludeRemap(req.ID)
 
 	// If byname, also exclude all locations with the same name.
 	if req.Byname {
 		var name string
-		db.Raw("SELECT name FROM locations WHERE id = ?", req.ID).Scan(&name)
+		db.Table("locations").Select("name").Where("id = ?", req.ID).Scan(&name)
 		if name != "" {
 			var otherIDs []uint64
-			db.Raw("SELECT id FROM locations WHERE name = ? AND id != ?", name, req.ID).Pluck("id", &otherIDs)
+			db.Table("locations").Where("name = ? AND id != ?", name, req.ID).Pluck("id", &otherIDs)
 			for _, otherID := range otherIDs {
-				db.Exec("INSERT IGNORE INTO locations_excluded (locationid, groupid, userid) VALUES (?, ?, ?)",
-					otherID, req.GroupID, myid)
+				// Twin of
+				// 666504e10980 above.
+				db.Table("locations_excluded").Clauses(clause.Insert{Modifier: "IGNORE"}).
+					Create(map[string]interface{}{"locationid": otherID, "groupid": req.GroupID, "userid": myid})
 				queueExcludeRemap(otherID)
 			}
 		}
@@ -904,10 +999,10 @@ func ExcludeLocation(c *fiber.Ctx) error {
 
 func queueExcludeRemap(locationID uint64) {
 	var wkt string
-	database.DBConn.Raw(
-		"SELECT ST_AsText(COALESCE(ourgeometry, geometry)) FROM locations WHERE id = ?",
-		locationID,
-	).Scan(&wkt)
+	database.DBConn.Table("locations").
+		Select("ST_AsText(COALESCE(ourgeometry, geometry))").
+		Where("id = ?", locationID).
+		Scan(&wkt)
 	if wkt == "" {
 		return
 	}

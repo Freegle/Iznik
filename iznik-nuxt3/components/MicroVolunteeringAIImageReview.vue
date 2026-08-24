@@ -11,7 +11,7 @@
     <div class="image-card mb-3">
       <div class="image-container">
         <img
-          :src="currentImageUrl"
+          :src="aiimage.url"
           :alt="'AI image for ' + aiimage.name"
           class="review-image"
           @error="brokenImage"
@@ -45,39 +45,16 @@
         </div>
       </div>
 
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <div class="d-flex gap-2">
-          <button class="btn btn-outline-secondary" @click="regenerate">
-            Regenerate
-          </button>
-          <button
-            class="btn btn-outline-secondary"
-            :disabled="currentIndex === 0"
-            @click="previous"
-          >
-            Previous
-          </button>
-          <button
-            class="btn btn-outline-secondary"
-            :disabled="currentIndex >= images.length - 1"
-            @click="next"
-          >
-            Next
-          </button>
-        </div>
-        <SpinButton
-          variant="success"
-          icon-name="thumbs-up"
-          label="Accept - looks good"
-          :disabled="containsPeople === null"
-          @handle="approve"
-        />
-      </div>
-
       <div class="question-block mb-3">
         <p class="question-label">
           Is this a good image for &ldquo;{{ aiimage.name }}&rdquo;?
         </p>
+        <p v-if="containsPeople === null" class="help-hint">
+          Please answer the question above first
+        </p>
+      </div>
+
+      <div class="d-flex justify-content-end align-items-center mb-3">
         <div class="d-flex gap-2">
           <SpinButton
             variant="danger"
@@ -86,9 +63,28 @@
             :disabled="containsPeople === null"
             @handle="reject"
           />
+          <SpinButton
+            variant="success"
+            icon-name="thumbs-up"
+            label="Accept - looks good"
+            :disabled="containsPeople === null"
+            @handle="approve"
+          />
         </div>
-        <p v-if="containsPeople === null" class="help-hint mt-2">
-          Please answer the question above first
+      </div>
+
+      <div class="question-block mb-3">
+        <p class="question-label">Not suitable for a picture at all?</p>
+        <SpinButton
+          variant="outline-danger"
+          icon-name="ban"
+          label="This item shouldn't have an AI image"
+          @handle="suppress"
+        />
+        <p class="help-hint mt-2">
+          Use this for things that shouldn't have a generated picture at all
+          (e.g. cash, a lift, a voucher). We won't create an image for this item
+          again.
         </p>
       </div>
     </div>
@@ -96,10 +92,9 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import SpinButton from './SpinButton'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
-import AIImagesAPI from '~/api/AIImagesAPI'
 
 const props = defineProps({
   aiimage: {
@@ -114,30 +109,6 @@ const microVolunteeringStore = useMicroVolunteeringStore()
 
 const containsPeople = ref(null)
 const submitted = ref(false)
-
-const images = ref([props.aiimage.url])
-const currentIndex = ref(0)
-
-const currentImageUrl = computed(() => images.value[currentIndex.value])
-
-async function regenerate() {
-  const api = new AIImagesAPI()
-  const result = await api.regenerate(props.aiimage.id)
-  images.value.push(result.url)
-  currentIndex.value = images.value.length - 1
-}
-
-function previous() {
-  if (currentIndex.value > 0) {
-    currentIndex.value--
-  }
-}
-
-function next() {
-  if (currentIndex.value < images.value.length - 1) {
-    currentIndex.value++
-  }
-}
 
 async function approve(callback) {
   await microVolunteeringStore.respond({
@@ -155,6 +126,21 @@ async function reject(callback) {
   await microVolunteeringStore.respond({
     aiimageid: props.aiimage.id,
     response: 'Reject',
+    containspeople: containsPeople.value,
+  })
+
+  submitted.value = true
+  callback()
+  emit('next')
+}
+
+// Suppress: the item itself shouldn't have an AI image at all (terminal — once
+// enough reviewers agree, we never generate or show an image for this item again).
+// Distinct from Reject, which just means "this generated image is poor".
+async function suppress(callback) {
+  await microVolunteeringStore.respond({
+    aiimageid: props.aiimage.id,
+    response: 'Suppress',
     containspeople: containsPeople.value,
   })
 

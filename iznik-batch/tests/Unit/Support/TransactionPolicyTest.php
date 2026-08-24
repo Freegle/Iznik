@@ -134,6 +134,60 @@ class TransactionPolicyTest extends TestCase
         $this->assertFalse(TransactionPolicy::isDeadlock($e));
     }
 
+    /**
+     * Regression (2026-08-06): rippling queries bind polygon WKT whose
+     * coordinate digits routinely contain "1213". Substring-matching the whole
+     * QueryException message - which embeds the SQL with bindings - classified
+     * deterministic geometry errors as deadlocks, burning 3 futile retries per
+     * statement and logging "deadlock persisted" hundreds of times a day. The
+     * driver's structured errorInfo is authoritative and unpollutable.
+     */
+    public function test_is_deadlock_ignores_1213_inside_query_bindings(): void
+    {
+        $pdo = new PDOException('SQLSTATE[22S01]: <<Unknown error>>: 3516 POLYGON/MULTIPOLYGON value is a geometry of unexpected type GEOMCOLLECTION in st_area.');
+        $pdo->errorInfo = ['22S01', 3516, 'POLYGON/MULTIPOLYGON value is a geometry of unexpected type GEOMCOLLECTION in st_area.'];
+        $e = new QueryException(
+            'mysql',
+            'SELECT ST_Area(ST_Intersection(iso, grp)) FROM (SELECT ST_GeomFromText(?, 3857) AS iso, ST_GeomFromText(?, 3857) AS grp) t',
+            ['POLYGON((-121300.5 6712133.4,-121200.1 6712050.9,-121300.5 6712133.4))', 'POLYGON((0 0,1 0,1 1,0 1,0 0))'],
+            $pdo
+        );
+
+        $this->assertFalse(TransactionPolicy::isDeadlock($e));
+    }
+
+    public function test_is_deadlock_error_info_1713_undo_log_is_not_deadlock(): void
+    {
+        $pdo = new PDOException('SQLSTATE[HY000]: General error: 1713 Undo log record is too big.');
+        $pdo->errorInfo = ['HY000', 1713, 'Undo log record is too big.'];
+        $e = new QueryException(
+            'mysql',
+            'UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
+            ['POLYGON((-121356.1 6712050.9,-121300.5 6712133.4,-121356.1 6712050.9))', 121159007],
+            $pdo
+        );
+
+        $this->assertFalse(TransactionPolicy::isDeadlock($e));
+    }
+
+    public function test_is_deadlock_error_info_1213_is_deadlock(): void
+    {
+        $pdo = new PDOException('SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock');
+        $pdo->errorInfo = ['40001', 1213, 'Deadlock found when trying to get lock; try restarting transaction'];
+        $e = new QueryException('mysql', 'INSERT INTO rippling_reach (msgid) VALUES (?)', [1], $pdo);
+
+        $this->assertTrue(TransactionPolicy::isDeadlock($e));
+    }
+
+    public function test_is_deadlock_error_info_1205_lock_wait_is_deadlock(): void
+    {
+        $pdo = new PDOException('SQLSTATE[HY000]: General error: 1205 Lock wait timeout exceeded');
+        $pdo->errorInfo = ['HY000', 1205, 'Lock wait timeout exceeded; try restarting transaction'];
+        $e = new QueryException('mysql', 'UPDATE x SET y = ?', [1], $pdo);
+
+        $this->assertTrue(TransactionPolicy::isDeadlock($e));
+    }
+
     public function test_atomic_retries_on_deadlock_exception(): void
     {
         $attempts = 0;

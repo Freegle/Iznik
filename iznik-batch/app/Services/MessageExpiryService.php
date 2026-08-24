@@ -182,6 +182,21 @@ class MessageExpiryService
      * threshold regardless of maxagetoshow — posts hidden from display for months
      * before being auto-expired. Groups that have stored settings are unaffected
      * (JSON_EXTRACT reads their actual values).
+     *
+     * Expiry is judged across the message's LIVE postings only, and a message
+     * expires when EVERY live Approved posting is past its group's threshold —
+     * i.e. the most generous group wins, matching what the Go API's
+     * computeExpiresat() displays to the poster. Two earlier behaviours here
+     * were wrong (2,400+ posts wrongly withdrawn between 13 May and 11 Aug 2026):
+     *   - ANY-group semantics: one rippled-in copy on a group with
+     *     maxagetoshow=0 (an 18-day threshold) expired the whole message even
+     *     though the poster's home group gave it 90 days.
+     *   - No deleted/collection filter: copies rippling had already retracted
+     *     (messages_groups.deleted=1, arrival frozen at retraction) still
+     *     counted, so a dead copy could expire the live post.
+     * A message with NO live Approved posting left is not expired here — its
+     * spatial row is cleaned up by MessageSpatialService's removeDeleted /
+     * removeNonApproved passes instead.
      */
     protected function getExpiredCandidates(): \Illuminate\Support\Collection
     {
@@ -189,8 +204,6 @@ class MessageExpiryService
 SELECT DISTINCT ms.msgid
 FROM messages_spatial ms
 JOIN messages m ON m.id = ms.msgid
-JOIN messages_groups mg ON mg.msgid = ms.msgid
-JOIN `groups` g ON g.id = mg.groupid
 LEFT JOIN messages_promises mp ON mp.msgid = ms.msgid
 WHERE ms.successful = 0
   AND mp.id IS NULL
@@ -203,14 +216,25 @@ WHERE ms.successful = 0
       NOT EXISTS (
         SELECT 1 FROM messages_outcomes mo2 WHERE mo2.msgid = ms.msgid
       )
-      AND TIMESTAMPDIFF(DAY, mg.arrival, NOW()) > GREATEST(
-        COALESCE(JSON_EXTRACT(g.settings, '$.maxagetoshow') + 0, 90),
-        CASE m.type
-          WHEN 'Offer' THEN COALESCE(JSON_EXTRACT(g.settings, '$.reposts.offer')  + 0, 3)
-                          * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
-          ELSE          COALESCE(JSON_EXTRACT(g.settings, '$.reposts.wanted') + 0, 7)
-                          * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
-        END
+      AND EXISTS (
+        SELECT 1 FROM messages_groups mgl
+        WHERE mgl.msgid = ms.msgid AND mgl.deleted = 0 AND mgl.collection = 'Approved'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM messages_groups mg
+        JOIN `groups` g ON g.id = mg.groupid
+        WHERE mg.msgid = ms.msgid
+          AND mg.deleted = 0
+          AND mg.collection = 'Approved'
+          AND TIMESTAMPDIFF(DAY, mg.arrival, NOW()) <= GREATEST(
+            COALESCE(JSON_EXTRACT(g.settings, '$.maxagetoshow') + 0, 90),
+            CASE m.type
+              WHEN 'Offer' THEN COALESCE(JSON_EXTRACT(g.settings, '$.reposts.offer')  + 0, 3)
+                              * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
+              ELSE          COALESCE(JSON_EXTRACT(g.settings, '$.reposts.wanted') + 0, 7)
+                              * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
+            END
+          )
       )
       AND NOT EXISTS (
         SELECT 1 FROM chat_messages cm

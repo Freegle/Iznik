@@ -44,10 +44,39 @@ return [
         ],
 
         // Main connection - uses iznik database (or iznik_batch_test for PHPUnit).
+        //
+        // Read/write split (V1 parity: SQLHOSTS_READ / SQLHOSTS_MOD). Writes always
+        // go to DB_HOST - the single Galera write node - to avoid cluster write
+        // conflicts and lockups. Reads go to DB_HOST_READ when set, otherwise fall
+        // back to DB_HOST so single-host deployments (dev/CI) are unchanged. Both
+        // accept a comma-separated list of hosts; Laravel picks one at random.
+        //
+        // Replica failover: App\Database\FailoverConnectionFactory (registered in
+        // AppServiceProvider) wraps the read PDO resolver so that if ALL read hosts
+        // are unreachable, reads automatically fall back to the write host and a
+        // warning is logged. Recovery is natural: the read PDO resolver is lazy and
+        // called fresh on each reconnect, so the replica is re-attempted on the next
+        // connection after it recovers. Single-host deployments (read == write hosts)
+        // are unaffected.
+        //
+        // No 'sticky': Galera replication is synchronous (certification-based), so a
+        // committed write is visible on the read nodes without meaningful delay -
+        // reads can always use the read host, even in long-running daemons (V1 had no
+        // sticky either). The only case that must stay on one node is an OPEN
+        // transaction, whose uncommitted changes are node-local; Laravel already
+        // routes every read to the write connection while a transaction is open
+        // (getReadPdo() checks transactions > 0 before anything else), so sticky is
+        // unnecessary for that and would only defeat read offloading.
         'mysql' => [
             'driver' => 'mysql',
             'url' => env('DB_URL'),
-            'host' => env('DB_HOST', '127.0.0.1'),
+            'read' => [
+                'host' => array_map('trim', explode(',', (string) (env('DB_HOST_READ') ?: env('DB_HOST', '127.0.0.1')))),
+            ],
+            'write' => [
+                'host' => array_map('trim', explode(',', (string) env('DB_HOST', '127.0.0.1'))),
+            ],
+            'sticky' => false,
             'port' => env('DB_PORT', '3306'),
             'database' => defined('PHPUNIT_COMPOSER_INSTALL') ? 'iznik_batch_test' : env('DB_DATABASE', 'iznik'),
             'username' => env('DB_USERNAME', 'root'),

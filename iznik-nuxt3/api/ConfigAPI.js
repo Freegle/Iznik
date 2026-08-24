@@ -35,7 +35,9 @@ export default class ConfigAPI extends BaseAPI {
   // Concern keywords management
   fetchConcernKeywordsv2(params = {}) {
     const query = new URLSearchParams(params).toString()
-    return this.$getv2('/config/admin/concern_keywords' + (query ? '?' + query : ''))
+    return this.$getv2(
+      '/config/admin/concern_keywords' + (query ? '?' + query : '')
+    )
   }
 
   addConcernKeywordv2(data) {

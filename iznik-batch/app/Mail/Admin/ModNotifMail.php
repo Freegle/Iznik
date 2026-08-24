@@ -20,6 +20,14 @@ class ModNotifMail extends MjmlMailable
 
     private string $modNotifSubject;
 
+    /**
+     * Transactional - a moderator notification - so it carries no List-Unsubscribe.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return null;
+    }
+
     public function __construct(
         string $recipientName,
         string $recipientEmail,
@@ -35,7 +43,7 @@ class ModNotifMail extends MjmlMailable
         $this->htmlSummary = $htmlSummary;
         $this->textSummary = $textSummary;
         $this->modNotifSubject = $subject;
-        $this->settingsUrl = config('freegle.sites.mod', 'https://modtools.org') . '/modtools/settings';
+        $this->settingsUrl = config('freegle.sites.mod', 'https://modtools.org') . '/settings';
     }
 
     protected function getSubject(): string
@@ -61,6 +69,9 @@ class ModNotifMail extends MjmlMailable
             'email' => $this->email,
             'htmlSummary' => $this->htmlSummary,
             'settingsUrl' => $this->settingsUrl,
+            // The count-bearing subject (e.g. "MODERATE: 5 things to do") so the inbox
+            // preview shows how much is waiting, not a generic line.
+            'modNotifSubject' => $this->modNotifSubject,
         ];
 
         return $this

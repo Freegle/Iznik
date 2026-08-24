@@ -8,7 +8,14 @@ use Illuminate\Support\Facades\Log;
 
 class WhatJobsService
 {
-    const MINIMUM_CPC = 0.10;
+    // Minimum cost-per-click for a WhatJobs listing to be worth ingesting/showing.
+    // Lowered 0.10 -> 0.08 on 2026-07-09: WhatJobs compressed ~75% of their bids to
+    // ~£0.084 (just under the old £0.10 floor), collapsing our billable feed from
+    // ~225k to ~80k and tripping the swap-guard so the jobs table went stale. £0.08
+    // sits just below that £0.084 spike (≈10th percentile of the current feed),
+    // recapturing the bulk (~325k) while still excluding the genuine sub-£0.08 tail.
+    // Must match Job::MINIMUM_CPC (serving), Go job.JOBS_MINIMUM_CPC, and V1.
+    const MINIMUM_CPC = 0.08;
     const MAX_AGE_DAYS = 7;
     const DISTRIBUTE = 0.0005;
     const BATCH_SIZE = 500;
@@ -20,13 +27,26 @@ class WhatJobsService
     const MIN_SWAP_RATIO = 0.5;
     const SWAP_RATIO_MIN_EXISTING = 1000;
 
+    // Where the feed-change gate keeps what it knows about each feed (validators
+    // and a content hash) between runs. One row in the existing config table, so
+    // there is no schema step.
+    const GATE_CONFIG_KEY = 'whatjobs.feed_state';
+
+    // The gate may never skip for longer than this. Six syncs a day all deciding
+    // "unchanged" would leave the jobs table - and the jobs.seenat freshness check
+    // that watches it (ScheduledOutcomeRegistry, 24h floor) - untouched for a day,
+    // and would turn a gate bug that wrongly reports "unchanged" into a silent
+    // permanent stall. Forcing a real rebuild once inside the monitor's window means
+    // the existing alarm still fires if anything here breaks.
+    const MAX_SKIP_HOURS = 20;
+
     // UK bounding box for geocoder
     const UK_SWLAT = 49.959999905;
     const UK_SWLNG = -7.57216793459;
     const UK_NELAT = 58.6350001085;
     const UK_NELNG = 1.68153079591;
 
-    // Special-case address normalisation (matches iznik-server Jobs::geocode)
+    // Special-case address normalisation (matches the legacy V1 PHP Jobs::geocode)
     private const ADDRESS_FIXES = [
         'West Marsh'      => 'Grimsby',
         'Stoney Middleton' => 'Stoney Middleton, Derbyshire',
@@ -460,8 +480,26 @@ class WhatJobsService
         // parseFeed yields each job as it parses the XML, so we stream straight
         // from XML → DB. Holding the full ~180k-job result in PHP memory used
         // to FatalError at 512M; this keeps peak memory at one batch (~200 rows).
-        $tmp1 = $feed1 ? $this->downloadFeed($feed1) : null;
-        $tmp2 = $feed2 ? $this->downloadFeed($feed2) : null;
+        // Ask the feeds whether anything actually changed before paying for a rebuild.
+        // A dry run is a diagnostic, so it always parses.
+        $gate = $this->evaluateFeedGate(array_filter([$feed1, $feed2]), $dryRun);
+
+        if ($gate['skip']) {
+            Log::info('WhatJobs sync skipped - feeds unchanged', [
+                'reasons'      => $gate['reasons'],
+                'last_rebuild' => $gate['last_rebuild'],
+            ]);
+
+            return [
+                'total'    => 0,
+                'inserted' => 0,
+                'skipped_unchanged' => true,
+                'reasons'  => $gate['reasons'],
+            ];
+        }
+
+        $tmp1 = $feed1 ? ($gate['paths'][$feed1] ?? null) : null;
+        $tmp2 = $feed2 ? ($gate['paths'][$feed2] ?? null) : null;
 
         // Build a single generator that yields from both feeds in sequence so
         // insertJobs() sees one continuous stream (and the second feed's geocode
@@ -487,6 +525,14 @@ class WhatJobsService
             Log::info('WhatJobs dry run', ['total_jobs' => $total]);
             return ['total' => $total, 'inserted' => 0, 'dry_run' => true];
         }
+
+        // Rebuild jobs_keywords from clicks on the *current* (pre-swap) live
+        // table BEFORE inserting, so insertJobs() can score clickability inline
+        // and set it on the INSERT. Keyword frequency is a slow-moving 31-day
+        // click signal, independent of the incoming feed, so computing it from
+        // the outgoing table is correct — and it lets us drop the old post-swap
+        // updateClickability() pass that hammered Galera with ~1M UPDATEs.
+        $this->analyseClickability();
 
         // Real run: stream jobs into jobs_new in batches, then decide whether
         // to swap based on the inserted row count.
@@ -514,8 +560,22 @@ class WhatJobsService
         }
 
         $this->swapTables();
-        $this->analyseClickability();
-        $this->updateClickability();
+
+        // Only now, with the table actually rebuilt, are the new validators safe to
+        // keep. Storing them earlier would mean a refused swap (see above) left us
+        // believing the live table already matched the feed, and the gate would skip
+        // every run after it.
+        $this->commitFeedGateState($gate['state']);
+
+        // The swap drops rows for postings that have closed/left the feed. The
+        // spatial server's "jobs" index backs both the web jobs page and the
+        // digest (since #764), and its incremental delta only adds/updates — it
+        // never removes vanished ids. Without an explicit rebuild the index
+        // keeps serving stale ids (gone, or remapped to a different posting)
+        // until the nightly 03:00 rebuild, so clicks land on the wrong/closed
+        // job and don't convert to billable. Trigger a rebuild now so the index
+        // matches the freshly-swapped table.
+        app(SpatialAdminService::class)->rebuildDataset('jobs');
 
         Log::info('WhatJobs sync complete', ['total' => $inserted, 'inserted' => $inserted]);
 
@@ -575,6 +635,14 @@ class WhatJobsService
         return false;
     }
 
+    /**
+     * ETag/Last-Modified from the last downloadFeed() response, recorded so the gate can
+     * report what the feed claims about itself. Nothing acts on these yet - see fetchFeed.
+     *
+     * @var array{etag: ?string, last_modified: ?string}|null
+     */
+    protected ?array $lastFeedHeaders = null;
+
     protected function downloadFeed(string $url): ?string
     {
         $gzFile  = tempnam(sys_get_temp_dir(), 'whatjobs_gz_');
@@ -593,6 +661,11 @@ class WhatJobsService
                 return null;
             }
 
+            $this->lastFeedHeaders = [
+                'etag' => $response->header('ETag') ?: null,
+                'last_modified' => $response->header('Last-Modified') ?: null,
+            ];
+
             // Stream-decompress to avoid loading everything into memory
             $gz  = gzopen($gzFile, 'rb');
             $out = fopen($xmlFile, 'wb');
@@ -610,6 +683,189 @@ class WhatJobsService
             @unlink($xmlFile);
             return null;
         }
+    }
+
+    /**
+     * Fetch one feed and say whether it is worth reparsing.
+     *
+     * WhatJobs regenerates its feed roughly once a day, but we sync six times a day, so
+     * most runs reparse content we already loaded: three consecutive runs one day produced
+     * byte-identical parse fingerprints, kept counts matching to the digit. Each of those
+     * pointless runs costs 25-45 minutes of batch-host CPU, around a gigabyte of row images
+     * replicated to every Galera node, and a rebuild of the spatial jobs index on each db
+     * host.
+     *
+     * The test is a hash of the feed's own content. The feed's ETag is recorded alongside
+     * it but nothing acts on it: an ETag comes back through a CDN, which can preserve one
+     * across a genuine regeneration, and the agreed rollout is to watch the decisions this
+     * makes for a week before trusting a 304 to skip a transfer. Hashing what we downloaded
+     * settles the question ourselves, and the download was never the expensive part.
+     *
+     * The hash is over the decompressed XML rather than the gzip, because gzip's header
+     * carries a modification time - identical content recompressed is different bytes.
+     *
+     * $prev is what we stored last time; an empty array forces "changed".
+     *
+     * status: 'downloaded' (reparse it) | 'unchanged' (skip if the other feeds agree) |
+     *         'failed' (fail open - run the full pipeline)
+     */
+    protected function fetchFeed(string $url, array $prev): array
+    {
+        $this->lastFeedHeaders = null;
+
+        // Deliberately routed through downloadFeed so there is a single place that knows
+        // how to obtain a feed.
+        $path = $this->downloadFeed($url);
+
+        if ($path === null) {
+            return ['status' => 'failed', 'reason' => 'download-failed', 'path' => null];
+        }
+
+        $hash = @hash_file('sha256', $path) ?: null;
+        $identical = $hash !== null && isset($prev['hash']) && $prev['hash'] === $hash;
+
+        return [
+            'status'        => $identical ? 'unchanged' : 'downloaded',
+            'reason'        => $identical ? 'identical-content' : 'changed',
+            'path'          => $path,
+            'etag'          => $this->lastFeedHeaders['etag'] ?? null,
+            'last_modified' => $this->lastFeedHeaders['last_modified'] ?? null,
+            'hash'          => $hash,
+        ];
+    }
+
+    /**
+     * Decide whether this run has anything to do.
+     *
+     * It skips only when EVERY configured feed says unchanged, because the sync
+     * rebuilds the whole jobs table from all feeds at once - one changed feed means
+     * the whole pipeline runs.
+     *
+     * The gate fails open throughout: a download error, an unreadable stored state,
+     * a dry run, --force, or a rebuild older than MAX_SKIP_HOURS all produce a normal
+     * full run. The worst a broken gate can do is cost what today already costs.
+     */
+    protected function evaluateFeedGate(array $urls, bool $dryRun): array
+    {
+        $state = $this->readFeedGateState();
+        $lastRebuild = $state['last_rebuild'] ?? null;
+
+        $bypass = null;
+        if ($dryRun) {
+            $bypass = 'dry-run';
+        } elseif ($this->forceFullSync) {
+            $bypass = 'forced';
+        } elseif (!$urls) {
+            $bypass = 'no-feeds';
+        } elseif ($lastRebuild === null) {
+            $bypass = 'no-previous-rebuild';
+        } elseif (strtotime($lastRebuild) < strtotime('-' . self::MAX_SKIP_HOURS . ' hours')) {
+            // Guaranteed rebuild: see MAX_SKIP_HOURS.
+            $bypass = 'rebuild-overdue';
+        }
+
+        $results = [];
+        foreach ($urls as $url) {
+            $prev = $bypass ? [] : ($state['feeds'][$this->feedStateKey($url)] ?? []);
+            $results[$url] = $this->fetchFeed($url, $prev);
+        }
+
+        $newState = $state;
+        $newState['feeds'] = $state['feeds'] ?? [];
+        $reasons = [];
+        $allUnchanged = $urls !== [];
+
+        foreach ($results as $url => $r) {
+            $reasons[$this->feedStateKey($url)] = $r['reason'] ?? $r['status'];
+            if ($r['status'] !== 'unchanged') {
+                $allUnchanged = false;
+            }
+            if ($r['status'] !== 'failed') {
+                $newState['feeds'][$this->feedStateKey($url)] = [
+                    'etag'          => $r['etag'] ?? null,
+                    'last_modified' => $r['last_modified'] ?? null,
+                    'hash'          => $r['hash'] ?? null,
+                ];
+            }
+        }
+
+        $skip = $bypass === null && $allUnchanged;
+
+        if ($skip) {
+            // Nothing will be parsed, so drop the files we did fetch, and record that
+            // the gate ran. commitFeedGateState is NOT called here: last_rebuild must
+            // keep pointing at the last real rebuild, or the MAX_SKIP_HOURS floor
+            // would never trigger.
+            foreach ($results as $r) {
+                if (!empty($r['path'])) {
+                    @unlink($r['path']);
+                }
+            }
+            $newState['last_checked'] = now()->toDateTimeString();
+            $this->writeFeedGateState($newState);
+        }
+
+        $paths = [];
+        foreach ($results as $url => $r) {
+            $paths[$url] = $r['path'] ?? null;
+        }
+
+        return [
+            'skip'         => $skip,
+            'bypass'       => $bypass,
+            'reasons'      => $reasons,
+            'paths'        => $paths,
+            'last_rebuild' => $lastRebuild,
+            'state'        => $newState,
+        ];
+    }
+
+    /**
+     * Short stable identifier for a feed URL, so the stored state does not carry
+     * credentials that some feed URLs embed as query parameters.
+     */
+    protected function feedStateKey(string $url): string
+    {
+        return substr(hash('sha256', $url), 0, 16);
+    }
+
+    protected function readFeedGateState(): array
+    {
+        try {
+            $raw = DB::table('config')->where('key', self::GATE_CONFIG_KEY)->value('value');
+            $decoded = $raw ? json_decode($raw, true) : null;
+
+            return is_array($decoded) ? $decoded : [];
+        } catch (\Throwable $e) {
+            // Fail open - an unreadable state just means a full run.
+            Log::warning('WhatJobs: could not read feed gate state', ['error' => $e->getMessage()]);
+
+            return [];
+        }
+    }
+
+    protected function writeFeedGateState(array $state): void
+    {
+        try {
+            DB::table('config')->upsert(
+                [['key' => self::GATE_CONFIG_KEY, 'value' => json_encode($state)]],
+                ['key'],
+                ['value'],
+            );
+        } catch (\Throwable $e) {
+            Log::warning('WhatJobs: could not store feed gate state', ['error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Record a completed rebuild: the validators the feeds gave us this run, plus the
+     * timestamp the MAX_SKIP_HOURS floor is measured from.
+     */
+    protected function commitFeedGateState(array $state): void
+    {
+        $state['last_rebuild'] = now()->toDateTimeString();
+        $state['last_checked'] = $state['last_rebuild'];
+        $this->writeFeedGateState($state);
     }
 
     /**
@@ -718,7 +974,7 @@ class WhatJobsService
 
             [$swlat, $swlng, $nelat, $nelng, $geomWkt] = $geom;
 
-            // Randomise within bbox to avoid clustering (matches iznik-server behaviour)
+            // Randomise within bbox to avoid clustering (matches the legacy V1 PHP behaviour)
             $newlat  = $swlat + (mt_rand() / mt_getrandmax()) * ($nelat - $swlat);
             $newlng  = $swlng + (mt_rand() / mt_getrandmax()) * ($nelng - $swlng);
             $geomWkt = $this->boxPoly(
@@ -732,7 +988,7 @@ class WhatJobsService
             $titleClean = $title ? html_entity_decode($title, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
 
             yield [
-                'location'        => $location ? html_entity_decode($location, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
+                'location'        => $location ? $this->titleCaseLocation(html_entity_decode($location, ENT_QUOTES | ENT_HTML5, 'UTF-8')) : null,
                 'title'           => $titleClean,
                 'city'            => $city ? html_entity_decode($city, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
                 'state'           => $state ? html_entity_decode($state, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
@@ -766,6 +1022,24 @@ class WhatJobsService
     // ISO 3166-2 two/three-letter subdivision codes used by some feeds
     private const STATE_ISO_CODES = ['eng', 'wls', 'sct', 'nir', 'gb'];
 
+    /**
+     * When true, geocodeCityState skips the jobs-table geocode cache and
+     * re-resolves each tuple from postcode/Photon. Set for a one-time
+     * --refresh-geocode sync to retro-correct tuples mis-cached by the old
+     * inverted-extent bug; off in normal hourly runs (which keep the cache).
+     */
+    public bool $forceRegeocode = false;
+
+    /**
+     * When true, the feed-change gate is bypassed and the feeds are reparsed and
+     * reloaded whatever they contain. Set by --force, and used for the guaranteed
+     * rebuild the gate schedules for itself (see MAX_SKIP_HOURS).
+     *
+     * A public property rather than a sync() argument because sync()'s signature is
+     * an override point for tests.
+     */
+    public bool $forceFullSync = false;
+
     public function geocodeCityState(
         string $city,
         string $state,
@@ -778,7 +1052,15 @@ class WhatJobsService
             return null;
         }
 
-        $cacheKey = "$city,$state,$country";
+        // Resolve the UK outward postcode up front, if the feed gave us one.
+        // It is used two ways below:
+        //  (a) it keys the in-memory cache, so a job WITH a postcode never
+        //      inherits a (possibly wrong) city/state geocode that an earlier
+        //      same-(city,state,country) job WITHOUT a postcode cached; and
+        //  (b) it is tried FIRST, before the self-poisoning jobs-table cache
+        //      and the ambiguous Photon city/state lookups.
+        $outward  = $zip !== '' ? $this->extractOutwardCode($zip) : '';
+        $cacheKey = $outward !== '' ? "$city,$state,$country|$outward" : "$city,$state,$country";
 
         // array_key_exists (not isset) so cached negative results (null)
         // are reused — Photon currently rate-limits us with HTTP 429, so
@@ -790,18 +1072,41 @@ class WhatJobsService
             return $cache[$cacheKey];
         }
 
-        // Check DB cache first (existing geocoded job with same city/state/country)
-        $geo = DB::select(
-            "SELECT ST_AsText(ST_Envelope(geometry)) AS geom FROM jobs
-             WHERE city = ? AND state = ? AND country = ? LIMIT 1",
-            [$city, $state, $country]
-        );
+        // POSTCODE-FIRST. A UK outward code pins the job to the right district
+        // deterministically, so prefer it over both the self-poisoning
+        // jobs-table cache and the ambiguous Photon city/state lookups. This is
+        // the primary fix for "jobs in the wrong place" (Discourse #9692/#24):
+        // e.g. "Conington, East of England" with zip PE29 3TN lands in
+        // Cambridgeshire, not a same-named place Photon returns near London.
+        // Sampling the live feed, jobs that DO carry a postcode previously had a
+        // stored geometry a mean ~80km (max ~1400km) from their own postcode
+        // centroid, with 56% over 50km out; this removes that error for them.
+        if ($outward !== '') {
+            $postcodeResult = $this->geocodePostcode($outward);
+            if ($postcodeResult) {
+                $cache[$cacheKey] = $postcodeResult;
+                return $postcodeResult;
+            }
+        }
 
-        if (count($geo) && $geo[0]->geom) {
-            $bbox = $this->bboxFromWkt($geo[0]->geom);
-            if ($bbox) {
-                $cache[$cacheKey] = $bbox;
-                return $bbox;
+        // Check DB cache first (existing geocoded job with same city/state/country).
+        // Skipped during a one-time --refresh-geocode run so previously mis-cached
+        // tuples (e.g. the inverted-extent London placements) re-geocode fresh
+        // instead of inheriting their own wrong point. The per-run in-memory cache
+        // above still dedupes, so each tuple is geocoded at most once per run.
+        if (!$this->forceRegeocode) {
+            $geo = DB::select(
+                "SELECT ST_AsText(ST_Envelope(geometry)) AS geom FROM jobs
+                 WHERE city = ? AND state = ? AND country = ? LIMIT 1",
+                [$city, $state, $country]
+            );
+
+            if (count($geo) && $geo[0]->geom) {
+                $bbox = $this->bboxFromWkt($geo[0]->geom);
+                if ($bbox) {
+                    $cache[$cacheKey] = $bbox;
+                    return $bbox;
+                }
             }
         }
 
@@ -857,13 +1162,7 @@ class WhatJobsService
             }
         }
 
-        // Postcode fallback: try outward code via dedicated lookup
-        if (!$result && $zip) {
-            $outward = $this->extractOutwardCode($zip);
-            if ($outward) {
-                $result = $this->geocodePostcode($outward);
-            }
-        }
+        // (The postcode is resolved FIRST, above — no trailing fallback needed.)
 
         if (!$result) {
             // Categorise the failure for observability.
@@ -915,7 +1214,10 @@ class WhatJobsService
                 continue;
             }
 
-            $result = $this->geocodeAddress($seg, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng);
+            // Town/settlement layers only — keeps a town name off waterways,
+            // counties and landmarks (see geocodeAddress).
+            $cityLayers = ['city', 'locality', 'district'];
+            $result = $this->geocodeAddress($seg, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng, $cityLayers);
             if ($result) {
                 return $result;
             }
@@ -923,7 +1225,7 @@ class WhatJobsService
             // Try title-cased variant (feed often sends all-lowercase cities)
             $titled = ucwords(mb_strtolower($seg));
             if ($titled !== $seg) {
-                $result = $this->geocodeAddress($titled, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng);
+                $result = $this->geocodeAddress($titled, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng, $cityLayers);
                 if ($result) {
                     return $result;
                 }
@@ -1010,7 +1312,8 @@ class WhatJobsService
         float $bbswlat = self::UK_SWLAT,
         float $bbswlng = self::UK_SWLNG,
         float $bbnelat = self::UK_NELAT,
-        float $bbnelng = self::UK_NELNG
+        float $bbnelng = self::UK_NELNG,
+        array $layers = []
     ): ?array {
         $addr = self::ADDRESS_FIXES[$addr] ?? $addr;
 
@@ -1021,6 +1324,15 @@ class WhatJobsService
 
         $url = rtrim($geocoderBase, '/') . '/api?q=' . urlencode($addr)
             . "&bbox=$bbswlng%2C$bbswlat%2C$bbnelng%2C$bbnelat";
+
+        // Restrict to specific Photon layers (city/locality/district for a town
+        // lookup) so a town name can't fuzzy-match a waterway ("Thame" → River
+        // Thames, a 190km extent through London), a county ("Ham" → Hampshire) or
+        // a landmark/company ("Bourne End" → Optoma Europe Ltd). Empty = no
+        // restriction (state/region lookups, which Photon often types as "other").
+        foreach ($layers as $layer) {
+            $url .= '&layer=' . urlencode($layer);
+        }
 
         // Photon rate-limits us with HTTP 429. Without the backoff retry,
         // a single burst poisons hundreds of (city,state,country) tuples
@@ -1061,7 +1373,16 @@ class WhatJobsService
             // the geocoder name exactly matched (e.g. 'London' → 'London') to return
             // null, preventing state-constrained city searches for those regions.
             if (isset($props['extent'])) {
-                [$swlng, $swlat, $nelng, $nelat] = array_map('floatval', $props['extent']);
+                // Photon extent order is [minLon, maxLat, maxLon, minLat]
+                // (west, NORTH, east, SOUTH). Previously this was destructured as
+                // [swlng, swlat, nelng, nelat], which put the NORTH edge into swlat
+                // and the SOUTH edge into nelat — an upside-down bbox. That made the
+                // area check go negative (so large regions like "East of England"
+                // were treated as a tiny "specific location" and used directly,
+                // skipping the city search) AND placed jobs at the wrong latitude —
+                // e.g. East-of-England jobs landed at ~lat 51.5 (London). Map the
+                // extent to the right corners.
+                [$swlng, $nelat, $nelng, $swlat] = array_map('floatval', $props['extent']);
                 return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
             }
 
@@ -1117,6 +1438,42 @@ class WhatJobsService
         $body = str_replace(["\r\n", "\r", "\n", '–', 'Â'], [' ', ' ', ' ', '-', '-'], $body);
         $body = substr($body, 0, 256) . ' ';
         return $body;
+    }
+
+    /**
+     * Fix the casing of an all-lowercase feed location for display.
+     *
+     * The WhatJobs feed supplies most locations entirely lowercase ("stockton
+     * on tees", "poole, dorset" - ~80% of rows), which looks broken in job
+     * ads. When the value contains no uppercase at all, title-case it UK-style:
+     * every word capitalised except linking words ("Newcastle upon Tyne",
+     * "Weston-super-Mare"), with apostrophes and dotted abbreviations left
+     * intact ("Bishop's Stortford", "St. Columb"). A value with any existing
+     * uppercase is the feed's own deliberate casing ("Dunham on the Hill") and
+     * passes through untouched.
+     */
+    public function titleCaseLocation(?string $location): ?string
+    {
+        if ($location === null || $location === '' || $location !== mb_strtolower($location, 'UTF-8')) {
+            return $location;
+        }
+
+        // Linking words stay lowercase mid-name, per UK place-name convention
+        // ("Stockton-on-Tees", "Ashby-de-la-Zouch", "Chapel-en-le-Frith").
+        $connectors = ['on', 'upon', 'under', 'by', 'in', 'of', 'the', 'and', 'at',
+            'le', 'la', 'de', 'en', 'cum', 'super', 'next', 'over', 'with'];
+
+        $first = true;
+
+        return preg_replace_callback('/[^\s,\-\/]+/u', function ($m) use (&$first, $connectors) {
+            $word = $m[0];
+            if (!$first && in_array($word, $connectors, true)) {
+                return $word;
+            }
+            $first = false;
+
+            return mb_strtoupper(mb_substr($word, 0, 1, 'UTF-8'), 'UTF-8') . mb_substr($word, 1, null, 'UTF-8');
+        }, $location);
     }
 
     public function canonicalJobTitle(?string $title): ?string
@@ -1176,10 +1533,28 @@ class WhatJobsService
         // Preserve existing auto-increment IDs so email links (e.g. /jobs/12345) don't break
         $existingIds = DB::table('jobs')->pluck('id', 'job_reference')->all();
 
+        // Clickability is a pure function of the title's keyword pairs weighted
+        // by how often those pairs appear in *clicked* jobs (jobs_keywords,
+        // rebuilt by analyseClickability() immediately before this call),
+        // normalised by the 95th-percentile keyword count. Because it depends on
+        // nothing but the title + those pre-computed frequencies, we compute it
+        // here in PHP and set it on the INSERT. Previously a post-swap
+        // updateClickability() pass issued one UPDATE per row — ~1M separate
+        // autocommit statements, each its own Galera write-set certified and
+        // applied synchronously across all three nodes. That sustained storm ran
+        // for ~an hour and starved apiv2's connection pool (health checks hung,
+        // monit restarted it). Folding it into the batched INSERT means the
+        // freshly-swapped table is never touched again.
+        $maxish   = $this->getMaxish();
+        $keywords = [];
+        foreach (DB::select('SELECT keyword, count FROM jobs_keywords') as $row) {
+            $keywords[$row->keyword] = (int) $row->count;
+        }
+
         $inserted = 0;
         $buffer   = [];
 
-        $flush = function () use (&$buffer, &$inserted, $existingIds, $srid): void {
+        $flush = function () use (&$buffer, &$inserted, $existingIds, $srid, $keywords, $maxish): void {
             if (empty($buffer)) {
                 return;
             }
@@ -1188,7 +1563,14 @@ class WhatJobsService
             $bindings     = [];
 
             foreach ($buffer as $j) {
-                $id             = $existingIds[$j['job_reference']] ?? null;
+                $id = $existingIds[$j['job_reference']] ?? null;
+
+                $score = 0;
+                foreach ($this->getKeywords($j['title']) as $kw) {
+                    $score += $keywords[$kw] ?? 0;
+                }
+                $clickability = $maxish > 0 ? $score / $maxish : 0;
+
                 $placeholders[] = '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,ST_GeomFromText(?,?),?,?,?,?,?)';
                 array_push(
                     $bindings,
@@ -1198,7 +1580,7 @@ class WhatJobsService
                     $j['job_reference'], $j['company'], $j['category'], $j['url'],
                     $j['body'], $j['cpc'],
                     $j['geometry'], $srid,
-                    $j['clickability'], $j['bodyhash'], $j['seenat'],
+                    $clickability, $j['bodyhash'], $j['seenat'],
                     $j['visible'], $j['canonical_title']
                 );
             }

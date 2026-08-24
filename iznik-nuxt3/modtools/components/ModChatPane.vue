@@ -103,8 +103,8 @@ function resize() {
 
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 
-const ChatNotVisible = defineAsyncComponent(() =>
-  import('~/components/ChatNotVisible.vue')
+const ChatNotVisible = defineAsyncComponent(
+  () => import('~/components/ChatNotVisible.vue')
 )
 
 const { chat } = await setupChatMT(props.id)
@@ -264,7 +264,6 @@ function typing(val) {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  transition: height 1s;
 
   height: calc(100vh - 60px);
 

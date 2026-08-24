@@ -13,7 +13,7 @@ import { promisify } from 'node:util'
 import https from 'node:https'
 import { getDb, kvGet } from './db/index.js'
 import { putStatusPost } from './db/discourse-status.js'
-import { DISCOURSE_BASE } from './discourse.js'
+import { DISCOURSE_BASE, formatReplyRaw, hasNonEmptyQuote } from './discourse.js'
 import type { Database as DB } from 'better-sqlite3'
 
 const execAsync = promisify(exec)
@@ -261,10 +261,23 @@ async function fetchPrsLive(): Promise<any[]> {
   }
 }
 
-function postToDiscourse(topicId: number, raw: string): Promise<{ ok: boolean; error?: string }> {
+function postToDiscourse(topicId: number, raw: string, replyToPostNumber?: number): Promise<{ ok: boolean; error?: string }> {
   return new Promise((resolve) => {
+    // HARD INVARIANT (matches postDiscourseReply): never post a reply without quoted
+    // text. Refuse rather than post a context-less reply.
+    if (!hasNonEmptyQuote(raw)) {
+      resolve({ ok: false, error: 'refusing to post a Discourse reply with no quoted text' })
+      return
+    }
     const apiKey = getDiscourseApiKey()
-    const body = JSON.stringify({ topic_id: topicId, raw })
+    // reply_to_post_number threads the reply under the SPECIFIC post that
+    // reported the problem (not just the topic). Only set for post > 1; a reply
+    // to the OP (post 1) is a normal topic reply and Discourse normalises it.
+    const payload: Record<string, unknown> = { topic_id: topicId, raw }
+    if (replyToPostNumber && replyToPostNumber > 1) {
+      payload.reply_to_post_number = replyToPostNumber
+    }
+    const body = JSON.stringify(payload)
 
     const options = {
       hostname: new URL(DISCOURSE_BASE).hostname,
@@ -272,8 +285,7 @@ function postToDiscourse(topicId: number, raw: string): Promise<{ ok: boolean; e
       path: '/posts.json',
       method: 'POST',
       headers: {
-        'User-Api-Key': apiKey,
-        'Api-Username': 'Edward_Hibbert',
+        'Api-Key': apiKey,
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
       },
@@ -464,11 +476,11 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     }
 
     try {
-      // Format as Discourse reply with quote
-      const raw = `[quote="${draft.username}, post:${draft.post}, topic:${draft.topic}"]\n${draft.quote}\n[/quote]\n\n${draft.body}`
+      // Format as Discourse reply with quote (shared with the auto-post path).
+      const raw = formatReplyRaw(draft)
 
       // Post to Discourse
-      const result = await postToDiscourse(draft.topic, raw)
+      const result = await postToDiscourse(draft.topic, raw, draft.post)
       if (!result.ok) {
         json(res, 502, { error: result.error ?? 'Failed to post' })
         return

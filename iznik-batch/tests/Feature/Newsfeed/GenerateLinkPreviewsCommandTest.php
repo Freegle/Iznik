@@ -2,12 +2,27 @@
 
 namespace Tests\Feature\Newsfeed;
 
+use App\Services\NewsfeedLinkPreviewService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class GenerateLinkPreviewsCommandTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // The command resolves the service from the container; bind one whose host resolution is
+        // deterministic (there is no external DNS in tests) so the SSRF check runs for real against a
+        // public IP rather than failing to resolve the test hostnames.
+        $this->app->bind(NewsfeedLinkPreviewService::class, fn () => new class extends NewsfeedLinkPreviewService {
+            protected function resolveHostIps(string $host): array
+            {
+                return filter_var($host, FILTER_VALIDATE_IP) ? [$host] : ['93.184.216.34'];
+            }
+        });
+    }
+
     private function insertNewsfeed(array $attrs): void
     {
         DB::table('newsfeed')->insert(array_merge([

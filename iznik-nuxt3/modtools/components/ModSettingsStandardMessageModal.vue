@@ -134,9 +134,14 @@ const config = computed(() => {
 })
 
 const locked = computed(() => {
-  return (
+  // A protected config with a null createdby has no real lock owner, so it must
+  // not read as locked - otherwise parseInt(null) is NaN, NaN !== myid is always
+  // true, and every user (including the creator) loses the Save/Add and Delete
+  // buttons. Guard createdby truthy first, matching ModSettingsModConfig.vue.
+  return Boolean(
     config.value &&
     config.value.protected &&
+    config.value.createdby &&
     parseInt(config.value.createdby) !== myid.value
   )
 })

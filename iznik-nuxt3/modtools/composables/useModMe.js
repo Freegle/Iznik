@@ -39,6 +39,22 @@ export function useModMe() {
   const hasPermissionGiftAid = computed(() => {
     return hasPermission('GiftAid')
   })
+  const hasPermissionClearance = computed(() => {
+    return hasPermission('Clearance')
+  })
+  // Some pages are gated on team membership rather than a permission flag. Support and
+  // Admin get in regardless, matching what the API allows.
+  function onTeam(name) {
+    const { me, supportOrAdmin } = useMe()
+    if (supportOrAdmin.value) {
+      return true
+    }
+    const teams = me.value ? me.value.teams : null
+    return Boolean(teams && teams.includes(name))
+  }
+  const onPartnershipsTeam = computed(() => {
+    return onTeam('Partnerships')
+  })
   // Needed for some modtoolstasks but /mixins/me.js/myGroups() OK for most mod tasks as it is a copy of modgroup.list
   const myModGroups = computed(() => {
     // But do we need to do other stuff in myGroups() eg sorting?
@@ -74,6 +90,7 @@ export function useModMe() {
     const authStore = useAuthStore()
     const chatStore = useChatStore()
     const miscStore = useMiscStore()
+    const { fetchMe } = useMe()
     if (miscStore.workTimer) {
       clearTimeout(miscStore.workTimer)
     }
@@ -98,8 +115,13 @@ export function useModMe() {
       let currentTotal = 0
       if (authStore.work) currentTotal += authStore.work.total
       if (chatStore) currentTotal += Math.min(99, chatStore.unreadCount)
-      const { fetchMe } = useMe()
-      await fetchMe(true)
+      // Refresh the work counts (the source of the blue/red pending-message badges).
+      // Use forceServer so the result reflects state as of NOW: a mod action (Hold, then
+      // Release moments later) must not piggyback on an earlier still-in-flight fetchMe()
+      // and pick up stale counts, which left the badges showing the pre-action state until
+      // a manual page refresh (Discourse #9951). fetchMe coalesces these forceServer calls
+      // onto a single trailing refetch, so rapid actions don't flood /session.
+      await fetchMe(true, true)
       await modGroupStore.getModGroups()
 
       const chatcount = chatStore ? Math.min(99, chatStore.unreadCount) : 0
@@ -132,14 +154,22 @@ export function useModMe() {
     miscStore.workTimer = setTimeout(checkWork, 30000)
   }
 
+  function resetCheckWork() {
+    isFirstCheckWork = true
+  }
+
   return {
     hasPermissionNewsletter,
     hasPermissionSpamAdmin,
     hasPermissionGiftAid,
+    hasPermissionClearance,
+    onTeam,
+    onPartnershipsTeam,
     myModGroups,
     myModGroup,
     amAModOn,
     checkWorkDeferGetMessages,
     checkWork,
+    resetCheckWork,
   }
 }

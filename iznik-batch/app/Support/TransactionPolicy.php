@@ -6,6 +6,7 @@ use Illuminate\Database\DeadlockException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use PDOException;
 use RuntimeException;
 use Throwable;
 
@@ -14,7 +15,7 @@ use Throwable;
  *
  * IMPORTANT: On a MySQL/Galera cluster, explicit transactions hold locks across
  * all nodes. Long-running or overlapping transactions cause deadlocks. The
- * iznik-server PHP code avoids this by using IMPLICIT transactions - each SQL
+ * legacy V1 PHP code avoids this by using IMPLICIT transactions - each SQL
  * statement auto-commits immediately, minimizing lock time.
  *
  * POLICY:
@@ -174,21 +175,45 @@ class TransactionPolicy
             return true;
         }
 
+        // Prefer the driver's structured error record: errorInfo is
+        // [SQLSTATE, driver code, driver message] and cannot be polluted by
+        // the query text. When the driver code is present it is authoritative
+        // either way - a known non-lock error (3516 geometry type, 1713 undo
+        // log too big, ...) must NOT be retried as a deadlock.
+        for ($t = $e; $t !== null; $t = $t->getPrevious()) {
+            $info = $t instanceof PDOException ? ($t->errorInfo ?? null) : null;
+
+            if (is_array($info) && isset($info[1]) && is_numeric($info[1])) {
+                return ($info[0] ?? null) === '40001'
+                    || in_array((int) $info[1], [1213, 1205], true);
+            }
+        }
+
         $code = $e->getCode();
-        $message = strtolower($e->getMessage());
 
         // PDO SQLSTATE for serialization failure
         if ($code === '40001' || $code === 40001) {
             return true;
         }
 
-        // MySQL error codes embedded in message
-        if (str_contains($message, '1213') || str_contains($message, 'deadlock')) {
+        // No structured record - fall back to text matching, but ONLY on the
+        // driver-message portion. Laravel's QueryException message appends
+        // "(Connection: mysql, SQL: <query with bindings>)", and rippling
+        // queries bind multi-thousand-vertex polygon WKT whose coordinate
+        // digits routinely contain "1213"/"1205". Substring-matching the
+        // whole message classified deterministic geometry/undo-log errors as
+        // deadlocks, burning 3 futile retries per statement and logging
+        // "deadlock persisted after all retries" hundreds of times a day.
+        $message = strtolower($e->getMessage());
+        $driverMessage = strstr($message, '(connection:', true) ?: $message;
+
+        // MySQL error codes / phrases in the driver message
+        if (str_contains($driverMessage, '1213') || str_contains($driverMessage, 'deadlock')) {
             return true;
         }
 
         // Lock wait timeout (sometimes worth retrying)
-        if (str_contains($message, '1205') || str_contains($message, 'lock wait timeout')) {
+        if (str_contains($driverMessage, '1205') || str_contains($driverMessage, 'lock wait timeout')) {
             return true;
         }
 

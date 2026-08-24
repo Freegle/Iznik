@@ -3,6 +3,7 @@
 namespace App\Mail\Stories;
 
 use App\Mail\MjmlMailable;
+use App\Services\UnsubscribeService;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
@@ -16,7 +17,7 @@ class StoriesNewsletterMail extends MjmlMailable
         public readonly string $headerImageUrl,
         public readonly string $tellUrl,
         public readonly string $giveUrl,
-        public readonly string $findUrl,
+        public readonly string $askUrl,
         public readonly string $previewText,
         public readonly string $unsubscribeUrl,
         public readonly string $settingsUrl,
@@ -27,6 +28,11 @@ class StoriesNewsletterMail extends MjmlMailable
     protected function getSubject(): string
     {
         return 'Lovely stories from other freeglers!';
+    }
+
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_NEWSLETTER;
     }
 
     protected function getRecipientUserId(): ?int
@@ -55,7 +61,7 @@ class StoriesNewsletterMail extends MjmlMailable
             'headerImageUrl' => $this->headerImageUrl,
             'tellUrl'        => $this->tellUrl,
             'giveUrl'        => $this->giveUrl,
-            'findUrl'        => $this->findUrl,
+            'askUrl'        => $this->askUrl,
             'previewText'    => $this->previewText,
             'unsubscribeUrl' => $this->unsubscribeUrl,
             'settingsUrl'    => $this->settingsUrl,

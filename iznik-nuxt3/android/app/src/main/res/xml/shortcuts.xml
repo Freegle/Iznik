@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press app-icon quick actions. Each launches MainActivity with a
+     https://www.ilovefreegle.org/<path> data URI, which the existing deep-link
+     intent-filter + the appUrlOpen handler (stores/mobile.js) route to <path>. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <shortcut
+      android:shortcutId="give"
+      android:enabled="true"
+      android:icon="@mipmap/ic_launcher"
+      android:shortcutShortLabel="@string/shortcut_give_short"
+      android:shortcutLongLabel="@string/shortcut_give_long">
+    <intent
+        android:action="android.intent.action.VIEW"
+        android:targetPackage="org.ilovefreegle.direct"
+        android:targetClass="org.ilovefreegle.direct.MainActivity"
+        android:data="https://www.ilovefreegle.org/give" />
+  </shortcut>
+  <shortcut
+      android:shortcutId="ask"
+      android:enabled="true"
+      android:icon="@mipmap/ic_launcher"
+      android:shortcutShortLabel="@string/shortcut_ask_short"
+      android:shortcutLongLabel="@string/shortcut_ask_long">
+    <intent
+        android:action="android.intent.action.VIEW"
+        android:targetPackage="org.ilovefreegle.direct"
+        android:targetClass="org.ilovefreegle.direct.MainActivity"
+        android:data="https://www.ilovefreegle.org/ask" />
+  </shortcut>
+  <shortcut
+      android:shortcutId="chats"
+      android:enabled="true"
+      android:icon="@mipmap/ic_launcher"
+      android:shortcutShortLabel="@string/shortcut_chats_short"
+      android:shortcutLongLabel="@string/shortcut_chats_long">
+    <intent
+        android:action="android.intent.action.VIEW"
+        android:targetPackage="org.ilovefreegle.direct"
+        android:targetClass="org.ilovefreegle.direct.MainActivity"
+        android:data="https://www.ilovefreegle.org/chats" />
+  </shortcut>
+</shortcuts>

@@ -5,12 +5,47 @@ namespace App\Console\Commands\Mail;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Traits\FeatureFlags;
 use App\Services\UnifiedDigestService;
+use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 
 class SendUnifiedDigestCommand extends Command
 {
     use FeatureFlags;
+    use GracefulShutdown;
     use PreventsOverlapping;
+
+    /**
+     * How long an idle pass through the loop takes, at minimum.
+     *
+     * Chosen to match what an idle pass effectively cost before: the eligible-groups
+     * query plus a one-second sleep. Paced on elapsed time rather than slept flat, so
+     * that making those queries cheaper banks the saving instead of spending it on
+     * polling more often. Only idle passes wait - a pass that sent something starts the
+     * next one immediately.
+     */
+    private const IDLE_ITERATION_SECONDS = 2.0;
+
+    /**
+     * The shortest pause between idle passes, whatever the pass cost.
+     *
+     * Pacing purely on elapsed time has a nasty edge: a pass that overruns the period
+     * leaves no remainder to wait out, so the loop would go straight round again with no
+     * gap at all. The pass most likely to overrun is a slow one, and the usual reason for
+     * a slow one is a database under strain - exactly when easing off matters most. This
+     * floor keeps a gap there regardless.
+     */
+    private const IDLE_MINIMUM_PAUSE_SECONDS = 0.5;
+
+    /**
+     * How long to wait after an idle pass that took $elapsed seconds.
+     *
+     * Separated out so the awkward cases can be tested without having to make a real
+     * pass run slowly.
+     */
+    public static function idlePauseSeconds(float $elapsed): float
+    {
+        return max(self::IDLE_MINIMUM_PAUSE_SECONDS, self::IDLE_ITERATION_SECONDS - $elapsed);
+    }
 
     /**
      * The name and signature of the console command.
@@ -71,6 +106,13 @@ class SendUnifiedDigestCommand extends Command
 
     protected function doHandle(UnifiedDigestService $service): int
     {
+        // SIGTERM/SIGINT (and an optional abort file) flip a flag the service
+        // checks between users (daily) or between groups (immediate), so a
+        // long --mode=daily run can be drained cleanly without tearing a
+        // per-user spool write. The 2026-06-11 manual rollout had to be
+        // SIGTERM'd with no graceful path; this wires one in for next time.
+        $this->registerShutdownHandlers();
+
         $mode = $this->option('mode');
         $userId = $this->option('user') ? (int) $this->option('user') : null;
         $groupId = $this->option('group') ? (int) $this->option('group') : null;
@@ -84,21 +126,21 @@ class SendUnifiedDigestCommand extends Command
             return Command::FAILURE;
         }
 
-        if (! in_array($mode, [UnifiedDigestService::MODE_DAILY, UnifiedDigestService::MODE_IMMEDIATE])) {
-            $this->error("Invalid mode '{$mode}'. Must be 'daily' or 'immediate'.");
+        if (! in_array($mode, [UnifiedDigestService::MODE_DAILY, UnifiedDigestService::MODE_IMMEDIATE, UnifiedDigestService::MODE_REACH])) {
+            $this->error("Invalid mode '{$mode}'. Must be 'daily', 'immediate' or 'reach'.");
             return Command::FAILURE;
         }
 
-        // Daily mode is intentionally NOT live: V1's bulk3
-        // `digest.php -i 1/2/4/8/24` crons still own daily and our
-        // users_digests table doesn't exist on prod. Refuse with a
-        // clear message rather than letting it fail mid-run with
-        // "Base table not found". Local/CI tests run against a test
-        // DB that DOES have the table via the iznik-batch migration
-        // (2026_01_06_120000_create_users_digests_table.php).
+        // Daily mode is gated at the recipient level by
+        // FREEGLE_DIGEST_DAILY_ALLOWLIST (default empty = nobody; V1's bulk3
+        // `digest.php -i 24` cron still owns daily for everyone else). This
+        // is just a defensive guard: if the users_digests table hasn't been
+        // migrated in this environment, refuse with a clear message rather
+        // than failing mid-run with "Base table not found". The table is
+        // created by 2026_01_06_120000_create_users_digests_table.php.
         if ($mode === UnifiedDigestService::MODE_DAILY
             && ! \Illuminate\Support\Facades\Schema::hasTable('users_digests')) {
-            $this->warn('Daily mode is not enabled here — V1 owns daily sends. users_digests table not present.');
+            $this->warn('Daily mode skipped — users_digests table not present (migration not run here).');
             return Command::SUCCESS;
         }
 
@@ -133,32 +175,68 @@ class SendUnifiedDigestCommand extends Command
         // any time during our run, and another shard may be processing
         // one of our groups (no — partitions are disjoint, but messages
         // are still arriving from outside the digest system). Match the
-        // mail:chat:user2user pattern: sleep(1) when nothing to do, keep
+        // mail:chat:user2user pattern: hold idle passes to a fixed period
+        // (IDLE_ITERATION_SECONDS) rather than racing round the loop, and keep
         // looping until max-iterations is hit. The next cron tick takes
         // over from there.
-        $stats = ['groups_processed' => 0, 'users_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'errors' => 0];
+        // Immediate mode reports per-group counters (groups_processed,
+        // no_new_posts_groups); daily mode reports per-user ones
+        // (no_new_posts). Initialise both so either summary table below can
+        // read its keys regardless of which mode ran.
+        $stats = ['groups_processed' => 0, 'users_processed' => 0, 'posts_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'no_new_posts' => 0, 'errors' => 0];
+
+        $shouldStop = fn () => $this->shouldStop();
 
         for ($i = 0; $i < $maxIterations; $i++) {
-            $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards);
+            // hrtime, not microtime: this measures how long the pass took, and the
+            // system clock can step (NTP, a VM resuming) in a way that would make that
+            // measurement nonsense. hrtime only ever moves forward.
+            $iterationStart = hrtime(true);
+
+            $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards, $shouldStop);
 
             // Daily mode returns a different stat shape — match keys best-effort.
-            foreach (['groups_processed', 'users_processed', 'emails_sent', 'no_new_posts_groups', 'errors'] as $k) {
+            foreach (['groups_processed', 'users_processed', 'posts_processed', 'emails_sent', 'no_new_posts_groups', 'no_new_posts', 'errors'] as $k) {
                 if (isset($r[$k])) {
                     $stats[$k] += $r[$k];
                 }
             }
 
-            // Sleep briefly between idle iterations so we don't hammer
-            // the DB with empty queries. Active iterations roll straight
-            // into the next without a sleep.
+            // Service signalled a clean stop (SIGTERM/SIGINT/abort-file) —
+            // break the outer max-iterations loop too rather than starting
+            // a fresh batch.
+            if (!empty($r['stopped'])) {
+                $this->info('Shutdown signal received — stopped between batches.');
+                break;
+            }
+
+            // Hold idle iterations to a fixed period so we don't hammer the DB with
+            // empty queries. Active iterations roll straight into the next without a
+            // wait, because immediate mail is meant to be immediate.
+            //
+            // This paces on ELAPSED TIME rather than sleeping a flat second, which
+            // matters as soon as the queries get cheaper: a flat sleep leaves the poll
+            // rate free to rise as the work shrinks, so a saving in the query is partly
+            // spent on running it more often. Sleeping the remainder of the period
+            // instead holds the rate steady whatever the queries cost.
             if (($r['emails_sent'] ?? 0) === 0 && $i + 1 < $maxIterations) {
-                sleep(1);
+                $elapsed = (hrtime(true) - $iterationStart) / 1_000_000_000;
+                usleep((int) (self::idlePauseSeconds($elapsed) * 1_000_000));
             }
         }
 
         $this->newLine();
 
-        if ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
+        if ($mode === UnifiedDigestService::MODE_REACH) {
+            $this->table(
+                ['Metric', 'Count'],
+                [
+                    ['Posts Processed', $stats['posts_processed']],
+                    ['Emails Sent', $stats['emails_sent']],
+                    ['Errors', $stats['errors']],
+                ]
+            );
+        } elseif ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
             $this->table(
                 ['Metric', 'Count'],
                 [
@@ -196,11 +274,16 @@ class SendUnifiedDigestCommand extends Command
      */
     protected function lockKeySuffix(): ?string
     {
+        // Key the flock by MODE as well as shard. daily, immediate and reach are now
+        // all sharded, and a bare "shard-0-of-8" would make daily shard 0 and immediate
+        // shard 0 share one lock file and block each other. Mode-keying keeps every
+        // (mode, shard) partition on its own flock so no two ever contend.
+        $mode = (string) $this->option('mode');
         $shards = max(1, (int) $this->option('shards'));
         if ($shards === 1) {
-            return null; // single-shard runs use the default unsuffixed lock
+            return $mode; // single-shard run: mode-specific lock (e.g. an ad-hoc --mode=daily)
         }
         $shard = (int) $this->option('shard');
-        return "shard-{$shard}-of-{$shards}";
+        return "{$mode}-shard-{$shard}-of-{$shards}";
     }
 }

@@ -10,6 +10,38 @@ const { SCREENSHOTS_DIR } = require('../config')
 const { waitForModal } = require('./ui')
 
 /**
+ * Remove any leftover modal backdrop.
+ *
+ * A modal that closes via a route redirect can leave its `.modal-backdrop` node
+ * behind in `<div id="teleports">`. It is invisible in a screenshot but it sits
+ * over the whole page and swallows pointer events, so the next click retries
+ * until it times out against an element Playwright has already reported as
+ * "visible, enabled and stable" - which reads as a hydration or timing problem
+ * rather than an overlay.
+ *
+ * @param {import('@playwright/test').Page} page - Playwright page object
+ * @returns {Promise<void>}
+ */
+async function clearModalBackdrops(page) {
+  if (page.isClosed()) return
+
+  await page
+    .evaluate(() => {
+      document
+        .querySelectorAll('.modal.show, .modal[style*="display: block"]')
+        .forEach((el) => {
+          el.classList.remove('show')
+          el.style.display = 'none'
+        })
+      document.querySelectorAll('.modal-backdrop').forEach((el) => el.remove())
+      document.body.classList.remove('modal-open')
+      document.body.style.removeProperty('overflow')
+      document.body.style.removeProperty('padding-right')
+    })
+    .catch(() => {})
+}
+
+/**
  * Waits for auth to be persisted to localStorage after login.
  * This ensures the auth token is available before navigating away.
  * @param {import('@playwright/test').Page} page - Playwright page object
@@ -158,28 +190,8 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       }
     }
 
-    // Clear any lingering modal backdrop from a prior modal (e.g. the login
-    // modal that closes via route redirect after signUpViaHomepage). The
-    // backdrop node in <div id="teleports"> otherwise intercepts pointer
-    // events and blocks the #menu-option-logout click.
-    if (!page.isClosed()) {
-      await page
-        .evaluate(() => {
-          document
-            .querySelectorAll('.modal.show, .modal[style*="display: block"]')
-            .forEach((el) => {
-              el.classList.remove('show')
-              el.style.display = 'none'
-            })
-          document
-            .querySelectorAll('.modal-backdrop')
-            .forEach((el) => el.remove())
-          document.body.classList.remove('modal-open')
-          document.body.style.removeProperty('overflow')
-          document.body.style.removeProperty('padding-right')
-        })
-        .catch(() => {})
-    }
+    // A leftover backdrop here blocks the #menu-option-logout click.
+    await clearModalBackdrops(page)
 
     // Check if the logout button is visible (desktop or mobile)
     const desktopLogout = page.locator('#menu-option-logout')
@@ -379,7 +391,7 @@ async function waitForEnabledSignInButton(page) {
 
   // With SSR, buttons may be rendered disabled and only become enabled after
   // Vue hydration. Poll until we find an enabled button or timeout.
-  const hydrationTimeout = timeouts.ui.appearance
+  const hydrationTimeout = timeouts.ui.hydration
   const pollInterval = 200
   const startTime = Date.now()
   let signInButton = null
@@ -504,6 +516,12 @@ async function signUpViaHomepage(
   if (!signInButton) {
     return false
   }
+
+  // A modal left open by the page the test came from (Explore opens one) leaves
+  // a backdrop over the sign-in button. Playwright reports the button as
+  // visible, enabled and stable and then retries the click for the full
+  // timeout, so the failure names the button rather than what is in the way.
+  await clearModalBackdrops(page)
 
   console.log(`Found valid sign-in button, clicking...`)
   await signInButton.click()
@@ -753,8 +771,26 @@ async function loginViaHomepage(
 
   const signInButton = await waitForEnabledSignInButton(page)
   if (!signInButton) {
-    return false
+    // Throw rather than return false. A false return means "those credentials
+    // did not work", which callers like unsubscribeManually legitimately treat
+    // as "not registered" and carry on from. Never getting a usable sign-in
+    // button is a different thing - the page did not hydrate - and carrying on
+    // runs the rest of the test logged out. That surfaces minutes later as an
+    // unrelated failure (the give flow stopping on its email step behind a
+    // signup dialog, timing out on a /myposts navigation that was never going
+    // to happen), which is what made this expensive to diagnose.
+    throw new Error(
+      `Login for ${email} could not start: no enabled .test-signinbutton after ` +
+        `${timeouts.ui.hydration}ms, so the page never hydrated. Failing here ` +
+        `rather than continuing logged out.`
+    )
   }
+
+  // A modal left open by the page the test came from (Explore opens one) leaves
+  // a backdrop over the sign-in button. Playwright reports the button as
+  // visible, enabled and stable and then retries the click for the full
+  // timeout, so the failure names the button rather than what is in the way.
+  await clearModalBackdrops(page)
 
   console.log(`Found valid sign-in button, clicking...`)
   await signInButton.click()
@@ -1527,10 +1563,29 @@ async function loginViaModTools(page, email, password = 'freegle') {
   console.log(`Starting ModTools login for: ${email}`)
 
   // Navigate to ModTools root — the layout shows LoginModal when not authenticated.
-  await page.goto(`${modtoolsBaseUrl}/`, {
-    timeout: timeouts.navigation.initial,
-    waitUntil: 'domcontentloaded',
-  })
+  // Retry when a still-settling SPA navigation from the previous page (e.g. the
+  // Freegle site redirecting after logout) interrupts this goto — the same
+  // transient class gotoAndVerify tolerates.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await page.goto(`${modtoolsBaseUrl}/`, {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+      })
+      break
+    } catch (error) {
+      if (
+        attempt < 3 &&
+        error.message.includes('is interrupted by another navigation')
+      ) {
+        console.log(
+          `ModTools goto interrupted by another navigation, retry ${attempt}`
+        )
+        continue
+      }
+      throw error
+    }
+  }
 
   // Wait for the login modal's email field to be visible — this confirms both
   // that Vue has hydrated and the modal is rendered. Playwright locators
@@ -1649,4 +1704,5 @@ module.exports = {
   getMyGroups,
   clearSessionData,
   waitForEnabledSignInButton,
+  clearModalBackdrops,
 }

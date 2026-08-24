@@ -86,8 +86,10 @@ func TestCronJobCommandsUnique(t *testing.T) {
 }
 
 func TestCronJobKnownInactiveJobs(t *testing.T) {
-	// These two jobs are known to be intentionally disabled.
-	knownInactive := []string{"deploy:watch", "users:cleanup"}
+	// deploy:watch is intentionally disabled: it detects code updates via
+	// version.txt, which isn't how the Docker environment deploys.
+	// users:cleanup was re-enabled once the V1 cutover left it unscheduled.
+	knownInactive := []string{"deploy:watch"}
 	for _, cmd := range knownInactive {
 		found := false
 		for _, j := range cronJobs {
@@ -190,4 +192,29 @@ func TestCronJobStructFields(t *testing.T) {
 	if queueJob.Category != "System" {
 		t.Errorf("queue:background-tasks Category = %q, want System", queueJob.Category)
 	}
+}
+
+// The users_approxlocs refresh is the only writer of the point cloud that drives rippling reach,
+// so if it silently stops running nothing else notices - it must be visible on the SysAdmin cron
+// dashboard where an overdue run shows up.
+func TestCronJobsIncludesApproxLocsRefresh(t *testing.T) {
+	const command = "users:update-approx-locs"
+
+	for _, j := range cronJobs {
+		if j.Command != command {
+			continue
+		}
+		if !j.Active {
+			t.Errorf("%s: Active = false, want true", command)
+		}
+		if j.IntervalMinutes != 1440 {
+			t.Errorf("%s: IntervalMinutes = %d, want 1440 (daily)", command, j.IntervalMinutes)
+		}
+		if j.Category != "User Management" {
+			t.Errorf("%s: Category = %q, want %q", command, j.Category, "User Management")
+		}
+		return
+	}
+
+	t.Errorf("cronJobs is missing %q - it would not appear in SysAdmin > Cron Jobs", command)
 }

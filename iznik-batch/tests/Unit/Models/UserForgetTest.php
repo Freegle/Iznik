@@ -3,11 +3,12 @@
 namespace Tests\Unit\Models;
 
 use App\Models\User;
+use App\Models\UserDeletion;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
- * Tests for User::forget() — ported from iznik-server UserTest::testForget()
+ * Tests for User::forget() — ported from the legacy V1 PHP UserTest::testForget()
  * and iznik-server-go TestPostSessionForget.
  */
 class UserForgetTest extends TestCase
@@ -180,6 +181,30 @@ class UserForgetTest extends TestCase
 
         $this->assertNotNull($log);
         $this->assertEquals('GDPR request', $log->text);
+    }
+
+    public function test_forget_records_deletion_for_partners(): void
+    {
+        // Partners mirror our users and only learn about changes by polling, so a
+        // forget has to leave a tombstone they can see.
+        $user = $this->createTestUser();
+
+        $user->forget('TN account removed');
+
+        $this->assertDatabaseHas('users_deletions', [
+            'userid' => $user->id,
+            'type' => UserDeletion::TYPE_FORGOTTEN,
+            'reason' => 'TN account removed',
+        ]);
+    }
+
+    public function test_forget_dry_run_records_nothing(): void
+    {
+        $user = $this->createTestUser();
+
+        $user->forget('TN account removed', TRUE);
+
+        $this->assertDatabaseMissing('users_deletions', ['userid' => $user->id]);
     }
 
     public function test_forget_clears_message_content(): void

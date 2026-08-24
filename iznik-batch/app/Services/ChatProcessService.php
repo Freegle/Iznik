@@ -27,6 +27,37 @@ class ChatProcessService
     private const REVIEW_SPAM = 'Spam';
     private const REVIEW_LAST = 'Last';
 
+    /**
+     * Map a ContentCheckService check identifier to the specific chat_messages
+     * `reportreason` enum value, so the modtools review UI can tell the moderator
+     * WHY a message was held instead of the unhelpful "failed spam checks, but we
+     * don't have any more information about why". Every value here is a member of
+     * the reportreason enum and is already rendered with friendly text by
+     * ModChatReview.vue. Anything unmapped falls back to the generic 'Spam'.
+     */
+    private const CHECK_TO_REPORTREASON = [
+        ContentCheckService::CHECK_CONCERN_KEYWORD => 'WorryWord',
+        ContentCheckService::CHECK_PER_GROUP_WORRY => 'WorryWord',
+        ContentCheckService::CHECK_MONEY           => 'Money',
+        ContentCheckService::CHECK_URL             => 'Link',
+        ContentCheckService::CHECK_MESSAGING_LINK  => 'Link',
+        ContentCheckService::CHECK_SPAMHAUS_DBL    => 'URL on DBL',
+        ContentCheckService::CHECK_EMAIL_ADDRESS   => 'Email',
+        ContentCheckService::CHECK_LANGUAGE        => 'Language',
+        ContentCheckService::CHECK_KNOWN_SPAMMER   => 'Referenced known spammer',
+        ContentCheckService::CHECK_GREETING_SPAM   => 'Greetings spam',
+    ];
+
+    /**
+     * Resolve the specific reportreason for a checkChatMessage() result.
+     * Returns the generic 'Spam' for a null result or an unmapped check.
+     */
+    private function reportReasonForCheck(?array $result): string
+    {
+        $check = $result['check'] ?? null;
+        return self::CHECK_TO_REPORTREASON[$check] ?? self::REVIEW_SPAM;
+    }
+
     private ContentCheckService $contentCheck;
 
     public function __construct(?ContentCheckService $contentCheck = null)
@@ -75,21 +106,14 @@ class ChatProcessService
         $chattype = $message->chattype;
         $platform = (bool) $message->platform;
 
-        // --- Ban check for messages with a refmsgid ---
-        if (!empty($message->refmsgid)) {
-            $banned = DB::table('messages_groups')
-                ->join('users_banned', function ($join) use ($userid) {
-                    $join->on('messages_groups.groupid', '=', 'users_banned.groupid')
-                        ->where('users_banned.userid', '=', $userid);
-                })
-                ->where('messages_groups.msgid', $message->refmsgid)
-                ->exists();
-
-            if ($banned) {
-                $this->processFailed($id);
-                return true;
-            }
-        }
+        // A ban is a fact about the sender's standing with the communities they share with
+        // the person they are writing to - see isBannedInCommonGroups below, which is the
+        // check that applies. It deliberately does NOT look at which communities the post
+        // reached: rippling puts a post on communities the poster never chose, so asking
+        // "is the sender banned anywhere this post landed?" threw away replies from members
+        // in good standing wherever they and the poster actually talk (one live example was
+        // 410m away, on the poster's own community, banned only on a community the post had
+        // rippled into and that neither of them was conversing on).
 
         // --- User2User spam and review checks ---
         $review = 0;
@@ -104,7 +128,7 @@ class ChatProcessService
                 ->exists();
 
             if ($isSpammer) {
-                $this->processFailed($id);
+                $this->processFailed($id, ChatMessage::PROCESSFAIL_SPAMMER);
                 return true;
             }
 
@@ -114,7 +138,7 @@ class ChatProcessService
             $bannedInCommon = $this->isBannedInCommonGroups($userid, $otherId);
 
             if ($bannedInCommon) {
-                $this->processFailed($id);
+                $this->processFailed($id, ChatMessage::PROCESSFAIL_BANNED_IN_COMMON);
                 return true;
             }
 
@@ -131,19 +155,31 @@ class ChatProcessService
                 // Moderated members' user-text messages and held any that matched
                 // a concern keyword / link / phone number etc. That scan was lost
                 // when chat_process.php was migrated to this service, so restore it.
-                // Any hit maps to reportreason 'Spam'; the review UI re-derives the
-                // specific reason from the message text.
-                if ($this->contentCheck->checkChatMessage((string) ($message->message ?? '')) !== null) {
+                // Map the specific check that fired to its reportreason enum
+                // value, so the review UI tells the moderator WHY (e.g. "It looks
+                // like it refers to money.") rather than "...no more information
+                // about why". Unmapped checks fall back to the generic 'Spam'.
+                $checkResult = $this->contentCheck->checkChatMessage((string) ($message->message ?? ''));
+                if ($checkResult !== null) {
                     $review = 1;
-                    $reviewreason = self::REVIEW_SPAM;
+                    $reviewreason = $this->reportReasonForCheck($checkResult);
                 }
             }
 
-            // If the previous message in this chat is held for review, hold this one too.
+            // If the PREVIOUS message in this chat is held for review, hold this
+            // one too. Use id < $id, not id != $id: V1's chat_process.php was a
+            // continuous daemon that processed each message as it arrived, so the
+            // newest other row WAS the previous one. This service processes in
+            // batches (processIncoming orders by id asc), so when a burst of
+            // messages is pending, "newest other row" is a LATER, not-yet-processed
+            // message (reviewrequired defaults to 0) and the hold chain silently
+            // breaks — subsequent messages from a member already under review get
+            // delivered (Discourse #9656). Looking strictly backwards at the
+            // immediately preceding (already-processed) message restores the chain.
             if (!$review) {
                 $lastReview = DB::table('chat_messages')
                     ->where('chatid', $chatid)
-                    ->where('id', '!=', $id)
+                    ->where('id', '<', $id)
                     ->orderByDesc('id')
                     ->value('reviewrequired');
 
@@ -184,6 +220,22 @@ class ChatProcessService
                 'created_at' => now(),
                 'attempts' => 0,
             ]);
+
+            // Surface the room in recipients' chat list now the message is deliverable.
+            // ListForUser filters chat_rooms.latestmessage >= now - CHAT_ACTIVE_LIMIT (31d),
+            // and neither CreateChatMessage nor this service bumped latestmessage - only the
+            // hourly chats:update-counts recompute did. So a reply landing in a room dormant
+            // for >31 days (Freegle keeps one User2User room per pair, reused across items)
+            // stayed out of the recipient's list until that hourly cron ran, even though the
+            // notification email fired immediately - up to ~1h of "email arrived but the chat
+            // isn't showing". Bump here, gated on the same deliverability the email/in-app
+            // fetch use (not held for review, not spam), so list visibility tracks delivery.
+            // GREATEST guards against moving latestmessage backwards when a burst is processed
+            // out of natural order; the hourly recompute remains as a backfill.
+            DB::update(
+                'UPDATE chat_rooms SET latestmessage = GREATEST(COALESCE(latestmessage, ?), ?) WHERE id = ?',
+                [$message->date, $message->date, $chatid]
+            );
         }
 
         return true;
@@ -206,15 +258,26 @@ class ChatProcessService
 
     /**
      * Mark a message as failed processing.
+     *
+     * A failed message is never notified to the recipient (ChatNotificationService only
+     * takes processingsuccessful = 1), so record WHY. Without this a suppressed reply is
+     * indistinguishable from one that was never sent, which is how a batch of dropped
+     * replies got misdiagnosed as a rippling delay.
      */
-    private function processFailed(int $messageId): void
+    private function processFailed(int $messageId, ?string $reason = null): void
     {
         DB::table('chat_messages')
             ->where('id', $messageId)
             ->update([
                 'processingrequired' => 0,
                 'processingsuccessful' => 0,
+                'processingfailreason' => $reason,
             ]);
+
+        Log::info('ChatProcess: message suppressed', [
+            'chatmsgid' => $messageId,
+            'reason' => $reason,
+        ]);
     }
 
     /**

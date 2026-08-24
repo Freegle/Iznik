@@ -1,5 +1,5 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'We miss you on Freegle!'])
+  @include('emails.mjml.partials.head', ['preview' => 'We miss you - could we tempt you back?'])
   <mj-body background-color="#f4f4f4">
 
     {{-- Header — vertical padding on the SECTION (not the text) so mj-column
@@ -44,7 +44,7 @@
       <mj-column>
         <mj-button
           mj-class="btn-warning"
-          href="{{ $userSite }}/engage?engageid={{ $engageId }}&action=find"
+          href="{{ $userSite }}/engage?engageid={{ $engageId }}&action=ask"
           border-radius="3px"
           font-size="15px"
           font-weight="bold"

@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
+	"gorm.io/gorm"
 	"log"
 )
 
 // Newsfeed type constants.
 const (
-	TypeCommunityEvent      = "CommunityEvent"
+	TypeCommunityEvent       = "CommunityEvent"
 	TypeVolunteerOpportunity = "VolunteerOpportunity"
 )
 
@@ -36,7 +37,14 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Lng *float64
 		}
 		var ul UserLoc
-		db.Raw("SELECT l.lat, l.lng FROM users u LEFT JOIN locations l ON l.id = u.lastlocation WHERE u.id = ?", userid).Scan(&ul)
+		// The LEFT JOIN matters: a
+		// user with no lastlocation must still yield a row, with NULL lat/lng,
+		// which is why both fields are pointers.
+		db.Table("users u").
+			Select("l.lat, l.lng").
+			Joins("LEFT JOIN locations l ON l.id = u.lastlocation").
+			Where("u.id = ?", userid).
+			Scan(&ul)
 		lat = ul.Lat
 		lng = ul.Lng
 	}
@@ -48,7 +56,7 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Lng *float64
 		}
 		var gl GroupLoc
-		db.Raw("SELECT lat, lng FROM `groups` WHERE id = ?", groupid).Scan(&gl)
+		db.Table("groups").Select("lat, lng").Where("id = ?", groupid).Scan(&gl)
 		lat = gl.Lat
 		lng = gl.Lng
 	}
@@ -62,10 +70,10 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 	hidden := "NULL"
 	if userid > 0 {
 		var modStatus string
-		db.Raw("SELECT COALESCE(newsfeedmodstatus, 'Unmoderated') FROM users WHERE id = ?", userid).Scan(&modStatus)
+		db.Table("users").Select("COALESCE(newsfeedmodstatus, 'Unmoderated')").Where("id = ?", userid).Scan(&modStatus)
 
 		var spamCount int64
-		db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection = ?", userid, utils.SPAM_COLLECTION_SPAMMER).Scan(&spamCount)
+		db.Table("spam_users").Where("userid = ? AND collection = ?", userid, utils.SPAM_COLLECTION_SPAMMER).Count(&spamCount)
 
 		if modStatus == utils.NEWSFEED_MODSTATUS_SUPPRESSED || spamCount > 0 {
 			hidden = "NOW()"
@@ -78,7 +86,7 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 			Type *string
 		}
 		var last LastEntry
-		db.Raw("SELECT `type` FROM newsfeed WHERE userid = ? ORDER BY id DESC LIMIT 1", userid).Scan(&last)
+		db.Table("newsfeed").Select("`type`").Where("userid = ?", userid).Order("id DESC").Limit(1).Scan(&last)
 
 		if last.Type != nil && *last.Type == nfType {
 			// Last entry by this user was the same type - skip to prevent duplicate.
@@ -90,37 +98,40 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 	var location *string
 	if groupid > 0 {
 		var groupName string
-		db.Raw("SELECT nameshort FROM `groups` WHERE id = ?", groupid).Scan(&groupName)
+		db.Table("groups").Select("nameshort").Where("id = ?", groupid).Scan(&groupName)
 		if groupName != "" {
 			location = &groupName
 		}
 	}
 
-	pos := fmt.Sprintf("ST_GeomFromText('POINT(%f %f)', %d)", *lng, *lat, utils.SRID)
-
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return 0, err
+	// Same zero-precision-change
+	// conversion as newsfeed.go's createRefer/createPost (10bcbd6a6404,
+	// f961504c334d): the WKT text is built exactly as before via
+	// fmt.Sprintf("POINT(%f %f)", ...), then bound as a genuine ST_GeomFromText
+	// argument rather than spliced into the SQL text. hidden is a fixed
+	// two-way literal ("NULL" or "NOW()"), never a bound value, so
+	// gorm.Expr(hidden) with no args is exact. deleted/reviewrequired/pinned
+	// were always fixed literals (NULL, 0, 0), not runtime values.
+	row := map[string]interface{}{
+		"type":           nfType,
+		"userid":         userid,
+		"groupid":        groupid,
+		"eventid":        eventid,
+		"volunteeringid": volunteeringid,
+		"position":       gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", *lng, *lat), utils.SRID),
+		"location":       location,
+		"hidden":         gorm.Expr(hidden),
+		"deleted":        gorm.Expr("NULL"),
+		"reviewrequired": gorm.Expr("0"),
+		"pinned":         gorm.Expr("0"),
 	}
-	sqlResult, err := sqlDB.Exec(
-		fmt.Sprintf("INSERT INTO newsfeed (`type`, userid, groupid, eventid, volunteeringid, position, location, hidden, deleted, reviewrequired, pinned) "+
-			"VALUES (?, ?, ?, ?, ?, %s, ?, %s, NULL, 0, 0)", pos, hidden),
-		nfType, userid, groupid, eventid, volunteeringid, location,
-	)
-
-	if err != nil {
+	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		log.Printf("Failed to create newsfeed entry: %v", err)
 		return 0, err
 	}
 
-	var id uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		id = uint64(lastID)
-	}
+	idInt, _ := row["@id"].(int64)
+	id := uint64(idInt)
 
 	return id, nil
 }

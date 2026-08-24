@@ -22,6 +22,19 @@
                 />
               </b-input-group>
             </NoticeMessage>
+            <NoticeMessage
+              v-if="
+                editing &&
+                editmessage &&
+                message.groups &&
+                message.groups.length > 1
+              "
+              variant="warning"
+              class="w-100 mb-2"
+            >
+              This edit will apply to the post on all
+              {{ message.groups.length }} groups it appears on.
+            </NoticeMessage>
             <div v-if="editing && editmessage" class="d-flex flex-wrap">
               <ModGroupSelect
                 v-model="editgroup"
@@ -81,7 +94,8 @@
               <span
                 v-if="message.matchedon && message.matchedon.type === 'Vector'"
                 class="highlight"
-              >{{ eSubject }}</span>
+                >{{ eSubject }}</span
+              >
               <Highlighter
                 v-else-if="message.matchedon"
                 :search-words="[String(message.matchedon.word)]"
@@ -131,24 +145,82 @@
               :message="message"
               modinfo
               display-message-link
+              :only-groupid="currentGroupid"
             />
             <div
-              v-if="homegroup && groupid && groupid !== homegroupids[0]"
+              v-if="
+                homegroup &&
+                groupid &&
+                groupid !== homegroupids[0] &&
+                !alreadyOnHomeGroup
+              "
               class="small text-danger"
             >
               Possibly should be on {{ homegroup }}
               <span v-if="!homegroupontn"> but group not on TN </span>
             </div>
-            <div
-              v-if="otherGroups.length > 0"
-              class="small text-muted"
-            >
-              Also on:
-              <span
-                v-for="(g, idx) in otherGroups"
-                :key="g.groupid"
-              >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
+            <div v-if="otherGroups.length > 0" class="small text-muted">
+              May also be shown to some members in
+              <ShowMore
+                :items="otherGroups"
+                :limit="3"
+                inline
+                keyfield="groupid"
+              >
+                <template #item="{ item }">{{
+                  groupStore.get(item.groupid)?.namedisplay ||
+                  'Group ' + item.groupid
+                }}</template>
+              </ShowMore>
             </div>
+            <NoticeMessage
+              v-if="onMultipleOfMyGroups || isRippledInToContextGroup"
+              variant="info"
+              class="mt-1 mb-2"
+              data-test="multi-group-mod-warning"
+            >
+              <span v-if="onMultipleOfMyGroups">
+                This post is on several of your communities. You're moderating
+                for <strong>{{ currentGroupName || 'this group' }}</strong> -
+                approving or rejecting here affects
+                <strong>{{ currentGroupName || 'this group' }}</strong> only.
+              </span>
+              <span v-if="isRippledInToContextGroup">
+                <span
+                  v-if="pending"
+                  data-test="ripple-out-of-area-reject-warning"
+                >
+                  This post has rippled in from a neighbouring community -
+                  that's expected, so
+                  <strong class="text-danger"
+                    >please don't reject it just for being "out of area"</strong
+                  >
+                  (only reject for the usual reasons: spam, breaks the rules,
+                  wrong sort of thing).
+                </span>
+                <span v-else>
+                  This post was
+                  <strong>rippled in</strong> from a neighbouring community and
+                  automatically approved onto
+                  <strong>{{ currentGroupName || 'this group' }}</strong> to
+                  keep moderation load low. You don't need to do anything; you
+                  can still reject it for the usual reasons (spam, breaks the
+                  rules), just not for being "out of area".
+                </span>
+                <span
+                  v-if="rippleProximity"
+                  class="d-block mt-1"
+                  data-test="ripple-proximity-note"
+                >
+                  This post is quicker to get to for Freeglers in
+                  {{ rippleProximity.p }} than {{ rippleProximity.p }} is to
+                  {{ rippleProximity.q }}.
+                </span>
+                <a href="#" @click.prevent="ripplingExplanationModal?.show()">
+                  Learn more
+                </a>
+              </span>
+            </NoticeMessage>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -208,7 +280,9 @@
                   icon-name="reply"
                   confirm
                   @handle="backToPending"
-                  ><span class="d-none d-sm-inline">Back to Pending</span></SpinButton
+                  ><span class="d-none d-sm-inline"
+                    >Back to Pending</span
+                  ></SpinButton
                 >
               </div>
               <div class="ms-2">
@@ -249,7 +323,7 @@
                 at
                 {{ datetimeshort(message.outcomes[0].timestamp) }}
               </NoticeMessage>
-              <div v-if="message.heldby">
+              <div v-if="contextGroup?.heldby">
                 <NoticeMessage variant="warning" class="mb-2">
                   <p v-if="me.id === heldbyId">
                     You held this. Other people will see a warning to check with
@@ -262,7 +336,7 @@
                   </p>
                   <ModMessageButton
                     :messageid="message.id"
-                    :groupid="groupid"
+                    :groupid="currentGroupid"
                     variant="warning"
                     icon="play"
                     release
@@ -297,6 +371,12 @@
                 {{ fromUser.activedistance }} miles apart.
               </NoticeMessage>
             </div>
+            <NoticeMessage v-if="noLocation" variant="warning" class="mb-2">
+              We couldn't work out where this post is (often an emailed post
+              whose subject has no recognised place name). Please click
+              <strong>Edit</strong> and add a postcode (it doesn't have to be
+              exactly right - do your best) so members can find it.
+            </NoticeMessage>
             <NoticeMessage v-if="outsideUK" variant="warning" class="mb-2">
               This message may be from outside the UK ({{ position.lat }},
               {{ position.lng }}), which means it might be a scam. Please check
@@ -309,8 +389,30 @@
             >
               {{ message.spamreason }}
             </NoticeMessage>
+            <!-- When a post is back in Pending because a moderator moved it there (e.g. a
+                 "Back to Pending" on any community pulls every copy back for per-group
+                 review), the reason is stored on THIS group's copy (contextGroup.spamreason),
+                 not the message-level spamreason. Surface it so a mod who approved the post
+                 understands why it has reappeared and isn't left clicking Approve with no
+                 explanation. -->
             <NoticeMessage
-              v-if="pending && membership && membership.ourpostingstatus === 'MODERATED'"
+              v-if="
+                contextGroup &&
+                contextGroup.collection === 'Pending' &&
+                contextGroup.spamreason &&
+                contextGroup.spamreason !== message.spamreason
+              "
+              variant="info"
+              class="mb-2"
+            >
+              {{ contextGroup.spamreason }}
+            </NoticeMessage>
+            <NoticeMessage
+              v-if="
+                pending &&
+                membership &&
+                membership.ourpostingstatus === 'MODERATED'
+              "
               variant="info"
               class="mb-2"
             >
@@ -353,16 +455,21 @@
               v-if="
                 message.worry?.length ||
                 message.groups?.some(
-                  (g) =>
-                    g.contentcheck_reasons &&
-                    g.contentcheck_reasons.length
+                  (g) => g.contentcheck_reasons && g.contentcheck_reasons.length
                 )
               "
               :messageid="message.id"
+              :groupid="currentGroupid"
+              :covered="explainedElsewhere"
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
-              <b-form-textarea v-if="editing" v-model="editmessage.textbody" rows="8" class="mb-3" />
+              <b-form-textarea
+                v-if="editing"
+                v-model="editmessage.textbody"
+                rows="8"
+                class="mb-3"
+              />
               <div v-else-if="editreview">
                 <template v-if="oldBody || newBody">
                   <h4>Differences:</h4>
@@ -393,9 +500,12 @@
                 class="mb-3 rounded border p-2 preline forcebreak fw-bold"
               >
                 <span
-                  v-if="message.matchedon && message.matchedon.type === 'Vector'"
+                  v-if="
+                    message.matchedon && message.matchedon.type === 'Vector'
+                  "
                   class="highlight"
-                >{{ eBody }}</span>
+                  >{{ eBody }}</span
+                >
                 <Highlighter
                   v-else-if="message.matchedon"
                   :search-words="[String(message.matchedon.word)]"
@@ -407,6 +517,30 @@
                   {{ eBody }}
                 </span>
               </div>
+              <b-alert
+                v-if="isBulk"
+                :model-value="true"
+                variant="info"
+                class="mb-3"
+              >
+                <strong>
+                  <v-icon icon="boxes-stacked" /> Bulk clearance —
+                  {{ message.bulkcount }} item{{
+                    message.bulkcount === 1 ? '' : 's'
+                  }}.
+                </strong>
+                This is a single post on the group, but when a member opens it
+                they can see each item and turn on the ones they'd like (and how
+                many).
+                <b-button
+                  variant="link"
+                  class="p-0 ms-1 align-baseline"
+                  data-testid="bulk-preview-btn"
+                  @click="showBulkPreview = true"
+                >
+                  See how members see it
+                </b-button>
+              </b-alert>
               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
                 <div
                   v-for="attachment in attachments"
@@ -446,6 +580,15 @@
               :boundary="group.poly || group.polyofficial"
               :height="150"
             />
+            <b-button
+              v-if="canShowReach"
+              variant="white"
+              size="sm"
+              class="mt-2 w-100"
+              @click="reachMapModal?.show()"
+            >
+              <v-icon icon="map-marker-alt" /> View rippling reach
+            </b-button>
           </b-col>
           <b-col cols="12" lg="3">
             <div
@@ -456,7 +599,7 @@
                 :message="message"
                 :userid="fromUserId"
                 modinfo
-                :groupid="groupid"
+                :groupid="currentGroupid"
               />
               <div v-else-if="fromUserId && !fromUser">
                 <Spinner :size="20" />
@@ -554,7 +697,7 @@
             <ModMemberActions
               v-if="showActions && message.groups && message.groups.length"
               :userid="fromUserId"
-              :groupid="groupid"
+              :groupid="currentGroupid"
               @commentadded="updateComments"
             />
           </b-col>
@@ -585,7 +728,7 @@
         </b-row>
       </b-card-body>
       <b-card-footer v-if="!noactions && expanded">
-        <div v-if="message.heldby && heldbyId !== myid">
+        <div v-if="contextGroup?.heldby && heldbyId !== myid">
           This message is held by someone else. The buttons are hidden so you
           don't click them by accident. Please check with them before releasing
           the message.
@@ -599,9 +742,7 @@
         </NoticeMessage>
         <div
           v-if="
-            pending &&
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
+            pending && (!contextGroup?.heldby || heldbyId === myid) && !editing
           "
           class="text-end mb-1"
         >
@@ -610,15 +751,13 @@
           </b-button>
         </div>
         <ModMessageButtons
-          v-if="
-            (!message.heldby || (message.heldby && heldbyId === myid)) &&
-            !editing
-          "
+          v-if="(!contextGroup?.heldby || heldbyId === myid) && !editing"
           :messageid="message.id"
-          :groupid="groupid"
+          :groupid="currentGroupid"
           :modconfigid="configid"
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
+          :is-home-group="isHomeGroup"
         />
         <b-button
           v-if="editing"
@@ -650,6 +789,20 @@
       :userid="fromUserId"
       :safelist="false"
     />
+    <RipplingExplanationModal ref="ripplingExplanationModal" />
+    <ModMessageReachMap
+      v-if="message && message.id"
+      ref="reachMapModal"
+      :messageid="message.id"
+      :lat="position?.lat"
+      :lng="position?.lng"
+      :arrival="reachArrival"
+    />
+    <ModBulkPreviewModal
+      v-if="showBulkPreview"
+      :messageid="message.id"
+      @hidden="showBulkPreview = false"
+    />
     <div ref="bottom" />
   </div>
 </template>
@@ -657,6 +810,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import Highlighter from 'vue-highlight-words'
+import ShowMore from '~/components/ShowMore.vue'
 
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
@@ -671,10 +825,16 @@ import { useMiscStore } from '~/stores/misc'
 import { SUBJECT_REGEX } from '~/constants'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 
 import { useModGroupStore } from '@/stores/modgroup'
 
 import { twem } from '~/composables/useTwem'
+import {
+  isRippledInToContextGroup as isRippledIn,
+  earliestArrivalGroupId,
+  homeGroupId,
+} from '~/composables/rippleStatus'
 
 const props = defineProps({
   messageid: {
@@ -718,6 +878,14 @@ const props = defineProps({
   },
   contextGroupid: {
     type: Number,
+    required: false,
+    default: null,
+  },
+  /* The messages_groups.collection this listing is browsing (Approved, Pending, ...).
+     Used only to pick which group copy currentGroupid falls back to when there is no
+     explicit contextGroupid - see currentGroupid below. */
+  collection: {
+    type: String,
     required: false,
     default: null,
   },
@@ -772,16 +940,26 @@ const fromUser = computed(() => {
 })
 const { typeOptions } = setupKeywords()
 const { me, myid } = useMe()
-const { myModGroups, myModGroup } = useModMe()
+const { myModGroups, myModGroup, amAModOn } = useModMe()
 
 const top = ref(null)
 const bottom = ref(null)
 const spamConfirm = ref(null)
+const ripplingExplanationModal = ref(null)
+const reachMapModal = ref(null)
 
 const saving = ref(false)
 const saved = ref(false)
 const showEmailSourceModal = ref(false)
 const showSpamModal = ref(false)
+const showBulkPreview = ref(false)
+
+// A bulk "clearance" offer carries a structured catalogue of items.
+const isBulk = computed(
+  () =>
+    (message.value?.bulkcount || 0) > 0 ||
+    (message.value?.bulkitems?.length || 0) > 0
+)
 const showMailSettings = ref(false)
 const showActions = ref(false)
 const showEmails = ref(false)
@@ -807,22 +985,192 @@ const groupid = computed(() => {
   return 0
 })
 
-const messageGroup = computed(() => {
-  return groupid.value || null
+// The group this copy is being administered on. In a specific group's queue that's the
+// explicit context group; in the all-communities view we pick the group I moderate that
+// most needs attention - a Pending one first, then the most-recent arrival - so a Reject
+// here is unambiguous and the rippled-in notice has a group to anchor to.
+const currentGroupid = computed(() => {
+  if (props.contextGroupid) return parseInt(props.contextGroupid)
+  const mine = moderatedGroupsOnPost.value
+  if (mine.length) {
+    // An edit under review belongs to the post's ORIGIN group, not to a copy that
+    // rippled in later. Anchor to the origin-most group I moderate (earliest arrival)
+    // so the "moderating for X" banner and the Approve/Reject target the origin group
+    // - otherwise a post that originated on a group I'm active on but rippled into a
+    // group I only back up gets shown as "moderating for <backup group>" (Discourse 9518).
+    if (props.editreview) {
+      const originPick = earliestArrivalGroupId(mine)
+      if (originPick != null) return originPick
+    }
+    const pending = mine.filter((g) =>
+      ['Pending', 'PendingOther', 'Spam'].includes(g.collection)
+    )
+    // The Approved Messages list (and any other single-collection listing) can still
+    // show a post that is Pending on a DIFFERENT group I also moderate - a mod covering
+    // several communities sees every post that is Approved on any one of them. Without
+    // this, the pending-first fallback below anchored to that other, still-pending copy
+    // even while browsing Approved Messages, so the notice above read the pending copy's
+    // live setting-based hold (e.g. "this group moderates all posts") on a post that had
+    // already gone out on the group actually being viewed (Discourse #10024).
+    const matchingListedCollection = props.collection
+      ? mine.filter((g) =>
+          (props.collection === 'Pending'
+            ? ['Pending', 'PendingOther', 'Spam']
+            : [props.collection]
+          ).includes(g.collection)
+        )
+      : []
+    const pool = matchingListedCollection.length
+      ? matchingListedCollection
+      : pending.length
+        ? pending
+        : mine
+    // Anchor to the group the post ORIGINATED on (home), not a copy that rippled in
+    // later. A mod active on both the origin and a group the post rippled into should
+    // act on / reply from the origin, so a Blank reply appends to the member's existing
+    // chat with the origin group's volunteers rather than starting a fresh one from the
+    // rippled-in group (Discourse 9808/565). rippled_in is authoritative here; arrival is
+    // not, because the approve path stamps arrival=NOW() on whichever copy was approved -
+    // which is exactly the just-approved rippled-in copy we must NOT pick.
+    const home = homeGroupId(pool)
+    if (home != null) return home
+    return parseInt(pool[0].groupid)
+  }
+  const gid = parseInt(groupid.value)
+  return gid || null
 })
 
-// Get the group info for the contextual group (multi-group support).
+// Get the group info for the group being administered (multi-group support).
 const contextGroup = computed(() => {
   if (!message.value?.groups?.length) return null
-  const gid = parseInt(groupid.value)
-  return message.value.groups.find((g) => parseInt(g.groupid) === gid) || message.value.groups[0]
+  const gid = currentGroupid.value
+  return (
+    message.value.groups.find((g) => parseInt(g.groupid) === gid) ||
+    message.value.groups[0]
+  )
 })
 
-// Other groups this message is on (for multi-group indicator).
+// Hold reasons this component already explains with its own notices above, which
+// use live state - the location we resolved now, the member's current posting
+// status - rather than whatever the content check stored when it ran. Passing
+// them to ModMessageWorry stops the same cause being stated twice, once here and
+// once from the stored reason (Discourse #9989).
+const explainedElsewhere = computed(() => {
+  // Location is always better answered live than from the stored reason: either
+  // we still can't place the post, and the notice above says so in more helpful
+  // words, or a moderator has since added a postcode and the stored reason is
+  // stale - it would claim we don't know where a post with a visible postcode is.
+  const covered = ['NoLocation']
+
+  // Only claim this one when the notice above is actually rendering. The member's
+  // memberships may simply not have loaded, and a post held purely by a setting
+  // with nothing saying so is what Discourse #9987 was about.
+  if (pending.value && membership.value?.ourpostingstatus === 'MODERATED') {
+    covered.push('MemberModerated')
+  }
+
+  return covered
+})
+
+// The origin group: the earliest arrival across the post's groups (shown as "First
+// posted on ..."). Excluded from the "may also be shown" list so it isn't listed twice.
+const originGroupid = computed(() => {
+  const groups = message.value?.groups || []
+  let earliest = null
+  for (const g of groups) {
+    if (!g.arrival) continue
+    if (!earliest || new Date(g.arrival) < new Date(earliest.arrival))
+      earliest = g
+  }
+  return earliest ? parseInt(earliest.groupid) : null
+})
+
+// Other groups this message is on (for the "may also be shown to some members in"
+// indicator): everything except the group being administered (context) and the
+// origin/first-posted group.
 const otherGroups = computed(() => {
   if (!message.value?.groups) return []
-  const gid = parseInt(groupid.value)
-  return message.value.groups.filter((g) => parseInt(g.groupid) !== gid)
+  const gid = currentGroupid.value
+  const origin = originGroupid.value
+  return message.value.groups.filter((g) => {
+    const id = parseInt(g.groupid)
+    return id !== gid && id !== origin
+  })
+})
+
+// Suppress the "Possibly should be on <homegroup>" hint when the post is ALREADY on that
+// group - e.g. it's the origin/first-posted group, or the post has rippled onto it. The
+// template's `groupid !== homegroupids[0]` only covers the case where the home group is the
+// group currently being administered; a post on its home group but viewed under a different
+// group's context (common once a post ripples onto several groups) would otherwise be told
+// it "should be on" a group it's already a member of.
+const alreadyOnHomeGroup = computed(() => {
+  const homeId = homegroupids.value?.[0]
+  if (!homeId) return false
+  return (message.value?.groups || []).some(
+    (g) => parseInt(g.groupid) === homeId
+  )
+})
+
+// The groups this post is on that the current user actually moderates. When there's more
+// than one, a Reject/Approve here is ambiguous unless we say which group it applies to.
+const moderatedGroupsOnPost = computed(() =>
+  (message.value?.groups || []).filter((g) => amAModOn(parseInt(g.groupid)))
+)
+const onMultipleOfMyGroups = computed(
+  () => moderatedGroupsOnPost.value.length > 1
+)
+// The name of the group this copy is being administered on (the context group).
+const currentGroupName = computed(() => {
+  const gid = contextGroup.value?.groupid
+  return gid ? groupStore.get(parseInt(gid))?.namedisplay : null
+})
+
+// Whether the copy being administered is the post's home/origin group. Delete and Delete
+// as Spam (which remove the post itself) are only offered here, not on a rippled-in copy.
+const isHomeGroup = computed(() => {
+  const origin = originGroupid.value
+  return origin == null || currentGroupid.value === origin
+})
+
+// Rippling-out: only OFFER/WANTED posts ripple, so only offer the reach map for those.
+// The modal itself explains when a post isn't rippling yet.
+const canShowReach = computed(
+  () => message.value?.type === 'Offer' || message.value?.type === 'Wanted'
+)
+
+// When the post entered the rippling system: the earliest arrival across its groups
+// (a repost ripples from the repost time, not the original post date). The engine uses
+// MIN(messages_spatial.arrival); mirror that so the reach opens at the right point.
+const reachArrival = computed(() => {
+  const arrivals = (message.value?.groups || [])
+    .map((g) => g.arrival)
+    .filter(Boolean)
+  if (arrivals.length) {
+    return arrivals.reduce((a, b) => (new Date(a) <= new Date(b) ? a : b))
+  }
+  return message.value?.date || null
+})
+
+// Rippling-out (#6): the post originated on another group and has rippled in to the
+// group this copy is being administered on, so it is "starting to become available" to
+// that group's members. Anchored to currentGroupid (the explicit context group, or the
+// group being administered in the all-communities view) so the banner shows in both.
+const isRippledInToContextGroup = computed(() =>
+  isRippledIn(message.value?.groups, currentGroupid.value)
+)
+
+// Task #23: the P/Q "quicker to get to" note for the copy on currentGroupid - only present
+// (both fields non-null) when the routing server said quicker=true at ripple-in time.
+const rippleProximity = computed(() => {
+  const gid = currentGroupid.value
+  const g = (message.value?.groups || []).find(
+    (row) => parseInt(row.groupid) === gid
+  )
+  if (g?.ripple_proximity_p && g?.ripple_proximity_q) {
+    return { p: g.ripple_proximity_p, q: g.ripple_proximity_q }
+  }
+  return null
 })
 
 const messageHistory = computed(() => {
@@ -830,13 +1178,13 @@ const messageHistory = computed(() => {
 })
 
 const group = computed(() => {
-  let ret = null
-
-  if (messageGroup.value) {
-    ret = myModGroups.value.find((g) => parseInt(g.id) === messageGroup.value)
-  }
-
-  return ret
+  // Use currentGroupid (the group this copy is being administered on) rather than
+  // groupid/groups[0]. For a rippled post the first/unordered group may be the origin
+  // group, which would draw the wrong community's boundary on the map and centre it on
+  // the wrong place (Discourse 9808/305).
+  const gid = currentGroupid.value
+  if (!gid) return null
+  return myModGroups.value.find((g) => parseInt(g.id) === gid) || null
 })
 
 const position = computed(() => {
@@ -858,8 +1206,19 @@ const position = computed(() => {
   return ret
 })
 
+// No resolved location: either the API returned no point, or the point collapsed
+// to ~(0,0) - an unset/ungeocoded lat/lng (e.g. an email post whose subject location
+// couldn't be geocoded, stored NULL and read back as 0). That is "location unknown",
+// NOT a real foreign location, so it must not trip the outside-UK scam warning
+// (Discourse #9865). UK lat is ~49-61, so a real post is never within 0.5deg of (0,0).
+const noLocation = computed(() => {
+  const p = position.value
+  return !p || (Math.abs(p.lat) < 0.5 && Math.abs(p.lng) < 0.5)
+})
+
 const outsideUK = computed(() => {
   return (
+    !noLocation.value &&
     position.value &&
     (position.value.lng < -16 ||
       position.value.lat < 49 ||
@@ -882,17 +1241,20 @@ const eBody = computed(() => {
   return twem(message.value.textbody)
 })
 
-// Handle heldby as either numeric ID (Go API) or object (PHP API).
+// heldby is per-group (messages_groups.heldby): a hold set by another team on a
+// group this post also rippled to must not block action on the copy being
+// administered here, so this reads contextGroup - the group behind currentGroupid -
+// rather than any message-wide flag (Discourse 9970/2, mods with several nearby
+// groups saw posts stuck "held" that were only held on a DIFFERENT one of their
+// groups). Handle heldby as either numeric ID (Go API) or object (PHP API).
 const heldbyId = computed(() => {
-  if (!message.value) return null
-  const h = message.value.heldby
+  const h = contextGroup.value?.heldby
   if (!h) return null
   return Number.isInteger(h) ? h : h.id
 })
 
 const heldbyName = computed(() => {
-  if (!message.value) return ''
-  const h = message.value.heldby
+  const h = contextGroup.value?.heldby
   if (!h) return ''
   if (Number.isInteger(h)) {
     const user = userStore.byId(h)
@@ -917,9 +1279,15 @@ const configid = computed(() => {
   // Look up configid from authStore.groups (always populated from session)
   // rather than relying on modGroupStore.list[].mysettings which may not be
   // populated yet due to a race condition with fetchGroupMT().
-  if (groupid.value && authStore.groups) {
+  //
+  // Anchor to currentGroupid (the group this copy is being administered on),
+  // not groupid (which falls back to groups[0] - no guaranteed order). Using
+  // groupid here let a rippled post's standard-message list and substitutions
+  // ($groupname etc.) come from a different group's config than the one shown
+  // as "moderating for" and used to send/sign the reply (Discourse 9862/15).
+  if (currentGroupid.value && authStore.groups) {
     const sessionGroup = authStore.groups.find(
-      (g) => parseInt(g.groupid) === parseInt(groupid.value)
+      (g) => parseInt(g.groupid) === parseInt(currentGroupid.value)
     )
     if (sessionGroup?.configid) {
       id = sessionGroup.configid
@@ -948,15 +1316,28 @@ watch(
   { immediate: true }
 )
 
+// A subject "follows the keyword convention" if it starts with a keyword this
+// group recognises for any type — built from the group's own settings.keywords
+// plus the standard OFFER/WANTED and common variants (OFFERED/REQUESTED/REQUEST).
+const keywordRegex = computed(() =>
+  buildKeywordRegex(group.value?.settings?.keywords)
+)
+
 const subjectClass = computed(() => {
   let ret = 'text-success'
 
   if (message.value && modconfig.value && modconfig.value.coloursubj) {
-    ret =
-      message.value.subject?.match &&
-      message.value.subject.match(modconfig.value.subjreg)
-        ? 'text-success'
-        : 'text-danger'
+    const subj = message.value.subject
+    // Green when the subject uses a recognised keyword for this group, OR matches
+    // the mod's own subjreg. Previously this tested ONLY subjreg (default
+    // /^(OFFER|WANTED):/i), so a Wanted post shown with a custom keyword such as
+    // "REQUESTED" was wrongly coloured red even though it's a valid Wanted.
+    // See Discourse https://discourse.ilovefreegle.org/t/9481/594
+    const ok =
+      subj?.match &&
+      (subj.match(keywordRegex.value) ||
+        (modconfig.value.subjreg && subj.match(modconfig.value.subjreg)))
+    ret = ok ? 'text-success' : 'text-danger'
   }
 
   return ret
@@ -1041,19 +1422,22 @@ const duplicateAge = computed(() => {
   let check = false
   if (!message.value?.groups) return null
 
+  const msgtype = message.value.type.toLowerCase()
   message.value.groups.forEach((g) => {
     const grp = myModGroup(g.groupid)
+    if (!grp) return
 
-    // console.log("duplicateAge group", group?.settings?.duplicates)
-    if (
-      grp &&
-      grp.settings &&
-      grp.settings.duplicates && // TODO: MT group does not have settings
-      grp.settings.duplicates.check
-    ) {
+    // V1 parity: the group's default settings (Group.php) enable duplicate
+    // detection with a 14-day window. The V2 group API returns only the
+    // stored settings (no default merge), so a group with no explicit
+    // `duplicates` block must fall back to the default rather than silently
+    // disabling duplicate highlighting. Explicit check:0 still turns it off.
+    // (Discourse 9518/341)
+    const dup = grp.settings?.duplicates
+    const enabled = dup?.check ?? true
+    if (enabled) {
       check = true
-      const msgtype = message.value.type.toLowerCase()
-      ret = Math.min(ret, grp.settings.duplicates[msgtype])
+      ret = Math.min(ret, dup?.[msgtype] ?? 14)
     }
   })
 
@@ -1132,9 +1516,9 @@ onMounted(() => {
       : []
     findHomeGroup()
 
-    // Fetch heldby user if message is held (Go API returns numeric ID).
-    if (message.value.heldby && Number.isInteger(message.value.heldby)) {
-      userStore.fetch(message.value.heldby)
+    // Fetch heldby user if the copy on the context group is held (Go API returns numeric ID).
+    if (heldbyId.value && Number.isInteger(heldbyId.value)) {
+      userStore.fetch(heldbyId.value)
     }
   }
 })
@@ -1212,9 +1596,13 @@ function startEdit() {
   editmessage.value = JSON.parse(JSON.stringify(message.value))
   editing.value = true
   miscStore.modtoolsediting = true
-  editmessage.value.groups.forEach((grp) => {
-    editgroup.value = grp.groupid
-  })
+  // Anchor the edit target to the group this copy is administered on (currentGroupid - a
+  // group the mod definitely moderates). Taking the last row of the unordered groups array
+  // could pick the origin group the mod does NOT moderate; ModGroupSelect (modonly) then
+  // resets the selection to 0, and save()'s move() fires with groupid 0 -> 400 (the title
+  // PATCH having already saved). With the right group, move() is skipped entirely. (9808/303)
+  editgroup.value =
+    currentGroupid.value || editmessage.value.groups[0]?.groupid || null
 }
 
 async function save() {
@@ -1230,9 +1618,11 @@ async function save() {
     }
 
     if (editmessage.value.item && editmessage.value.location) {
-      // Well-structured message
+      // Well-structured message. Pass the selected group so the rebuilt
+      // subject uses that group's keyword (e.g. a group overriding OFFER).
       await messageStore.patch({
         id: editmessage.value.id,
+        groupid: editgroup.value,
         msgtype: editmessage.value.type,
         item: editmessage.value.item.name,
         location: editmessage.value.location.name,
@@ -1275,7 +1665,7 @@ async function save() {
 function settingsChange(param, val) {
   const params = {
     userid: fromUserId.value,
-    groupid: groupid.value,
+    groupid: currentGroupid.value,
   }
   params[param] = val
   memberStore.update(params)
@@ -1353,8 +1743,20 @@ function checkHistory(duplicateCheck) {
 
           const key = histMsg.id + '-' + histMsg.arrival
 
-          if (duplicateCheck && groupsInCommon) {
-            // Same group - so this is a duplicate
+          if (
+            duplicateCheck &&
+            groupsInCommon &&
+            histMsg.id < message.value.id
+          ) {
+            // Same group, and this history message was posted before the one we're
+            // rendering (message ids are auto-increment, so a lower id means earlier).
+            // So the message we're rendering is the second/subsequent copy and IS a
+            // duplicate of this earlier one. We deliberately do NOT flag the first
+            // (original) post: when rendering it, every same-subject match in its
+            // history has a higher id, so checkHistory returns empty and it stays
+            // unflagged. This keeps the duplicate badge on the 2nd+ copies only - which
+            // matters now that Pending messages appear in messagehistory (PR #805), as
+            // otherwise both copies of a duplicated Pending post would be flagged.
             if (!dupids[key]) {
               dupids[key] = true
               ret.push(histMsg)
@@ -1416,7 +1818,7 @@ function cancelEdit() {
 }
 
 async function backToPending(callback) {
-  await messageStore.backToPending(message.value.id)
+  await messageStore.backToPending(message.value.id, currentGroupid.value)
   callback()
 }
 

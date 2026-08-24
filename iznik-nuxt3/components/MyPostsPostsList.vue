@@ -114,16 +114,16 @@
           </nuxt-link>
         </template>
         <template v-else-if="props.type === 'Wanted'">
-          <nuxt-link to="/find" class="mobile-btn mobile-btn--find">
-            <v-icon icon="search" class="me-2" />Find stuff
+          <nuxt-link to="/ask" class="mobile-btn mobile-btn--ask">
+            <v-icon icon="shopping-cart" class="me-2" />Ask for stuff
           </nuxt-link>
         </template>
         <template v-else>
           <nuxt-link to="/give" class="mobile-btn mobile-btn--give">
             <v-icon icon="gift" class="me-2" />Give stuff
           </nuxt-link>
-          <nuxt-link to="/find" class="mobile-btn mobile-btn--find">
-            <v-icon icon="search" class="me-2" />Find stuff
+          <nuxt-link to="/ask" class="mobile-btn mobile-btn--ask">
+            <v-icon icon="shopping-cart" class="me-2" />Ask for stuff
           </nuxt-link>
         </template>
       </div>
@@ -208,6 +208,14 @@ watch(activePosts, (newVal) => {
 const visiblePosts = computed(() => {
   let visiblePostList = showOldPosts.value ? posts.value : activePosts.value
   visiblePostList = visiblePostList || []
+
+  // Bulk offers ("clearances") are managed from their own card
+  // (MyPostsClearances) — don't also show them in the normal posts list.
+  visiblePostList = visiblePostList.filter((post) => {
+    const msg = messageStore.byId(post.id)
+    const bulkcount = msg?.bulkcount ?? msg?.bulkitems?.length ?? 0
+    return bulkcount === 0
+  })
 
   const filter = filterText.value.trim().toLowerCase()
   if (filter) {
@@ -587,7 +595,7 @@ const visibleCollectionGroups = computed(() => {
     }
   }
 
-  &--find {
+  &--ask {
     background: $color-secondary;
     color: $color-white;
 

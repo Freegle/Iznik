@@ -168,6 +168,53 @@ class FreegleApiClient
         return $response && ($response['ret'] ?? -1) === 0;
     }
 
+    /**
+     * Opposite-type posts matching a given post, from the apiv2 in-memory vector
+     * store (GET /message/{id}/matches). Returns a list of matched-post rows
+     * (['id', 'groupid', 'score', 'lat', 'lng']); empty on any failure so the
+     * matched-posts mail degrades to "no matches" rather than erroring.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function matchesForPost(int $msgid, int $limit = 10): array
+    {
+        $response = $this->get('/message/'.$msgid.'/matches', ['limit' => $limit]);
+
+        // The endpoint returns a bare JSON array (not the {ret,...} envelope).
+        if (is_array($response) && ! isset($response['ret'])) {
+            return $response;
+        }
+
+        return [];
+    }
+
+    /**
+     * Members whose saved search matches this post, at the matched-posts
+     * threshold. Same shape and same bar as matchesForPost - both compare stored
+     * document embeddings, so a score means the same thing from either.
+     *
+     * @return array<int,array{userid:int,searchid:int,term:string,score:float}>
+     */
+    public function searchMatchesForPost(int $msgid, int $limit = 10): array
+    {
+        $response = $this->get('/message/'.$msgid.'/searchmatches', ['limit' => $limit]);
+
+        if (is_array($response) && ! isset($response['ret'])) {
+            return $response;
+        }
+
+        return [];
+    }
+
+    private function get(string $path, array $query = []): mixed
+    {
+        if ($query) {
+            $path .= '?'.http_build_query($query);
+        }
+
+        return $this->request('GET', $path, []);
+    }
+
     private function patch(string $path, array $data): ?array
     {
         return $this->request('PATCH', $path, $data);
@@ -206,7 +253,9 @@ class FreegleApiClient
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        if ($method !== 'GET') {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+        }
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
 

@@ -33,6 +33,15 @@ if [ -f "$PARENT_ENV" ]; then
   set -a; { source "$PARENT_ENV"; } 2>/dev/null || true; set +a
 fi
 
+# The FSM brain + delegates run `claude`, which must use the Claude Code
+# SUBSCRIPTION session, NOT a standalone API key. ../.env defines
+# ANTHROPIC_API_KEY (for other tools) and the source above exports it; if it
+# reaches `claude` it bills that key, and once its balance is exhausted every
+# LLM call fails with "Credit balance is too low" and the FSM does nothing.
+# Drop it so claude falls back to the logged-in session. (driver.ts also deletes
+# it from process.env as the primary guard; this is belt-and-suspenders.)
+unset ANTHROPIC_API_KEY
+
 # ── Single-instance guard ─────────────────────────────────────────────────────
 # Prevent two run-loop.sh processes from running concurrently (e.g. if the
 # scheduled /loop wakeup fires while a prior run is still in progress).
@@ -101,6 +110,20 @@ red_pr_numbers() {
       END { print n+0 }
     ')
     if [ "${red:-0}" -gt 0 ] 2>/dev/null; then
+      # Skip PRs the FSM has already EXHAUSTED (>= 3 fix attempts): more
+      # iterations cannot fix them, so a red exhausted PR must NOT keep the loop
+      # churning every couple of minutes — it's surfaced for human review via the
+      # dashboard instead. Without this the loop never sleeps while such a PR
+      # stays red. cwd is the script dir (set above), so monitor.db is relative.
+      local attempts=0
+      if command -v sqlite3 >/dev/null 2>&1 && [ -f monitor.db ]; then
+        attempts=$(sqlite3 monitor.db \
+          "SELECT COALESCE(MAX(CAST(value AS INTEGER)),0) FROM kv WHERE key='pr_fix_attempts_${pr}'" \
+          2>/dev/null || echo 0)
+      fi
+      if [ "${attempts:-0}" -ge 3 ] 2>/dev/null; then
+        continue
+      fi
       printf '%s ' "$pr"
     fi
   done

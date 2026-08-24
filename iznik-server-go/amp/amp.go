@@ -30,6 +30,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // AMPChatMessage extends ChatMessageQuery with AMP-specific display fields.
@@ -77,15 +78,15 @@ func recordAmpReplyTracking(db *gorm.DB, emailTrackingID *uint64, linkURL, linkP
 	if emailTrackingID == nil {
 		return
 	}
-	db.Exec(
-		"UPDATE email_tracking SET replied_at = NOW(), replied_via = 'amp' WHERE id = ?",
-		*emailTrackingID,
-	)
-	db.Exec(
-		"INSERT INTO email_tracking_clicks (email_tracking_id, link_url, link_position, action, clicked_at) "+
-			"VALUES (?, ?, ?, 'amp_reply', NOW())",
-		*emailTrackingID, linkURL, linkPosition,
-	)
+	db.Table("email_tracking").Where("id = ?", *emailTrackingID).
+		Updates(map[string]interface{}{"replied_at": gorm.Expr("NOW()"), "replied_via": gorm.Expr("'amp'")})
+	db.Table("email_tracking_clicks").Create(map[string]interface{}{
+		"email_tracking_id": *emailTrackingID,
+		"link_url":          linkURL,
+		"link_position":     linkPosition,
+		"action":            gorm.Expr("'amp_reply'"),
+		"clicked_at":        gorm.Expr("NOW()"),
+	})
 }
 
 // computeHMAC generates an HMAC-SHA256 signature.
@@ -135,7 +136,16 @@ func ValidateToken(c *fiber.Ctx) (uint64, uint64, error) {
 	// Verify user still exists
 	db := database.DBConn
 	var exists bool
-	db.Raw("SELECT EXISTS(SELECT 1 FROM users WHERE id = ?)", userID).Scan(&exists)
+	// BuildClauses
+	// override: GORM's builder always adds a FROM clause once .Table() is
+	// called, but Statement.Build only renders the clause NAMES actually
+	// passed to it - restricting BuildClauses to {"SELECT"} renders the
+	// SELECT clause alone and drops the (still-registered but unwalked) FROM,
+	// matching a bare "SELECT EXISTS(...)" with no top-level FROM. Proven by
+	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c).
+	tx := db.Table("users").Select("EXISTS(SELECT 1 FROM users WHERE id = ?)", userID)
+	tx.Statement.BuildClauses = []string{"SELECT"}
+	tx.Scan(&exists)
 	if !exists {
 		return 0, 0, nil
 	}
@@ -222,17 +232,14 @@ func getUserInfo(userID uint64) userInfo {
 
 	// Query user info with image and preferred email for Gravatar fallback.
 	// Email is in users_emails table, not users table.
-	db.Raw(`
-		SELECT u.id, u.fullname, u.firstname, u.lastname,
-		       ui.id AS imageid, ui.url AS imageurl,
-		       ue.email AS email
-		FROM users u
-		LEFT JOIN users_images ui ON ui.userid = u.id
-		LEFT JOIN users_emails ue ON ue.userid = u.id
-		WHERE u.id = ?
-		ORDER BY ui.default DESC, ui.id ASC, ue.preferred DESC
-		LIMIT 1
-	`, userID).Scan(&result)
+	db.Table("users u").
+		Select("u.id, u.fullname, u.firstname, u.lastname, ui.id AS imageid, ui.url AS imageurl, ue.email AS email").
+		Joins("LEFT JOIN users_images ui ON ui.userid = u.id").
+		Joins("LEFT JOIN users_emails ue ON ue.userid = u.id").
+		Where("u.id = ?", userID).
+		Order("ui.default DESC, ui.id ASC, ue.preferred DESC").
+		Limit(1).
+		Scan(&result)
 
 	// Build display name - same logic as chat/chatroom.go
 	var name string
@@ -327,23 +334,24 @@ func GetChatMessages(c *fiber.Ctx) error {
 		if tid, err := strconv.ParseUint(tidStr, 10, 64); err == nil {
 			// Record AMP render - always upgrade to 'amp' since it's a stronger
 			// signal than pixel tracking (proves AMP content was rendered)
-			db.Exec(`
-				UPDATE email_tracking
-				SET opened_at = COALESCE(opened_at, NOW()),
-				    opened_via = 'amp'
-				WHERE id = ?
-			`, tid)
+			db.Table("email_tracking").Where("id = ?", tid).Updates(map[string]interface{}{
+				"opened_at":  gorm.Expr("COALESCE(opened_at, NOW())"),
+				"opened_via": gorm.Expr("'amp'"),
+			})
 			// Also record in clicks table for analytics (won't duplicate due to unique tracking)
-			db.Exec(`
-				INSERT IGNORE INTO email_tracking_clicks (email_tracking_id, link_url, action, clicked_at)
-				VALUES (?, 'amp://render', 'amp_render', NOW())
-			`, tid)
+			db.Table("email_tracking_clicks").Clauses(clause.Insert{Modifier: "IGNORE"}).
+				Create(map[string]interface{}{
+					"email_tracking_id": tid,
+					"link_url":          gorm.Expr("'amp://render'"),
+					"action":            gorm.Expr("'amp_render'"),
+					"clicked_at":        gorm.Expr("NOW()"),
+				})
 		}
 	}
 
 	// Verify user is member of this chat
 	var memberUserID uint64
-	db.Raw(`SELECT userid FROM chat_roster WHERE chatid = ? AND userid = ?`, chatID, userID).Scan(&memberUserID)
+	db.Table("chat_roster").Select("userid").Where("chatid = ? AND userid = ?", chatID, userID).Scan(&memberUserID)
 
 	if memberUserID == 0 {
 		return c.JSON(AMPChatResponse{Items: []AMPChatMessage{}, CanReply: false})
@@ -441,10 +449,7 @@ func PostChatReply(c *fiber.Ctx) error {
 
 	// Verify user is still member of chat
 	var memberUserID uint64
-	db.Raw(`
-		SELECT userid FROM chat_roster
-		WHERE chatid = ? AND userid = ?
-	`, chatID, userID).Scan(&memberUserID)
+	db.Table("chat_roster").Select("userid").Where("chatid = ? AND userid = ?", chatID, userID).Scan(&memberUserID)
 
 	if memberUserID == 0 {
 		return c.Status(fiber.StatusForbidden).JSON(ReplyResponse{
@@ -454,36 +459,28 @@ func PostChatReply(c *fiber.Ctx) error {
 	}
 
 	// Insert the message.
-	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
-	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
-	// parallel load (GORM's connection pool may assign a different connection).
-	sqlDB, err := db.DB()
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(ReplyResponse{
-			Success: false,
-			Message: "Failed to send message. Please try on Freegle.",
-		})
+	// Plain, isolated, literal single-row
+	// INSERT; id read back via GORM's map-Create "@id" writeback.
+	row := map[string]interface{}{
+		"chatid":               chatID,
+		"userid":               userID,
+		"message":              message,
+		"type":                 utils.CHAT_MESSAGE_DEFAULT,
+		"date":                 gorm.Expr("NOW()"),
+		"processingsuccessful": gorm.Expr("1"),
 	}
-	sqlResult, err := sqlDB.Exec(`
-		INSERT INTO chat_messages (chatid, userid, message, type, date, processingsuccessful)
-		VALUES (?, ?, ?, ?, NOW(), 1)
-	`, chatID, userID, message, utils.CHAT_MESSAGE_DEFAULT)
-
-	if err != nil {
+	if err := db.Table("chat_messages").Create(row).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(ReplyResponse{
 			Success: false,
 			Message: "Failed to send message. Please try on Freegle.",
 		})
 	}
 
-	var messageID uint64
-	lastID, err := sqlResult.LastInsertId()
-	if err == nil && lastID > 0 {
-		messageID = uint64(lastID)
-	}
+	messageIDInt, _ := row["@id"].(int64)
+	messageID := uint64(messageIDInt)
 
 	// Update chat room latest message time
-	db.Exec(`UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?`, chatID)
+	db.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()"))
 
 	recordAmpReplyTracking(db, emailTrackingID, "amp://reply", "amp_reply_form")
 
@@ -543,7 +540,114 @@ func PostDigestReply(c *fiber.Ctx) error {
 		})
 	}
 
-	replyText := strings.TrimSpace(body.Message)
+	return processDigestReply(c, userID, messageID, body.Message, emailTrackingID)
+}
+
+// PostDigestReplyShared handles the SHARED-form digest reply endpoint
+// (POST /amp/digest/reply, no :id in the path). Unlike PostDigestReply, all
+// identity fields come from the FORM BODY (mid, rt, exp, uid, message) so a
+// single <amp-form> in the digest template can submit a reply to ANY post by
+// binding mid/rt/exp from the tapped card's state — there's no per-post form.
+//
+// It validates the SAME HMAC as ValidateToken ("amp" + uid + mid + exp) using
+// the body values, then runs the identical reply logic via processDigestReply.
+//
+// @Summary Post reply from AMP digest email (shared form)
+// @Description Submits an inline reply to a digest-email post; identity in the body (mid/rt/exp/uid)
+// @Tags AMP
+// @Accept x-www-form-urlencoded
+// @Produce json
+// @Param mid formData int true "Message ID (the post being replied to)"
+// @Param rt formData string true "Token (HMAC)"
+// @Param uid formData int true "User ID"
+// @Param exp formData int true "Token expiry timestamp"
+// @Param tid formData int false "Email tracking ID for analytics"
+// @Param message formData string true "Reply text"
+// @Success 200 {object} ReplyResponse
+// @Failure 400 {object} ReplyResponse
+// @Router /amp/digest/reply [post]
+func PostDigestReplyShared(c *fiber.Ctx) error {
+	userID, messageID := validateBodyToken(c)
+	if userID == 0 || messageID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "Invalid token",
+		})
+	}
+
+	var emailTrackingID *uint64
+	if tidStr := c.FormValue("tid"); tidStr != "" {
+		if tid, err := strconv.ParseUint(tidStr, 10, 64); err == nil {
+			emailTrackingID = &tid
+		}
+	}
+
+	messageText := c.FormValue("message")
+	if strings.TrimSpace(messageText) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "Please enter a message.",
+		})
+	}
+
+	return processDigestReply(c, userID, messageID, messageText, emailTrackingID)
+}
+
+// validateBodyToken is the body-based equivalent of ValidateToken: it reads
+// rt/uid/exp/mid from the FORM BODY and validates the same HMAC
+// ("amp" + uid + mid + exp). Returns (userID, messageID) or (0, 0) on any
+// failure, mirroring ValidateToken's graceful-zero behaviour.
+func validateBodyToken(c *fiber.Ctx) (uint64, uint64) {
+	token := c.FormValue("rt")
+	uid := c.FormValue("uid")
+	exp := c.FormValue("exp")
+	mid := c.FormValue("mid")
+
+	if token == "" || uid == "" || exp == "" || mid == "" {
+		return 0, 0
+	}
+
+	expTime, err := strconv.ParseInt(exp, 10, 64)
+	if err != nil || time.Now().Unix() > expTime {
+		return 0, 0
+	}
+
+	secret := getAMPSecret()
+	if secret == "" {
+		return 0, 0
+	}
+
+	message := "amp" + uid + mid + exp
+	expectedMAC := computeHMAC(message, secret)
+	if subtle.ConstantTimeCompare([]byte(token), []byte(expectedMAC)) != 1 {
+		return 0, 0
+	}
+
+	userID, _ := strconv.ParseUint(uid, 10, 64)
+	messageID, _ := strconv.ParseUint(mid, 10, 64)
+
+	db := database.DBConn
+	var exists bool
+	// Same
+	// BuildClauses override as ValidateToken above; see the comment there and
+	// the retired ormharness's bareexists_test.go (removed in d22ba1d6c).
+	tx := db.Table("users").Select("EXISTS(SELECT 1 FROM users WHERE id = ?)", userID)
+	tx.Statement.BuildClauses = []string{"SELECT"}
+	tx.Scan(&exists)
+	if !exists {
+		return 0, 0
+	}
+
+	return userID, messageID
+}
+
+// processDigestReply contains the shared digest-reply business logic used by
+// both the path-based PostDigestReply and the body-based PostDigestReplyShared.
+// It validates the reply length, looks up the post owner, rejects self-replies,
+// find-or-creates the User2User chat, inserts the Interested chat message and
+// records tracking/analytics.
+func processDigestReply(c *fiber.Ctx, userID, messageID uint64, rawMessage string, emailTrackingID *uint64) error {
+	replyText := strings.TrimSpace(rawMessage)
 	if len(replyText) > 10000 {
 		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
 			Success: false,
@@ -606,8 +710,8 @@ func PostDigestReply(c *fiber.Ctx) error {
 	chatMessageID := chatMsg.ID
 
 	// ChatRoom struct doesn't model the latestmessage column (it's not
-	// returned in normal reads), so touch it with a small raw UPDATE.
-	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+	// returned in normal reads), so touch it with a small write.
+	db.Table("chat_rooms").Where("id = ?", chatID).Update("latestmessage", gorm.Expr("NOW()"))
 
 	recordAmpReplyTracking(db, emailTrackingID, "amp://digest-reply", "amp_digest_reply_form")
 

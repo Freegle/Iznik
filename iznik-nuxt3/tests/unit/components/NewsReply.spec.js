@@ -11,6 +11,7 @@ const mockNewsfeedUnlove = vi.fn()
 const mockNewsfeedHide = vi.fn()
 const mockNewsfeedUnhide = vi.fn()
 const mockNewsfeedDelete = vi.fn()
+let mockSeenBeforeVisit = null
 
 vi.mock('~/stores/newsfeed', () => ({
   useNewsfeedStore: () => ({
@@ -22,6 +23,9 @@ vi.mock('~/stores/newsfeed', () => ({
     unhide: mockNewsfeedUnhide,
     delete: mockNewsfeedDelete,
     tagusers: [{ displayname: 'Alice' }, { displayname: 'Bob' }],
+    get seenBeforeVisit() {
+      return mockSeenBeforeVisit
+    },
   }),
 }))
 
@@ -55,6 +59,15 @@ vi.mock('~/composables/useTwem', () => ({
 vi.mock('~/composables/useTimeFormat', () => ({
   timeago: (date) => '2 hours ago',
   timeagoShort: (date) => '2h',
+}))
+
+const mockScrollToAndPin = vi.fn(() => vi.fn())
+vi.mock('~/composables/useScrollAnchor', () => ({
+  scrollToAndPin: (...args) => mockScrollToAndPin(...args),
+  fixedHeaderOffset: () => 74,
+  imagesComplete: () => true,
+  whenImagesComplete: () => Promise.resolve(),
+  whenAllSettled: () => Promise.resolve(),
 }))
 
 vi.mock('pluralize', () => ({
@@ -208,6 +221,7 @@ describe('NewsReply', () => {
           NewsReplies: {
             template: '<div class="news-replies"></div>',
             props: ['id', 'threadhead', 'scrollTo', 'replyTo', 'depth'],
+            emits: ['rendered', 'subtree-rendered'],
           },
           OurUploader: {
             template: '<div class="our-uploader"></div>',
@@ -227,6 +241,10 @@ describe('NewsReply', () => {
             template: '<span class="user-name"></span>',
             props: ['id', 'intro'],
           },
+          'nuxt-link': {
+            template: '<a class="nuxt-link-stub" :href="to"><slot /></a>',
+            props: ['to'],
+          },
         },
       },
     })
@@ -234,6 +252,7 @@ describe('NewsReply', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockSeenBeforeVisit = null
     mockAuthUser.value = {
       id: 1,
       displayname: 'Current User',
@@ -437,13 +456,14 @@ describe('NewsReply', () => {
       expect(wrapper.find('.our-uploaded-image').exists()).toBe(true)
     })
 
-    it('shows nuxt picture for external image', () => {
+    it('does not render a picture for a bare externaluid', () => {
+      // Uploadcare is gone, so a bare externaluid must not render a picture.
       const replyWithImage = {
         ...mockReply,
         image: { id: 1, externaluid: 'ext123', path: '/images/photo.jpg' },
       }
       const wrapper = createWrapper({}, replyWithImage)
-      expect(wrapper.find('.nuxt-picture').exists()).toBe(true)
+      expect(wrapper.find('.nuxt-picture').exists()).toBe(false)
     })
   })
 
@@ -503,14 +523,83 @@ describe('NewsReply', () => {
   })
 
   describe('scroll to', () => {
-    it('highlights when scrollTo matches id', () => {
+    it('highlights the deep-link target', () => {
       const wrapper = createWrapper({ scrollTo: '100' })
-      expect(wrapper.find('.bg-info').exists()).toBe(true)
+      expect(wrapper.find('.deep-link-target').exists()).toBe(true)
     })
 
     it('does not highlight when scrollTo does not match', () => {
       const wrapper = createWrapper({ scrollTo: '200' })
-      expect(wrapper.find('.bg-info').exists()).toBe(false)
+      expect(wrapper.find('.deep-link-target').exists()).toBe(false)
+    })
+
+    it('highlights when the target is a later message in a combined block', () => {
+      const combinedReply = {
+        ...mockReply,
+        isCombined: true,
+        combinedIds: [100, 102],
+      }
+      const wrapper = createWrapper(
+        { scrollTo: '102', replyData: combinedReply },
+        combinedReply
+      )
+      expect(wrapper.find('.deep-link-target').exists()).toBe(true)
+    })
+
+    it('does not start a pin itself - NewsThread owns the deep-link pin', async () => {
+      const wrapper = createWrapper({ scrollTo: '' })
+      await wrapper.setProps({ scrollTo: '100' })
+      expect(mockScrollToAndPin).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('suppressed children (feed context)', () => {
+    // The feed card carries one link, the "View all N replies from ..." row
+    // NewsReplies puts above the card's visible replies. It already counts and
+    // names the whole tree, so a nested stand-in link here would offer a
+    // subset of the same conversation under a smaller, confusing number.
+    it('drops its nested list without standing anything in its place', () => {
+      const withNested = { ...mockReply, replies: [{ id: 456 }, { id: 457 }] }
+      const wrapper = createWrapper({ suppressChildren: true }, withNested)
+
+      expect(wrapper.find('.news-replies').exists()).toBe(false)
+      expect(wrapper.find('.view-child-replies').exists()).toBe(false)
+      expect(wrapper.text()).not.toContain('View 2 replies')
+    })
+
+    it('reports its subtree complete on mount when children are suppressed', () => {
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({ suppressChildren: true }, withNested)
+
+      expect(wrapper.emitted('subtree-rendered')).toBeTruthy()
+      expect(wrapper.emitted('subtree-rendered')[0]).toEqual([100])
+    })
+
+    it('renders nothing extra when there are no children', () => {
+      const wrapper = createWrapper({ suppressChildren: true })
+      expect(wrapper.find('.view-child-replies').exists()).toBe(false)
+      expect(wrapper.find('.news-replies').exists()).toBe(false)
+    })
+  })
+
+  describe('subtree rendered', () => {
+    it('a reply without children reports its subtree on mount', () => {
+      const wrapper = createWrapper()
+      expect(wrapper.emitted('subtree-rendered')).toBeTruthy()
+      expect(wrapper.emitted('subtree-rendered')[0]).toEqual([100])
+    })
+
+    it('a reply with children waits for the nested list to report', async () => {
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({}, withNested)
+      expect(wrapper.emitted('subtree-rendered')).toBeFalsy()
+
+      const nested = wrapper.findComponent('.news-replies')
+      nested.vm.$emit('subtree-rendered', 100)
+      await flushPromises()
+
+      expect(wrapper.emitted('subtree-rendered')).toBeTruthy()
+      expect(wrapper.emitted('subtree-rendered')[0]).toEqual([100])
     })
   })
 
@@ -534,6 +623,131 @@ describe('NewsReply', () => {
       const wrapper = createWrapper()
       expect(wrapper.emitted('rendered')).toBeTruthy()
       expect(wrapper.emitted('rendered')[0]).toEqual([100])
+    })
+
+    it('announces every id in a combined block on mount', () => {
+      // The deep-link pin in NewsThread listens for the target id. A combined
+      // block only mounts one component (keyed by its first id), so it must
+      // announce the later ids too or a deep link to them never pins.
+      const combinedReply = {
+        ...mockReply,
+        isCombined: true,
+        combinedIds: [100, 102],
+      }
+      const wrapper = createWrapper({ replyData: combinedReply }, combinedReply)
+      const announced = wrapper.emitted('rendered').map((args) => args[0])
+      expect(announced).toContain(100)
+      expect(announced).toContain(102)
+    })
+
+    it('forwards rendered events from nested replies (depth 2+)', async () => {
+      // A reply with sub-replies renders a nested <NewsReplies>. Its
+      // rendered events must bubble through this component, otherwise
+      // NewsThread never hears about depth 2+ replies mounting and the
+      // notification deep-link scroll can't target them.
+      const withNested = { ...mockReply, replies: [{ id: 456 }] }
+      const wrapper = createWrapper({}, withNested)
+      const nested = wrapper.findComponent('.news-replies')
+      expect(nested.exists()).toBe(true)
+      nested.vm.$emit('rendered', 456)
+      await flushPromises()
+      const events = wrapper.emitted('rendered')
+      expect(events.some(([id]) => id === 456)).toBe(true)
+    })
+  })
+
+  describe('new pill', () => {
+    it('does not show new pill when seenBeforeVisit is null', () => {
+      mockSeenBeforeVisit = null
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when seenBeforeVisit is 0', () => {
+      mockSeenBeforeVisit = 0
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when reply id is below cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 200 means 100 <= 200 = not new
+      mockSeenBeforeVisit = 200
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('does not show new pill when reply id equals cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 100 means 100 > 100 is false
+      mockSeenBeforeVisit = 100
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(false)
+    })
+
+    it('shows new pill when reply id is above cutoff', () => {
+      // mockReply.id = 100, seenBeforeVisit = 50 means 100 > 50 = new
+      mockSeenBeforeVisit = 50
+      const wrapper = createWrapper()
+      expect(wrapper.find('.reply-new-pill').exists()).toBe(true)
+    })
+
+    it('new pill has accessible label', () => {
+      mockSeenBeforeVisit = 50
+      const wrapper = createWrapper()
+      const pill = wrapper.find('.reply-new-pill')
+      expect(pill.attributes('aria-label')).toBeTruthy()
+    })
+  })
+
+  // Consecutive posts from one person render as a single block that keeps the
+  // FIRST post's id. Hanging a reply off that id drops it in before the rest of
+  // the run, so the person's own posts end up split apart by the reply. It has
+  // to attach to the last post in the run.
+  describe('replying to a combined block', () => {
+    const combinedReply = () => ({
+      ...mockReply,
+      isCombined: true,
+      combinedIds: [101, 102, 103],
+    })
+
+    it('sends the reply against the last post in the run', async () => {
+      mockNewsfeedSend.mockResolvedValue(999)
+      const combined = combinedReply()
+      const wrapper = createWrapper({ id: 101, replyData: combined }, combined)
+      await wrapper.find('.reply-action').trigger('click')
+      const ta = wrapper.findComponent({ name: 'AutoHeightTextarea' })
+      await ta.setValue('nice one')
+      ta.trigger('keyup.enter')
+      await flushPromises()
+      expect(mockNewsfeedSend).toHaveBeenCalledWith('nice one', 103, 1, null)
+    })
+
+    it('sends against the post itself when nothing was combined', async () => {
+      mockNewsfeedSend.mockResolvedValue(999)
+      const wrapper = createWrapper({ id: 100 })
+      await wrapper.find('.reply-action').trigger('click')
+      const ta = wrapper.findComponent({ name: 'AutoHeightTextarea' })
+      await ta.setValue('hello')
+      ta.trigger('keyup.enter')
+      await flushPromises()
+      expect(mockNewsfeedSend).toHaveBeenCalledWith('hello', 100, 1, null)
+    })
+  })
+
+  describe('double-submit guard', () => {
+    it('posts a reply only once when send fires twice (Enter keydown+keyup double-fire)', async () => {
+      // Live bug (newsfeed 613876/613879): one Enter fires both the keydown (parent div) and keyup
+      // (textarea) sendReply bindings; without a re-entrancy guard both pass the non-empty check
+      // (replybox is cleared only after the async send) and post duplicate replies.
+      mockNewsfeedSend.mockResolvedValue(999)
+      const wrapper = createWrapper()
+      await wrapper.find('.reply-action').trigger('click') // open the reply box
+      const ta = wrapper.findComponent({ name: 'AutoHeightTextarea' })
+      await ta.setValue('hello world')
+      // Rapid double-fire, no await between, so the 2nd call hits the in-flight guard.
+      ta.trigger('keyup.enter')
+      ta.trigger('keyup.enter')
+      await flushPromises()
+      expect(mockNewsfeedSend).toHaveBeenCalledTimes(1)
     })
   })
 })

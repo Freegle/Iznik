@@ -9,7 +9,7 @@
 # This configuration:
 # - Disables production-build containers (not needed on Yesterday, dev containers are faster)
 # - Disables MCP containers (not needed on Yesterday, and port 8084 conflicts with 2FA)
-# - Disables playwright and apiv1-phpunit (not needed on Yesterday)
+# - Disables playwright (not needed on Yesterday)
 # - Remaps API ports to avoid conflicts with yesterday-traefik
 # - Exposes dev containers on external ports for yesterday access
 #
@@ -29,18 +29,6 @@ services:
 
   # Disable MCP support tools (not needed on Yesterday, mcp-query-sanitizer uses port 8084
   # which conflicts with yesterday-2fa)
-  mcp-query-sanitizer:
-    deploy:
-      replicas: 0
-
-  mcp-interface:
-    deploy:
-      replicas: 0
-
-  mcp-pseudonymizer:
-    deploy:
-      replicas: 0
-
   # Note: batch-prod (profile: production) and postfix (profile: mail) don't start
   # because Yesterday doesn't enable those profiles.
 
@@ -49,15 +37,7 @@ services:
     deploy:
       replicas: 0
 
-  apiv1-phpunit:
-    deploy:
-      replicas: 0
-
-  # Remap API ports to avoid conflicts with yesterday-traefik (which uses 8181 and 8193)
-  apiv1:
-    ports: !reset
-      - "8182:80"
-
+  # Remap API ports to avoid conflicts with yesterday-traefik (which uses 8193)
   apiv2:
     ports: !reset
       - "8195:8192"
@@ -68,6 +48,18 @@ services:
   batch:
     deploy:
       replicas: 0
+
+  # Spatial servers (iznik-spatial-go / iznik-routing-go, added in #459). Both are
+  # in the `frontend` profile, so they start on Yesterday. The KNN server
+  # (spatial-knn) only needs the DB (percona) and comes up as-is. The routing
+  # server (spatial) depends on spatial-knn being healthy AND defaults to the full
+  # UK OSM graph (/data/uk-latest.osm.pbf), which isn't downloaded on Yesterday —
+  # so point it at the committed Bristol extract baked into the image (same as CI)
+  # so it starts and serves the Bristol area instead of exiting on the missing file.
+  spatial:
+    environment:
+      - OSM_PBF_PATH=/app/testdata/bristol.osm.pbf
+      - DEPRIVATION_CSV=/app/testdata/bristol_lsoa.csv
 
   # Expose dev containers on external ports for yesterday server
   freegle-dev-local:

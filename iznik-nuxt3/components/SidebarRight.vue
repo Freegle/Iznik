@@ -8,6 +8,7 @@
       :div-id="adDivId"
       class="da"
       :jobs="showJobOpportunities"
+      placement="sidebar_right"
     />
   </div>
 </template>

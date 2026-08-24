@@ -68,17 +68,19 @@ function makeAddress(overrides = {}) {
   }
 }
 
-// NOTE ON LATENT BUG — double space in all building-number outputs
+// The spacing between a building number and the line it prefixes used to be wrong in
+// two opposite directions, from one expression:
 //
-// The EH space-check reads: `nextLinePrefix.charAt(nextLinePrefix.length !== ' ')`
-// `length !== ' '` is a strict-type comparison (number vs string) that is ALWAYS true.
-// `true` coerces to 1 for charAt, so it checks charAt(1) — the second character.
-// Rules 2, 4, and 5 set `nextLinePrefix = buildingNumber + ' '` (already has a
-// trailing space). The EH check then sees a truthy second char and appends another
-// space, producing "42  Oxford Street" instead of "42 Oxford Street".
-// The intended check was probably `charAt(nextLinePrefix.length - 1) !== ' '`.
-// All affected tests below assert the ACTUAL (buggy) double-space output.
-// See the skip test at the end of the Rule 2 describe block for the ideal behaviour.
+//   nextLinePrefix.charAt(nextLinePrefix.length !== ' ')
+//
+// `length !== ' '` compares a number to a string, so it is always true, and true
+// coerces to 1 — meaning this checked the SECOND character rather than the last.
+// Rules 2, 4 and 5 set the prefix to `buildingNumber + ' '`, whose second character
+// is usually a digit, so another space was appended: "42  Oxford Street". Rule 7
+// sets the prefix with no trailing space, so for a single-digit number charAt(1) was
+// '' and no space was added at all: "8King Road".
+//
+// Both are fixed, and the tests below assert correctly spaced output.
 
 describe('usePAF', () => {
   describe('constructAddress', () => {
@@ -101,39 +103,48 @@ describe('usePAF', () => {
     })
 
     describe('Rule 2 — building number only', () => {
-      // Actual output has a double space due to the EH space-check latent bug.
       it.each([
-        { buildingNumber: 42, thoroughfare: 'Oxford Street', expected: ['42  Oxford Street'] },
-        { buildingNumber: '10', thoroughfare: 'Downing Street', expected: ['10  Downing Street'] },
-        { buildingNumber: 1, thoroughfare: 'Park Lane', expected: ['1  Park Lane'] },
+        {
+          buildingNumber: 42,
+          thoroughfare: 'Oxford Street',
+          expected: ['42 Oxford Street'],
+        },
+        {
+          buildingNumber: '10',
+          thoroughfare: 'Downing Street',
+          expected: ['10 Downing Street'],
+        },
+        {
+          buildingNumber: 1,
+          thoroughfare: 'Park Lane',
+          expected: ['1 Park Lane'],
+        },
       ])(
-        'prepends $buildingNumber to $thoroughfare (actual output has double space — see latent bug skip)',
+        'prepends $buildingNumber to $thoroughfare with a single space',
         ({ buildingNumber, thoroughfare, expected }) => {
           expect(addr({ buildingNumber, thoroughfare })).toEqual(expected)
         }
       )
 
-      it('produces a standalone number line when no thoroughfare or locality', () => {
-        const lines = addr({ buildingNumber: 7 })
-        expect(lines).toHaveLength(1)
-        expect(lines[0]).toContain('7')
+      it('never emits a double space between number and thoroughfare', () => {
+        expect(
+          addr({ buildingNumber: 42, thoroughfare: 'Oxford Street' })[0]
+        ).not.toMatch(/\s{2}/)
       })
 
-      // TODO: latent bug — EH space check `charAt(length !== ' ')` evaluates to
-      // `charAt(1)` (always), adding a second trailing space to nextLinePrefix that
-      // already ends with ' ' (from `buildingNumber + ' '`). Fix: change to
-      // `charAt(nextLinePrefix.length - 1) !== ' '`.
-      it.skip('prepends building number with a single space (correct behaviour)', () => {
-        expect(addr({ buildingNumber: 42, thoroughfare: 'Oxford Street' })).toEqual(['42 Oxford Street'])
+      it('produces a standalone number line, with no trailing space, when there is nothing to prefix', () => {
+        expect(addr({ buildingNumber: 7 })).toEqual(['7'])
       })
     })
 
     describe('Rule 3 — building name only (no sub-building, no number)', () => {
       it('pushes ordinary name as its own line before thoroughfare', () => {
-        expect(addr({ buildingName: 'The White House', thoroughfare: 'Baker Street' })).toEqual([
-          'The White House',
-          'Baker Street',
-        ])
+        expect(
+          addr({
+            buildingName: 'The White House',
+            thoroughfare: 'Baker Street',
+          })
+        ).toEqual(['The White House', 'Baker Street'])
       })
 
       it.each([
@@ -144,7 +155,11 @@ describe('usePAF', () => {
         ({ buildingName, thoroughfare }) => {
           const lines = addr({ buildingName, thoroughfare })
           expect(lines).toHaveLength(1)
-          expect(lines[0]).toMatch(new RegExp(`^${buildingName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))
+          expect(lines[0]).toMatch(
+            new RegExp(
+              `^${buildingName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`
+            )
+          )
         }
       )
 
@@ -174,101 +189,133 @@ describe('usePAF', () => {
       it('"Willowbrook 12" is NOT split because pure digit suffixes are not split', () => {
         // The split regex /\s[0-9]+[a-zA-Z]+$/ requires trailing letters; "12" has none.
         // /\s[0-9]+-[0-9]+$/ also does not match. So "Willowbrook 12" stays as one name.
-        const lines = addr({ buildingName: 'Willowbrook 12', thoroughfare: 'Station Road' })
+        const lines = addr({
+          buildingName: 'Willowbrook 12',
+          thoroughfare: 'Station Road',
+        })
         expect(lines).toEqual(['Willowbrook 12', 'Station Road'])
       })
 
       it('"Ash House 3-5" is split on the range " 3-5"', () => {
         // " 3-5" matches /\s[0-9]+-[0-9]+$/ — split yields buildingName="Ash House", buildingNumber="3-5".
-        // Rule 4 then applies: push buildingName, nextLinePrefix = "3-5 " → double-space → "3-5  ".
-        const lines = addr({ buildingName: 'Ash House 3-5', thoroughfare: 'High Road' })
+        // Rule 4 then applies: push buildingName, nextLinePrefix = "3-5 " → "3-5 High Road".
+        const lines = addr({
+          buildingName: 'Ash House 3-5',
+          thoroughfare: 'High Road',
+        })
         expect(lines).toContain('Ash House')
         expect(lines.some((l) => l.startsWith('3-5'))).toBe(true)
       })
 
       it('"Rose Cottage 2A" is split on the alpha-suffixed number " 2A"', () => {
         // " 2A" matches /\s[0-9]+[a-zA-Z]+$/ — split yields buildingName="Rose Cottage", buildingNumber="2A".
-        const lines = addr({ buildingName: 'Rose Cottage 2A', thoroughfare: 'Green Lane' })
+        const lines = addr({
+          buildingName: 'Rose Cottage 2A',
+          thoroughfare: 'Green Lane',
+        })
         expect(lines).toContain('Rose Cottage')
         expect(lines.some((l) => l.startsWith('2A'))).toBe(true)
       })
 
-      // TODO: latent bug — ex4Regex is constructed with `new RegExp('/^(...).../')` (forward
-      // slashes INCLUDED in the pattern string), so the regex matches literal "/" characters
-      // rather than guarding special prefixes like "Block". "Block 1A" ends with " 1A" which
-      // matches the split regex, so it is incorrectly split into buildingName="Block" and
-      // buildingNumber="1A" instead of being kept intact.
-      it.skip('"Block 1A" should NOT be split because "Block" is in the ex4 special-prefix list', () => {
-        const lines = addr({ buildingName: 'Block 1A', thoroughfare: 'Main Street' })
-        expect(lines).toContain('Block 1A')
+      // Royal Mail Exception 4: a name that is one of the listed prefixes followed by a
+      // number stays whole. The regex was built as `new RegExp('/^(...).../')` with the
+      // delimiting slashes inside the pattern string, so it only ever looked for literal
+      // "/" characters and this guard never fired.
+      it('"Block 1A" is NOT split because "Block" is an ex4 special prefix', () => {
+        expect(
+          addr({ buildingName: 'Block 1A', thoroughfare: 'Main Street' })
+        ).toEqual(['Block 1A', 'Main Street'])
       })
 
-      it('"Block 1A" IS split (latent bug: ex4Regex is broken)', () => {
-        // Due to the ex4Regex bug, "Block 1A" is treated as: buildingName="Block", buildingNumber="1A".
-        const lines = addr({ buildingName: 'Block 1A', thoroughfare: 'Main Street' })
-        expect(lines).toContain('Block')
-        expect(lines.some((l) => l.startsWith('1A'))).toBe(true)
+      it.each([
+        { buildingName: 'Unit 5-7' },
+        { buildingName: 'Suite 2B' },
+        { buildingName: 'Stall 4A' },
+        { buildingName: 'Maisonette 12C' },
+      ])(
+        '"$buildingName" is kept whole as an ex4 special prefix',
+        ({ buildingName }) => {
+          expect(addr({ buildingName, thoroughfare: 'Main Street' })).toEqual([
+            buildingName,
+            'Main Street',
+          ])
+        }
+      )
+
+      it('still splits a name whose leading word is NOT a special prefix', () => {
+        // Guards against the regex being loosened into matching everything.
+        expect(
+          addr({ buildingName: 'Willow 1A', thoroughfare: 'Main Street' })
+        ).toEqual(['Willow', '1A Main Street'])
       })
     })
 
     describe('Rule 4 — building name + building number', () => {
-      // Actual output has a double space on the number+thoroughfare line (same EH bug as Rule 2).
       it.each([
         {
           buildingName: 'Maple House',
           buildingNumber: 10,
           thoroughfare: 'Elm Street',
-          expected: ['Maple House', '10  Elm Street'],
+          expected: ['Maple House', '10 Elm Street'],
         },
         {
           buildingName: 'Riverside',
           buildingNumber: '25',
           thoroughfare: 'Quay Road',
-          expected: ['Riverside', '25  Quay Road'],
+          expected: ['Riverside', '25 Quay Road'],
         },
       ])(
-        'puts $buildingName on own line then $buildingNumber prefixes thoroughfare (double space — latent bug)',
+        'puts $buildingName on own line then $buildingNumber prefixes thoroughfare',
         ({ buildingName, buildingNumber, thoroughfare, expected }) => {
-          expect(addr({ buildingName, buildingNumber, thoroughfare })).toEqual(expected)
+          expect(addr({ buildingName, buildingNumber, thoroughfare })).toEqual(
+            expected
+          )
         }
       )
     })
 
     describe('Rule 5 — sub-building name + building number', () => {
-      // Actual output has a double space on the number+thoroughfare line (same EH bug as Rule 2).
       it.each([
         {
           subBuildingName: 'Flat 3',
           buildingNumber: 15,
           thoroughfare: 'Park Road',
-          expected: ['Flat 3', '15  Park Road'],
+          expected: ['Flat 3', '15 Park Road'],
         },
         {
           subBuildingName: 'Unit 2',
           buildingNumber: 200,
           thoroughfare: 'Business Park',
-          expected: ['Unit 2', '200  Business Park'],
+          expected: ['Unit 2', '200 Business Park'],
         },
       ])(
-        'puts $subBuildingName on own line then $buildingNumber prefixes thoroughfare (double space — latent bug)',
+        'puts $subBuildingName on own line then $buildingNumber prefixes thoroughfare',
         ({ subBuildingName, buildingNumber, thoroughfare, expected }) => {
-          expect(addr({ subBuildingName, buildingNumber, thoroughfare })).toEqual(expected)
+          expect(
+            addr({ subBuildingName, buildingNumber, thoroughfare })
+          ).toEqual(expected)
         }
       )
     })
 
     describe('Rule 6 — sub-building name + building name (no number)', () => {
       it('outputs sub-building name, then building name, then thoroughfare as separate lines', () => {
-        expect(addr({ subBuildingName: 'Flat 1', buildingName: 'Elm Court', thoroughfare: 'West Street' })).toEqual([
-          'Flat 1',
-          'Elm Court',
-          'West Street',
-        ])
+        expect(
+          addr({
+            subBuildingName: 'Flat 1',
+            buildingName: 'Elm Court',
+            thoroughfare: 'West Street',
+          })
+        ).toEqual(['Flat 1', 'Elm Court', 'West Street'])
       })
 
       it('"3A" sub-building produces a separate line because it is only 2 chars (regex needs 3+)', () => {
         // /^[0-9].*[0-9][a-zA-Z]$/ requires minimum 3 chars; "3A" has 2, so no exception.
-        const lines = addr({ subBuildingName: '3A', buildingName: 'Beech House', thoroughfare: 'Acacia Avenue' })
+        const lines = addr({
+          subBuildingName: '3A',
+          buildingName: 'Beech House',
+          thoroughfare: 'Acacia Avenue',
+        })
         expect(lines).toContain('3A')
         expect(lines).toContain('Beech House')
         expect(lines).toContain('Acacia Avenue')
@@ -276,15 +323,25 @@ describe('usePAF', () => {
 
       it('single non-numeric sub-building char produces "X, building-name" combined line', () => {
         // subBuildingName.length === 1 AND isNaN('B') → comma appended, then used as prefix
-        const lines = addr({ subBuildingName: 'B', buildingName: 'Beech House', thoroughfare: 'Acacia Avenue' })
+        const lines = addr({
+          subBuildingName: 'B',
+          buildingName: 'Beech House',
+          thoroughfare: 'Acacia Avenue',
+        })
         expect(lines.find((l) => l.startsWith('B,'))).toBeTruthy()
       })
 
       it('numeric start-and-end sub-building (e.g. "10to12") is used as prefix to building name', () => {
         // "10to12" matches /^[0-9].*[0-9]$/ → exception applies: subBuildingName used as nextLinePrefix
-        const lines = addr({ subBuildingName: '10to12', buildingName: 'Oak House', thoroughfare: 'Station Road' })
+        const lines = addr({
+          subBuildingName: '10to12',
+          buildingName: 'Oak House',
+          thoroughfare: 'Station Road',
+        })
         // nextLinePrefix = '10to12 ', then building name: push('10to12 Oak House') or similar
-        expect(lines.find((l) => l.includes('10to12') && l.includes('Oak House'))).toBeTruthy()
+        expect(
+          lines.find((l) => l.includes('10to12') && l.includes('Oak House'))
+        ).toBeTruthy()
       })
     })
 
@@ -326,7 +383,9 @@ describe('usePAF', () => {
           buildingNumber: 20,
           thoroughfare: 'King Road',
         })
-        expect(lines.find((l) => l.includes('10to4') && l.includes('Windsor Towers'))).toBeTruthy()
+        expect(
+          lines.find((l) => l.includes('10to4') && l.includes('Windsor Towers'))
+        ).toBeTruthy()
         expect(lines.find((l) => l.startsWith('20'))).toBeTruthy()
       })
 
@@ -338,31 +397,48 @@ describe('usePAF', () => {
           buildingNumber: 10,
           thoroughfare: 'Station Road',
         })
-        // "A, " becomes the prefix → "A, Oak House" combined line, then "10  Station Road"
-        expect(lines.find((l) => l.startsWith('A,') && l.includes('Oak House'))).toBeTruthy()
+        // "A, " becomes the prefix → "A, Oak House" combined line, then "10 Station Road"
+        expect(
+          lines.find((l) => l.startsWith('A,') && l.includes('Oak House'))
+        ).toBeTruthy()
         expect(lines.find((l) => l.includes('Station Road'))).toBeTruthy()
       })
 
-      // TODO: latent bug — single-digit buildingNumber in Rule 7 produces no space before
-      // thoroughfare. In Rule 7, nextLinePrefix = '' + buildingNumber (no trailing space).
-      // The EH check then does charAt(1) which for a 1-char string returns '' (falsy), so
-      // no space is appended. Result: '8King Road' instead of '8 King Road'.
-      it.skip('single-digit buildingNumber gets a space before thoroughfare (latent bug)', () => {
-        const lines = addr({
-          subBuildingName: 'Flat 2',
-          buildingName: 'Windsor Towers',
-          buildingNumber: 8,
-          thoroughfare: 'King Road',
-        })
-        expect(lines.find((l) => l === '8 King Road')).toBeTruthy()
+      // Rule 7 sets the prefix with no trailing space, which is the arm that used to
+      // produce "8King Road" with the number jammed against the street.
+      it('single-digit buildingNumber gets a space before thoroughfare', () => {
+        expect(
+          addr({
+            subBuildingName: 'Flat 2',
+            buildingName: 'Windsor Towers',
+            buildingNumber: 8,
+            thoroughfare: 'King Road',
+          })
+        ).toEqual(['Flat 2', 'Windsor Towers', '8 King Road'])
       })
+
+      it.each([1, 8, 9])(
+        'single-digit buildingNumber %i is separated from the thoroughfare',
+        (buildingNumber) => {
+          const lines = addr({
+            subBuildingName: 'Flat 2',
+            buildingName: 'Windsor Towers',
+            buildingNumber,
+            thoroughfare: 'King Road',
+          })
+          expect(lines[lines.length - 1]).toBe(`${buildingNumber} King Road`)
+        }
+      )
     })
 
     describe('Rule C1 — sub-building name only (no building name or number)', () => {
       it('uses sub-building name as prefix for the next thoroughfare line', () => {
         // Rule C1: nextLinePrefix = subBuildingName (no trailing space).
         // EH check adds one space → 'Rear of ' → thoroughfare: 'Rear of Elm Street'.
-        const lines = addr({ subBuildingName: 'Rear of', thoroughfare: 'Elm Street' })
+        const lines = addr({
+          subBuildingName: 'Rear of',
+          thoroughfare: 'Elm Street',
+        })
         expect(lines).toEqual(['Rear of Elm Street'])
       })
 
@@ -374,9 +450,12 @@ describe('usePAF', () => {
 
     describe('organisation and department names', () => {
       it('prepends organisation name as first address line', () => {
-        const lines = addr({ organizationName: 'Acme Corp', buildingNumber: 5, thoroughfare: 'High Street' })
+        const lines = addr({
+          organizationName: 'Acme Corp',
+          buildingNumber: 5,
+          thoroughfare: 'High Street',
+        })
         expect(lines[0]).toBe('Acme Corp')
-        // Double-space latent bug on number+thoroughfare line
         expect(lines.find((l) => l.includes('High Street'))).toBeTruthy()
       })
 
@@ -393,7 +472,11 @@ describe('usePAF', () => {
       })
 
       it('adds department name without an organisation name', () => {
-        const lines = addr({ departmentName: 'Accounts', buildingNumber: 3, thoroughfare: 'Bank Road' })
+        const lines = addr({
+          departmentName: 'Accounts',
+          buildingNumber: 3,
+          thoroughfare: 'Bank Road',
+        })
         expect(lines).toContain('Accounts')
         expect(lines.find((l) => l.includes('Bank Road'))).toBeTruthy()
       })
@@ -406,10 +489,16 @@ describe('usePAF', () => {
 
     describe('PO Box', () => {
       it('adds a "PO Box N" entry before the building lines', () => {
-        const lines = addr({ poBox: '123', buildingNumber: 5, thoroughfare: 'Main Road' })
+        const lines = addr({
+          poBox: '123',
+          buildingNumber: 5,
+          thoroughfare: 'Main Road',
+        })
         // Note: EH cleanup strips "PO Box " prefix from addressLines[0], so the PO Box line
         // may only be visible as the bare number after cleanup depending on its position.
-        expect(lines.some((l) => l.includes('PO Box 123') || l === '123')).toBe(true)
+        expect(lines.some((l) => l.includes('PO Box 123') || l === '123')).toBe(
+          true
+        )
       })
 
       it('strips leading "PO Box " from the first address line via EH cleanup', () => {
@@ -428,13 +517,20 @@ describe('usePAF', () => {
 
     describe('dependent thoroughfare', () => {
       it('outputs dependent thoroughfare before the main thoroughfare', () => {
-        const lines = addr({ dependentThoroughfare: 'Back Lane', thoroughfare: 'High Street' })
+        const lines = addr({
+          dependentThoroughfare: 'Back Lane',
+          thoroughfare: 'High Street',
+        })
         expect(lines).toEqual(['Back Lane', 'High Street'])
       })
 
-      it('building number prefixes the dependent thoroughfare (double space — latent bug)', () => {
+      it('building number prefixes the dependent thoroughfare', () => {
         // Rule 2 sets nextLinePrefix = buildingNumber + ' ', EH adds another space.
-        const lines = addr({ buildingNumber: 3, dependentThoroughfare: 'Back Lane', thoroughfare: 'High Street' })
+        const lines = addr({
+          buildingNumber: 3,
+          dependentThoroughfare: 'Back Lane',
+          thoroughfare: 'High Street',
+        })
         expect(lines[0]).toMatch(/^3/)
         expect(lines[0]).toContain('Back Lane')
         expect(lines[1]).toBe('High Street')
@@ -455,7 +551,10 @@ describe('usePAF', () => {
       })
 
       it('outputs dependent locality alone (no double-dependent)', () => {
-        const lines = addr({ thoroughfare: 'Main Street', dependentLocality: 'Kensington' })
+        const lines = addr({
+          thoroughfare: 'Main Street',
+          dependentLocality: 'Kensington',
+        })
         expect(lines).toEqual(['Main Street', 'Kensington'])
       })
 
@@ -464,7 +563,9 @@ describe('usePAF', () => {
           doubleDependentLocality: 'The Lanes',
           dependentLocality: 'Brighton',
         })
-        expect(lines.indexOf('The Lanes')).toBeLessThan(lines.indexOf('Brighton'))
+        expect(lines.indexOf('The Lanes')).toBeLessThan(
+          lines.indexOf('Brighton')
+        )
       })
     })
 
@@ -472,14 +573,20 @@ describe('usePAF', () => {
       it('removes a redundant first line when the second line begins with it plus a space', () => {
         // Scenario: org name produces a first line, then a thorofare line starts with the same text.
         // lines = ['The Lane', 'The Lane Villas', ...] → first removed.
-        const lines = addr({ organizationName: 'The Lane', thoroughfare: 'The Lane Villas' })
+        const lines = addr({
+          organizationName: 'The Lane',
+          thoroughfare: 'The Lane Villas',
+        })
         // 'The Lane Villas'.includes('The Lane ') → true → first line removed
         expect(lines).not.toContain('The Lane')
         expect(lines).toContain('The Lane Villas')
       })
 
       it('does NOT remove first line when second line does not start with first plus space', () => {
-        const lines = addr({ organizationName: 'Acme Corp', thoroughfare: 'High Street' })
+        const lines = addr({
+          organizationName: 'Acme Corp',
+          thoroughfare: 'High Street',
+        })
         expect(lines).toContain('Acme Corp')
         expect(lines).toContain('High Street')
       })
@@ -490,7 +597,11 @@ describe('usePAF', () => {
         //   subBuildingName='Flat 1' → lines[0], buildingName='Elm Court' → lines[1],
         //   thoroughfare='Elm Court Road' → lines[2].
         // lines[2] = 'Elm Court Road'.includes('Elm Court ') = true → splice(1,1).
-        const lines = addr({ subBuildingName: 'Flat 1', buildingName: 'Elm Court', thoroughfare: 'Elm Court Road' })
+        const lines = addr({
+          subBuildingName: 'Flat 1',
+          buildingName: 'Elm Court',
+          thoroughfare: 'Elm Court Road',
+        })
         expect(lines).not.toContain('Elm Court')
         expect(lines).toContain('Flat 1')
         expect(lines).toContain('Elm Court Road')
@@ -529,16 +640,20 @@ describe('usePAF', () => {
 
     it('appends post town and postcode on the final line', () => {
       const result = constructMultiLine(
-        makeAddress({ buildingnumber: 10, thoroughfaredescriptor: 'Downing Street' })
+        makeAddress({
+          buildingnumber: 10,
+          thoroughfaredescriptor: 'Downing Street',
+        })
       )
-      // Double-space latent bug: "10  Downing Street"
-      expect(result).toContain('Downing Street')
-      expect(result).toContain('LONDON SW1A 1AA')
+      expect(result).toBe('10 Downing Street\nLONDON SW1A 1AA')
     })
 
     it('separates address lines with newlines', () => {
       const result = constructMultiLine(
-        makeAddress({ buildingnumber: 10, thoroughfaredescriptor: 'Downing Street' })
+        makeAddress({
+          buildingnumber: 10,
+          thoroughfaredescriptor: 'Downing Street',
+        })
       )
       expect(result).toContain('\n')
     })
@@ -550,7 +665,11 @@ describe('usePAF', () => {
 
     it('includes organisation name when present', () => {
       const result = constructMultiLine(
-        makeAddress({ organizationname: 'HMRC', buildingnumber: 100, thoroughfaredescriptor: 'Parliament Street' })
+        makeAddress({
+          organizationname: 'HMRC',
+          buildingnumber: 100,
+          thoroughfaredescriptor: 'Parliament Street',
+        })
       )
       expect(result).toContain('HMRC')
     })
@@ -577,7 +696,11 @@ describe('usePAF', () => {
 
     it('assembles a PO Box address with posttown and postcode', () => {
       const result = constructMultiLine(
-        makeAddress({ pobox: '123', posttown: 'EDINBURGH', postcode: 'EH1 1AB' })
+        makeAddress({
+          pobox: '123',
+          posttown: 'EDINBURGH',
+          postcode: 'EH1 1AB',
+        })
       )
       expect(result).toContain('EDINBURGH EH1 1AB')
     })
@@ -594,7 +717,10 @@ describe('usePAF', () => {
 
     it('replaces all newlines with ", "', () => {
       const result = constructSingleLine(
-        makeAddress({ buildingnumber: 10, thoroughfaredescriptor: 'Downing Street' })
+        makeAddress({
+          buildingnumber: 10,
+          thoroughfaredescriptor: 'Downing Street',
+        })
       )
       expect(result).not.toContain('\n')
       expect(result).toContain(', ')
@@ -602,14 +728,20 @@ describe('usePAF', () => {
 
     it('contains the thoroughfare name in the single-line result', () => {
       const result = constructSingleLine(
-        makeAddress({ buildingnumber: 10, thoroughfaredescriptor: 'Downing Street' })
+        makeAddress({
+          buildingnumber: 10,
+          thoroughfaredescriptor: 'Downing Street',
+        })
       )
       expect(result).toContain('Downing Street')
     })
 
     it('contains post town and postcode', () => {
       const result = constructSingleLine(
-        makeAddress({ buildingnumber: 10, thoroughfaredescriptor: 'Downing Street' })
+        makeAddress({
+          buildingnumber: 10,
+          thoroughfaredescriptor: 'Downing Street',
+        })
       )
       expect(result).toContain('LONDON')
       expect(result).toContain('SW1A 1AA')

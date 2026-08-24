@@ -2,7 +2,9 @@
 
 namespace App\Mail;
 
+use App\Services\LoginLinkService;
 use App\Services\MjmlCompilerService;
+use App\Services\UnsubscribeService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Envelope;
@@ -26,6 +28,11 @@ abstract class MjmlMailable extends Mailable
      * Timestamp when email was created.
      */
     protected string $timestamp = '';
+
+    /**
+     * Memoised auto-login key used by both arms of the List-Unsubscribe header.
+     */
+    private ?string $cachedUnsubscribeKey = null;
 
     public function __construct()
     {
@@ -307,37 +314,102 @@ abstract class MjmlMailable extends Mailable
     }
 
     /**
+     * The category of email this mailable belongs to, for unsubscribe purposes.
+     *
+     * Both arms of List-Unsubscribe carry this, so "Unsubscribe" in a mail client turns
+     * off the kind of email the member actually received. See UnsubscribeService for the
+     * category list and what each one switches off.
+     *
+     * Returns null for transactional mail - password resets, address verification, replies
+     * to something the member did - which must not carry List-Unsubscribe at all.
+     */
+    protected function unsubscribeType(): ?string
+    {
+        return UnsubscribeService::TYPE_ALL;
+    }
+
+    /**
      * Add RFC 8058 List-Unsubscribe and List-Unsubscribe-Post headers.
      *
-     * Only added when we know the recipient user ID, so the unsubscribe URL
-     * can target the correct account. Uses both a mailto: address and an HTTPS
-     * URL for maximum compatibility. List-Unsubscribe-Post enables one-click
-     * unsubscribe without opening a browser.
+     * Only added when we know the recipient user ID, so the unsubscribe can target the
+     * correct account, and when the mailable declares an unsubscribe category.
+     *
+     * Both arms are key-authenticated with the users_logins type=Link credential, and both
+     * land somewhere that actually applies the opt-out:
+     *  - mailto goes to users.ilovefreegle.org, which our own postfix routes to
+     *    IncomingMailService. (It must NOT go to anything on ilovefreegle.org itself - that
+     *    domain's MX is Google Workspace, so mail sent there never reaches us and the member
+     *    gets an auto-reply telling them the mailbox is not monitored.)
+     *  - the HTTPS URL is the apiv2 one-click endpoint, which accepts the RFC 8058 POST.
+     *    (A Nuxt page will happily answer that POST with a 200 and do nothing, which mail
+     *    clients report to the member as a successful unsubscribe.)
      *
      * These headers are required by Gmail and Yahoo for bulk senders.
      */
     protected function addListUnsubscribeHeaders(Email $message): void
     {
         $userId = $this->getRecipientUserId();
+        $type = $this->unsubscribeType();
 
-        if ($userId === null) {
+        // A preview or fixture send can arrive with id 0; building a header for it would
+        // mint a users_logins row for a user that does not exist.
+        if ($userId === null || $userId <= 0 || $type === null) {
             return;
         }
 
         $headers = $message->getHeaders();
 
-        $unsubscribeEmail = config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org');
-        $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
-        $unsubscribeUrl = "{$userSite}/unsubscribe/{$userId}";
+        $unsubscribeEmail = $this->listUnsubscribeMailto($userId, $type);
+        $unsubscribeUrl = $this->listUnsubscribeUrl($userId);
 
         // List-Unsubscribe: RFC 2369 — mailto: and https: URLs.
         $headers->addTextHeader(
             'List-Unsubscribe',
-            "<mailto:{$unsubscribeEmail}?subject=unsubscribe>, <{$unsubscribeUrl}>"
+            "<mailto:{$unsubscribeEmail}>, <{$unsubscribeUrl}>"
         );
 
         // List-Unsubscribe-Post: RFC 8058 — enables one-click unsubscribe.
         $headers->addTextHeader('List-Unsubscribe-Post', 'List-Unsubscribe=One-Click');
+    }
+
+    /**
+     * The mailto: address used in the List-Unsubscribe header, handled by
+     * IncomingMailService::handleOneClickUnsubscribe().
+     */
+    protected function listUnsubscribeMailto(int $userId, string $type): string
+    {
+        $userDomain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+
+        return "unsubscribe-{$userId}-{$this->unsubscribeKey($userId)}-{$type}@{$userDomain}";
+    }
+
+    /**
+     * The HTTPS URL used in the List-Unsubscribe header: the apiv2 one-click endpoint,
+     * which applies the opt-out on POST (RFC 8058) and shows a confirmation page on GET.
+     * MatchedPosts overrides this with its own targeted relevantoff endpoint.
+     */
+    protected function listUnsubscribeUrl(int $userId): string
+    {
+        $apiV2 = rtrim((string) config('freegle.api.v2_url', 'https://api.ilovefreegle.org/apiv2'), '/');
+
+        return $apiV2.'/user/unsubscribe?'.http_build_query([
+            'u' => $userId,
+            'k' => $this->unsubscribeKey($userId),
+            't' => $this->unsubscribeType() ?? UnsubscribeService::TYPE_ALL,
+        ]);
+    }
+
+    /**
+     * The user's persistent auto-login key, memoised so building both arms of the header
+     * costs one lookup rather than one per arm per email in a digest run.
+     */
+    private function unsubscribeKey(int $userId): string
+    {
+        if ($this->cachedUnsubscribeKey === null) {
+            $this->cachedUnsubscribeKey = app(LoginLinkService::class)->getOrCreateKey($userId);
+        }
+
+        return $this->cachedUnsubscribeKey;
     }
 
     /**
