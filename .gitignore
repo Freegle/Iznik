@@ -79,3 +79,6 @@ monitor.db
 # freegle switch: runtime state for the worktree-escape guard
 # (legacy single file + per-session active-worktree.<session-id> files)
 .claude/active-worktree*
+
+# One-off operator backfill/drain scripts write their progress log beside themselves.
+scripts/*.log

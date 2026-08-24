@@ -234,6 +234,38 @@ Schedule::command('ripple:proximity-notes')
     ->sendOutputTo(cronLog('ripple:proximity-notes'))
     ->runInBackground();
 
+// Reach geometry dedup maintenance (PR #1402, plans/2026-08-23-rippling-reach-polygon-dedup.md).
+// The writers keep hashes current, so these exist only to mop up what a live table strands.
+//
+// --reset-mark on both sweeps is the point, not a reset for its own sake. Each command walks
+// forward by msgid and stores where it got to, and the drain deliberately skips posts that are
+// still expanding - so a post that was mid-expansion when the sweep went past is left holding a
+// full blob and, because the mark has moved on, is never revisited. Re-walking from the start is
+// cheap: an already-deduped or already-drained row is skipped without reading its blob, so a
+// whole-table pass is a few minutes and only does real work for rows that have since settled.
+Schedule::command('ripple:dedup-geometry', ['--reset-mark', '--limit' => 60000])
+    ->dailyAt('03:10')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('ripple:dedup-geometry'))
+    ->runInBackground();
+
+Schedule::command('ripple:drain-deduped-blobs', ['--reset-mark', '--limit' => 60000])
+    ->dailyAt('03:40')
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('ripple:drain-deduped-blobs'))
+    ->runInBackground();
+
+// Orphaned shared geometry, left behind whenever an expanding post's polygon changes. Deleting
+// one wrongly would lose the reach of every post sharing it, so the command requires two runs at
+// least --grace-hours apart to agree before it removes anything: the interval MUST therefore
+// exceed the grace, or consecutive passes are never far enough apart and nothing is ever
+// collected. Six hours against a four-hour grace leaves margin for scheduler drift.
+Schedule::command('ripple:gc-reach-geometry', ['--grace-hours' => 4, '--limit' => 2000])
+    ->everySixHours()
+    ->withoutOverlapping(60)
+    ->sendOutputTo(cronLog('ripple:gc-reach-geometry'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.
