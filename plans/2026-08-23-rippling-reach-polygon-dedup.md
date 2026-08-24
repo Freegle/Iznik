@@ -194,11 +194,23 @@ It should — the join is on a primary key and the driving predicate is unchange
 "should" is precisely what was wrong on 2026-08-21. Run the EXPLAIN on **db1, not db3**.
 
 **Stage 4 — free the duplicates.** `UPDATE … SET polygon = NULL` returns the LOB pages to
-the tablespace free list, one row at a time, pausable, no DDL. Note this does **not** shrink
-the `.ibd`: `df` will not move, but `data_free` goes from 0 to ~27 GB and new rows consume
-that instead of extending the file — roughly 18 days of growth absorbed at the current rate,
-plus a lower rate thereafter. Compacting the file is a separate operator decision; a rebuild
-needs ~50 GB against 52 GB free, so it wants headroom first.
+the tablespace free list, one row at a time, pausable, no DDL.
+
+**Corrected 2026-08-23 by observation, having predicted this wrongly.** The
+`ripple:shrink-overflow-bounds` backfill ran to completion the same evening and reclaimed a
+**measured 5.82 GB** across 48 batches (bytes read vs written per row, zero refusals). The
+`.ibd` went 50.2 GB → **50.23 GB** — flat, as expected, since InnoDB never returns pages to
+the OS without a rebuild. But `data_free` **did not move off 0.0 GB either**, which is what
+this plan previously claimed would happen.
+
+So do not use `data_free` as the success measure. Freed LOB pages go back to a segment free
+list rather than becoming countable free extents, and `innodb_stats_on_metadata = 0` means
+those figures are cached regardless. The observable proof is the **file failing to grow**
+while inserts continue — it stayed flat across an hour that also absorbed 5.82 GB of
+rewrites — not a number in `information_schema`.
+
+Compacting the file is a separate operator decision; a rebuild needs ~50 GB against 52 GB
+free, so it wants headroom first.
 
 ## Risks
 
