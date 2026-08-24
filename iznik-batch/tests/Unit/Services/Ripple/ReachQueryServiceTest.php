@@ -407,4 +407,114 @@ class ReachQueryServiceTest extends TestCase
         $this->assertTrue($svc->isWithinReach($msgid, 51.5, -0.1));
         Http::assertNothingSent();
     }
+
+    // ── The compact cell set (plans/2026-08-24-rippling-reach-raster-storage.md) ──
+
+    /**
+     * Store the row's reach as a cell set, built by the REAL rasteriser in
+     * iznik-spatial-go - the one place a polygon becomes cells. A hand-built
+     * blob would only prove this test agrees with itself about a format the
+     * writer has to agree with instead.
+     */
+    private function seedReachCells(int $msgid, string $wkt = self::POLY): void
+    {
+        // setUp's ring-index fake matches by URL pattern, so an unmatched
+        // rasterise request would get Laravel's default empty 200 - which
+        // CellSetService correctly refuses as "not a cell set". Re-fake with a
+        // closure that dispatches the ring stubs and lets the rasterise call
+        // through to the real service.
+        $stubs = $this->ringIndexStubs();
+        Http::fake(function ($request) use ($stubs) {
+            if (str_contains($request->url(), 'reach/rasterize')) {
+                return null; // not stubbed: the real rasteriser answers
+            }
+            foreach ($stubs as $pattern => $stub) {
+                if (\Illuminate\Support\Str::is($pattern, $request->url())) {
+                    return $stub($request);
+                }
+            }
+
+            return Http::response([], 200);
+        });
+
+        $cells = (new \App\Services\Ripple\CellSetService())->rasterize($wkt);
+        $this->assertNotNull($cells, 'the spatial server must return a cell set to seed with');
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['polygon_cells' => $cells]);
+    }
+
+    public function test_the_cell_set_answers_when_it_is_there(): void
+    {
+        $msgid = $this->seedReach();
+        $this->seedReachCells($msgid);
+
+        // The polygon is then made to cover NOTHING near the test points, so a
+        // true answer can only have come from the cell set - otherwise this
+        // would pass whichever path ran.
+        DB::statement(
+            'UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
+            ['POLYGON((10 10, 10.1 10, 10.1 10.1, 10 10.1, 10 10))', $msgid]
+        );
+
+        $svc = new ReachQueryService();
+        $this->assertTrue(
+            $svc->isWithinReach($msgid, 51.5, -0.1),
+            'a point inside the cell set is within reach even though the polygon has moved away'
+        );
+        $this->assertFalse(
+            $svc->isWithinReach($msgid, 52.0, 1.0),
+            'a point outside the cell set is not within reach'
+        );
+    }
+
+    public function test_a_row_with_no_cell_set_still_answers_from_the_polygon(): void
+    {
+        // The pre-backfill state, and the state after any clip that could not
+        // produce cells: NULL means "use the polygon", and it must keep working
+        // exactly as it did before this column existed.
+        $msgid = $this->seedReach();
+        $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells'));
+
+        $svc = new ReachQueryService();
+        $this->assertTrue($svc->isWithinReach($msgid, 51.5, -0.1));
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
+    }
+
+    public function test_a_malformed_cell_set_falls_back_to_the_polygon_rather_than_deciding(): void
+    {
+        // Bytes that will not decode must never decide a reply's fate - not by
+        // admitting everybody and not by refusing everybody. The polygon is
+        // still there and still correct, so it answers.
+        $msgid = $this->seedReach();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['polygon_cells' => 'not a cell set at all']);
+
+        $svc = new ReachQueryService();
+        $this->assertTrue($svc->isWithinReach($msgid, 51.5, -0.1), 'the polygon answers when the cells cannot');
+        $this->assertFalse($svc->isWithinReach($msgid, 52.0, 1.0));
+    }
+
+    public function test_the_cell_set_and_the_polygon_agree_across_the_reach(): void
+    {
+        // Two descriptions of one shape. Where they disagree, somebody either
+        // sees a post they cannot reply to or is refused one they can.
+        $msgid = $this->seedReach();
+        $this->seedReachCells($msgid);
+
+        $polygonSays = fn (float $lat, float $lng): bool => (bool) DB::selectOne(
+            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857)), 0) AS c
+             FROM rippling_reach WHERE msgid = ?',
+            [$lng, $lat, $msgid]
+        )->c;
+
+        $svc = new ReachQueryService();
+        foreach ([
+            [51.5, -0.1], [51.45, -0.15], [51.55, -0.05], [51.41, -0.19],
+            [52.0, 1.0], [51.0, -0.1], [51.5, 0.5],
+        ] as [$lat, $lng]) {
+            $this->assertSame(
+                $polygonSays($lat, $lng),
+                $svc->isWithinReach($msgid, $lat, $lng),
+                "cell set and polygon disagree about ($lat, $lng)"
+            );
+        }
+    }
 }

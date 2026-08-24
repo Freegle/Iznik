@@ -252,6 +252,57 @@ func ReachOverflowContaining(lng, lat float64, lanes []string) (in []int64, part
 	return out.In, out.Partial, nil
 }
 
+// cellSetMagicLE is the wire-format magic (0x31534343, "CCS1"), little-endian
+// - mirrors rippling.cellSetMagic / CellSetService::FORMAT_MAGIC, duplicated
+// here rather than imported to avoid a spatial->rippling import cycle
+// (rippling already imports spatial for this very function).
+var cellSetMagicLE = [4]byte{0x43, 0x43, 0x53, 0x31}
+
+// RasterizeWKT converts a polygon/multipolygon WKT string into its compact
+// cell-set form (plans/2026-08-24-rippling-reach-raster-storage.md), via the
+// spatial server's POST /v1/reach/rasterize - the ONE place a boundary
+// becomes a grid. Used by the reach clip (a secondary-group rejection has to
+// turn the REJECTING GROUP's own area into cells before it can subtract them
+// from a post's reach grid): the query API, not the admin one, since this is
+// a read-shaped conversion, not an index mutation.
+//
+// A 200 is not proof of a cell set: a misrouted request, a proxy's own 200,
+// or a server too old to know this endpoint would otherwise be returned and
+// STORED, and every later reader would decode-fail and fall back for the
+// life of the row while the column looked converted (the same failure mode
+// CellSetService::rasterize's PHP twin was hardened against). Checked here,
+// once, at the only place these bytes enter the Go side.
+func RasterizeWKT(wkt string) ([]byte, error) {
+	reqURL := fmt.Sprintf("%s/v1/reach/rasterize", baseURL())
+	resp, err := httpClient.Post(reqURL, "text/plain", strings.NewReader(wkt))
+	if err != nil {
+		return nil, fmt.Errorf("spatial rasterize: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spatial rasterize %s: HTTP %d", reqURL, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("spatial rasterize %s: read body: %w", reqURL, err)
+	}
+	if len(body) < 4 || body[0] != cellSetMagicLE[0] || body[1] != cellSetMagicLE[1] ||
+		body[2] != cellSetMagicLE[2] || body[3] != cellSetMagicLE[3] {
+		// The URL and a short preview are in the message on purpose: the way
+		// this fails in practice is a request reaching the WRONG service and
+		// getting a perfectly valid 200 from it, which "not a cell set" alone
+		// gives you no way to diagnose.
+		preview := body
+		if len(preview) > 40 {
+			preview = preview[:40]
+		}
+		return nil, fmt.Errorf("spatial rasterize %s: response is not a cell set (%d bytes, starts %q)",
+			reqURL, len(body), string(preview))
+	}
+	return body, nil
+}
+
 // ExtraString returns a string value from a QueryResult.Extra map, or "" if absent.
 func ExtraString(r QueryResult, key string) string {
 	if v, ok := r.Extra[key].(string); ok {

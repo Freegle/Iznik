@@ -1,7 +1,9 @@
 package rippling
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/binary"
 	"testing"
 )
 
@@ -66,9 +68,202 @@ func TestDecodeCellSet_RejectsZeroSizedGrid(t *testing.T) {
 	}
 }
 
+// CellSetContains is the read path: it must agree with a full decode at every
+// cell, since it exists only to avoid building the grid to test one bit.
+func TestCellSetContains_AgreesWithDecodeEverywhere(t *testing.T) {
+	b, err := base64.StdEncoding.DecodeString(goldenVectorB64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := mustDecodeGolden(t)
+
+	for row := -2; row < 13; row++ {
+		for col := -2; col < 13; col++ {
+			lng := (float64(col) + 0.5) * 0.0003
+			lat := (float64(row) + 0.5) * 0.0003
+			want := cs.Contains(lng, lat)
+			got, ok := CellSetContains(b, lng, lat)
+			if !ok {
+				t.Fatalf("cell (%d,%d): CellSetContains could not answer", col, row)
+			}
+			if got != want {
+				t.Errorf("cell (%d,%d): CellSetContains=%v, decode+Contains=%v", col, row, got, want)
+			}
+		}
+	}
+}
+
+// "Cannot answer" and "outside" are different answers, and the caller acts on
+// them differently: one falls back to the polygon, the other refuses. Bad
+// bytes must never be reported as a definite "outside".
+func TestCellSetContains_SaysItCannotAnswerRatherThanGuessing(t *testing.T) {
+	for name, b := range map[string][]byte{
+		"empty":      {},
+		"short":      []byte("CCS1"),
+		"bad magic":  make([]byte, 20),
+		"zero-sized": append([]byte{0x43, 0x43, 0x53, 0x31}, make([]byte, 16)...),
+		"truncated":  mustGoldenPrefix(t, 22),
+	} {
+		if _, ok := CellSetContains(b, 0.0015, 0.0015); ok {
+			t.Errorf("%s: expected \"cannot answer\", got a definite verdict", name)
+		}
+	}
+}
+
+// Outside the stored grid IS a definite answer - a point far from the reach is
+// not in it, and must not send the caller to the polygon for nothing.
+func TestCellSetContains_OutsideTheGridIsDefinite(t *testing.T) {
+	b, err := base64.StdEncoding.DecodeString(goldenVectorB64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range [][2]float64{{-100, -100}, {100, 100}, {5, 5}} {
+		inside, ok := CellSetContains(b, p[0], p[1])
+		if !ok {
+			t.Errorf("(%v,%v): expected a definite answer outside the grid", p[0], p[1])
+		}
+		if inside {
+			t.Errorf("(%v,%v): far outside the grid must not be inside", p[0], p[1])
+		}
+	}
+}
+
+func mustGoldenPrefix(t *testing.T, n int) []byte {
+	t.Helper()
+	b, err := base64.StdEncoding.DecodeString(goldenVectorB64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b[:n]
+}
+
+// Cols and Rows are each uint32, so a corrupt header can claim 1.8e19 cells.
+// Refusing it means "fall back to the polygon", which every caller already
+// handles; trying to allocate for it does not. The limit must match the other
+// implementations, or a value one language accepts is rejected by another.
+func TestDecodeCellSet_RejectsAnAbsurdlyLargeGrid(t *testing.T) {
+	b := make([]byte, 20)
+	b[0], b[1], b[2], b[3] = 0x43, 0x43, 0x53, 0x31
+	binary.LittleEndian.PutUint32(b[12:16], 0xFFFFFFFF) // cols
+	binary.LittleEndian.PutUint32(b[16:20], 0xFFFFFFFF) // rows
+	if _, err := DecodeCellSet(b); err == nil {
+		t.Fatal("a grid of 1.8e19 cells must be rejected, not allocated for")
+	}
+}
+
 func TestDecodeCellSet_OutOfBoundsNeverWraps(t *testing.T) {
 	cs := mustDecodeGolden(t)
 	if cs.Contains(-100, -100) || cs.Contains(100, 100) {
 		t.Error("a large negative/positive coordinate must not wrap into a valid index")
+	}
+}
+
+// encodeFullGrid hand-builds the wire bytes for a grid every one of whose
+// cells is set - a leading zero-length clear run followed by one set run
+// covering the whole grid, exactly what Encode would produce for it.
+func encodeFullGrid(minCol, minRow int32, cols, rows uint32) []byte {
+	out := make([]byte, cellSetHeaderSize)
+	binary.LittleEndian.PutUint32(out[0:4], cellSetMagic)
+	binary.LittleEndian.PutUint32(out[4:8], uint32(minCol))
+	binary.LittleEndian.PutUint32(out[8:12], uint32(minRow))
+	binary.LittleEndian.PutUint32(out[12:16], cols)
+	binary.LittleEndian.PutUint32(out[16:20], rows)
+	out = appendCellSetVarint(out, 0)
+	out = appendCellSetVarint(out, uint64(cols)*uint64(rows))
+	return out
+}
+
+func mustDecodeFullGrid(t *testing.T, minCol, minRow int32, cols, rows uint32) *DecodedCellSet {
+	t.Helper()
+	cs, err := DecodeCellSet(encodeFullGrid(minCol, minRow, cols, rows))
+	if err != nil {
+		t.Fatalf("DecodeCellSet(encodeFullGrid): %v", err)
+	}
+	return cs
+}
+
+// A full 3x3 grid at (0,0) and a full 3x3 grid at (1,1) overlap in the
+// bottom-right 2x2 of the first - global cells (1,1),(2,1),(1,2),(2,2).
+func TestSubtract_RemovesOverlappingCellsOnly(t *testing.T) {
+	a := mustDecodeFullGrid(t, 0, 0, 3, 3)
+	b := mustDecodeFullGrid(t, 1, 1, 3, 3)
+
+	result := a.Subtract(b)
+
+	untouched := cellDegrees / 2 // inside cell (0,0), never covered by b
+	if !result.Contains(untouched, untouched) {
+		t.Error("a cell outside the overlap must remain")
+	}
+	overlap := 2*cellDegrees + cellDegrees/2 // inside cell (2,2), covered by both a and b
+	if result.Contains(overlap, overlap) {
+		t.Error("the overlapping cell must be cleared")
+	}
+	if result.SetCellCount() >= a.SetCellCount() {
+		t.Errorf("expected fewer set cells after subtracting an overlapping region: before=%d after=%d",
+			a.SetCellCount(), result.SetCellCount())
+	}
+}
+
+func TestSubtract_NoOverlapLeavesBaseUnchanged(t *testing.T) {
+	a := mustDecodeFullGrid(t, 0, 0, 3, 3)
+	farAway := mustDecodeFullGrid(t, 100, 100, 1, 1)
+
+	result := a.Subtract(farAway)
+
+	if result.SetCellCount() != a.SetCellCount() {
+		t.Errorf("a disjoint subtrahend must not change the cell count: before=%d after=%d",
+			a.SetCellCount(), result.SetCellCount())
+	}
+}
+
+func TestSubtract_TotalOverlapEmptiesTheResult(t *testing.T) {
+	a := mustDecodeFullGrid(t, 0, 0, 3, 3)
+	coversAll := mustDecodeFullGrid(t, -1, -1, 5, 5)
+
+	result := a.Subtract(coversAll)
+
+	if result.SetCellCount() != 0 {
+		t.Errorf("a subtrahend covering the whole base must empty the result, got %d cells set", result.SetCellCount())
+	}
+}
+
+func TestSubtract_DoesNotMutateEitherOperand(t *testing.T) {
+	a := mustDecodeFullGrid(t, 0, 0, 3, 3)
+	b := mustDecodeFullGrid(t, 1, 1, 3, 3)
+	aCountBefore := a.SetCellCount()
+	bCountBefore := b.SetCellCount()
+
+	_ = a.Subtract(b)
+
+	if a.SetCellCount() != aCountBefore {
+		t.Error("Subtract must not mutate the receiver")
+	}
+	if b.SetCellCount() != bCountBefore {
+		t.Error("Subtract must not mutate the argument")
+	}
+}
+
+func TestEncode_RoundTripsTheGoldenVectorByteForByte(t *testing.T) {
+	cs := mustDecodeGolden(t)
+	want, err := base64.StdEncoding.DecodeString(goldenVectorB64)
+	if err != nil {
+		t.Fatalf("bad test fixture: %v", err)
+	}
+	if !bytes.Equal(cs.Encode(), want) {
+		t.Error("Encode must be byte-identical to the golden vector it was decoded from")
+	}
+}
+
+func TestSubtractResult_RoundTripsThroughEncodeAndDecode(t *testing.T) {
+	a := mustDecodeFullGrid(t, 0, 0, 3, 3)
+	b := mustDecodeFullGrid(t, 1, 1, 3, 3)
+
+	result := a.Subtract(b)
+	reDecoded, err := DecodeCellSet(result.Encode())
+	if err != nil {
+		t.Fatalf("re-decoding an encoded Subtract result must not fail: %v", err)
+	}
+	if reDecoded.SetCellCount() != result.SetCellCount() {
+		t.Errorf("round trip changed the cell count: %d vs %d", result.SetCellCount(), reDecoded.SetCellCount())
 	}
 }

@@ -43,9 +43,51 @@ disagreements** wherever either was definite (34,644 agreements, 5,757 points wh
 one or both said "ask the fine grid", 0 contradictions). This is not a theoretical
 claim - it is measured against the exact shape production stores today.
 
+That measurement is a one-off: it needs a ~1MB real polygon that is not checked in
+(`TestBuildRasterFromCellSet_AgreesWithPolygonBuild` now runs when `REACH_SAMPLE_WKT`
+points at one; it previously named a path that could never exist again, so it could
+only ever skip). **Parity is now also enforced on every run**, by
+`TestBuildRasterFromCellSet_AgreesWithAStaircaseBoundary`: a generated lattice
+staircase - the shape class production actually stores, since every reach and every
+ring is a marching-squares tracing of a routing-server raster, with hundreds of
+right-angle corners sitting exactly on cell edges - probed at the same 40,401 points.
+38,552 definite agreements, 1,849 deferred to the fine grid, **0 contradictions**.
+
+The rings are the largest prize. Measured 2026-08-23 by
+`ripple:shrink-overflow-bounds`' own dry run: `overflow_bounds` was **HALF the table at
+860KB a row**, its rings average **37,000 vertices**, and every one of those vertices
+already sits on the exact 0.0003-degree lattice a cell set uses - because the rings are
+traced from a routing-server raster. The read path then downsamples that tracing into a
+~130m coarse raster anyway. So the stored precision is parsed once, thrown away, and
+never used by the surface that reads it most.
+
+**The ring reduction is INFERRED, not measured.** 860KB/row and 37,000 vertices are real
+production figures, and a ring's boundary density is close to the reach polygon's
+(31,145 vertices) that was measured at 45x - but no real ring has been through this
+encoder, because the prod DB tunnel was not up when this stage was built. Do not quote
+45x for the rings.
+
+**And the ratio is very shape-dependent, which is worth knowing before predicting a
+disk saving.** Cell bytes scale with AREA and boundary complexity; WKT bytes scale with
+VERTEX COUNT. Measured against this encoder during Stage 2:
+
+| shape | vertices | WKT | cells | stored (base64) | reduction |
+|---|---|---|---|---|---|
+| real production reach polygon | 31,145 | 1,017,565 | 22,804 | n/a (blob) | **45x** |
+| generated traced blob, reach-sized | ~4,000 | 66,375 | 11,884 | 15,848 | 4.2x |
+| generated traced blob, ring-sized | ~4,000 | 66,215 | 23,052 | 30,736 | 2.2x |
+| generated lattice staircase (adversarial) | 18,003 | 294,727 | 64,379 | 85,840 | 3.4x |
+
+The generated shapes under-sell it because they carry a tenth of production's boundary
+detail for the same extent - the real win comes precisely from the fact that production
+stores an enormous number of vertices to describe an area a grid describes cheaply. The
+adversarial staircase is the RLE worst case (a run boundary in nearly every row) and is
+included as a floor, not a forecast. The honest way to size the ring saving is to run
+`ripple:backfill-ring-cells` against production data and measure the column.
+
 ## Design
 
-### The format: `cellset` (new standalone Go module `iznik-reach-cellset`)
+### The format: `cellset` (an internal package of `iznik-spatial-go`)
 
 A CellSet is a bitmap over a GLOBAL, fixed lattice - `CellDegrees = 0.0003` degrees on
 both axes (the same lattice the overflow rings and the routing server's own grid fill
@@ -74,11 +116,23 @@ IS the stored form. At 0.0003 degrees (~33m) that is less boundary ambiguity tha
 ~400m location blur every reach origin already carries
 (`App\Support\UserApproxLocService::BLUR_USER`) - not a new source of error.
 
-**Built and proven** (`iznik-reach-cellset/cellset/`): `FromPolygonWKT` (parser +
+**Built and proven** (`iznik-spatial-go/cellset/`): `FromPolygonWKT` (parser +
 scanline rasteriser, reusing `peterstace/simplefeatures` exactly as raster.go does),
-`Encode`/`Decode`, `Contains`, `SetCellCount`, `Bounds`. 10 unit tests + 1 live-sample
-test, all green. Handles holes and MULTIPOLYGON (both are real reach shapes - a clip
-can split a reach into disjoint pieces or carve a hole from the middle).
+`Encode`/`Decode`, `Contains`, `SetCellCount`, `Bounds`, `Subtract`. Unit tests plus a
+live-sample test, all green. Handles holes and MULTIPOLYGON (both are real reach shapes
+- a clip can split a reach into disjoint pieces or carve a hole from the middle).
+
+**Which operations may be duplicated in another language, and which may not.**
+`FromPolygonWKT` may not: turning a vector boundary into cells involves a real
+scanline-fill judgement call, and two independently-written rasterisers could disagree
+at a boundary cell in ways nothing would ever catch. It stays in one place, reached over
+HTTP (`POST /v1/reach/rasterize`) - the same discipline `GeomShareService` established
+for hash computation in PR #1402. `Decode`, `Contains`, `Encode` and `Subtract` may:
+parsing a fixed versioned format, testing a bit, serialising an already-computed grid,
+and AND-NOTing two grids on a shared fixed lattice are all deterministic arithmetic with
+nothing to canonicalise. So the Go API carries a self-contained port of everything
+except the rasteriser, and PHP carries the same, and a reader on a hot path never pays a
+network round trip to test one point.
 
 ### Where geometry work moves
 
@@ -104,33 +158,51 @@ edge/geometry math with bit-array sampling to build the SAME bounded coarse
 accelerator dataset_reach.go already serves from - 3 tests including the 40,401-probe
 zero-disagreement parity proof above.
 
-**Decoding is safe to duplicate; encoding is not.** A decoder only parses a fixed,
-versioned, self-describing format - there is no ambiguity a second implementation
-could introduce, unlike rasterising a polygon's boundary. So PHP
-(`App\Services\Ripple\CellSetService`) carries a decoder + `Contains`, proven
-identical to the real Go encoder's output via a GOLDEN VECTOR (not hand-written) -
-`CellSetServiceTest` in iznik-batch, 8 tests, all green.
+**Everything except the rasteriser is duplicated in PHP and in the Go API**, per the
+rule above: `Decode`, `Contains`, `Encode` and `Subtract` in
+`App\Services\Ripple\CellSetService` and in `iznik-server-go/rippling/cellset.go`, each
+proven against the SAME golden vector generated by the real encoder rather than
+hand-written (`CellSetServiceTest`; `rippling/cellset_test.go` and
+`test/firstreply_test.go`'s `frCellsGoldenVectorB64`).
 
-**iznik-server-go does NOT import the shared `iznik-reach-cellset` module** - it
-carries its own small decode-only port (`rippling/cellset.go`, ~120 lines, no external
-dependency), proven against the SAME golden vector
-(`rippling/cellset_test.go`, `test/firstreply_test.go`'s
-`frCellsGoldenVectorB64`). This was forced, not a style choice: this repo's dev/test
-containers sync only their own top-level directory
-(`file-sync.sh`: `iznik-server-go/* -> /app/`), so a cross-module `go.mod` `replace
-../iznik-reach-cellset` cannot resolve inside them - confirmed the hard way when the
-status-API Go suite failed with "replacement directory ../iznik-reach-cellset does
-not exist" after importing it directly. Three languages, three decoders, one encoder -
-consistent with the "encoding is centralised, decoding is safe to duplicate" rule
-above; it just means Go duplicates PHP's approach rather than sharing code with its
-own sibling module.
+Every decoder also refuses a grid larger than `MaxCells` (2^28, about 16,384 cells a
+side and a 32MB bitmap - far beyond any real reach, whose largest measured example was
+4.4 million cells). `Cols` and `Rows` are each uint32, so a corrupt header can claim
+1.8e19 cells; a decode failure has a defined meaning to every caller (fall back to the
+polygon) where an exhausted process does not. The limit is the same number in all
+three, so a value one language accepts is never rejected by another.
+
+**iznik-server-go does NOT import iznik-spatial-go's `cellset` package** - it carries
+its own small self-contained port with no external dependency. This was forced, not a
+style choice: this repo's dev/test containers sync only their own top-level directory
+(`file-sync.sh`: `iznik-server-go/* -> /app/`), so a cross-module `go.mod` `replace`
+cannot resolve inside them - confirmed the hard way when the status-API Go suite failed
+with "replacement directory does not exist" after importing it directly. Three
+languages, one rasteriser.
 
 ### Column shape (additive, stacked on the dedup change)
 
-`rippling_reach.max_polygon_cells MEDIUMBLOB NULL` - nullable and **unindexed
-deliberately**: nothing ever queries it in SQL, so an index would protect a query that
-never runs. A deploy ahead of the backfill is a no-op (every reader falls back to
-`max_polygon`/`max_polygon_hash` exactly as PR #1402 left them).
+Three columns, one per geometry the table stores, all nullable and all **unindexed
+deliberately**: nothing ever queries the bytes in SQL - they are opaque to MySQL and
+decoded entirely in application code - so an index would only protect a query that
+never runs. A deploy ahead of a backfill is a no-op in every case, because every
+reader falls back to the geometry (or, since PR #1402, its content hash).
+
+| Column | Type | Mirrors | Read by |
+|---|---|---|---|
+| `max_polygon_cells` | MEDIUMBLOB NULL | `max_polygon` - the eventual reach | the first-reply passthrough gate, PHP and Go |
+| `polygon_cells` | MEDIUMBLOB NULL | `polygon` - the reach so far | `ReachQueryService::isWithinReach` |
+| `overflow_cells` | JSON NULL | `overflow_bounds` - the rings, per lane | iznik-spatial-go's ring index build |
+
+`overflow_cells` is JSON rather than a blob because it holds one cell set per lane on
+the same JSON paths its rings use, so a consumer asks for a lane with the identical
+`JSON_EXTRACT` it already used. Its values are base64, since a JSON column's value must
+be valid UTF-8.
+
+None of the three retires the geometry it mirrors. The clips still run `ST_Difference`
+against `polygon`; `outer_bound`/`inner_bound` are still derived from a transient WKT;
+the map overlay still draws the ring vectors; and `has_overflow` is still GENERATED from
+`overflow_bounds IS NOT NULL`.
 
 ## Stage 0 (DONE, this session) - max_polygon vertical slice
 
@@ -156,8 +228,9 @@ not one polygon).
 | 9c | Malformed-cellset fallback proven both languages (falls back to legacy blob test, not fail-closed) | DONE both languages, in the 4253/4253 Go run and the Laravel run in progress |
 | 9d | Packaging gap: found it was WORSE than known (rasterize was silently null all session), then fully resolved (module folded into iznik-spatial-go, real Docker build + real deploy + real network call proven) | **DONE** - see "PACKAGING GAP" note below, supersedes the old "KNOWN GAP" text |
 | 10 | `ripple:backfill-max-reach-cells` for EXISTING rows (populate() only fills NULL max_polygon; this backfills rows whose eventual reach predates the feature) | DONE: command + 6 tests written; Laravel verification in progress at session handoff |
-| 11 | Docs freshness (first-reply.md, rippling-algorithm.md) | NOT STARTED |
-| 12 | Review + PR | NOT STARTED |
+| 11 | Docs freshness (rippling-algorithm.md §9b) | DONE - rewritten for all three columns; `iznik-spatial-go/cellset/**` and `dataset_reachoverflow.go` added to its `covers:` |
+| 12 | Review + PR | DONE - PR #1406 |
+| 13 | The single-point reader must NOT decode: `decode()` builds one entry per covered cell (measured 317ms / 128MB on a production-sized reach, on the reply gate). `containsEncoded` / `CellSetContains` walk the run stream instead (0.002ms, zero allocation, identical answers) | DONE both languages, and applied to `isWithinMaxReach` too |
 
 **Bug the Go suite caught (fixed):** `firstreply.ShouldPassThrough` originally fetched
 `max_polygon_cells` via GORM's chain `.Select(...).Where(...).Scan(&cells)` with
@@ -217,59 +290,137 @@ listed here) - none of them were the right shape. The right shape was recognisin
 that only one service ever needed the shared code, and giving up on sharing it
 saved a repo, a go.mod, and every one of those options' costs.
 
-## Stage 1 (NOT STARTED) - overflow_bounds
+## Stage 1 (DONE) - polygon, and both in-place clips
 
-Wrong shape for this design as literally stated: `overflow_bounds` is JSON holding 2-4
-WKT ring strings (rural bands, fairness quintiles, cluster wedges) plus a bbox array
-and a scalar, not one polygon. Two paths:
-  - Decompose: one CellSet per ring, keyed under the same JSON structure (lane -> cells
-    instead of lane -> WKT). Rewrites `ReachQueryService::lanesCarried`'s
-    `JSON_CONTAINS_PATH` presence test, `RingIndex::admits`, spatial-go's
-    `ReachOverflowDataset`, and the digest's bbox-widening read.
-  - Or: this may be superseded by whether Stage 0's disk win alone (measured ~45x on
-    `polygon`) already relieves enough pressure that `overflow_bounds`
-    (measured 2026-08-24: 5.78 GB post-shrink, whole-document-dedup-worth 2.71 GB per
-    plans/2026-08-23-rippling-reach-polygon-dedup.md's own follow-up measurement)
-    is no longer the priority it looked like mid-session. Re-measure the STEADY-STATE
-    table composition once Stage 0 + PR #1402 are both live before committing effort
-    here - the earlier steady-state model (project_reach_geometry_dedup_pr1402 memory)
-    found overflow_bounds would become the LARGEST undeduped term (~55GB) specifically
-    because it is not touched by either change; that conclusion should be re-checked
-    against Stage 0's actual measured effect before scoping this stage's size.
+`polygon` is NOT NULL, carries a live spatial index the browse feed drives off, has
+the most readers of any column (11 PHP sites, 10 Go sites per the PR #1402 mapping),
+and has the two in-place `ST_Difference` clips that mutate it. What it now has
+alongside it is `polygon_cells`, on exactly the terms Stage 0 established for
+`max_polygon_cells`: nullable, unindexed, additive, and never the thing a reader
+insists on.
 
-## Stage 2 (NOT STARTED) - polygon (the hot path)
+| # | Task | Status |
+|---|---|---|
+| 1 | Migration `polygon_cells` (Laravel + prod SQL, ALGORITHM=INSTANT pinned) | DONE, applied and re-applied in the worktree (idempotent) |
+| 2 | `cellset.Subtract` in all three implementations (spatial-go, the Go API's port, PHP) | DONE, cross-checked against each other |
+| 3 | `CellSetService::encode()` so a clipped grid can be written back | DONE, proven byte-identical to the real encoder's golden vector |
+| 4 | Every `polygon` write also writes `polygon_cells` - init upsert, advance UPDATE, recompute shrink, backfill rewrite | DONE, one helper so the four cannot drift |
+| 5 | `ExpandService::reapplyClips` clips the cells with `subtract`, not by re-rasterising | DONE |
+| 6 | Go `ClipReachForRejectedGroup` does the same, via `spatial.RasterizeWKT` for the rejecting group's own area | DONE |
+| 7 | `ReachQueryService::isWithinReach` answers from the cells when present | DONE, falls back to the exact sandwich path unchanged when NULL |
+| 8 | `ripple:backfill-reach-cells` for rows whose reach predates the change | DONE |
+| 9 | `CellSetService::rasterize` rejects a 200 that is not a cell set | DONE - an empty or truncated body was previously STORED, which would have looked converted while every reader decode-failed and fell back for the life of the row |
 
-The big one: `polygon` is NOT NULL with a live spatial index every browse/nearby/search
-query drives off, has the most readers of any column (11 PHP sites, 10 Go sites per
-the PR #1402 mapping), and has the two in-place `ST_Difference` clips
-(`ExpandService::reapplyClips`, Go `ClipReachForRejectedGroup`) that mutate it.
+**Why the clips subtract rather than re-rasterise.** After `ST_Difference` the surviving
+WKT is frequently BIGGER than the rejecting group's own area - which is the whole reason
+this format exists - so re-rasterising the result would cost more than the write it is
+meant to make cheap. Subtracting two grids is a bitwise AND-NOT over the overlapping
+cell range, and because `CellDegrees` is fixed rather than per-blob both operands are
+already on the same lattice: no resampling, no reprojection, and no ambiguity for two
+implementations to disagree about. That last point is why `Subtract`/`Encode` are safe
+to duplicate in every language that reads a cell set, while turning a polygon's VECTOR
+BOUNDARY into cells stays centralised in the one rasteriser.
 
-Key open design questions, NOT yet answered by this session's work:
-  - **The browse R-tree.** `rippling_reach_outer` (an MBR) currently drives the
-    browse feed's spatial index and must keep doing so - PR #1402 was explicit that
-    perturbing this predicate is what caused the 2026-08-21 outage. A CellSet has no
-    spatial index of its own (it is a flat blob); `outer_bound` almost certainly stays
-    exactly as it is, GEOMETRY, indexed, in MySQL - only the EXACT test behind it
-    (today's `ST_Contains(polygon, point)` correlated EXISTS) moves to a CellSet
-    decode. This should be a smaller, safer change than it sounds: same shape as
-    Stage 0's `isWithinMaxReach` rewrite, applied to more call sites.
-  - **The clips.** `ST_Difference` on a CellSet is a bit-array AND-NOT over the
-    overlapping cell range - no `ST_Buffer(0)` repair, no invalid-geometry ladder, no
-    1713 undo-log splitting, no spatial-index rebuild risk. This REMOVES an entire
-    class of fragility ExpandServiceTest/ExpandGeometrySafetyTest currently guard
-    against, but it means teaching `cellset` a subtract operation and re-deriving
-    `outer_bound`/`inner_bound` from the RESULT (today they are derived from the WKT
-    via MySQL `ST_Envelope`/buffer functions - from a CellSet they would need either a
-    cheap bbox-from-cells computation, which `Bounds()` already gives for the outer,
-    or staying WKT-derived by keeping a parallel WKT computation ONLY for the bounds
-    derivation step, not for storage).
-  - **iznik-spatial-go's own load path.** `dataset_reach.go`'s `Load`/`ApplyDelta`
-    currently read `ST_AsWKB(COALESCE(g.geom, rr.polygon))` and parse WKB via
-    `geom.UnmarshalWKB` before calling `BuildRaster`. Once `polygon` is a CellSet blob,
-    this becomes `cellset.Decode` + `BuildRasterFromCellSet` (already built, Stage 0) -
-    net SIMPLER and faster (no geometry parse, no edge-crossing math at all), but this
-    is the module's hot load path (~50k rows) and needs its own benchmark before
-    trusting that intuition.
+**What the clips do NOT touch.** `outer_bound` and `inner_bound` are still GEOMETRY,
+still spatially indexed, still derived MySQL-side from the transient WKT in the same
+statement as the polygon. PR #1402 was explicit that perturbing the browse feed's
+driving predicate is what caused the 2026-08-21 outage, and nothing here goes near it.
+
+**Failure direction.** Anywhere the cells cannot be produced or clipped - rasteriser
+down, bytes that will not decode, a row not yet backfilled - the column is left or set
+NULL and the reader falls back to the polygon. It is never left holding a stale grid,
+because a stale grid is MORE permissive than the polygon it disagrees with: it would
+admit members the reach no longer covers.
+
+## Stage 2 (DONE) - overflow_bounds, the rings
+
+The rings are the table's worst case and by some distance. Measured 2026-08-23
+(`ripple:shrink-overflow-bounds`' own docblock): `overflow_bounds` was HALF the table
+at 860KB a row, and each ring averages 37,000 vertices.
+
+Two facts settle the design, and both were already written down in this repo before
+this stage started:
+
+  - **The rings' vertices already sit on the 0.0003-degree lattice**, because they are
+    traced from a routing-server raster. A cell set is therefore a recovery of the
+    ring's own source grid, not a new approximation of it.
+  - **The read path already throws that precision away.** `iznik-spatial-go`'s
+    `ReachOverflowDataset` downsamples every ring into a ~130m coarse raster
+    (`ringRasterDim = 192`) at load, and that raster - not the WKT - is what answers
+    every admission question. The stored 37,000 vertices exist only to be parsed once
+    and discarded.
+
+So `overflow_cells` mirrors `overflow_bounds` exactly: same nesting, same JSON paths,
+each ring's WKT replaced by base64 cell bytes. Same paths so spatial-go asks for a lane
+with the identical `JSON_EXTRACT` it already used, and no consumer needs a second lane
+table. Base64 because a JSON column's value must be valid UTF-8; the ~33% inflation is
+nothing against the reduction.
+
+| # | Task | Status |
+|---|---|---|
+| 1 | Migration `overflow_cells` JSON NULL (Laravel + prod SQL, INSTANT pinned) | DONE, applied and re-applied; `has_overflow` VIRTUAL GENERATED verified intact |
+| 2 | `ExpandService::overflowCellsJson` - one encoder, so every write path agrees | DONE |
+| 3 | Both ring write paths write it: the init upsert and the recompute shrink | DONE (`advanceDue` writes no rings - it moves a tick pointer along a stored schedule, and the rings belong to the reach as a whole) |
+| 4 | The reuse path carries the cells across, so a reused row costs no rasterise calls | DONE |
+| 5 | spatial-go builds each lane's coarse raster from the cells when present, else parses the WKT | DONE, per lane |
+| 6 | `ripple:backfill-ring-cells` for rings that predate the change | DONE |
+
+**What the coarse raster deliberately keeps.** The 192-cell raster is unchanged: 2 bits
+a cell, ~9KB per ring, ~62MB across the ~6,700 live ring items - a measured figure this
+must not quietly inflate, and a fine cell set held in the index instead would be
+megabytes per ring decoded. So the cells replace the PARSE, not the accelerator, and
+the in/partial/out contract every caller relies on is the same one
+`BuildRasterFromCellSet` and `BuildRasterDim` both implement.
+
+**Per lane, not per row.** A lane's cells are filled in independently, so a
+partly-converted table is a normal state rather than a migration window: any lane whose
+cells are absent, malformed, or unrasterisable falls back to its WKT, and
+`overflow_bounds` stays the authority. That fallback is asserted both ways - the cells
+are preferred even when the WKT slot holds something that would fail to parse, and a
+deliberately corrupt cells blob still leaves the lane served by its ring.
+
+**What still reads the ring vectors, and must.** The map overlay
+(`iznik-server-go/message/reach.go`) draws the rings, so it genuinely needs the vector;
+"which lanes does this post carry" (`ReachQueryService::lanesCarried`) is a
+`JSON_CONTAINS_PATH` test; and `has_overflow` is GENERATED from
+`overflow_bounds IS NOT NULL` and indexed, with both the spatial-go ring load and its
+delta hanging off that index. None of those changes.
+
+**Deploy ordering.** `dataset_reachoverflow.go` queries `overflow_cells`
+unconditionally, following the stance `dataset_reach.go` already documents for
+`polygon_hash` (this module has no information_schema readiness gate, and the migration
+runs before any service is redeployed). That makes the ordering load-bearing: run the
+migration first, then redeploy spatial-go.
+
+## Stage 2's earlier open questions, and where they landed
+
+Recorded before Stages 1-2 were built; kept because several were answered by doing the
+work rather than by deciding not to.
+  - **The browse R-tree. ANSWERED: it is untouched, and stays untouched.**
+    `outer_bound` is still GEOMETRY, still indexed, still derived MySQL-side from the
+    transient WKT in the same statement as the polygon. Only the single-point exact
+    test behind it moved to a cell-set decode (`ReachQueryService::isWithinReach`),
+    exactly the shape Stage 0's `isWithinMaxReach` rewrite took. The browse feed's own
+    SQL (`ReachBrowseWhere`) was deliberately NOT converted: it is an expression
+    embedded in a larger query whose plan hangs off that index, and the 2026-08-21
+    outage is what perturbing it looks like.
+  - **The clips. ANSWERED: `Subtract`, in all three implementations.** A cell-set
+    difference is a bitwise AND-NOT over the overlapping cell range - no
+    `ST_Buffer(0)` repair, no invalid-geometry ladder, no 1713 undo-log splitting, no
+    spatial-index rebuild risk. `outer_bound`/`inner_bound` did NOT need re-deriving
+    from the result: the clip statement already NULLs `inner_bound` and leaves
+    `outer_bound` stale-loose (safe, since the exact test decides), and the next tick
+    re-derives both from the WKT. So the parallel-WKT option this question worried
+    about was never needed.
+  - **iznik-spatial-go's own load path. PARTLY ANSWERED - done for the RINGS, not yet
+    for the reaches.** `dataset_reachoverflow.go` now builds each lane's coarse raster
+    from the cells when present (Stage 2), which is where the parse cost actually
+    was: 37,000 vertices and ~0.8MB per ring. `dataset_reach.go` still reads
+    `ST_AsWKB(COALESCE(g.geom, rr.polygon))` and parses WKB. Switching it to
+    `cellset.Decode` + `BuildRasterFromCellSet` is the same one-line-per-lane change,
+    but it is this module's hot load path (~50k rows against the rings' ~4,400) and
+    should be benchmarked rather than assumed - and unlike the rings it cannot fall
+    back per item, since `polygon` is NOT NULL and every row has one.
   - **routing-go - EXPLORED (2026-08-24, file:line evidence), confirms Stage 0's
     choice was right and settles this question.** Dijkstra's own output
     (`IsochroneResult`, dijkstra.go:9-16) is a SPARSE map keyed by real road-graph
@@ -327,6 +478,41 @@ Key open design questions, NOT yet answered by this session's work:
     close to free to add given `GeomShareService`'s pattern is already proven. Decide
     once Stage 2's basic column exists whether the extra table+FK is worth it at these
     sizes, rather than assuming yes by default.
+
+## Stage 3 (NOT STARTED) - iznik-spatial-go's main reach index still parses WKT
+
+The single read site this whole design exists for is not yet converted:
+`dataset_reach.go` (the `/v1/reach/containing` index behind
+`spatial.ReachContaining` - the reply gate, the nearby feed and the mail all call
+through it) still does `ST_AsText(polygon)` and a full WKT parse on every `Load`
+and `ApplyDelta`, exactly as it did before this design existed. `polygon_cells`
+and `max_polygon_cells` are both written by every post; neither is read here.
+`BuildRasterFromCellSet` already exists (built for this) and has exactly one
+caller today - `dataset_reachoverflow.go`'s per-lane rasters, from Stage 2 -
+proving the pattern works, not yet applied to the dataset it was written for.
+
+This is deliberately its own stage, not folded into this PR, for one reason:
+`dataset_reach.go` is the driving index behind the 2026-08-21 outage (the one
+PR #1402's design doc keeps citing) - the single highest-traffic, highest-risk
+surface in this whole system, and everything shipped so far in Stages 0-2 is
+additive and low-risk by construction (a nullable column nobody has to read).
+Converting this dataset's Load/ApplyDelta is not: it changes what the busiest
+read path in the system does on every request. It deserves its own PR, its own
+review, and a rollback plan that does not ride on anything else in this one.
+
+Shape of the work, sketched but not built:
+  - `Load`/`ApplyDelta` prefer `polygon_cells`/`max_polygon_cells` when present
+    (decode -> `BuildRasterFromCellSet`), falling back to the existing
+    `ST_AsText` + `BuildRasterDim` path when absent - per row, exactly the
+    per-lane fallback `ringRasterFor` already proves in dataset_reachoverflow.go.
+  - The coarse raster's contract (in/partial/out) does not change; only where
+    it is built FROM changes.
+  - Needs its own before/after agreement measurement at real scale (mirroring
+    this design's own 40,401-probe parity check), specifically re-run against
+    THIS index's real load, not assumed from Stage 2's rings measurement.
+  - Needs the backfill commands (`ripple:backfill-reach-cells`,
+    `ripple:backfill-max-reach-cells`) to have actually reached a meaningful
+    fraction of live rows first, or this converts almost nothing on day one.
 
 ## Not doing (out of scope, decided or re-confirmed this session)
 

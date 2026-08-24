@@ -28,6 +28,7 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -2708,6 +2709,43 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 	clipTable := "rippling_reach mr JOIN `groups` g ON g.id = ?" +
 		rippling.GeomJoin(share, "mr", "polygon", "gsh")
 	poly := rippling.GeomExpr(share, "mr", "polygon", "gsh")
+	clipWhere := "mr.msgid = ? AND g.polyindex IS NOT NULL " +
+		"AND ST_GeometryType(g.polyindex) <> 'POINT' " +
+		"AND ST_Intersects(" + poly + ", g.polyindex) " +
+		"AND NOT ST_Within(" + poly + ", g.polyindex)"
+
+	// polygon_cells is clipped with the cell-set Subtract primitive
+	// (iznik-spatial-go/cellset.Subtract, ported here as DecodedCellSet.Subtract)
+	// rather than by re-rasterising the whole post-clip polygon: after
+	// ST_Difference the WKT is frequently BIGGER than the rejecting group's
+	// own area (that is exactly why this format exists), so re-rasterising it
+	// would cost more than the write it is meant to make cheap. Read BEFORE
+	// the clip below, from the SAME eligibility test, so cells and polygon
+	// are clipped from identical pre-clip state. Any failure (rasterise down,
+	// no cells stored yet) clips to NULL - fall back to `polygon` - rather
+	// than ever leave a stale, too-permissive grid in place.
+	cellsReady := rippling.PolygonCellsReady(db)
+	var clippedCells []byte
+	haveClippedCells := false
+	if cellsReady {
+		var curCells []byte
+		var groupWkt *string
+		// keep-raw: dynamic multi-table join (clipTable/clipWhere are built above
+		// from GeomShareReady-dependent fragments) with ST_AsText/ST_Intersects/
+		// ST_Within spatial predicates - GORM cannot render this shape.
+		row := db.Raw("SELECT mr.polygon_cells, ST_AsText(g.polyindex) FROM "+clipTable+" WHERE "+clipWhere, gid, msgid).Row()
+		if err := row.Scan(&curCells, &groupWkt); err == nil && curCells != nil && groupWkt != nil {
+			if groupBytes, rerr := spatial.RasterizeWKT(*groupWkt); rerr == nil {
+				if a, derr := rippling.DecodeCellSet(curCells); derr == nil {
+					if b, derr2 := rippling.DecodeCellSet(groupBytes); derr2 == nil {
+						clippedCells = a.Subtract(b).Encode()
+						haveClippedCells = true
+					}
+				}
+			}
+		}
+	}
+
 	set := clause.Set{
 		{Column: clause.Column{Table: "mr", Name: "polygon"}, Value: gorm.Expr("ST_Difference(" + poly + ", g.polyindex)")},
 	}
@@ -2721,12 +2759,20 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 			Column: clause.Column{Table: "mr", Name: "inner_bound"}, Value: gorm.Expr("NULL"),
 		})
 	}
+	if cellsReady {
+		if haveClippedCells {
+			set = append(set, clause.Assignment{
+				Column: clause.Column{Table: "mr", Name: "polygon_cells"}, Value: clippedCells,
+			})
+		} else {
+			set = append(set, clause.Assignment{
+				Column: clause.Column{Table: "mr", Name: "polygon_cells"}, Value: gorm.Expr("NULL"),
+			})
+		}
+	}
 	clip := db.Table(clipTable, gid).
 		Clauses(set).
-		Where("mr.msgid = ? AND g.polyindex IS NOT NULL "+
-			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
-			"AND ST_Intersects("+poly+", g.polyindex) "+
-			"AND NOT ST_Within("+poly+", g.polyindex)", msgid).
+		Where(clipWhere, msgid).
 		Updates(map[string]interface{}{})
 	if share && clip.Error == nil && clip.RowsAffected > 0 {
 		rippling.GeomUpsertFromRow(db, msgid, "polygon")

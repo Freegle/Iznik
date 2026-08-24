@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ripple;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * ripple:shrink-overflow-bounds — rewrite stored overflow rings at a sane precision.
@@ -146,10 +147,19 @@ class ShrinkOverflowBoundsCommand extends Command
             $bytesAfter += strlen($shrunk);
 
             if (! $dryRun) {
+                // overflow_cells is cleared in the SAME statement, so it can never
+                // describe a different shape from the rings it mirrors
+                // (plans/2026-08-24-rippling-reach-raster-storage.md). The drift a
+                // rewrite could cause is tiny - no vertex moves more than 5.3 m
+                // against a 33 m cell - but "tiny" is not a property anything
+                // checks, whereas NULL has one meaning everywhere: use the rings.
+                // ripple:backfill-ring-cells refills it from the rewritten rings.
+                $cellsClear = $this->cellsColumnExists() ? ', overflow_cells = NULL' : '';
                 // keep-raw: updated_at = updated_at suppresses the ON UPDATE CURRENT_TIMESTAMP
                 // bump, which the builder cannot express; the reach mailer watches that column.
                 DB::update(
-                    'UPDATE rippling_reach SET overflow_bounds = ?, updated_at = updated_at WHERE msgid = ?',
+                    'UPDATE rippling_reach SET overflow_bounds = ?' . $cellsClear
+                    . ', updated_at = updated_at WHERE msgid = ?',
                     [$shrunk, $row->msgid]
                 );
             }
@@ -310,6 +320,22 @@ class ShrinkOverflowBoundsCommand extends Command
         $row = DB::table('config')->where('key', self::CONFIG_KEY_MARK)->first();
 
         return $row && $row->value !== null && $row->value !== '' ? (int) $row->value : 0;
+    }
+
+    /** Memoized: has the overflow_cells (raster-storage) migration run here? */
+    private ?bool $cellsColumn = null;
+
+    private function cellsColumnExists(): bool
+    {
+        if ($this->cellsColumn === null) {
+            try {
+                $this->cellsColumn = Schema::hasColumn('rippling_reach', 'overflow_cells');
+            } catch (\Throwable) {
+                $this->cellsColumn = false;
+            }
+        }
+
+        return $this->cellsColumn;
     }
 
     private function saveMark(int $msgid): void

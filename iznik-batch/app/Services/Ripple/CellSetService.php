@@ -47,6 +47,22 @@ class CellSetService
     private const HEADER_SIZE = 20;
 
     /**
+     * Refuses a grid too large to be a real shape before building an array for
+     * it. Cols and Rows are each unsigned 32-bit, so a corrupt value could ask
+     * for 1.8e19 cells and the loop below would never finish; a decode failure
+     * has a defined meaning to every caller (fall back to the polygon) where an
+     * exhausted process does not.
+     *
+     * 2^28 cells is a square about 16,384 cells on a side - roughly 4.9 degrees,
+     * some 540km, far beyond any drive-time reach or overflow ring the UK can
+     * produce (the largest real reach measured was 90x54km, 4.4 million cells).
+     * Must stay the SAME limit as iznik-spatial-go's cellset.MaxCells and the Go
+     * API's cellSetMaxCells, or a value one language accepts is rejected by
+     * another.
+     */
+    private const MAX_CELLS = 1 << 28;
+
+    /**
      * Rasterise a polygon WKT into its canonical compact bytes, or null on
      * any failure - rasterising is best-effort exactly like every other
      * reach write path here (a routing hiccup must leave the row for the
@@ -66,7 +82,23 @@ class CellSetService
                 return null;
             }
 
-            return $r->body();
+            // A 200 is not proof of a cell set. An empty or truncated body -
+            // a misrouted request, a proxy's own 200, a server too old to know
+            // this endpoint - would otherwise be STORED, and every later
+            // reader would then decode-fail and fall back for the life of the
+            // row while the column looked populated. Check the header here,
+            // once, at the only place bytes enter the system.
+            $body = $r->body();
+            if (strlen($body) < self::HEADER_SIZE
+                || unpack('V', substr($body, 0, 4))[1] !== self::FORMAT_MAGIC) {
+                Log::warning('cellset: rasterize returned something that is not a cell set', [
+                    'bytes' => strlen($body),
+                ]);
+
+                return null;
+            }
+
+            return $body;
         } catch (\Throwable $e) {
             Log::warning('cellset: rasterize request failed', ['error' => $e->getMessage()]);
 
@@ -75,13 +107,113 @@ class CellSetService
     }
 
     /**
+     * Is (lng, lat) inside this cell set, WITHOUT decoding it?
+     *
+     * This is the shape every read path actually needs: one point, one answer.
+     * It walks the run-length stream counting cells until it reaches the one
+     * asked about, so it allocates nothing at all and touches only the runs
+     * before the target - typically a few thousand tiny integers.
+     *
+     * Use this, not decode()+contains(), anywhere a single point is being
+     * tested. Measured on a production-sized reach (4,334 x 1,634 = 7.1M
+     * cells): decode() costs 317ms and 128MB because it materialises one PHP
+     * array entry per set cell, which is far more than the SQL it replaces;
+     * this costs neither. decode() remains the right tool for the clip path,
+     * which genuinely needs the whole grid.
+     *
+     * Returns null when the bytes are unusable, so a caller can tell "not in
+     * reach" from "cannot say" and fall back to the polygon rather than
+     * deciding a reply's fate on a malformed blob.
+     */
+    public function containsEncoded(string $bytes, float $lng, float $lat): ?bool
+    {
+        try {
+            $header = $this->header($bytes);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $col = (int) floor($lng / self::CELL_DEGREES) - $header['minCol'];
+        $row = (int) floor($lat / self::CELL_DEGREES) - $header['minRow'];
+        if ($col < 0 || $row < 0 || $col >= $header['cols'] || $row >= $header['rows']) {
+            return false;
+        }
+
+        $target = $row * $header['cols'] + $col;
+        $total = $header['cols'] * $header['rows'];
+        $pos = self::HEADER_SIZE;
+        $len = strlen($bytes);
+        $cur = false;   // runs alternate, starting with a CLEAR run
+        $seen = 0;
+
+        try {
+            while ($seen < $total) {
+                [$run, $consumed] = $this->readVarint($bytes, $pos, $len);
+                $pos += $consumed;
+                $seen += $run;
+                if ($target < $seen) {
+                    return $cur;
+                }
+                $cur = !$cur;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+
+        // The stream ended before reaching the target: a truncated value, which
+        // is "cannot say", not "outside".
+        return null;
+    }
+
+    /**
+     * Header fields only, without walking the run stream.
+     *
+     * @return array{minCol:int,minRow:int,cols:int,rows:int}
+     */
+    private function header(string $bytes): array
+    {
+        if (strlen($bytes) < self::HEADER_SIZE) {
+            throw new \InvalidArgumentException('cellset: input too short for a header');
+        }
+
+        // Unpacked as unsigned 32-bit little-endian throughout ('l' is PHP's
+        // MACHINE-byte-order signed long - not guaranteed 32-bit or
+        // little-endian - so MinCol/MinRow are read as unsigned via 'V' and
+        // converted to signed by hand, which is exact and portable).
+        $h = unpack('VmagicVal/VminColRaw/VminRowRaw/Vcols/Vrows', $bytes);
+        if ($h === false || $h['magicVal'] !== self::FORMAT_MAGIC) {
+            throw new \InvalidArgumentException('cellset: bad magic');
+        }
+        if ($h['cols'] === 0 || $h['rows'] === 0) {
+            throw new \InvalidArgumentException('cellset: zero-sized grid');
+        }
+        if ($h['cols'] * $h['rows'] > self::MAX_CELLS) {
+            throw new \InvalidArgumentException(
+                'cellset: grid too large (' . $h['cols'] . 'x' . $h['rows'] . ' cells)'
+            );
+        }
+
+        return [
+            'minCol' => $this->toSigned32($h['minColRaw']),
+            'minRow' => $this->toSigned32($h['minRowRaw']),
+            'cols' => $h['cols'],
+            'rows' => $h['rows'],
+        ];
+    }
+
+    /**
      * Decode raw cell-set bytes into a queryable value: [minCol, minRow,
-     * cols, rows, bits] where bits is a plain array of the SET cell indices
-     * (row*cols+col) for O(1) lookup via array_key_exists - cheap enough at
-     * these sizes (a few thousand set cells for a typical reach) that a
-     * bitset packed into a PHP string is not worth the packing/unpacking
-     * complexity here. Throws on malformed input - callers decide whether
-     * that means "not populated yet" (a null value) or a real error.
+     * cols, rows, set] where `set` holds the SET cell indices (row*cols+col)
+     * as array keys.
+     *
+     * This materialises one array entry per SET cell, so it is proportional to
+     * the covered area, not to the compressed size: a production-sized reach
+     * measured 317ms and 128MB. That is the right trade only for the clip
+     * path, which needs the whole grid to subtract another from it. **For a
+     * single point, use containsEncoded()**, which allocates nothing.
+     *
+     * Throws on malformed input - callers decide whether that means "not
+     * populated yet" (a null value) or a real error.
      *
      * @return array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>}
      */
@@ -105,6 +237,9 @@ class CellSetService
         $rows = $header['rows'];
         if ($cols === 0 || $rows === 0) {
             throw new \InvalidArgumentException('cellset: zero-sized grid');
+        }
+        if ($cols * $rows > self::MAX_CELLS) {
+            throw new \InvalidArgumentException('cellset: grid too large (' . $cols . 'x' . $rows . ' cells)');
         }
 
         $total = $cols * $rows;
@@ -153,6 +288,105 @@ class CellSetService
         }
 
         return isset($decoded['set'][$row * $decoded['cols'] + $col]);
+    }
+
+    /**
+     * $a's cells minus $b's - the secondary-group rejection clip's cell-set
+     * equivalent of ST_Difference(polygon, group_area). Both decoded values
+     * share the SAME global lattice by construction, so this is set
+     * subtraction over global cell indices: no resampling, no ambiguity,
+     * safe to have in every language that reads a cell set (see the class
+     * doc comment's decode/encode reasoning - this is grid arithmetic, not
+     * rasterising a polygon boundary).
+     *
+     * The result keeps $a's own bounds (a superset of the true tight bbox
+     * after clipping, never a wrong cell), matching
+     * iznik-spatial-go/cellset's Subtract exactly. Callers that care whether
+     * anything is left should check for an empty `set` array, the same way
+     * they would check an ST_Difference result for emptiness.
+     *
+     * @param array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>} $a
+     * @param array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>} $b
+     * @return array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>}
+     */
+    public function subtract(array $a, array $b): array
+    {
+        $result = $a['set'];
+
+        foreach (array_keys($a['set']) as $localIndex) {
+            $row = intdiv($localIndex, $a['cols']);
+            $col = $localIndex % $a['cols'];
+
+            $globalCol = $a['minCol'] + $col;
+            $globalRow = $a['minRow'] + $row;
+
+            $bCol = $globalCol - $b['minCol'];
+            $bRow = $globalRow - $b['minRow'];
+            if ($bCol < 0 || $bRow < 0 || $bCol >= $b['cols'] || $bRow >= $b['rows']) {
+                continue;
+            }
+
+            if (isset($b['set'][$bRow * $b['cols'] + $bCol])) {
+                unset($result[$localIndex]);
+            }
+        }
+
+        return [
+            'minCol' => $a['minCol'],
+            'minRow' => $a['minRow'],
+            'cols' => $a['cols'],
+            'rows' => $a['rows'],
+            'set' => $result,
+        ];
+    }
+
+    /**
+     * Packs an already-decoded value back into wire bytes - as unambiguous
+     * as decoding, unlike rasterising a polygon boundary (see the class doc
+     * comment), so this is safe here even though rasterisation itself stays
+     * server-side. Byte-identical format to the real encoder's Encode().
+     *
+     * @param array{minCol:int,minRow:int,cols:int,rows:int,set:array<int,bool>} $decoded
+     */
+    public function encode(array $decoded): string
+    {
+        $out = pack(
+            'VVVVV',
+            self::FORMAT_MAGIC,
+            $decoded['minCol'] & 0xFFFFFFFF,
+            $decoded['minRow'] & 0xFFFFFFFF,
+            $decoded['cols'],
+            $decoded['rows']
+        );
+
+        $total = $decoded['cols'] * $decoded['rows'];
+        $cur = false;
+        $run = 0;
+        for ($i = 0; $i < $total; $i++) {
+            $v = isset($decoded['set'][$i]);
+            if ($v === $cur) {
+                $run++;
+
+                continue;
+            }
+            $out .= $this->encodeVarint($run);
+            $cur = $v;
+            $run = 1;
+        }
+        $out .= $this->encodeVarint($run);
+
+        return $out;
+    }
+
+    private function encodeVarint(int $v): string
+    {
+        $out = '';
+        while ($v >= 0x80) {
+            $out .= chr(($v & 0x7f) | 0x80);
+            $v >>= 7;
+        }
+
+        return $out . chr($v);
     }
 
     /**

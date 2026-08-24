@@ -83,6 +83,34 @@ class CellSetServiceTest extends TestCase
         $this->service()->decode($bytes);
     }
 
+    public function test_decode_rejects_an_absurdly_large_grid_instead_of_exhausting_the_process(): void
+    {
+        // Cols and Rows are each unsigned 32-bit, so a corrupt header can claim
+        // 1.8e19 cells. Refusing it means "fall back to the polygon", which
+        // every caller already handles; running out of memory does not.
+        $bytes = "\x43\x43\x53\x31"
+            . pack('VVVV', 0, 0, 0xFFFFFFFF, 0xFFFFFFFF);
+        $this->expectException(\InvalidArgumentException::class);
+        $this->service()->decode($bytes);
+    }
+
+    public function test_rasterize_refuses_a_200_that_is_not_a_cell_set(): void
+    {
+        // An empty or truncated 200 - a misrouted request, a proxy's own
+        // response, a server too old to know the endpoint - must not be stored.
+        // Storing it leaves a column that looks converted while every reader
+        // fails to decode it and falls back for the life of the row.
+        \Illuminate\Support\Facades\Http::fake([
+            '*/v1/reach/rasterize' => \Illuminate\Support\Facades\Http::response('', 200),
+        ]);
+        $this->assertNull($this->service()->rasterize('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'));
+
+        \Illuminate\Support\Facades\Http::fake([
+            '*/v1/reach/rasterize' => \Illuminate\Support\Facades\Http::response('<html>oops</html>', 200),
+        ]);
+        $this->assertNull($this->service()->rasterize('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'));
+    }
+
     public function test_contains_outside_the_grid_bounds_is_false_not_a_wraparound(): void
     {
         $bytes = base64_decode(self::GOLDEN_VECTOR);
@@ -92,5 +120,158 @@ class CellSetServiceTest extends TestCase
         // via PHP's own array indexing semantics.
         $this->assertFalse($this->service()->contains($decoded, -100, -100));
         $this->assertFalse($this->service()->contains($decoded, 100, 100));
+    }
+
+    // ── containsEncoded: the read path, which must never decode ──
+    //
+    // decode() materialises one array entry per COVERED cell, so it costs in
+    // proportion to area rather than to the compressed size: a
+    // production-sized reach (4,334 x 1,634 cells) measured 317ms and 128MB.
+    // That is more than the SQL the cell set exists to replace, and this is
+    // the reply gate. containsEncoded walks the run stream for the one cell
+    // asked about and allocates nothing (measured 0.002ms, 0 MB).
+
+    public function test_contains_encoded_agrees_with_decode_everywhere(): void
+    {
+        $bytes = base64_decode(self::GOLDEN_VECTOR);
+        $decoded = $this->service()->decode($bytes);
+
+        // Every cell of the golden vector's 11x11 grid, plus a margin outside
+        // it: the two paths must give the same answer at every one.
+        for ($row = -2; $row < 13; $row++) {
+            for ($col = -2; $col < 13; $col++) {
+                $lng = ($col + 0.5) * 0.0003;
+                $lat = ($row + 0.5) * 0.0003;
+                $this->assertSame(
+                    $this->service()->contains($decoded, $lng, $lat),
+                    $this->service()->containsEncoded($bytes, $lng, $lat),
+                    "the two paths disagree at cell ($col, $row)"
+                );
+            }
+        }
+    }
+
+    public function test_contains_encoded_agrees_with_the_go_encoder(): void
+    {
+        $bytes = base64_decode(self::GOLDEN_VECTOR);
+
+        // The same three points the decode-based tests above assert, so the
+        // read path is pinned to the real encoder's output, not to our decoder.
+        $this->assertTrue($this->service()->containsEncoded($bytes, 0.0015, 0.0015));
+        $this->assertFalse($this->service()->containsEncoded($bytes, 5, 5));
+        $this->assertFalse($this->service()->containsEncoded($bytes, -0.0001, -0.0001));
+    }
+
+    public function test_contains_encoded_says_it_cannot_answer_rather_than_guessing(): void
+    {
+        // Null, not false: a caller must be able to tell "outside the reach"
+        // from "these bytes are unusable" so it can fall back to the polygon.
+        // Answering false would silently refuse every reply on a bad blob.
+        $this->assertNull($this->service()->containsEncoded('', 0.0015, 0.0015));
+        $this->assertNull($this->service()->containsEncoded('not a cell set at all', 0.0015, 0.0015));
+        $this->assertNull($this->service()->containsEncoded(str_repeat("\x00", 20), 0.0015, 0.0015));
+
+        // Header intact, run stream cut short: the point is inside the grid's
+        // bounds but the stream never reaches it.
+        $truncated = substr(base64_decode(self::GOLDEN_VECTOR), 0, self::HEADER_BYTES + 2);
+        $this->assertNull($this->service()->containsEncoded($truncated, 0.0015, 0.0015));
+    }
+
+    public function test_contains_encoded_is_false_not_null_outside_the_grid(): void
+    {
+        // Outside the stored bounds is a real answer, and must not be confused
+        // with "cannot say" - a point far from the reach is definitely not in
+        // it, and should not send the caller to the polygon.
+        $bytes = base64_decode(self::GOLDEN_VECTOR);
+        $this->assertFalse($this->service()->containsEncoded($bytes, -100, -100));
+        $this->assertFalse($this->service()->containsEncoded($bytes, 100, 100));
+    }
+
+    private const HEADER_BYTES = 20;
+
+    public function test_encode_round_trips_the_golden_vector_byte_for_byte(): void
+    {
+        $bytes = base64_decode(self::GOLDEN_VECTOR);
+        $decoded = $this->service()->decode($bytes);
+
+        // Proves encode() is byte-identical to the real Go encoder's output
+        // for this vector, not merely self-consistent with our own decode().
+        $this->assertSame($bytes, $this->service()->encode($decoded));
+    }
+
+    /**
+     * A full 3x3 grid at (minCol=0,minRow=0) and a full 3x3 grid at
+     * (minCol=1,minRow=1) overlap in the bottom-right 2x2 of the first -
+     * global cells (1,1),(2,1),(1,2),(2,2). Hand-built (not from a
+     * rasteriser, which PHP does not have) to exercise subtract()'s global-
+     * coordinate translation directly, mirroring
+     * iznik-spatial-go/cellset/subtract_test.go's cases.
+     */
+    private function fullGrid(int $minCol, int $minRow, int $cols, int $rows): array
+    {
+        $set = [];
+        for ($i = 0; $i < $cols * $rows; $i++) {
+            $set[$i] = true;
+        }
+
+        return ['minCol' => $minCol, 'minRow' => $minRow, 'cols' => $cols, 'rows' => $rows, 'set' => $set];
+    }
+
+    public function test_subtract_removes_overlapping_cells_only(): void
+    {
+        $a = $this->fullGrid(0, 0, 3, 3);
+        $b = $this->fullGrid(1, 1, 3, 3);
+
+        $result = $this->service()->subtract($a, $b);
+
+        // Untouched corner (global 0,0 -> local idx 0) survives.
+        $this->assertTrue(isset($result['set'][0]));
+        // Overlapping corner (global 2,2 -> local idx 8) is cleared.
+        $this->assertFalse(isset($result['set'][8]));
+        $this->assertCount(5, $result['set']);
+    }
+
+    public function test_subtract_no_overlap_leaves_it_unchanged(): void
+    {
+        $a = $this->fullGrid(0, 0, 3, 3);
+        $farAway = $this->fullGrid(100, 100, 1, 1);
+
+        $result = $this->service()->subtract($a, $farAway);
+
+        $this->assertCount(9, $result['set']);
+    }
+
+    public function test_subtract_total_overlap_empties_the_result(): void
+    {
+        $a = $this->fullGrid(0, 0, 3, 3);
+        $coversAll = $this->fullGrid(-1, -1, 5, 5);
+
+        $result = $this->service()->subtract($a, $coversAll);
+
+        $this->assertCount(0, $result['set']);
+    }
+
+    public function test_subtract_does_not_mutate_either_operand(): void
+    {
+        $a = $this->fullGrid(0, 0, 3, 3);
+        $b = $this->fullGrid(1, 1, 3, 3);
+
+        $this->service()->subtract($a, $b);
+
+        $this->assertCount(9, $a['set']);
+        $this->assertCount(9, $b['set']);
+    }
+
+    public function test_subtract_result_round_trips_through_encode_and_decode(): void
+    {
+        $a = $this->fullGrid(0, 0, 3, 3);
+        $b = $this->fullGrid(1, 1, 3, 3);
+
+        $result = $this->service()->subtract($a, $b);
+        $reDecoded = $this->service()->decode($this->service()->encode($result));
+
+        $this->assertSame($result['set'], $reDecoded['set']);
+        $this->assertSame($result['minCol'], $reDecoded['minCol']);
+        $this->assertSame($result['minRow'], $reDecoded['minRow']);
     }
 }

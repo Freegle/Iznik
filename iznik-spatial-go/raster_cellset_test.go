@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/peterstace/simplefeatures/geom"
@@ -60,6 +61,115 @@ func TestBuildRasterFromCellSet_NeverWrong(t *testing.T) {
 	t.Logf("in=%d out=%d partial=%d", in, out, partial)
 }
 
+// staircaseRingWKT builds a closed ring whose boundary is a lattice staircase -
+// the shape class production actually stores. Every real reach polygon and every
+// overflow ring is a marching-squares tracing of a routing-server raster
+// (iznik-routing-go's traceBoundary), so its vertices step along the lattice in
+// right angles rather than following a smooth curve. A convex test square shares
+// none of that structure: it has four edges, no reflex corners and no boundary
+// cell touched twice.
+//
+// Deterministic, so a failure is reproducible: the staircase's step heights come
+// from a fixed integer walk, not a random source.
+func staircaseRingWKT(steps int) string {
+	const cell = cellset.CellDegrees
+	pts := make([][2]float64, 0, 4*steps+2)
+
+	// Out along the bottom, rising in a repeating 1-2-1-3 pattern of cells.
+	heights := []int{1, 2, 1, 3}
+	y := 0
+	for i := 0; i < steps; i++ {
+		x := float64(i) * cell
+		pts = append(pts, [2]float64{x, float64(y) * cell})
+		y += heights[i%len(heights)]
+		pts = append(pts, [2]float64{x, float64(y) * cell})
+	}
+	// Across the top, then back down the far side, then home along the axis.
+	top := float64(y+2) * cell
+	pts = append(pts, [2]float64{float64(steps) * cell, top})
+	pts = append(pts, [2]float64{0, top})
+	pts = append(pts, [2]float64{0, 0})
+
+	wkt := "POLYGON(("
+	for i, p := range pts {
+		if i > 0 {
+			wkt += ", "
+		}
+		// Eight decimals is four orders of magnitude finer than the 0.0003
+		// lattice, so formatting never nudges a vertex off it.
+		wkt += strconv.FormatFloat(p[0], 'f', 8, 64) + " " + strconv.FormatFloat(p[1], 'f', 8, 64)
+	}
+	return wkt + "))"
+}
+
+// TestBuildRasterFromCellSet_AgreesWithAStaircaseBoundary is the parity proof
+// that ALWAYS runs. The polygon-built and cell-set-built accelerators are two
+// descriptions of one shape - one via its boundary, one via its membership grid
+// - so wherever either is DEFINITE they must agree, and on a lattice staircase
+// (the shape production stores) that boundary is maximally awkward: hundreds of
+// right-angle corners sitting exactly on cell edges.
+//
+// The full-scale version of this, over a real ~31,000-vertex production polygon
+// probed at 40,401 points, is TestBuildRasterFromCellSet_AgreesWithPolygonBuild
+// above; it needs a ~1MB sample that is not checked in. This one needs nothing.
+func TestBuildRasterFromCellSet_AgreesWithAStaircaseBoundary(t *testing.T) {
+	wkt := staircaseRingWKT(60)
+
+	g, err := geom.UnmarshalWKT(wkt, geom.NoValidate{})
+	if err != nil {
+		t.Fatalf("parse staircase WKT: %v", err)
+	}
+	polyRaster := BuildRasterDim(g, rasterMaxDim)
+	if polyRaster == nil {
+		t.Fatal("nil polygon-built raster")
+	}
+
+	cs, err := cellset.FromPolygonWKT(wkt)
+	if err != nil {
+		t.Fatalf("FromPolygonWKT: %v", err)
+	}
+	cellRaster := BuildRasterFromCellSet(cs, rasterMaxDim)
+	if cellRaster == nil {
+		t.Fatal("nil cell-set-built raster")
+	}
+
+	minLng, minLat, maxLng, maxLat := cs.Bounds()
+	w, h := maxLng-minLng, maxLat-minLat
+
+	const n = 200
+	agree, deferred, contradictions := 0, 0, 0
+	for i := 0; i <= n; i++ {
+		for j := 0; j <= n; j++ {
+			x := minLng - 0.1*w + (1.2*w)*float64(i)/n
+			y := minLat - 0.1*h + (1.2*h)*float64(j)/n
+
+			a, b := polyRaster.Classify(x, y), cellRaster.Classify(x, y)
+			if a == cellPartial || b == cellPartial {
+				deferred++
+
+				continue
+			}
+			if a != b {
+				contradictions++
+				if contradictions <= 5 {
+					t.Errorf("contradiction at (%v,%v): polygon says %d, cells say %d", x, y, a, b)
+				}
+
+				continue
+			}
+			agree++
+		}
+	}
+
+	if contradictions > 0 {
+		t.Fatalf("%d contradictions over %d probes", contradictions, (n+1)*(n+1))
+	}
+	if agree == 0 {
+		t.Fatal("no probe was definite in both - this proves nothing")
+	}
+	t.Logf("agree=%d deferred=%d contradictions=0 over %d probes", agree, deferred, (n+1)*(n+1))
+}
+
 func TestBuildRasterFromCellSet_NilOnEmptyCellSet(t *testing.T) {
 	// A CellSet with zero area (degenerate bounds) - BuildRasterFromCellSet
 	// must degrade to nil, matching BuildRasterDim's "no raster; always use
@@ -75,12 +185,21 @@ func TestBuildRasterFromCellSet_NilOnEmptyCellSet(t *testing.T) {
 // BuildRasterDim and the CellSet-based BuildRasterFromCellSet must reach the
 // same DEFINITE verdict everywhere either one is definite - they are two
 // ways of describing the same shape, one via its boundary, one via its
-// membership grid. Skipped where the live sample artefact is not present.
+// membership grid.
+//
+// Needs a real reach polygon, which is ~1MB of WKT and so is not checked in.
+// Point REACH_SAMPLE_WKT at one to run it - e.g. pull a live row read-only
+// with `SELECT ST_AsText(polygon) FROM rippling_reach WHERE msgid = ...`. It
+// skips without one, and the CI-enforced parity check is the smaller
+// TestBuildOverflowItems_CellsAndWKTAgreeOnAdmission, which always runs.
 func TestBuildRasterFromCellSet_AgreesWithPolygonBuild(t *testing.T) {
-	path := "/tmp/claude-1000/-home-edward-FreegleDockerWSL/6cc0d137-5be2-47c2-a290-7c87f043dcd2/scratchpad/sample-polygon.wkt"
+	path := os.Getenv("REACH_SAMPLE_WKT")
+	if path == "" {
+		t.Skip("set REACH_SAMPLE_WKT to a real reach polygon's WKT to run this parity proof")
+	}
 	wkt, err := os.ReadFile(path)
 	if err != nil {
-		t.Skipf("live sample not present (%v)", err)
+		t.Skipf("REACH_SAMPLE_WKT is set but unreadable (%v)", err)
 	}
 
 	g, err := geom.UnmarshalWKT(string(wkt), geom.NoValidate{})

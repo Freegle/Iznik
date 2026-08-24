@@ -138,19 +138,19 @@ class MaxReachService
             }
             $cells = $cellsCol !== '' ? $row->max_polygon_cells : null;
             if ($cells !== null) {
-                try {
-                    $decoded = $this->cellSets->decode($cells);
-
-                    return $this->cellSets->contains($decoded, $lng, $lat);
-                } catch (\Throwable $e) {
-                    // A malformed blob must not silently pass every reply
-                    // through; fall back to the exact legacy test below like
-                    // any other decode failure (matches the Go passthrough
-                    // path's same fallback).
-                    Log::warning('firstreply: max reach cell set decode failed', [
-                        'msgid' => $msgid, 'error' => $e->getMessage(),
-                    ]);
+                // containsEncoded, not decode: decoding materialises one array
+                // entry per covered cell, which on a production-sized reach is
+                // 317ms and 128MB - far more than the SQL it replaces, and
+                // this is the reply gate. Walking the run stream for one point
+                // allocates nothing. Null means the bytes cannot answer, and a
+                // malformed blob must not silently pass every reply through -
+                // fall through to the exact legacy test below, matching the Go
+                // passthrough path's same fallback.
+                $say = $this->cellSets->containsEncoded($cells, $lng, $lat);
+                if ($say !== null) {
+                    return $say;
                 }
+                Log::warning('firstreply: max reach cell set could not be read', ['msgid' => $msgid]);
             }
 
             // Not backfilled with a cell set yet: the exact behaviour this

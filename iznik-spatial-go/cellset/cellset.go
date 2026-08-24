@@ -59,6 +59,20 @@ const formatMagicV1 uint32 = 0x31534343 // "CCS1" (Compact Cell Set, v1) read li
 
 const headerSize = 20 // magic(4) + MinCol(4) + MinRow(4) + Cols(4) + Rows(4)
 
+// MaxCells refuses a grid too large to be a real shape before allocating for
+// it. Cols and Rows are each uint32, so a corrupt or hostile header could ask
+// for 1.8e19 cells and the decoder would try to allocate exabytes; a decode
+// failure has a defined meaning everywhere (fall back to the polygon) whereas
+// an out-of-memory does not.
+//
+// 2^28 cells is a square about 16,384 cells on a side - roughly 4.9 degrees,
+// some 540km, far beyond any drive-time reach or overflow ring the UK can
+// produce (the largest real reach measured was 90x54km, 4.4 million cells).
+// The bitmap for it is 32MB, which bounds what one malformed value can cost.
+// Every implementation of this format uses the same limit, so a value one
+// language accepts is never rejected by another.
+const MaxCells = 1 << 28
+
 // CellSet is the decoded, queryable form.
 type CellSet struct {
 	MinCol, MinRow int32
@@ -84,6 +98,11 @@ func (cs *CellSet) getCell(col, row uint32) bool {
 func (cs *CellSet) setCell(col, row uint32) {
 	i := uint64(row)*uint64(cs.Cols) + uint64(col)
 	cs.bits[i>>3] |= 1 << (i & 7)
+}
+
+func (cs *CellSet) clearCell(col, row uint32) {
+	i := uint64(row)*uint64(cs.Cols) + uint64(col)
+	cs.bits[i>>3] &^= 1 << (i & 7)
 }
 
 // cellIndex returns the global column/row a point falls into.
@@ -141,6 +160,47 @@ func (cs *CellSet) Bounds() (minLng, minLat, maxLng, maxLat float64) {
 	return
 }
 
+// Subtract returns a new CellSet holding cs's cells minus other's - a
+// secondary-group rejection clip (plans/2026-08-24-rippling-reach-raster-
+// storage.md), the cell-set equivalent of ST_Difference(polygon, group_area).
+// Both operands share the SAME global lattice by construction (CellDegrees is
+// fixed, not per-blob), so this is a plain bitwise AND-NOT over the
+// overlapping (col, row) range - no resampling, no reprojection, and unlike
+// the polygon-boundary case there is no ambiguity for two implementations to
+// disagree about: this is safe to duplicate in every language that reads a
+// CellSet, the same way Decode/Contains are.
+//
+// The result keeps cs's own bounds (a superset of the true tight bbox after
+// clipping, never a wrong cell) rather than recomputing a tighter one - the
+// same trade-off FromPolygonWKT already accepts when a polygon's boundary
+// sits on a lattice line. Callers that care whether anything is left should
+// check SetCellCount() == 0, exactly as they would for an ST_Difference that
+// emptied a polygon.
+func (cs *CellSet) Subtract(other *CellSet) *CellSet {
+	result := newCellSet(cs.MinCol, cs.MinRow, cs.Cols, cs.Rows)
+	copy(result.bits, cs.bits)
+
+	for row := uint32(0); row < cs.Rows; row++ {
+		globalRow := cs.MinRow + int32(row)
+		otherRow := globalRow - other.MinRow
+		if otherRow < 0 || uint32(otherRow) >= other.Rows {
+			continue
+		}
+		for col := uint32(0); col < cs.Cols; col++ {
+			globalCol := cs.MinCol + int32(col)
+			otherCol := globalCol - other.MinCol
+			if otherCol < 0 || uint32(otherCol) >= other.Cols {
+				continue
+			}
+			if other.getCell(uint32(otherCol), uint32(otherRow)) {
+				result.clearCell(col, row)
+			}
+		}
+	}
+
+	return result
+}
+
 // Encode packs the CellSet into its wire form.
 func (cs *CellSet) Encode() []byte {
 	out := make([]byte, headerSize)
@@ -181,6 +241,10 @@ func Decode(b []byte) (*CellSet, error) {
 	rows := binary.LittleEndian.Uint32(b[16:20])
 	if cols == 0 || rows == 0 {
 		return nil, fmt.Errorf("cellset: zero-sized grid (%dx%d)", cols, rows)
+	}
+	if uint64(cols)*uint64(rows) > MaxCells {
+		return nil, fmt.Errorf("cellset: grid too large (%dx%d = %d cells, max %d)",
+			cols, rows, uint64(cols)*uint64(rows), MaxCells)
 	}
 
 	cs := newCellSet(minCol, minRow, cols, rows)

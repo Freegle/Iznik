@@ -1,6 +1,7 @@
 package cellset
 
 import (
+	"encoding/binary"
 	"testing"
 )
 
@@ -79,6 +80,20 @@ func TestDecode_RejectsBadMagic(t *testing.T) {
 	_, err := Decode([]byte{0, 1, 2, 3, 4, 5, 6, 7})
 	if err == nil {
 		t.Error("garbage input must not decode successfully")
+	}
+}
+
+// Cols and Rows are each uint32, so a corrupt header can claim 1.8e19 cells.
+// Refusing it means "fall back to the polygon", which every caller already
+// handles; trying to allocate for it does not. MaxCells must match the other
+// implementations, or a value one language accepts is rejected by another.
+func TestDecode_RejectsAnAbsurdlyLargeGrid(t *testing.T) {
+	b := make([]byte, headerSize)
+	binary.LittleEndian.PutUint32(b[0:4], formatMagicV1)
+	binary.LittleEndian.PutUint32(b[12:16], 0xFFFFFFFF) // cols
+	binary.LittleEndian.PutUint32(b[16:20], 0xFFFFFFFF) // rows
+	if _, err := Decode(b); err == nil {
+		t.Fatal("a grid of 1.8e19 cells must be rejected, not allocated for")
 	}
 }
 

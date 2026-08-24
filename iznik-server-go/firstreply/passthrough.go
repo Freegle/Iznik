@@ -142,24 +142,26 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 	}
 
 	// max_polygon_cells (plans/2026-08-24-rippling-reach-raster-storage.md) is
-	// the compact form: a decode-and-bit-test with no further round trip once
-	// populated. Fetched alongside so a not-yet-backfilled row costs nothing
-	// extra - it just falls through to the exact behaviour this had before
-	// that column existed. Row().Scan (the database/sql idiom), not GORM's
-	// chain Scan(&dest): that variant treats a []byte destination as a
-	// slice of rows to scan into (one uint8 per row), not a single BLOB
-	// value, and either errors or silently mis-populates it.
+	// the compact form: one keyed read and a walk of its run stream, with no
+	// further round trip once populated. Fetched alongside so a
+	// not-yet-backfilled row costs nothing extra - it just falls through to
+	// the exact behaviour this had before that column existed. Row().Scan (the
+	// database/sql idiom), not GORM's chain Scan(&dest): that variant treats a
+	// []byte destination as a slice of rows to scan into (one uint8 per row),
+	// not a single BLOB value, and either errors or silently mis-populates it.
 	var cells []byte
 	if err := db.Table("rippling_reach").
 		Select("max_polygon_cells").
 		Where("msgid = ?", refmsgid).
 		Row().Scan(&cells); err == nil && cells != nil {
-		cs, decErr := rippling.DecodeCellSet(cells)
-		if decErr == nil {
-			return cs.Contains(lng, lat)
+		// CellSetContains, not DecodeCellSet+Contains: decoding builds the
+		// whole grid to test one bit, which on a production-sized reach is
+		// 885KB and seven million iterations - on the reply gate, per reply.
+		// A blob that cannot answer must not silently pass every reply
+		// through, so it falls back to the exact test below.
+		if inside, ok := rippling.CellSetContains(cells, lng, lat); ok {
+			return inside
 		}
-		// A malformed blob must not silently pass every reply through; fall
-		// back to the exact test below like any other decode failure.
 	}
 
 	// max_polygon is populated by the firstreply:maxreach batch pass and is NULL
