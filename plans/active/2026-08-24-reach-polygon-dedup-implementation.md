@@ -199,8 +199,12 @@ one row per statement, updated_at self-assignment)
 
 ## Follow-ups (explicitly not this PR)
 
-- overflow_bounds dedup (JSON-of-WKT shape; has_overflow generated-column dependency;
-  spatial-go JSON_EXTRACT readers). ~6 GB.
+- overflow_bounds dedup (JSON-of-WKT shape). MEASURED 2026-08-24 over all 9,729 ringed
+  rows on db1: column is 5.78 GB post-shrink; whole-document dedup (format untouched,
+  second shared table + overflow_hash, drain to a `{}` stub so has_overflow needs no
+  DDL) saves 2.71 GB; decomposing to per-ring GEOMETRY rows adds only 2.7 points for a
+  rewrite of every overflow reader/writer - rejected. See the design doc's MEASURED
+  2026-08-24 section.
 - spatial-go distinct-hash parse optimisation (Category 3's 42% parse saving).
 - Simplify the lazy-BLOB EXISTS sandwich (design doc says separately, not in this change).
 - Prod DDL to actually drop rippling_reach_polygon index / make polygon nullable if the
