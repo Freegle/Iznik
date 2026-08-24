@@ -192,10 +192,10 @@ one row per statement, updated_at self-assignment)
 | 6 | Go helpers + read rewrites + clip rewrite | 🔄 core done (geomshare.go, builders+share bool, 3 call sites, clip); go-readers fork doing feeds/search/passthrough/tests |
 | 7 | spatial-go read rewrite | ✅ fork done (unconditional join per module precedent; text-shape tests) |
 | 8-11 | Backfill/checker/drain/GC commands | ✅ code + FULL LIVE SMOKE: dedup across posts AND columns, verify green, drain sentinel/NULL + readers correct on drained rows via tinker, FK 1451 blocks referenced delete, messages-cascade orphans swept by two-pass GC. Tests via php-tests fork |
-| 12 | EXPLAIN verification (dev) | ⬜ |
-| 13 | Docs freshness | ✅ rippling-algorithm §9a added; first-reply + trashnothing bumped |
-| 14 | Full suites (laravel, go) | ⬜ |
-| 15 | Review workflow + PR | ⬜ |
+| 12 | EXPLAIN verification (dev) | ✅ rippling_reach_outer drives; eq_ref PK then eq_ref hash. db1 EXPLAIN stays an operator gate |
+| 13 | Docs freshness | ✅ green on committed branch |
+| 14 | Full suites (laravel, go) | ✅ Go 4245, Laravel 5968, all pass |
+| 15 | Review workflow + PR | ✅ 7 confirmed findings fixed; **PR #1402 open**, CI #11188 running. Humans merge |
 
 ## Follow-ups (explicitly not this PR)
 
