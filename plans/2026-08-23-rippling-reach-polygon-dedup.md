@@ -30,7 +30,62 @@ Where it pays: 15,998 rows (28.3%) live in origins with ≥10 posts and produce 
 saving**. One origin carries 261 posts across 9 ticks. 12,824 origins are singletons
 (22.7% of rows) and save nothing.
 
-### Spatial clustering is NOT worth doing
+### Spatial clustering IS worth doing — this section was WRONG, corrected 2026-08-23
+
+The original conclusion below ("not worth it, four percentage points") was reached badly
+and is superseded. Two mistakes:
+
+1. **I only tested snap radii up to 444 m**, because I anchored on `BLUR_USER = 400`. But
+   the reach is ~28–40 km across (measured from `outer_bound` envelopes, all ticks), so
+   400 m is not the relevant scale at all — it is 1/70th of the thing being displaced.
+2. **I never measured what displacing an origin actually costs.** I inferred it from the
+   marginal sharing gain and a disc model, and I framed the risk as the Thames-bridging
+   failure mode. That was a category error: a clustered polygon is a **real isochrone
+   computed over the real road network from a real origin**. It respects every barrier
+   exactly. The error is misregistration — a bit too far one way, not far enough the other
+   — never an invalid claim that you can drive across water.
+
+Measured properly: same-tick pairs, real `ST_SymDifference` between their polygons.
+
+| origin separation | symmetric difference |
+|---|---|
+| 0.17 km | 9.51% |
+| 0.29 km | 8.36% |
+| 0.78 km | 8.63% |
+| 1.53 km | 11.87% |
+| 4.36 km | 24.44% |
+| 8.27 km | 70.61% |
+| 10.23 km | 144.72% |
+
+**Origin distance is a MINOR term below ~1.5 km.** Two reaches 170 m apart already differ
+by 9.5%, which displacement cannot explain. The cause is that the reach budget is derived
+**per-origin from local density** — the 170 m pair had `density_radius_miles` 4.67 vs 4.76
+and audiences of 8,216 vs 5,799 freeglers, on identical tick, cap, band and group list. So
+neighbours already get materially different reaches for reasons unrelated to distance, and
+adding 1.5 km of separation costs only ~3 points on top of that. Past ~4 km it degrades
+fast and clustering stops being defensible.
+
+Sharing at a defensible radius, with the config in the key so posts whose budgets
+legitimately differ are NOT merged:
+
+| key | distinct | saving |
+|---|---|---|
+| exact (origin, tick) | 32,040 | 42.1% |
+| snap 1.5 km + tick + mode/cap/band | 25,502 | **53.9%** |
+| snap 2 km + tick + mode/cap/band | 23,110 | **58.2%** |
+
+**Recommendation: cluster at ~1.5 km including config in the key.** That is +11.8 points
+over exact de-duplication, for a boundary shift inside the variation neighbours already
+have. It also argues for content addressing even more strongly: cluster members are *not*
+byte-identical, so this needs a deliberate "compute once per cluster" at write time rather
+than opportunistic hashing.
+
+The one thing it genuinely changes: every post in a cluster gets the same reach budget.
+Today neighbours 170 m apart can get audiences differing by 40% for no visible reason, so
+this arguably makes sizing MORE consistent — but it is a product decision about fairness,
+not a storage one, and should be taken as such.
+
+### ORIGINAL (superseded) reasoning, kept so the mistake is visible
 
 `UserApproxLocService::BLUR_USER = 400` metres, and the blur **displaces** each poster
 400 m in a direction derived from them rather than snapping to a grid. So a shared origin
