@@ -58,4 +58,24 @@ class LegacyGeometry
         self::$polygon = null;
         self::$overflow = null;
     }
+
+    /**
+     * Test hook: pretend to be in a given era without touching the schema.
+     *
+     * The two eras BOTH have to be tested, and dropping the columns from the
+     * test database would only swap which one is covered - the transition era
+     * is the code that actually runs on production first, for as long as the
+     * backfill takes, so it cannot be the untested one. Overriding the answer
+     * lets a test exercise the cells-only branches against a schema that still
+     * has the columns; the branches themselves never name a dropped column, so
+     * the SQL they emit is valid either way, and that is exactly the property
+     * worth asserting.
+     *
+     * The migration proves the schema half separately, by running.
+     */
+    public static function fake(?bool $polygon = null, ?bool $overflow = null): void
+    {
+        self::$polygon = $polygon;
+        self::$overflow = $overflow;
+    }
 }

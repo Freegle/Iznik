@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Ripple;
 
+use App\Services\Ripple\LegacyGeometry;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -79,6 +80,14 @@ class ShrinkOverflowBoundsCommand extends Command
 
     public function handle(): int
     {
+        // This sweep reads the LEGACY ring WKT, so the drop ends its work for
+        // good. Said plainly rather than crashing on a dropped column.
+        if (!LegacyGeometry::overflowReady()) {
+            $this->info('rippling_reach.overflow_bounds has been dropped - there is no ring WKT left to shrink.');
+
+            return self::SUCCESS;
+        }
+
         $dryRun = (bool) $this->option('dry-run');
 
         if ($this->option('reset-mark')) {

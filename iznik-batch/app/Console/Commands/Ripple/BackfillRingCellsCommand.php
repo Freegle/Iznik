@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Ripple;
 
+use App\Services\Ripple\LegacyGeometry;
 use App\Services\Ripple\CellSetService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -56,6 +57,14 @@ class BackfillRingCellsCommand extends Command
 
     public function handle(): int
     {
+        // This sweep reads the LEGACY ring WKT, so the drop ends its work for
+        // good. Said plainly rather than crashing on a dropped column.
+        if (!LegacyGeometry::overflowReady()) {
+            $this->info('rippling_reach.overflow_bounds has been dropped - every ring is stored as cells now, so this sweep is complete for good.');
+
+            return self::SUCCESS;
+        }
+
         // keep-raw: information_schema check for a column this Eloquent-less table has no model for
         $hasColumn = DB::selectOne(
             "SELECT COUNT(*) AS n FROM information_schema.columns

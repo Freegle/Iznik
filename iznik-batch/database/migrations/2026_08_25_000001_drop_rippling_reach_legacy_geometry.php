@@ -1,0 +1,165 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * Stop storing the reach polygons (plans/2026-08-24-rippling-reach-raster-
+ * storage.md, Stage 3). This is the step the whole design exists for: until
+ * now the cell grids sat ALONGSIDE the geometry they mirror, so the table was
+ * fractionally bigger rather than dramatically smaller.
+ *
+ * Dropped here:
+ *   polygon           GEOMETRY NOT NULL, and its SPATIAL INDEX
+ *   max_polygon       GEOMETRY NULL
+ *   overflow_bounds   JSON of ring WKT
+ *   polygon_hash / max_polygon_hash, their indexes and FKs, and the shared
+ *                     rippling_reach_geom table - the content-addressed dedup
+ *                     layer from #1402, which existed only to shrink the
+ *                     polygons that are now going entirely
+ *
+ * Kept deliberately:
+ *   outer_bound / inner_bound. These are NOT envelopes but buffered
+ *   simplifications (ReachBoundsService: ST_Buffer(ST_Simplify(reach, 0.002),
+ *   +/-0.002)), about 19KB a row, and they are the R-tree access path every
+ *   SQL-side prefilter drives from plus the cheap-accept tier. At that size
+ *   they are noise against what is being removed, and losing the index would
+ *   be the 2026-08-21 outage again.
+ *   has_overflow is kept too, but REGENERATED from overflow_cells - same
+ *   meaning, same index shape.
+ *
+ * WHY THIS IS SAFE TO RUN, AND WHEN. Every reader has been two-era since the
+ * code that ships with this migration: App\Services\Ripple\LegacyGeometry
+ * (PHP) and rippling.LegacyPolygonReady / LegacyOverflowReady (Go) ask the
+ * schema which era they are in, and the legacy branches are simply dead once
+ * the columns are absent. So the ONLY precondition is that every live row
+ * carries polygon_cells - which the guard below enforces rather than trusts,
+ * because a row without cells has no reach at all afterwards.
+ *
+ * DEV AND CI RUN THIS; PRODUCTION DOES NOT, YET. In dev and CI the table is
+ * small and the backfill is a no-op, so this runs and the whole suite then
+ * proves the post-drop world. On production the same statements live in the
+ * companion .sql file and are the operator's to run, node by node under RSU,
+ * AFTER ripple:backfill-reach-cells / -max-reach-cells / -ring-cells report
+ * complete and ripple:verify-cells-parity has been run and read. DROP COLUMN
+ * on this table rebuilds it, which is what finally returns the ~50GB .ibd
+ * (plus ~19.4GB a node of rippling_reach_geom) to the operating system - so
+ * it is a long ALTER, and it is the point of the exercise.
+ *
+ * NOT REVERSIBLE, and down() says so rather than pretending. The polygons are
+ * a traced approximation of a routing grid; the cells are that same grid at a
+ * fixed resolution. Going back would mean tracing every grid into a boundary
+ * and calling it the original, which it would not be. The rollback for this
+ * change is to not run it - which is why production keeps the columns until
+ * the parity report has been read by a human.
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        if (!Schema::hasTable('rippling_reach')) {
+            return;
+        }
+
+        // The guard: never drop the only copy of a reach. A live row without
+        // cells would simply stop having a reach - it would vanish from the
+        // feed, stop admitting replies, and there would be nothing left to
+        // rebuild it from.
+        if (Schema::hasColumn('rippling_reach', 'polygon')
+            && Schema::hasColumn('rippling_reach', 'polygon_cells')) {
+            $uncovered = DB::table('rippling_reach')->whereNull('polygon_cells')->count();
+            if ($uncovered > 0) {
+                throw new RuntimeException(
+                    "Refusing to drop the reach geometry: {$uncovered} row(s) have no polygon_cells. "
+                    . 'Run ripple:backfill-reach-cells to completion first.'
+                );
+            }
+        }
+
+        // 1. The dedup layer: FKs, then indexes, then columns, then the table.
+        foreach (['rippling_reach_polygon_hash_foreign', 'rippling_reach_max_polygon_hash_foreign'] as $fk) {
+            if ($this->hasForeignKey($fk)) {
+                DB::statement("ALTER TABLE rippling_reach DROP FOREIGN KEY {$fk}");
+            }
+        }
+        foreach (['rippling_reach_polygon_hash', 'rippling_reach_max_polygon_hash'] as $idx) {
+            if ($this->hasIndex($idx)) {
+                DB::statement("ALTER TABLE rippling_reach DROP INDEX {$idx}");
+            }
+        }
+        foreach (['polygon_hash', 'max_polygon_hash'] as $col) {
+            if (Schema::hasColumn('rippling_reach', $col)) {
+                DB::statement("ALTER TABLE rippling_reach DROP COLUMN {$col}");
+            }
+        }
+
+        // 2. has_overflow is GENERATED from overflow_bounds, so it and its
+        //    index must go BEFORE the column they derive from, and come back
+        //    derived from overflow_cells instead.
+        if ($this->hasIndex('rippling_reach_has_overflow')) {
+            DB::statement('ALTER TABLE rippling_reach DROP INDEX rippling_reach_has_overflow');
+        }
+        if (Schema::hasColumn('rippling_reach', 'has_overflow')) {
+            DB::statement('ALTER TABLE rippling_reach DROP COLUMN has_overflow');
+        }
+        if (Schema::hasColumn('rippling_reach', 'overflow_bounds')) {
+            DB::statement('ALTER TABLE rippling_reach DROP COLUMN overflow_bounds');
+        }
+        if (Schema::hasColumn('rippling_reach', 'overflow_cells')
+            && !Schema::hasColumn('rippling_reach', 'has_overflow')) {
+            DB::statement(
+                'ALTER TABLE rippling_reach
+                    ADD COLUMN has_overflow TINYINT(1)
+                        GENERATED ALWAYS AS (overflow_cells IS NOT NULL) VIRTUAL'
+            );
+            DB::statement(
+                'ALTER TABLE rippling_reach
+                    ADD INDEX rippling_reach_has_overflow (has_overflow, updated_at)'
+            );
+        }
+
+        // 3. The fat geometry, and the R-tree that drove the browse feed until
+        //    the spatial index took that job over.
+        if ($this->hasIndex('rippling_reach_polygon')) {
+            DB::statement('ALTER TABLE rippling_reach DROP INDEX rippling_reach_polygon');
+        }
+        foreach (['polygon', 'max_polygon'] as $col) {
+            if (Schema::hasColumn('rippling_reach', $col)) {
+                DB::statement("ALTER TABLE rippling_reach DROP COLUMN {$col}");
+            }
+        }
+
+        // 4. The shared geometry table, once nothing points at it.
+        Schema::dropIfExists('rippling_reach_geom');
+    }
+
+    public function down(): void
+    {
+        // Deliberately not reversible - see the class comment. Re-adding empty
+        // columns would be worse than refusing: every reader would find NULL
+        // where it expects a reach and quietly decide nobody is covered.
+        throw new RuntimeException(
+            'Dropping the reach geometry cannot be undone: the cell grids are now the only '
+            . 'record of every reach. Restore from a backup taken before the drop instead.'
+        );
+    }
+
+    private function hasIndex(string $name): bool
+    {
+        return DB::table('information_schema.statistics')
+            ->whereRaw('table_schema = DATABASE()')
+            ->where('table_name', 'rippling_reach')
+            ->where('index_name', $name)
+            ->exists();
+    }
+
+    private function hasForeignKey(string $name): bool
+    {
+        return DB::table('information_schema.referential_constraints')
+            ->whereRaw('constraint_schema = DATABASE()')
+            ->where('table_name', 'rippling_reach')
+            ->where('constraint_name', $name)
+            ->exists();
+    }
+};

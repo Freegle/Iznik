@@ -8,6 +8,44 @@ import (
 	"gorm.io/gorm"
 )
 
+// Test overrides for the era guards. BOTH eras have to be tested: dropping
+// the columns from the test schema would only swap which one is covered, and
+// the transition era is the code that runs on production first, for as long as
+// the backfill takes, so it cannot be the untested one. Overriding the answer
+// exercises the cells-only branches against a schema that still has the
+// columns - which works precisely because those branches never name a dropped
+// column, and asserting that is the point. The migration proves the schema
+// half separately, by running.
+var legacyForTest struct {
+	sync.Mutex
+	polygon  *bool
+	overflow *bool
+}
+
+// SetLegacyGeomForTest forces the era guards' answers; nil restores the real
+// schema check. Call with defer to restore.
+func SetLegacyGeomForTest(polygon, overflow *bool) {
+	legacyForTest.Lock()
+	defer legacyForTest.Unlock()
+	legacyForTest.polygon = polygon
+	legacyForTest.overflow = overflow
+}
+
+func legacyOverride(which string) (bool, bool) {
+	legacyForTest.Lock()
+	defer legacyForTest.Unlock()
+	var p *bool
+	if which == "polygon" {
+		p = legacyForTest.polygon
+	} else {
+		p = legacyForTest.overflow
+	}
+	if p == nil {
+		return false, false
+	}
+	return *p, true
+}
+
 var legacyPolygonOnce sync.Once
 var legacyPolygonExists bool
 
@@ -25,6 +63,9 @@ var legacyPolygonExists bool
 // ReachBoundsReady (the sandwich bounds, which STAY), and this one (the fat
 // geometry itself).
 func LegacyPolygonReady(db *gorm.DB) bool {
+	if v, ok := legacyOverride("polygon"); ok {
+		return v
+	}
 	if db == nil {
 		return false
 	}
@@ -67,6 +108,9 @@ var legacyOverflowExists bool
 // ring WKT column). Separate because the two columns are dropped by separate
 // statements and any window between them must not confuse the guards.
 func LegacyOverflowReady(db *gorm.DB) bool {
+	if v, ok := legacyOverride("overflow"); ok {
+		return v
+	}
 	if db == nil {
 		return false
 	}
