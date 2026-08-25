@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ripple;
 
 use App\Services\Ripple\CellSetService;
 use App\Services\Ripple\GeomShareService;
+use App\Services\Ripple\LegacyGeometry;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -74,6 +75,17 @@ class BackfillReachCellsCommand extends Command
         if ($this->option('reset-mark')) {
             $this->saveMark(0);
             $this->info('Mark reset.');
+        }
+
+        // This sweep converts the LEGACY polygon into cells, so once that
+        // column is dropped its work is finished for good. Say so and succeed,
+        // rather than crashing on a column that no longer exists: an operator
+        // running it out of habit, or a scheduler entry nobody has pruned yet,
+        // must not fill the logs with unknown-column errors.
+        if (!LegacyGeometry::polygonReady()) {
+            $this->info('rippling_reach.polygon has been dropped - every reach is stored as cells now, so this sweep is complete for good.');
+
+            return self::SUCCESS;
         }
 
         $after = $this->option('after') !== null ? (int) $this->option('after') : $this->mark();

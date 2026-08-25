@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ripple;
 
 use App\Services\Ripple\CellSetService;
 use App\Services\Ripple\GeomShareService;
+use App\Services\Ripple\LegacyGeometry;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -77,6 +78,16 @@ class BackfillMaxReachCellsCommand extends Command
         if ($this->option('reset-mark')) {
             $this->saveMark(0);
             $this->info('Mark reset.');
+        }
+
+        // As with ripple:backfill-reach-cells: this converts the LEGACY
+        // max_polygon into cells, so the drop ends its work for good. max_polygon
+        // is dropped in the same DDL step as polygon, so the polygon guard
+        // answers for both.
+        if (!LegacyGeometry::polygonReady()) {
+            $this->info('rippling_reach.max_polygon has been dropped - every max reach is stored as cells now, so this sweep is complete for good.');
+
+            return self::SUCCESS;
         }
 
         $after = $this->option('after') !== null ? (int) $this->option('after') : $this->mark();
