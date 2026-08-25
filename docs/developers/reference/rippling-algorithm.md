@@ -1214,7 +1214,10 @@ all in the boundary band, all at *exactly* 0.000m from the edge, all one directi
 (`ST_Contains` excludes points lying ON the boundary while the grid includes the cell whose
 centre is inside, so the grid is marginally more inclusive at the edge), none beyond a
 cell. Interior 0/80, exterior 0/80, and probes half a cell and 1.5 cells off the edge all
-agreed. Reach radius worst 0.63%. Traced coverage identical on all eight.
+agreed. Reach radius worst 0.63%. Traced coverage identical on all eight. Group
+intersects/within agreed 15/15 both ways. And the clip - `ST_Difference` then rasterise
+against grid `Subtract` - came out with **zero** cells of symmetric difference, so the two
+implementations of the shrink agree exactly rather than approximately.
 
 **Operator order.** Deploy, then run the three backfills to completion
 (`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`), then

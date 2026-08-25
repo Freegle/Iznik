@@ -601,7 +601,9 @@ bounding box are dominated by cases where a lattice and a boundary cannot disagr
 report built on them reads as 100% agreement and proves nothing.
 
 Run against 8 real drive-time isochrones straight from the routing server (1,615 to 34,471
-vertices, 45KB to 965KB of WKT):
+vertices, 45KB to 965KB of WKT), with three seeded group areas - one containing the
+reaches, one overlapping their eastern half, one far away - so the group cases have
+something real to compare:
 
 | Read case | Result |
 |---|---|
@@ -611,8 +613,8 @@ vertices, 45KB to 965KB of WKT):
 | distance-outside-reach | worst 94.2m absolute, on a value reported in miles |
 | reach extent | outer_bound's envelope is 223m/side WIDER - the 0.002-degree buffer, as designed, so still a superset |
 | traced boundary | coverage identical on all 8 rows |
-| group intersects/within | **NOT MEASURED** - the dev spatial groups dataset answers 503. Not claimed as verified |
-| clip comparison | **NOT MEASURED** - 0 tests for the same reason |
+| group intersects/within | 15 tests, **15/15 agree on both** intersects and within, 0 failures |
+| clip comparison | 7 tests, **0 cells** of symmetric difference: `rasterise(ST_Difference(poly, group))` and `Subtract(cells(poly), cells(group))` produce identical coverage |
 
 The direction matters and is uniform: every difference is polygon-out / grid-in. That is
 not lattice error at all - `ST_Contains` excludes a point lying exactly ON the boundary
