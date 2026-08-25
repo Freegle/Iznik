@@ -37,15 +37,34 @@ use Illuminate\Support\Facades\Schema;
  * carries polygon_cells - which the guard below enforces rather than trusts,
  * because a row without cells has no reach at all afterwards.
  *
- * DEV AND CI RUN THIS; PRODUCTION DOES NOT, YET. In dev and CI the table is
- * small and the backfill is a no-op, so this runs and the whole suite then
- * proves the post-drop world. On production the same statements live in the
- * companion .sql file and are the operator's to run, node by node under RSU,
- * AFTER ripple:backfill-reach-cells / -max-reach-cells / -ring-cells report
- * complete and ripple:verify-cells-parity has been run and read. DROP COLUMN
- * on this table rebuilds it, which is what finally returns the ~50GB .ibd
- * (plus ~19.4GB a node of rippling_reach_geom) to the operating system - so
- * it is a long ALTER, and it is the point of the exercise.
+ * OPT-IN, AND NOT YET ON BY DEFAULT ANYWHERE - a deliberate decision, not a
+ * fudge, and the reason is test coverage rather than caution about the DDL
+ * (which is proven: it has been run twice against a clone of the real table
+ * structure, refusing correctly on an uncovered row and doing nothing on the
+ * second pass).
+ *
+ * The code that ships with this migration is two-era, and the TRANSITION era -
+ * legacy columns present, cells preferred - is what production runs FIRST, for
+ * as long as the three backfills take. If dev and CI dropped the columns now,
+ * every fixture that writes a polygon would have to be converted, and the
+ * transition era would lose the only tests that execute its SQL rather than
+ * merely inspect it. Trading away coverage of the era that runs first, to gain
+ * coverage of the era that runs later, is the wrong way round.
+ *
+ * So: dev and CI keep both forms and keep testing both eras (the cells-only
+ * branches are covered by PostDropEraTest, which forces the era guard rather
+ * than the schema - see LegacyGeometry::fake). Production drops via the
+ * companion .sql file, node by node under RSU, AFTER the backfills report
+ * complete and ripple:verify-cells-parity has been run and READ. The follow-up
+ * PR that deletes the now-dead legacy branches also converts the fixtures and
+ * turns this migration on by default, so the schema and the code stop
+ * diverging at the same moment.
+ *
+ * Set RIPPLE_DROP_LEGACY_GEOMETRY=1 to run it before then.
+ *
+ * DROP COLUMN on this table rebuilds it, which is what finally returns the
+ * ~50GB .ibd (plus ~19.4GB a node of rippling_reach_geom) to the operating
+ * system - so it is a long ALTER, and it is the point of the exercise.
  *
  * NOT REVERSIBLE, and down() says so rather than pretending. The polygons are
  * a traced approximation of a routing grid; the cells are that same grid at a
@@ -59,6 +78,12 @@ return new class extends Migration
     public function up(): void
     {
         if (!Schema::hasTable('rippling_reach')) {
+            return;
+        }
+
+        // Opt-in - see the class comment for why this is off by default, and
+        // when it turns on.
+        if (!filter_var(env('RIPPLE_DROP_LEGACY_GEOMETRY', false), FILTER_VALIDATE_BOOLEAN)) {
             return;
         }
 

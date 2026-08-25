@@ -31,13 +31,17 @@
 --    NAME is the error message. SIGNAL cannot carry a computed message
 --    through PREPARE, and a bare SELECT would scroll past unnoticed in a long
 --    run; `mysql` reading a file aborts on the first error unless --force, so
---    this genuinely halts before any DDL.
-SELECT COUNT(*) AS rows_without_polygon_cells FROM rippling_reach WHERE polygon_cells IS NULL;
+--    this genuinely halts before any DDL. The name is kept under MySQL's
+--    64-character identifier limit on purpose: go over it and the error
+--    becomes "Identifier name '...' is too long", which reads like a bug in
+--    this file rather than a deliberate refusal.
+SELECT COUNT(*) AS rows_without_polygon_cells_must_be_zero
+  FROM rippling_reach WHERE polygon_cells IS NULL;
 
 SET @uncovered := (SELECT COUNT(*) FROM rippling_reach WHERE polygon_cells IS NULL);
 SET @ddl := IF(@uncovered = 0,
     'SELECT 1',
-    'SELECT 1 FROM `REFUSING_TO_DROP__rows_still_have_no_polygon_cells__run_ripple_backfill_reach_cells_to_completion_first`');
+    'SELECT 1 FROM `REFUSING__rows_have_no_polygon_cells__run_the_backfill_first`');
 PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
 
 -- 1. Dedup FKs, then their indexes and columns (each guarded).

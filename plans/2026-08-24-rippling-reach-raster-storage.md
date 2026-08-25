@@ -479,7 +479,7 @@ work rather than by deciding not to.
     once Stage 2's basic column exists whether the extra table+FK is worth it at these
     sizes, rather than assuming yes by default.
 
-## Stage 3 (REDESIGNED 2026-08-25, in progress) - stop storing the polygons at all
+## Stage 3 (BUILT 2026-08-25) - stop storing the polygons at all
 
 Edward's direction, replacing the earlier Stage 3 sketch (which only re-pointed the
 spatial index's build input and kept every polygon): the point of this design is disk,
@@ -591,6 +591,75 @@ order 10-15GB against the ~185GB the un-deduped model was heading for.
     FORCE INDEX (rippling_reach_status_index) and comment; whichever merges second
     resolves trivially. The suggested composite becomes (status) alone - a blob
     column cannot usefully join it.
+
+### MEASURED 2026-08-25 - what the parity run actually found
+
+`ripple:verify-cells-parity` (new) asks the OLD question and the NEW question of the same
+row at the same points, per read case. Sampling is weighted to the boundary band - the
+polygon's own vertices, jittered by fractions of a cell - because uniform points over a
+bounding box are dominated by cases where a lattice and a boundary cannot disagree, so a
+report built on them reads as 100% agreement and proves nothing.
+
+Run against 8 real drive-time isochrones straight from the routing server (1,615 to 34,471
+vertices, 45KB to 965KB of WKT):
+
+| Read case | Result |
+|---|---|
+| point-in-reach | 640 probes, 87 differ - **all** in the boundary band, **all at exactly 0.000m from the edge**, all one direction, **none** beyond a cell. Interior 0/80, exterior 0/80. Probes at 0.5 and 1.5 cells off the edge all AGREED, so the disagreement band is narrower than one cell |
+| point-in-max-reach | 9/640 differ, worst 8.0m |
+| reach radius | worst 0.63% relative; 7 of 8 rows under 0.2% |
+| distance-outside-reach | worst 94.2m absolute, on a value reported in miles |
+| reach extent | outer_bound's envelope is 223m/side WIDER - the 0.002-degree buffer, as designed, so still a superset |
+| traced boundary | coverage identical on all 8 rows |
+| group intersects/within | **NOT MEASURED** - the dev spatial groups dataset answers 503. Not claimed as verified |
+| clip comparison | **NOT MEASURED** - 0 tests for the same reason |
+
+The direction matters and is uniform: every difference is polygon-out / grid-in. That is
+not lattice error at all - `ST_Contains` excludes a point lying exactly ON the boundary
+while the grid includes the cell whose centre is inside. The grid is marginally more
+inclusive at the edge, which for a reach admits a handful of people exactly on the line
+rather than excluding anyone the polygon reached.
+
+Compression, measured on those same 8: **36.2x to 43.7x**, falling slightly as the reach
+grows. The 45x from one production polygon is the TOP of the range, not the middle.
+
+**Two flaws in the measurement itself, found by running it rather than trusting it.** Both
+are the reason to distrust a clean-looking verification report:
+  - distance-to-boundary was first asked of `ST_Boundary`, which returns NULL on the ~94%
+    of real reach polygons that are technically invalid. Every distance came back null,
+    the guard skipped the threshold check entirely, and the report printed "worst
+    disagreement 0.0m, 0 beyond one cell" while measuring NOTHING. It now computes exact
+    point-to-segment distance in PHP, and a difference it cannot measure is a FAILURE.
+  - the first fallback was nearest-VERTEX, an upper bound loose enough to report two
+    spurious failures at exactly 50.0m - which was the 1.5-cell offset of the probes
+    themselves.
+  - and `spatial-knn` was still running the OLD binary (404 on vectorize and
+    groups-intersecting), the same stale-container trap as the previous stage. Rebuilt and
+    redeployed before any of the above was believed.
+
+### The drop, and why it is opt-in in dev/CI for now
+
+The migration and its production SQL both REFUSE while any live row has no
+`polygon_cells`. Proven by execution against a clone of the real table structure: refuses
+correctly on an uncovered row, drops everything on the first pass, does nothing on the
+second, leaves `has_overflow` regenerated from `overflow_cells` and
+`rippling_reach_outer` intact while the polygon R-tree and both hash indexes are gone.
+
+It is gated on `RIPPLE_DROP_LEGACY_GEOMETRY` and off by default, which is a decision about
+TEST COVERAGE rather than caution about the DDL. The transition era - columns present,
+cells preferred - is what production runs FIRST, for as long as the backfills take. Letting
+dev/CI drop the columns now would force every polygon-writing fixture to be converted and
+would leave that era with no tests that execute its SQL. Trading away coverage of the era
+that runs first, to gain coverage of the era that runs later, is the wrong way round. The
+cells-only branches are covered instead by forcing the era guard (`LegacyGeometry::fake`,
+`rippling.SetLegacyGeomForTest`), which works precisely because those branches never name a
+dropped column - and `PostDropEraTest` asserts both the answers and, by reading the SQL
+actually issued, that no dropped column appears in it.
+
+The follow-up PR deletes the then-dead legacy branches (including `GeomShareService` and
+`rippling/geomshare.go`, which survive here only as the read path for a legacy row),
+converts the fixtures, and turns the migration on by default - so the schema and the code
+stop diverging at the same moment.
 
 ### Test/measurement obligations before this stage is called done
 
