@@ -48,6 +48,20 @@ func FromGeometry(g geom.Geometry) (*CellSet, error) {
 		rows = 1
 	}
 
+	// The SAME bound Decode enforces, applied on the way IN. Decode has always
+	// refused an absurd grid before allocating for it, but until this check the
+	// construction path did not - so a legitimately enormous input allocated
+	// whatever its extent implied. That matters because this is reachable from
+	// /v1/groups/intersecting with a group's own area: a national-scale
+	// boundary spanning ~10 degrees is 33,000 cells a side, over a billion
+	// cells, a 139MB bitmap, inside the spatial server. Refusing is correct -
+	// the caller treats a rasterise failure as "cannot answer" and falls back
+	// rather than acting on a wrong answer.
+	if uint64(cols)*uint64(rows) > MaxCells {
+		return nil, fmt.Errorf("cellset: %d x %d = %d cells exceeds the %d limit",
+			cols, rows, uint64(cols)*uint64(rows), uint64(MaxCells))
+	}
+
 	cs := newCellSet(minCol, minRow, cols, rows)
 
 	// Bucket edges by the rows they can cross, so the fill is ~edges work

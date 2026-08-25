@@ -138,10 +138,19 @@ class BackfillRingCellsCommand extends Command
             }
 
             // keep-raw: `updated_at = updated_at` self-assignment to suppress the ON UPDATE auto-bump - the builder always emits a real value
-            DB::statement(
-                'UPDATE rippling_reach SET overflow_cells = ?, updated_at = updated_at WHERE msgid = ?',
+            $n = DB::affectingStatement(
+                'UPDATE rippling_reach SET overflow_cells = ?, updated_at = updated_at
+                  WHERE msgid = ? AND overflow_cells IS NULL',
                 [json_encode($cells), $lastMsgid]
             );
+            if ($n < 1) {
+                // A ring write landed while this row's lanes were being
+                // rasterised - its value is newer. Same compare-and-swap
+                // reasoning as ripple:backfill-reach-cells.
+                $skipped++;
+
+                continue;
+            }
             $filled++;
 
             if ($sleepMs > 0) {

@@ -216,21 +216,32 @@ class VerifyCellsParityCommand extends Command
             }
         }
 
-        // Interior: the reach origin (always inside by construction) plus a
-        // deterministic lattice walk inward from the bbox centre. Deterministic
-        // rather than random so two runs are comparable.
+        // Interior: points the POLYGON ACTUALLY CONTAINS. A reach is a ragged
+        // isochrone, so a point derived from its bounding box is frequently
+        // outside it - and an "interior" band built that way would silently be
+        // measuring the exterior, making a clean "interior 0 disagreements"
+        // figure mean much less than it reads. So candidates are generated
+        // deterministically (so two runs are comparable) and each is CONFIRMED
+        // inside before being counted as interior.
         [$minLng, $minLat, $maxLng, $maxLat] = $this->envelopeBox((string) $row->poly_env_wkt);
-        $cLng = ($minLng + $maxLng) / 2;
-        $cLat = ($minLat + $maxLat) / 2;
         $wantInterior = max(0, (int) $this->option('interior-points'));
         if ($wantInterior > 0) {
+            // The reach origin is inside by construction - it is what the
+            // isochrone was grown from.
             $points[] = ['lng' => (float) $row->lng, 'lat' => (float) $row->lat, 'band' => 'interior'];
-            for ($k = 1; count($points) < $wantBoundary + $wantInterior; $k++) {
-                $f = $k / ($wantInterior + 1);
-                $points[] = ['lng' => $cLng + ($maxLng - $cLng) * 0.5 * $f,
-                    'lat' => $cLat + ($maxLat - $cLat) * 0.5 * $f, 'band' => 'interior'];
-                if ($k > $wantInterior * 2) {
-                    break;
+            $found = 1;
+            // Walk a deterministic lattice over the bounding box, keeping only
+            // the points the polygon contains, spiralling out from the origin
+            // so the kept points are spread rather than clustered.
+            $steps = 17;
+            for ($i = 0; $i < $steps * $steps && $found < $wantInterior; $i++) {
+                $gx = $i % $steps;
+                $gy = intdiv($i, $steps);
+                $lng = $minLng + ($maxLng - $minLng) * (($gx + 0.5) / $steps);
+                $lat = $minLat + ($maxLat - $minLat) * (($gy + 0.5) / $steps);
+                if ($this->polygonContains((string) $row->poly_wkt, $lng, $lat) === true) {
+                    $points[] = ['lng' => $lng, 'lat' => $lat, 'band' => 'interior'];
+                    $found++;
                 }
             }
         }
@@ -262,7 +273,7 @@ class VerifyCellsParityCommand extends Command
     private function checkContainment(object $row, array $points, array &$report, array &$rowDetail): void
     {
         $disagreements = [];
-        $verts = $this->exteriorVertices((string) $row->poly_wkt);
+        $rings = $this->exteriorRings((string) $row->poly_wkt);
         foreach ($points as $p) {
             $old = $this->polygonContains((string) $row->poly_wkt, $p['lng'], $p['lat']);
             if ($old === null) {
@@ -295,7 +306,7 @@ class VerifyCellsParityCommand extends Command
             $report['containment']['directions'][$dir] =
                 ($report['containment']['directions'][$dir] ?? 0) + 1;
 
-            [$metres, $how] = $this->metresFromEdge((string) $row->poly_wkt, $verts, $p['lng'], $p['lat']);
+            [$metres, $how] = $this->metresFromEdge($rings, $p['lng'], $p['lat']);
             $report['containment']['measuredBy'][$how] = ($report['containment']['measuredBy'][$how] ?? 0) + 1;
 
             if ($metres === null) {
@@ -338,7 +349,7 @@ class VerifyCellsParityCommand extends Command
         if ($row->max_poly_wkt === null || $row->max_cells === null) {
             return;
         }
-        $maxVerts = $this->exteriorVertices((string) $row->max_poly_wkt);
+        $maxRings = $this->exteriorRings((string) $row->max_poly_wkt);
         $worst = 0.0;
         foreach ($points as $p) {
             $old = $this->polygonContains((string) $row->max_poly_wkt, $p['lng'], $p['lat']);
@@ -355,7 +366,7 @@ class VerifyCellsParityCommand extends Command
                 continue;
             }
             $report['maxReach']['disagree']++;
-            [$metres, $how] = $this->metresFromEdge((string) $row->max_poly_wkt, $maxVerts, $p['lng'], $p['lat']);
+            [$metres, $how] = $this->metresFromEdge($maxRings, $p['lng'], $p['lat']);
             if ($metres === null) {
                 $report['failures'][] = sprintf(
                     'msgid %d: MAX-reach disagreement whose distance from the edge could not be measured',
@@ -700,86 +711,71 @@ class VerifyCellsParityCommand extends Command
      * that turns "they disagree sometimes" into "they disagree only at the
      * edge", so it must never quietly fail to measure.
      *
-     * Two ways round, because the GIS way is not reliable here: roughly 94% of
-     * production reach polygons are technically invalid (self-touching rings
-     * from the routing server's grid fill), and ST_Boundary/ST_Distance return
-     * NULL or throw on those. The first version of this command used only the
-     * GIS way, got NULL every time, and therefore reported "worst disagreement
-     * 0.0m" - a headline that looked like a result and measured nothing. So
-     * the fallback is the distance to the nearest polygon VERTEX, computed in
-     * PHP from the vertex list this command already parses. That is an upper
-     * bound on the distance to the boundary (the boundary passes through every
-     * vertex), which is the conservative direction for this test: it can only
-     * ever make a disagreement look FURTHER from the edge than it is, never
-     * nearer.
+     * Computed here rather than asked of the database, for two reasons found
+     * the hard way:
      *
-     * Returns [metres, how] so the report can say which measure it used, and
-     * null metres when neither works - which is counted, not ignored.
+     *  - MySQL/Percona DO NOT IMPLEMENT ST_Boundary (verified on 8.0.43:
+     *    "FUNCTION ST_Boundary does not exist"). An earlier version of this
+     *    command asked for it inside a try/catch, so every measurement failed
+     *    silently and the report printed "worst disagreement 0.0m" while
+     *    measuring nothing at all.
+     *  - The replacement must use the polygon's real EDGES. Measuring to the
+     *    nearest VERTEX is only an upper bound and reported spurious failures;
+     *    measuring to segments taken from a flat list of every coordinate pair
+     *    in the WKT is WORSE THAN THAT, because consecutive pairs that span a
+     *    ring or polygon boundary form segments the polygon does not have, and
+     *    a spurious segment passing near a probe point makes the measured
+     *    distance SMALLER - which would let a genuinely distant disagreement
+     *    be reported as edge-adjacent, exactly the wrong direction for a test
+     *    whose failure condition is "too far from the edge".
      *
-     * @param array<int,array{0:float,1:float}> $verts
+     * So the rings are parsed as rings, and only within-ring consecutive pairs
+     * are treated as edges. The result is the exact distance to the boundary.
+     *
+     * Returns [metres, how]; null metres is counted as a failure by the caller
+     * rather than treated as zero.
+     *
+     * @param array<int,array<int,array{0:float,1:float}>> $rings
      * @return array{0:?float,1:string}
      */
-    private function metresFromEdge(string $wkt, array $verts, float $lng, float $lat): array
+    private function metresFromEdge(array $rings, float $lng, float $lat): array
     {
-        try {
-            // keep-raw: ST_Distance over ST_Boundary with an SRID re-tag - nothing for the builder to build
-            $r = DB::selectOne(
-                'SELECT ST_Distance(
-                        ST_SRID(ST_Boundary(ST_GeomFromText(?, 3857)), 4326),
-                        ST_SRID(POINT(?, ?), 4326)) AS d',
-                [$wkt, $lng, $lat]
-            );
-            if ($r !== null && $r->d !== null) {
-                return [(float) $r->d, 'boundary'];
-            }
-        } catch (\Throwable) {
-            // Invalid stored geometry - expected on most real rows. Fall through.
-        }
-
-        if (count($verts) < 2) {
+        if ($rings === []) {
             return [null, 'unmeasured'];
         }
 
-        // Exact distance to the boundary, computed here: the minimum
-        // point-to-SEGMENT distance over every edge of every ring. Nearest
-        // VERTEX was the first attempt and is wrong for this purpose - it is
-        // only an upper bound, and it overstated distances badly enough to
-        // report spurious failures on probe points deliberately placed 1.5
-        // cells from a vertex but lying a few metres from a neighbouring edge.
-        // Done only for the handful of probes that actually disagree, so the
-        // per-segment walk costs nothing overall.
+        // Local flat projection: metres per degree at this latitude. Distances
+        // here are tens of metres, so the flat approximation is exact enough
+        // and avoids a haversine per segment.
         $mPerDegLat = 111320.0;
         $mPerDegLng = 111320.0 * cos(deg2rad($lat));
         $px = $lng * $mPerDegLng;
         $py = $lat * $mPerDegLat;
 
         $best = INF;
-        $n = count($verts);
-        for ($i = 0; $i < $n - 1; $i++) {
-            // Rings are closed in the WKT, so consecutive pairs are real
-            // edges; the join between one ring's last point and the next
-            // ring's first is a spurious edge, but it can only ever make the
-            // measured distance SMALLER, which is the safe direction for a
-            // test that fails on distances being too LARGE.
-            $ax = $verts[$i][0] * $mPerDegLng;
-            $ay = $verts[$i][1] * $mPerDegLat;
-            $bx = $verts[$i + 1][0] * $mPerDegLng;
-            $by = $verts[$i + 1][1] * $mPerDegLat;
+        foreach ($rings as $ring) {
+            $n = count($ring);
+            for ($i = 0; $i < $n - 1; $i++) {
+                $ax = $ring[$i][0] * $mPerDegLng;
+                $ay = $ring[$i][1] * $mPerDegLat;
+                $bx = $ring[$i + 1][0] * $mPerDegLng;
+                $by = $ring[$i + 1][1] * $mPerDegLat;
 
-            $dx = $bx - $ax;
-            $dy = $by - $ay;
-            $len2 = $dx * $dx + $dy * $dy;
-            if ($len2 <= 0.0) {
-                $d = sqrt(($px - $ax) ** 2 + ($py - $ay) ** 2);
-            } else {
-                $t = (($px - $ax) * $dx + ($py - $ay) * $dy) / $len2;
-                $t = max(0.0, min(1.0, $t));
-                $d = sqrt(($px - ($ax + $t * $dx)) ** 2 + ($py - ($ay + $t * $dy)) ** 2);
-            }
-            if ($d < $best) {
-                $best = $d;
-                if ($best === 0.0) {
-                    break;
+                $dx = $bx - $ax;
+                $dy = $by - $ay;
+                $len2 = $dx * $dx + $dy * $dy;
+                if ($len2 <= 0.0) {
+                    $d = sqrt(($px - $ax) ** 2 + ($py - $ay) ** 2);
+                } else {
+                    $t = (($px - $ax) * $dx + ($py - $ay) * $dy) / $len2;
+                    $t = max(0.0, min(1.0, $t));
+                    $d = sqrt(($px - ($ax + $t * $dx)) ** 2 + ($py - ($ay + $t * $dy)) ** 2);
+                }
+                if ($d < $best) {
+                    $best = $d;
+                    if ($best === 0.0) {
+                        return [0.0, 'nearest-edge'];
+                    }
                 }
             }
         }
@@ -818,6 +814,37 @@ class VerifyCellsParityCommand extends Command
         }
 
         return $worst > 0 ? $worst : null;
+    }
+
+    /**
+     * The rings of a POLYGON/MULTIPOLYGON WKT, each as its own vertex list, so
+     * consecutive pairs within a ring are real edges and no segment is
+     * invented across a ring or polygon boundary. Parsed here rather than
+     * asked of MySQL because ST_PointN wants one ring at a time and these
+     * polygons run to tens of thousands of vertices.
+     *
+     * @return array<int,array<int,array{0:float,1:float}>>
+     */
+    private function exteriorRings(string $wkt): array
+    {
+        $rings = [];
+        // Every innermost parenthesised group is one ring: "(x y,x y,...)".
+        if (preg_match_all('/\(([^()]*)\)/', $wkt, $groups)) {
+            foreach ($groups[1] as $body) {
+                $ring = [];
+                foreach (explode(',', $body) as $pair) {
+                    $parts = preg_split('/\s+/', trim($pair));
+                    if (count($parts) >= 2 && is_numeric($parts[0]) && is_numeric($parts[1])) {
+                        $ring[] = [(float) $parts[0], (float) $parts[1]];
+                    }
+                }
+                if (count($ring) >= 2) {
+                    $rings[] = $ring;
+                }
+            }
+        }
+
+        return $rings;
     }
 
     /**

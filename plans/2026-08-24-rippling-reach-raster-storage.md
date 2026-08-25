@@ -607,7 +607,7 @@ something real to compare:
 
 | Read case | Result |
 |---|---|
-| point-in-reach | 640 probes, 87 differ - **all** in the boundary band, **all at exactly 0.000m from the edge**, all one direction, **none** beyond a cell. Interior 0/80, exterior 0/80. Probes at 0.5 and 1.5 cells off the edge all AGREED, so the disagreement band is narrower than one cell |
+| point-in-reach | 640 probes, 88 differ - 87 boundary probes at **exactly 0.000m**, one interior probe at **7.98m**, **none beyond a cell**, exterior 0/80. Probes at 0.5 and 1.5 cells off the edge all AGREED |
 | point-in-max-reach | 9/640 differ, worst 8.0m |
 | reach radius | worst 0.63% relative; 7 of 8 rows under 0.2% |
 | distance-outside-reach | worst 94.2m absolute, on a value reported in miles |
@@ -616,11 +616,16 @@ something real to compare:
 | group intersects/within | 15 tests, **15/15 agree on both** intersects and within, 0 failures |
 | clip comparison | 7 tests, **0 cells** of symmetric difference: `rasterise(ST_Difference(poly, group))` and `Subtract(cells(poly), cells(group))` produce identical coverage |
 
-The direction matters and is uniform: every difference is polygon-out / grid-in. That is
-not lattice error at all - `ST_Contains` excludes a point lying exactly ON the boundary
-while the grid includes the cell whose centre is inside. The grid is marginally more
-inclusive at the edge, which for a reach admits a handful of people exactly on the line
-rather than excluding anyone the polygon reached.
+Direction: 87 are polygon-out / grid-in at 0.000m, which is not lattice error at all -
+ST_Contains excludes a point lying ON the boundary while the grid includes the cell whose
+centre is inside. ONE is the other way (polygon-in / grid-out, 7.98m inside the edge), so
+the grid does occasionally miss a point the polygon covered. Eight metres, against a 33m
+lattice and the ~400m of location blur every origin already carries.
+
+An earlier run of this reported "87, all one direction, all at exactly 0.000m". That was
+partly an ARTEFACT of two harness bugs (segments invented across ring boundaries, which
+shrinks measured distances; and bbox-derived "interior" points that were really outside).
+Both fixed; these are the numbers from the corrected harness.
 
 Compression on those same 8 Bristol isochrones: 36.2x to 43.7x. **But measured on SIX REAL
 PRODUCTION polygons (read-only over the live tunnel, 2026-08-25): 19.5x to 22.0x, 20.2x

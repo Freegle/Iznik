@@ -513,8 +513,7 @@ class ExpandService
             if (LegacyGeometry::polygonReady()) {
                 $stats['groups_before'] += $this->countCrosspostGroups((string) $row->cur_wkt);
             } elseif (($row->polygon_cells ?? null) !== null) {
-                $before = $this->cellSets->groupsIntersecting($row->polygon_cells);
-                $stats['groups_before'] += $before === null ? 0 : count($before);
+                $stats['groups_before'] += $this->countCrosspostGroupsFromCells($row->polygon_cells);
             }
             $stats['groups_after'] += $this->countCrosspostGroups($storeWkt);
 
@@ -617,6 +616,50 @@ class ExpandService
      * post-specific and not part of a breadth measure). Used by recomputeReach to
      * report how the audience cap narrows cross-posting.
      */
+    /**
+     * countCrosspostGroups for a stored grid: which groups the reach touches,
+     * asked of the spatial server, then narrowed by the SAME predicate the SQL
+     * form applies.
+     *
+     * The narrowing is the point. The spatial server's groups index selects on
+     * publish=1 AND listable=1 only (dataset_groups.go), while the SQL form
+     * additionally requires type='Freegle' and onhere=1, excludes
+     * playground-named groups, excludes POINT-geometry sentinels and honours
+     * the ripple-in opt-out. Counting the raw answer would make
+     * groups_before and groups_after in ripple:recompute-reach's output two
+     * different populations, so the audience-cap effectiveness figure an
+     * operator reads would be measuring the wrong difference.
+     *
+     * @param string $cells encoded cell set
+     */
+    private function countCrosspostGroupsFromCells(string $cells): int
+    {
+        $touching = $this->cellSets->groupsIntersecting($cells);
+        if ($touching === null || $touching === []) {
+            return 0;
+        }
+        $ids = array_map(static fn ($g) => (int) $g['id'], $touching);
+
+        // keep-raw: the opt-out clause is an SQL fragment built by
+        // GroupRippleOptOut, and ST_GeometryType is a spatial predicate - the
+        // builder can render neither.
+        $row = DB::selectOne(
+            "SELECT COUNT(*) AS c
+             FROM `groups` g
+             WHERE g.id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")
+               AND g.publish = 1
+               AND g.type = 'Freegle'
+               AND g.onhere = 1
+               AND g.nameshort NOT LIKE '%playground%'
+               AND g.polyindex IS NOT NULL
+               AND ST_GeometryType(g.polyindex) <> 'POINT'"
+            . $this->optOutClause('g.id', GroupRippleOptOut::DIRECTION_IN),
+            $ids
+        );
+
+        return (int) ($row->c ?? 0);
+    }
+
     private function countCrosspostGroups(string $wkt): int
     {
         if ($wkt === '') {

@@ -1,6 +1,7 @@
 package rippling
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -125,5 +126,70 @@ func TestCellSetContains_FailClosedContract(t *testing.T) {
 			t.Errorf("%s: probe claimed it could answer (returned in=%v); a gate must be able to tell "+
 				"'cannot say' from 'outside' or it will admit replies on unreadable bytes", name, in)
 		}
+	}
+}
+
+// GOLDEN_NEGATIVE_OFFSETS is a grid whose MinCol AND MinRow are both NEGATIVE,
+// produced by the real rasteriser (iznik-spatial-go's POST /v1/reach/rasterize)
+// for POLYGON((-0.0009 -0.0006, 0.0006 -0.0006, 0.0006 0.0006, -0.0009 0.0006,
+// -0.0009 -0.0006)) - a box straddling both lng 0 and lat 0.
+//
+// This case is worth pinning separately because the UK is at NEGATIVE
+// longitude and Greenwich is lng 0, so real reaches straddle the meridian
+// routinely - and the header stores MinCol/MinRow as int32 written through
+// uint32, which is exactly where a sign bug hides. The pre-existing golden
+// vector has MinCol=MinRow=0 and so never exercised it.
+//
+// Header: MinCol=-3 MinRow=-2 Cols=6 Rows=5, 20 covered cells.
+const goldenNegativeOffsets = "Q0NTMf3////+////BgAAAAUAAAAABQEFAQUBBQc="
+
+func TestCellSet_NegativeOffsetsAgreeWithPHP(t *testing.T) {
+	raw, err := base64.StdEncoding.DecodeString(goldenNegativeOffsets)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cs, err := DecodeCellSet(raw)
+	if err != nil {
+		t.Fatalf("golden vector with negative offsets would not decode: %v", err)
+	}
+	if got := cs.SetCellCount(); got != 20 {
+		t.Errorf("covered cells: got %d, want 20 - the header's signed offsets are being read wrongly", got)
+	}
+
+	// The same four probes the PHP side answers. A sign bug shows up here as an
+	// inverted or shifted answer rather than as a decode failure.
+	cases := []struct {
+		lng, lat float64
+		want     bool
+	}{
+		{-0.00075, -0.00045, true}, // inside, both coords negative
+		{0.00045, 0.00045, true},   // inside, both coords positive
+		{-0.00105, 0.0, false},     // outside to the west, beyond MinCol
+		{0.00075, 0.0, false},      // outside to the east, beyond MinCol+Cols
+	}
+	for _, c := range cases {
+		// The streaming probe: what every gate uses.
+		got, ok := CellSetContains(raw, c.lng, c.lat)
+		if !ok {
+			t.Errorf("probe could not answer at %.5f,%.5f", c.lng, c.lat)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("probe at %.5f,%.5f: got %v, want %v (PHP answers %v for the same bytes)",
+				c.lng, c.lat, got, c.want, c.want)
+		}
+		// And the decoded form, which the clip uses: the two must never differ.
+		if full := cs.Contains(c.lng, c.lat); full != got {
+			t.Errorf("at %.5f,%.5f the streaming probe says %v but a full decode says %v - "+
+				"the two read paths have diverged on a negative-offset grid", c.lng, c.lat, got, full)
+		}
+	}
+
+	// Re-encoding must reproduce the bytes exactly, including the negative
+	// offsets in the header: this is what lets the clip write a grid back.
+	if out := base64.StdEncoding.EncodeToString(cs.Encode()); out != goldenNegativeOffsets {
+		t.Errorf("re-encode is not byte-identical for negative offsets:\n got %s\nwant %s",
+			out, goldenNegativeOffsets)
 	}
 }

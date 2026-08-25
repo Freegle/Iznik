@@ -54,20 +54,45 @@ type tracedRing struct {
 
 // TraceBoundary extracts the covered area's boundary as rings on the lattice.
 // Interior is always on the LEFT of travel, so shells come out CCW and holes
-// CW. Vertices where two covered regions touch only diagonally are resolved
-// by always taking the rightmost turn, which splits the pinch into separate
-// simple rings instead of a self-touching one.
+// CW, and every returned ring is SIMPLE - no ring visits a corner twice.
+//
+// Corners where two regions meet only diagonally (saddles) are the whole
+// difficulty. A saddle admits two pairings of its edges, and the choice is
+// forced to be inconsistent somewhere: making the COVERED region 4-connected
+// there necessarily makes the UNCOVERED region 8-connected, and vice versa. So
+// a single rule cannot keep both sides simple, and a hole threading two
+// saddles will come back as a figure-eight however the pairing is chosen.
+//
+// Two things therefore happen. Saddles are paired by the CELL each edge
+// bounds, which is direction-independent (an earlier version preferred a turn
+// direction, decided from the direction of travel at the moment the corner was
+// visited, so visit order changed the answer). And any walk that still closes
+// on itself is split at its repeated corners into simple loops - their union
+// is the same boundary, so coverage is untouched.
 func (cs *CellSet) TraceBoundary() []tracedRing {
-	// Directed boundary edges, keyed by start corner. A corner has at most
-	// two outgoing edges (exactly two only at a diagonal pinch).
+	// Directed boundary edges, keyed by start corner, each remembering WHICH
+	// CELL's boundary it is. A corner has at most two outgoing edges, and
+	// exactly two only at a saddle - one cell diagonally touching another.
+	//
+	// The owning cell is what resolves a saddle, and it is why this needs no
+	// turn preference at all. At a saddle the two outgoing edges belong to the
+	// two different diagonal cells, as do the two incoming edges, so
+	// continuing onto the edge of the SAME cell keeps each region's ring to
+	// itself. An earlier version instead preferred a left turn, decided from
+	// the direction of travel at the moment the corner was visited - which is
+	// correct at a single saddle but not when one walk meets two of them: the
+	// walk could route back through the first saddle instead of closing there
+	// and emit a figure-eight. Pairing by cell is direction-independent, so
+	// visit order cannot change the answer.
 	type outEdge struct {
 		dir  int
+		cell corner // the cell whose boundary this edge is
 		used bool
 	}
 	edges := make(map[uint64][]outEdge)
-	addEdge := func(c corner, dir int) {
+	addEdge := func(c corner, dir int, owner corner) {
 		k := cornerKey(c)
-		edges[k] = append(edges[k], outEdge{dir: dir})
+		edges[k] = append(edges[k], outEdge{dir: dir, cell: owner})
 	}
 
 	isSet := func(col, row int32) bool {
@@ -82,17 +107,18 @@ func (cs *CellSet) TraceBoundary() []tracedRing {
 			if !isSet(col, row) {
 				continue
 			}
+			owner := corner{col, row}
 			if !isSet(col, row-1) { // south edge, travel +x
-				addEdge(corner{col, row}, dirPosX)
+				addEdge(corner{col, row}, dirPosX, owner)
 			}
 			if !isSet(col+1, row) { // east edge, travel +y
-				addEdge(corner{col + 1, row}, dirPosY)
+				addEdge(corner{col + 1, row}, dirPosY, owner)
 			}
 			if !isSet(col, row+1) { // north edge, travel -x
-				addEdge(corner{col + 1, row + 1}, dirNegX)
+				addEdge(corner{col + 1, row + 1}, dirNegX, owner)
 			}
 			if !isSet(col-1, row) { // west edge, travel -y
-				addEdge(corner{col, row + 1}, dirNegY)
+				addEdge(corner{col, row + 1}, dirNegY, owner)
 			}
 		}
 	}
@@ -105,42 +131,39 @@ func (cs *CellSet) TraceBoundary() []tracedRing {
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 
-	takeEdge := func(c corner, prevDir int, forced bool) (int, bool) {
-		k := cornerKey(c)
-		out := edges[k]
-		if forced {
-			// Starting edge of a ring: any unused edge will do.
+	// takeEdge claims an unused outgoing edge at corner c and returns its
+	// direction plus the cell it bounds. prevCell is the cell whose boundary
+	// the walk arrived on; at a saddle that is what decides which way to go,
+	// and everywhere else there is only one candidate anyway.
+	takeEdge := func(c corner, prevCell corner, havePrev bool) (int, corner, bool) {
+		out := edges[cornerKey(c)]
+		if havePrev {
 			for i := range out {
-				if !out[i].used {
+				if !out[i].used && out[i].cell == prevCell {
 					out[i].used = true
-					return out[i].dir, true
-				}
-			}
-			return 0, false
-		}
-		// Preference: LEFT turn first, then straight on, then right. The
-		// covered region is on the left of travel, so at a diagonal pinch
-		// the left turn is the one that stays wrapped around the region the
-		// walk is already tracing; taking the right turn there crosses over
-		// into the diagonally-touching region and produces a self-touching
-		// figure-eight. Reverse is never a boundary continuation.
-		order := [3]int{(prevDir + 1) % 4, prevDir, (prevDir + 3) % 4}
-		for _, want := range order {
-			for i := range out {
-				if !out[i].used && out[i].dir == want {
-					out[i].used = true
-					return out[i].dir, true
+					return out[i].dir, out[i].cell, true
 				}
 			}
 		}
-		return 0, false
+		// A straight run passes from one cell's edge to the next cell's, so
+		// the owner legitimately changes at an ordinary corner; and a ring's
+		// first edge has no predecessor. Either way, any unused edge will do -
+		// there is only ever more than one at a saddle, which the branch above
+		// has already handled.
+		for i := range out {
+			if !out[i].used {
+				out[i].used = true
+				return out[i].dir, out[i].cell, true
+			}
+		}
+		return 0, corner{}, false
 	}
 
 	var rings []tracedRing
 	for _, k := range keys {
 		for {
 			start := corner{col: int32(uint32(k)), row: int32(uint32(k >> 32))}
-			dir, ok := takeEdge(start, 0, true)
+			dir, cell, ok := takeEdge(start, corner{}, false)
 			if !ok {
 				break
 			}
@@ -148,23 +171,67 @@ func (cs *CellSet) TraceBoundary() []tracedRing {
 			var raw []corner
 			raw = append(raw, start)
 			cur := corner{start.col + dirDX[dir], start.row + dirDY[dir]}
-			prev := dir
 			for cur != start {
 				raw = append(raw, cur)
-				nd, ok := takeEdge(cur, prev, false)
+				nd, ncell, ok := takeEdge(cur, cell, true)
 				if !ok {
 					// Cannot happen on a well-formed grid: every corner's
 					// in-degree equals its out-degree by construction.
 					return nil
 				}
 				cur = corner{cur.col + dirDX[nd], cur.row + dirDY[nd]}
-				prev = nd
+				cell = ncell
 			}
 
-			rings = append(rings, finishRing(raw))
+			// One walk can legitimately close on itself more than once. A
+			// saddle is a single decision that cannot make both sides
+			// simple: pairing by owning cell keeps the COVERED region
+			// 4-connected, which necessarily makes the UNCOVERED region
+			// 8-connected, so a hole threading two saddles comes back as a
+			// figure-eight. Splitting the walk at its repeated corners
+			// yields simple loops either way, and their union is the same
+			// boundary, so nothing about coverage changes.
+			for _, loop := range splitIntoSimpleLoops(raw) {
+				rings = append(rings, finishRing(loop))
+			}
 		}
 	}
 	return rings
+}
+
+// splitIntoSimpleLoops breaks a closed corner walk into loops that each visit
+// every corner at most once. A walk that never repeats a corner comes back
+// unchanged (one loop), which is the ordinary case.
+//
+// Standard closed-walk decomposition: carry the path on a stack, and when a
+// corner reappears, the segment from its first occurrence to just before now
+// is a complete loop - pop it and carry on. Whatever is left on the stack at
+// the end closes back to the start.
+func splitIntoSimpleLoops(raw []corner) [][]corner {
+	var loops [][]corner
+	stack := make([]corner, 0, len(raw))
+	at := make(map[corner]int, len(raw))
+
+	for _, c := range raw {
+		if j, seen := at[c]; seen {
+			loop := make([]corner, len(stack)-j)
+			copy(loop, stack[j:])
+			if len(loop) >= 3 {
+				loops = append(loops, loop)
+			}
+			for _, x := range stack[j:] {
+				delete(at, x)
+			}
+			stack = stack[:j]
+		}
+		at[c] = len(stack)
+		stack = append(stack, c)
+	}
+	if len(stack) >= 3 {
+		loops = append(loops, stack)
+	}
+
+	return loops
 }
 
 // finishRing merges collinear runs and computes the signed area.

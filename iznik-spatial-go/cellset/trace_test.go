@@ -98,6 +98,23 @@ var traceFixtures = map[string][]string{
 		"#.#.#",
 		"#####",
 	},
+	// CHAINED diagonal pinches: a covered cell touching two other covered
+	// regions at OPPOSITE corners, so one walk meets two saddle points. This
+	// is the case a per-visit turn preference gets wrong - the walk can route
+	// back through the earlier pinch instead of closing there, producing a
+	// figure-eight. Found by an adversarial review.
+	"chained pinch": {
+		"#####",
+		"#.#.#",
+		"#..##",
+		"#.#.#",
+		"#####",
+	},
+	"chained pinch open": {
+		"#..",
+		".#.",
+		"..#",
+	},
 }
 
 // The trace's load-bearing property: rasterising the traced boundary (via the

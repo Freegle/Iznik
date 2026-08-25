@@ -149,11 +149,32 @@ class BackfillReachCellsCommand extends Command
                 continue;
             }
 
+            // COMPARE-AND-SWAP on `polygon_cells IS NULL`, not a blind write.
+            // This command reads a row's WKT, makes an HTTP call to rasterise
+            // it, then writes - and ExpandService::advanceDue is a separate
+            // process that overwrites both polygon and polygon_cells on its
+            // own cadence. Between the read and the write here, a tick can
+            // land, so an unconditional UPDATE would replace fresh cells with
+            // cells rasterised from the PREVIOUS reach. Nothing would ever
+            // repair it either: this command skips non-NULL rows, and once
+            // the post stops expanding advanceDue never revisits it - so the
+            // reply gate would hold replies from people the post really does
+            // reach, permanently. The condition makes the race a no-op
+            // instead: whoever wrote first wins, and both wrote a grid for a
+            // reach the row actually had.
             // keep-raw: `updated_at = updated_at` self-assignment to suppress the ON UPDATE auto-bump - the builder always emits a real value
-            DB::statement(
-                'UPDATE rippling_reach SET polygon_cells = ?, updated_at = updated_at WHERE msgid = ?',
+            $n = DB::affectingStatement(
+                'UPDATE rippling_reach SET polygon_cells = ?, updated_at = updated_at
+                  WHERE msgid = ? AND polygon_cells IS NULL',
                 [$cells, $lastMsgid]
             );
+            if ($n < 1) {
+                // A tick filled it while this row was being rasterised. Its
+                // value is newer than ours; leave it.
+                $skipped++;
+
+                continue;
+            }
             $filled++;
 
             if ($sleepMs > 0) {

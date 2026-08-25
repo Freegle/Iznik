@@ -151,10 +151,21 @@ class BackfillMaxReachCellsCommand extends Command
                 continue;
             }
 
-            DB::statement(
-                'UPDATE rippling_reach SET max_polygon_cells = ?, updated_at = updated_at WHERE msgid = ?',
+            // Compare-and-swap, for the same reason as
+            // ripple:backfill-reach-cells: MaxReachService::populate is a
+            // separate once-a-minute process that writes this column, and a
+            // blind UPDATE here could replace its fresher value with one
+            // rasterised from the max_polygon read before it ran.
+            $n = DB::affectingStatement(
+                'UPDATE rippling_reach SET max_polygon_cells = ?, updated_at = updated_at
+                  WHERE msgid = ? AND max_polygon_cells IS NULL',
                 [$cells, $lastMsgid]
             );
+            if ($n < 1) {
+                $skipped++;
+
+                continue;
+            }
             $filled++;
 
             if ($sleepMs > 0) {

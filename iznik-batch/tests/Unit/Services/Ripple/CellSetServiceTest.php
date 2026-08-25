@@ -20,6 +20,59 @@ class CellSetServiceTest extends TestCase
 {
     private const GOLDEN_VECTOR = 'Q0NTMQAAAAAAAAAACwAAAAsAAAAACgEKAQoBCgEKAQoBCgEKAQoBCgw=';
 
+    /**
+     * A grid whose minCol AND minRow are both NEGATIVE, from the same real
+     * rasteriser: POLYGON((-0.0009 -0.0006, 0.0006 -0.0006, 0.0006 0.0006,
+     * -0.0009 0.0006, -0.0009 -0.0006)) - a box straddling both lng 0 and
+     * lat 0. Header: minCol=-3 minRow=-2 cols=6 rows=5, 20 covered cells.
+     *
+     * Pinned separately from GOLDEN_VECTOR, which has minCol=minRow=0 and so
+     * never exercised the sign path at all. It matters because the UK sits at
+     * NEGATIVE longitude and Greenwich is lng 0, so real reaches straddle the
+     * meridian routinely - and the header carries these as int32 written
+     * through uint32, which is where a sign bug would hide. The identical
+     * constant and the identical probes are asserted on the Go side
+     * (rippling/postdrop_test.go), so the two languages are locked together
+     * on this case rather than merely believed to agree.
+     */
+    private const GOLDEN_NEGATIVE_OFFSETS = 'Q0NTMf3////+////BgAAAAUAAAAABQEFAQUBBQc=';
+
+    public function test_negative_grid_offsets_decode_probe_and_re_encode(): void
+    {
+        $svc = new CellSetService();
+        $bytes = base64_decode(self::GOLDEN_NEGATIVE_OFFSETS);
+
+        $decoded = $svc->decode($bytes);
+        $this->assertSame(-3, $decoded['minCol'], 'a negative minCol must survive the uint32 round trip');
+        $this->assertSame(-2, $decoded['minRow'], 'a negative minRow must survive the uint32 round trip');
+        $this->assertCount(20, $decoded['set']);
+
+        // The same four probes the Go side asserts on the same bytes.
+        $cases = [
+            [-0.00075, -0.00045, true],   // inside, both coordinates negative
+            [0.00045, 0.00045, true],     // inside, both positive
+            [-0.00105, 0.0, false],       // west of minCol
+            [0.00075, 0.0, false],        // east of minCol + cols
+        ];
+        foreach ($cases as [$lng, $lat, $want]) {
+            $stream = $svc->containsEncoded($bytes, $lng, $lat);
+            $this->assertSame($want, $stream, sprintf('streaming probe at %.5f,%.5f', $lng, $lat));
+            $this->assertSame(
+                $stream,
+                $svc->contains($decoded, $lng, $lat),
+                sprintf('the streaming probe and a full decode disagree at %.5f,%.5f', $lng, $lat)
+            );
+        }
+
+        // Re-encoding must reproduce the bytes exactly, negative header and
+        // all - this is what lets the clip write a shrunk grid back.
+        $this->assertSame(
+            self::GOLDEN_NEGATIVE_OFFSETS,
+            base64_encode($svc->encode($decoded)),
+            're-encode must be byte-identical for a negative-offset grid'
+        );
+    }
+
     private function service(): CellSetService
     {
         return new CellSetService();

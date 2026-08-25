@@ -62,9 +62,11 @@ use Illuminate\Support\Facades\Schema;
  *
  * Set RIPPLE_DROP_LEGACY_GEOMETRY=1 to run it before then.
  *
- * DROP COLUMN on this table rebuilds it, which is what finally returns the
- * ~50GB .ibd (plus ~19.4GB a node of rippling_reach_geom) to the operating
- * system - so it is a long ALTER, and it is the point of the exercise.
+ * THE DROPS ALONE DO NOT RECLAIM ANYTHING. Percona 8.0.29+ performs DROP
+ * COLUMN as ALGORITHM=INSTANT - metadata only - so the old bytes stay in every
+ * existing row until it is rewritten. The final ALTER ... FORCE is what
+ * returns the ~50GB .ibd (plus ~19.4GB a node of rippling_reach_geom) to the
+ * operating system, and it is the long one.
  *
  * NOT REVERSIBLE, and down() says so rather than pretending. The polygons are
  * a traced approximation of a routing grid; the cells are that same grid at a
@@ -87,17 +89,35 @@ return new class extends Migration
             return;
         }
 
-        // The guard: never drop the only copy of a reach. A live row without
-        // cells would simply stop having a reach - it would vanish from the
-        // feed, stop admitting replies, and there would be nothing left to
-        // rebuild it from.
-        if (Schema::hasColumn('rippling_reach', 'polygon')
-            && Schema::hasColumn('rippling_reach', 'polygon_cells')) {
-            $uncovered = DB::table('rippling_reach')->whereNull('polygon_cells')->count();
+        // The guard: never drop the only copy of anything. THREE columns are
+        // being removed and each has its own mirror and its own backfill, so
+        // each is checked separately - an earlier version checked only
+        // polygon_cells and would happily have dropped max_polygon and
+        // overflow_bounds while their mirrors were still empty, losing every
+        // post's eventual reach and every overflow ring.
+        //
+        // polygon is NOT NULL, so every row must have cells. max_polygon and
+        // overflow_bounds are nullable and are legitimately absent on most
+        // rows, so the test is "has the old value but not the new one" rather
+        // than "has no new value".
+        $checks = [
+            ['polygon', 'polygon_cells', null, 'ripple:backfill-reach-cells'],
+            ['max_polygon', 'max_polygon_cells', 'max_polygon', 'ripple:backfill-max-reach-cells'],
+            ['overflow_bounds', 'overflow_cells', 'overflow_bounds', 'ripple:backfill-ring-cells'],
+        ];
+        foreach ($checks as [$old, $new, $onlyWhereSet, $command]) {
+            if (!Schema::hasColumn('rippling_reach', $old) || !Schema::hasColumn('rippling_reach', $new)) {
+                continue;
+            }
+            $q = DB::table('rippling_reach')->whereNull($new);
+            if ($onlyWhereSet !== null) {
+                $q->whereNotNull($onlyWhereSet);
+            }
+            $uncovered = $q->count();
             if ($uncovered > 0) {
                 throw new RuntimeException(
-                    "Refusing to drop the reach geometry: {$uncovered} row(s) have no polygon_cells. "
-                    . 'Run ripple:backfill-reach-cells to completion first.'
+                    "Refusing to drop rippling_reach.{$old}: {$uncovered} row(s) have it but have no {$new}. "
+                    . "Run {$command} to completion first."
                 );
             }
         }
@@ -115,7 +135,7 @@ return new class extends Migration
         }
         foreach (['polygon_hash', 'max_polygon_hash'] as $col) {
             if (Schema::hasColumn('rippling_reach', $col)) {
-                DB::statement("ALTER TABLE rippling_reach DROP COLUMN {$col}");
+                DB::statement("ALTER TABLE rippling_reach DROP COLUMN {$col}, ALGORITHM=INSTANT");
             }
         }
 
@@ -126,10 +146,10 @@ return new class extends Migration
             DB::statement('ALTER TABLE rippling_reach DROP INDEX rippling_reach_has_overflow');
         }
         if (Schema::hasColumn('rippling_reach', 'has_overflow')) {
-            DB::statement('ALTER TABLE rippling_reach DROP COLUMN has_overflow');
+            DB::statement('ALTER TABLE rippling_reach DROP COLUMN has_overflow, ALGORITHM=INSTANT');
         }
         if (Schema::hasColumn('rippling_reach', 'overflow_bounds')) {
-            DB::statement('ALTER TABLE rippling_reach DROP COLUMN overflow_bounds');
+            DB::statement('ALTER TABLE rippling_reach DROP COLUMN overflow_bounds, ALGORITHM=INSTANT');
         }
         if (Schema::hasColumn('rippling_reach', 'overflow_cells')
             && !Schema::hasColumn('rippling_reach', 'has_overflow')) {
@@ -151,12 +171,27 @@ return new class extends Migration
         }
         foreach (['polygon', 'max_polygon'] as $col) {
             if (Schema::hasColumn('rippling_reach', $col)) {
-                DB::statement("ALTER TABLE rippling_reach DROP COLUMN {$col}");
+                DB::statement("ALTER TABLE rippling_reach DROP COLUMN {$col}, ALGORITHM=INSTANT");
             }
         }
 
         // 4. The shared geometry table, once nothing points at it.
         Schema::dropIfExists('rippling_reach_geom');
+
+        // 5. The rebuild, which is what actually returns the disk. Everything
+        // above is metadata only: Percona 8.0.29+ does DROP COLUMN as
+        // ALGORITHM=INSTANT, so the dropped columns' bytes stay in every
+        // existing row until it is rewritten. Measured on 8.0.43-34: a table
+        // of five 200KB blobs reported 1,552KB after an INSTANT drop and 16KB
+        // after this. One rebuild rather than pinning INPLACE on each drop,
+        // which would rebuild the table six times.
+        //
+        // LOCK=SHARED because InnoDB REFUSES LOCK=NONE here: "Do not support
+        // online operation on table with GIS index" - the index on
+        // outer_bound, which this change keeps. Reads continue, writes block.
+        // On production that is why the whole file is run node-by-node under
+        // RSU, on a node already out of rotation.
+        DB::statement('ALTER TABLE rippling_reach FORCE, ALGORITHM=INPLACE, LOCK=SHARED');
     }
 
     public function down(): void
