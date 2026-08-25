@@ -19,7 +19,13 @@ func FromPolygonWKT(wkt string) (*CellSet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cellset: parse WKT: %w", err)
 	}
+	return FromGeometry(g)
+}
 
+// FromGeometry rasterises an already-parsed POLYGON or MULTIPOLYGON with the
+// same rule as FromPolygonWKT - the entry point for geometries that arrive as
+// WKB (e.g. group areas from the groups index) rather than text.
+func FromGeometry(g geom.Geometry) (*CellSet, error) {
 	edges := polygonEdges(g)
 	if len(edges) == 0 {
 		return nil, fmt.Errorf("cellset: no polygon rings in geometry")
