@@ -149,6 +149,38 @@ class ReachBoundsService
     }
 
     /**
+     * The true reach as a SQL geometry source for the derivations below, era
+     * for era: the stored polygon (through the dedup COALESCE) while it
+     * exists, otherwise the stored cell grid traced back to a scratch WKT
+     * parameter by the spatial server (CellSetService::vectorize at tolerance
+     * 0 - exact, roundtrip-proven). Null when nothing can supply a geometry;
+     * callers then skip or take the envelope fallback.
+     *
+     * @return array{join:string,expr:string,binds:array<int,string>}|null
+     */
+    private function reachSource(int $msgid): ?array
+    {
+        if (LegacyGeometry::polygonReady()) {
+            return [
+                'join' => GeomShareService::joinSql('rippling_reach', 'polygon', 'g'),
+                'expr' => GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g'),
+                'binds' => [],
+            ];
+        }
+
+        $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+        if ($cells === null || $cells === '') {
+            return null;
+        }
+        $vec = app(CellSetService::class)->vectorize($cells, 0);
+        if ($vec === null) {
+            return null;
+        }
+
+        return ['join' => '', 'expr' => 'ST_GeomFromText(?, 3857)', 'binds' => [$vec['wkt']]];
+    }
+
+    /**
      * Replace a missing or uselessly small inner bound with one derived from the stored
      * polygon; keep a useful one untouched. Degraded completed-post rows (POINT outer)
      * are never resurrected. Returns 'kept', 'derived', 'nulled' or 'skipped' so the
@@ -163,9 +195,14 @@ class ReachBoundsService
         // The exact geometry may live in rippling_reach_geom (content-addressed
         // dedup); every derivation below reads the shared row when the hash points
         // at one, the blob otherwise - a drained row can still get its bounds
-        // re-derived.
-        $join = GeomShareService::joinSql('rippling_reach', 'polygon', 'g');
-        $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g');
+        // re-derived. Post-drop the source is the traced grid as a scratch param.
+        $src = $this->reachSource($msgid);
+        if ($src === null) {
+            return 'skipped';
+        }
+        $join = $src['join'];
+        $poly = $src['expr'];
+        $binds = $src['binds'];
 
         try {
             // keep-raw: ST_GeometryType/ST_Area GIS expressions; useReadPdo=false (own-write read)
@@ -175,7 +212,7 @@ class ReachBoundsService
                         COALESCE(ST_Area(inner_bound) / NULLIF(ST_Area($poly), 0), 0) AS ratio
                    FROM rippling_reach$join
                   WHERE msgid = ? AND ($poly) IS NOT NULL AND outer_bound IS NOT NULL",
-                [$msgid],
+                array_merge($binds, [$msgid], $binds),
                 false
             )[0] ?? null;
 
@@ -199,7 +236,7 @@ class ReachBoundsService
                     SET inner_bound = " . self::innerExpr($poly) . ',
                         updated_at = updated_at
                   WHERE msgid = ? AND ST_GeometryType(outer_bound) <> \'POINT\'',
-                [$msgid]
+                array_merge($binds, [$msgid])
             );
         } catch (\Throwable $e) {
             Log::warning("ripple: inner bound derivation failed for msg {$msgid}: {$e->getMessage()}");
@@ -228,9 +265,17 @@ class ReachBoundsService
             return;
         }
 
-        // The exact geometry may live in rippling_reach_geom (content-addressed dedup).
-        $join = GeomShareService::joinSql('rippling_reach', 'polygon', 'g');
-        $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g');
+        // The exact geometry may live in rippling_reach_geom (content-addressed
+        // dedup); post-drop the source is the traced grid as a scratch param.
+        $src = $this->reachSource($msgid);
+        if ($src === null) {
+            $this->fallbackToEnvelope($msgid);
+
+            return;
+        }
+        $join = $src['join'];
+        $poly = $src['expr'];
+        $binds = $src['binds'];
 
         $derived = false;
         try {
@@ -241,7 +286,7 @@ class ReachBoundsService
                         inner_bound = ' . self::innerExpr($poly) . ',
                         updated_at = updated_at
                   WHERE msgid = ?',
-                [$msgid]
+                array_merge($binds, $binds, [$msgid])
             );
             $derived = true;
         } catch (\Throwable) {
@@ -300,9 +345,15 @@ class ReachBoundsService
      */
     private function verifySandwich(int $msgid): array
     {
-        // The exact geometry may live in rippling_reach_geom (content-addressed dedup).
-        $join = GeomShareService::joinSql('rippling_reach', 'polygon', 'g');
-        $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g');
+        // The exact geometry may live in rippling_reach_geom (content-addressed
+        // dedup); post-drop the source is the traced grid as a scratch param.
+        $src = $this->reachSource($msgid);
+        if ($src === null) {
+            return [0, 0];
+        }
+        $join = $src['join'];
+        $poly = $src['expr'];
+        $binds = $src['binds'];
 
         try {
             // keep-raw: ST_Contains sandwich verification; useReadPdo=false (own-write read)
@@ -311,7 +362,7 @@ class ReachBoundsService
                         (inner_bound IS NULL OR ST_Contains($poly, inner_bound)) AS i
                    FROM rippling_reach$join
                   WHERE msgid = ?",
-                [$msgid],
+                array_merge($binds, $binds, [$msgid]),
                 false
             )[0] ?? null;
 
@@ -357,6 +408,30 @@ class ReachBoundsService
     private function fallbackToEnvelope(int $msgid): void
     {
         try {
+            if (!LegacyGeometry::polygonReady()) {
+                // The grid's bounding box, straight from its header - the
+                // cell form of ST_Envelope, needing neither a trace nor the
+                // spatial server. No cells at all leaves the previous outer
+                // (safe-loose) and clears the inner.
+                $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+                $bbox = $cells === null || $cells === '' ? null : app(CellSetService::class)->boundsWkt($cells);
+                if ($bbox === null) {
+                    $this->nullInner($msgid);
+
+                    return;
+                }
+                // keep-raw: ST_GeomFromText SET expression; updated_at preserved deliberately
+                DB::update(
+                    'UPDATE rippling_reach
+                        SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL,
+                            updated_at = updated_at
+                      WHERE msgid = ?',
+                    [$bbox, $msgid]
+                );
+
+                return;
+            }
+
             // keep-raw: ST_Envelope over the deduped-or-local geometry; updated_at preserved deliberately
             DB::update(
                 'UPDATE rippling_reach' . GeomShareService::joinSql('rippling_reach', 'polygon', 'g') . '

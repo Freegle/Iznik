@@ -414,4 +414,271 @@ class CellSetService
 
         throw new \InvalidArgumentException('cellset: truncated varint');
     }
+
+    /**
+     * Trace the covered area's boundary back to a vector, via the spatial
+     * server (the ONE place that judgement lives, exactly like rasterize is
+     * the one boundary-to-cells point). $toleranceDegrees 0 keeps the exact
+     * lattice outline; positive values simplify for display. Returns
+     * ['wkt' => ..., 'geojson' => ...] or null on any failure - callers keep
+     * a vector-free fallback the same way rasterize's callers do.
+     */
+    public function vectorize(string $bytes, float $toleranceDegrees = 0): ?array
+    {
+        try {
+            $base = rtrim((string) config('freegle.spatial_server_url'), '/');
+            $url = $base . '/v1/reach/vectorize';
+            if ($toleranceDegrees > 0) {
+                $url .= '?tolerance=' . $toleranceDegrees;
+            }
+            $r = Http::timeout(10)
+                ->withBody($bytes, 'application/octet-stream')
+                ->post($url);
+            if (!$r->successful()) {
+                Log::warning('cellset: vectorize failed', ['status' => $r->status()]);
+
+                return null;
+            }
+            $out = $r->json();
+            if (!is_array($out) || !is_string($out['wkt'] ?? null) || $out['wkt'] === '') {
+                Log::warning('cellset: vectorize returned no boundary');
+
+                return null;
+            }
+
+            return ['wkt' => $out['wkt'], 'geojson' => $out['geojson'] ?? null];
+        } catch (\Throwable $e) {
+            Log::warning('cellset: vectorize request failed', ['error' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Which groups' areas does this grid touch, and is it entirely inside any
+     * of them - the cell form of the ST_Intersects/ST_Within pair the clip,
+     * the retraction pass and the crosspost count ask. Answered by the
+     * spatial server on the same lattice the reach itself uses. Returns a
+     * list of ['id' => int, 'within' => bool], or null on any failure so the
+     * caller can distinguish "touches no groups" from "could not ask".
+     */
+    public function groupsIntersecting(string $bytes): ?array
+    {
+        try {
+            $base = rtrim((string) config('freegle.spatial_server_url'), '/');
+            $r = Http::timeout(10)
+                ->withBody($bytes, 'application/octet-stream')
+                ->post($base . '/v1/groups/intersecting');
+            if (!$r->successful()) {
+                Log::warning('cellset: groups intersecting failed', ['status' => $r->status()]);
+
+                return null;
+            }
+            $out = $r->json();
+            if (!is_array($out) || !is_array($out['groups'] ?? null)) {
+                return null;
+            }
+            $groups = [];
+            foreach ($out['groups'] as $g) {
+                if (is_array($g) && isset($g['id'])) {
+                    $groups[] = ['id' => (int) $g['id'], 'within' => (bool) ($g['within'] ?? false)];
+                }
+            }
+
+            return $groups;
+        } catch (\Throwable $e) {
+            Log::warning('cellset: groups intersecting request failed', ['error' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /**
+     * The covered grid's bounding box as a POLYGON WKT, read from the header
+     * alone (no run-stream walk) - the cell form of ST_Envelope(polygon), for
+     * the bounds fallback ladder. Null on unusable bytes.
+     */
+    public function boundsWkt(string $bytes): ?string
+    {
+        try {
+            $h = $this->header($bytes);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $minLng = $h['minCol'] * self::CELL_DEGREES;
+        $minLat = $h['minRow'] * self::CELL_DEGREES;
+        $maxLng = ($h['minCol'] + $h['cols']) * self::CELL_DEGREES;
+        $maxLat = ($h['minRow'] + $h['rows']) * self::CELL_DEGREES;
+
+        return sprintf(
+            'POLYGON((%.10F %.10F,%.10F %.10F,%.10F %.10F,%.10F %.10F,%.10F %.10F))',
+            $minLng, $minLat, $maxLng, $minLat, $maxLng, $maxLat, $minLng, $maxLat, $minLng, $minLat
+        );
+    }
+
+    /**
+     * Every live post whose committed reach covers this point, as msgids from
+     * the spatial index - the same authority the feed, badge and search read,
+     * asked the same way RingIndex asks the ring question. Returns null on
+     * any failure (fail closed: the digest then mails nothing on the strength
+     * of a reach nobody could check). `partial` ids - legacy coarse-raster
+     * rows the index cannot decide exactly - are NOT included: treating an
+     * undecided post as unreached holds it for a later digest rather than
+     * mailing someone the site may turn away.
+     *
+     * @return array<int,int>|null
+     */
+    public function reachContaining(float $lat, float $lng): ?array
+    {
+        try {
+            $base = rtrim((string) config('freegle.spatial_server_url'), '/');
+            $r = Http::timeout(10)->get($base . '/v1/reach/containing', ['lng' => $lng, 'lat' => $lat]);
+            if (!$r->successful()) {
+                Log::warning('cellset: reach containing failed', ['status' => $r->status()]);
+
+                return null;
+            }
+            $in = $r->json('in');
+            if (!is_array($in)) {
+                return null;
+            }
+
+            return array_map('intval', $in);
+        } catch (\Throwable $e) {
+            Log::warning('cellset: reach containing request failed', ['error' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /**
+     * The greatest great-circle metres from an origin to any covered cell -
+     * the reach radius the digest score's 'close' term divides by, previously
+     * a walk of the polygon's WKT vertices. Streaming over the run stream: a
+     * covered run is a horizontal span of cells, and distance from a fixed
+     * origin along a fixed row is maximised at one of the span's two ends, so
+     * only run endpoints are ever measured. Allocates nothing. Null when the
+     * bytes are unusable.
+     */
+    public function maxDistanceMetresFrom(string $bytes, float $olng, float $olat): ?float
+    {
+        $walk = $this->walkRuns($bytes, function (int $row, int $startCol, int $endCol, array $h, float &$best) use ($olng, $olat) {
+            $lat = ($h['minRow'] + $row + 0.5) * self::CELL_DEGREES;
+            foreach ([$startCol, $endCol] as $col) {
+                $lng = ($h['minCol'] + $col + 0.5) * self::CELL_DEGREES;
+                $d = $this->haversineMetres($olat, $olng, $lat, $lng);
+                if ($d > $best) {
+                    $best = $d;
+                }
+            }
+        }, 0.0);
+
+        return $walk;
+    }
+
+    /**
+     * The least great-circle metres from a point to any covered cell: 0 when
+     * the point's own cell is covered, otherwise the distance to the nearest
+     * covered cell's centre - the cell form of ST_Distance(point, reach),
+     * which RippleReplyService uses to say how far outside the reach a held
+     * replier is. Exact at lattice resolution (~33m), well inside the miles
+     * rounding it feeds. Streaming, like maxDistanceMetresFrom: within one
+     * covered run the nearest cell to the point is at the clamped column, so
+     * each run costs O(1). Null when the bytes are unusable.
+     */
+    public function distanceToNearestCellMetres(string $bytes, float $plng, float $plat): ?float
+    {
+        // Inside a covered cell = distance zero, matching ST_Distance for a
+        // contained point (the walk below measures to cell CENTRES, so a
+        // point near its own cell's edge would otherwise read ~20m). Asked
+        // first: it is the common case on this path and far cheaper.
+        $inside = $this->containsEncoded($bytes, $plng, $plat);
+        if ($inside === null) {
+            return null;
+        }
+        if ($inside) {
+            return 0.0;
+        }
+
+        $pcol = (int) floor($plng / self::CELL_DEGREES);
+
+        $walk = $this->walkRuns($bytes, function (int $row, int $startCol, int $endCol, array $h, float &$best) use ($pcol, $plng, $plat) {
+            $col = max($h['minCol'] + $startCol, min($h['minCol'] + $endCol, $pcol));
+            $lat = ($h['minRow'] + $row + 0.5) * self::CELL_DEGREES;
+            $lng = ($col + 0.5) * self::CELL_DEGREES;
+            $d = $this->haversineMetres($plat, $plng, $lat, $lng);
+            if ($d < $best) {
+                $best = $d;
+            }
+        }, INF);
+
+        if ($walk === null || $walk === INF) {
+            return null;
+        }
+
+        return $walk;
+    }
+
+    /**
+     * Walk every covered run, calling $fn(rowLocal, startColLocal,
+     * endColLocal, header, &$acc) per run. Returns the accumulator, or null
+     * on unusable bytes. A run may span multiple rows in the raw stream;
+     * this splits those so $fn always sees one row's span.
+     */
+    private function walkRuns(string $bytes, callable $fn, float $initial): ?float
+    {
+        try {
+            $h = $this->header($bytes);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        $total = $h['cols'] * $h['rows'];
+        $pos = self::HEADER_SIZE;
+        $len = strlen($bytes);
+        $cur = false;
+        $seen = 0;
+        $acc = $initial;
+
+        try {
+            while ($seen < $total) {
+                [$run, $consumed] = $this->readVarint($bytes, $pos, $len);
+                $pos += $consumed;
+                if ($cur && $run > 0) {
+                    $start = $seen;
+                    $end = $seen + $run - 1;
+                    $row = intdiv($start, $h['cols']);
+                    $lastRow = intdiv($end, $h['cols']);
+                    while ($row <= $lastRow) {
+                        $s = $row === intdiv($start, $h['cols']) ? $start % $h['cols'] : 0;
+                        $e = $row === $lastRow ? $end % $h['cols'] : $h['cols'] - 1;
+                        $fn($row, $s, $e, $h, $acc);
+                        $row++;
+                    }
+                }
+                $seen += $run;
+                $cur = !$cur;
+            }
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($seen !== $total) {
+            return null;
+        }
+
+        return $acc;
+    }
+
+    /** Great-circle metres between two lat/lng points. */
+    private function haversineMetres(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $r = 6371000.0;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+        return 2 * $r * asin(min(1.0, sqrt($a)));
+    }
 }

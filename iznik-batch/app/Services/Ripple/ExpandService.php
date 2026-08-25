@@ -165,18 +165,31 @@ class ExpandService
             return null;
         }
 
+        // While overflow_bounds is still stored, the scalars
+        // (fairness_budget_min, bbox) live THERE only - mirroring them here
+        // would be two places to drift. Once that column is dropped this
+        // document is the only home they can have, so they ride along: the
+        // reuse guard needs fairness_budget_min and the digest's bbox
+        // prefilter needs bbox. Rows written before the drop lack them and
+        // degrade safely (reuse recomputes; the digest widens its prefilter).
+        $includeScalars = ! LegacyGeometry::overflowReady();
+
         $out = [];
         foreach ($bounds as $lane => $rings) {
             if (! is_array($rings)) {
-                continue; // fairness_budget_min, a scalar
+                if ($includeScalars) {
+                    $out[(string) $lane] = $rings; // fairness_budget_min, a scalar
+                }
+                continue;
+            }
+            if ($lane === 'bbox') {
+                if ($includeScalars) {
+                    $out['bbox'] = $rings; // four floats, not a lane
+                }
+                continue;
             }
             $converted = [];
             foreach ($rings as $band => $wkt) {
-                // The is_string test is what excludes `bbox`, which IS an array
-                // (four floats) and so gets this far: it contributes nothing,
-                // the lane ends up empty, and it is dropped below. Non-geometry
-                // members belong in overflow_bounds only - mirroring them here
-                // would be two places to drift.
                 if (! is_string($wkt) || $wkt === '') {
                     continue;
                 }
@@ -437,11 +450,16 @@ class ExpandService
         $q = DB::table('rippling_reach')
             ->select($cols)
             // The geometry may live in rippling_reach_geom (content-addressed dedup).
-            ->when(GeomShareService::ready(), fn ($qq) => $qq->leftJoin(
+            ->when(LegacyGeometry::polygonReady() && GeomShareService::ready(), fn ($qq) => $qq->leftJoin(
                 'rippling_reach_geom as gsh', 'gsh.hash', '=', 'rippling_reach.polygon_hash'
             ))
+            // Current footprint, for the crosspost-breadth stat: the legacy
+            // WKT while it exists, the stored grid afterwards (counted via
+            // the spatial server's groups-intersecting answer).
             // keep-raw: ST_AsText is a spatial function the builder cannot render
-            ->selectRaw('ST_AsText(' . GeomShareService::sourceExpr('rippling_reach', 'polygon', 'gsh') . ') AS cur_wkt')   // current footprint, for the crosspost-breadth stat
+            ->when(LegacyGeometry::polygonReady(), fn ($qq) => $qq->selectRaw(
+                'ST_AsText(' . GeomShareService::sourceExpr('rippling_reach', 'polygon', 'gsh') . ') AS cur_wkt'
+            ), fn ($qq) => $qq->addSelect('polygon_cells'))
             ->where('status', '!=', 'rejected')            // active reach rows only
             ->where('total_freeglers', '>', $target);      // only rows that can exceed the cap
         if ($onlyMsgid !== null) {
@@ -492,7 +510,12 @@ class ExpandService
             // vs under the CAPPED reach, counted with the SAME selection the live ripple
             // uses (rippleIntoNewGroups). Accumulated for both dry-run and live so a
             // dry-run reports the cap's headline impact on crossposting before any write.
-            $stats['groups_before'] += $this->countCrosspostGroups((string) $row->cur_wkt);
+            if (LegacyGeometry::polygonReady()) {
+                $stats['groups_before'] += $this->countCrosspostGroups((string) $row->cur_wkt);
+            } elseif (($row->polygon_cells ?? null) !== null) {
+                $before = $this->cellSets->groupsIntersecting($row->polygon_cells);
+                $stats['groups_before'] += $before === null ? 0 : count($before);
+            }
             $stats['groups_after'] += $this->countCrosspostGroups($storeWkt);
 
             if ($dryRun) {
@@ -515,15 +538,33 @@ class ExpandService
             $withOverflowCells = $this->overflowCellsColumnReady();
             $ovCellsSet = $withOverflowCells ? ', overflow_cells = ?' : '';
             // Hash from the polygon bytes this statement stores (SET is left to right);
-            // geom row upserted first because the FK insists.
-            $hashSet = GeomShareService::ready()
-                ? ', polygon_hash = ' . GeomShareService::hashOfColumnExpr('polygon')
-                : '';
-            if (GeomShareService::ready()) {
-                GeomShareService::upsertFromWkt($storeWkt);
+            // geom row upserted first because the FK insists. Cells-only era:
+            // the grid is the stored reach, bound as a plain parameter, and a
+            // failed rasterise SKIPS the row (this pass SHRINKS - writing a
+            // row whose new, smaller reach nobody can read would admit people
+            // the cap just excluded).
+            $withPolygon = LegacyGeometry::polygonReady();
+            $leadSet = 'polygon = ST_GeomFromText(?, ' . self::SRID . ')';
+            $lead = [$storeWkt];
+            $hashSet = '';
+            if ($withPolygon) {
+                $hashSet = GeomShareService::ready()
+                    ? ', polygon_hash = ' . GeomShareService::hashOfColumnExpr('polygon')
+                    : '';
+                if (GeomShareService::ready()) {
+                    GeomShareService::upsertFromWkt($storeWkt);
+                }
+            } else {
+                $cells = $this->cellSets->rasterize($storeWkt);
+                if ($cells === null) {
+                    $stats['skipped']++;
+                    continue;
+                }
+                $leadSet = 'polygon_cells = ?';
+                $lead = [$cells];
             }
             $shrinkSql = fn (string $set): string => 'UPDATE rippling_reach
-                    SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $hashSet . $set . ',
+                    SET ' . $leadSet . $hashSet . $set . ',
                         schedule = ?, reachable_group_ids = ?, total_freeglers = ?, max_drive_min = ?'
                         . $ovSet . $ovCellsSet . ',
                         updated_at = updated_at
@@ -538,16 +579,20 @@ class ExpandService
                 $row->msgid,
             ]);
             try {
-                DB::statement($shrinkSql($boundsSet), array_merge([$storeWkt], $boundsParams, $shrinkTail));
+                // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
+                DB::statement($shrinkSql($boundsSet), array_merge($lead, $boundsParams, $shrinkTail));
             } catch (\Throwable $e) {
                 if ($boundsSet === '') {
                     throw $e;
                 }
                 [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
-                DB::statement($shrinkSql($envSet), array_merge([$storeWkt], $envParams, $shrinkTail));
+                // keep-raw: envelope-fallback variant of the same spatial UPDATE
+                DB::statement($shrinkSql($envSet), array_merge($lead, $envParams, $shrinkTail));
             }
 
-            $this->writePolygonCells((int) $row->msgid, $storeWkt);
+            if ($withPolygon) {
+                $this->writePolygonCells((int) $row->msgid, $storeWkt);
+            }
 
             // Preserve any secondary-group "out of area" rejection clips (the clip
             // statement shrinks polygon and NULLs inner_bound atomically).
@@ -914,30 +959,44 @@ class ExpandService
         // and targeting already treats [] as unavailable - so retraction must never
         // act on it either, or one bad routing-side query would retract every copy
         // of the post. Polygon-based retraction still applies to such rows.
-        // The reach geometry may live in rippling_reach_geom (content-addressed dedup).
-        // Alias gsh, not g: `groups g` already owns that alias in this query.
-        $rrJoin = GeomShareService::joinSql('rr', 'polygon', 'gsh');
-        $rrPoly = GeomShareService::sourceExpr('rr', 'polygon', 'gsh');
-        $reachClause = $this->reachableGateEnabled()
-            ? "AND (NOT ST_Intersects(g.polyindex, $rrPoly)
-                    OR (rr.reachable_group_ids IS NOT NULL
-                        AND JSON_VALID(rr.reachable_group_ids)
-                        AND JSON_LENGTH(rr.reachable_group_ids) > 0
-                        AND NOT JSON_CONTAINS(rr.reachable_group_ids, CAST(g.id AS JSON))))"
-            : "AND NOT ST_Intersects(g.polyindex, $rrPoly)";
+        if (LegacyGeometry::polygonReady()) {
+            // The reach geometry may live in rippling_reach_geom (content-addressed dedup).
+            // Alias gsh, not g: `groups g` already owns that alias in this query.
+            $rrJoin = GeomShareService::joinSql('rr', 'polygon', 'gsh');
+            $rrPoly = GeomShareService::sourceExpr('rr', 'polygon', 'gsh');
+            $reachClause = $this->reachableGateEnabled()
+                ? "AND (NOT ST_Intersects(g.polyindex, $rrPoly)
+                        OR (rr.reachable_group_ids IS NOT NULL
+                            AND JSON_VALID(rr.reachable_group_ids)
+                            AND JSON_LENGTH(rr.reachable_group_ids) > 0
+                            AND NOT JSON_CONTAINS(rr.reachable_group_ids, CAST(g.id AS JSON))))"
+                : "AND NOT ST_Intersects(g.polyindex, $rrPoly)";
 
-        // keep-raw: ST_Intersects/ST_GeometryType spatial predicates - the builder cannot render these
-        $rows = DB::select(
-            "SELECT g.id
-               FROM messages_groups mg
-               JOIN `groups` g ON g.id = mg.groupid
-               JOIN rippling_reach rr ON rr.msgid = mg.msgid$rrJoin
-              WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
-                AND rr.status <> 'held'
-                AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'
-                " . $reachClause,
-            [$msgid]
-        );
+            // keep-raw: ST_Intersects/ST_GeometryType spatial predicates - the builder cannot render these
+            $rows = DB::select(
+                "SELECT g.id
+                   FROM messages_groups mg
+                   JOIN `groups` g ON g.id = mg.groupid
+                   JOIN rippling_reach rr ON rr.msgid = mg.msgid$rrJoin
+                  WHERE mg.msgid = ? AND mg.rippled_in = 1 AND mg.deleted = 0
+                    AND rr.status <> 'held'
+                    AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'
+                    " . $reachClause,
+                [$msgid]
+            );
+        } else {
+            // Cells-only era: "which groups does the reach still intersect"
+            // is answered by the spatial server on the same lattice the reach
+            // is stored on (CellSetService::groupsIntersecting). Failure
+            // retracts NOTHING - over-coverage for one more pass is visible
+            // and self-heals; retracting on a guess is not.
+            $rows = $this->outOfReachRippledGroupsFromCells($msgid);
+            if ($rows === null) {
+                $stats['retract_check_unavailable'] = ($stats['retract_check_unavailable'] ?? 0) + 1;
+
+                return 0;
+            }
+        }
 
         if ($dryRun) {
             $n = count($rows);
@@ -962,6 +1021,66 @@ class ExpandService
             }
         }
         return $retracted;
+    }
+
+    /**
+     * The cells-only form of retractOutOfReachCopies' candidate query: the
+     * post's rippled-in groups that its current grid no longer intersects
+     * (plus, with the reachable gate on, groups outside the node-reachable
+     * set - the same JSON rule as the SQL form, applied here in PHP). Returns
+     * null when the question cannot be answered (no cells, spatial down), and
+     * the caller retracts nothing.
+     *
+     * @return array<int,object>|null rows shaped {id: groupid}
+     */
+    private function outOfReachRippledGroupsFromCells(int $msgid): ?array
+    {
+        $rr = DB::table('rippling_reach')
+            ->where('msgid', $msgid)
+            ->where('status', '<>', 'held')
+            ->first(['polygon_cells', 'reachable_group_ids']);
+        if ($rr === null || $rr->polygon_cells === null) {
+            return $rr === null ? [] : null;
+        }
+
+        $intersecting = $this->cellSets->groupsIntersecting($rr->polygon_cells);
+        if ($intersecting === null) {
+            return null;
+        }
+        $stillCovered = [];
+        foreach ($intersecting as $g) {
+            $stillCovered[(int) $g['id']] = true;
+        }
+
+        $reachable = null;
+        if ($this->reachableGateEnabled() && is_string($rr->reachable_group_ids)) {
+            $decoded = json_decode($rr->reachable_group_ids, true);
+            // Same rule as the SQL form: an EMPTY set means "gate could not
+            // compute" and must never retract anything.
+            if (is_array($decoded) && $decoded !== []) {
+                $reachable = array_fill_keys(array_map('intval', $decoded), true);
+            }
+        }
+
+        $rippled = DB::table('messages_groups as mg')
+            ->join('groups as g', 'g.id', '=', 'mg.groupid')
+            ->where('mg.msgid', $msgid)
+            ->where('mg.rippled_in', 1)
+            ->where('mg.deleted', 0)
+            ->whereNotNull('g.polyindex')
+            ->pluck('g.id');
+
+        $rows = [];
+        foreach ($rippled as $gid) {
+            $gid = (int) $gid;
+            $gone = !isset($stillCovered[$gid])
+                || ($reachable !== null && !isset($reachable[$gid]));
+            if ($gone) {
+                $rows[] = (object) ['id' => $gid];
+            }
+        }
+
+        return $rows;
     }
 
     /**
@@ -1273,12 +1392,21 @@ class ExpandService
                     ? json_decode($e->overflow_bounds, true)
                     : null;
 
+                $reusedOverflowCells = $ovCellsCol !== '' && ! empty($e->overflow_cells)
+                    ? json_decode($e->overflow_cells, true)
+                    : null;
+
                 // A fairness ring computed under a DIFFERENT weight is not this post's ring,
                 // however co-located the two posts are - the same argument as the reach-budget
                 // guard above. Recompute rather than inherit a stretch nobody asked for.
-                if (is_array($reusedOverflow) && isset($reusedOverflow['fairness'])) {
-                    $storedBudget = isset($reusedOverflow['fairness_budget_min'])
-                        ? (float) $reusedOverflow['fairness_budget_min']
+                // The budget scalar lives in overflow_bounds while that column exists and in
+                // overflow_cells afterwards (see overflowCellsJson); a pre-drop cells doc has
+                // no scalar, so a cells-only row with a fairness ring and no recorded budget
+                // is recomputed rather than trusted.
+                $fairnessSource = is_array($reusedOverflow) ? $reusedOverflow : $reusedOverflowCells;
+                if (is_array($fairnessSource) && isset($fairnessSource['fairness'])) {
+                    $storedBudget = isset($fairnessSource['fairness_budget_min'])
+                        ? (float) $fairnessSource['fairness_budget_min']
                         : null;
                     $wantBudget = $this->reach->fairnessBudgetMinutes($ceiling);
                     if ($storedBudget === null || $wantBudget === null
@@ -1286,10 +1414,6 @@ class ExpandService
                         continue;
                     }
                 }
-
-                $reusedOverflowCells = $ovCellsCol !== '' && ! empty($e->overflow_cells)
-                    ? json_decode($e->overflow_cells, true)
-                    : null;
 
                 $scheduleByKey[$k] = [
                     'ticks' => $ticks,
@@ -1398,15 +1522,25 @@ class ExpandService
                     // themselves, so the two can never describe different shapes.
                     $withOverflowCells = $this->overflowCellsColumnReady();
                     $withHash = GeomShareService::ready();
+                    // Cells-only era (the legacy polygon columns are dropped):
+                    // the grid is the ONLY stored reach, carried as a plain
+                    // bind in the same statement as the derived bounds. All
+                    // the spatial algebra still happens - union, bounds
+                    // derivation - but on the SCRATCH WKT parameter, which is
+                    // never stored.
+                    $withPolygon = LegacyGeometry::polygonReady();
                     $overflowJson = $this->overflowJson($schedule);
                     $overflowCellsJson = $this->overflowCellsJson($schedule);
                     $poly = 'ST_GeomFromText(?, ' . self::SRID . ')';
-                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $withOverflow, $withOverflowCells, $withHash, $poly): string {
+                    $initSql = function (string $outerExpr, string $innerExpr) use ($ready, $withDensity, $withOverflow, $withOverflowCells, $withHash, $withPolygon, $poly): string {
                         // polygon_hash consumes a second bind of the same WKT: an INSERT
                         // column list cannot reference the sibling polygon column.
-                        $hCol = $withHash ? ', polygon_hash' : '';
-                        $hVal = $withHash ? ', ' . GeomShareService::hashOfWktExpr() : '';
-                        $hDup = $withHash ? ', polygon_hash = VALUES(polygon_hash)' : '';
+                        $pCol = $withPolygon ? ', polygon' : ', polygon_cells';
+                        $pVal = $withPolygon ? ', ' . $poly : ', ?';
+                        $pDup = $withPolygon ? ', polygon = VALUES(polygon)' : ', polygon_cells = VALUES(polygon_cells)';
+                        $hCol = $withPolygon && $withHash ? ', polygon_hash' : '';
+                        $hVal = $withPolygon && $withHash ? ', ' . GeomShareService::hashOfWktExpr() : '';
+                        $hDup = $withPolygon && $withHash ? ', polygon_hash = VALUES(polygon_hash)' : '';
                         $cols = $ready ? ', outer_bound, inner_bound' : '';
                         $vals = $ready ? ", $outerExpr, $innerExpr" : '';
                         $dup = $ready ? ', outer_bound = VALUES(outer_bound), inner_bound = VALUES(inner_bound)' : '';
@@ -1425,12 +1559,12 @@ class ExpandService
                             . ($withOverflowCells ? ', overflow_cells = VALUES(overflow_cells)' : '');
 
                         return 'INSERT INTO rippling_reach
-                           (msgid, lat, lng, polygon' . $hCol . $cols . ', arrival, mode, tick, total_ticks,
+                           (msgid, lat, lng' . $pCol . $hCol . $cols . ', arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
                             next_expansion_at, status' . $dCols . ', created_at, updated_at)
-                         VALUES (?, ?, ?, ' . $poly . $hVal . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
+                         VALUES (?, ?, ?' . $pVal . $hVal . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
-                            lat = VALUES(lat), lng = VALUES(lng), polygon = VALUES(polygon)' . $hDup . $dup . ',
+                            lat = VALUES(lat), lng = VALUES(lng)' . $pDup . $hDup . $dup . ',
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),
                             total_ticks = VALUES(total_ticks), total_freeglers = VALUES(total_freeglers),
                             max_drive_min = VALUES(max_drive_min), schedule = VALUES(schedule),
@@ -1447,15 +1581,27 @@ class ExpandService
                     ], $withDensity ? [$cap['band'], $cap['radius_miles'], $ceiling] : [],
                        $withOverflow ? [$overflowJson] : [],
                        $withOverflowCells ? [$overflowCellsJson] : []);
-                    $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $withHash, $poly): void {
-                        if ($withHash) {
+                    $initStore = function (string $wkt) use ($initSql, $initTail, $row, $lat, $lng, $ready, $withHash, $withPolygon, $poly): void {
+                        if ($withPolygon && $withHash) {
                             // Shared geom row first - the FK on polygon_hash insists. A crash
                             // between here and the upsert below just leaves an orphan geom row
                             // for ripple:gc-reach-geometry. Inside this closure so every
                             // undo-log-shrink retry upserts ITS OWN (simplified) bytes.
                             GeomShareService::upsertFromWkt($wkt);
                         }
-                        $head = array_merge([$row->msgid, $lat, $lng, $wkt], $withHash ? [$wkt] : []);
+                        if ($withPolygon) {
+                            $head = array_merge([$row->msgid, $lat, $lng, $wkt], $withHash ? [$wkt] : []);
+                        } else {
+                            // The grid is the only stored reach now, so a failed
+                            // rasterise must FAIL this store (the post keeps its
+                            // previous state and is retried next sweep) - it can
+                            // never write a row whose reach nobody can read.
+                            $cells = $this->cellSets->rasterize($wkt);
+                            if ($cells === null) {
+                                throw new \RuntimeException('rasterise failed; reach store left for the next pass');
+                            }
+                            $head = [$row->msgid, $lat, $lng, $cells];
+                        }
                         try {
                             // keep-raw: upsert with ST_GeomFromText/derived-bounds SQL expressions in the column list - the builder cannot render these
                             DB::statement(
@@ -1472,7 +1618,9 @@ class ExpandService
                                 array_merge($head, [$wkt], $initTail)
                             );
                         }
-                        $this->writePolygonCells((int) $row->msgid, $wkt);
+                        if ($withPolygon) {
+                            $this->writePolygonCells((int) $row->msgid, $wkt);
+                        }
                     };
                     $storeWkt = $this->storeWithUndoLogShrink($initStore, $storeWkt, (int) $row->msgid);
                     // Routing-provided bounds (tighter than derived) upgrade the columns,
@@ -1633,24 +1781,49 @@ class ExpandService
                     // is computed from the polygon bytes this same statement just stored -
                     // and it rides the polygon statement through advanceSplitForUndoLog
                     // (16 bytes of undo, nothing like the spatial columns that split).
-                    $hashSet = GeomShareService::ready()
+                    $withPolygon = LegacyGeometry::polygonReady();
+                    $hashSet = $withPolygon && GeomShareService::ready()
                         ? ', polygon_hash = ' . GeomShareService::hashOfColumnExpr('polygon')
                         : '';
-                    $advanceSql = fn (string $set): string => 'UPDATE rippling_reach
+                    // Cells-only era: the stored reach is the grid, bound as a
+                    // plain parameter; the WKT is scratch for the derived
+                    // bounds only. The undo-log split/shrink machinery below
+                    // is legacy-only by construction - a ~23KB grid plus
+                    // ~19KB bounds cannot approach the 16KB-per-column undo
+                    // page problem megabyte polygons had.
+                    $advanceSql = $withPolygon
+                        ? fn (string $set): string => 'UPDATE rippling_reach
                          SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $hashSet . $set . ',
+                             reachable_group_ids = COALESCE(?, reachable_group_ids),
+                             tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
+                         WHERE msgid = ?'
+                        : fn (string $set): string => 'UPDATE rippling_reach
+                         SET polygon_cells = ?' . $set . ',
                              reachable_group_ids = COALESCE(?, reachable_group_ids),
                              tick = ?, next_expansion_at = ?, status = ?, updated_at = NOW()
                          WHERE msgid = ?';
                     $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
-                    $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $row): void {
-                        if (GeomShareService::ready()) {
+                    $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $row, $withPolygon): void {
+                        if ($withPolygon && GeomShareService::ready()) {
                             GeomShareService::upsertFromWkt($wkt); // FK: geom row before its hash
+                        }
+                        if ($withPolygon) {
+                            $lead = [$wkt];
+                        } else {
+                            // A failed rasterise fails the advance: the post
+                            // keeps its previous reach and is retried next
+                            // sweep. Never write a reach nobody can read.
+                            $cells = $this->cellSets->rasterize($wkt);
+                            if ($cells === null) {
+                                throw new \RuntimeException('rasterise failed; advance left for the next pass');
+                            }
+                            $lead = [$cells];
                         }
                         [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
                         try {
                             try {
                                 // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
-                                DB::statement($advanceSql($boundsSet), array_merge([$wkt], $boundsParams, $advanceTail));
+                                DB::statement($advanceSql($boundsSet), array_merge($lead, $boundsParams, $advanceTail));
                             } catch (\Throwable $e) {
                                 // 1713 depends only on the OLD values of the updated
                                 // columns, so the envelope variant (same columns) can
@@ -1660,15 +1833,17 @@ class ExpandService
                                 }
                                 [$envSet, $envParams] = $this->boundsEnvelopeSql($wkt);
                                 // keep-raw: envelope-fallback variant of the same spatial UPDATE
-                                DB::statement($advanceSql($envSet), array_merge([$wkt], $envParams, $advanceTail));
+                                DB::statement($advanceSql($envSet), array_merge($lead, $envParams, $advanceTail));
                             }
                         } catch (\Throwable $e) {
-                            if (!$this->isUndoLogTooBig($e)) {
+                            if (!$withPolygon || !$this->isUndoLogTooBig($e)) {
                                 throw $e;
                             }
                             $this->advanceSplitForUndoLog($wkt, $advanceSql, $advanceTail, (int) $row->msgid);
                         }
-                        $this->writePolygonCells((int) $row->msgid, $wkt);
+                        if ($withPolygon) {
+                            $this->writePolygonCells((int) $row->msgid, $wkt);
+                        }
                     };
                     $storeWkt = $this->storeWithUndoLogShrink($advanceStore, $storeWkt, (int) $row->msgid);
                     // The polygon was just overwritten from the cached schedule, which does NOT
@@ -2542,15 +2717,32 @@ class ExpandService
                 // Polygon + derived bounds in ONE statement; envelope retry on throw.
                 [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
                 // Hash from the polygon bytes this statement stores (SET is left to
-                // right); geom row upserted first because the FK insists.
-                $hashSet = GeomShareService::ready()
-                    ? ', polygon_hash = ' . GeomShareService::hashOfColumnExpr('polygon')
-                    : '';
-                if (GeomShareService::ready()) {
-                    GeomShareService::upsertFromWkt($storeWkt);
+                // right); geom row upserted first because the FK insists. Cells-only
+                // era: the grid is the stored reach, and this pass RE-DERIVES (it
+                // may shrink), so a failed rasterise skips the row rather than
+                // writing a reach nobody can read.
+                $withPolygon = LegacyGeometry::polygonReady();
+                $leadSet = 'polygon = ST_GeomFromText(?, ' . self::SRID . ')';
+                $lead = [$storeWkt];
+                $hashSet = '';
+                if ($withPolygon) {
+                    $hashSet = GeomShareService::ready()
+                        ? ', polygon_hash = ' . GeomShareService::hashOfColumnExpr('polygon')
+                        : '';
+                    if (GeomShareService::ready()) {
+                        GeomShareService::upsertFromWkt($storeWkt);
+                    }
+                } else {
+                    $cells = $this->cellSets->rasterize($storeWkt);
+                    if ($cells === null) {
+                        $stats['skipped']++;
+                        continue;
+                    }
+                    $leadSet = 'polygon_cells = ?';
+                    $lead = [$cells];
                 }
                 $backfillSql = fn (string $set): string => 'UPDATE rippling_reach
-                        SET polygon = ST_GeomFromText(?, ' . self::SRID . ')' . $hashSet . $set . ',
+                        SET ' . $leadSet . $hashSet . $set . ',
                             schedule = ?, reachable_group_ids = ?,
                             total_freeglers = ?, max_drive_min = ?,
                             updated_at = updated_at
@@ -2563,15 +2755,19 @@ class ExpandService
                     $row->msgid,
                 ];
                 try {
-                    DB::statement($backfillSql($boundsSet), array_merge([$storeWkt], $boundsParams, $backfillTail));
+                    // keep-raw: UPDATE with ST_GeomFromText/derived-bounds SQL expressions in SET - the builder cannot render these
+                    DB::statement($backfillSql($boundsSet), array_merge($lead, $boundsParams, $backfillTail));
                 } catch (\Throwable $e) {
                     if ($boundsSet === '') {
                         throw $e;
                     }
                     [$envSet, $envParams] = $this->boundsEnvelopeSql($storeWkt);
-                    DB::statement($backfillSql($envSet), array_merge([$storeWkt], $envParams, $backfillTail));
+                    // keep-raw: envelope-fallback variant of the same spatial UPDATE
+                    DB::statement($backfillSql($envSet), array_merge($lead, $envParams, $backfillTail));
                 }
-                $this->writePolygonCells((int) $row->msgid, $storeWkt);
+                if ($withPolygon) {
+                    $this->writePolygonCells((int) $row->msgid, $storeWkt);
+                }
 
                 // Secondary "out of area" rejection clips must survive the rewrite
                 // (the clip statement shrinks polygon and NULLs inner_bound atomically).
@@ -2677,6 +2873,21 @@ class ExpandService
         if (!is_array($gids) || empty($gids)) {
             return;
         }
+
+        if (!LegacyGeometry::polygonReady()) {
+            // Cells-only era: the clip is pure grid arithmetic - fetch the
+            // row's grid, subtract each rejecting group's rasterised area,
+            // write the survivor back with the inner bound NULLed in the same
+            // statement (a stale inner could cheap-accept viewers in the
+            // clipped-out area; the outer stays a valid superset). On any
+            // failure the row is left UNCLIPPED and logged: over-reaching
+            // into a rejecting group is visible and retried next tick,
+            // where a wrong grid would silently misgate replies everywhere.
+            $this->reapplyClipsCellsOnly($msgid, array_map('intval', $gids));
+
+            return;
+        }
+
         // The polygon SHRINKS here: a stale inner bound could cheap-accept viewers in
         // the clipped-out area, so it is NULLed in the SAME statement. The outer bound
         // is left stale-loose (safe — the MBR/exact tests still decide correctly).
@@ -2744,6 +2955,67 @@ class ExpandService
             GeomShareService::upsertFromRow($msgid, 'polygon');
             GeomShareService::rehashFromRow($msgid, 'polygon');
         }
+    }
+
+    /**
+     * reapplyClips for the cells-only era: one read of the row's grid, one
+     * Subtract per rejecting group (each group's area rasterised once per run,
+     * cached), one write. A reach left wholly inside the union of its
+     * rejecting groups keeps an EMPTY grid rather than being deleted here -
+     * the advance that called this just wrote the row and owns its lifecycle;
+     * an empty grid admits nobody, which is the correct behaviour for a post
+     * every rejecting group has squeezed out.
+     *
+     * @param array<int,int> $gids
+     */
+    private function reapplyClipsCellsOnly(int $msgid, array $gids): void
+    {
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first(['polygon_cells']);
+        if ($row === null || $row->polygon_cells === null) {
+            return;
+        }
+
+        try {
+            $decoded = $this->cellSets->decode($row->polygon_cells);
+        } catch (\Throwable $e) {
+            Log::warning('ripple: reapplyClips could not decode stored cells; row left unclipped', [
+                'msgid' => $msgid, 'error' => $e->getMessage(),
+            ]);
+
+            return;
+        }
+
+        $clipped = false;
+        foreach ($gids as $gid) {
+            $gwkt = DB::table('groups')->where('id', $gid)->value(DB::raw('ST_AsText(polyindex)'));
+            if (!is_string($gwkt) || $gwkt === '' || str_starts_with($gwkt, 'POINT')) {
+                continue;
+            }
+            $groupCells = $this->rasterizedGroupCells($gid, $gwkt);
+            if ($groupCells === null) {
+                Log::warning('ripple: reapplyClips could not rasterise rejecting group; its clip skipped this tick', [
+                    'msgid' => $msgid, 'gid' => $gid,
+                ]);
+                continue;
+            }
+            try {
+                $decoded = $this->cellSets->subtract($decoded, $this->cellSets->decode($groupCells));
+                $clipped = true;
+            } catch (\Throwable $e) {
+                Log::warning('ripple: reapplyClips subtract failed; that clip skipped this tick', [
+                    'msgid' => $msgid, 'gid' => $gid, 'error' => $e->getMessage(),
+                ]);
+            }
+        }
+        if (!$clipped) {
+            return;
+        }
+
+        $update = ['polygon_cells' => $this->cellSets->encode($decoded)];
+        if ($this->bounds->ready()) {
+            $update['inner_bound'] = null;
+        }
+        DB::table('rippling_reach')->where('msgid', $msgid)->update($update);
     }
 
     /** Per-request cache: a rejecting group's own area is expensive to rasterise and does not change within one run. */

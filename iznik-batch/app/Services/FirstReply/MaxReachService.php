@@ -4,6 +4,7 @@ namespace App\Services\FirstReply;
 
 use App\Services\Ripple\CellSetService;
 use App\Services\Ripple\GeomShareService;
+use App\Services\Ripple\LegacyGeometry;
 use App\Services\Ripple\ReachService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -71,7 +72,12 @@ class MaxReachService
         return self::$cellsColumnExists;
     }
 
-    /** Has the max_polygon migration run? Everything here no-ops if not. */
+    /**
+     * Can a max reach be stored/read at all? Either era's column will do:
+     * max_polygon_cells is the stored form going forward, max_polygon the
+     * legacy geometry until the drop. Everything here no-ops if neither
+     * migration has run.
+     */
     public function available(): bool
     {
         if (self::$columnExists === null) {
@@ -82,7 +88,7 @@ class MaxReachService
             }
         }
 
-        return self::$columnExists;
+        return self::$columnExists || $this->cellsAvailable();
     }
 
     /** Test-only: forget the memoized column check. */
@@ -110,6 +116,27 @@ class MaxReachService
         }
 
         try {
+            if (!LegacyGeometry::polygonReady()) {
+                // Cells-only era: both the current and the eventual reach are
+                // answered from their stored grids, one keyed read, streaming
+                // probes, no geometry SQL anywhere. Undecidable bytes fail
+                // closed - the conservative default this gate has always had.
+                $row = DB::table('rippling_reach')
+                    ->select('polygon_cells', 'max_polygon_cells')
+                    ->where('msgid', $msgid)
+                    ->first();
+                if ($row === null) {
+                    return false;
+                }
+                if ($row->polygon_cells !== null
+                    && $this->cellSets->containsEncoded($row->polygon_cells, $lng, $lat) === true) {
+                    return true;
+                }
+
+                return $row->max_polygon_cells !== null
+                    && $this->cellSets->containsEncoded($row->max_polygon_cells, $lng, $lat) === true;
+            }
+
             $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
             // polygon may live in rippling_reach_geom (content-addressed
             // dedup); COALESCE reads the shared row when the hash points at
@@ -221,13 +248,27 @@ class MaxReachService
             return $stats;
         }
 
-        $rows = DB::table('rippling_reach')
+        // FORCE INDEX, because the planner's natural choice here is pathological
+        // (PR #1404, carried through the cells rewrite because the pathology is
+        // about the DRIVING index, not the columns tested). ORDER BY updated_at
+        // DESC LIMIT 200 makes it drive off rippling_reach_updated_at and filter
+        // each row - fine while there was a backlog, since the LIMIT was
+        // satisfied early. Once every expanding post has a max reach the
+        // predicate matches NOTHING, so it walks the WHOLE index to prove it:
+        // 55,990 row lookups in a ~50GB table, 2m09s on an idle db1, once a
+        // minute. Driving off status bounds it by the expanding rows (8.5k) and
+        // the same empty answer takes 5.3s. Measured 2026-08-24.
+        $rows = DB::query()
+            ->fromRaw('rippling_reach FORCE INDEX (rippling_reach_status_index)')
             ->select('msgid', 'lat', 'lng', 'schedule')
-            // "Lacks a max reach" means BOTH the blob and the hash are absent: after
-            // ripple:drain-deduped-blobs the blob is NULL while the hash still points
-            // at the shared geometry, and refilling such a row would undo the drain.
-            ->whereNull('max_polygon')
-            ->when(GeomShareService::ready(), fn ($q) => $q->whereNull('max_polygon_hash'))
+            ->when($this->cellsAvailable(), fn ($q) => $q->whereNull('max_polygon_cells'))
+            // Legacy era: "lacks a max reach" additionally means BOTH the blob and
+            // the hash are absent - after ripple:drain-deduped-blobs the blob is
+            // NULL while the hash still points at the shared geometry, and
+            // refilling such a row would undo the drain. Post-drop these columns
+            // are gone and the cells test above is the whole predicate.
+            ->when(LegacyGeometry::polygonReady(), fn ($q) => $q->whereNull('max_polygon'))
+            ->when(LegacyGeometry::polygonReady() && GeomShareService::ready(), fn ($q) => $q->whereNull('max_polygon_hash'))
             ->whereNotNull('schedule')
             // Only posts still expanding: a done post's current reach IS its
             // eventual reach, so no reply to it can be held inside max_polygon
@@ -317,10 +358,11 @@ class MaxReachService
             $row = DB::table('rippling_reach')
                 ->select('schedule')
                 ->where('msgid', $msgid)
-                // Same both-absent rule as populate(): a drained row still HAS a
-                // max reach, in rippling_reach_geom.
-                ->whereNull('max_polygon')
-                ->when(GeomShareService::ready(), fn ($q) => $q->whereNull('max_polygon_hash'))
+                // Same "lacks a max reach" rule as populate(), era for era: a
+                // drained row still HAS a max reach, in rippling_reach_geom.
+                ->when($this->cellsAvailable(), fn ($q) => $q->whereNull('max_polygon_cells'))
+                ->when(LegacyGeometry::polygonReady(), fn ($q) => $q->whereNull('max_polygon'))
+                ->when(LegacyGeometry::polygonReady() && GeomShareService::ready(), fn ($q) => $q->whereNull('max_polygon_hash'))
                 ->whereNotNull('schedule')
                 ->first();
 
@@ -456,6 +498,24 @@ class MaxReachService
      */
     private function storeMaxPolygon(int $msgid, string $wkt, ?int $cumulative): void
     {
+        if (!LegacyGeometry::polygonReady()) {
+            // Cells-only era: the grid IS the stored form, so a failed
+            // rasterise must not write anything - the row stays unfilled for
+            // the next pass, exactly like a failed routing call. (Contrast
+            // the legacy era below, where cells are best-effort because
+            // max_polygon carries the answer.)
+            $cells = $this->cellSets->rasterize($wkt);
+            if ($cells === null) {
+                throw new \RuntimeException('max reach rasterise failed; row left for the next pass');
+            }
+            DB::table('rippling_reach')->where('msgid', $msgid)->update([
+                'max_polygon_cells' => $cells,
+                'max_cumulative_users' => $cumulative,
+            ]);
+
+            return;
+        }
+
         $withHash = GeomShareService::ready();
         if ($withHash) {
             GeomShareService::upsertFromWkt($wkt);
@@ -472,9 +532,10 @@ class MaxReachService
         );
 
         // The compact cell-set form (plans/2026-08-24-rippling-reach-raster-
-        // storage.md), best-effort: a rasterise failure leaves the column
-        // NULL and every reader falls back to max_polygon exactly as before
-        // this existed - never a reason to fail the write that matters.
+        // storage.md), best-effort in THIS era only: a rasterise failure
+        // leaves the column NULL and every reader falls back to max_polygon
+        // exactly as before this existed - never a reason to fail the write
+        // that matters.
         if ($this->cellsAvailable()) {
             $cells = $this->cellSets->rasterize($wkt);
             if ($cells !== null) {

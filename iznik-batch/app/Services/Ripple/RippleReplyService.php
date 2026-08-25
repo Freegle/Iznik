@@ -319,6 +319,28 @@ class RippleReplyService
      */
     private function milesOutsideReach(int $msgid, float $lat, float $lng): ?float
     {
+        // The stored cell grid answers this with one keyed blob read and a
+        // streaming walk of its run stream (distance to the nearest covered
+        // cell, exact at the 33m lattice - noise against the miles this
+        // feeds): no megabyte polygon fetched, no ST_Distance. Rows the
+        // backfill has not reached fall through to the legacy geometry while
+        // its columns exist.
+        try {
+            $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+            if ($cells !== null && $cells !== '') {
+                $metres = app(CellSetService::class)->distanceToNearestCellMetres($cells, $lng, $lat);
+                if ($metres !== null) {
+                    return $metres / 1609.344;
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning("ripple: milesOutsideReach cells read failed for {$msgid}: {$e->getMessage()}");
+        }
+
+        if (!LegacyGeometry::polygonReady()) {
+            return null;
+        }
+
         try {
             // keep-raw: ST_Distance over the deduped-or-local geometry - the builder cannot render this
             $row = DB::selectOne(

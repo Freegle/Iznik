@@ -123,6 +123,14 @@ class ReachQueryService
                 return $this->isWithinOverflow($msgid, $lat, $lng, $band);
             }
 
+            if (!LegacyGeometry::polygonReady()) {
+                // Post-drop there is no polygon to fall back to: a row whose
+                // cells cannot answer gates on the rings alone, exactly as a
+                // definite "outside" would - the fail-closed direction for a
+                // reply gate (the release cron re-asks as the reach grows).
+                return $this->isWithinOverflow($msgid, $lat, $lng, $band);
+            }
+
             if ($this->boundsAvailable()) {
                 $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
                 // The exact geometry may live in rippling_reach_geom (content-addressed
@@ -375,10 +383,14 @@ class ReachQueryService
         }
 
         try {
+            // The authoritative lane list is overflow_bounds while it exists,
+            // overflow_cells afterwards - the cells mirror its JSON paths by
+            // design, so the question and its answers are identical.
+            $laneColumn = LegacyGeometry::overflowReady() ? 'overflow_bounds' : 'overflow_cells';
             $selects = [];
             $params = [];
             foreach ($paths as $i => $path) {
-                $selects[] = "JSON_CONTAINS_PATH(overflow_bounds, 'one', ?) AS p$i";
+                $selects[] = "JSON_CONTAINS_PATH($laneColumn, 'one', ?) AS p$i";
                 $params[] = $path;
             }
             $params[] = $msgid;
