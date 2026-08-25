@@ -479,49 +479,142 @@ work rather than by deciding not to.
     once Stage 2's basic column exists whether the extra table+FK is worth it at these
     sizes, rather than assuming yes by default.
 
-## Stage 3 (NOT STARTED) - iznik-spatial-go's main reach index still parses WKT
+## Stage 3 (REDESIGNED 2026-08-25, in progress) - stop storing the polygons at all
 
-The single read site this whole design exists for is not yet converted:
-`dataset_reach.go` (the `/v1/reach/containing` index behind
-`spatial.ReachContaining` - the reply gate, the nearby feed and the mail all call
-through it) still does `ST_AsText(polygon)` and a full WKT parse on every `Load`
-and `ApplyDelta`, exactly as it did before this design existed. `polygon_cells`
-and `max_polygon_cells` are both written by every post; neither is read here.
-`BuildRasterFromCellSet` already exists (built for this) and has exactly one
-caller today - `dataset_reachoverflow.go`'s per-lane rasters, from Stage 2 -
-proving the pattern works, not yet applied to the dataset it was written for.
+Edward's direction, replacing the earlier Stage 3 sketch (which only re-pointed the
+spatial index's build input and kept every polygon): the point of this design is disk,
+and a cell grid stored ALONGSIDE its polygon saves none. So the endgame is that
+`rippling_reach` stores NO fat geometry at all. `polygon`, `max_polygon` and
+`overflow_bounds` go; the cells columns become the only stored form; the spatial
+server answers containment on the grid; anything that genuinely needs a vector gets
+one traced from the cells on demand. PR #1403 (dedup maintenance schedule) is closed
+as obsolete; #1402's dedup machinery is unwound by this stage. #1402 merged to master
+2026-08-24, so this branch now targets master directly.
 
-This is deliberately its own stage, not folded into this PR, for one reason:
-`dataset_reach.go` is the driving index behind the 2026-08-21 outage (the one
-PR #1402's design doc keeps citing) - the single highest-traffic, highest-risk
-surface in this whole system, and everything shipped so far in Stages 0-2 is
-additive and low-risk by construction (a nullable column nobody has to read).
-Converting this dataset's Load/ApplyDelta is not: it changes what the busiest
-read path in the system does on every request. It deserves its own PR, its own
-review, and a rollback plan that does not ride on anything else in this one.
+### What goes, what stays
 
-Shape of the work, sketched but not built:
-  - `Load`/`ApplyDelta` prefer `polygon_cells`/`max_polygon_cells` when present
-    (decode -> `BuildRasterFromCellSet`), falling back to the existing
-    `ST_AsText` + `BuildRasterDim` path when absent - per row, exactly the
-    per-lane fallback `ringRasterFor` already proves in dataset_reachoverflow.go.
-  - The coarse raster's contract (in/partial/out) does not change; only where
-    it is built FROM changes.
-  - Needs its own before/after agreement measurement at real scale (mirroring
-    this design's own 40,401-probe parity check), specifically re-run against
-    THIS index's real load, not assumed from Stage 2's rings measurement.
-  - Needs the backfill commands (`ripple:backfill-reach-cells`,
-    `ripple:backfill-max-reach-cells`) to have actually reached a meaningful
-    fraction of live rows first, or this converts almost nothing on day one.
+Goes: `polygon` (+ its R-tree `rippling_reach_polygon`), `max_polygon`,
+`overflow_bounds`, `polygon_hash`, `max_polygon_hash`, both FKs, the whole
+`rippling_reach_geom` table, `GeomShareService` (PHP), `rippling/geomshare.go` (Go),
+the dedup/drain/GC/verify commands, the Douglas-Peucker simplify-on-oversize ladder
+and the split-advance two-spatial-index workaround in ExpandService (cells are 22KB
+and there is only one spatial-indexed column left to update, so neither problem can
+recur), `ripple:shrink-overflow-bounds` and the WKT `ripple:backfill-rings`.
 
-## Not doing (out of scope, decided or re-confirmed this session)
+Stays, deliberately:
+  - `outer_bound` (NOT NULL, R-tree) and `inner_bound`. These are NOT envelopes:
+    outer = `ST_Buffer(ST_Simplify(polygon, 0.002), 0.002)`, inner the negative
+    buffer (ReachBoundsService). ~19KB a row, they are the R-tree access path for
+    every SQL-side prefilter and the cheap-decide ladder, and at these sizes they
+    are noise next to what is being removed. The sandwich contract
+    (outer ⊇ reach ⊇ inner) is unchanged.
+  - `lat`/`lng`, `status`, `schedule`, tick bookkeeping - untouched.
+  - `has_overflow` - regenerated FROM `overflow_cells` instead of `overflow_bounds`
+    (DDL: drop and re-add the generated column and its index; it is VIRTUAL, small).
+  - MySQL stays the system of record for the cells bytes; spatial algebra on scratch
+    WKT params (never stored) remains allowed, e.g. deriving outer/inner in the same
+    statement that writes a tick, from the WKT the routing server just returned.
 
-  - Adaptive/bounded-size grids (like `raster.go`'s own 96x96 cap) for the CANONICAL
-    stored form - that trades accuracy for a size cap, and the size problem is already
-    solved by RLE at a FIXED fine resolution (45x measured); a size cap would only
-    matter for enormous reaches, better handled case-by-case if one is ever observed
-    rather than designed in up front.
-  - Storing CellSets outside MySQL (object storage, a dedicated KV store). MySQL
-    remains the system of record - Galera replication, backups, point-in-time
-    recovery, the FK cascade from `messages` all keep working unchanged. Only the
-    COMPUTATION moves out of MySQL, never the storage of record.
+### Where each question is answered afterwards
+
+One writer rule is unchanged: boundary -> cells happens only in spatial-go
+(`POST /v1/reach/rasterize`). Fixed-format arithmetic on the bytes (probe, subtract,
+encode, and the new streaming measures below) may be duplicated per language.
+
+| Question | Today (this branch) | Endgame |
+|---|---|---|
+| Reply gate "is this point in reach" (PHP ReachQueryService, Go chat gate) | cells probe, polygon fallback | cells probe; fallback only while the column still exists (guarded), then none |
+| Max-reach passthrough gate | cells probe, max_polygon fallback | same treatment |
+| Feed universe (isochrone/message.go fetchReachCandidates) | SQL sandwich + exact ST_Contains (the 2026-08-21 query) | spatial server id-list (badge pattern, SPATIAL_REACH_MODE made always-on); degraded mode below |
+| Badge (reachspatial.go) | id-list, `partial` resolved by SQL exact test | id-list, `partial` gone (fine grid decides exactly); legacy partial resolved by fetching cells + probe |
+| Search reach arm (message/search.go) | outer_bound + polygon ST_Contains driving the polygon R-tree | msgid IN (spatial id-list), outer_bound conjunct kept as belt |
+| Digest recipient selection (one message, many member points) | ST_Contains(mr.polygon, point) per member in SQL | NEW `POST /v1/reach/admits` (msgid + points -> admitted keys), mirroring /v1/reachoverflow/admits which the digest already calls fail-closed; outer_bound prefilter kept in SQL |
+| Digest unmailed gate (one recipient, many messages) | correlated sandwich EXISTS + exact | id-list from /v1/reach/containing spliced in, exactly as ringRescueIds already splices ring admissions |
+| Digest reach radius (score denominator) | ST_AsText(polygon) + vertex walk in PHP | streaming `MaxDistanceFrom(origin)` over the run stream (touches run endpoints only, no decode); PHP port, deterministic arithmetic |
+| milesOutsideReach (RippleReplyService) | ST_Distance on re-tagged polygon | streaming `DistanceToNearestCell`: min point-to-run-segment over runs, O(runs), exact at lattice resolution (33m, well inside the miles rounding it feeds) |
+| Map overlay: reach GeoJSON (message/reach.go) | ST_AsGeoJSON(polygon, 5) | NEW `POST /v1/reach/vectorize` (cells -> simplified MULTIPOLYGON, tolerance param): marching-squares trace ported from routing-go + DP simplify, ONE implementation |
+| Map overlay: ring GeoJSON per lane | ST_AsGeoJSON(ST_Simplify(GeomFromText(ring))) | vectorize per lane from overflow_cells |
+| Group-intersect tests (clip eligibility, retraction, crosspost count, origin-inside) | ST_Intersects(reach polygon, g.polyindex) | rasterize the group's polyindex (scratch, already done in the Go clip) + grid ops: Intersects = any common cell, Within = A subset of B; pure cell arithmetic |
+| Rejection clip | ST_Difference in SQL + cells Subtract alongside | cells Subtract ONLY, then re-derive outer/inner from vectorize(clipped cells) via the existing outerExpr/innerExpr on the scratch WKT |
+| outer/inner derivation at tick write | outerExpr/innerExpr over the polygon being written | same expressions over the routing WKT as a scratch param in the same statement; the WKT is in hand every place the polygon used to be written |
+| spatial-go reach index build (dataset_reach.go) | ST_AsText + WKT parse + 96-cell raster per row | read polygon_cells, store the cells as the item blob, probe the run stream at query time: EXACT, `partial` ceases to exist; per-row fallback to the WKT path while the column survives |
+| Reach envelope shipped to the feed client (reach_wkt x3 sites) | ST_AsText(ST_Envelope(polygon)) | ST_AsText(ST_Envelope(outer_bound)): display-only, 0.002 deg wider, still one small expression per row |
+
+### Failure/degraded modes (the polygon fallback no longer exists)
+
+  - Writes: rasterize is now load-bearing on the tick path. A failed rasterize FAILS
+    the tick advance (post keeps its previous reach, retried next sweep) - it must
+    never write a row with NULL cells, because NULL no longer means "read the
+    polygon", it means the post has no reach. Reach growth pausing while spatial-go
+    is down is acceptable (half-hourly cadence, resumable); a reach silently
+    vanishing is not.
+  - Feed/search/badge with spatial-go down: outer_bound-superset candidates from SQL,
+    exactness restored by probing polygon_cells for JUST the returned page (~20 rows,
+    ~450KB blob fetch, 0.002ms/probe). Bounded, correct, slower - a degraded mode,
+    not a second authority.
+  - Digest: /v1/reach/admits fails CLOSED like RingIndex::admits (nobody admitted
+    beats mailing someone the site would turn away).
+  - Corrupt cells bytes: the probe's "cannot answer" return now surfaces as
+    not-in-reach plus a logged error (fail closed), not as a polygon retry.
+
+### Schema and rollout (one PR, two-state code, operator-ordered DDL)
+
+The code ships column-existence-guarded (the codebase's existing pattern:
+Schema::hasColumn memoized in PHP, GeomShareReady/ReachBoundsReady-style
+one-shot checks in Go): with the old columns present it still writes/reads
+them as fallback; with them absent every fallback branch is dead. Dev/CI
+migrations DROP the columns, so CI proves the post-drop world; prod keeps them
+until the operator runs the drop DDL. Order on prod:
+
+  1. Merge + deploy (batch bind-mount, apiv2, spatial-go). New rows now carry cells.
+  2. Run the backfills to 100%: ripple:backfill-reach-cells,
+     ripple:backfill-max-reach-cells, ripple:backfill-ring-cells. They read the old
+     columns (COALESCE through the geom table for drained rows), so they run BEFORE
+     any drop. They refuse politely post-drop.
+  3. Verify coverage (the drop SQL's own guard re-checks: it refuses while any live
+     row has NULL polygon_cells).
+  4. Run the idempotent drop SQL: drop FKs, hash columns, R-tree, polygon,
+     max_polygon, overflow_bounds, regenerate has_overflow, drop rippling_reach_geom.
+     DROP COLUMN rebuilds the table INPLACE, which is what finally returns the
+     ~50GB .ibd (plus ~19.4GB/node rippling_reach_geom) to the OS.
+  5. A later trivial PR deletes the then-dead fallback guards.
+
+Steady-state size afterwards, rough: ~154k rows x (cells ~23KB + outer ~19KB +
+inner + meta) plus overflow_cells (unmeasured on real rings, see Stage 2 caveat):
+order 10-15GB against the ~185GB the un-deduped model was heading for.
+
+### Interactions with open PRs
+
+  - #1404 (FORCE INDEX in MaxReachService::populate): the pathology survives the
+    column swap ("lacks a max reach" becomes max_polygon_cells IS NULL and still
+    matches nothing once caught up), so the rewrite here carries the same
+    FORCE INDEX (rippling_reach_status_index) and comment; whichever merges second
+    resolves trivially. The suggested composite becomes (status) alone - a blob
+    column cannot usefully join it.
+
+### Test/measurement obligations before this stage is called done
+
+  - Both suites green via the status API with the columns DROPPED in the test schema
+    (fixtures/factories that wrote polygon write cells; golden vectors unchanged).
+  - Feed parity: id-list universe vs the old SQL universe on real viewer points,
+    mirroring the 40,401-probe methodology; zero membership disagreements expected
+    (both derive from the same cells).
+  - Vectorize round-trip: rasterize(vectorize(cells)) == cells on real grids
+    (the trace must not lose cells at this resolution).
+  - EXPLAIN on the rewritten feed/search/digest queries on the dev DB: the id-list
+    shapes must stay keyed lookups (the 2026-08-21 regression shape is an EXISTS
+    that decorrelates the id list - see isochrone/reachspatial.go's comment).
+  - Perf spot-checks: digest recipient pass per message, reply gate, map overlay
+    endpoint, tick advance including the rasterize round trip.
+
+## Not doing (out of scope, decided or re-confirmed)
+
+  - Adaptive/bounded-size grids for the canonical stored form (fixed fine lattice
+    is the design; RLE already solved size).
+  - Storing CellSets outside MySQL. Only computation moves out of MySQL, never the
+    storage of record.
+  - Content-hash dedup on CellSets (the earlier future-idea bullet): dead, the
+    polygons it would dedup are being removed instead, and 23KB rows do not earn a
+    hash table + FK.
+  - Emitting cells directly from routing-go (variable-resolution grids break the
+    global lattice; re-confirmed, see the Stage 2 exploration notes above).
