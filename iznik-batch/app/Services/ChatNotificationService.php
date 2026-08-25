@@ -274,6 +274,42 @@ class ChatNotificationService
                         'to_user' => $sendingTo->id,
                     ]);
                 } else {
+                    // CLAIM BEFORE SENDING. This used to send first and advance the
+                    // watermark afterwards, which is only safe if the second write
+                    // cannot fail. It can: on 2026-08-24, while db3 was desynced for a
+                    // table rebuild and ~1,800 commits were blocked, the mail went out
+                    // and the watermark write timed out, so every subsequent run found
+                    // the same message unnotified and sent it again. Two members
+                    // received the same notification 258 and 247 times in 50 minutes.
+                    //
+                    // Advancing the watermark first inverts the failure mode. A
+                    // conditional UPDATE is the claim: it only moves lastmsgemailed
+                    // forward from below this message, so two concurrent runs cannot
+                    // both claim it, and a claim that affects no rows means someone
+                    // else already has it. If the claim times out we send nothing.
+                    //
+                    // That trade is deliberate: the cost of a lost claim is ONE missed
+                    // notification, which the unread catch-up summary already covers,
+                    // against hundreds of duplicates for the same member. Prefer
+                    // at-most-once wherever the side effect leaves our control.
+                    $claimed = ChatRoster::where('chatid', $chatRoom->id)
+                        ->where('userid', $sendingTo->id)
+                        ->where(function ($q) use ($message) {
+                            $q->whereNull('lastmsgemailed')
+                                ->orWhere('lastmsgemailed', '<', $message->id);
+                        })
+                        ->update([
+                            // lastmsgnotified is used by V1's push notification cron
+                            // (notification_chaseup.php) to avoid re-notifying users for
+                            // messages already handled by email.
+                            'lastmsgemailed' => $message->id,
+                            'lastmsgnotified' => $message->id,
+                        ]);
+
+                    if (! $claimed) {
+                        continue;
+                    }
+
                     // Send the notification email.
                     $this->sendNotificationEmail(
                         $sendingTo,
@@ -282,14 +318,6 @@ class ChatNotificationService
                         $message,
                         $chatType
                     );
-
-                    // Update roster with last message emailed and notified.
-                    // lastmsgnotified is used by V1's push notification cron (notification_chaseup.php)
-                    // to avoid re-notifying users for messages already handled by email.
-                    $roster->update([
-                        'lastmsgemailed' => $message->id,
-                        'lastmsgnotified' => $message->id,
-                    ]);
 
                     // Update message mailedtoall if all members have been notified.
                     $this->updateMailedToAll($message);
