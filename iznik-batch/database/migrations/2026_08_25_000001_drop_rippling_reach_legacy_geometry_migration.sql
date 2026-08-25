@@ -21,7 +21,14 @@
 --   2. rippling_reach_geom last, once nothing references it.
 --
 -- After this, restart the Go API, spatial servers and batch workers so their
--- memoized era guards (LegacyPolygonReady etc.) re-read the schema.
+-- memoized era guards (LegacyPolygonReady etc.) re-read the schema. That
+-- restart is REQUIRED, not tidy-up: the guards are resolved once per process,
+-- so a worker started before the drop still believes the columns exist and
+-- will name them until it is restarted. The statements below also drop
+-- overflow_bounds BEFORE polygon, so between those two a process holds one
+-- guard true and the other false - which every reader tolerates (they are
+-- separate guards precisely so that window is coherent) but which is another
+-- reason not to leave old processes running across the drop.
 
 -- 0. Coverage guard. This MUST stop the script, not merely warn: a live row
 --    with no polygon_cells has no reach at all after this file runs, and

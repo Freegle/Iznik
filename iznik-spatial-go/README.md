@@ -28,8 +28,8 @@ The index is rebuilt from MySQL and kept in sync. Eight datasets are served:
 | `userapproxlocs` | Point | `users_approxlocs` | `position` | full rebuild every 15 min (no incremental) |
 | `groups` | Polygon | `groups` | `polyindex` | full rebuild every 15 min (no incremental) |
 | `jobs` | Polygon | `jobs` | `geometry` | incremental on `jobs.seenat`; nightly full rebuild |
-| `reach` | Polygon (rasterised) | `rippling_reach` | `polygon` | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn |
-| `reachoverflow` | Polygon (rasterised) | `rippling_reach` | `overflow_bounds` JSON, one ring per lane | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn. **Ids are packed**: `msgid << 4 \| lane code`, so one index answers a per-lane question — see `dataset_reachoverflow.go` |
+| `reach` | Cell grid | `rippling_reach` | `polygon_cells` (the legacy `polygon` while it still exists, per row) | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn — **exactly** from a cell grid, so `partial` is only ever returned for a row still on the legacy geometry |
+| `reachoverflow` | Cell grid | `rippling_reach` | `overflow_cells` JSON, one ring per lane (the legacy `overflow_bounds` while it still exists, per lane) | incremental on `updated_at` every 2 min + reconcile; daily full rebuild. Answers `/containing`, not knn. **Ids are packed**: `msgid << 4 \| lane code`, so one index answers a per-lane question — see `dataset_reachoverflow.go` |
 
 Both rasterised datasets classify a query point from a 2-bit-per-cell grid over
 each geometry's bbox, so only the thin boundary band needs the exact geometry.

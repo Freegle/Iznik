@@ -126,8 +126,9 @@ class BackfillReachCellsCommand extends Command
 
             if ($row->wkt === null) {
                 // The join found no shared row and the blob is a sentinel or
-                // gone - a dangling hash. ripple:verify-geometry-dedup's job,
-                // not this command's; leave it and move on.
+                // gone - a dangling hash left behind by the retired dedup
+                // layer. Not this command's job; leave it and move on (the
+                // drop removes the hash columns entirely).
                 $skipped++;
 
                 continue;
