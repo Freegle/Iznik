@@ -164,14 +164,19 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 		}
 	}
 
-	// max_polygon is populated by the firstreply:maxreach batch pass and is NULL
-	// until it gets there (and on any deploy that predates the migration), so a
-	// missing column or value degrades to the existing hold behaviour. The
-	// geometry may live in rippling_reach_geom (content-addressed dedup,
+	// Legacy geometry fallback, only while the max_polygon column exists: it
+	// is populated by the firstreply:maxreach batch pass and is NULL until it
+	// gets there, so a missing value degrades to the existing hold behaviour.
+	// The geometry may live in rippling_reach_geom (content-addressed dedup,
 	// plans/2026-08-23-rippling-reach-polygon-dedup.md): COALESCE reads the
 	// shared row when max_polygon_hash points at one, the local blob otherwise;
 	// "IS NOT NULL" tests the SAME expression so it keeps meaning "a max reach
-	// is known" after the drain, which NULLs the blob but not the hash.
+	// is known" after the drain, which NULLs the blob but not the hash. Once
+	// the columns are dropped a row without usable cells simply holds the
+	// reply - the conservative default this gate has always had.
+	if !rippling.LegacyPolygonReady(db) {
+		return false
+	}
 	share := rippling.GeomShareReady(db)
 	maxPoly := rippling.GeomExpr(share, "rippling_reach", "max_polygon", "g")
 	var within int

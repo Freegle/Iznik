@@ -310,3 +310,55 @@ func readCellSetVarint(b []byte) (v uint64, n int, err error) {
 	}
 	return 0, 0, fmt.Errorf("truncated varint")
 }
+
+// Intersects reports whether the two grids share at least one covered cell -
+// the cell form of ST_Intersects(reach, area). Like Subtract, plain bit
+// arithmetic on the fixed shared lattice: one possible answer, safe to exist
+// per language (see the package comment for what is NOT safe to duplicate).
+func (cs *DecodedCellSet) Intersects(other *DecodedCellSet) bool {
+	for row := uint32(0); row < cs.rows; row++ {
+		globalRow := cs.minRow + int32(row)
+		otherRow := globalRow - other.minRow
+		if otherRow < 0 || uint32(otherRow) >= other.rows {
+			continue
+		}
+		for col := uint32(0); col < cs.cols; col++ {
+			if !cs.getCell(col, row) {
+				continue
+			}
+			globalCol := cs.minCol + int32(col)
+			otherCol := globalCol - other.minCol
+			if otherCol < 0 || uint32(otherCol) >= other.cols {
+				continue
+			}
+			if other.getCell(uint32(otherCol), uint32(otherRow)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Within reports whether every covered cell of cs is also covered by other -
+// the cell form of ST_Within(reach, area). An empty grid is vacuously within.
+func (cs *DecodedCellSet) Within(other *DecodedCellSet) bool {
+	for row := uint32(0); row < cs.rows; row++ {
+		globalRow := cs.minRow + int32(row)
+		otherRow := globalRow - other.minRow
+		outsideRow := otherRow < 0 || uint32(otherRow) >= other.rows
+		for col := uint32(0); col < cs.cols; col++ {
+			if !cs.getCell(col, row) {
+				continue
+			}
+			if outsideRow {
+				return false
+			}
+			globalCol := cs.minCol + int32(col)
+			otherCol := globalCol - other.minCol
+			if otherCol < 0 || uint32(otherCol) >= other.cols || !other.getCell(uint32(otherCol), uint32(otherRow)) {
+				return false
+			}
+		}
+	}
+	return true
+}

@@ -2679,6 +2679,16 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 		Where("msgid = ? AND (rejected_groups IS NULL OR JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) = 0)", msgid, gid).
 		Update("rejected_groups", gorm.Expr("JSON_ARRAY_APPEND(COALESCE(rejected_groups, JSON_ARRAY()), '$', ?)", gid))
 
+	// Cells-only era: once the legacy polygon is dropped the whole clip is
+	// grid arithmetic - read the row's cells and the group's area, subtract,
+	// write back (or delete the row when nothing remains). The sandwich inner
+	// bound is NULLed for the same reason as the legacy path below; the outer
+	// bound stays stale-loose, a still-valid superset of the SHRUNK reach.
+	if !rippling.LegacyPolygonReady(db) {
+		clipReachCellsOnly(db, msgid, gid)
+		return
+	}
+
 	// Trim where the reach extends beyond the rejected group (skip the wholly-within
 	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
 	// The polygon SHRINKS: a stale sandwich inner bound could keep cheap-accepting
@@ -2808,6 +2818,68 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
 			"AND ST_Within("+poly+", g.polyindex)", msgid).
 		Delete(nil)
+}
+
+// clipReachCellsOnly is ClipReachForRejectedGroup for the cells-only era: no
+// stored polygon exists, so the clip is Subtract over two grids on the shared
+// lattice. The group's area is rasterised by the spatial server (the one
+// rasteriser); on any failure the reach is left UNCLIPPED and the failure
+// logged - over-reaching into a group that rejected the post is visible and
+// recoverable, where writing a wrong or empty grid would silently change who
+// may reply everywhere.
+func clipReachCellsOnly(db *gorm.DB, msgid, gid uint64) {
+	var row struct {
+		Cells    []byte  `gorm:"column:cells"`
+		GroupWkt *string `gorm:"column:group_wkt"`
+	}
+	if err := db.Table("rippling_reach mr").
+		Joins("JOIN `groups` g ON g.id = ?", gid).
+		Select("mr.polygon_cells AS cells, ST_AsText(g.polyindex) AS group_wkt").
+		Where("mr.msgid = ? AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'", msgid).
+		Scan(&row).Error; err != nil {
+		log.Printf("clip cells: fetch failed for msgid=%d gid=%d: %v", msgid, gid, err)
+		return
+	}
+	if row.GroupWkt == nil {
+		// No reach row, or the group has no usable area: nothing to clip.
+		return
+	}
+	if len(row.Cells) == 0 {
+		log.Printf("clip cells: msgid=%d has no stored cells; reach left unclipped for gid=%d", msgid, gid)
+		return
+	}
+	groupBytes, err := spatial.RasterizeWKT(*row.GroupWkt)
+	if err != nil {
+		log.Printf("clip cells: rasterise group %d failed: %v", gid, err)
+		return
+	}
+	reach, err := rippling.DecodeCellSet(row.Cells)
+	if err != nil {
+		log.Printf("clip cells: msgid=%d stored cells unreadable: %v", msgid, err)
+		return
+	}
+	group, err := rippling.DecodeCellSet(groupBytes)
+	if err != nil {
+		log.Printf("clip cells: group %d cells unreadable: %v", gid, err)
+		return
+	}
+
+	if !reach.Intersects(group) {
+		return
+	}
+	if reach.Within(group) {
+		// Nothing valid remains: drop the reach row, exactly as the legacy
+		// path's wholly-within DELETE did.
+		db.Table("rippling_reach").Where("msgid = ?", msgid).Delete(nil)
+		return
+	}
+
+	clipped := reach.Subtract(group).Encode()
+	set := map[string]interface{}{"polygon_cells": clipped}
+	if rippling.ReachBoundsReady(db) {
+		set["inner_bound"] = gorm.Expr("NULL")
+	}
+	db.Table("rippling_reach").Where("msgid = ?", msgid).Updates(set)
 }
 
 // RecordRippleEvent bumps the per-day counter for a rippling-out event (design §15/§16 —
