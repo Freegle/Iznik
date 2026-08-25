@@ -52,6 +52,15 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
     public ?Message $refMessage;
 
     /**
+     * Distinct ids of Offer/Wanted posts referenced anywhere in this chat,
+     * newest first. Lazily built by getChatRefMsgIds(); the Symfony-message
+     * callback can run more than once per mailable, so this must not re-query.
+     *
+     * @var int[]|null
+     */
+    protected ?array $chatRefMsgIds = NULL;
+
+    /**
      * Whether this is a "waiting for reply" chase-up of an expected reply.
      * When TRUE the subject is prefixed with "WAITING FOR REPLY: " to match
      * the legacy V1 PHP ChatRoom::chaseupExpected() behaviour.
@@ -527,9 +536,15 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
             // carried two conflicting List-Unsubscribe headers, one of which answered
             // "stop emailing me about chats" by removing the member's account.
 
-            // Add referenced message IDs if available.
-            if ($this->refMessage) {
-                $headers->addTextHeader('X-Freegle-Msgids', (string) $this->refMessage->id);
+            // Add the ids of the posts this chat is about. TrashNothing links a
+            // chat mail to its post via this header, so it must be on every mail
+            // in an item chat - and only the initial Interested message carries
+            // a refmsgid, so the triggering message alone is not enough: plain
+            // follow-ups would go out unlinkable. Chat-wide ids, newest first,
+            // comma-separated (the V1 format TN already parses).
+            $refMsgIds = $this->getChatRefMsgIds();
+            if ($refMsgIds !== []) {
+                $headers->addTextHeader('X-Freegle-Msgids', implode(',', $refMsgIds));
             }
 
             // Add sender user ID for User2User and Mod2Mod chats.
@@ -678,6 +693,31 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
         return [
             'subject' => $refMessage->subject,
         ];
+    }
+
+    /**
+     * Distinct ids of the Offer/Wanted posts referenced anywhere in this chat,
+     * newest first. Matches the per-chat refmsgids the legacy V1 PHP
+     * ChatRoom::getPublic() exposed.
+     *
+     * @return int[]
+     */
+    protected function getChatRefMsgIds(): array
+    {
+        if ($this->chatRefMsgIds === NULL) {
+            $this->chatRefMsgIds = ChatMessage::where('chatid', $this->chatRoom->id)
+                ->whereNotNull('refmsgid')
+                ->whereHas('refMessage', function ($query) {
+                    $query->whereIn('type', [Message::TYPE_OFFER, Message::TYPE_WANTED]);
+                })
+                ->distinct()
+                ->orderByDesc('refmsgid')
+                ->pluck('refmsgid')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        }
+
+        return $this->chatRefMsgIds;
     }
 
     /**

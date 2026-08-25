@@ -6,6 +6,7 @@ use App\Mail\Chat\ChatNotification;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\User;
+use Symfony\Component\Mime\Email;
 use Tests\TestCase;
 
 class ChatNotificationTest extends TestCase
@@ -2170,5 +2171,129 @@ class ChatNotificationTest extends TestCase
 
         // Mod2Mod branch: senderName + ': ' + snippet
         $this->assertStringContainsString('Eve Moderator: Can you cover moderation', $html);
+    }
+
+    /**
+     * Build the mailable and run its Symfony-message callbacks against a bare
+     * Email, returning the X-Freegle-Msgids header value (NULL if absent).
+     * This exercises the same closure that stamps headers on a real send.
+     */
+    private function msgidsHeaderFor(ChatNotification $mail): ?string
+    {
+        $mail->build();
+
+        $email = new Email();
+        foreach ($mail->callbacks as $callback) {
+            $callback($email);
+        }
+
+        return $email->getHeaders()->get('X-Freegle-Msgids')?->getBodyAsString();
+    }
+
+    public function test_follow_up_message_notification_carries_msgids_header(): void
+    {
+        // TrashNothing links a chat mail to its post via X-Freegle-Msgids.
+        // Only the initial Interested message carries a refmsgid, so the
+        // header must come from the whole chat, not the triggering message -
+        // otherwise every follow-up in an item chat goes out unlinkable.
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user1, $group);
+
+        $refMessage = $this->createTestMessage($user1, $group, [
+            'subject' => 'OFFER: Desk lamp (Hove BN3)',
+        ]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id,
+            'user2' => $user2->id,
+            'created' => now(),
+        ]);
+
+        $this->createTestChatMessage($room, $user2, [
+            'message' => 'Is this still available?',
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $refMessage->id,
+            'date' => now()->subMinutes(5),
+        ]);
+
+        // The follow-up has no refmsgid of its own.
+        $followUp = $this->createTestChatMessage($room, $user2, [
+            'message' => 'Thanks, see you at 2pm.',
+        ]);
+
+        $mail = new ChatNotification(
+            $user1,
+            $user2,
+            $room,
+            $followUp,
+            ChatRoom::TYPE_USER2USER
+        );
+
+        $this->assertSame((string) $refMessage->id, $this->msgidsHeaderFor($mail));
+    }
+
+    public function test_msgids_header_lists_all_posts_in_chat_newest_first(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user1, $group);
+
+        $firstPost = $this->createTestMessage($user1, $group, [
+            'subject' => 'OFFER: Desk lamp (Hove BN3)',
+        ]);
+        $secondPost = $this->createTestMessage($user1, $group, [
+            'subject' => 'OFFER: Bookcase (Hove BN3)',
+        ]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2USER,
+            'user1' => $user1->id,
+            'user2' => $user2->id,
+            'created' => now(),
+        ]);
+
+        $this->createTestChatMessage($room, $user2, [
+            'message' => 'Interested in the lamp.',
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $firstPost->id,
+            'date' => now()->subMinutes(10),
+        ]);
+        $this->createTestChatMessage($room, $user2, [
+            'message' => 'And the bookcase too please.',
+            'type' => ChatMessage::TYPE_INTERESTED,
+            'refmsgid' => $secondPost->id,
+            'date' => now()->subMinutes(5),
+        ]);
+
+        $followUp = $this->createTestChatMessage($room, $user2, [
+            'message' => 'Can I take both at once?',
+        ]);
+
+        $mail = new ChatNotification(
+            $user1,
+            $user2,
+            $room,
+            $followUp,
+            ChatRoom::TYPE_USER2USER
+        );
+
+        // Comma-separated, newest post first - the V1 format TN already parses.
+        $this->assertSame(
+            $secondPost->id . ',' . $firstPost->id,
+            $this->msgidsHeaderFor($mail)
+        );
+    }
+
+    public function test_no_msgids_header_when_chat_references_no_post(): void
+    {
+        ['mail' => $mail] = $this->createUser2UserChatSetup([
+            'message_text' => 'Just saying hello.',
+        ]);
+
+        $this->assertNull($this->msgidsHeaderFor($mail));
     }
 }
