@@ -203,9 +203,31 @@ DROP TABLE IF EXISTS rippling_reach_geom;
 --    operator decision, not something this file should make silently.
 --
 --    Safe to re-run: a second rebuild is wasted work but changes nothing.
---    Verify afterwards with (expect it to have fallen by roughly the column
---    sizes measured in the design doc):
+--
+--    VERIFYING IT ACTUALLY HAPPENED. Two checks, and the second is the one
+--    that cannot be fooled:
+--
+--      -- (a) the space came back
 --      SELECT ROUND(data_length/1024/1024/1024, 1) AS gb
 --        FROM information_schema.tables
 --       WHERE table_schema = DATABASE() AND table_name = 'rippling_reach';
+--
+--      -- (b) no instantly-dropped columns are still lurking in the rows.
+--      --     MUST be 0. Anything above 0 means at least one INSTANT change
+--      --     has not been rewritten away, i.e. the rebuild did not run or
+--      --     did not complete.
+--      SELECT TOTAL_ROW_VERSIONS FROM information_schema.INNODB_TABLES
+--       WHERE NAME = CONCAT(DATABASE(), '/rippling_reach');
+--
+--    Check (a) alone is not enough: data_length can look plausible while the
+--    dropped bytes are still there, because every INSTANT change above only
+--    edits metadata. Check (b) counts them directly. Measured on this table in
+--    dev BEFORE this migration runs it already reads 3, from the earlier
+--    INSTANT column additions - so it is a live counter, not a formality.
+--
+--    It is also a BUDGET: InnoDB permits 64 row versions per table and then
+--    refuses all further INSTANT DDL ("Maximum row versions reached"), which
+--    would leave the next schema change with no fast path. This migration
+--    spends 7, and the rebuild returns the count to 0 - so running the rebuild
+--    is also what keeps that fast path available for later changes.
 ALTER TABLE rippling_reach FORCE, ALGORITHM=INPLACE, LOCK=SHARED;

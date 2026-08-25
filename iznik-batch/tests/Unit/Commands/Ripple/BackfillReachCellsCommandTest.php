@@ -105,17 +105,54 @@ class BackfillReachCellsCommandTest extends TestCase
         $second = $this->seedRowNeedingBackfill();
         [$lower, $higher] = $first < $second ? [$first, $second] : [$second, $first];
 
+        // The sweep runs NEWEST-FIRST, so the mark is a ceiling that walks
+        // downwards. That direction is deliberate: every reach row is deleted
+        // by the 90-day purge, so an oldest-first sweep spends its effort on
+        // rows about to disappear and leaves the long-lived ones until last.
+        // Asserting the order here, rather than just "both eventually convert",
+        // is what stops that being quietly reversed.
         $this->artisan('ripple:backfill-reach-cells --limit=1')->assertExitCode(0);
-        $this->assertNotNull($this->cellsFor($lower), 'the first run converts the lower msgid');
-        $this->assertNull($this->cellsFor($higher), 'and stops there');
+        $this->assertNotNull($this->cellsFor($higher), 'the first run converts the NEWEST msgid');
+        $this->assertNull($this->cellsFor($lower), 'and stops there');
         $this->assertSame(
-            (string) $lower,
+            (string) $higher,
             (string) DB::table('config')->where('key', self::CONFIG_KEY_MARK)->value('value'),
             'the mark records where it got to'
         );
 
         $this->artisan('ripple:backfill-reach-cells --limit=1')->assertExitCode(0);
-        $this->assertNotNull($this->cellsFor($higher), 'the next run continues from the mark');
+        $this->assertNotNull($this->cellsFor($lower), 'the next run continues below the mark');
+    }
+
+    /**
+     * Rows still expanding are skipped, because the next tick rewrites their
+     * grid anyway - so converting them here is work thrown away, and it was
+     * also the only way this command could race a live tick.
+     */
+    public function test_expanding_rows_are_left_for_the_next_tick(): void
+    {
+        $msgid = $this->seedRowNeedingBackfill();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['status' => 'expanding']);
+
+        $this->artisan('ripple:backfill-reach-cells')->assertExitCode(0);
+
+        $this->assertNull($this->cellsFor($msgid), 'an expanding row must be left alone');
+    }
+
+    /**
+     * --after is a CEILING now, not a floor. Getting that backwards would make
+     * a sharded run silently sweep the wrong half of the table.
+     */
+    public function test_after_is_a_ceiling_not_a_floor(): void
+    {
+        $first = $this->seedRowNeedingBackfill();
+        $second = $this->seedRowNeedingBackfill();
+        [$lower, $higher] = $first < $second ? [$first, $second] : [$second, $first];
+
+        $this->artisan('ripple:backfill-reach-cells', ['--after' => $higher])->assertExitCode(0);
+
+        $this->assertNotNull($this->cellsFor($lower), 'rows BELOW the ceiling are converted');
+        $this->assertNull($this->cellsFor($higher), 'the ceiling itself is excluded');
     }
 
     public function test_the_backfill_does_not_disturb_updated_at(): void

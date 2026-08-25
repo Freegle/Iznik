@@ -36,7 +36,14 @@ func TestRasterizeWKT_ProducesDecodableCellSet(t *testing.T) {
 }
 
 func TestRasterizeWKT_LiveSampleShrinksByAnOrderOfMagnitude(t *testing.T) {
-	path := "/tmp/claude-1000/-home-edward-FreegleDockerWSL/6cc0d137-5be2-47c2-a290-7c87f043dcd2/scratchpad/sample-polygon.wkt"
+	// Env var, not a hard-coded path. This used to name a scratch
+	// directory from the session that captured the sample, which no
+	// longer exists - so the test skipped forever while looking like
+	// coverage. Point REACH_SAMPLE_WKT at a real reach polygon to run it.
+	path := os.Getenv("REACH_SAMPLE_WKT")
+	if path == "" {
+		t.Skip("set REACH_SAMPLE_WKT to a file holding one real reach polygon in WKT to run this")
+	}
 	wkt, err := os.ReadFile(path)
 	if err != nil {
 		t.Skipf("live sample not present (%v)", err)

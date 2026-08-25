@@ -117,6 +117,25 @@ func FromGeometry(g geom.Geometry) (*CellSet, error) {
 		}
 	}
 
+	// A grid covering NOTHING is refused, not returned. Degenerate input
+	// produces one silently - a ring of three identical points, an unclosed
+	// two-segment ring, or a sliver thinner than a cell all fill no cell
+	// centre - and the bytes for it are perfectly valid, so every caller
+	// would store and trust them. For a reach that is the worst possible
+	// outcome: a reach always contains its own origin, so "covers nobody" is
+	// never a real answer, and once this is the only stored form there is no
+	// polygon left to notice the difference. The post would simply vanish
+	// from the feed and admit no replies.
+	//
+	// An error instead makes the write paths fail their tick and retry, which
+	// is what they already do for a rasterise failure. Nothing legitimate is
+	// lost: an emptied grid after a rejection clip comes from Subtract, not
+	// from here, and those callers already test SetCellCount() == 0 to decide
+	// whether the reach still exists at all.
+	if cs.SetCellCount() == 0 {
+		return nil, fmt.Errorf("cellset: geometry covers no cell centre (degenerate or thinner than %.4f degrees)", CellDegrees)
+	}
+
 	return cs, nil
 }
 

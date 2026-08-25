@@ -327,4 +327,144 @@ class CellSetServiceTest extends TestCase
         $this->assertSame($result['minCol'], $reDecoded['minCol']);
         $this->assertSame($result['minRow'], $reDecoded['minRow']);
     }
+
+    // ---- the streaming measures and the spatial-server clients added for
+    // ---- Stage 3, none of which had a test before.
+
+    /**
+     * The reach radius the digest score divides by. Streaming over run
+     * endpoints, so the answer must still match a hand-computed haversine to
+     * the farthest covered cell.
+     */
+    public function test_max_distance_from_origin_matches_a_hand_computation(): void
+    {
+        $svc = new CellSetService();
+        // A box 0.003 x 0.003 degrees (10 x 10 cells) with its origin at the
+        // south-west corner, so the farthest covered cell is the north-east one.
+        $wkt = 'POLYGON((0 51.5, 0.003 51.5, 0.003 51.503, 0 51.503, 0 51.5))';
+        $bytes = $svc->rasterize($wkt);
+        $this->assertNotNull($bytes, 'the rasteriser must be reachable for this test to mean anything');
+
+        $metres = $svc->maxDistanceMetresFrom($bytes, 0.0, 51.5);
+        $this->assertNotNull($metres);
+
+        // North-east cell CENTRE is at roughly (0.00285, 51.50285). Haversine
+        // from the origin is ~360m; allow a cell of slack either way.
+        $this->assertGreaterThan(300, $metres);
+        $this->assertLessThan(420, $metres);
+    }
+
+    /**
+     * How far outside the reach a held replier is. Zero inside, and a sane
+     * positive figure outside - this feeds a miles number a member reads.
+     */
+    public function test_distance_to_nearest_cell(): void
+    {
+        $svc = new CellSetService();
+        $wkt = 'POLYGON((0 51.5, 0.003 51.5, 0.003 51.503, 0 51.503, 0 51.5))';
+        $bytes = $svc->rasterize($wkt);
+        $this->assertNotNull($bytes);
+
+        // Inside is exactly zero, not "a few metres to the nearest centre".
+        $this->assertSame(0.0, $svc->distanceToNearestCellMetres($bytes, 0.0015, 51.5015));
+
+        // A point ~0.01 degrees east is roughly 700m from the eastern edge at
+        // this latitude.
+        $out = $svc->distanceToNearestCellMetres($bytes, 0.013, 51.5015);
+        $this->assertNotNull($out);
+        $this->assertGreaterThan(500, $out);
+        $this->assertLessThan(900, $out);
+
+        // Unreadable bytes must answer "cannot say", never a distance.
+        $this->assertNull($svc->distanceToNearestCellMetres('rubbish', 0.0, 51.5));
+    }
+
+    /** The grid's bounding box as WKT - the cell form of ST_Envelope. */
+    public function test_bounds_wkt_covers_the_grid_and_refuses_rubbish(): void
+    {
+        $svc = new CellSetService();
+        $bytes = base64_decode(self::GOLDEN_NEGATIVE_OFFSETS);
+
+        $wkt = $svc->boundsWkt($bytes);
+        $this->assertNotNull($wkt);
+        $this->assertStringStartsWith('POLYGON((', $wkt);
+
+        // minCol=-3 minRow=-2 cols=6 rows=5 on a 0.0003 lattice, so the box
+        // runs from (-0.0009,-0.0006) to (0.0009,0.0009).
+        $decoded = $svc->decode($bytes);
+        $this->assertSame(-3, $decoded['minCol']);
+
+        // Every covered cell's CENTRE must be strictly inside, which is what
+        // the callers rely on. The box CORNERS sit exactly on the boundary,
+        // and ST_Contains excludes a boundary point - the same closed-versus-
+        // open distinction that accounts for the boundary-band differences in
+        // ripple:verify-cells-parity - so they are checked with MBRContains,
+        // which includes it.
+        foreach ([[-0.00075, -0.00045], [0.00075, 0.00075]] as [$lng, $lat]) {
+            $row = \Illuminate\Support\Facades\DB::selectOne(
+                'SELECT ST_Contains(ST_GeomFromText(?, 3857), ST_SRID(POINT(?, ?), 3857)) AS c',
+                [$wkt, $lng, $lat]
+            );
+            $this->assertSame(1, (int) $row->c, sprintf('a covered cell centre %f,%f must be inside the bbox', $lng, $lat));
+        }
+        // The corners are checked arithmetically rather than with a spatial
+        // predicate: they sit exactly ON the boundary, and every MySQL
+        // "contains" test excludes a boundary point, so a GIS assertion here
+        // would be testing that convention rather than the bbox.
+        preg_match_all('/-?\d+(?:\.\d+)?/', $wkt, $m);
+        $coords = array_map('floatval', $m[0]);
+        $lngs = array_values(array_filter($coords, fn ($v, $i) => $i % 2 === 0, ARRAY_FILTER_USE_BOTH));
+        $lats = array_values(array_filter($coords, fn ($v, $i) => $i % 2 === 1, ARRAY_FILTER_USE_BOTH));
+        $this->assertEqualsWithDelta(-0.0009, min($lngs), 1e-9, 'west edge');
+        $this->assertEqualsWithDelta(0.0009, max($lngs), 1e-9, 'east edge');
+        $this->assertEqualsWithDelta(-0.0006, min($lats), 1e-9, 'south edge');
+        $this->assertEqualsWithDelta(0.0009, max($lats), 1e-9, 'north edge');
+
+        $this->assertNull($svc->boundsWkt('too short'));
+    }
+
+    /**
+     * The spatial-server clients must return null rather than throw when the
+     * server cannot answer - every caller treats null as "fall back" or "admit
+     * nobody", and an exception would instead abort a tick or a digest run.
+     */
+    public function test_spatial_clients_return_null_when_the_server_cannot_answer(): void
+    {
+        config(['freegle.spatial_server_url' => 'http://127.0.0.1:9']); // nothing listens on discard
+        $svc = new CellSetService();
+
+        $this->assertNull($svc->vectorize('irrelevant', 0));
+        $this->assertNull($svc->groupsIntersecting('irrelevant'));
+        $this->assertNull($svc->reachContaining(51.5, -0.1));
+        $this->assertNull($svc->rasterize('POLYGON((0 0,1 0,1 1,0 1,0 0))'));
+    }
+
+    /**
+     * The tracer round trip, through the real endpoints: a grid traced to a
+     * boundary and rasterised again must cover the same cells. This is the
+     * property the sandwich-bounds derivation and the map overlay both rest
+     * on.
+     */
+    public function test_vectorize_round_trips_back_to_the_same_coverage(): void
+    {
+        $svc = new CellSetService();
+        $wkt = 'POLYGON((0 51.5, 0.003 51.5, 0.003 51.503, 0 51.503, 0 51.5))';
+        $bytes = $svc->rasterize($wkt);
+        $this->assertNotNull($bytes);
+
+        $vec = $svc->vectorize($bytes, 0);
+        $this->assertNotNull($vec, 'the vectorize endpoint must be reachable');
+        $this->assertArrayHasKey('wkt', $vec);
+
+        $back = $svc->rasterize($vec['wkt']);
+        $this->assertNotNull($back);
+
+        $a = $svc->decode($bytes);
+        $b = $svc->decode($back);
+        $this->assertSame(
+            count($svc->subtract($a, $b)['set']) + count($svc->subtract($b, $a)['set']),
+            0,
+            'tracing and re-rasterising must not move a single covered cell'
+        );
+    }
 }

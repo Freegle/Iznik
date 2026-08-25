@@ -40,8 +40,8 @@ class BackfillReachCellsCommand extends Command
 {
     protected $signature = 'ripple:backfill-reach-cells
                             {--limit=100 : Max rows to process this run}
-                            {--sleep-ms=50 : Pause between rows, to go easy on the rasterise endpoint}
-                            {--after= : Start after this msgid instead of the stored mark}
+                            {--sleep-ms=50 : Pause between rows, to go easy on the rasterise endpoint. Set 0 and shard by --after to go as fast as the rasteriser allows.}
+                            {--after= : Start BELOW this msgid instead of the stored mark (the sweep runs newest-first, so this is a ceiling). Also how to shard: give each worker its own range.}
                             {--reset-mark : Start from the beginning again}
                             {--dry-run : Report what would be filled without writing}';
 
@@ -88,30 +88,54 @@ class BackfillReachCellsCommand extends Command
             return self::SUCCESS;
         }
 
-        $after = $this->option('after') !== null ? (int) $this->option('after') : $this->mark();
+        // The resume mark is a CEILING that walks DOWNWARDS, because the sweep
+        // runs newest-first. Zero or unset both mean "start at the top" - which
+        // is also what --reset-mark leaves behind, so a reset restarts from the
+        // newest row rather than finding nothing below zero.
+        $mark = $this->mark();
+        $before = $this->option('after') !== null
+            ? (int) $this->option('after')
+            : ($mark > 0 ? $mark : PHP_INT_MAX);
         $limit = max(1, (int) $this->option('limit'));
 
         $pJoin = GeomShareService::joinSql('rippling_reach', 'polygon', 'gp');
         $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'gp');
 
-        // Candidates are exactly the rows that have a reach but no cells for
-        // it. `polygon` is NOT NULL on this table, so unlike max_polygon there
-        // is no "does it have one at all" question to ask - only the drained
-        // case, which the COALESCE join covers.
+        // Candidates are the rows that have a reach but no cells for it, MINUS
+        // the ones still expanding. `polygon` is NOT NULL on this table, so
+        // unlike max_polygon there is no "does it have one at all" question -
+        // only the drained case, which the COALESCE join covers.
+        //
+        // EXPANDING ROWS ARE SKIPPED, for two reasons that point the same way.
+        // ExpandService rewrites both the polygon and the cells on every tick,
+        // so those rows fill themselves in within a tick or two and any work
+        // done here is thrown away; and doing it anyway is what created the
+        // race the compare-and-swap below defends against. Measured on
+        // production 2026-08-25: 8,390 of 56,317 rows are expanding, so this
+        // is ~15% less work as well as one less way to go wrong.
+        //
+        // NEWEST FIRST, deliberately. Every reach row is deleted by the
+        // 90-day message purge, so the oldest rows are the ones with least
+        // life left - converting them first spends the whole sweep on rows
+        // about to disappear, and leaves the rows that will be queried for
+        // months until last. (Nothing has reached the purge yet: the oldest
+        // row is 2026-06-22, so today this only changes the order work is
+        // done in, not the total. It will matter later.)
         // keep-raw: the COALESCE-through-join WKT read has no query-builder equivalent
         $rows = DB::select(
             "SELECT rippling_reach.msgid, ST_AsText($poly) AS wkt
                FROM rippling_reach$pJoin
-              WHERE rippling_reach.msgid > ?
+              WHERE rippling_reach.msgid < ?
                 AND rippling_reach.polygon_cells IS NULL
-              ORDER BY rippling_reach.msgid
+                AND rippling_reach.status <> 'expanding'
+              ORDER BY rippling_reach.msgid DESC
               LIMIT ?",
-            [$after, $limit]
+            [$before, $limit]
         );
 
         if (empty($rows)) {
-            $this->info($after > 0
-                ? "Nothing left after msgid {$after}. Sweep complete."
+            $this->info($before < PHP_INT_MAX
+                ? "Nothing left below msgid {$before}. Sweep complete."
                 : 'Nothing to backfill.');
 
             return self::SUCCESS;
@@ -119,7 +143,7 @@ class BackfillReachCellsCommand extends Command
 
         $filled = 0;
         $skipped = 0;
-        $lastMsgid = $after;
+        $lastMsgid = $before;
 
         foreach ($rows as $row) {
             $lastMsgid = (int) $row->msgid;
