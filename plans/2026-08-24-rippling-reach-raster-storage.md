@@ -622,8 +622,18 @@ while the grid includes the cell whose centre is inside. The grid is marginally 
 inclusive at the edge, which for a reach admits a handful of people exactly on the line
 rather than excluding anyone the polygon reached.
 
-Compression, measured on those same 8: **36.2x to 43.7x**, falling slightly as the reach
-grows. The 45x from one production polygon is the TOP of the range, not the middle.
+Compression on those same 8 Bristol isochrones: 36.2x to 43.7x. **But measured on SIX REAL
+PRODUCTION polygons (read-only over the live tunnel, 2026-08-25): 19.5x to 22.0x, 20.2x
+overall**, across reaches of 7,787 to 33,819 vertices. THAT is the number to quote. The 45x
+from one earlier polygon and the 36-44x here are both the top of the range.
+
+Production column sizes, mean over the 200 most recent rows (computed server-side, blobs
+never shipped): polygon 297KB, max_polygon 416KB, overflow_bounds 366KB, outer_bound 39KB -
+~1,118KB a row, which matches the ~1.2MB/row in the steady-state model. Applying 20x to the
+three fat columns and keeping outer_bound gives ~92KB a row: **~12x smaller overall**, ~60GB
+to ~5GB today and ~164GB to ~14GB at steady state. Note what that leaves: **outer_bound is
+then 42% of the row**, so the geometry that STAYS becomes the biggest single term, and
+squeezing the cells further would be the wrong place to look next.
 
 **Two flaws in the measurement itself, found by running it rather than trusting it.** Both
 are the reason to distrust a clean-looking verification report:

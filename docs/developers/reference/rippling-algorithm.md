@@ -1058,10 +1058,16 @@ immediately after tracing (`iznik-routing-go`'s `buildIsochroneGrid`/`traceBound
 stores that grid, RLE-compressed, on a fixed 0.0003-degree lattice (the same one the
 overflow rings already use).
 
-Measured 2026-08-25 on eight real drive-time isochrones straight from the routing server,
-from 1,615 to 34,471 vertices (45KB to 965KB of WKT): **36.2x to 43.7x smaller**, with the
-ratio falling slightly as the reach grows. One earlier production polygon measured 45x, so
-treat that as the top of the range rather than the middle.
+Measured 2026-08-25 on six REAL PRODUCTION polygons (read-only over the live tunnel), 7,787
+to 33,819 vertices: **19.5x to 22.0x, 20.2x overall**. That is the figure to use. Eight
+Bristol-sized routed isochrones measured 36.2x to 43.7x and one earlier production polygon
+measured 45x; both are the top of the range rather than the middle, because the ratio rises
+with boundary detail per unit area.
+
+Production column sizes, mean over the 200 most recent rows: `polygon` 297KB, `max_polygon`
+416KB, `overflow_bounds` 366KB, `outer_bound` 39KB - about 1,118KB a row. At 20x on the three
+fat columns, with `outer_bound` kept, that becomes ~92KB: **~12x smaller overall**, and
+`outer_bound` is then 42% of the row.
 
 The ratio is shape-dependent, so treat 45x as that polygon's number rather than the
 column's: grid bytes scale with area and boundary complexity, WKT bytes scale with vertex
@@ -1156,8 +1162,8 @@ Run the migration before redeploying the spatial servers.
 the ratio between two representations, and it only becomes disk when the geometry stops
 being stored. §9c is that step. `polygon`, `max_polygon` and `overflow_bounds` are dropped,
 along with the whole §9a dedup layer (hash columns, their indexes and FKs, and
-`rippling_reach_geom`). Steady-state estimate afterwards: order 10-15GB, against the ~185GB
-the un-deduplicated model was heading for.
+`rippling_reach_geom`). Steady-state estimate afterwards: ~14GB against ~164GB (see the
+measured sizes in 9b).
 
 **Every reader is two-era, and the schema decides which era it is in.**
 `App\Services\Ripple\LegacyGeometry::polygonReady()` / `::overflowReady()` (PHP),
