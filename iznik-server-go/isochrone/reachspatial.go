@@ -18,7 +18,6 @@ package isochrone
 // containment path unchanged.
 
 import (
-
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
