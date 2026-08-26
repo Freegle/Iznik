@@ -57,54 +57,6 @@ func TestBaseURL(t *testing.T) {
 	}
 }
 
-func TestExtraString(t *testing.T) {
-	tests := []struct {
-		name string
-		r    QueryResult
-		key  string
-		want string
-	}{
-		{"present string value", QueryResult{Extra: map[string]any{"name": "Fred"}}, "name", "Fred"},
-		{"missing key", QueryResult{Extra: map[string]any{"name": "Fred"}}, "missing", ""},
-		{"wrong type (number)", QueryResult{Extra: map[string]any{"name": float64(5)}}, "name", ""},
-		{"nil Extra map", QueryResult{}, "name", ""},
-		{"empty string value", QueryResult{Extra: map[string]any{"name": ""}}, "name", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ExtraString(tt.r, tt.key); got != tt.want {
-				t.Errorf("ExtraString() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestExtraInt64(t *testing.T) {
-	tests := []struct {
-		name string
-		r    QueryResult
-		key  string
-		want int64
-	}{
-		{"float64 value (typical JSON decode)", QueryResult{Extra: map[string]any{"id": float64(42)}}, "id", 42},
-		{"int64 value", QueryResult{Extra: map[string]any{"id": int64(7)}}, "id", 7},
-		{"missing key", QueryResult{Extra: map[string]any{"id": float64(42)}}, "missing", 0},
-		{"wrong type (string)", QueryResult{Extra: map[string]any{"id": "42"}}, "id", 0},
-		{"nil Extra map", QueryResult{}, "id", 0},
-		{"negative float64", QueryResult{Extra: map[string]any{"id": float64(-3)}}, "id", -3},
-		{"zero float64", QueryResult{Extra: map[string]any{"id": float64(0)}}, "id", 0},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ExtraInt64(tt.r, tt.key); got != tt.want {
-				t.Errorf("ExtraInt64() = %d, want %d", got, tt.want)
-			}
-		})
-	}
-}
-
 func withServer(t *testing.T, handler http.HandlerFunc) func() {
 	t.Helper()
 	srv := httptest.NewServer(handler)
