@@ -435,6 +435,159 @@ class BackfillBrowseMaxDistanceCommandTest extends TestCase
         $this->assertArrayNotHasKey('browseReachMaxDistance', $this->settingsOf($id));
     }
 
+    /*
+     * The SEPARATE outbound axis (myPostsMaxMinutes / myPostsMaxDistance): how far away people
+     * can be and still see this member's posts, once they have set that apart from what they see.
+     * Its stored radius drifts exactly as the inbound one does - it was derived from where they
+     * lived when they chose it - so it needs the same reconciliation. Its range is the ripple
+     * ceiling for everyone, not the member's band, so there is no rescale and no band here.
+     */
+
+    private function outboundDistanceOf(int $id): mixed
+    {
+        return $this->settingsOf($id)['myPostsMaxDistance'] ?? null;
+    }
+
+    private function outboundMinutesOf(int $id): mixed
+    {
+        return $this->settingsOf($id)['myPostsMaxMinutes'] ?? null;
+    }
+
+    public function testReconcilesAStaleOutboundRadius(): void
+    {
+        $this->fakeMedium(8.5);
+        $id = $this->userWith([
+            'browseMaxMinutes' => 20,
+            'browseMaxDistance' => 8.5,
+            'myPostsMaxMinutes' => 25,
+            'myPostsMaxDistance' => 1,
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(8.5, $this->outboundDistanceOf($id), 'the stale 1 mile must be rederived');
+        $this->assertSame(25, $this->outboundMinutesOf($id), 'the chosen travel time is untouched');
+    }
+
+    public function testNeverCreatesAnOutboundPair(): void
+    {
+        // Absence is what "linked" means - every outbound reader falls back to browseMaxDistance.
+        // Writing a value here would split a member's two axes apart without them asking, which is
+        // the one thing the split was designed not to do.
+        $this->fakeMedium(8.5);
+        $id = $this->userWith(['browseMaxMinutes' => 20, 'browseMaxDistance' => 1]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertNull($this->outboundMinutesOf($id));
+        $this->assertNull($this->outboundDistanceOf($id));
+    }
+
+    public function testLeavesAConsistentOutboundPairAlone(): void
+    {
+        $this->fakeMedium(8.5);
+        $id = $this->userWith([
+            'browseMaxMinutes' => 20,
+            'browseMaxDistance' => 8.5,
+            'myPostsMaxMinutes' => 25,
+            'myPostsMaxDistance' => 8.5,
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')
+            ->expectsOutputToContain('already consistent')
+            ->assertSuccessful();
+
+        $this->assertSame(8.5, $this->outboundDistanceOf($id));
+    }
+
+    public function testOutboundIsNotCappedByTheMembersBand(): void
+    {
+        // A dense/city member caps at 20 minutes INBOUND, but their posts still ripple to the
+        // ceiling, so an outbound 45 is a legitimate choice and must survive. Clamping it to the
+        // band would quietly cut their reach by more than half.
+        $this->fakeLookups(400, 0.9, 7.4);
+        $id = $this->userWith([
+            'browseMaxMinutes' => 20,
+            'browseMaxDistance' => 7.4,
+            'myPostsMaxMinutes' => 45,
+            'myPostsMaxDistance' => 1,
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(45, $this->outboundMinutesOf($id), 'the band must not clamp the outbound axis');
+    }
+
+    public function testOutboundAtTheCeilingStoresTheNoLimitSentinel(): void
+    {
+        // The top stop on this axis always means "no limit": its range IS the ceiling, so unlike
+        // the inbound axis there is no band below which a real radius has to be stored instead.
+        $this->fakeLookups(400, 0.9, 7.4);
+        $id = $this->userWith([
+            'browseMaxMinutes' => 20,
+            'browseMaxDistance' => 7.4,
+            'myPostsMaxMinutes' => 45,
+            'myPostsMaxDistance' => 3,
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(9007199254740991, $this->outboundDistanceOf($id));
+    }
+
+    public function testAnOutboundOnlyCorrectionIsStillSaved(): void
+    {
+        // The inbound half is already consistent, so that path returns without writing. The
+        // outbound correction has to be flushed anyway or it would be silently dropped - the
+        // settings array is read once, before either half is touched.
+        $this->fakeMedium(8.5);
+        $id = $this->userWith([
+            'browseMaxMinutes' => 20,
+            'browseMaxDistance' => 8.5,
+            'myPostsMaxMinutes' => 25,
+            'myPostsMaxDistance' => 2,
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertSame(8.5, $this->outboundDistanceOf($id), 'the outbound fix must survive');
+        $this->assertSame(8.5, $this->chosenDistanceOf($id), 'the inbound half is unchanged');
+    }
+
+    public function testDryRunWritesNoOutboundCorrection(): void
+    {
+        $this->fakeMedium(8.5);
+        $id = $this->userWith([
+            'browseMaxMinutes' => 20,
+            'browseMaxDistance' => 8.5,
+            'myPostsMaxMinutes' => 25,
+            'myPostsMaxDistance' => 2,
+        ]);
+
+        $this->artisan('browse:backfill-max-distance', ['--dry-run' => true])->assertSuccessful();
+
+        $this->assertSame(2, $this->outboundDistanceOf($id));
+    }
+
+    public function testARelinkedRowIsLeftAlone(): void
+    {
+        // "Link them again" stores JSON null in both outbound keys (PATCH /session replaces the
+        // settings blob wholesale). That reads as unset everywhere, so this command must not
+        // treat it as a pair to reconcile - which would resurrect a choice the member gave up.
+        $this->fakeMedium(8.5);
+        $id = $this->userWith([
+            'browseMaxMinutes' => 20,
+            'browseMaxDistance' => 8.5,
+            'myPostsMaxMinutes' => null,
+            'myPostsMaxDistance' => null,
+        ]);
+
+        $this->artisan('browse:backfill-max-distance')->assertSuccessful();
+
+        $this->assertNull($this->outboundMinutesOf($id));
+        $this->assertNull($this->outboundDistanceOf($id));
+    }
+
     /**
      * A member whose radius lookup fails is SKIPPED, and a skipped member keeps no band
      * limit at all - so a broken lookup does not shrink this command's effect, it voids it.
