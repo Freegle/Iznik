@@ -75,7 +75,7 @@ lat), so no call site changes: `search.go:271`, `search.go:294`,
 | 17 | Tests: Laravel | ✅ | |
 | 18 | Docs freshness (4 pages) | ✅ | members/04-your-account, rippling-algorithm, rippling-out, first-reply |
 | 19 | Visual review, headless Chrome, GPU off | ✅ | linked / split / dead zone / dual map shading |
-| 20 | PR with screenshots | 🔄 | |
+| 20 | PR with screenshots | ✅ | #1415 |
 
 ## Risks
 
