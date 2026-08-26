@@ -29,7 +29,7 @@ Worktree: /home/edward/FreegleDocker-reach-raster.
 | 7 | spatial-go: dataset_reach.go + dataset_reachoverflow.go cells-only | ✅ | module suite green (go test ./...) |
 | 8 | Fixtures/tests: polygon-writers -> cells; era-fake tests collapse to one era | ✅ | PHP: SeedsReachCells trait (offline rect grids) + FakesRingIndex serves reach/containing; Go: reachindexstub_test serves index from test rows |
 | 9 | Docs: rippling-algorithm.md + first-reply.md + freshness green | ✅ | |
-| 10 | Full suites green via status API: Laravel + Go + spatial-go | ⬜ | worktree status port TBD |
+| 10 | Full suites green via status API: Laravel + Go + spatial-go | 🔄 | Laravel 5955/5955 PASS; Go running; spatial-go green |
 | 11 | Review pass + PR | ⬜ | merge gate in body |
 
 ## Key decisions (planned)

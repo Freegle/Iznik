@@ -82,13 +82,14 @@ func TestOverflowLaneOrder_IsByCode(t *testing.T) {
 }
 
 // The SELECT list must ask for the lanes in that same order, since the scan
-// pairs column i with lane i positionally.
-func TestOverflowSelect_BindsLanesInOrder(t *testing.T) {
+// pairs column i with lane i positionally - and must reference no dropped
+// column: naming one errors on EVERY query, which is exactly what froze this
+// dataset's load and delta on all four instances the moment the Stage 3 drop
+// ran (2026-08-26).
+func TestOverflowSelect_BindsLanesInOrderAndNamesNoDroppedColumn(t *testing.T) {
 	cols, args := overflowSelect()
 	lanes := overflowLaneOrder()
 
-	// The scan pairs column i with lane i positionally, so the binds must run
-	// through the lane order in order.
 	if len(args) != len(lanes) {
 		t.Fatalf("select binds %d paths, want %d", len(args), len(lanes))
 	}
@@ -101,6 +102,9 @@ func TestOverflowSelect_BindsLanesInOrder(t *testing.T) {
 	// by MySQL - the DB doing that work is what this dataset exists to stop.
 	if got := countSubstr(cols, "JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?))"); got != len(lanes) {
 		t.Errorf("select has %d cell extractions, want %d: %s", got, len(lanes), cols)
+	}
+	if got := countSubstr(cols, "overflow_bounds"); got != 0 {
+		t.Errorf("select names the dropped overflow_bounds %d time(s): %s", got, cols)
 	}
 }
 

@@ -1290,12 +1290,29 @@ radius worst 0.63%. Traced coverage identical on all eight. Group intersects/wit
 came out with **zero** cells of symmetric difference, so the two implementations of the
 shrink agree exactly rather than approximately.
 
-**Operator order (as run).** Deploy, then the three backfills to completion
-(`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`), then
-`ripple:verify-cells-parity` read by a human, then the drop DDL node by node under RSU.
-The backfill and parity commands were removed with the legacy branches once the transition
-completed - run them from a checkout predating the removal if a straggler database needs
-them.
+**Operator order (as run, completed on production 2026-08-26).** Deploy, then the three
+backfills to completion (`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`),
+then `ripple:verify-cells-parity` read by a human, then the drop DDL - **with the table's
+writers silenced estate-wide first**; see the rollout procedure in §9c below, learned the
+hard way. The backfill and parity commands (and their scheduled mop-up sweeps) were removed
+with the legacy branches once the transition completed - run them from a checkout predating
+the removal if a straggler database needs them.
+
+**Two production lessons from the run, kept for the next migration of this shape:**
+
+- **"Completion" regrows until the drop.** `ripple:backfill-reach-cells` deliberately
+  skipped `status='expanding'` rows - ExpandService rewrites their cells on every tick -
+  but a post's *final* tick flips it to `done` without writing cells (nothing left to
+  expand to), so a pre-cells expander whose only remaining step was "finish" landed in
+  `done` with `polygon_cells` still NULL, invisible to ticks and already behind the sweep's
+  resume mark. Measured: 155 such rows three hours after the one-off backfill finished.
+  Nightly `--reset-mark` sweeps converged the population. The drop guards themselves are
+  full-table scans (the ring guard alone took 42s on production), so quiet minutes before
+  the first DDL statement are the guards working, not a hang.
+- **`--include-expanding` finished it at sweep speed**: lifting the expanding-rows skip
+  converted the stragglers directly (safe: the write was the same compare-and-swap, a tick
+  landing mid-flight won). Run on production 2026-08-26: 5,721 rows in ten minutes, 70
+  harmless CAS losses to live ticks, and all three drop guards read zero.
 
 **Run `ripple:verify-ring-cells-parity` as well - the other one does not cover the rings.**
 `ripple:verify-cells-parity` has eight read cases, seven over `polygon_cells` and one over
@@ -1399,11 +1416,47 @@ guard rather than issuing DDL, so nothing executed these ALTERs at all.
 That combined drop runs `LOCK=SHARED`, which is **not** a choice: InnoDB refuses `LOCK=NONE` on this table
 outright ("Do not support online operation on table with GIS index"), and the GIS index in
 question is the one on `outer_bound` that this change deliberately keeps. Reads continue;
-writes to `rippling_reach` block for the duration. That is survivable only because the drop
-is run node by node under RSU, on a node already desynced and out of rotation. Afterwards,
+writes to `rippling_reach` block for the duration. Afterwards,
 check `INFORMATION_SCHEMA.INNODB_TABLES.TOTAL_ROW_VERSIONS` for the table is back to 0 -
 that counter, not `data_length`, is the honest signal that no instantly-dropped column is
 still lurking in the rows.
+
+**RSU alone is NOT enough - the table's writers must be silenced estate-wide first.**
+This page originally said "each block is one RSU pass: desync the node, run it, resync",
+and following that took a production node down twice on 2026-08-26. Galera replicates
+every write as a full row-image, and those images include even *virtual* generated
+columns; an RSU DDL that drops a mid-table or virtual column changes the layout on one
+node only, so the next replicated write to the table fails to apply there
+(`Replica SQL: Column 29 ... cannot be converted from type 'tinyint' to type
+'mediumblob'`), the cluster votes, and the diverged node is expelled and aborts - about
+one second after the ALTER returns. Recovery is a full state transfer.
+
+What actually worked, and is the procedure to repeat:
+
+1. The virtual-column drop (statement 1) under plain **TOI** - metadata-only, ~0.1 s,
+   applied at the same sequence number on every node, so no divergence window exists.
+   TOI is wrong for the big statements only because a long TOI ALTER stalls the whole
+   cluster's replication for its duration.
+2. **Silence every writer of `rippling_reach` for the whole multi-node rollout** - not
+   per node, because mid-rollout the nodes differ from *each other*. Batch writers stop
+   with `docker stop freegledocker-batch-prod`; the one api-side writer
+   (`ClipReachForRejectedGroup`, the rejection clip) was bounced with a temporary
+   env-gated no-op that logged any skipped clip for re-application (none fired).
+   Foreign-key CASCADE deletes are safe throughout - each node executes them
+   engine-side, so no row-image for this table crosses the wire.
+3. Statements 2 and 3 paired, per node, under `SET SESSION wsrep_OSU_method=RSU` -
+   **session, not global**: a global RSU left set from an earlier session is what armed
+   the first crash. Statement 3's trailing virtual adds would be row-image-tolerant on
+   their own, but pairing keeps every finished node at the final schema.
+4. `DROP TABLE rippling_reach_geom` under TOI at the end - instant.
+5. Restart apiv2 and the spatial servers (including the local `spatial-knn` container):
+   apiv2 memoises its schema era per process, and `dataset_reachoverflow.go` memoises at
+   startup too (unlike `dataset_reach.go`, which re-asks every delta), so both keep
+   naming dropped columns until restarted. Batch CLI commands re-check per invocation.
+
+A node that is down for unrelated maintenance during the window is an opportunity, not a
+problem: its rejoin state transfer copies a post-drop donor wholesale, so the DDL never
+needs to run on it at all - that is how db3 got its schema.
 
 ## 10. The sysadmin analytics tab
 
