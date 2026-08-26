@@ -14,11 +14,13 @@ use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Tests\Support\SeedsReachCells;
 use Tests\Support\SeedsSpatialIndex;
 use Tests\TestCase;
 
 class ExpandServiceTest extends TestCase
 {
+    use SeedsReachCells;
     use SeedsSpatialIndex;
 
     private const WKT = 'POLYGON((-0.1 51.5, -0.2 51.5, -0.2 51.6, -0.1 51.6, -0.1 51.5))';
