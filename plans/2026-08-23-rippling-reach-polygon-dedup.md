@@ -293,6 +293,35 @@ Independent of, and multiplies with:
 Rounding may even raise the de-duplication hit rate slightly, as near-identical polygons
 round to identical bytes. UNVERIFIED and not worth measuring separately.
 
+## MEASURED 2026-08-24: overflow_bounds follow-up sizing (all 9,729 ringed rows, db1)
+
+polygon/max_polygon dedup shipped as PR #1402 with overflow_bounds excluded (it is
+JSON-of-WKT, not a GEOMETRY - see the correction above). The follow-up was then sized
+properly: per-document AND per-ring MD5s for every ringed row (has_overflow = 1), batched
+1,000 PK rows at a time on an idle db1.
+
+| approach | saves | share of column |
+|---|---|---|
+| column total (post-shrink) | — | **5.78 GB** (not the ~10 GB estimated from the biased early-backfill sample) |
+| A: whole-document dedup, format untouched | **2.71 GB** | 46.9% |
+| B: decompose to per-ring GEOMETRY rows | 2.87 GB | 49.6% |
+| B's increment over A | 154 MB | **2.7 points** |
+
+Distinct documents = distinct ring-SETS exactly (5,352 = 5,352), so no two documents
+differ only in their scalars - stripping bbox/fairness_budget_min before hashing buys
+nothing. Per-ring cross-document sharing exists (rural.medium 52%, rural.sparse 48%,
+cluster wedges ~34%) but almost all of it co-occurs with fully identical documents,
+which whole-document hashing already captures. The fairness lanes carry no rings at all
+in the current population.
+
+Same verdict shape as the snap-radius table above, and by the same logic: 2.7 points is
+not worth rewriting every overflow reader (the JSON path-presence test, the digest bbox
+read, spatial-go's ring parser) and decomposing every writer. **The follow-up, if taken,
+is A: a second shared table (hash BINARY(16) PK, bounds LONGTEXT) + overflow_hash on
+rippling_reach, drained to a `{}` stub so the has_overflow generated column and its
+index never need DDL.** A recent-400 window measured A = B to the byte; the sharing gap
+lives entirely in the older third of the population.
+
 ## CORRECTION 2026-08-23: the column shares below are measured on a BIASED sample
 
 The per-row column shares used further down (overflow_bounds 50%, max_polygon 28%,

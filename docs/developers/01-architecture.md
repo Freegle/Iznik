@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-24
+last_reviewed: 2026-08-25
 owner: Freegle dev team
 covers:
   - docs/developers/reference/architecture.md
@@ -80,9 +80,11 @@ and per-group membership and roles are the ones you will meet first.
   reference for the lanes and the table of where each is honoured.
 
   Agreeing on the answer is not sufficient: how a surface ASKS costs as much as what it
-  concludes. The lane rings are 37,000-vertex polygons stored as JSON, so the read question
-  ("which of these posts admit me") cannot be answered from the column at any level of
-  narrowing - it is hundreds of parses, seconds per page. Read paths ask the spatial server,
+  concludes. The lane rings WERE 37,000-vertex polygons stored as JSON, so the read question
+  ("which of these posts admit me") could not be answered from the column at any level of
+  narrowing - it was hundreds of parses, seconds per page. They are now stored as compact
+  cell grids on a fixed lattice (rippling-algorithm.md §9b-9c), which is far cheaper to read
+  but does not change the rule below, because the rule is about SHAPE rather than size. Read paths ask the spatial server,
   which rasterises each ring once, and never put the JSON test beside an indexed predicate:
   do that and the optimiser drops the index for the entire query, which reads as a healthy
   site returning correct answers right up until it stops returning them. Twice on 21 Aug

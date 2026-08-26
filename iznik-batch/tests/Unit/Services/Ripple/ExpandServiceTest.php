@@ -7,6 +7,7 @@ use App\Models\Group;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
+use App\Services\Ripple\CellSetService;
 use App\Services\Ripple\ExpandService;
 use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\ReachService;
@@ -3854,6 +3855,314 @@ class ExpandServiceTest extends TestCase
             $originalBytes,
             $originalStillThere,
             'the ORIGINAL shared geom row was never mutated in place - this is the 261-post corruption guard'
+        );
+    }
+
+    // ── The compact cell-set columns (plans/2026-08-24-rippling-reach-raster-storage.md) ──
+    //
+    // Every one of these goes through the REAL rasteriser in iznik-spatial-go
+    // (CellSetService::rasterize, the ONE place a polygon becomes its canonical
+    // compact form) rather than a stub, because a stub would agree with itself
+    // about a format the reading side has to agree with instead. Http::fake()
+    // would intercept that call and hand back an empty 200, so these tests
+    // deliberately fake ONLY the routing endpoints and let the rasterise
+    // request go to the live service.
+
+    /**
+     * Fake the routing endpoints while letting the rasterise call through to
+     * the real spatial server - Laravel's stubs are matched in order, so the
+     * unmatched-request passthrough has to be explicit.
+     */
+    private function fakeRoutingButNotRasterize(string $wkt): void
+    {
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        $schedule = [];
+        for ($k = 1; $k <= 3; $k++) {
+            $schedule[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k, 'polygon' => $polygon];
+        }
+        Http::fake(function ($request) use ($schedule) {
+            if (str_contains($request->url(), 'reach/rasterize')) {
+                // Not stubbed: let the real rasteriser answer.
+                return null;
+            }
+            if (str_contains($request->url(), 'ripple-schedule')) {
+                return Http::response([
+                    'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
+                ], 200);
+            }
+
+            return Http::response([], 200);
+        });
+    }
+
+    private function cellSets(): \App\Services\Ripple\CellSetService
+    {
+        return new \App\Services\Ripple\CellSetService();
+    }
+
+    public function test_init_stores_the_reach_as_a_cell_set_that_agrees_with_the_polygon(): void
+    {
+        $this->fakeRoutingButNotRasterize(self::WKT);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $this->service()->process(false, 500);
+
+        $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+        $this->assertNotNull($cells, 'init must store the cell set alongside the polygon');
+
+        // The cell set must classify points the same way the stored polygon
+        // does - it is a different representation of one shape, not a second
+        // opinion about which shape it is.
+        $decoded = $this->cellSets()->decode($cells);
+        $polygonSays = fn (float $lng, float $lat): bool => (bool) DB::selectOne(
+            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857)), 0) AS c
+             FROM rippling_reach WHERE msgid = ?',
+            [$lng, $lat, $msgid]
+        )->c;
+
+        foreach ([[-0.15, 51.55], [-0.12, 51.52], [-0.18, 51.58], [5.0, 5.0], [-1.0, 50.0]] as [$lng, $lat]) {
+            $this->assertSame(
+                $polygonSays($lng, $lat),
+                $this->cellSets()->contains($decoded, $lng, $lat),
+                "cell set and polygon disagree about ($lng, $lat)"
+            );
+        }
+    }
+
+    public function test_a_secondary_reject_clips_the_cell_set_as_well_as_the_polygon(): void
+    {
+        // The whole point of the Subtract primitive: a rejection has to shrink
+        // BOTH representations, or the cell set keeps admitting people in the
+        // area the polygon has just stopped covering - and the cell set is what
+        // the reply gate reads.
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+        $group = $this->createTestGroup();
+        // Rejected group's area = the EASTERN half of the reach (lng -0.15..-0.10).
+        DB::statement(
+            "UPDATE `groups` SET polyindex = ST_GeomFromText(
+                'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', 3857)
+             WHERE id = ?",
+            [$group->id]
+        );
+
+        $ticksJson = json_encode([
+            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
+            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
+            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+        );
+        $this->fakeRoutingButNotRasterize(self::WKT);
+
+        $this->service()->process(false, 500);
+
+        $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+        $this->assertNotNull($cells, 'the clip must leave a cell set, not drop the column');
+        $decoded = $this->cellSets()->decode($cells);
+
+        $this->assertFalse(
+            $this->cellSets()->contains($decoded, -0.12, 51.55),
+            'the rejected eastern area must be cleared from the cell set too'
+        );
+        $this->assertTrue(
+            $this->cellSets()->contains($decoded, -0.18, 51.55),
+            'the western origin area must survive in the cell set'
+        );
+    }
+
+    public function test_a_rasterise_failure_clears_the_cell_set_rather_than_leaving_a_stale_one(): void
+    {
+        // Two of the four polygon write paths SHRINK the reach, so a stale cell
+        // set left behind by a failed rasterise would be LARGER than the polygon
+        // it disagrees with - it would admit members the reach has just stopped
+        // covering, and the cell set is what the reply gate reads. NULL costs a
+        // fallback; stale costs correctness.
+        $msgid = $this->seedSpatialPost(now()->subHours(7));
+
+        $ticksJson = json_encode([
+            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
+            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
+            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+        );
+
+        // Give the row a real cell set first, from the real rasteriser.
+        $this->fakeRoutingButNotRasterize(self::WKT);
+        $seeded = $this->cellSets()->rasterize(self::WKT);
+        $this->assertNotNull($seeded, 'the real rasteriser must seed a cell set for this test to mean anything');
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['polygon_cells' => $seeded]);
+
+        // Now break the rasteriser and let the tick run.
+        Http::fake(function ($request) use ($ticksJson) {
+            if (str_contains($request->url(), 'reach/rasterize')) {
+                return Http::response('rasteriser is down', 500);
+            }
+
+            return Http::response([], 200);
+        });
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(3, (int) $row->tick, 'the tick still advanced - the reach write does not depend on the cells');
+        $this->assertNull(
+            $row->polygon_cells,
+            'a failed rasterise must clear the cell set, not leave the previous reach behind'
+        );
+    }
+
+    public function test_the_overflow_rings_are_stored_as_cell_sets_on_the_same_paths(): void
+    {
+        // The rings are the table's worst case (860KB a row, 37k vertices each).
+        // Their cell sets have to land on the SAME JSON paths as the rings, or
+        // iznik-spatial-go asks for a lane and gets nothing.
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $polygon = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
+            ]]],
+        ];
+        $ring = [
+            'type' => 'Feature',
+            'geometry' => ['type' => 'Polygon', 'coordinates' => [[
+                [-0.05, 51.45], [-0.25, 51.45], [-0.25, 51.65], [-0.05, 51.65], [-0.05, 51.45],
+            ]]],
+        ];
+        $schedule = [];
+        for ($k = 1; $k <= 3; $k++) {
+            $schedule[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k, 'polygon' => $polygon];
+        }
+        Http::fake(function ($request) use ($schedule, $ring) {
+            if (str_contains($request->url(), 'reach/rasterize')) {
+                return null; // the real rasteriser
+            }
+            if (str_contains($request->url(), 'ripple-schedule')) {
+                return Http::response([
+                    'total_freeglers' => 90,
+                    'max_drive_min' => 30,
+                    'schedule' => $schedule,
+                    'overflow_rural' => ['sparse' => $ring],
+                ], 200);
+            }
+
+            return Http::response([], 200);
+        });
+
+        $this->service()->process(false, 500);
+
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertNotNull($row->overflow_bounds, 'the ring itself is still stored');
+        $this->assertNotNull($row->overflow_cells, 'the ring must also be stored as a cell set');
+
+        $bounds = json_decode($row->overflow_bounds, true);
+        $cellsByLane = json_decode($row->overflow_cells, true);
+        $this->assertArrayHasKey('sparse', $bounds['rural'] ?? [], 'sanity: the ring landed where expected');
+        $this->assertArrayHasKey(
+            'sparse',
+            $cellsByLane['rural'] ?? [],
+            'the cell set must sit on the same lane path as the ring'
+        );
+        // The scalar members of overflow_bounds are deliberately NOT mirrored.
+        $this->assertArrayNotHasKey('bbox', $cellsByLane, 'bbox is a scalar read from overflow_bounds, not copied');
+
+        $decoded = $this->cellSets()->decode(base64_decode($cellsByLane['rural']['sparse']));
+        $this->assertTrue(
+            $this->cellSets()->contains($decoded, -0.15, 51.55),
+            "a point inside the ring must be inside the ring's cell set"
+        );
+        $this->assertFalse(
+            $this->cellSets()->contains($decoded, 5.0, 5.0),
+            'a point nowhere near the ring must not be'
+        );
+    }
+
+    /**
+     * Regression test for the group-cells cache in reapplyClips: a TRANSIENT
+     * rasterise failure for a rejecting group's own area must not
+     * permanently disable cells-clipping for every later post rejected by
+     * the same group in the same run - only a SUCCESS may be cached. A stub
+     * CellSetService fails exactly once, and only for the rejecting group's
+     * WKT (never the posts' own reach polygon), so the failure is isolated
+     * to the group-cells cache rather than writePolygonCells's own call.
+     */
+    public function test_group_cells_cache_retries_after_a_transient_rasterize_failure(): void
+    {
+        $group = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET polyindex = ST_GeomFromText(
+                'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', 3857)
+             WHERE id = ?",
+            [$group->id]
+        );
+
+        $ticksJson = json_encode([
+            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
+            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
+            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
+        ]);
+        $msgidA = $this->seedSpatialPost(now()->subHours(7));
+        $msgidB = $this->seedSpatialPost(now()->subHours(7));
+        foreach ([$msgidA, $msgidB] as $msgid) {
+            DB::statement(
+                "INSERT INTO rippling_reach
+                   (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                    max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
+                 VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+                [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+            );
+        }
+
+        $real = $this->cellSets();
+        $postWkt = self::WKT;
+        $flaky = new class($real, $postWkt) extends CellSetService {
+            private bool $failedOnce = false;
+
+            public function __construct(private CellSetService $real, private string $postWkt)
+            {
+            }
+
+            public function rasterize(string $wkt): ?string
+            {
+                // Only the REJECTING GROUP's own area (never the posts' own
+                // reach polygon) fails, and only the first time it is asked for.
+                if ($wkt !== $this->postWkt && !$this->failedOnce) {
+                    $this->failedOnce = true;
+
+                    return null;
+                }
+
+                return $this->real->rasterize($wkt);
+            }
+        };
+
+        $service = new ExpandService(new ReachService(), null, null, null, null, $flaky);
+        $service->process(false, 500);
+
+        $cellsA = DB::table('rippling_reach')->where('msgid', $msgidA)->value('polygon_cells');
+        $this->assertNull($cellsA, 'the first post to hit the transient failure must fall back to NULL, not a stale grid');
+
+        $cellsB = DB::table('rippling_reach')->where('msgid', $msgidB)->value('polygon_cells');
+        $this->assertNotNull(
+            $cellsB,
+            'the group-cells cache must retry after a transient failure, not stay poisoned for the rest of the run'
         );
     }
 }

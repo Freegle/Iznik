@@ -82,6 +82,10 @@ type reachCandidateRow struct {
 	ReachLat float64 `gorm:"column:reach_lat"`
 	ReachLng float64 `gorm:"column:reach_lng"`
 	ReachWKT string  `gorm:"column:reach_wkt"`
+	// ReachCells is the post's stored cell grid, selected ONLY on the
+	// degraded path (reachProbe non-nil) where the SQL conjunct was just the
+	// outer-bound superset and each row must be probed in Go.
+	ReachCells []byte `gorm:"column:reach_cells"`
 }
 
 // blurredDistanceMiles blurs this post's real coordinates (utils.Blur, deterministic — the
@@ -163,9 +167,9 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 	// added by reachCandidateQuery's own JOIN chain, shared with reachCandidatePoints
 	// (which does not select reach_wkt, so the extra LEFT JOIN there costs a
 	// primary-key lookup and nothing more).
-	share := rippling.GeomShareReady(db)
 	var candidates []reachCandidateRow
-	reachCandidateQuery(db, myid, latlng, unseenOnly).
+	query, probe := reachCandidateQuery(db, myid, latlng, unseenOnly)
+	query.
 		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 			"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
 			"ms.msgtype AS type, m.fromuser AS fromuser, ms.arrival, m.arrival AS posted, "+
@@ -175,11 +179,52 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 			" THEN 1 ELSE 0 END AS unseen, "+
 			"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 			"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-			"rr.lat AS reach_lat, rr.lng AS reach_lng, ST_AsText(ST_Envelope("+rippling.GeomExpr(share, "rr", "polygon", "g")+")) AS reach_wkt",
+			"rr.lat AS reach_lat, rr.lng AS reach_lng, "+reachExtentSelect(db, probe),
 			utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 		Scan(&candidates)
 
-	return candidates
+	return filterProbed(candidates, probe)
+}
+
+// reachExtentSelect picks how the reach extent (reach_wkt, the score's
+// 'close' denominator) is read, and whether the row carries its cells for the
+// degraded probe. While the legacy polygon exists its envelope is used,
+// exactly as before; afterwards the OUTER BOUND's envelope stands in - the
+// same extent within the bound's 0.002-degree buffer, read from a ~19KB
+// simplified vector instead of a megabyte polygon, and only ever consumed as
+// a radius over-estimate (ReachRadiusMetres).
+func reachExtentSelect(db *gorm.DB, probe *reachProbe) string {
+	sel := reachEnvelopeExpr(db) + " AS reach_wkt"
+	if probe != nil {
+		sel += ", rr.polygon_cells AS reach_cells"
+	}
+	return sel
+}
+
+// reachEnvelopeExpr is the reach-extent envelope for whichever schema era is
+// live: the legacy polygon's envelope while it exists (through the dedup
+// COALESCE when that does), the outer bound's afterwards.
+func reachEnvelopeExpr(db *gorm.DB) string {
+	if rippling.LegacyPolygonReady(db) {
+		return "ST_AsText(ST_Envelope(" + rippling.GeomExpr(rippling.GeomShareReady(db), "rr", "polygon", "g") + "))"
+	}
+	return "ST_AsText(ST_Envelope(rr.outer_bound))"
+}
+
+// filterProbed applies the degraded-path cells probe to fetched candidates;
+// a nil probe returns them untouched.
+func filterProbed(cands []reachCandidateRow, probe *reachProbe) []reachCandidateRow {
+	if probe == nil {
+		return cands
+	}
+	kept := cands[:0]
+	for _, c := range cands {
+		if probe.keep(c.ID, c.ReachCells) {
+			c.ReachCells = nil // not needed downstream; drop the blob early
+			kept = append(kept, c)
+		}
+	}
+	return kept
 }
 
 // reachCandidatePoints is the count-shaped slice of the reach arm: the SAME membership
@@ -191,10 +236,13 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 // write node (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md finding 2).
 func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reachCandidateRow {
 	var candidates []reachCandidateRow
-	reachCandidateQuery(db, myid, latlng, true).
-		Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id").
-		Scan(&candidates)
-	return candidates
+	query, probe := reachCandidateQuery(db, myid, latlng, true)
+	sel := "ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id"
+	if probe != nil {
+		sel += ", rr.polygon_cells AS reach_cells"
+	}
+	query.Select(sel).Scan(&candidates)
+	return filterProbed(candidates, probe)
 }
 
 // ClearCount clears the member's browse unread count in one call.
@@ -272,7 +320,7 @@ func browseClearedWatermark(db *gorm.DB, myid uint64) uint64 {
 // (nearbyCount) all build on it, so none of them can drift on membership: a post the feed
 // shows is a post the badge counts, held-for-moderation reaches stay out of both, and the
 // author's outbound cap binds everywhere.
-func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOnly bool) *gorm.DB {
+func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOnly bool) (*gorm.DB, *reachProbe) {
 	unseenFilter := ""
 	if unseenOnly {
 		// Unseen = no impression AND above the cleared watermark. Inlined rather than bound
@@ -281,7 +329,7 @@ func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOn
 			strconv.FormatUint(browseClearedWatermark(db, myid), 10) + " "
 	}
 
-	reachWhere, pointArgs := reachOrOverflowSQL(db, myid, latlng.Lng, latlng.Lat)
+	reachWhere, pointArgs, probe := reachOrOverflowSQL(db, myid, latlng.Lng, latlng.Lat)
 
 	// Two independent shape axes -
 	// unseenFilter (a plain bool toggle) and reachWhere (a live-DB-gated
@@ -320,12 +368,13 @@ func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOn
 
 	// The reach geometry may live in rippling_reach_geom (content-addressed dedup);
 	// see fetchReachCandidates. A primary-key LEFT JOIN, harmless for the callers
-	// that never select reach_wkt (reachCandidatePoints, nearbyCount).
-	if rippling.GeomShareReady(db) {
+	// that never select reach_wkt (reachCandidatePoints, nearbyCount). Guarded on
+	// the legacy columns surviving: post-drop neither the hash nor the table exists.
+	if rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db) {
 		query = query.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
 	}
 
-	return query.Where(whereSQL, whereArgs...)
+	return query.Where(whereSQL, whereArgs...), probe
 }
 
 // markPinned flags any summary in res whose msgid has a messages_pinned row (a paid
@@ -454,7 +503,7 @@ func Messages(c *fiber.Ctx) error {
 		// passed its args in.
 		// The reach geometry may live in rippling_reach_geom (content-addressed
 		// dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md).
-		ownShare := rippling.GeomShareReady(db)
+		ownShare := rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db)
 		ownQuery := db.Table("messages m").
 			Select("m.lat, m.lng, m.id, "+
 				"ANY_VALUE(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
@@ -468,7 +517,7 @@ func Messages(c *fiber.Ctx) error {
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = m.id AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = m.id AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
 				"ANY_VALUE(COALESCE(rr.lat, 0)) AS reach_lat, ANY_VALUE(COALESCE(rr.lng, 0)) AS reach_lng, "+
-				"ANY_VALUE(COALESCE(ST_AsText(ST_Envelope("+rippling.GeomExpr(ownShare, "rr", "polygon", "g")+")), '')) AS reach_wkt",
+				"ANY_VALUE(COALESCE("+reachEnvelopeExpr(db)+", '')) AS reach_wkt",
 				utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
 				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 			Joins("INNER JOIN messages_groups mg ON mg.msgid = m.id").
@@ -658,7 +707,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		var candidates []reachCandidateRow
 		// The reach geometry may live in rippling_reach_geom (content-addressed
 		// dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md).
-		mgShare := rippling.GeomShareReady(db)
+		mgShare := rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db)
 		mgQuery := db.Table("messages_spatial ms").
 			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
@@ -669,7 +718,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 				" THEN 1 ELSE 0 END AS unseen, "+
 				"COALESCE((SELECT SUM(mlv.count) FROM messages_likes mlv WHERE mlv.msgid = ms.msgid AND mlv.type = ?), 0) AS views, "+
 				"(SELECT COUNT(*) FROM chat_messages cm WHERE cm.refmsgid = ms.msgid AND cm.type = ? AND cm.reviewrejected = 0 AND cm.reviewrequired = 0) AS replies, "+
-				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE(ST_AsText(ST_Envelope("+rippling.GeomExpr(mgShare, "rr", "polygon", "g")+")), '') AS reach_wkt",
+				"COALESCE(rr.lat, 0) AS reach_lat, COALESCE(rr.lng, 0) AS reach_lng, COALESCE("+reachEnvelopeExpr(db)+", '') AS reach_wkt",
 				utils.MESSAGE_LIKES_VIEW, utils.CHAT_MESSAGE_INTERESTED).
 			// JOIN messages for the ORIGINAL post arrival (m.arrival), stable across
 			// rippling — see the reach arm above.
@@ -910,7 +959,7 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	// spatial index's rasters, and SQL only runs keyed lookups over the returned ids
 	// (plus the exact polygon test for the few boundary-band ids). Any failure falls
 	// through to the SQL containment path below, unchanged.
-	spatialIn, spatialPartial, useSpatial := spatialReachIDs(latlng)
+	spatialIn, spatialPartial, useSpatial := spatialReachIDs(db, latlng)
 
 	// The rasters answer only the committed reach. The feed additionally admits
 	// via the viewer's overflow ring (reachOrOverflowSQL), so the badge must ask
@@ -943,7 +992,18 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 				Scan(&count)
 			return count
 		}
-		reachCandidateQuery(db, myid, latlng, true).
+		countQuery, probe := reachCandidateQuery(db, myid, latlng, true)
+		if probe != nil {
+			// Degraded path: the SQL conjunct is only the outer-bound
+			// superset, so a bare COUNT would over-count. Count what survives
+			// the cells probe instead - same rows the feed would render.
+			var cands []reachCandidateRow
+			countQuery.
+				Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, rr.polygon_cells AS reach_cells").
+				Scan(&cands)
+			return uint64(len(filterProbed(cands, probe)))
+		}
+		countQuery.
 			Select("COUNT(DISTINCT ms.msgid)").
 			Scan(&count)
 		return count

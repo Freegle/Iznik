@@ -233,17 +233,6 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 	// search repeatedly in quick succession, so consecutive searches skip the expensive
 	// containment entirely (measured: ~1.4s cold, ~0.15s warm end-to-end). The own arm
 	// stays fresh so a just-posted item is searchable immediately.
-	//
-	// The exact polygon may live in rippling_reach_geom (content-addressed dedup,
-	// plans/2026-08-23-rippling-reach-polygon-dedup.md): COALESCE reads the shared row
-	// when rr.polygon_hash points at one, the local blob otherwise. The DRIVING index
-	// for this query is now rippling_reach_outer (the outer_bound conjunct below), not
-	// rippling_reach_polygon: the exact-polygon conjunct is a COALESCE expression and
-	// can no longer be an R-tree access path on its own, but outer_bound is unchanged,
-	// unindexed by the dedup, and a genuine superset (see the comment above) - so the
-	// plan is unaffected in practice. Confirm with EXPLAIN on db1 before this ships
-	// (Stage 3 of the dedup plan; this is the exact query the 2026-08-21 outage hit).
-	share := rippling.GeomShareReady(db)
 	now := time.Now()
 	key := reachUniverseKey(myid, lat, lng)
 	reachIDs, hit := cachedReachUniverse(key, now)
@@ -259,29 +248,22 @@ func nearbyFeedMsgIDs(db *gorm.DB, myid uint64, lat float64, lng float64) []uint
 		// own preference and applies however the viewer got in.
 		// TWO ARMS, TWO QUERIES - deliberately not one OR.
 		//
-		// The committed-reach arm is driven by the SPATIAL index on
-		// rippling_reach.polygon. ORing the ring test into it removed that index
-		// (EXPLAIN: key=rippling_reach_polygon rows=1 becomes key=NULL rows=62,534)
-		// and full-scanned a 17GB table on every cold cache fill, which on
-		// 2026-08-21 put 70+ concurrent copies on the read node, 250 running
-		// threads and load 158. The ring test is JSON_EXTRACT over a column and
-		// can never be indexed alongside a geometry predicate, so it has to be
-		// asked separately and merged here.
-		containment := "AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
-			"AND ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)) "
-
-		args := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
-		args = append(args, float64(9007199254740991), lat, lng, lat)
-		db.Table("rippling_reach rr"+rippling.GeomJoin(share, "rr", "polygon", "g")).
-			Select("ms.msgid").
-			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
-			Joins("INNER JOIN messages m ON m.id = ms.msgid").
-			Joins("INNER JOIN users au ON au.id = m.fromuser").
-			Where("ms.successful = 0 AND rr.status != 'held' "+
-				containment+
-				utils.AuthorReachCapWhere,
-				args...).
-			Scan(&reachIDs)
+		// The committed-reach arm. Preferred source: the spatial index's id
+		// list (exact, from the stored cell grids - the same authority the
+		// feed and badge use), narrowed here by the same visibility and
+		// author-cap conjuncts, bounded by primary key. The legacy geometry
+		// SQL survives as the fallback while its columns exist; once they are
+		// dropped the last resort is the outer-bound superset with each
+		// candidate probed against its stored cells in Go.
+		//
+		// History, because this is the exact query the 2026-08-21 outage hit:
+		// the SQL form is driven by the outer_bound R-tree, and ORing the
+		// ring test into it removed that index (EXPLAIN: key=
+		// rippling_reach_polygon rows=1 becomes key=NULL rows=62,534) and
+		// full-scanned a 17GB table on every cold cache fill - 70+ concurrent
+		// copies, 250 running threads, load 158. The ring test stays out of
+		// every form here.
+		reachIDs = searchReachArmIDs(db, lng, lat)
 
 		// Ring arm. The posts an overflow ring admits this viewer to, resolved
 		// through rippling.AdmittedMsgids - the spatial server's rasters, with
@@ -645,4 +627,95 @@ func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult 
 	}
 
 	return results
+}
+
+// searchReachArmIDs resolves the committed-reach arm of the search universe:
+// which live posts' current reach covers this viewer, filtered by the same
+// visibility and author-cap conjuncts as the feed. Three forms, in preference
+// order, mirroring the feed's reachContainmentSQL:
+//
+//  1. Spatial-index id list (exact, from the stored cell grids), narrowed by
+//     a primary-key IN - the keyed lookup shape. `partial` ids are legacy
+//     coarse-raster rows and keep the exact-geometry arm while the legacy
+//     columns exist.
+//  2. The legacy geometry SQL (outer-bound R-tree drive + exact ST_Contains
+//     through the dedup COALESCE), byte-for-byte the pre-cells query.
+//  3. Degraded (post-drop, spatial down): outer-bound superset in SQL, each
+//     candidate probed against its stored cells here. Correct and bounded,
+//     just slower - the emergency path.
+func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
+	authorCapArgs := []interface{}{float64(9007199254740991), lat, lng, lat}
+	var reachIDs []uint64
+
+	if in, partial, ok := rippling.SpatialReachIDs(db, lng, lat); ok {
+		legacy := rippling.LegacyPolygonReady(db)
+		if len(partial) > 0 && !legacy {
+			// Impossible for healthy rows post-drop; do not silently hide posts.
+			fmt.Printf("search: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
+			partial = nil
+		}
+		containment := "AND rr.msgid IN (?) "
+		args := []interface{}{in}
+		join := ""
+		if len(partial) > 0 {
+			share := rippling.GeomShareReady(db)
+			join = rippling.GeomJoin(share, "rr", "polygon", "g")
+			containment = "AND (rr.msgid IN (?) OR (rr.msgid IN (?) AND " +
+				"ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)))) "
+			args = []interface{}{in, partial, lng, lat, utils.SRID}
+		}
+		db.Table("rippling_reach rr"+join).
+			Select("ms.msgid").
+			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+			Joins("INNER JOIN messages m ON m.id = ms.msgid").
+			Joins("INNER JOIN users au ON au.id = m.fromuser").
+			Where("ms.successful = 0 AND rr.status != 'held' "+
+				containment+utils.AuthorReachCapWhere,
+				append(args, authorCapArgs...)...).
+			Scan(&reachIDs)
+		return reachIDs
+	}
+
+	if rippling.LegacyPolygonReady(db) {
+		// The pre-cells SQL form. The DRIVING index is rippling_reach_outer
+		// (the outer_bound conjunct), and the exact-polygon conjunct reads
+		// through the dedup COALESCE when that era's columns exist.
+		share := rippling.GeomShareReady(db)
+		containment := "AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
+			"AND ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)) "
+		args := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
+		db.Table("rippling_reach rr"+rippling.GeomJoin(share, "rr", "polygon", "g")).
+			Select("ms.msgid").
+			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+			Joins("INNER JOIN messages m ON m.id = ms.msgid").
+			Joins("INNER JOIN users au ON au.id = m.fromuser").
+			Where("ms.successful = 0 AND rr.status != 'held' "+
+				containment+utils.AuthorReachCapWhere,
+				append(args, authorCapArgs...)...).
+			Scan(&reachIDs)
+		return reachIDs
+	}
+
+	// Degraded: outer-bound superset + Go-side cells probe.
+	var cands []struct {
+		Msgid uint64 `gorm:"column:msgid"`
+		Cells []byte `gorm:"column:cells"`
+	}
+	args := []interface{}{lng, lat, utils.SRID}
+	db.Table("rippling_reach rr").
+		Select("ms.msgid, rr.polygon_cells AS cells").
+		Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
+		Joins("INNER JOIN messages m ON m.id = ms.msgid").
+		Joins("INNER JOIN users au ON au.id = m.fromuser").
+		Where("ms.successful = 0 AND rr.status != 'held' "+
+			"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) "+
+			utils.AuthorReachCapWhere,
+			append(args, authorCapArgs...)...).
+		Scan(&cands)
+	for _, c := range cands {
+		if in, ok := rippling.CellSetContains(c.Cells, lng, lat); ok && in {
+			reachIDs = append(reachIDs, c.Msgid)
+		}
+	}
+	return reachIDs
 }

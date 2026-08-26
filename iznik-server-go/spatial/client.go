@@ -252,6 +252,134 @@ func ReachOverflowContaining(lng, lat float64, lanes []string) (in []int64, part
 	return out.In, out.Partial, nil
 }
 
+// cellSetMagicLE is the wire-format magic (0x31534343, "CCS1"), little-endian
+// - mirrors rippling.cellSetMagic / CellSetService::FORMAT_MAGIC, duplicated
+// here rather than imported to avoid a spatial->rippling import cycle
+// (rippling already imports spatial for this very function).
+var cellSetMagicLE = [4]byte{0x43, 0x43, 0x53, 0x31}
+
+// RasterizeWKT converts a polygon/multipolygon WKT string into its compact
+// cell-set form (plans/2026-08-24-rippling-reach-raster-storage.md), via the
+// spatial server's POST /v1/reach/rasterize - the ONE place a boundary
+// becomes a grid. Used by the reach clip (a secondary-group rejection has to
+// turn the REJECTING GROUP's own area into cells before it can subtract them
+// from a post's reach grid): the query API, not the admin one, since this is
+// a read-shaped conversion, not an index mutation.
+//
+// A 200 is not proof of a cell set: a misrouted request, a proxy's own 200,
+// or a server too old to know this endpoint would otherwise be returned and
+// STORED, and every later reader would decode-fail and fall back for the
+// life of the row while the column looked converted (the same failure mode
+// CellSetService::rasterize's PHP twin was hardened against). Checked here,
+// once, at the only place these bytes enter the Go side.
+func RasterizeWKT(wkt string) ([]byte, error) {
+	reqURL := fmt.Sprintf("%s/v1/reach/rasterize", baseURL())
+	resp, err := httpClient.Post(reqURL, "text/plain", strings.NewReader(wkt))
+	if err != nil {
+		return nil, fmt.Errorf("spatial rasterize: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spatial rasterize %s: HTTP %d", reqURL, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("spatial rasterize %s: read body: %w", reqURL, err)
+	}
+	if len(body) < 4 || body[0] != cellSetMagicLE[0] || body[1] != cellSetMagicLE[1] ||
+		body[2] != cellSetMagicLE[2] || body[3] != cellSetMagicLE[3] {
+		// The URL and a short preview are in the message on purpose: the way
+		// this fails in practice is a request reaching the WRONG service and
+		// getting a perfectly valid 200 from it, which "not a cell set" alone
+		// gives you no way to diagnose.
+		preview := body
+		if len(preview) > 40 {
+			preview = preview[:40]
+		}
+		return nil, fmt.Errorf("spatial rasterize %s: response is not a cell set (%d bytes, starts %q)",
+			reqURL, len(body), string(preview))
+	}
+	return body, nil
+}
+
+// VectorizeCells calls POST /v1/reach/vectorize: encoded cell bytes in, the
+// traced boundary out - for the few places that genuinely need a vector now
+// the grid is the stored form (the map overlay; re-deriving the sandwich
+// bounds after a clip). toleranceDegrees 0 keeps the exact lattice outline;
+// positive values simplify for display. Returns the WKT and the GeoJSON
+// geometry of the same boundary. Tracing, like rasterising, lives only in
+// the spatial server - it carries judgement that must not exist twice.
+func VectorizeCells(cells []byte, toleranceDegrees float64) (wkt string, geojson string, err error) {
+	reqURL := fmt.Sprintf("%s/v1/reach/vectorize", baseURL())
+	if toleranceDegrees > 0 {
+		reqURL += fmt.Sprintf("?tolerance=%g", toleranceDegrees)
+	}
+	resp, err := httpClient.Post(reqURL, "application/octet-stream", bytes.NewReader(cells))
+	if err != nil {
+		return "", "", fmt.Errorf("spatial vectorize: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("spatial vectorize %s: HTTP %d", reqURL, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", fmt.Errorf("spatial vectorize %s: read body: %w", reqURL, err)
+	}
+	var out struct {
+		WKT     string          `json:"wkt"`
+		GeoJSON json.RawMessage `json:"geojson"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", "", fmt.Errorf("spatial vectorize %s: parse: %w", reqURL, err)
+	}
+	if out.WKT == "" {
+		return "", "", fmt.Errorf("spatial vectorize %s: empty boundary", reqURL)
+	}
+	return out.WKT, string(out.GeoJSON), nil
+}
+
+// GroupCellRelation mirrors the spatial server's response item for
+// GroupsIntersectingCells.
+type GroupCellRelation struct {
+	ID     int64 `json:"id"`
+	Within bool  `json:"within"`
+}
+
+// GroupsIntersectingCells calls POST /v1/groups/intersecting: which groups'
+// areas share at least one covered cell with this grid, each flagged with
+// whether the grid lies entirely within that group. The cell form of the
+// ST_Intersects/ST_Within pair the rejection clip, the retraction pass and
+// the crosspost count ask - answered by the spatial server so the comparison
+// happens on the same lattice as the reach itself, with the group rasters
+// cached there.
+func GroupsIntersectingCells(cells []byte) ([]GroupCellRelation, error) {
+	reqURL := fmt.Sprintf("%s/v1/groups/intersecting", baseURL())
+	resp, err := httpClient.Post(reqURL, "application/octet-stream", bytes.NewReader(cells))
+	if err != nil {
+		return nil, fmt.Errorf("spatial groups intersecting: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, fmt.Errorf("spatial dataset \"groups\" not ready")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spatial groups intersecting %s: HTTP %d", reqURL, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("spatial groups intersecting %s: read body: %w", reqURL, err)
+	}
+	var out struct {
+		Groups []GroupCellRelation `json:"groups"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("spatial groups intersecting %s: parse: %w", reqURL, err)
+	}
+	return out.Groups, nil
+}
+
 // ExtraString returns a string value from a QueryResult.Extra map, or "" if absent.
 func ExtraString(r QueryResult, key string) string {
 	if v, ok := r.Extra[key].(string); ok {

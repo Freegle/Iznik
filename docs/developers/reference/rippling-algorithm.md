@@ -1,11 +1,13 @@
 ---
-last_reviewed: 2026-08-24
+last_reviewed: 2026-08-25
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
   - iznik-batch/app/Console/Commands/Browse/**
   - iznik-server-go/rippling/**
   - iznik-server-go/density/**
+  - iznik-spatial-go/cellset/**
+  - iznik-spatial-go/dataset_reachoverflow.go
   - iznik-nuxt3/composables/useReachDistance.js
   - iznik-nuxt3/composables/useReachOverlay.js
   - iznik-nuxt3/components/PostMap.vue
@@ -365,7 +367,8 @@ reading, so it is inside the noise the data already carries. It cannot merge two
 neighbours either - lattice points are three whole units apart at 0.0001 resolution
 and rounding moves each by at most half a unit (checked over 632,152 consecutive
 pairs; none collapsed). Measured **1.70x** on its own. Rows written before that
-are rewritten by `ripple:shrink-overflow-bounds`, which is bounded, resumable,
+are rewritten by `ripple:shrink-overflow-bounds`, which is bounded, resumable, refuses once
+`overflow_bounds` has been dropped (§9c),
 holds `updated_at` still so the reach mailer does not reconsider the row, and
 checks every coordinate before writing. Dry-run over production rows: **1.70x**,
 nothing refused.
@@ -1033,12 +1036,333 @@ The contract, defined once per language in `GeomShareService` (PHP) and
   instead PROVES a geometry unreferenced: age grace, two passes agreeing across at least the
   grace interval, an anti-join re-checked inside the DELETE itself, and the FK as backstop.
 
-Operator lifecycle: `ripple:dedup-geometry` (backfill hashes),
-`ripple:verify-geometry-dedup` (recompute-and-compare checker; non-zero when anything
-mismatches OR when it compared nothing), `ripple:drain-deduped-blobs` (the actual disk win:
-verified blobs become a sentinel `POINT(0 0)` for `polygon` - NOT NULL + spatial index rule
-out NULL - and NULL for `max_polygon`), then the GC on repeat. `overflow_bounds` is NOT
-deduplicated here: it is JSON-of-WKT, not a GEOMETRY, and has_overflow is generated from it.
+**This layer is being RETIRED, not maintained (§9c).** It existed to shrink the polygons,
+and the polygons are going entirely - so deduplicating them is wasted work and the shared
+table becomes pure overhead. Its four operator commands (`ripple:dedup-geometry`,
+`ripple:verify-geometry-dedup`, `ripple:drain-deduped-blobs`, `ripple:gc-reach-geometry`)
+have been deleted, and the scheduling PR that would have kept them running (#1403) was
+closed as obsolete. What remains of `GeomShareService` / `rippling/geomshare.go` is the
+READ path only: those `COALESCE`s are how a legacy row is read during the window between
+this code deploying and the operator dropping the columns, so they survive until the drop
+and then become dead code, removed in the follow-up. `overflow_bounds` was never
+deduplicated here anyway: it is JSON-of-WKT rather than a GEOMETRY, and `has_overflow` is
+generated from it.
+
+### 9b. Cell-set (raster) storage (stacked on §9a)
+
+Sharing identical polygons (§9a) is one order of magnitude; the next is to stop storing a
+*vector tracing* of the reach at all and store the *membership grid* directly instead
+(plans/2026-08-24-rippling-reach-raster-storage.md). `polygon`/`max_polygon` are ~11k-vertex
+boundary tracings of an area the routing server itself computes as a grid fill and discards
+immediately after tracing (`iznik-routing-go`'s `buildIsochroneGrid`/`traceBoundary`); this
+stores that grid, RLE-compressed, on a fixed 0.0003-degree lattice (the same one the
+overflow rings already use).
+
+Measured 2026-08-25 on six REAL PRODUCTION polygons (read-only over the live tunnel), 7,787
+to 33,819 vertices: **19.5x to 22.0x, 20.2x overall**. That is the figure to use. Eight
+Bristol-sized routed isochrones measured 36.2x to 43.7x and one earlier production polygon
+measured 45x; both are the top of the range rather than the middle, because the ratio rises
+with boundary detail per unit area.
+
+**Whole-table sizes, not a sample of rows.** Two earlier attempts at this figure were both
+wrong in the same direction and are worth knowing about, because either mistake is easy to
+repeat: sampling the 200-500 *newest* rows oversamples rows that are still expanding, and
+reading the `polygon` column directly misses that **82% of rows have already been drained by
+§9a** - their `polygon` holds a sentinel and the real bytes live in `rippling_reach_geom`.
+Measured through the column, a row looks like 69KB; measured through the join every reader
+actually uses, it is 342KB.
+
+Measured 2026-08-25 from `information_schema`, which cannot be sampled wrongly:
+`rippling_reach` 19.1GB + `rippling_reach_geom` 21.5GB = **40.6GB a node**. After the drop
+(§9c) that becomes ~3.5GB, and ~11GB at the steady state once every row carries grids -
+about **12x**, freeing ~37GB a node, and the whole shared table goes with it. `outer_bound`
+is then 64% of what each row holds, so the geometry that **stays** is where any further
+saving would have to come from, not the grids.
+
+The ratio is shape-dependent, so treat 45x as that polygon's number rather than the
+column's: grid bytes scale with area and boundary complexity, WKT bytes scale with vertex
+count, and the win comes precisely from production storing tens of thousands of vertices
+to describe an area a grid describes cheaply.
+
+**Rings measure the same, and are now measured rather than inferred.** `overflow_bounds` is
+a JSON column, not a geometry one - `{bbox, rural: {lane: WKT}}` - so each lane's ring is its
+own polygon inside it. Four real production rings pulled from two rows (2026-08-25),
+9,001 to 42,643 vertices across both the `medium` and `sparse` lanes: **21.5x, 21.6x, 22.7x,
+23.7x**. That sits squarely on the 19.5-22.0x measured for reach polygons, which is the
+expected result - a ring is boundary-dense in the same way a reach is. Ring blobs are the
+table's largest: 11,303 rows carry one, mean 604KB, max 1,788KB.
+
+**Turning a polygon into cells happens in exactly one place** - `iznik-spatial-go`'s
+`POST /v1/reach/rasterize` (its `cellset` package) - the same discipline `GeomShareService`
+established for content-hash canonicalisation: two independently-written rasterisers could
+disagree at a boundary cell in ways nothing would catch; one writer cannot disagree with
+itself. **Everything else about a cell set is duplicated deliberately.** Decoding, testing
+a point, serialising an already-computed grid, and subtracting one grid from another are
+all deterministic arithmetic on a fixed versioned format with nothing to canonicalise, so
+`App\Services\Ripple\CellSetService` (PHP) and `iznik-server-go/rippling`'s own port (Go;
+not a shared module - see below) both do them directly, proven identical via a golden
+vector generated by the real encoder rather than hand-written. That is what lets a reader
+on a hot path answer "is this point inside" without a network round trip.
+
+**The three rules that define the format**, stated here because each is a decision someone
+will otherwise have to reverse-engineer from the encoder, and getting any of them wrong is
+silent:
+
+1. **A cell is set if and only if its CENTRE lies inside the polygon** (even-odd rule). This
+   is the boundary convention, and it is deliberate rather than incidental: a cell the
+   boundary merely clips is *out*. So the stored area can differ from the polygon by up to
+   half a cell either way along the edge - at most ~33m N-S, ~19-25m E-W at UK latitudes.
+   That is the entire accuracy claim, and §9c measures it against real polygons. The
+   alternative rules (any-overlap, which only ever grows the area; majority-coverage, which
+   needs the clipped area computed per cell) were rejected for being respectively biased and
+   expensive, not because centre-in is more accurate.
+2. **Each blob is scoped to its own reach's extent, not to the global lattice.** The header
+   carries `MinCol`/`MinRow`/`Cols`/`Rows`, so a Bristol-sized reach stores a Bristol-sized
+   grid whose cells happen to be *aligned* to the global lattice. Only the alignment is
+   global. This is what keeps a decode proportional to one reach's area rather than the
+   country's, and why two reaches can be compared cell-for-cell with no resampling.
+3. **The format version lives in the magic** (`"CCS1"`), not in a separate field. A change of
+   lattice or layout becomes `CCS2` with its own magic, so a v1 reader hands back "bad magic"
+   on v2 bytes instead of misreading them - which is what makes a future format change a
+   gradual, detectable migration rather than a stop-the-world rewrite.
+
+**Three columns, one per geometry the table stores.** All nullable, all unindexed -
+nothing ever queries the bytes in SQL; they are opaque to MySQL and decoded in application
+code. They began as purely additive mirrors, so that a deploy ahead of a backfill was a
+no-op with every reader falling back to the geometry or its §9a hash. **They are now the
+only stored form (§9c)**; the fallbacks remain solely for the window before the operator
+drops the columns.
+
+| Column | Mirrors | Written by | Read by | Backfill |
+|---|---|---|---|---|
+| `max_polygon_cells` | `max_polygon` | `MaxReachService::storeMaxPolygon` | `isWithinMaxReach`, Go `firstreply.ShouldPassThrough` | `ripple:backfill-max-reach-cells` |
+| `polygon_cells` | `polygon` | all four `ExpandService` polygon writes | `ReachQueryService::isWithinReach` | `ripple:backfill-reach-cells` |
+| `overflow_cells` | `overflow_bounds` | both `ExpandService` ring writes | `iznik-spatial-go`'s ring index build | `ripple:backfill-ring-cells` |
+
+**The rejection clips subtract, they do not re-rasterise.** When a secondary group
+rejects a post, `ExpandService::reapplyClips` and the Go `ClipReachForRejectedGroup` both
+shrink `polygon` with `ST_Difference` - and shrink `polygon_cells` by rasterising the
+*rejecting group's own area* and subtracting it. That way round because after the
+difference the surviving reach is frequently bigger than the group that clipped it, so
+re-rasterising the result would cost more than the write it is meant to make cheap.
+Subtraction is a bitwise AND-NOT: `CellDegrees` is fixed rather than per-blob, so both
+grids are already on the same lattice - no resampling, no reprojection, and no ambiguity
+for two implementations to disagree about. If anything about the cell path fails, the
+column is set NULL and the reader falls back; it is never left holding a stale grid,
+because a stale grid is *more* permissive than the polygon it disagrees with.
+
+**`outer_bound` and `inner_bound` survive the drop** - still GEOMETRY, still spatially
+indexed, still derived MySQL-side in the same statement that writes the reach. They are
+buffered simplifications rather than envelopes (`ST_Buffer(ST_Simplify(reach, 0.002),
+±0.002)`), about 19KB a row, and they are the R-tree access path every SQL-side prefilter
+drives from. At that size they are noise against what is being removed, and losing the
+index would be the 2026-08-21 outage again. Post-drop they are derived from the grid traced
+back to a boundary (`/v1/reach/vectorize`, exact at tolerance 0), falling back to the
+grid's own bounding box.
+
+**The rings are the biggest win, and the shape that made it easy.** Measured 2026-08-23,
+`overflow_bounds` was *half the table* at 860KB a row, with rings averaging 37,000
+vertices - and every one of those vertices already sits on the 0.0003-degree lattice,
+because the rings are traced from a routing-server raster. The read path then downsamples
+that tracing into a ~130m coarse raster anyway (§How a read surface must ask the ring
+question), so the stored precision is parsed once and thrown away. `overflow_cells`
+mirrors `overflow_bounds`' nesting and JSON paths exactly, with each ring's WKT replaced
+by base64 cell bytes, so `iznik-spatial-go` asks for a lane with the identical
+`JSON_EXTRACT` it always used. It builds that lane's coarse raster from the cells when
+they are there and parses the WKT when they are not - **per lane**, so a partly-converted
+table is a normal state rather than a migration window. The coarse raster itself is
+unchanged at 192 cells and ~9KB a ring: the cells replace the *parse*, not the
+accelerator, and a fine cell set held in the index instead would be megabytes per ring.
+`overflow_bounds` was the authority for three things, and §9c moves all three onto the
+cells: the map overlay now draws rings traced back from the grid, the "which lanes does
+this post carry" test is a `JSON_CONTAINS_PATH` against `overflow_cells` (whose lane paths
+are identical by design), and `has_overflow` is regenerated from `overflow_cells IS NOT
+NULL` with the same index shape. The cells document then also carries the two scalars
+(`fairness_budget_min`, `bbox`) that previously lived only in `overflow_bounds`, because
+after the drop it is the only place they can live.
+
+There is no shared Go module between `iznik-server-go` and `iznik-spatial-go` for this: this
+repo's dev/test containers and Docker build contexts each sync only their own top-level
+directory, so a cross-module dependency cannot resolve inside either. iznik-server-go
+carries its own small port; iznik-spatial-go - the only service that ever needed the actual
+rasteriser - carries the whole `cellset` package as an ordinary internal package of its own
+module.
+
+**Deploy order matters for the rings.** `dataset_reachoverflow.go` queries
+`overflow_cells` unconditionally, following the stance `dataset_reach.go` already
+documents for `polygon_hash` (this module has no `information_schema` readiness gate).
+Run the migration before redeploying the spatial servers.
+
+### 9c. Storing ONLY the cells
+
+§9b put a grid beside every geometry, which made the table slightly *bigger*: the 36-44x is
+the ratio between two representations, and it only becomes disk when the geometry stops
+being stored. §9c is that step. `polygon`, `max_polygon` and `overflow_bounds` are dropped,
+along with the whole §9a dedup layer (hash columns, their indexes and FKs, and
+`rippling_reach_geom`). Measured against the whole-table sizes in §9b: **40.6GB a node
+today, ~3.5GB immediately after the drop and ~11GB at the steady state** - about 12x.
+
+**Every reader is two-era, and the schema decides which era it is in.**
+`App\Services\Ripple\LegacyGeometry::polygonReady()` / `::overflowReady()` (PHP),
+`rippling.LegacyPolygonReady` / `LegacyOverflowReady` (Go) and `reachLegacyForm()` (the
+spatial server) each ask `information_schema` once per process. With the columns present
+every legacy branch behaves exactly as it did; with them absent those branches are
+unreachable. Nothing is feature-flagged, because a flag can disagree with the schema and
+this cannot.
+
+Where each question is answered once the columns are gone:
+
+| Question | Answered by |
+|---|---|
+| Point-in-reach: reply gate, feed, badge, search, digest recipients | The spatial index's id list, or a run-stream probe of `polygon_cells`. `partial` ceases to exist: a 33m lattice has no ambiguous boundary cell to defer on |
+| Point-in-max-reach (first-reply passthrough) | A probe of `max_polygon_cells` |
+| Feed / search / badge universe | `spatial.ReachContaining` id lists; degraded mode is the `outer_bound` superset in SQL, refined by probing each returned row's cells in Go |
+| Digest recipient selection | `outer_bound` narrows in SQL, then the message's grid is fetched ONCE and every candidate's point probed against it |
+| Digest unmailed gate | A pure id comparison against the spatial index, fail-closed like `RingIndex::admits` |
+| Reach radius (digest score denominator) | A streaming walk of the grid's run endpoints |
+| Distance outside the reach (held replies) | Streaming distance to the nearest covered cell |
+| Reach extent shipped to the feed | `ST_Envelope(outer_bound)` - 223m/side wider than the polygon's envelope, and consumed only as an over-estimate |
+| Map overlay, reach and rings | `POST /v1/reach/vectorize` - the grid traced back to a boundary, at a display tolerance |
+| Sandwich bounds after a write or clip | Derived from the traced grid; fallback is the grid's header bbox |
+| Which groups a reach touches (clip, retraction, crosspost count) | `POST /v1/groups/intersecting` - grid-vs-grid `Intersects`/`Within` on the shared lattice |
+| The rejection clip | `Subtract` on two grids; the row is deleted when nothing is left |
+
+**Tracing is the inverse valve, and lives in one place** for the same reason rasterising
+does. `cellset.ToMultiPolygonWKT` walks the grid's boundary edges, taking the left turn at
+a diagonal pinch so two regions touching at a corner come out as separate simple rings
+rather than one self-touching figure-eight, and nests holes under the shell that contains
+them. At tolerance 0 it is exact in the only sense that matters: rasterising its output
+through the production rasteriser reproduces the same covered cells. It is not
+byte-identical, and must not be asserted to be - the stored grid's header records the
+source polygon's envelope, which is legitimately wider than the covered extent a trace
+reproduces.
+
+**Writes now fail rather than degrade.** While the polygon existed, a failed rasterise left
+`polygon_cells` NULL and readers fell back. With the grid as the only stored form, a failed
+rasterise fails the tick: the post keeps its previous reach and is retried next sweep.
+Reach growth pausing while the spatial server is down is acceptable at a half-hourly
+cadence; a reach silently vanishing is not.
+
+**Verification.** `ripple:verify-cells-parity` asks the OLD question and the NEW question
+of the same row at the same points, per read case, and reports where they differ and by how
+much - deliberately sampling the boundary band (the polygon's own vertices, jittered by
+fractions of a cell) because uniform points over a bounding box are dominated by cases
+where a lattice and a boundary cannot disagree. It fails on a containment difference more
+than one cell from the edge, a radius more than a configurable percentage out, a trace that
+changes coverage, or a difference it cannot measure. Run it BEFORE the drop, on a database
+that still has both forms.
+
+Measured on eight real isochrones (2026-08-25): 640 containment probes, 88 differences -
+87 boundary probes at *exactly* 0.000m from the edge and one interior probe at 7.98m, none
+beyond a cell, exterior 0/80. The 87 are `ST_Contains` excluding a point lying ON the
+boundary while the grid includes the cell whose centre is inside; the one is the opposite
+direction, so the grid does occasionally miss a point the polygon covered - by eight
+metres, against a 33m lattice and the ~400m of location blur every origin carries. Reach
+radius worst 0.63%. Traced coverage identical on all eight. Group intersects/within agreed
+15/15 both ways. And the clip - `ST_Difference` then rasterise against grid `Subtract` -
+came out with **zero** cells of symmetric difference, so the two implementations of the
+shrink agree exactly rather than approximately.
+
+**Operator order.** Deploy, then run the three backfills to completion
+(`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`), then
+`ripple:verify-cells-parity` and read it, then the drop DDL node by node under RSU.
+
+**FIVE schema operations in total, and only ONE of them does real work.** Every statement is a
+separate pass under RSU on a ~50GB table, so the count is a real cost rather than a tidiness
+question. It was nineteen.
+
+| # | When | Statement | Cost |
+|---|---|---|---|
+| 1 | Deploy | add `polygon_cells`, `max_polygon_cells`, `overflow_cells`, `has_max_reach`, `ALGORITHM=INSTANT` | metadata only, seconds |
+| 2 | Deploy | add `rippling_reach_maxreach_candidates`, `ALGORITHM=INPLACE, LOCK=NONE` | online index build |
+| 3 | Drop | drop both generated columns and their indexes | metadata only |
+| 4 | Drop | drop both dedup FKs and all five legacy columns, `ALGORITHM=INPLACE, LOCK=SHARED` | **the rebuild; blocks writes** |
+| 5 | Drop | restore both generated columns and both indexes | no rebuild |
+
+Plus `DROP TABLE rippling_reach_geom`, which is not an ALTER and takes ~21.5GB a node with it.
+
+**FEWER STATEMENTS IS NOT AUTOMATICALLY LESS WORK, which is why this is five and not fewer.**
+1 and 2 look mergeable and must not be: measured, folding the `INSTANT` column adds into the
+index build resets `TOTAL_ROW_VERSIONS` to 0, meaning it **rebuilt the whole table** - and that
+form cannot be `LOCK=NONE` either, so it would block writes for the length of a 50GB rebuild.
+Two cheap passes beat one expensive one. 3 and 5 cannot merge into 4 at all: a virtual
+generated column may not be added or dropped in the same ALTER as anything else.
+
+Two things that used to cost a statement each and are now implicit, verified rather than
+assumed: **single-column indexes** go automatically when their column is dropped (so
+`rippling_reach_polygon`, `_polygon_hash` and `_max_polygon_hash` need no statement), and the
+**foreign keys** ride along inside statement 4. Only the two dedup FKs are named there;
+`rippling_reach_shadow_msgid_foreign` also exists and must survive.
+
+**How long the backfill takes, and how to make it shorter.** The defaults
+(`--limit=100 --sleep-ms=50`) are cron-shaped: deliberately slow, so a sweep running
+alongside normal traffic cannot saturate the rasterise endpoint. For a one-off migration they
+are the wrong shape, and the sleep dominates - measured 2026-08-25, rasterising the largest
+realistic input (a 373KB, 23,665-vertex production polygon) takes **22ms**, so a 50ms pause
+is more than twice the actual work.
+
+| Setting | Rate | 47,927 rows (of 56,317; the rest are `expanding` and skipped) |
+|---|---|---|
+| Defaults | ~13 rows/s | ~1 hour per backfill, ~3 hours for all three |
+| `--limit=1000000 --sleep-ms=0` | ~40 rows/s | ~20 min per backfill, ~1 hour for all three |
+| ...plus 4 shards on `--after` | ~160 rows/s | ~5 min per backfill |
+
+Sharding is what the `--after` ceiling is for: give each worker a disjoint msgid range and
+they never contend, because each row is one independent statement. Past about four shards the
+limit stops being the rasteriser and becomes MySQL egress - the sweep ships ~1.1MB of WKT per
+row (`polygon` 297KB + `max_polygon` 416KB + `overflow_bounds` 366KB), so all three backfills
+move roughly **53GB** out of the database and into the spatial server. That transfer, not the
+rasterising, is the real floor.
+
+Two things that look like speedups and are not. **Sending WKB instead of WKT** buys nothing:
+measured on the same polygon, the text is 15.8 bytes a vertex against 16 as binary doubles,
+because these coordinates only carry 4-6 decimals - WKB is very slightly *larger*.
+(`cellset.FromGeometry` accepts WKB anyway, for the groups index.) And **raising `--limit`
+alone** does not help without dropping the sleep, since the sleep is per row, not per run. The
+migration and the production SQL both REFUSE while any live row has no `polygon_cells`,
+because such a row would simply stop having a reach. The drop is not reversible: `down()`
+throws rather than re-adding empty columns, since every reader would then find NULL where
+it expects a reach and quietly decide nobody is covered. The rollback is to not run it.
+**`ALGORITHM=INSTANT` IS REFUSED ON THIS TABLE, and an earlier version of the DDL that pinned
+it failed on its first statement and left every legacy column in place.** In general MySQL 8
+would default a `DROP COLUMN` to INSTANT, which edits metadata and leaves the dropped bytes in
+every existing row - the columns vanish from `SHOW CREATE TABLE` while `data_length` barely
+moves. That much is true and was measured (1,552KB after an instant drop against 16KB after a
+rebuild). But it was measured on a *simplified* table, and this one refuses INSTANT twice over:
+
+1. **While any VIRTUAL generated column exists** (`has_overflow`, `has_max_reach`), InnoDB
+   refuses to drop *any* column, even one nothing derives from - "INPLACE ADD or DROP of
+   virtual columns cannot be combined with other ALTER TABLE actions".
+2. **And with those removed, because of the GIS index** on `outer_bound` that the change keeps
+   - "Do not support online operation on table with GIS index".
+
+So the shape is: take both generated columns off (each in its own statement, index before
+column), then drop **every** legacy column in ONE `ALTER ... ALGORITHM=INPLACE`, then put the
+generated columns back over the cell columns. An INPLACE drop rewrites the table by definition,
+so that single statement is also the rebuild - measured, a 400-row clone with ~200KB in each fat
+column went 91,808KB to 1,696KB with no follow-up. There is deliberately **no** separate
+`ALTER TABLE ... FORCE`: it was redundant, and the version that had one could never reach it.
+
+**Index before column, every time** - and not because MySQL would refuse otherwise. It does
+not: dropping a generated column **silently rewrites** any index naming it, so
+`(status, has_max_reach, updated_at)` becomes `(status, updated_at)` under the same name. A
+guard checking only the index name would then skip re-creating it, leaving the wrong index in
+place permanently.
+
+The sequence lives in `App\Services\Ripple\LegacyGeometryDrop` rather than inline in the
+migration, so `LegacyGeometryDropTest` can run **the real statements** against a
+`CREATE TABLE ... LIKE rippling_reach` clone. That is the gap which let the broken version
+through: CI never sets `RIPPLE_DROP_LEGACY_GEOMETRY`, and the post-drop tests fake the schema
+guard rather than issuing DDL, so nothing executed these ALTERs at all.
+
+That combined drop runs `LOCK=SHARED`, which is **not** a choice: InnoDB refuses `LOCK=NONE` on this table
+outright ("Do not support online operation on table with GIS index"), and the GIS index in
+question is the one on `outer_bound` that this change deliberately keeps. Reads continue;
+writes to `rippling_reach` block for the duration. That is survivable only because the drop
+is run node by node under RSU, on a node already desynced and out of rotation. Afterwards,
+check `INFORMATION_SCHEMA.INNODB_TABLES.TOTAL_ROW_VERSIONS` for the table is back to 0 -
+that counter, not `data_length`, is the honest signal that no instantly-dropped column is
+still lurking in the rows.
 
 ## 10. The sysadmin analytics tab
 

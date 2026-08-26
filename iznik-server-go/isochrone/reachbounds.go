@@ -1,6 +1,7 @@
 package isochrone
 
 import (
+	"log"
 	"strings"
 
 	"github.com/freegle/iznik-server-go/rippling"
@@ -22,20 +23,58 @@ import (
 // testing whether the viewer point lies inside rr's reach: the sandwich form when the
 // bounds columns exist, else the legacy exact-polygon test. Callers splice it in place
 // of the old ST_Contains conjunct.
-func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []interface{}) {
+func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []interface{}, probe bool) {
+	// Spatial-index id-list first (the badge's proven shape, now the feed's
+	// too): the geometry test that was 95-98% of this query's cost is
+	// answered from the spatial index — exactly, from the stored cell grids —
+	// and SQL runs a keyed IN-list lookup. `partial` ids are legacy
+	// coarse-raster rows (no cells yet); they keep the exact-geometry arm,
+	// which exists only while the legacy columns do. Any spatial failure
+	// falls through to the SQL forms below, unchanged.
+	if in, partial, ok := spatialReachIDs(db, utils.LatLng{Lat: lat, Lng: lng}); ok {
+		legacy := rippling.LegacyPolygonReady(db)
+		if len(partial) > 0 && !legacy {
+			// Impossible for healthy rows post-drop (partial requires a row
+			// without cells, and post-drop cells are the only stored form) —
+			// surface it rather than silently dropping posts.
+			log.Printf("reach containment: %d partial ids with no legacy geometry to resolve them", len(partial))
+			partial = nil
+		}
+		if len(partial) > 0 {
+			share := rippling.GeomShareReady(db)
+			return "AND (ms.msgid IN (?) OR (ms.msgid IN (?) AND " +
+					"ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)))) ",
+				[]interface{}{in, partial, lng, lat, utils.SRID}, false
+		}
+		// GORM renders an empty slice as IN (NULL) — matches nothing — which
+		// is right for a viewer no reach covers (the ring arm may still admit).
+		return "AND ms.msgid IN (?) ", []interface{}{in}, false
+	}
+
 	share := rippling.GeomShareReady(db)
-	if rippling.ReachBoundsReady(db) {
-		return rippling.ReachBrowseWhere(share, float64(lng), float64(lat), utils.SRID)
+	if rippling.LegacyPolygonReady(db) {
+		if rippling.ReachBoundsReady(db) {
+			w, a := rippling.ReachBrowseWhere(share, float64(lng), float64(lat), utils.SRID)
+			return w, a, false
+		}
+
+		// Pre-sandwich fallback: no join here (the enclosing query owns the FROM), so
+		// test via a correlated PK-pair lookup when the geometry may be deduped.
+		if share {
+			return "AND ST_Contains(COALESCE((SELECT g2.geom FROM rippling_reach_geom g2 WHERE g2.hash = rr.polygon_hash), rr.polygon), ST_SRID(POINT(?, ?), ?)) ",
+				[]interface{}{lng, lat, utils.SRID}, false
+		}
+
+		return "AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) ", []interface{}{lng, lat, utils.SRID}, false
 	}
 
-	// Pre-sandwich fallback: no join here (the enclosing query owns the FROM), so
-	// test via a correlated PK-pair lookup when the geometry may be deduped.
-	if share {
-		return "AND ST_Contains(COALESCE((SELECT g2.geom FROM rippling_reach_geom g2 WHERE g2.hash = rr.polygon_hash), rr.polygon), ST_SRID(POINT(?, ?), ?)) ",
-			[]interface{}{lng, lat, utils.SRID}
-	}
-
-	return "AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) ", []interface{}{lng, lat, utils.SRID}
+	// Degraded: no spatial index AND no legacy geometry (post-drop with the
+	// spatial server unreachable). The outer bound — a stored SUPERSET of the
+	// reach — narrows in SQL, and the caller probes each candidate's stored
+	// cells in Go (reachCandidateQuery threads this flag up). Correct and
+	// bounded, just slower: the emergency path, not a second authority.
+	w, a := rippling.ReachOuterOnlyWhere(float64(lng), float64(lat), utils.SRID)
+	return w, a, true
 }
 
 // viewerOverflowPaths is every ring path that could let this viewer in: their band or
@@ -54,17 +93,49 @@ func viewerAdmittedMsgids(db *gorm.DB, myid uint64, lat, lng float32) []uint64 {
 		viewerOverflowPaths(db, myid, lat, lng))
 }
 
+// reachProbe rides up from reachOrOverflowSQL when the containment conjunct
+// is only the outer-bound SUPERSET (the degraded path in reachContainmentSQL):
+// the caller must keep a returned row only when the viewer's point probes into
+// its stored cells — except ring-admitted posts, which are in via the ring
+// whatever the committed reach says, exactly as the OR arm in the SQL says.
+type reachProbe struct {
+	lng, lat float64
+	admitted map[uint64]struct{}
+}
+
+// keep answers the probe for one candidate row. Undecidable cells fail
+// closed: post-drop a healthy row always has cells, so an unreadable blob is
+// a row that must not decide anything.
+func (p *reachProbe) keep(msgid uint64, cells []byte) bool {
+	if _, ok := p.admitted[msgid]; ok {
+		return true
+	}
+	in, ok := rippling.CellSetContains(cells, p.lng, p.lat)
+	return ok && in
+}
+
 // reachOrOverflowSQL is reachContainmentSQL plus, when any overflow ring applies to this
 // viewer, the rings as alternative ways in. Returned as ONE conjunct so it can be spliced
 // into the single concatenated WHERE the browse query builds - see the note in
 // reachCandidateQuery about why that query cannot be split across several Where() calls.
-func reachOrOverflowSQL(db *gorm.DB, myid uint64, lng, lat float32) (string, []interface{}) {
-	reachWhere, reachArgs := reachContainmentSQL(db, lng, lat)
+// A non-nil reachProbe means the conjunct is a superset and rows need the Go-side probe.
+func reachOrOverflowSQL(db *gorm.DB, myid uint64, lng, lat float32) (string, []interface{}, *reachProbe) {
+	reachWhere, reachArgs, probe := reachContainmentSQL(db, lng, lat)
+
+	admitted := viewerAdmittedMsgids(db, myid, lat, lng)
 
 	// The rings are resolved to msgids HERE, so composeReachOverflow stays pure
 	// and its SQL shape remains directly testable - which is the point of the
 	// split, and the shape is where this fails silently.
-	return composeReachOverflow(reachWhere, reachArgs, viewerAdmittedMsgids(db, myid, lat, lng))
+	where, args := composeReachOverflow(reachWhere, reachArgs, admitted)
+	if !probe {
+		return where, args, nil
+	}
+	p := &reachProbe{lng: float64(lng), lat: float64(lat), admitted: make(map[uint64]struct{}, len(admitted))}
+	for _, id := range admitted {
+		p.admitted[id] = struct{}{}
+	}
+	return where, args, p
 }
 
 // composeReachOverflow brackets the reach test and the rings as ALTERNATIVES within one

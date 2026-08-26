@@ -77,6 +77,18 @@ func ReachBrowseWhere(share bool, lng, lat float64, srid int) (string, []interfa
 	return where, args
 }
 
+// ReachOuterOnlyWhere is the browse containment reduced to the outer bound
+// alone (leading "AND ..."): a SUPERSET of the reach, for the degraded path
+// where neither the spatial index nor the legacy exact geometry can decide
+// (spatial server down after the polygon columns are dropped). Rows passing
+// it must be probed against their stored cells by the caller. Consumes TWO
+// (lng, lat, srid) triples.
+func ReachOuterOnlyWhere(lng, lat float64, srid int) (string, []interface{}) {
+	return "AND MBRContains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
+			"AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) ",
+		[]interface{}{lng, lat, srid, lng, lat, srid}
+}
+
 var reachBoundsOnce sync.Once
 var reachBoundsExists bool
 

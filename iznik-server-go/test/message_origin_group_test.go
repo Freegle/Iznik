@@ -5,6 +5,8 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -168,6 +170,119 @@ func TestClipReachForRejectedGroup(t *testing.T) {
 	var n int
 	db.Raw("SELECT JSON_LENGTH(rejected_groups) FROM rippling_reach WHERE msgid = ?", mid).Scan(&n)
 	assert.Equal(t, 1, n, "the same rejected group is not appended twice")
+}
+
+// The clip must shrink polygon_cells alongside polygon
+// (plans/2026-08-24-rippling-reach-raster-storage.md). The cell set is what the
+// reply gate reads, so a clip that shrank only the polygon would leave the cells
+// admitting people in the area the reach has just stopped covering - and a stale
+// cell set is MORE permissive than the polygon it disagrees with, which is the
+// dangerous direction.
+func TestClipReachForRejectedGroupClipsTheCellSet(t *testing.T) {
+	db := database.DBConn
+
+	var hasCells int
+	db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() " +
+		"AND table_name = 'rippling_reach' AND column_name = 'polygon_cells'").Scan(&hasCells)
+	require.Equal(t, 1, hasCells,
+		"rippling_reach.polygon_cells must exist - run scripts/setup-test-database.sh")
+
+	prefix := uniquePrefix("clipcells")
+	userID := CreateTestUser(t, prefix, "User")
+	group1 := CreateTestGroup(t, prefix+"a") // origin (west)
+	group2 := CreateTestGroup(t, prefix+"b") // secondary group that rejects (east)
+	mid := CreateTestMessage(t, userID, group1, "OFFER: clip cells test item", 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW() + INTERVAL 1 HOUR, 'Approved', 0)", mid, group2)
+
+	// group2's area is the EASTERN half of the reach below.
+	db.Exec("UPDATE `groups` SET polyindex = ST_GeomFromText("+
+		"'POLYGON((0.0 51.45,0.15 51.45,0.15 51.55,0.0 51.55,0.0 51.45))', 3857) WHERE id = ?", group2)
+
+	const reachWKT = "POLYGON((-0.15 51.45,0.15 51.45,0.15 51.55,-0.15 51.55,-0.15 51.45))"
+	db.Exec("INSERT INTO rippling_reach (msgid, polygon, outer_bound) VALUES (?, "+
+		"ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)))", mid, reachWKT, reachWKT)
+
+	// Seed polygon_cells from the REAL rasteriser, the one place a polygon
+	// becomes cells - a hand-built blob would only prove this test agrees with
+	// itself about a format the writer has to agree with instead.
+	seeded, err := spatial.RasterizeWKT(reachWKT)
+	// A hard requirement, not a skip. The rasteriser IS available in every
+	// environment that runs this suite, and skipping on its absence is how a
+	// write path that never worked passes as green - the exact trap this
+	// design already fell into once (see the plan's Stage 0 notes).
+	require.NoError(t, err, "the rasteriser must answer - run scripts/setup-test-database.sh and check spatial-knn is up")
+	require.NotEmpty(t, seeded, "the rasteriser must return a cell set to seed with")
+	seedRes := db.Exec("UPDATE rippling_reach SET polygon_cells = ? WHERE msgid = ?", seeded, mid)
+	require.NoError(t, seedRes.Error, "seeding polygon_cells must succeed")
+	require.EqualValues(t, 1, seedRes.RowsAffected, "the seed must land on exactly this row")
+
+	cellsCover := func(lng, lat float64) bool {
+		var raw []byte
+		if err := db.Raw("SELECT polygon_cells FROM rippling_reach WHERE msgid = ?", mid).Row().Scan(&raw); err != nil {
+			t.Fatalf("read polygon_cells: %v", err)
+		}
+		require.NotNil(t, raw, "polygon_cells must not be NULL")
+		cs, derr := rippling.DecodeCellSet(raw)
+		require.NoError(t, derr, "stored polygon_cells must decode (seeded %d bytes %x, read %d bytes %x)",
+			len(seeded), seeded[:minInt(16, len(seeded))], len(raw), raw[:minInt(16, len(raw))])
+		return cs.Contains(lng, lat)
+	}
+
+	require.True(t, cellsCover(0.1, 51.5), "the seeded cell set covers the eastern area")
+	require.True(t, cellsCover(-0.1, 51.5), "the seeded cell set covers the western origin area")
+
+	message.ClipReachForRejectedGroup(db, mid, group2)
+
+	assert.False(t, cellsCover(0.1, 51.5),
+		"the rejected group's eastern area must be cleared from the cell set, not just the polygon")
+	assert.True(t, cellsCover(-0.1, 51.5),
+		"the western origin area must survive in the cell set")
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// A row with NO cell set yet (the state before the backfill reaches it) must
+// come out of a clip with polygon_cells still NULL - never a partial or
+// invented grid. NULL is what tells every reader to use the polygon.
+func TestClipReachForRejectedGroupLeavesAbsentCellsNull(t *testing.T) {
+	db := database.DBConn
+
+	var hasCells int
+	db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() " +
+		"AND table_name = 'rippling_reach' AND column_name = 'polygon_cells'").Scan(&hasCells)
+	require.Equal(t, 1, hasCells, "rippling_reach.polygon_cells must exist")
+
+	prefix := uniquePrefix("clipnocells")
+	userID := CreateTestUser(t, prefix, "User")
+	group1 := CreateTestGroup(t, prefix+"a")
+	group2 := CreateTestGroup(t, prefix+"b")
+	mid := CreateTestMessage(t, userID, group1, "OFFER: clip without cells", 51.5, -0.1)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW() + INTERVAL 1 HOUR, 'Approved', 0)", mid, group2)
+	db.Exec("UPDATE `groups` SET polyindex = ST_GeomFromText("+
+		"'POLYGON((0.0 51.45,0.15 51.45,0.15 51.55,0.0 51.55,0.0 51.45))', 3857) WHERE id = ?", group2)
+
+	const reachWKT = "POLYGON((-0.15 51.45,0.15 51.45,0.15 51.55,-0.15 51.55,-0.15 51.45))"
+	db.Exec("INSERT INTO rippling_reach (msgid, polygon, outer_bound) VALUES (?, "+
+		"ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)))", mid, reachWKT, reachWKT)
+
+	message.ClipReachForRejectedGroup(db, mid, group2)
+
+	var raw []byte
+	require.NoError(t, db.Raw("SELECT polygon_cells FROM rippling_reach WHERE msgid = ?", mid).Row().Scan(&raw))
+	assert.Nil(t, raw, "a row with no cell set must still have none after a clip")
+
+	// ...and the polygon clip itself still happened.
+	var covers int
+	db.Raw("SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(0.1, 51.5), 3857)), 0) "+
+		"FROM rippling_reach WHERE msgid = ?", mid).Scan(&covers)
+	assert.Equal(t, 0, covers, "the polygon clip must run regardless of whether cells were present")
 }
 
 // RecordRippleEvent upserts a per-day counter (§15/§16 instrumentation), used here for the

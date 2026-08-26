@@ -37,6 +37,7 @@ class GeomShareReaderMatrixTest extends TestCase
         parent::setUp();
         GeomShareService::forgetReady();
         MaxReachService::forgetAvailability();
+        MaxReachService::forgetCellsAvailability();
         DB::statement('DELETE FROM rippling_reach');
         DB::statement('DELETE FROM rippling_reach_geom');
         $this->fakeRingIndex();
@@ -145,7 +146,7 @@ class GeomShareReaderMatrixTest extends TestCase
     private function assertIsWithinMaxReachAgrees(string $state): void
     {
         $msgid = $this->seedMaxRow($state);
-        $svc = new MaxReachService(app(ReachService::class));
+        $svc = app(MaxReachService::class);
 
         $this->assertTrue(
             $svc->isWithinMaxReach($msgid, self::INSIDE_LAT, self::INSIDE_LNG),
