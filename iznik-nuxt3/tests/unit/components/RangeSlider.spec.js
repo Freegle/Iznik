@@ -160,4 +160,43 @@ describe('RangeSlider', () => {
       expect(input.element.value).toBe('3')
     })
   })
+  // A shared axis: several sliders with different maxima stacked on one scale, so the thumb
+  // positions can be read against each other. The unavailable tail is drawn as an inert stub rather
+  // than by widening the input, so keyboard and assistive tech cannot reach a value the caller has
+  // ruled out.
+  describe('shared axis dead zone', () => {
+    it('draws no dead zone by default', () => {
+      const wrapper = createWrapper({ min: 5, max: 20 })
+      expect(wrapper.find('.range-slider__deadzone').exists()).toBe(false)
+    })
+
+    it('draws no dead zone when the axis matches the maximum', () => {
+      const wrapper = createWrapper({ min: 5, max: 45, axisMax: 45 })
+      expect(wrapper.find('.range-slider__deadzone').exists()).toBe(false)
+    })
+
+    it('gives the input its share of the axis and the stub the rest', () => {
+      // 5..20 of a 5..45 axis is 15/40 = 37.5%.
+      const wrapper = createWrapper({ min: 5, max: 20, axisMax: 45 })
+      expect(wrapper.find('input').attributes('style')).toContain('37.5')
+      expect(wrapper.find('.range-slider__deadzone').exists()).toBe(true)
+    })
+
+    it('keeps the input max at the reachable value, not the axis', () => {
+      const wrapper = createWrapper({ min: 5, max: 20, axisMax: 45 })
+      expect(wrapper.find('input').attributes('max')).toBe('20')
+    })
+
+    it('hides the stub from assistive tech and explains it on hover', () => {
+      const wrapper = createWrapper({
+        min: 5,
+        max: 20,
+        axisMax: 45,
+        deadZoneTitle: 'Not shown where you live',
+      })
+      const stub = wrapper.find('.range-slider__deadzone')
+      expect(stub.attributes('aria-hidden')).toBe('true')
+      expect(stub.attributes('title')).toBe('Not shown where you live')
+    })
+  })
 })

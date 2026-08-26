@@ -96,6 +96,37 @@ export const BROWSE_MINUTES_FALLBACK_MAX = 30
 export const BROWSE_MINUTES_MAX = 45
 export const BROWSE_MINUTES_STEP = 5
 
+// The two axes the "How far away" control drives. They are the SAME question asked in opposite
+// directions, so they share the slider, the minutes->miles routing conversion and the towns hint;
+// they differ only in which settings keys they write and how far they are allowed to go.
+//
+//   browse  (INBOUND)  how far away a post may be for ME to see it. Tops out at the member's own
+//                      density band cap (town/near cap_minutes), because that is the furthest the
+//                      reach engine will admit them to - see useReachDistance.
+//   myPosts (OUTBOUND) how far away someone may be and still see MY posts. Tops out at
+//                      BROWSE_MINUTES_MAX, the ripple ceiling, because a post's reach grows to the
+//                      ceiling whatever band its origin is in (DensityService::ceiling()). Capping
+//                      this axis at the member's own band would misreport a city member's real
+//                      reach as ~20 minutes when their posts already travel 45.
+//
+// The outbound keys are ABSENT until the member drags the outbound slider. Absent (and JSON null,
+// and <= 0) all mean "linked": every outbound reader falls back to browseMaxDistance, which is
+// exactly the behaviour before the split. Re-linking sends the keys as null, which apiv2's
+// JSON_MERGE_PATCH deletes.
+export const DISTANCE_AXES = {
+  browse: {
+    minutesKey: 'browseMaxMinutes',
+    milesKey: 'browseMaxDistance',
+    // Band-capped: loadCap() narrows this to the member's own cap_minutes.
+    bandCapped: true,
+  },
+  myPosts: {
+    minutesKey: 'myPostsMaxMinutes',
+    milesKey: 'myPostsMaxDistance',
+    bandCapped: false,
+  },
+}
+
 // Colour for the reach/isochrone-style map polygons (the former per-user
 // isochrone fill, now reused for the browse "coverage" hull). Kept as a
 // constant so the map overlays don't hardcode the hex in several places.

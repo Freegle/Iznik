@@ -1322,6 +1322,79 @@ describe('PostMap', () => {
         expect(geo).not.toEqual(REACH)
         expect(geo.type).toBe('Polygon')
       })
+
+      // The outbound half of the distance control: how far away someone can be and still see
+      // this member's posts. Only drawn once they have set it separately from what they see -
+      // while the two are linked there is one shape, and drawing the same outline twice would
+      // just thicken it.
+      const MY_POSTS_REACH = {
+        type: 'Feature',
+        geometry: {
+          type: 'Polygon',
+          coordinates: [
+            [
+              [-0.9, 50.9],
+              [0.7, 50.9],
+              [0.7, 52.2],
+              [-0.9, 52.2],
+              [-0.9, 50.9],
+            ],
+          ],
+        },
+      }
+
+      it('draws nothing extra while the two axes are linked', async () => {
+        const { nextReachSeq, publishReach } = useReachOverlay()
+        publishReach(nextReachSeq(), REACH)
+
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        expect(wrapper.findAllComponents({ name: 'LGeoJson' }).length).toBe(1)
+      })
+
+      it('shades both extents once the member sets them separately', async () => {
+        const browse = useReachOverlay()
+        browse.publishReach(browse.nextReachSeq(), REACH)
+        const myPosts = useReachOverlay('myPosts')
+        myPosts.publishReach(myPosts.nextReachSeq(), MY_POSTS_REACH)
+
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        const layers = wrapper.findAllComponents({ name: 'LGeoJson' })
+        expect(layers.length).toBe(2)
+        expect(layers[0].props('geojson')).toEqual(REACH)
+        expect(layers[1].props('geojson')).toEqual(MY_POSTS_REACH)
+
+        // What you SEE is filled; who sees YOU is an outline. The outbound extent is usually
+        // the wider of the two, so filling it as well would wash out the shape that answers
+        // "what will I see".
+        expect(layers[0].props('options').fill).toBe(true)
+        expect(layers[1].props('options').fill).toBe(false)
+        expect(layers[1].props('options').dashArray).toBeTruthy()
+      })
+
+      // The slots are independent: a change on one axis must not discard the other's shape.
+      it('keeps the outbound shape when the inbound one is cleared', async () => {
+        const browse = useReachOverlay()
+        browse.publishReach(browse.nextReachSeq(), REACH)
+        const myPosts = useReachOverlay('myPosts')
+        myPosts.publishReach(myPosts.nextReachSeq(), MY_POSTS_REACH)
+        browse.clearReach()
+
+        const wrapper = await mountNearbyWithMessages(HULL_MESSAGES, {
+          selectedMaxDistance: 10,
+        })
+
+        const layers = wrapper.findAllComponents({ name: 'LGeoJson' })
+        expect(layers.length).toBe(2)
+        // Inbound fell back to the hull; outbound is untouched.
+        expect(layers[0].props('geojson')).not.toEqual(REACH)
+        expect(layers[1].props('geojson')).toEqual(MY_POSTS_REACH)
+      })
     })
   })
 

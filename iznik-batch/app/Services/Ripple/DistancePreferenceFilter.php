@@ -87,13 +87,38 @@ class DistancePreferenceFilter
 
     /**
      * A member's OUTBOUND cap in miles: how far away other people may see the posts they
-     * write. Reads ONLY settings.browseMaxDistance - the key the member set themselves.
+     * write.
+     *
+     * Two keys, in priority order:
+     *   - settings.myPostsMaxDistance: the member's own answer to "how far away can people see
+     *     my posts", written only once they separate it from what they see.
+     *   - settings.browseMaxDistance: what they chose for what THEY see. Consulted as the
+     *     fallback because the two used to be one control, so a member who has never separated
+     *     them keeps exactly the behaviour they had before; separating them is precisely what
+     *     stops this key applying outbound.
      *
      * The band default (browseReachMaxDistance) is deliberately NOT consulted here. It says
      * how far this member will travel to collect, which is a different question from how far
      * their giveaway should travel to find a taker; applying it outbound would stop a city
      * member's posts leaving their ~4.8-mile band radius and undo the reason the ripple grows
      * to the ceiling at all.
+     *
+     * Absent, null, non-numeric or <= 0 all mean "this key holds no choice" and fall through to
+     * the next one; the sentinel means an explicit "no limit" and stops there. Note the null case
+     * is reachable: re-linking the two axes patches the outbound keys to null, and although
+     * apiv2's JSON_MERGE_PATCH then deletes them, is_numeric(null) is false so a leftover null
+     * reads as unset either way.
+     *
+     * Non-positive falling THROUGH is a deliberate difference from the inbound maxDistanceMiles
+     * above, which collapses it to unlimited. The two have different fallbacks and so want
+     * different answers: inbound falls back to the density band default, where "0 means take the
+     * band" would silently narrow a member who had explicitly asked for no limit; outbound falls
+     * back to the member's own inbound choice, where a 0 can only be a derivation artefact - it
+     * cannot mean "show my posts to nobody" and it cannot mean "no limit" - so ignoring the key
+     * is the only sane reading.
+     *
+     * Must stay in step with iznik-server-go/utils/reachcap.go's authorCapMiles, which resolves
+     * the same two keys the same way in SQL.
      */
     public function authorMaxDistanceMiles(User $user): float
     {
@@ -101,17 +126,27 @@ class DistancePreferenceFilter
         if (is_string($settings)) {
             $settings = json_decode($settings, true) ?: [];
         }
-
-        $value = is_array($settings) ? ($settings['browseMaxDistance'] ?? null) : null;
-        if (!is_numeric($value)) {
+        if (!is_array($settings)) {
             return (float) self::DISTANCE_UNLIMITED;
         }
 
-        $value = (float) $value;
+        foreach (['myPostsMaxDistance', 'browseMaxDistance'] as $key) {
+            $value = $settings[$key] ?? null;
+            if (!is_numeric($value)) {
+                continue;
+            }
 
-        return $value <= 0 || $value >= self::DISTANCE_UNLIMITED
-            ? (float) self::DISTANCE_UNLIMITED
-            : $value;
+            $value = (float) $value;
+            if ($value <= 0) {
+                continue;
+            }
+
+            return $value >= self::DISTANCE_UNLIMITED
+                ? (float) self::DISTANCE_UNLIMITED
+                : $value;
+        }
+
+        return (float) self::DISTANCE_UNLIMITED;
     }
 
     /**

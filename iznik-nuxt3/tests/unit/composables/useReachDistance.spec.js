@@ -511,3 +511,102 @@ describe('useReachDistance reach overlay for an unset slider', () => {
     expect(mockFetchNear).toHaveBeenCalledTimes(1)
   })
 })
+
+// The outbound axis: how far away someone can be and still see MY posts. Same slider, same
+// minutes->miles conversion, different keys - and two deliberate differences in behaviour, both
+// tested here because getting either wrong changes a member's reach without them asking.
+describe('useReachDistance axis myPosts', () => {
+  let useReachDistance
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    mockMe.value = {
+      lat: 53.4,
+      lng: -1.3,
+      settings: { browseMaxMinutes: 20, browseMaxDistance: 12 },
+    }
+    const mod = await import('~/composables/useReachDistance')
+    useReachDistance = mod.useReachDistance
+  })
+
+  it('writes the outbound keys and leaves the browse keys untouched', async () => {
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 18.25 })
+    const { onSliderChange } = useReachDistance(null, { axis: 'myPosts' })
+
+    await onSliderChange(30)
+
+    const saved = mockSaveAndGet.mock.calls[0][0].settings
+    expect(saved.myPostsMaxMinutes).toBe(30)
+    expect(saved.myPostsMaxDistance).toBe(18.25)
+    // The inbound pair is a separate choice and must survive untouched.
+    expect(saved.browseMaxMinutes).toBe(20)
+    expect(saved.browseMaxDistance).toBe(12)
+  })
+
+  // A post's reach grows to the ripple ceiling whatever band its origin is in, so the outbound
+  // axis is NOT band-capped. Honouring cap_minutes here would tell a city member their posts
+  // reach 20 minutes when they already reach 45.
+  it('ignores the density band cap and tops out at the ripple ceiling', async () => {
+    mockFetchNear.mockResolvedValue({
+      cap_minutes: 20,
+      density_band: 'dense',
+      reach_radius_miles: 30,
+    })
+    const { maxMinutes, loadCap } = useReachDistance(null, { axis: 'myPosts' })
+
+    await loadCap()
+
+    expect(maxMinutes.value).toBe(BROWSE_MINUTES_MAX)
+  })
+
+  it('stores the no-limit sentinel at the top stop even for a band-capped member', async () => {
+    mockFetchNear.mockResolvedValue({ cap_minutes: 20, density_band: 'dense' })
+    const { onSliderChange } = useReachDistance(null, { axis: 'myPosts' })
+
+    await onSliderChange(BROWSE_MINUTES_MAX)
+
+    const saved = mockSaveAndGet.mock.calls[0][0].settings
+    expect(saved.myPostsMaxMinutes).toBe(BROWSE_MINUTES_MAX)
+    expect(saved.myPostsMaxDistance).toBe(BROWSE_DISTANCE_UNLIMITED)
+  })
+
+  // While unset the two axes are linked, so the outbound slider has to show the member's REAL
+  // current outbound reach rather than a default of its own.
+  it('starts at the inbound travel time when the member has chosen one', async () => {
+    mockFetchNear.mockResolvedValue({ reach_radius_miles: 12 })
+    const { sliderValue } = useReachDistance(null, { axis: 'myPosts' })
+
+    expect(sliderValue.value).toBe(20)
+  })
+
+  it('starts at no limit when the member has never chosen an inbound distance', async () => {
+    // The band default lives in the separate, inbound-only browseReachMaxDistance key, so this
+    // member's posts are not capped at all today. Showing the band default would understate it.
+    mockMe.value.settings = {
+      browseMaxMinutes: 20,
+      browseReachMaxDistance: 4.8,
+    }
+    const { sliderValue } = useReachDistance(null, { axis: 'myPosts' })
+
+    expect(sliderValue.value).toBe(BROWSE_MINUTES_MAX)
+  })
+
+  // The two axes publish to separate overlay slots. A shared slot would let a change on one
+  // discard the other's in-flight shape and blank half the map.
+  it('publishes its reach shape to its own overlay slot', async () => {
+    const { useReachOverlay } = await import('~/composables/useReachOverlay')
+    mockFetchNear.mockResolvedValue({
+      reach_radius_miles: 18.25,
+      reach_polygon: { type: 'Feature', minutes: 30 },
+    })
+    const { onSliderChange } = useReachDistance(null, {
+      axis: 'myPosts',
+      withPolygon: true,
+    })
+
+    await onSliderChange(30)
+
+    expect(useReachOverlay('myPosts').reachGeoJSON.value.minutes).toBe(30)
+    expect(useReachOverlay('browse').reachGeoJSON.value).toBeNull()
+  })
+})

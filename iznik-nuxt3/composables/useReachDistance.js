@@ -8,45 +8,83 @@ import {
   BROWSE_MINUTES_MIN,
   BROWSE_MINUTES_MAX,
   BROWSE_MINUTES_FALLBACK_MAX,
+  DISTANCE_AXES,
 } from '~/constants'
 
-// Shared logic for the TIME-based "How far away" slider (browse filter + Feed settings). The slider
-// is a travel-time budget in MINUTES - matching the reach system (drive-time isochrones) rather than
-// miles. On change we convert the chosen minutes to a crow-flies mile radius via real routing
+// Shared logic for the TIME-based "How far away" sliders (browse filter + Feed settings). A slider
+// is a travel-time budget in MINUTES - matching the reach system (drive-time isochrones) rather
+// than miles. On change we convert the chosen minutes to a crow-flies mile radius via real routing
 // (location-aware, no hardcoded miles<->minutes constant) and persist BOTH:
-//   - settings.browseMaxMinutes: the source of truth, so the slider restores.
-//   - settings.browseMaxDistance: the derived radius the fast Haversine feed filter reads.
+//   - <axis>.minutesKey: the source of truth, so the slider restores.
+//   - <axis>.milesKey:   the derived radius the fast Haversine filters read.
 // The far-right stop means "no limit": it stores BROWSE_DISTANCE_UNLIMITED so the server's own
 // reach keeps governing. `onPersisted(miles)` runs after a successful save (emit / refetch count).
 //
-// The far-right stop is NOT a fixed 30 minutes. The reach engine sizes each post's budget from how
-// thinly freeglers are spread around it (20 dense / 30 medium / 45 sparse), so the slider asks the
-// server for this member's own cap and tops out there. Until that answer arrives - and whenever
-// density cannot be measured - the flat cap applies, so the slider is never wider than something
-// the server will honour.
+// TWO AXES (see DISTANCE_AXES). The same question in opposite directions:
+//   axis 'browse'  (INBOUND, the default) - how far away a post may be for me to see it.
+//   axis 'myPosts' (OUTBOUND)             - how far away someone may be and still see my posts.
+//
+// They differ in exactly two ways beyond which keys they write:
+//
+//  1. Their TOP STOP. The inbound stop is NOT a fixed 30 minutes: the reach engine sizes each
+//     post's budget from how thinly freeglers are spread around it (20 dense / 30 medium / 45
+//     sparse), so the inbound slider asks the server for this member's own cap and tops out there.
+//     Until that answer arrives - and whenever density cannot be measured - the flat cap applies,
+//     so the slider is never wider than something the server will honour. The OUTBOUND stop is the
+//     ripple ceiling (BROWSE_MINUTES_MAX) for every member, because a post's reach grows to the
+//     ceiling whatever band its origin is in. Band-capping the outbound axis would tell a city
+//     member their posts reach 20 minutes when they already reach 45.
+//
+//  2. What the top stop STORES. Inbound stores the sentinel only when the member's own band earns
+//     the ceiling, and a real derived radius below it - otherwise a member below the ceiling would
+//     silently inherit the widest band's reach. Outbound's range IS the ceiling, so its top stop
+//     always means "no limit" and always stores the sentinel.
 //
 // `withPolygon` additionally asks /town/near for the OUTLINE of the chosen travel time and
-// publishes it via useReachOverlay, for the browse map to shade. It rides on these calls rather
-// than having its own because the routing pass that produces the shape is the one this composable
-// already makes; the Feed settings slider leaves it off, and so pays nothing for a map it has not
-// got. See useReachOverlay for why the shape is an illustration and never a containment test.
-export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
+// publishes it via useReachOverlay (into this axis's own slot), for the browse map to shade. It
+// rides on these calls rather than having its own because the routing pass that produces the shape
+// is the one this composable already makes; the Feed settings sliders leave it off, and so pay
+// nothing for a map they have not got. See useReachOverlay for why the shape is an illustration and
+// never a containment test.
+export function useReachDistance(
+  onPersisted,
+  { withPolygon = false, axis = 'browse' } = {}
+) {
+  const { minutesKey, milesKey, bandCapped } = DISTANCE_AXES[axis]
   const authStore = useAuthStore()
   const { me } = useMe()
   const runtimeConfig = useRuntimeConfig()
   const apiInstance = api(runtimeConfig)
-  const { nextReachSeq, publishReach, clearReach } = useReachOverlay()
+  const { nextReachSeq, publishReach, clearReach } = useReachOverlay(axis)
 
-  // The top of the slider for this member. Starts at the flat cap and narrows or widens once the
-  // server reports the band. BROWSE_MINUTES_MAX is the ceiling across all bands: a server that
-  // reports something larger (a future band, a misconfigured env) must not stretch the UI past a
-  // travel time we are willing to offer.
-  const maxMinutes = ref(BROWSE_MINUTES_FALLBACK_MAX)
-
-  // Slider position comes from the saved travel-time budget; default (unset) is the top = "no limit".
-  const savedMinutes = computed(
-    () => me.value?.settings?.browseMaxMinutes ?? maxMinutes.value
+  // The top of the slider for this member. A band-capped axis starts at the flat cap and narrows or
+  // widens once the server reports the band; BROWSE_MINUTES_MAX is the ceiling across all bands, so
+  // a server that reports something larger (a future band, a misconfigured env) must not stretch
+  // the UI past a travel time we are willing to offer. An axis that is not band-capped sits at the
+  // ceiling from the start and never moves.
+  const maxMinutes = ref(
+    bandCapped ? BROWSE_MINUTES_FALLBACK_MAX : BROWSE_MINUTES_MAX
   )
+
+  // Slider position comes from this axis's saved travel-time budget.
+  //
+  // When the OUTBOUND budget is unset the two are still linked, so the outbound slider must show
+  // the member's real current outbound reach, which is whatever browseMaxDistance yields:
+  //   - they have chosen an inbound distance -> the same travel time caps their posts too, so show
+  //     browseMaxMinutes.
+  //   - they have never chosen one (the common case: the band default lives in the separate,
+  //     inbound-only browseReachMaxDistance key) -> their posts are not capped at all, so show the
+  //     top stop, which means "no limit".
+  // Showing the band default here instead would understate a city member's reach by more than half.
+  const savedMinutes = computed(() => {
+    const settings = me.value?.settings
+    const own = settings?.[minutesKey]
+    if (typeof own === 'number') return own
+    if (axis === 'myPosts' && typeof settings?.browseMaxDistance === 'number') {
+      return settings?.browseMaxMinutes ?? maxMinutes.value
+    }
+    return maxMinutes.value
+  })
 
   function positionFor(minutes) {
     if (minutes >= maxMinutes.value) return maxMinutes.value
@@ -62,9 +100,9 @@ export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
     sliderValue.value = positionFor(m)
   })
 
-  // One call to /town/near answers both questions: the member's cap (which describes their location,
-  // not the chosen time) and the radius for a given travel time. Null if there's no known location
-  // or the call fails - best-effort, we then leave the cap and the radius unchanged.
+  // One call to /town/near answers both questions: the member's cap (which describes their
+  // location, not the chosen time) and the radius for a given travel time. Null if there's no known
+  // location or the call fails - best-effort, we then leave the cap and the radius unchanged.
   async function fetchNear(minutes) {
     const lat = me.value?.lat
     const lng = me.value?.lng
@@ -79,7 +117,13 @@ export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
     const seq = withPolygon ? nextReachSeq() : null
     try {
       const r = await apiInstance.town.fetchNear(lat, lng, minutes, withPolygon)
-      if (typeof r?.cap_minutes === 'number' && r.cap_minutes > 0) {
+      // Only a band-capped axis takes its top from the server. The outbound axis is bounded by the
+      // ripple ceiling, which is the same for everyone, so cap_minutes must not narrow it.
+      if (
+        bandCapped &&
+        typeof r?.cap_minutes === 'number' &&
+        r.cap_minutes > 0
+      ) {
         maxMinutes.value = Math.min(r.cap_minutes, BROWSE_MINUTES_MAX)
       }
       if (withPolygon) {
@@ -111,8 +155,8 @@ export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
     const asked = savedMinutes.value
     await fetchNear(asked)
 
-    const saved = me.value?.settings?.browseMaxMinutes
-    if (typeof saved === 'number' && saved > maxMinutes.value) {
+    const saved = me.value?.settings?.[minutesKey]
+    if (bandCapped && typeof saved === 'number' && saved > maxMinutes.value) {
       await onSliderChange(maxMinutes.value)
       return
     }
@@ -151,9 +195,11 @@ export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
     // only means "as far as my own band goes" for a member whose band earns that
     // ceiling. Below it - a city or middling area - the top stop still needs a real
     // derived radius, or the member would silently inherit the widest band's reach.
+    // The outbound axis is not band-capped: its range IS the ceiling, so its top stop
+    // always takes this branch and always means a genuine "no limit".
     if (atTop && maxMinutes.value >= BROWSE_MINUTES_MAX) {
-      settings.browseMaxMinutes = minutes
-      settings.browseMaxDistance = BROWSE_DISTANCE_UNLIMITED
+      settings[minutesKey] = minutes
+      settings[milesKey] = BROWSE_DISTANCE_UNLIMITED
       sliderValue.value = minutes
       await authStore.saveAndGet({ settings })
       if (onPersisted) onPersisted(BROWSE_DISTANCE_UNLIMITED)
@@ -165,10 +211,10 @@ export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
     }
 
     const radius = await reachRadiusFor(minutes)
-    settings.browseMaxMinutes = minutes
+    settings[minutesKey] = minutes
     if (atTop) sliderValue.value = minutes
     if (radius !== null) {
-      settings.browseMaxDistance = radius
+      settings[milesKey] = radius
     } else {
       // The derivation failed (no known location, or the routing call errored).
       // The old cached radius belongs to a DIFFERENT slider position - keeping
@@ -177,15 +223,20 @@ export function useReachDistance(onPersisted, { withPolygon = false } = {}) {
       // Fail open instead: the server's own reach still governs, and the next
       // successful slider change - or the browse:backfill-max-distance batch
       // command - restores a derived cap.
-      settings.browseMaxDistance = BROWSE_DISTANCE_UNLIMITED
+      settings[milesKey] = BROWSE_DISTANCE_UNLIMITED
     }
     await authStore.saveAndGet({ settings })
     if (onPersisted)
-      onPersisted(settings.browseMaxDistance ?? BROWSE_DISTANCE_UNLIMITED)
+      onPersisted(settings[milesKey] ?? BROWSE_DISTANCE_UNLIMITED)
   }
 
   // Components get the cap without asking; the composable is also called directly in tests, where
   // there is no instance to mount into and loadCap() is driven explicitly.
+  //
+  // Giving an axis back up (forgetting the member's choice so the readers fall back again) is
+  // deliberately NOT here. It belongs to whoever owns the linked/split state - DistanceSliders -
+  // and putting it here would mean that component instantiating this composable for an axis it is
+  // not currently showing, which would spend a routing call on a slider nobody has asked for.
   if (getCurrentInstance()) {
     onMounted(loadCap)
   }
