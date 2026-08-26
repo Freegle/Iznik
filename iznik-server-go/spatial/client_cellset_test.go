@@ -338,7 +338,8 @@ func TestReachOverflowContainingSendsTheLanes(t *testing.T) {
 	var gotPath, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotQuery = r.URL.Path, r.URL.RawQuery
-		_, _ = w.Write([]byte(`{"in":[11],"partial":[12]}`))
+		// "filtered" is REQUIRED, not decoration - see the test below.
+		_, _ = w.Write([]byte(`{"in":[11],"partial":[12],"filtered":true}`))
 	}))
 	defer srv.Close()
 	t.Setenv("SPATIAL_KNN_URL", srv.URL)
@@ -360,6 +361,34 @@ func TestReachOverflowContainingSendsTheLanes(t *testing.T) {
 	}
 	if len(partial) != 1 || partial[0] != 12 {
 		t.Errorf("partial = %v, want [12]", partial)
+	}
+}
+
+// A 200 that does not say `"filtered":true` must be REFUSED, ids and all.
+//
+// Without lane filtering the server returns its own PACKED ids
+// (msgid<<4|lane), not msgids. Reading those as msgids would admit a set of
+// arbitrary other posts - only for ring members, and with no error anywhere to
+// show for it. A server too old to know the lanes parameter says nothing in
+// this field, so an ABSENT flag has to be refused exactly like a false one.
+//
+// This test exists because writing it wrong found the guard: a stub returning
+// a plausible `{"in":[...],"partial":[...]}` was rejected, which is the client
+// behaving correctly and worth pinning down so nobody "fixes" it later.
+func TestReachOverflowContainingRefusesUnfilteredIds(t *testing.T) {
+	for _, body := range map[string]string{
+		"flag absent": `{"in":[11],"partial":[12]}`,
+		"flag false":  `{"in":[11],"partial":[12],"filtered":false}`,
+	} {
+		serveBytes(t, http.StatusOK, []byte(body))
+
+		in, partial, err := ReachOverflowContaining(-0.09, 51.51, []string{"rural"})
+		if err == nil {
+			t.Fatalf("unfiltered ids were accepted for %q - those are packed ids, and reading them as msgids admits arbitrary posts", body)
+		}
+		if in != nil || partial != nil {
+			t.Errorf("got in=%v partial=%v alongside the error; no packed id may reach the caller", in, partial)
+		}
 	}
 }
 
