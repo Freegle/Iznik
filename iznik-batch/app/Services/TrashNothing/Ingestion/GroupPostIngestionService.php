@@ -243,7 +243,13 @@ class GroupPostIngestionService
         // Update user's last access.
         Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastaccess=now()');
         if (!$this->dryRun) {
-            DB::table('users')->where('id', $user->id)->update(['lastaccess' => now()]);
+            // ->save() rather than a query-builder update: $user is already a
+            // loaded Eloquent model, and the repo convention is that writes go
+            // through it so model events fire and Laravel Auditing sees them
+            // (iznik-batch/CLAUDE.md, "Code Style"). The trace line above is
+            // diffed byte-for-byte against the email path and is unaffected.
+            $user->lastaccess = now();
+            $user->save();
         }
 
         // No membership gate: the group here was chosen for the post (via
@@ -462,7 +468,8 @@ class GroupPostIngestionService
             if ($locationId && $user->id) {
                 Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);
                 if (!$this->dryRun) {
-                    DB::table('users')->where('id', $user->id)->update(['lastlocation' => $locationId]);
+                    $user->lastlocation = $locationId;
+                    $user->save();
                 }
             }
 
