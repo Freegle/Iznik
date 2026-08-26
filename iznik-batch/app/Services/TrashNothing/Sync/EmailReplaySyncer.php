@@ -207,9 +207,13 @@ class EmailReplaySyncer
         $to                    = trim($row['to'] ?? '');
         $record['envelope_to'] = $to;
         if ($to !== '' && str_contains($to, '@')) {
-            // Derive group_id from the local-part of the To address
-            // ("8444" from "8444@groups.ilovefreegle.org").
-            $record['group_id'] = explode('@', $to, 2)[0];
+            // The To local-part is the Freegle group's `nameshort`
+            // ("gloucesterfreegle" from "gloucesterfreegle@groups.ilovefreegle.org"),
+            // which is how IncomingMailService::findGroup() resolves it on the
+            // real email path. NOT TN's own numeric group id — that appears only
+            // in the API path's post JSON (`group_id`, non-empty on a crosspost
+            // copy), never in this CSV.
+            $record['group_nameshort'] = explode('@', $to, 2)[0];
         }
 
         $postId            = trim($row['x-trash-nothing-post-id'] ?? '');
@@ -246,9 +250,9 @@ class EmailReplaySyncer
      */
     private function processEmail(array $record, ?string $minDate, ?string $maxDate): array
     {
-        $postId  = $record['post_id'] ?? '';
-        $groupId = $record['group_id'] ?? '';
-        $date    = $record['date'] ?? null;
+        $postId         = $record['post_id'] ?? '';
+        $groupNameshort = $record['group_nameshort'] ?? '';
+        $date           = $record['date'] ?? null;
 
         if ($date) {
             if (!$minDate || $date < $minDate) {
@@ -259,14 +263,14 @@ class EmailReplaySyncer
             }
         }
 
-        Log::info('TN-SYNC-TRACE [EMAIL] post_id=' . $postId . ' group_id=' . $groupId . ' date=' . $date . ' subject=' . substr((string) ($record['subject'] ?? ''), 0, 60));
+        Log::info('TN-SYNC-TRACE [EMAIL] post_id=' . $postId . ' group=' . $groupNameshort . ' date=' . $date . ' subject=' . substr((string) ($record['subject'] ?? ''), 0, 60));
 
         try {
             $envelopeFrom = $record['envelope_from'] ?? ($record['from_address'] ?? '');
-            $envelopeTo   = $record['envelope_to'] ?? ($groupId . '@' . config('freegle.mail.group_domain'));
+            $envelopeTo   = $record['envelope_to'] ?? ($groupNameshort . '@' . config('freegle.mail.group_domain'));
 
             if (!empty($envelopeFrom)) {
-                $this->ensureUserExists($envelopeFrom, $groupId, $record['from_name'] ?? null);
+                $this->ensureUserExists($envelopeFrom, $groupNameshort, $record['from_name'] ?? null);
             }
 
             $rawMessage = $record['raw_message'] ?? $this->buildRawEmail($record, $envelopeTo);
@@ -278,7 +282,7 @@ class EmailReplaySyncer
 
             $this->loki->logEvent('tn-sync', 'email-replay', [
                 'tn_post_id' => $postId,
-                'group_id'   => $groupId,
+                'group'      => $groupNameshort,
                 'result'     => $result->value,
             ]);
 
@@ -337,6 +341,15 @@ class EmailReplaySyncer
      * post's `fromuser` can legitimately differ between the two paths when
      * both had to stub-create the poster; see the `fromuser` exclusion note
      * in ParityComparer::diffMessageFields().
+     *
+     * $groupNameshort is the To local-part, i.e. the Freegle group's
+     * `nameshort` ("gloucesterfreegle"), so the lookup below matches how
+     * IncomingMailService::findGroup() resolves the very same address moments
+     * later. If the group isn't in this database the membership is skipped and
+     * route() drops the post as "Post to unknown group" — which is a signal
+     * that the run is against a database missing those groups, not a parity
+     * failure, and tn:parity-check reports it as such (see
+     * ParityComparer::parseUnknownGroupDrops()).
      */
     private function ensureUserExists(string $email, ?string $groupNameshort, ?string $fromName): void
     {

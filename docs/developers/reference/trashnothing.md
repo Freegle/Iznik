@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-25
+last_reviewed: 2026-08-26
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -171,6 +171,17 @@ moves on a repost or edit, so `expiration - date != 90 days` means TN mutated th
 post. The title check is deliberately narrow: it applies only where the subject
 is the *sole* disagreement on every layer, since a subject difference is also
 what a genuine truncation or encoding bug would look like.
+
+**Run it against a database that has the groups.** The email side is driven by
+TN's post-log CSV, whose `To` is `<nameshort>@groups.ilovefreegle.org` — the
+group's Freegle `nameshort`, not TN's numeric `group_id` (that appears only in
+the API path's post JSON). `IncomingMailService` resolves it by `nameshort` and
+drops the post as "Post to unknown group" if there is no such row, before
+writing anything, so on a disposable parity database cloned without those groups
+every post vanishes and Layers 3-5 compare zero pairs — a PASS that checked
+nothing. `ParityComparer::parseUnknownGroupDrops()` counts those drops per
+group, the report lists them, and `tn:parity-check` fails outright when they
+account for the whole email side.
 
 ### Verifying nothing is dropped after the cutover
 

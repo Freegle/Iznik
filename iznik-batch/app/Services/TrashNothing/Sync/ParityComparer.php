@@ -83,6 +83,7 @@ class ParityComparer
      *     overlapCount: int, layer3Mismatches: string[], layer4Divergences: string[],
      *     layer5Mismatches: string[], layer5Compared: int, layer5StructureOnly: int,
      *     lokiEntriesSeen: int,
+     *     emailUnknownGroups: array<string, string[]>, emailUnknownGroupPostCount: int,
      * }
      */
     public function computeLayers(array $emailLines, array $apiLines): array
@@ -93,6 +94,7 @@ class ParityComparer
         $emailMessages     = $this->parseMessages($emailLines);
         $apiMessages       = $this->parseMessages($apiLines);
         $emailPostDetails  = $this->parsePostDetails($emailLines);
+        $emailUnknownGroups = $this->parseUnknownGroupDrops($emailLines);
         $emailStubUserIds  = $this->parseStubUserIds($emailLines);
         $apiStubUserIds    = $this->parseStubUserIds($apiLines);
         $emailLokiEntries  = $this->parseLokiEntries($emailLines);
@@ -207,6 +209,11 @@ class ParityComparer
             // (Loki disabled for the run) — a silent zero would otherwise read
             // as a pass.
             'lokiEntriesSeen'     => count($emailLokiEntries) + count($apiLokiEntries),
+            // Groups the email path could not resolve, so every post addressed
+            // to them was dropped before any comparison could happen — see
+            // parseUnknownGroupDrops().
+            'emailUnknownGroups'  => $emailUnknownGroups,
+            'emailUnknownGroupPostCount' => array_sum(array_map('count', $emailUnknownGroups)),
         ];
     }
 
@@ -512,6 +519,39 @@ class ParityComparer
             }
         }
         return $skips;
+    }
+
+    /**
+     * Parses the email path's `TN-SYNC-TRACE [POST-SKIP] reason=unknown-group
+     * group_id=<nameshort> post_id=<id>` lines into nameshort => post_ids.
+     *
+     * IncomingMailService resolves a post's group from the To local-part, which
+     * is the group's `nameshort` — so this fires for every post addressed to a
+     * group that is not in the database the run used, and the post is dropped
+     * before anything is written. That is not a parity failure on either path;
+     * it means the email side had nothing to compare. Left unreported it is
+     * dangerous: with every email post dropped, Layers 3-5 compare zero pairs
+     * and the run prints PASS having checked nothing. TNParityCheckCommand
+     * surfaces the count and fails a run where it accounts for the whole email
+     * side (same reasoning as the `lokiEntriesSeen === 0` guard).
+     *
+     * The `group_id=` field name is IncomingMailService's own and carries a
+     * nameshort, not a numeric id — the email path has no numeric group id to
+     * log at the point it gives up.
+     *
+     * @param  string[]  $lines
+     * @return array<string, string[]> nameshort => post_ids
+     */
+    public function parseUnknownGroupDrops(array $lines): array
+    {
+        $drops = [];
+        foreach ($lines as $line) {
+            if (preg_match('/TN-SYNC-TRACE \[POST-SKIP\] reason=unknown-group group_id=(\S+) post_id=(\S*)/', $line, $m)) {
+                $drops[$m[1]][] = $m[2];
+            }
+        }
+        ksort($drops);
+        return $drops;
     }
 
     /**

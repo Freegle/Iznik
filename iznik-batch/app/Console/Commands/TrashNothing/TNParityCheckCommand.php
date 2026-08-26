@@ -49,6 +49,9 @@ class TNParityCheckCommand extends Command
 {
     private const POST_ID_PREFIX = 'post_id=';
 
+    /** Enough post_ids per unknown group to identify it; the count carries the rest. */
+    private const UNKNOWN_GROUP_POST_IDS_SHOWN = 3;
+
     protected $signature = 'tn:parity-check
                             {--local-testing : Use fixture files instead of live CSV / live TN API}
                             {--refresh-csv : Re-download the TN post-log CSV even if a cached copy exists}
@@ -163,8 +166,9 @@ class TNParityCheckCommand extends Command
      * Runs the four-layer comparison, refines Layer 1 misses via a live
      * single-post lookup fallback (see reclassifyLayer1Misses()), and prints
      * a plaintext summary + failure lists. Returns Command::FAILURE if
-     * Layer 1, Layer 3 or Layer 5 found problems, Command::SUCCESS otherwise
-     * (Layers 2/4 are informational only).
+     * Layer 1, Layer 3 or Layer 5 found problems, or if the email path
+     * resolved no group at all so there was nothing to compare;
+     * Command::SUCCESS otherwise (Layers 2/4 are informational only).
      */
     private function compareAndReport(array $emailLines, array $apiLines, PostSyncer $apiSyncer, bool $localTesting, string $from, string $to): int
     {
@@ -181,6 +185,16 @@ class TNParityCheckCommand extends Command
         }
 
         $this->printReport($layers);
+
+        // A run where the email path resolved no group at all compared nothing:
+        // every post was dropped before a messages row existed, so Layers 3-5
+        // are silently empty and would otherwise print PASS. That means the
+        // database is missing the groups TN posted to (a disposable parity DB
+        // cloned without them, most often), not that the two paths agree.
+        if ($layers['emailUnknownGroupPostCount'] > 0 && $layers['emailUnknownGroupPostCount'] === $layers['emailPostIdCount']) {
+            $this->error('FAIL: the email path dropped every post as "unknown group" — none of the groups TN addressed exist in this database, so no parity was actually checked.');
+            return Command::FAILURE;
+        }
 
         if (empty($layers['layer1Missing']) && empty($layers['layer3Mismatches']) && empty($layers['layer5Mismatches'])) {
             $this->info('PASS: no coverage gaps, no same-group parity mismatches, no Loki divergence.');
@@ -386,6 +400,13 @@ class TNParityCheckCommand extends Command
             $this->line('Layer 3/5 (filtered out):  title_edited_on_tn=' . count($layers['subjectEditedOnTn']));
         }
         $this->line('API crossposts discarded:  ' . count($layers['apiCrosspostsDiscarded'] ?? []) . ' (TN per-group copies, identified by group_id; excluded from every count above — Freegle cross-posts via rippling)');
+        if (($layers['emailUnknownGroupPostCount'] ?? 0) > 0) {
+            $this->line(
+                'Unknown groups (email):    ' . count($layers['emailUnknownGroups'])
+                . ' group(s) missing from this database, swallowing ' . $layers['emailUnknownGroupPostCount'] . ' post(s)'
+                . '  [' . implode(', ', array_keys($layers['emailUnknownGroups'])) . ']'
+            );
+        }
         $this->line($this->formatIngestionGainLine($layers));
         $this->line('');
 
@@ -407,6 +428,26 @@ class TNParityCheckCommand extends Command
         $this->printSection('Layer 3 FAILURES — same group on both paths, but content/outcome differs:', $layers['layer3Mismatches'], isFailure: true);
         $this->printSection('Layer 4 (informational) — overlapping posts with no meaningful same-group comparison:', $layers['layer4Divergences']);
         $this->printSection('Layer 5 FAILURES — the two paths reported different Loki entries for the same post:', $layers['layer5Mismatches'], isFailure: true);
+        $this->printSection(
+            'NOT COMPARED — the email path dropped these posts as "unknown group": the group is addressed by nameshort and does not exist in this database, so nothing was written to compare against. Restore/clone the groups before trusting this run:',
+            $this->formatUnknownGroupLines($layers),
+            isFailure: true,
+        );
+    }
+
+    /**
+     * @return string[] one "<nameshort>: N post(s) (post_id=…, …)" line per group
+     */
+    private function formatUnknownGroupLines(array $layers): array
+    {
+        $lines = [];
+        foreach ($layers['emailUnknownGroups'] ?? [] as $nameshort => $postIds) {
+            $shown = array_slice($postIds, 0, self::UNKNOWN_GROUP_POST_IDS_SHOWN);
+            $lines[] = $nameshort . ': ' . count($postIds) . ' post(s) ('
+                . implode(', ', array_map(static fn (string $id) => self::POST_ID_PREFIX . $id, $shown))
+                . (count($postIds) > count($shown) ? ', …' : '') . ')';
+        }
+        return $lines;
     }
 
     /**

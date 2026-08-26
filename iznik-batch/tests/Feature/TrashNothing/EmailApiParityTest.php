@@ -119,7 +119,7 @@ class EmailApiParityTest extends TestCase
         // API side is a genuine regression, not "just a non-UK post" (those
         // never reach the email path at all, since TN only emails posts to a
         // Freegle group address in the first place).
-        $this->seedParityGroup('9107', 25.0000, 25.0000);
+        $this->seedParityGroup('parity-l1oob-freegle', 25.0000, 25.0000);
 
         $layers = $this->runScenario('layer1_out_of_bounds', from: self::WINDOW_FROM, to: self::WINDOW_TO);
 
@@ -128,12 +128,44 @@ class EmailApiParityTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // Harness guard — groups missing from the database the run used
+    // -------------------------------------------------------------------------
+
+    public function test_reports_the_groups_the_email_path_could_not_resolve(): void
+    {
+        // Deliberately seeds nothing: the fixture is addressed to
+        // parity-vanished-freegle@groups.ilovefreegle.org, and
+        // IncomingMailService resolves that To local-part against
+        // groups.nameshort. With no such group the post is dropped before
+        // anything is written, so it contributes nothing to Layers 3-5 —
+        // which, unreported, reads exactly like agreement. A run against a
+        // database cloned without the groups TN posts to would look like this
+        // for every post; tn:parity-check fails outright on that.
+        $layers = $this->runScenario('layer1_missing', from: self::WINDOW_FROM, to: self::WINDOW_TO);
+
+        $this->assertSame(
+            ['parity-vanished-freegle' => ['tn-parity-l1-1']],
+            $layers['emailUnknownGroups'],
+            'An unresolvable group must be reported by nameshort, with the posts it swallowed',
+        );
+        $this->assertSame(1, $layers['emailUnknownGroupPostCount']);
+    }
+
+    public function test_silent_about_unknown_groups_when_the_email_path_resolved_them(): void
+    {
+        $layers = $this->runAllCleanScenario();
+
+        $this->assertSame([], $layers['emailUnknownGroups'], 'A seeded group must not be reported as missing');
+        $this->assertSame(0, $layers['emailUnknownGroupPostCount']);
+    }
+
+    // -------------------------------------------------------------------------
     // Layer 2 — extra posts (informational)
     // -------------------------------------------------------------------------
 
     public function test_layer2_flags_extra_api_only_posts_without_failing(): void
     {
-        $this->seedParityGroup('9103', 22.0000, 22.0000);
+        $this->seedParityGroup('parity-l2-freegle', 22.0000, 22.0000);
 
         $layers = $this->runScenario('layer2_extra', from: self::WINDOW_FROM, to: self::WINDOW_TO);
 
@@ -210,7 +242,7 @@ class EmailApiParityTest extends TestCase
 
     public function test_layer3_flags_same_group_content_mismatch(): void
     {
-        $group = $this->seedParityGroup('9104', 23.0000, 23.0000);
+        $group = $this->seedParityGroup('parity-l3-freegle', 23.0000, 23.0000);
         $this->seedParityUser(88020005, 'parityl3@user.trashnothing.com', $group->id);
 
         $layers = $this->runScenario('layer3_mismatch', from: self::WINDOW_FROM, to: self::WINDOW_TO);
@@ -234,11 +266,11 @@ class EmailApiParityTest extends TestCase
 
     public function test_layer4_flags_divergent_group_resolution(): void
     {
-        $groupEmail = $this->seedParityGroup('9105', 24.0000, 24.0000);
+        $groupEmail = $this->seedParityGroup('parity-l4-email-freegle', 24.0000, 24.0000);
         // Far enough away that groupsNear() unambiguously resolves the API-side
         // post to a different group than the one the email path's recipient
         // address routes to.
-        $groupApi = $this->seedParityGroup('9106', -40.0000, 150.0000);
+        $groupApi = $this->seedParityGroup('parity-l4-api-freegle', -40.0000, 150.0000);
         $this->seedParityUser(88020006, 'parityl4@user.trashnothing.com', $groupEmail->id);
 
         $layers = $this->runScenario('layer4_divergent_group', from: self::WINDOW_FROM, to: self::WINDOW_TO);
@@ -269,7 +301,7 @@ class EmailApiParityTest extends TestCase
      */
     private function runAllCleanScenario(): array
     {
-        $group = $this->seedParityGroup('9101', 20.0000, 20.0000);
+        $group = $this->seedParityGroup('parity-clean-freegle', 20.0000, 20.0000);
         $this->seedParityUser(88020001, 'parityclean@user.trashnothing.com', $group->id);
 
         return $this->runScenario('all_clean', from: self::WINDOW_FROM, to: self::WINDOW_TO);
@@ -688,6 +720,17 @@ class EmailApiParityTest extends TestCase
         return $lines;
     }
 
+    /**
+     * $nameshort is what the scenario's fixture CSV puts in the To local-part,
+     * because that is what the real fd-post-log.csv carries: TN emails a
+     * Freegle group at `<nameshort>@groups.ilovefreegle.org`, and both
+     * IncomingMailService::findGroup() and EmailReplaySyncer's membership stub
+     * resolve it as a nameshort. TN's own numeric group id never appears on
+     * this side — it is an API-path field (`group_id` in the post JSON,
+     * non-empty only on a crosspost copy) — so these names are deliberately
+     * alphabetic, matching the shape of real ones (gloucesterfreegle,
+     * Sheffield-Freegle).
+     */
     private function seedParityGroup(string $nameshort, float $lat, float $lng): Group
     {
         return Group::firstOrCreate(['nameshort' => $nameshort], [
