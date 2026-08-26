@@ -65,7 +65,8 @@ class UserChangesSyncer
                         continue;
                     }
 
-                    if (!empty($change['reply_time'])) {
+                    // isset() not !empty(): a reply time of 0 is legitimate.
+                    if (isset($change['reply_time'])) {
                         $replyTime = UserReplyTime::firstOrNew(['userid' => $change['fd_user_id']]);
                         $isNew = !$replyTime->exists;
                         $replyTime->replytime = $change['reply_time'];
@@ -80,7 +81,8 @@ class UserChangesSyncer
                         ]);
                     }
 
-                    if (!empty($change['about_me'])) {
+                    // isset() not !empty(): an empty string means the member cleared their bio.
+                    if (isset($change['about_me'])) {
                         try {
                             $aboutMe = UserAboutMe::firstOrNew(['userid' => $change['fd_user_id']]);
                             $isNew = !$aboutMe->exists;

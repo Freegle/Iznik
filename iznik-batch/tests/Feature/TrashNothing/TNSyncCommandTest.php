@@ -305,6 +305,61 @@ class TNSyncCommandTest extends TestCase
         $this->assertEquals(7200, $replyTime);
     }
 
+    public function test_sync_reply_time_zero_is_stored(): void
+    {
+        $user = $this->createTNUser();
+
+        DB::table('users_replytime')->insert([
+            'userid' => $user->id,
+            'replytime' => 1800,
+            'timestamp' => self::DATE_OLD,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'reply_time' => 0,
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // A reply time of 0 is a real value (instant replies), not "no change".
+        $replyTime = DB::table('users_replytime')->where('userid', $user->id)->value('replytime');
+        $this->assertEquals(0, $replyTime);
+    }
+
+    public function test_sync_reply_time_absent_is_left_alone(): void
+    {
+        $user = $this->createTNUser();
+
+        DB::table('users_replytime')->insert([
+            'userid' => $user->id,
+            'replytime' => 1800,
+            'timestamp' => self::DATE_OLD,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'username' => 'SomeName',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $replyTime = DB::table('users_replytime')->where('userid', $user->id)->value('replytime');
+        $this->assertEquals(1800, $replyTime);
+    }
+
     public function test_sync_reply_time_executes_without_error(): void
     {
         $user = $this->createTNUser();
@@ -347,6 +402,61 @@ class TNSyncCommandTest extends TestCase
 
         $aboutMe = DB::table('users_aboutme')->where('userid', $user->id)->value('text');
         $this->assertEquals('I love giving things away!', $aboutMe);
+    }
+
+    public function test_sync_about_me_empty_string_clears_bio(): void
+    {
+        $user = $this->createTNUser();
+
+        DB::table('users_aboutme')->insert([
+            'userid' => $user->id,
+            'text' => 'Old bio',
+            'timestamp' => self::DATE_OLD,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'about_me' => '',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // An empty string means the member cleared their bio, not "no change".
+        $aboutMe = DB::table('users_aboutme')->where('userid', $user->id)->value('text');
+        $this->assertSame('', $aboutMe);
+    }
+
+    public function test_sync_about_me_absent_is_left_alone(): void
+    {
+        $user = $this->createTNUser();
+
+        DB::table('users_aboutme')->insert([
+            'userid' => $user->id,
+            'text' => 'Old bio',
+            'timestamp' => self::DATE_OLD,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'username' => 'SomeName',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $aboutMe = DB::table('users_aboutme')->where('userid', $user->id)->value('text');
+        $this->assertEquals('Old bio', $aboutMe);
     }
 
     public function test_sync_about_me_executes_without_error(): void
