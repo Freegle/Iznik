@@ -164,4 +164,63 @@ class BackfillRingCellsCommandTest extends TestCase
             'updated_at must be held still - the reach mailer and the spatial delta poll both watch it'
         );
     }
+
+    /**
+     * A row whose rings PARTLY convert must be left entirely alone.
+     *
+     * This is the failure that would have been permanent and silent. The
+     * command used to store whatever rings rasterised and drop the ones that
+     * did not, which wrote overflow_cells NOT NULL - and from there nothing
+     * could tell: the compare-and-swap in handle() only revisits rows where
+     * overflow_cells IS NULL, the drop migration's guard tests exactly that
+     * same condition, and ripple:verify-cells-parity does not look at ring
+     * cells at all (it has eight read cases, none of them overflow). So one
+     * transient 400 from the rasterise endpoint lost one lane's ring, and
+     * after the drop there was no WKT left to rebuild it from: that lane
+     * would admit nobody, for ever, with nothing anywhere saying so.
+     *
+     * Leaving the row unconverted instead means the drop migration REFUSES,
+     * which is the outcome worth having.
+     */
+    public function test_a_row_whose_rings_partly_fail_is_left_entirely_unconverted(): void
+    {
+        // One ring the rasteriser accepts, one it cannot parse. Both are
+        // non-empty strings, so both get past the is_string guard and are
+        // genuinely attempted.
+        $msgid = $this->seedRingedRow([
+            'rural' => ['sparse' => self::SPARSE_RING],
+            'cluster' => ['w1' => 'THIS IS NOT WKT AND CANNOT BE RASTERISED'],
+        ]);
+
+        $this->artisan('ripple:backfill-ring-cells')
+            ->expectsOutputToContain('failed to rasterise')
+            ->assertExitCode(0);
+
+        $this->assertNull(
+            $this->ringCellsFor($msgid),
+            'a partly-converted row must store NOTHING - a partial write looks converted for ever'
+        );
+
+        // And it stays a candidate, so a --reset-mark sweep can pick it up
+        // once the rasteriser is healthy again.
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_bounds'),
+            'the ring WKT must survive, since it is the only thing left to retry from'
+        );
+    }
+
+    /**
+     * The sibling case: EVERY ring failing is also "leave it alone", and must
+     * not write an empty object either.
+     */
+    public function test_a_row_whose_rings_all_fail_stores_nothing(): void
+    {
+        $msgid = $this->seedRingedRow([
+            'rural' => ['sparse' => 'NOT WKT'],
+        ]);
+
+        $this->artisan('ripple:backfill-ring-cells')->assertExitCode(0);
+
+        $this->assertNull($this->ringCellsFor($msgid), 'an all-failed row must not store an empty object');
+    }
 }

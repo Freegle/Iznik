@@ -1193,6 +1193,20 @@ module.
 documents for `polygon_hash` (this module has no `information_schema` readiness gate).
 Run the migration before redeploying the spatial servers.
 
+**The ring conversion is all-or-nothing per row, and that is load-bearing.** A post can
+carry several rings (a rural ring per band, plus cluster wedges), each needing its own
+rasterise call. `ripple:backfill-ring-cells` therefore converts a row completely or leaves
+it untouched: storing the rings that succeeded and dropping one that failed would write
+`overflow_cells` NOT NULL, and from there nothing can tell. The sweep's own
+compare-and-swap only revisits rows where `overflow_cells IS NULL`; the §9c drop
+migration's third guard tests that same condition; and `ripple:verify-cells-parity` has
+eight read cases, **none of which reads ring cells at all**. So one transient failure from
+the rasterise endpoint would lose one lane's ring permanently, and after the drop there is
+no WKT left to rebuild it from - that lane would admit nobody, silently, for the life of
+the row. Failing the whole row instead makes the drop migration refuse, which is the
+outcome worth having. The command reports any failed rings and tells you to re-run with
+`--reset-mark`, because the resume mark advances past a skipped row.
+
 ### 9c. Storing ONLY the cells
 
 §9b put a grid beside every geometry, which made the table slightly *bigger*: the 36-44x is
