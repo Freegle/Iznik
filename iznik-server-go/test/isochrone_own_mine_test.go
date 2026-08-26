@@ -22,6 +22,7 @@ func TestNearbyFeed_OwnPostFlaggedMine(t *testing.T) {
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 

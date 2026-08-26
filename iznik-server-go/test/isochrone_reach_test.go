@@ -26,6 +26,7 @@ func TestNearbyReachFeed(t *testing.T) {
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
@@ -135,6 +136,7 @@ func TestNearbyCountDistanceLimit(t *testing.T) {
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
@@ -215,6 +217,7 @@ func TestNearbyFeedHonoursDistanceLimit(t *testing.T) {
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
@@ -282,6 +285,7 @@ func TestNearbyFeedPostedIsOriginalArrival(t *testing.T) {
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
@@ -390,6 +394,7 @@ func TestNearbyFeedHonoursAuthorDistanceLimit(t *testing.T) {
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 

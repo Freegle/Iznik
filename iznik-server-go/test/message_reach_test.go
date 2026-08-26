@@ -22,6 +22,7 @@ func ensureRippleReachTable() {
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
 		overflow_cells JSON NULL,
 		arrival TIMESTAMP NULL DEFAULT NULL,
 		tick SMALLINT UNSIGNED NOT NULL DEFAULT 0,
@@ -71,19 +72,22 @@ func TestMessageReachAsMod(t *testing.T) {
 	assert.Equal(t, float64(9), result["totalticks"], "total ticks surfaced")
 
 	// The ACTUAL stored reach outline crosses as GeoJSON - it is what the reach modal draws,
-	// since held/clipped/capped reaches are invisible to a schedule-based projection.
+	// since held/clipped/capped reaches are invisible to a schedule-based projection. The
+	// vectoriser traces the cell grid, whose components can be disjoint, so the type is
+	// MultiPolygon (the modal's geoJsonToLatLngs accepts both).
 	polyStr, ok := result["polygon"].(string)
 	assert.True(t, ok, "polygon returned as a GeoJSON string")
 	var geo struct {
-		Type        string         `json:"type"`
-		Coordinates [][][2]float64 `json:"coordinates"`
+		Type        string           `json:"type"`
+		Coordinates [][][][2]float64 `json:"coordinates"`
 	}
 	assert.NoError(t, json.Unmarshal([]byte(polyStr), &geo), "polygon parses as GeoJSON")
-	assert.Equal(t, "Polygon", geo.Type)
-	assert.NotEmpty(t, geo.Coordinates, "polygon has at least one ring")
-	// Coordinates are [lng, lat] in degrees, matching how the reach geometry is stored.
-	assert.InDelta(t, -0.2, geo.Coordinates[0][0][0], 0.001)
-	assert.InDelta(t, 51.4, geo.Coordinates[0][0][1], 0.001)
+	assert.Equal(t, "MultiPolygon", geo.Type)
+	assert.NotEmpty(t, geo.Coordinates, "outline has at least one polygon")
+	// Coordinates are [lng, lat] in degrees; the traced outline hugs the seeded box to
+	// within a cell (0.0003 degrees).
+	assert.InDelta(t, -0.2, geo.Coordinates[0][0][0][0], 0.001)
+	assert.InDelta(t, 51.4, geo.Coordinates[0][0][0][1], 0.001)
 }
 
 // exactly the people it is for. Reach carries no member data, so there is nothing to scope.
@@ -213,31 +217,34 @@ func TestMessageReachIncludesTheRings(t *testing.T) {
 	assert.NotContains(t, rings, "cluster.w2", "a lane this post has not got is absent, not null")
 
 	var geo struct {
-		Type        string         `json:"type"`
-		Coordinates [][][2]float64 `json:"coordinates"`
+		Type        string           `json:"type"`
+		Coordinates [][][][2]float64 `json:"coordinates"`
 	}
 	assert.NoError(t, json.Unmarshal([]byte(sparse), &geo), "each ring parses as GeoJSON")
-	assert.Equal(t, "Polygon", geo.Type)
+	assert.Equal(t, "MultiPolygon", geo.Type, "the vectoriser traces cell grids, whose components can be disjoint")
 	assert.NotEmpty(t, geo.Coordinates)
 
 	// Assert the ring's EXTENT, not its first vertex: simplifying normalises the
-	// winding and start point, so which corner comes first is MySQL's business and
-	// asserting it tests nothing about whether the right area came back.
+	// winding and start point, so which corner comes first is the tracer's business
+	// and asserting it tests nothing about whether the right area came back.
 	// Coordinates are [lng, lat] degrees, as the reach polygon's are.
-	minLng, maxLng := geo.Coordinates[0][0][0], geo.Coordinates[0][0][0]
-	minLat, maxLat := geo.Coordinates[0][0][1], geo.Coordinates[0][0][1]
-	for _, p := range geo.Coordinates[0] {
-		if p[0] < minLng {
-			minLng = p[0]
-		}
-		if p[0] > maxLng {
-			maxLng = p[0]
-		}
-		if p[1] < minLat {
-			minLat = p[1]
-		}
-		if p[1] > maxLat {
-			maxLat = p[1]
+	first := geo.Coordinates[0][0][0]
+	minLng, maxLng := first[0], first[0]
+	minLat, maxLat := first[1], first[1]
+	for _, poly := range geo.Coordinates {
+		for _, p := range poly[0] {
+			if p[0] < minLng {
+				minLng = p[0]
+			}
+			if p[0] > maxLng {
+				maxLng = p[0]
+			}
+			if p[1] < minLat {
+				minLat = p[1]
+			}
+			if p[1] > maxLat {
+				maxLat = p[1]
+			}
 		}
 	}
 	assert.InDelta(t, 0.5, minLng, 0.01, "the ring spans the longitudes it was seeded with")
