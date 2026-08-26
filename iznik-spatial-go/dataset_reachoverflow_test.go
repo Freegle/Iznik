@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"spatial-server/cellset"
@@ -83,7 +84,7 @@ func TestOverflowLaneOrder_IsByCode(t *testing.T) {
 // The SELECT list must ask for the lanes in that same order, since the scan
 // pairs column i with lane i positionally.
 func TestOverflowSelect_BindsLanesInOrder(t *testing.T) {
-	cols, args := overflowSelect()
+	cols, args := overflowSelectCols(true)
 	lanes := overflowLaneOrder()
 
 	// Every lane is asked for twice - cells first, then WKT - and the scan
@@ -108,6 +109,39 @@ func TestOverflowSelect_BindsLanesInOrder(t *testing.T) {
 	}
 	if got := countSubstr(cols, "JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?))"); got != len(lanes) {
 		t.Errorf("select has %d lane extractions, want %d: %s", got, len(lanes), cols)
+	}
+}
+
+// Post-drop era: overflow_bounds is gone, so its half of the SELECT must be
+// literal NULLs, never the column name - naming a dropped column errors on
+// EVERY query, which is exactly what froze this dataset's load and delta on
+// all four instances the moment the Stage 3 drop ran (2026-08-26). The shape
+// is preserved (one value per lane per form) so the scanner stays era-blind.
+func TestOverflowSelect_PostDropUsesNullsNotTheDroppedColumn(t *testing.T) {
+	cols, args := overflowSelectCols(false)
+	lanes := overflowLaneOrder()
+
+	// Binds shrink to the cells half only; the WKT half binds nothing.
+	if len(args) != len(lanes) {
+		t.Fatalf("select binds %d paths, want %d (cells only post-drop)", len(args), len(lanes))
+	}
+	if got := countSubstr(cols, "overflow_bounds"); got != 0 {
+		t.Errorf("post-drop select still names overflow_bounds %d time(s): %s", got, cols)
+	}
+	if got := countSubstr(cols, "JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?))"); got != len(lanes) {
+		t.Errorf("select has %d cell extractions, want %d: %s", got, len(lanes), cols)
+	}
+	// The scanner pairs columns positionally, so the NULL placeholders must
+	// keep the column COUNT identical to the pre-drop era. Asserted by
+	// building the exact expected string - counting ", " separators is a trap
+	// this test fell into on its first run: every cells extraction contains
+	// ", " INSIDE it ("overflow_cells, ?"), so the separator count read 29
+	// where the assertion expected 19, and the suite failed on every master
+	// build (invisible to PR builds, which do not run the spatial step).
+	want := strings.Repeat("JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), ", len(lanes)) +
+		strings.TrimSuffix(strings.Repeat("NULL, ", len(lanes)), ", ")
+	if cols != want {
+		t.Errorf("post-drop select shape:\n got: %s\nwant: %s", cols, want)
 	}
 }
 

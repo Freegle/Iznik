@@ -234,6 +234,45 @@ Schedule::command('ripple:proximity-notes')
     ->sendOutputTo(cronLog('ripple:proximity-notes'))
     ->runInBackground();
 
+// Cell-grid mop-up sweeps (plans/2026-08-24-rippling-reach-raster-storage.md), scheduled
+// because the population they convert REGROWS until the legacy geometry is dropped.
+//
+// ripple:backfill-reach-cells deliberately skips status='expanding' (ExpandService rewrites
+// those rows' cells on every tick), but a post's FINAL tick flips it to 'done' without
+// writing a polygon - there is nothing left to expand to - so a pre-cells expander whose
+// only remaining step was "finish" lands in 'done' with polygon_cells still NULL, and
+// nothing ever revisits it. Measured on production 2026-08-26: 155 such rows three hours
+// after the one-off backfill completed, growing by one every few minutes as the ~6,400
+// pre-cells expanders drained. The drop migration refuses while ANY row lacks cells, so
+// without this sweep the refusal recurs however many times the operator re-runs the
+// one-off backfill.
+//
+// --reset-mark is the point, not a reset for its own sake: each command stores where it
+// got to and would otherwise resume from the bottom of a completed sweep and find nothing
+// forever. Re-walking is cheap - already-converted rows are filtered in the WHERE - and
+// only does real work for rows that have settled since the last pass.
+//
+// All three self-retire after the drop: each detects its legacy column is gone and exits
+// successfully saying the sweep is complete for good. Prune these entries with the
+// post-drop cleanup that removes the legacy read branches.
+Schedule::command('ripple:backfill-reach-cells', ['--reset-mark', '--limit' => 60000, '--sleep-ms' => 25])
+    ->dailyAt('02:35')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('ripple:backfill-reach-cells'))
+    ->runInBackground();
+
+Schedule::command('ripple:backfill-max-reach-cells', ['--reset-mark', '--limit' => 60000, '--sleep-ms' => 25])
+    ->dailyAt('03:35')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('ripple:backfill-max-reach-cells'))
+    ->runInBackground();
+
+Schedule::command('ripple:backfill-ring-cells', ['--reset-mark', '--limit' => 60000, '--sleep-ms' => 50])
+    ->dailyAt('04:35')
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('ripple:backfill-ring-cells'))
+    ->runInBackground();
+
 // Update UK spatial data - runs monthly.
 // Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
 // Signals Go spatial server to reload after update.

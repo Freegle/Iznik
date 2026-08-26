@@ -219,4 +219,65 @@ class VerifyCellsParityCommandTest extends TestCase
         // should have been kept AND all should agree.
         $this->assertSame(0, $band['interior']['disagree']);
     }
+
+    /**
+     * A group whose area only TOUCHES the reach must be measurable.
+     *
+     * This is the case that took the whole report down on production
+     * (2026-08-26): the group-relations check measured the overlap as
+     * ST_Area(ST_Intersection(...)), and the intersection of two polygons
+     * that meet along a boundary is a LINESTRING or a GEOMETRYCOLLECTION -
+     * which ST_Area refuses outright with "ERROR 3516: POLYGON/MULTIPOLYGON
+     * value is a geometry of unexpected type GEOMCOLLECTION in st_area". The
+     * command aborted on the FIRST sampled row, so the parity gate the drop
+     * migration depends on could not be run at all.
+     *
+     * Nothing in this suite caught it because createTestGroup() leaves
+     * polyindex NULL, and the check skips groups without one - so every
+     * existing test ran the group-relations case against zero groups and
+     * passed. This test gives a group a real polyindex sharing an edge with
+     * the reach, and asserts BOTH that the command survives and that the
+     * check genuinely ran (tests > 0), since a vacuous pass is what hid the
+     * bug in the first place.
+     */
+    public function test_a_group_sharing_only_a_boundary_with_the_reach_is_measured_not_fatal(): void
+    {
+        $msgid = $this->seedRow(self::REACH, self::REACH);
+
+        // Butted up against the reach's eastern edge at lng -0.08: the two
+        // polygons share that edge exactly and overlap in no area at all.
+        $group = $this->createTestGroup();
+        DB::statement(
+            'UPDATE `groups` SET polyindex = ST_GeomFromText(?, 3857) WHERE id = ?',
+            ['POLYGON((-0.08 51.50, -0.06 51.50, -0.06 51.52, -0.08 51.52, -0.08 51.50))', $group->id]
+        );
+
+        $path = tempnam(sys_get_temp_dir(), 'parity') ?: '/tmp/parity-touching.json';
+
+        $this->artisan('ripple:verify-cells-parity', [
+            '--limit' => 1,
+            '--boundary-points' => 10,
+            '--json' => $path,
+        ])->assertExitCode(0);
+
+        $report = json_decode((string) file_get_contents($path), true);
+        @unlink($path);
+
+        $rel = $report['summary']['groupRelations'];
+        $this->assertGreaterThan(
+            0,
+            $rel['tests'],
+            'the group-relations case did not run, so this test would pass with the bug still present'
+        );
+
+        // Touching is not overlapping: whatever the two sides say about
+        // intersects, an edge-only meeting can never be a FAILURE, because
+        // there is no area for the lattice to have got wrong.
+        $this->assertSame(0, $rel['failures']);
+
+        // Read-only, like every other case.
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells')
+        );
+    }
 }

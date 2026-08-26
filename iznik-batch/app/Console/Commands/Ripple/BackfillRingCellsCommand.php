@@ -108,6 +108,7 @@ class BackfillRingCellsCommand extends Command
         $filled = 0;
         $skipped = 0;
         $rings = 0;
+        $failedRings = 0;
         $lastMsgid = $after;
 
         foreach ($rows as $row) {
@@ -120,11 +121,11 @@ class BackfillRingCellsCommand extends Command
                 continue;
             }
 
-            $cells = $this->rasterizeRings($bounds, $dryRun, $rings);
+            $cells = $this->rasterizeRings($bounds, $dryRun, $rings, $failedRings);
             if ($cells === null) {
-                // Nothing rasterised - either no geometry leaves (a row whose
-                // only members are the scalars) or every call failed. Leave it
-                // for the next run rather than writing an empty object, which
+                // Either no geometry leaves (a row whose only members are the
+                // scalars) or ANY ring failed to rasterise. Leave it for the
+                // next run rather than writing a partial or empty object, which
                 // would look converted and stop this sweep revisiting it.
                 $skipped++;
 
@@ -162,6 +163,11 @@ class BackfillRingCellsCommand extends Command
             $this->saveMark($lastMsgid);
         }
 
+        // The failed-ring count is REPORTED, not just counted. `%d ring(s)` is
+        // rings ATTEMPTED, incremented before the rasterise call, so a failure
+        // was previously invisible in this line - and a sweep that quietly
+        // converted nothing would read exactly like one that converted
+        // everything.
         $this->info(sprintf(
             '%s %d row(s) / %d ring(s), skipped %d, across %d candidate(s). Mark now %d.',
             $dryRun ? 'Would fill' : 'Filled',
@@ -172,20 +178,45 @@ class BackfillRingCellsCommand extends Command
             $lastMsgid
         ));
 
+        if ($failedRings > 0) {
+            // --reset-mark, not just "re-run". The mark advances past a SKIPPED
+            // row (it is set from the last msgid seen, not the last converted),
+            // and this sweep walks upwards from it, so a plain re-run starts
+            // above the row that failed and never revisits it.
+            //
+            // Left unconverted, such a row is caught: the drop migration
+            // refuses while any row has overflow_bounds and no overflow_cells.
+            // That is the point of failing the whole row rather than storing
+            // the rings that did convert - a loud refusal at the gate instead
+            // of one lane silently admitting nobody, for ever, with the WKT
+            // gone.
+            $this->warn(sprintf(
+                '%d ring(s) failed to rasterise; their rows were left unconverted. '
+                . 'Re-run with --reset-mark until this reads 0 - the mark has moved past them. '
+                . 'Until then the drop migration will refuse, which is the intended outcome.',
+                $failedRings
+            ));
+        }
+
         return self::SUCCESS;
     }
 
     /**
      * The decoded overflow_bounds turned into the overflow_cells shape - the
      * same nesting and paths, each ring's WKT replaced by base64 cell bytes -
-     * or null when nothing could be converted. Mirrors
-     * ExpandService::overflowCellsJson; the scalar members
-     * (fairness_budget_min, bbox) are deliberately not carried across.
+     * or null when the row has no rings to convert OR when ANY single ring
+     * failed to rasterise. Mirrors ExpandService::overflowCellsJson; the scalar
+     * members (fairness_budget_min, bbox) are deliberately not carried across.
+     *
+     * ALL OR NOTHING is the whole point of the null: a row is either fully
+     * converted or left alone. Returning the rings that did convert would write
+     * a row that looks finished, and nothing downstream could tell - see the
+     * note at the failure branch below.
      *
      * @param  array<string,mixed>  $bounds
      * @return array<string,array<string,string>>|null
      */
-    private function rasterizeRings(array $bounds, bool $dryRun, int &$rings): ?array
+    private function rasterizeRings(array $bounds, bool $dryRun, int &$rings, int &$failedRings): ?array
     {
         $out = [];
         $thisRow = 0;
@@ -208,9 +239,25 @@ class BackfillRingCellsCommand extends Command
                     continue;
                 }
                 $cells = $this->cellSets->rasterize($wkt);
-                if ($cells !== null) {
-                    $converted[(string) $band] = base64_encode($cells);
+                if ($cells === null) {
+                    // ALL OR NOTHING PER ROW. Storing the siblings and dropping
+                    // this one would be permanent and silent: the row is written
+                    // with overflow_cells NOT NULL, so the compare-and-swap in
+                    // handle() never revisits it, the drop migration's guard
+                    // (overflow_bounds IS NOT NULL AND overflow_cells IS NULL)
+                    // counts it as converted, and nothing verifies ring cells
+                    // against the WKT at all. One transient failure from the
+                    // rasterise endpoint would therefore lose one lane's ring
+                    // for good, and after the drop there is no WKT left to
+                    // rebuild it from - so that lane silently admits nobody.
+                    // Failing the whole row leaves it for the next sweep, which
+                    // is the same choice ExpandService makes when a reach
+                    // rasterise fails: keep the previous state and retry.
+                    $failedRings++;
+
+                    return null;
                 }
+                $converted[(string) $band] = base64_encode($cells);
             }
             if (!empty($converted)) {
                 $out[(string) $lane] = $converted;

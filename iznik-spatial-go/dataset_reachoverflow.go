@@ -122,7 +122,25 @@ func overflowLaneOrder() []string {
 // a normal state - the cells are preferred when present and the WKT is the
 // fallback. Reading both costs one extra keyed extraction per lane and returns
 // NULL for the absent one, which is far cheaper than a second query would be.
-func overflowSelect() (cols string, args []interface{}) {
+//
+// Once the Stage 3 drop removes overflow_bounds, the WKT half becomes literal
+// NULLs rather than a column reference: naming a dropped column is an error on
+// EVERY query, which froze this dataset's delta on all four instances the
+// moment the drop ran (2026-08-26) - the load and the 2-minute delta both
+// failed with 1054 until this check existed. The column-existence probe is
+// re-asked per query, matching dataset_reach.go's stance, so the operator
+// dropping the column mid-flight is adopted within one delta interval. The
+// SELECT's shape (one value per lane per form) is preserved so the row scanner
+// needs no schema awareness; a NULL WKT simply means no fallback, which is
+// correct post-drop because the cells are complete - the drop migration
+// refuses to run while any ring lacks them.
+func overflowSelect(db *sql.DB) (cols string, args []interface{}) {
+	return overflowSelectCols(mysqlColumnExists(db, "rippling_reach", "overflow_bounds"))
+}
+
+// overflowSelectCols is the pure half, split out so the column shape is
+// testable in both schema eras without a database.
+func overflowSelectCols(hasWKT bool) (cols string, args []interface{}) {
 	var parts []string
 	lanes := overflowLaneOrder()
 	for _, path := range lanes {
@@ -130,8 +148,12 @@ func overflowSelect() (cols string, args []interface{}) {
 		args = append(args, path)
 	}
 	for _, path := range lanes {
-		parts = append(parts, "JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?))")
-		args = append(args, path)
+		if hasWKT {
+			parts = append(parts, "JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?))")
+			args = append(args, path)
+		} else {
+			parts = append(parts, "NULL")
+		}
 	}
 	return strings.Join(parts, ", "), args
 }
@@ -269,7 +291,7 @@ func buildOverflowItems(r overflowRowScan, lanes []string) []Item {
 // distinction that keeps a rebuild off the cluster's back.
 func (d *ReachOverflowDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 	lanes := overflowLaneOrder()
-	cols, args := overflowSelect()
+	cols, args := overflowSelect(mysqlDB)
 
 	rows, err := mysqlDB.Query(
 		"SELECT msgid, "+cols+" FROM rippling_reach WHERE has_overflow = 1 AND status != 'held'",
@@ -352,7 +374,7 @@ func (d *ReachOverflowDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 // produce deletions, and filtering on has_overflow would hide it.
 func (d *ReachOverflowDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
 	lanes := overflowLaneOrder()
-	cols, args := overflowSelect()
+	cols, args := overflowSelect(mysqlDB)
 	args = append(args, since.UTC())
 
 	// has_overflow (generated, indexed) bounds this to rows that actually carry

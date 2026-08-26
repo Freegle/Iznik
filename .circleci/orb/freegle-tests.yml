@@ -2936,15 +2936,24 @@ jobs:
               status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/spatial/status" || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
               if [ "$status" = "completed" ]; then
-                echo "$status_response" | jq -r '.logs // ""' | tail -30
                 if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "$status_response" | jq -r '.logs // ""' | tail -30
                   echo "✅ Spatial tests passed"; break
                 else
+                  logs=$(echo "$status_response" | jq -r '.logs // ""')
+                  echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
+                  echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
+                  echo "--- last 40 lines ---"
+                  echo "$logs" | tail -40
                   echo "❌ Spatial tests failed"; exit 1
                 fi
               elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                echo "$status_response" | jq -r '.logs // ""' | tail -30
-                echo "❌ Spatial tests failed"; exit 1
+                logs=$(echo "$status_response" | jq -r '.logs // ""')
+                  echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
+                  echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
+                  echo "--- last 40 lines ---"
+                  echo "$logs" | tail -40
+                  echo "❌ Spatial tests failed"; exit 1
               fi
             done
           no_output_timeout: 10m
@@ -2967,15 +2976,24 @@ jobs:
               status_response=$(curl -s "http://localhost:${PORT_STATUS:-8081}/api/tests/routing/status" || echo '{"status":"error"}')
               status=$(echo "$status_response" | jq -r '.status // "unknown"')
               if [ "$status" = "completed" ]; then
-                echo "$status_response" | jq -r '.logs // ""' | tail -30
                 if [ "$(echo "$status_response" | jq -r '.success // false')" = "true" ]; then
+                  echo "$status_response" | jq -r '.logs // ""' | tail -30
                   echo "✅ Routing tests passed"; break
                 else
+                  logs=$(echo "$status_response" | jq -r '.logs // ""')
+                  echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
+                  echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
+                  echo "--- last 40 lines ---"
+                  echo "$logs" | tail -40
                   echo "❌ Routing tests failed"; exit 1
                 fi
               elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                echo "$status_response" | jq -r '.logs // ""' | tail -30
-                echo "❌ Routing tests failed"; exit 1
+                logs=$(echo "$status_response" | jq -r '.logs // ""')
+                  echo "--- failure-relevant lines (DATA RACE / FAIL / panic, with context) ---"
+                  echo "$logs" | grep -aE -B3 -A30 'WARNING: DATA RACE|--- FAIL|^FAIL|panic:|build failed|cannot find|SIGSEGV' | tail -400
+                  echo "--- last 40 lines ---"
+                  echo "$logs" | tail -40
+                  echo "❌ Routing tests failed"; exit 1
               fi
             done
           no_output_timeout: 10m
