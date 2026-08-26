@@ -378,6 +378,156 @@ class CellSetService
         return $out;
     }
 
+    /**
+     * $a with $b's covered cells removed, working DIRECTLY on the run streams
+     * - never decode()ing either grid.
+     *
+     * WHY THIS EXISTS: decode() allocates one PHP array entry per COVERED
+     * CELL, so its memory follows the covered AREA, not the compressed size.
+     * That is survivable for a reach, but the clip subtracts a REJECTING
+     * GROUP's area, and a county-sized group rasterises to ~10M cells - about
+     * a gigabyte of PHP arrays. ripple:expand died on exactly that six times
+     * in three hours on 2026-08-26 (the first post-drop evening), each crash
+     * also wedging its overlap lock, and expansion fell to ~175 advances per
+     * half hour with 1,200+ posts overdue. This walk keeps memory
+     * proportional to the RUN COUNT (the boundary), a few kilobytes for the
+     * same inputs.
+     *
+     * The result keeps $a's exact frame: subtraction can only clear cells, so
+     * $a's bounding box remains valid (possibly loose, exactly like
+     * subtract()'s result, whose frame is also left untrimmed). A wholly
+     * clipped grid comes back as one clear run - "admits nobody" - matching
+     * the documented behaviour of the decode path.
+     *
+     * Null on unreadable input, mirroring the decode path's failure contract.
+     *
+     * B is indexed per GLOBAL row as [startCol, endCol) intervals - memory
+     * O(B's runs) - then A's stream is re-emitted row by row with those
+     * intervals cleared. Both grids sit on the same global lattice by
+     * construction, which is what makes the row alignment a plain integer
+     * offset.
+     */
+    public function subtractEncoded(string $a, string $b): ?string
+    {
+        try {
+            $ha = $this->header($a);
+            $hb = $this->header($b);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        // Index B's SET runs as per-global-row column intervals.
+        $bRows = [];
+        $pos = self::HEADER_SIZE;
+        $len = strlen($b);
+        $total = $hb['cols'] * $hb['rows'];
+        $seen = 0;
+        $set = false; // runs alternate, starting CLEAR
+        while ($seen < $total) {
+            try {
+                [$run, $n] = $this->readVarint($b, $pos, $len);
+            } catch (\Throwable) {
+                return null;
+            }
+            $pos += $n;
+            if ($set && $run > 0) {
+                // A set run may span row boundaries; split per row.
+                $idx = $seen;
+                $left = $run;
+                while ($left > 0) {
+                    $row = intdiv($idx, $hb['cols']);
+                    $col = $idx % $hb['cols'];
+                    $take = min($left, $hb['cols'] - $col);
+                    $gRow = $hb['minRow'] + $row;
+                    $bRows[$gRow][] = [$hb['minCol'] + $col, $hb['minCol'] + $col + $take];
+                    $idx += $take;
+                    $left -= $take;
+                }
+            }
+            $seen += $run;
+            $set = !$set;
+        }
+        if ($seen !== $total) {
+            return null;
+        }
+
+        // Walk A row by row, clearing B's intervals, re-encoding as we go.
+        $out = pack('VVVVV', self::FORMAT_MAGIC,
+            $ha['minCol'] & 0xFFFFFFFF, $ha['minRow'] & 0xFFFFFFFF, $ha['cols'], $ha['rows']);
+        $emitCur = false; // encoder state: current colour, always starts clear
+        $emitRun = 0;
+        $emit = function (bool $colour, int $count) use (&$emitCur, &$emitRun, &$out): void {
+            if ($count === 0) {
+                return;
+            }
+            if ($colour === $emitCur) {
+                $emitRun += $count;
+
+                return;
+            }
+            $out .= $this->encodeVarint($emitRun);
+            $emitCur = $colour;
+            $emitRun = $count;
+        };
+
+        $pos = self::HEADER_SIZE;
+        $len = strlen($a);
+        $total = $ha['cols'] * $ha['rows'];
+        $seen = 0;
+        $set = false;
+        while ($seen < $total) {
+            try {
+                [$run, $n] = $this->readVarint($a, $pos, $len);
+            } catch (\Throwable) {
+                return null;
+            }
+            $pos += $n;
+            if ($run > 0) {
+                if (!$set) {
+                    $emit(false, $run);
+                } else {
+                    // Split the set run per row and clear B's overlap.
+                    $idx = $seen;
+                    $left = $run;
+                    while ($left > 0) {
+                        $row = intdiv($idx, $ha['cols']);
+                        $col = $idx % $ha['cols'];
+                        $take = min($left, $ha['cols'] - $col);
+                        $gRow = $ha['minRow'] + $row;
+                        $gStart = $ha['minCol'] + $col;      // global column span
+                        $gEnd = $gStart + $take;             // [gStart, gEnd)
+                        $cursor = $gStart;
+                        foreach ($bRows[$gRow] ?? [] as [$bs, $be]) {
+                            if ($be <= $cursor || $bs >= $gEnd) {
+                                continue;
+                            }
+                            if ($bs > $cursor) {
+                                $emit(true, $bs - $cursor);
+                                $cursor = $bs;
+                            }
+                            $clearTo = min($be, $gEnd);
+                            $emit(false, $clearTo - $cursor);
+                            $cursor = $clearTo;
+                        }
+                        if ($cursor < $gEnd) {
+                            $emit(true, $gEnd - $cursor);
+                        }
+                        $idx += $take;
+                        $left -= $take;
+                    }
+                }
+            }
+            $seen += $run;
+            $set = !$set;
+        }
+        if ($seen !== $total) {
+            return null;
+        }
+        $out .= $this->encodeVarint($emitRun); // flush the final run
+
+        return $out;
+    }
+
     private function encodeVarint(int $v): string
     {
         $out = '';
