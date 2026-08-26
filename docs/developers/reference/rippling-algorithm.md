@@ -1291,6 +1291,21 @@ shrink agree exactly rather than approximately.
 (`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`), then
 `ripple:verify-cells-parity` and read it, then the drop DDL node by node under RSU.
 
+**"Completion" regrows until the drop, which is why the backfills are also scheduled.**
+`ripple:backfill-reach-cells` deliberately skips `status='expanding'` rows - ExpandService
+rewrites their cells on every tick - but a post's *final* tick flips it to `done` without
+writing a polygon, since there is nothing left to expand to. So a pre-cells expander whose
+only remaining step was "finish" lands in `done` with `polygon_cells` still NULL, invisible
+to ticks (nothing revisits a done row) and already behind the sweep's resume mark. Measured
+on production 2026-08-26: 155 such rows three hours after the one-off backfill finished,
+growing steadily as the ~6,400 pre-cells expanders drained. The nightly scheduled sweeps in
+`console.php` (02:35/03:35/04:35, each with `--reset-mark` because the stored mark would
+otherwise resume from the bottom of a finished sweep and find nothing forever) converge this
+population; expect the drop migration's guards to pass only once the pre-cells expanding
+population has fully drained. The guards themselves are full-table scans - the ring guard
+alone took 42 s on production - so several quiet minutes before the first DDL statement is
+the guards working, not a hang.
+
 **Run `ripple:verify-ring-cells-parity` as well - the other one does not cover the rings.**
 `ripple:verify-cells-parity` has eight read cases, seven over `polygon_cells` and one over
 `max_polygon_cells`; none of them reads `overflow_cells`. Without the ring command the rings
