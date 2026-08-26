@@ -13,29 +13,23 @@ package isochrone
 // a handful of rows by primary key, not hundreds — so the result is exactly
 // the old query's, only the bulk geometry work is gone.
 //
-// Dark-launched: SPATIAL_REACH_MODE=on enables it per node; anything else
-// (or any spatial error, or a not-ready dataset) falls back to the SQL
-// containment path unchanged.
+// Always tried: on any spatial error or a not-ready dataset the caller falls
+// back to the degraded outer-bound + cells-probe path.
 
 import (
+	"fmt"
+
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
 
 // spatialReachIDs asks the spatial server which live reaches cover the
-// viewer. ok=false (mode off, transport error, dataset not ready) means the
-// caller must use the SQL containment path.
-//
-// Once the legacy polygon columns are dropped the SQL containment path no
-// longer exists, so the mode flag stops being consulted: the spatial index is
-// the only full-fidelity answer and is always tried (its failure then falls to
-// the outer-bound + cells-probe degraded path, not to geometry SQL).
+// viewer. ok=false (transport error, dataset not ready) means the caller must
+// use the degraded outer-bound + cells-probe path.
 func spatialReachIDs(db *gorm.DB, latlng utils.LatLng) (in []int64, partial []int64, ok bool) {
-	// Read fresh each call (cheap next to the network hop): lets tests point
-	// SPATIAL_KNN_URL at a stub with t.Setenv, and ops flip the mode per node
-	// via .env + monit restart. The gate itself lives in rippling so search's
-	// reach arm makes the identical decision.
+	// The call itself lives in rippling so search's reach arm makes the
+	// identical decision.
 	return rippling.SpatialReachIDs(db, float64(latlng.Lng), float64(latlng.Lat))
 }
 
@@ -59,8 +53,8 @@ func spatialReachIDs(db *gorm.DB, latlng utils.LatLng) (in []int64, partial []in
 // reference to rippling_reach at all, so it counted held posts. Requiring a live
 // non-held row for both closes that, and costs one primary-key lookup per id.
 // fromIDsWhere builds the containment WHERE for reachCandidateQueryFromIDs:
-// the two raster buckets, plus — when a ring admits the viewer to something —
-// those posts as a third arm. The rasters only answer the committed reach, and
+// the raster id bucket, plus — when a ring admits the viewer to something —
+// those posts as a second arm. The rasters only answer the committed reach, and
 // the feed (reachOrOverflowSQL) additionally admits via the ring, so the badge
 // must too or it undercounts the feed. Every arm requires a live non-held
 // reach row, so a held or retracted post cannot be counted in on the
@@ -79,7 +73,7 @@ func spatialReachIDs(db *gorm.DB, latlng utils.LatLng) (in []int64, partial []in
 // ids    -> ms type=range key=msgid rows=22.
 // EXISTS -> ms type=ALL   key=NULL  rows=58,348, with the JSON parse and the
 // geometry build repeated per row, on a badge that polls ~2/s.
-func fromIDsWhere(share bool, legacy bool, in, partial []int64, latlng utils.LatLng, admitted []uint64) (string, []interface{}) {
+func fromIDsWhere(in []int64, latlng utils.LatLng, admitted []uint64) (string, []interface{}) {
 	ringArm := ""
 	var ringArgs []interface{}
 	if len(admitted) > 0 {
@@ -94,38 +88,16 @@ func fromIDsWhere(share bool, legacy bool, in, partial []int64, latlng utils.Lat
 		ringArgs = []interface{}{admitted}
 	}
 
-	// The partial bucket's exact test may read a shared geometry
-	// (content-addressed dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md):
-	// PK join + COALESCE, same shape as every other exact-polygon test, primary
-	// key bound by r2.msgid = ms.msgid so this stays the keyed lookup the whole
-	// spatial path exists to be. share is GeomShareReady(db) at the call site
-	// (an explicit bool, not a db handle, so this stays testable without one -
-	// matching rippling.ReachBrowseWhere/ReachInReachExpr). legacy is
-	// LegacyPolygonReady(db): once the polygon columns are dropped the exact
-	// arm cannot be expressed - and cannot be needed, since `partial` only
-	// arises from index rows built WITHOUT cells, which post-drop do not exist.
-	partialArm := ""
-	var partialArgs []interface{}
-	if legacy {
-		partialArm = "OR (ms.msgid IN (?) AND EXISTS (" +
-			"SELECT 1 FROM rippling_reach r2" + rippling.GeomJoin(share, "r2", "polygon", "g2") + " WHERE r2.msgid = ms.msgid " +
-			"AND r2.status != 'held' " +
-			"AND ST_Contains(" + rippling.GeomExpr(share, "r2", "polygon", "g2") + ", ST_SRID(POINT(?, ?), ?)))) "
-		partialArgs = []interface{}{partial, latlng.Lng, latlng.Lat, utils.SRID}
-	}
-
 	whereSQL := "ms.successful = 0 AND ml.msgid IS NULL " +
 		"AND ((ms.msgid IN (?) AND EXISTS (" +
 		"SELECT 1 FROM rippling_reach r1 WHERE r1.msgid = ms.msgid " +
 		"AND r1.status != 'held')) " +
-		partialArm +
 		ringArm + ") " +
 		authorReachCapWhere
 
 	// GORM renders an empty slice as IN (NULL) — never matches — which is
-	// exactly right for an empty in or partial list.
+	// exactly right for an empty in list.
 	whereArgs := []interface{}{in}
-	whereArgs = append(whereArgs, partialArgs...)
 	whereArgs = append(whereArgs, ringArgs...)
 	whereArgs = append(whereArgs, BrowseDistanceUnlimited, latlng.Lat, latlng.Lng, latlng.Lat)
 
@@ -133,9 +105,15 @@ func fromIDsWhere(share bool, legacy bool, in, partial []int64, latlng utils.Lat
 }
 
 func reachCandidateQueryFromIDs(db *gorm.DB, myid uint64, latlng utils.LatLng, in, partial []int64, admitted []uint64) *gorm.DB {
+	if len(partial) > 0 {
+		// A partial id meant a legacy coarse-raster row whose boundary band
+		// needed the exact geometry; healthy rows no longer produce them.
+		// Excluded (fail-closed for a badge) rather than silently counted.
+		fmt.Printf("badge: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
+	}
 	// One concatenated WHERE string in a single Where() call — same GORM
 	// extra-paren gotcha as reachCandidateQuery (see there).
-	whereSQL, whereArgs := fromIDsWhere(rippling.GeomShareReady(db), rippling.LegacyPolygonReady(db), in, partial, latlng, admitted)
+	whereSQL, whereArgs := fromIDsWhere(in, latlng, admitted)
 
 	return db.Table("messages_spatial ms").
 		Joins("INNER JOIN messages m ON m.id = ms.msgid").

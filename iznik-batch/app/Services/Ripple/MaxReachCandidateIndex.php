@@ -24,8 +24,8 @@ use Illuminate\Support\Facades\DB;
  * nothing (15,177 rows against the composite's 1). A hint and an index are
  * alternatives, not layers.
  *
- * So the answer is a schema fact, asked once per process, exactly like
- * LegacyGeometry - production applies DDL by hand under RSU rather than via
+ * So the answer is a schema fact, asked once per process - production
+ * applies DDL by hand under RSU rather than via
  * artisan, so code genuinely does run against both schemas, and the workers are
  * restarted after the DDL lands.
  */

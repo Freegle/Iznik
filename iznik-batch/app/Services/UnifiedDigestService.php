@@ -10,9 +10,7 @@ use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\Ripple\DigestPostScorer;
-use App\Services\Ripple\LegacyGeometry;
 use App\Services\Ripple\DistancePreferenceFilter;
-use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\RingIndex;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -59,19 +57,6 @@ class UnifiedDigestService
 
     /** Memoized once per run: whether the optional messages_pinned table exists. */
     private ?bool $messagesPinnedTableExists = null;
-
-    /** Memoized once per run: whether the sandwich-bounds columns have been migrated. */
-    private ?bool $reachBoundsColumnsExist = null;
-
-    /** True when the reach-gate can use the sandwich-bounds prefilter. */
-    private function reachBoundsAvailable(): bool
-    {
-        if ($this->reachBoundsColumnsExist === null) {
-            $this->reachBoundsColumnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
-        }
-
-        return $this->reachBoundsColumnsExist;
-    }
 
     /**
      * Digest mode constants.
@@ -722,20 +707,15 @@ class UnifiedDigestService
         }
 
         try {
-            // The ring document: overflow_bounds while it exists, its cells
-            // mirror afterwards - same lane keys by design, and post-drop the
-            // cells document carries the bbox scalar too (rows written before
-            // the drop lack it, and fall to the widen-to-everyone branch,
-            // which is safe).
-            if (LegacyGeometry::overflowReady()) {
-                $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_bounds');
-            } else {
-                self::$overflowColumn ??= Schema::hasColumn('rippling_reach', 'overflow_cells');
-                if (! self::$overflowColumn) {
-                    return $none;
-                }
-                $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_cells');
+            // The ring document: overflow_cells, which mirrors the retired
+            // overflow_bounds lane keys by design and carries the bbox scalar
+            // too (rows written before the drop lack it, and fall to the
+            // widen-to-everyone branch, which is safe).
+            self::$overflowColumn ??= Schema::hasColumn('rippling_reach', 'overflow_cells');
+            if (! self::$overflowColumn) {
+                return $none;
             }
+            $raw = DB::table('rippling_reach')->where('msgid', $msgid)->value('overflow_cells');
             $bounds = is_string($raw) ? json_decode($raw, true) : null;
             if (! is_array($bounds)) {
                 return $none;
@@ -937,36 +917,21 @@ class UnifiedDigestService
             // and the index needs their band to know which rural ring may admit
             // them. NOTE: these sit before the WHERE in the SQL text, so their
             // parameters come FIRST in the array below.
-            // The containment test per candidate member. While the legacy
-            // polygon exists it is the exact SQL this always ran (through the
-            // dedup COALESCE when that era's tables do). Afterwards the SQL
-            // narrows by the stored OUTER BOUND (a superset), and exactness
-            // moves to PHP: the message's cell grid is fetched ONCE and every
+            // The containment test per candidate member. The SQL narrows by
+            // the stored OUTER BOUND (a superset), and exactness lives in
+            // PHP: the message's cell grid is fetched ONCE and every
             // surviving candidate's point is probed against it - the same
             // stored bytes every other surface answers from.
-            $legacyPolygon = LegacyGeometry::polygonReady();
-            $probeCells = null;
-            if ($legacyPolygon) {
-                $mrJoin = GeomShareService::joinSql('mr', 'polygon', 'gmr');
-                $mrPoly = GeomShareService::sourceExpr('mr', 'polygon', 'gmr');
-                $containSql = "ST_Contains($mrPoly, $point)";
-            } else {
-                $mrJoin = '';
-                $probeCells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
-                $containSql = "(ST_GeometryType(mr.outer_bound) <> 'POINT' AND ST_Contains(mr.outer_bound, $point))";
-            }
+            $probeCells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+            $containSql = "(ST_GeometryType(mr.outer_bound) <> 'POINT' AND ST_Contains(mr.outer_bound, $point))";
+            $mrJoin = '';
 
-            $primaryFlag = '';
-            $primaryParams = [];
-            if ($overflowSql !== '' || !$legacyPolygon) {
-                // in_primary: exact from the polygon in the legacy era; from
-                // the outer bound (refined by the PHP probe below) afterwards.
-                // density_band rides along for the ring index whenever either
-                // consumer needs post-filtering.
-                $primaryFlag = ", $containSql AS in_primary"
-                    . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band";
-                $primaryParams[] = $srid;
-            }
+            // in_primary: from the outer bound, refined by the PHP probe
+            // below. density_band rides along for the ring index whenever
+            // either consumer needs post-filtering.
+            $primaryFlag = ", $containSql AS in_primary"
+                . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band";
+            $primaryParams = [$srid];
 
             // status <> 'held': a frozen reach belongs to a post whose origin copy has been
             // pulled back for moderation. Browse, the badge and search hide it, so mailing it
@@ -1006,25 +971,23 @@ class UnifiedDigestService
                 )
             ));
 
-            if (!$legacyPolygon) {
-                // Refine the outer-bound superset to the exact reach: probe
-                // each candidate's point against the message's cell grid. A
-                // candidate the probe rejects (or cannot decide - unreadable
-                // bytes admit nobody) is only a recipient if a ring admits
-                // them, exactly like a candidate the polygon rejected.
-                $cellSets = app(\App\Services\Ripple\CellSetService::class);
-                foreach ($recipientRows as $row) {
-                    $in = false;
-                    if ($probeCells !== null && $probeCells !== ''
-                        && $row->resolved_lat !== null && $row->resolved_lng !== null) {
-                        $in = $cellSets->containsEncoded($probeCells, (float) $row->resolved_lng, (float) $row->resolved_lat) === true;
-                    }
-                    $row->in_primary = ((int) ($row->in_primary ?? 0) === 1 && $in) ? 1 : 0;
+            // Refine the outer-bound superset to the exact reach: probe
+            // each candidate's point against the message's cell grid. A
+            // candidate the probe rejects (or cannot decide - unreadable
+            // bytes admit nobody) is only a recipient if a ring admits
+            // them, exactly like a candidate outside the reach.
+            $cellSets = app(\App\Services\Ripple\CellSetService::class);
+            foreach ($recipientRows as $row) {
+                $in = false;
+                if ($probeCells !== null && $probeCells !== ''
+                    && $row->resolved_lat !== null && $row->resolved_lng !== null) {
+                    $in = $cellSets->containsEncoded($probeCells, (float) $row->resolved_lng, (float) $row->resolved_lat) === true;
                 }
-                $recipientRows = $recipientRows->filter(
-                    fn ($row) => (int) ($row->in_primary ?? 0) === 1 || $overflowSql !== ''
-                )->values();
+                $row->in_primary = ((int) ($row->in_primary ?? 0) === 1 && $in) ? 1 : 0;
             }
+            $recipientRows = $recipientRows->filter(
+                fn ($row) => (int) ($row->in_primary ?? 0) === 1 || $overflowSql !== ''
+            )->values();
 
             if ($overflowSql !== '') {
                 $recipientRows = collect($this->keepRingAdmitted($recipientRows->all(), $msgid));
@@ -2097,103 +2060,32 @@ class UnifiedDigestService
 
         $latlng = $this->resolveUserLatLng($user);
         if ($latlng !== null) {
-            if (!LegacyGeometry::polygonReady()) {
-                // Cells-only era: the member's whole containment universe
-                // comes from the spatial index as an id list (the same
-                // authority, and the same call shape, the feed and badge use)
-                // and the gate is a pure id comparison - no geometry in this
-                // query at all. Failure fails CLOSED, like RingIndex::admits:
-                // a spatial outage holds reach-gated posts for a later digest
-                // rather than mailing what nobody could check.
-                [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
-                $containing = app(\App\Services\Ripple\CellSetService::class)
-                    ->reachContaining($latlng[0], $latlng[1]) ?? [];
-                $inSql = '';
-                $inParams = [];
-                if ($containing !== []) {
-                    $inSql = ' AND rr.msgid NOT IN (' . implode(',', array_fill(0, count($containing), '?')) . ')';
-                    $inParams = $containing;
-                }
-                // Exclude a post when a reach row exists, the member is not
-                // in its containment list, and no ring rescues them - the
-                // same statement the sandwich branch below makes, minus the
-                // geometry.
-                // keep-raw: correlated NOT EXISTS with a spliced ringRescue fragment
-                // (ringRescueIds returns SQL text), same shape as the branches below -
-                // the builder cannot compose another service's fragment.
-                $query->whereRaw(
-                    "NOT EXISTS (SELECT 1 FROM rippling_reach rr
-                        WHERE rr.msgid = messages.id$inSql$ringRescue)",
-                    array_merge($inParams, $ringParams)
-                );
-            } elseif ($this->reachBoundsAvailable()) {
-                // Sandwich-bounds prefilter (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md):
-                // the exact polygon averages ~178 KB, so consult the small same-row bounds
-                // columns first — outside a real outer_bound is an authoritative reject,
-                // inside inner_bound an authoritative accept — and only test the exact
-                // polygon for the band between them. The 178 KB polygon is referenced
-                // ONLY inside a correlated EXISTS: MySQL's lazy BLOB fetch does not cross
-                // OR expression items, so any direct reference would fetch it for every
-                // evaluated row and defeat the point. A POINT outer_bound (completion
-                // pruning) is treated as ABSENT here: this query has no successful=0
-                // filter — it still shows "came and went" posts — so degraded bounds must
-                // fall back to the exact polygon rather than reject them.
-                //
-                // Rural-ring rescue: rings extend BEYOND outer_bound (they exist precisely for
-                // members the capped reach did not cover), so "outside outer_bound" can no
-                // longer be an unconditional reject. The ring is OR-ed in at the level that
-                // wraps the WHOLE reject test (both the outer_bound branch and the boundary-band
-                // exact-polygon branch) — "AND NOT ring" outside the A-OR-B group below — rather
-                // than nested inside one branch, so either kind of reject is rescued the same way.
-                $point = 'ST_SRID(POINT(?, ?), 3857)';
-                // Ring rescue as an id list from the spatial index - the same call, and
-                // the same answer, the website's feed and badge get for this member. The
-                // ring test used to be spliced in here as SQL, which meant this path
-                // deciding for itself who a ring admits; that is how the digest came to
-                // name posts the site would not show.
-                [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
-                // keep-raw: spatial predicates (ST_Contains, ST_SRID, ST_GeomFromText,
-                // ST_GeometryType) and the correlated-EXISTS sandwich-bounds shape have no
-                // query-builder equivalent.
-                // The exact geometry may live in rippling_reach_geom (content-addressed
-                // dedup): PK join + COALESCE keeps this the same lazy-BLOB correlated
-                // EXISTS whether the row is deduped, drained or untouched.
-                $r2Join = GeomShareService::joinSql('r2', 'polygon', 'g2');
-                $r2Poly = GeomShareService::sourceExpr('r2', 'polygon', 'g2');
-                // keep-raw: spatial predicates and the correlated-EXISTS sandwich-bounds shape have no query-builder equivalent
-                $query->whereRaw(
-                    "NOT EXISTS (SELECT 1 FROM rippling_reach rr
-                        WHERE rr.msgid = messages.id
-                          AND (((ST_GeometryType(rr.outer_bound) <> 'POINT'
-                                AND NOT ST_Contains(rr.outer_bound, $point))
-                               OR ((ST_GeometryType(rr.outer_bound) = 'POINT'
-                                    OR COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 0)
-                                   AND NOT EXISTS (SELECT 1 FROM rippling_reach r2$r2Join
-                                       WHERE r2.msgid = rr.msgid
-                                         AND ST_Contains($r2Poly, $point))))
-                          $ringRescue))",
-                    array_merge(
-                        [$latlng[1], $latlng[0], $latlng[1], $latlng[0], $latlng[1], $latlng[0]], // POINT(lng, lat) x3
-                        $ringParams
-                    )
-                );
-            } else {
-                // Bounds table not migrated yet — the original exact-polygon gate, plus the
-                // same rural-ring rescue as the sandwich branch above.
-                $point = 'ST_SRID(POINT(?, ?), 3857)';
-                // Same rescue, same source as the sandwich branch above.
-                [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
-                // keep-raw: spatial predicates (ST_Contains, ST_SRID) have no query-builder
-                // equivalent.
-                $rrJoin = GeomShareService::joinSql('rr', 'polygon', 'g');
-                $rrPoly = GeomShareService::sourceExpr('rr', 'polygon', 'g');
-                // keep-raw: spatial predicates (ST_Contains, ST_SRID) have no query-builder equivalent
-                $query->whereRaw(
-                    "NOT EXISTS (SELECT 1 FROM rippling_reach rr$rrJoin WHERE rr.msgid = messages.id
-                        AND ST_Contains($rrPoly, $point) = 0$ringRescue)",
-                    array_merge([$latlng[1], $latlng[0]], $ringParams) // POINT(lng, lat)
-                );
+            // The member's whole containment universe comes from the spatial
+            // index as an id list (the same authority, and the same call
+            // shape, the feed and badge use) and the gate is a pure id
+            // comparison - no geometry in this query at all. Failure fails
+            // CLOSED, like RingIndex::admits: a spatial outage holds
+            // reach-gated posts for a later digest rather than mailing what
+            // nobody could check.
+            [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
+            $containing = app(\App\Services\Ripple\CellSetService::class)
+                ->reachContaining($latlng[0], $latlng[1]) ?? [];
+            $inSql = '';
+            $inParams = [];
+            if ($containing !== []) {
+                $inSql = ' AND rr.msgid NOT IN (' . implode(',', array_fill(0, count($containing), '?')) . ')';
+                $inParams = $containing;
             }
+            // Exclude a post when a reach row exists, the member is not in
+            // its containment list, and no ring rescues them.
+            // keep-raw: correlated NOT EXISTS with a spliced ringRescue fragment
+            // (ringRescueIds returns SQL text) - the builder cannot compose
+            // another service's fragment.
+            $query->whereRaw(
+                "NOT EXISTS (SELECT 1 FROM rippling_reach rr
+                    WHERE rr.msgid = messages.id$inSql$ringRescue)",
+                array_merge($inParams, $ringParams)
+            );
         }
 
         // Bound the load (see DIGEST_LOAD_CAP): oldest-first + this limit means a member who
@@ -2419,30 +2311,18 @@ class UnifiedDigestService
 
         $default = (float) config('freegle.ripple.score.default_reach_metres', 30000);
 
-        if (LegacyGeometry::polygonReady()) {
-            // keep-raw: ST_AsText over the deduped-or-local geometry - the builder cannot render this
-            $row = DB::selectOne(
-                'SELECT rr.lng AS ox, rr.lat AS oy, rr.polygon_cells AS cells, ST_AsText('
-                . GeomShareService::sourceExpr('rr', 'polygon', 'g') . ') AS poly_wkt
-                   FROM rippling_reach rr' . GeomShareService::joinSql('rr', 'polygon', 'g')
-                . ' WHERE rr.msgid = ?',
-                [$msgid]
-            );
-        } else {
-            $row = DB::selectOne(
-                'SELECT rr.lng AS ox, rr.lat AS oy, rr.polygon_cells AS cells FROM rippling_reach rr WHERE rr.msgid = ?',
-                [$msgid]
-            );
-        }
+        $row = DB::selectOne(
+            'SELECT rr.lng AS ox, rr.lat AS oy, rr.polygon_cells AS cells FROM rippling_reach rr WHERE rr.msgid = ?',
+            [$msgid]
+        );
 
         return $this->reachRadiusCache[$msgid] = $this->reachRadiusFromRow($row, $default);
     }
 
     /**
-     * One row's reach radius: the stored cell grid first (a streaming walk of
-     * its run endpoints - see CellSetService::maxDistanceMetresFrom), the
-     * legacy polygon's vertex walk while that column exists, the configured
-     * default when neither can say.
+     * One row's reach radius: the stored cell grid (a streaming walk of its
+     * run endpoints - see CellSetService::maxDistanceMetresFrom), the
+     * configured default when it cannot say.
      */
     private function reachRadiusFromRow(?object $row, float $default): float
     {
@@ -2455,9 +2335,6 @@ class UnifiedDigestService
             if ($metres !== null && $metres > 0) {
                 return $metres;
             }
-        }
-        if (($row->poly_wkt ?? null) !== null) {
-            return $this->reachRadiusFromWkt((float) $row->ox, (float) $row->oy, $row->poly_wkt, $default);
         }
 
         return $default;
@@ -2490,23 +2367,11 @@ class UnifiedDigestService
         $ids = array_keys($ids);
 
         foreach (array_chunk($ids, 500) as $chunk) {
-            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
-            if (LegacyGeometry::polygonReady()) {
-                // keep-raw: ST_AsText over the deduped-or-local geometry - the builder cannot render this
-                $rows = DB::select(
-                    'SELECT rr.msgid, rr.lng AS ox, rr.lat AS oy, rr.polygon_cells AS cells, ST_AsText('
-                    . GeomShareService::sourceExpr('rr', 'polygon', 'g') . ') AS poly_wkt
-                       FROM rippling_reach rr' . GeomShareService::joinSql('rr', 'polygon', 'g')
-                    . " WHERE rr.msgid IN ($placeholders)",
-                    $chunk
-                );
-            } else {
-                $rows = DB::select(
-                    "SELECT rr.msgid, rr.lng AS ox, rr.lat AS oy, rr.polygon_cells AS cells
-                       FROM rippling_reach rr WHERE rr.msgid IN ($placeholders)",
-                    $chunk
-                );
-            }
+            $rows = DB::table('rippling_reach')
+                ->select('msgid', 'lng as ox', 'lat as oy', 'polygon_cells as cells')
+                ->whereIn('msgid', $chunk)
+                ->get()
+                ->all();
             foreach ($rows as $row) {
                 $this->reachRadiusCache[(int) $row->msgid] = $this->reachRadiusFromRow($row, $default);
             }
@@ -2519,38 +2384,6 @@ class UnifiedDigestService
                 $this->reachRadiusCache[$mid] = $default;
             }
         }
-    }
-
-    /**
-     * Reach radius in metres from a reach origin and its polygon WKT: the greatest
-     * great-circle distance from the origin to any exterior-ring vertex. Shared by the
-     * single-row {@see reachRadiusMetres} and the batch {@see primeReachRadiusCache}.
-     *
-     * Parsing the WKT ring in PHP is more portable than MySQL geometry functions and
-     * avoids SRID-transform issues. WKT form: POLYGON((lng1 lat1,lng2 lat2,...)) — x is
-     * lng, y is lat. Falls back to $default when the WKT can't be parsed.
-     */
-    private function reachRadiusFromWkt(float $oLng, float $oLat, ?string $wkt, float $default): float
-    {
-        if ($wkt === null || !preg_match('/POLYGON\s*\(\s*\(([^)]+)\)/', $wkt, $m)) {
-            return $default;
-        }
-
-        $maxDist = 0.0;
-        foreach (explode(',', $m[1]) as $pair) {
-            $parts = preg_split('/\s+/', trim($pair));
-            if (count($parts) < 2) {
-                continue;
-            }
-            $vLng = (float) $parts[0];
-            $vLat = (float) $parts[1];
-            $dist = $this->haversineMetres($oLat, $oLng, $vLat, $vLng);
-            if ($dist > $maxDist) {
-                $maxDist = $dist;
-            }
-        }
-
-        return $maxDist > 0 ? $maxDist : $default;
     }
 
     /**

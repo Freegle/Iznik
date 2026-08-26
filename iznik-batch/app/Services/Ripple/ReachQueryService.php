@@ -11,29 +11,13 @@ use Illuminate\Support\Facades\Schema;
  * reach?" — the single gate shared by browse "Nearby" (#1), reply-eligibility
  * (#2) and held-reply release (#3).
  *
- * Uses the SRID-3857 convention of rippling_reach.polygon / messages_spatial.point
- * (lng/lat degrees under an SRID-3857 label), so points are built the same way the
- * Go API builds them: ST_SRID(POINT(lng, lat), 3857).
+ * Uses the SRID-3857 convention of messages_spatial.point (lng/lat degrees
+ * under an SRID-3857 label), so points are built the same way the Go API
+ * builds them: ST_SRID(POINT(lng, lat), 3857).
  */
 class ReachQueryService
 {
     private const SRID = 3857;
-
-    /** Memoized: whether the sandwich-bounds columns exist (pre-migration deploys fall back). */
-    private static ?bool $boundsColumnsExist = null;
-
-    private function boundsAvailable(): bool
-    {
-        if (self::$boundsColumnsExist === null) {
-            try {
-                self::$boundsColumnsExist = Schema::hasColumn('rippling_reach', 'outer_bound');
-            } catch (\Throwable) {
-                self::$boundsColumnsExist = false;
-            }
-        }
-
-        return self::$boundsColumnsExist;
-    }
 
     /** Memoized: has the polygon_cells (raster-storage) migration run? */
     private static ?bool $cellsColumnExists = null;
@@ -107,71 +91,18 @@ class ReachQueryService
         try {
             // The compact cell set (plans/2026-08-24-rippling-reach-raster-
             // storage.md) answers this from ONE keyed read of ~20KB and a walk
-            // of its run stream - no sandwich dance, no ~178KB polygon
+            // of its run stream - no sandwich dance, no megabyte polygon
             // fetched, no spatial function. NULL means the cell set cannot
-            // say (no column, not backfilled, unparseable), and the
-            // sandwich/exact path below is then the exact behaviour this
-            // method had before the column existed.
-            $cellsSay = $this->reachCellsSay($msgid, $lat, $lng);
-            if ($cellsSay !== null) {
-                if ($cellsSay) {
-                    return true;
-                }
-
-                // The reach proper says no; the rings are still the caller's
-                // second chance, exactly as below.
-                return $this->isWithinOverflow($msgid, $lat, $lng, $band);
-            }
-
-            if (!LegacyGeometry::polygonReady()) {
-                // Post-drop there is no polygon to fall back to: a row whose
-                // cells cannot answer gates on the rings alone, exactly as a
-                // definite "outside" would - the fail-closed direction for a
-                // reply gate (the release cron re-asks as the reach grows).
-                return $this->isWithinOverflow($msgid, $lat, $lng, $band);
-            }
-
-            if ($this->boundsAvailable()) {
-                $point = 'ST_SRID(POINT(?, ?), ' . self::SRID . ')';
-                // The exact geometry may live in rippling_reach_geom (content-addressed
-                // dedup): primary-key join + COALESCE keeps this the same lazy-BLOB
-                // correlated EXISTS whether the row is deduped, drained or untouched.
-                $join = GeomShareService::joinSql('r2', 'polygon', 'g2');
-                $poly = GeomShareService::sourceExpr('r2', 'polygon', 'g2');
-                $row = DB::selectOne(
-                    "SELECT EXISTS(
-                        SELECT 1 FROM rippling_reach rr
-                        WHERE rr.msgid = ?
-                          AND ((ST_GeometryType(rr.outer_bound) <> 'POINT'
-                                AND ST_Contains(rr.outer_bound, $point)
-                                AND (COALESCE(ST_Contains(rr.inner_bound, $point), 0) = 1
-                                     OR EXISTS (SELECT 1 FROM rippling_reach r2$join
-                                         WHERE r2.msgid = rr.msgid AND ST_Contains($poly, $point))))
-                               OR (ST_GeometryType(rr.outer_bound) = 'POINT'
-                                   AND EXISTS (SELECT 1 FROM rippling_reach r2$join
-                                       WHERE r2.msgid = rr.msgid AND ST_Contains($poly, $point))))
-                     ) AS within",
-                    [$msgid, $lng, $lat, $lng, $lat, $lng, $lat, $lng, $lat]
-                );
-            } else {
-                $join = GeomShareService::joinSql('rippling_reach', 'polygon', 'g');
-                $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g');
-                $row = DB::selectOne(
-                    'SELECT EXISTS(
-                        SELECT 1 FROM rippling_reach' . $join . '
-                        WHERE msgid = ?
-                          AND ST_Contains(' . $poly . ', ST_SRID(POINT(?, ?), ' . self::SRID . ')) = 1
-                     ) AS within',
-                    [$msgid, $lng, $lat]
-                );
-            }
-
-            if ((bool) ($row->within ?? 0)) {
+            // say (not written yet, unparseable): a row whose cells cannot
+            // answer gates on the rings alone, exactly as a definite
+            // "outside" would - the fail-closed direction for a reply gate
+            // (the release cron re-asks as the reach grows).
+            if ($this->reachCellsSay($msgid, $lat, $lng) === true) {
                 return true;
             }
 
-            // Only now, when the reach proper has said no: a post that already covers this
-            // viewer never pays for the ring test.
+            // Only now, when the reach proper has said no: a post that already
+            // covers this viewer never pays for the ring test.
             return $this->isWithinOverflow($msgid, $lat, $lng, $band);
         } catch (\Throwable $e) {
             // rippling_reach is created by the reach engine (PR A). Until that is
@@ -383,10 +314,10 @@ class ReachQueryService
         }
 
         try {
-            // The authoritative lane list is overflow_bounds while it exists,
-            // overflow_cells afterwards - the cells mirror its JSON paths by
-            // design, so the question and its answers are identical.
-            $laneColumn = LegacyGeometry::overflowReady() ? 'overflow_bounds' : 'overflow_cells';
+            // The authoritative lane list is overflow_cells, which mirrors the
+            // retired overflow_bounds JSON paths by design - the question and
+            // its answers are identical.
+            $laneColumn = 'overflow_cells';
             $selects = [];
             $params = [];
             foreach ($paths as $i => $path) {

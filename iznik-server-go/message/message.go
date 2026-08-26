@@ -2663,10 +2663,10 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 }
 
 // ClipReachForRejectedGroup removes a rejecting secondary group's area from a post's
-// rippling reach polygon, so the post stops showing — and stops being reply-eligible —
-// in that group's area (#6). The post's reach (rippling_reach.polygon, GEOMETRY SRID
-// 3857) is trimmed by the group's DPA-or-CGA area (groups.polyindex). If the reach lies
-// wholly within the rejected group, nothing valid remains, so the reach row is dropped.
+// rippling reach, so the post stops showing — and stops being reply-eligible —
+// in that group's area (#6). The post's reach grid (rippling_reach.polygon_cells)
+// is trimmed by the group's DPA-or-CGA area (groups.polyindex). If the reach lies
+// wholly within the rejected group, nothing remains, so the reach row is dropped.
 //
 // Errors are ignored on purpose: until the reach engine (PR A) is live there is no
 // rippling_reach table/row to clip, in which case this is a harmless no-op.
@@ -2679,148 +2679,14 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 		Where("msgid = ? AND (rejected_groups IS NULL OR JSON_CONTAINS(rejected_groups, CAST(? AS JSON)) = 0)", msgid, gid).
 		Update("rejected_groups", gorm.Expr("JSON_ARRAY_APPEND(COALESCE(rejected_groups, JSON_ARRAY()), '$', ?)", gid))
 
-	// Cells-only era: once the legacy polygon is dropped the whole clip is
-	// grid arithmetic - read the row's cells and the group's area, subtract,
-	// write back (or delete the row when nothing remains). The sandwich inner
-	// bound is NULLed for the same reason as the legacy path below; the outer
-	// bound stays stale-loose, a still-valid superset of the SHRUNK reach.
-	if !rippling.LegacyPolygonReady(db) {
-		clipReachCellsOnly(db, msgid, gid)
-		return
-	}
-
-	// Trim where the reach extends beyond the rejected group (skip the wholly-within
-	// case, whose ST_Difference would be empty and violate the NOT NULL geometry).
-	// The polygon SHRINKS: a stale sandwich inner bound could keep cheap-accepting
-	// viewers inside the clipped-out area, so it is NULLed in the SAME statement. The
-	// outer bound is left stale-loose (safe) and the next expander tick re-derives both.
-	// ORM migration site 7653c7a2e4ed (Tier 3 shapes / wave 5 runtime-varying
-	// review). The optional ", mr.inner_bound = NULL" SET fragment gives this
-	// statement exactly 2 real rendered forms - "NoInnerBound" and
-	// "WithInnerBound" below, both proved in TestOrmWave5_7653c7a2e4ed
-	// (AssertGoldenShapes; declared shapes lived in the retired ormharness's
-	// shapes.json; removed in d22ba1d6c). An
-	// explicit ordered clause.Set (not a map) keeps mr.polygon ahead of
-	// mr.inner_bound the same way the source text did, even though the two
-	// assignments are independent and the order is not actually load-bearing.
-	// `groups` needs its own backticks: GORM only quotes identifiers it
-	// constructs itself, not identifiers inside a raw Table()/Where() string,
-	// and "groups" is a MySQL reserved word.
-	// The reach geometry may live in rippling_reach_geom (content-addressed dedup).
-	// This clip mutates the blob in place, and the hash may be SHARED: rewriting the
-	// shared geom row instead would silently clip every other post pointing at it
-	// (261 in the worst case measured), so the hash is NULLed in the SAME statement
-	// (detach) and re-pointed at the clipped bytes below. A crash between leaves the
-	// hash NULL, which every reader treats as "use the blob". COALESCE reads the
-	// shared geometry as the difference source so a drained row clips correctly,
-	// materialising the clipped bytes back into its own blob. Alias gsh, not g:
-	// `groups g` already owns that alias here.
-	share := rippling.GeomShareReady(db)
-	clipTable := "rippling_reach mr JOIN `groups` g ON g.id = ?" +
-		rippling.GeomJoin(share, "mr", "polygon", "gsh")
-	poly := rippling.GeomExpr(share, "mr", "polygon", "gsh")
-	clipWhere := "mr.msgid = ? AND g.polyindex IS NOT NULL " +
-		"AND ST_GeometryType(g.polyindex) <> 'POINT' " +
-		"AND ST_Intersects(" + poly + ", g.polyindex) " +
-		"AND NOT ST_Within(" + poly + ", g.polyindex)"
-
-	// polygon_cells is clipped with the cell-set Subtract primitive
-	// (iznik-spatial-go/cellset.Subtract, ported here as DecodedCellSet.Subtract)
-	// rather than by re-rasterising the whole post-clip polygon: after
-	// ST_Difference the WKT is frequently BIGGER than the rejecting group's
-	// own area (that is exactly why this format exists), so re-rasterising it
-	// would cost more than the write it is meant to make cheap. Read BEFORE
-	// the clip below, from the SAME eligibility test, so cells and polygon
-	// are clipped from identical pre-clip state. Any failure (rasterise down,
-	// no cells stored yet) clips to NULL - fall back to `polygon` - rather
-	// than ever leave a stale, too-permissive grid in place.
-	cellsReady := rippling.PolygonCellsReady(db)
-	var clippedCells []byte
-	haveClippedCells := false
-	if cellsReady {
-		var curCells []byte
-		var groupWkt *string
-		// keep-raw: dynamic multi-table join (clipTable/clipWhere are built above
-		// from GeomShareReady-dependent fragments) with ST_AsText/ST_Intersects/
-		// ST_Within spatial predicates - GORM cannot render this shape.
-		row := db.Raw("SELECT mr.polygon_cells, ST_AsText(g.polyindex) FROM "+clipTable+" WHERE "+clipWhere, gid, msgid).Row()
-		if err := row.Scan(&curCells, &groupWkt); err == nil && curCells != nil && groupWkt != nil {
-			if groupBytes, rerr := spatial.RasterizeWKT(*groupWkt); rerr == nil {
-				if a, derr := rippling.DecodeCellSet(curCells); derr == nil {
-					if b, derr2 := rippling.DecodeCellSet(groupBytes); derr2 == nil {
-						clippedCells = a.Subtract(b).Encode()
-						haveClippedCells = true
-					}
-				}
-			}
-		}
-	}
-
-	set := clause.Set{
-		{Column: clause.Column{Table: "mr", Name: "polygon"}, Value: gorm.Expr("ST_Difference(" + poly + ", g.polyindex)")},
-	}
-	if share {
-		set = append(set, clause.Assignment{
-			Column: clause.Column{Table: "mr", Name: "polygon_hash"}, Value: gorm.Expr("NULL"),
-		})
-	}
-	if rippling.ReachBoundsReady(db) {
-		set = append(set, clause.Assignment{
-			Column: clause.Column{Table: "mr", Name: "inner_bound"}, Value: gorm.Expr("NULL"),
-		})
-	}
-	if cellsReady {
-		if haveClippedCells {
-			set = append(set, clause.Assignment{
-				Column: clause.Column{Table: "mr", Name: "polygon_cells"}, Value: clippedCells,
-			})
-		} else {
-			set = append(set, clause.Assignment{
-				Column: clause.Column{Table: "mr", Name: "polygon_cells"}, Value: gorm.Expr("NULL"),
-			})
-		}
-	}
-	clip := db.Table(clipTable, gid).
-		Clauses(set).
-		Where(clipWhere, msgid).
-		Updates(map[string]interface{}{})
-	if share && clip.Error == nil && clip.RowsAffected > 0 {
-		rippling.GeomUpsertFromRow(db, msgid, "polygon")
-		rippling.GeomRehashFromRow(db, msgid, "polygon")
-	}
-
-	// Reach wholly inside the rejected group → no area remains: drop the reach row.
-	// (Only the reach row: the shared geom row may serve other posts, and
-	// ripple:gc-reach-geometry reclaims it once nothing references it.)
-	// GORM's Delete
-	// callback (callbacks/delete.go) only calls AddClauseIfNotExists(clause.From{})
-	// - it never reads Statement.Joins the way the SELECT query callback does -
-	// so a plain .Joins() call before .Delete() is silently dropped. Supplying our
-	// own non-empty clause.From{} (via .Clauses, before .Delete runs) makes
-	// AddClauseIfNotExists a no-op, so the join we set on it survives. The join's
-	// Expression is a raw gorm.Expr so its bind lands inside the FROM clause,
-	// ahead of the WHERE's own bind - matching the original (gid, msgid) order.
-	// clause.Delete{Modifier: "mr"} supplies the "DELETE mr" alias prefix;
-	// .Table("rippling_reach mr") keeps the base table's own alias unquoted,
-	// the same TableExpr mechanism join_test.go pins for "users u".
-	deleteJoins := []clause.Join{{Expression: gorm.Expr("JOIN `groups` g ON g.id = ?", gid)}}
-	if share {
-		deleteJoins = append(deleteJoins, clause.Join{
-			Expression: gorm.Expr("LEFT JOIN rippling_reach_geom gsh ON gsh.hash = mr.polygon_hash"),
-		})
-	}
-	db.Table("rippling_reach mr").
-		Clauses(
-			clause.Delete{Modifier: "mr"},
-			clause.From{Joins: deleteJoins},
-		).
-		Where("mr.msgid = ? AND g.polyindex IS NOT NULL "+
-			"AND ST_GeometryType(g.polyindex) <> 'POINT' "+
-			"AND ST_Within("+poly+", g.polyindex)", msgid).
-		Delete(nil)
+	// The whole clip is grid arithmetic - read the row's cells and the
+	// group's area, subtract, write back (or delete the row when nothing
+	// remains). The sandwich inner bound is NULLed inside; the outer bound
+	// stays stale-loose, a still-valid superset of the SHRUNK reach.
+	clipReachCellsOnly(db, msgid, gid)
 }
 
-// clipReachCellsOnly is ClipReachForRejectedGroup for the cells-only era: no
+// clipReachCellsOnly is ClipReachForRejectedGroup's implementation: no
 // stored polygon exists, so the clip is Subtract over two grids on the shared
 // lattice. The group's area is rasterised by the spatial server (the one
 // rasteriser); on any failure the reach is left UNCLIPPED and the failure

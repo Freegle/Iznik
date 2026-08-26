@@ -631,67 +631,32 @@ func SearchByMsgID(db *gorm.DB, msgid uint64, groupids []uint64) []SearchResult 
 
 // searchReachArmIDs resolves the committed-reach arm of the search universe:
 // which live posts' current reach covers this viewer, filtered by the same
-// visibility and author-cap conjuncts as the feed. Three forms, in preference
+// visibility and author-cap conjuncts as the feed. Two forms, in preference
 // order, mirroring the feed's reachContainmentSQL:
 //
 //  1. Spatial-index id list (exact, from the stored cell grids), narrowed by
-//     a primary-key IN - the keyed lookup shape. `partial` ids are legacy
-//     coarse-raster rows and keep the exact-geometry arm while the legacy
-//     columns exist.
-//  2. The legacy geometry SQL (outer-bound R-tree drive + exact ST_Contains
-//     through the dedup COALESCE), byte-for-byte the pre-cells query.
-//  3. Degraded (post-drop, spatial down): outer-bound superset in SQL, each
-//     candidate probed against its stored cells here. Correct and bounded,
-//     just slower - the emergency path.
+//     a primary-key IN - the keyed lookup shape.
+//  2. Degraded (spatial down): outer-bound superset in SQL, each candidate
+//     probed against its stored cells here. Correct and bounded, just
+//     slower - the emergency path.
 func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 	authorCapArgs := []interface{}{float64(9007199254740991), lat, lng, lat}
 	var reachIDs []uint64
 
 	if in, partial, ok := rippling.SpatialReachIDs(db, lng, lat); ok {
-		legacy := rippling.LegacyPolygonReady(db)
-		if len(partial) > 0 && !legacy {
-			// Impossible for healthy rows post-drop; do not silently hide posts.
-			fmt.Printf("search: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
-			partial = nil
-		}
-		containment := "AND rr.msgid IN (?) "
-		args := []interface{}{in}
-		join := ""
 		if len(partial) > 0 {
-			share := rippling.GeomShareReady(db)
-			join = rippling.GeomJoin(share, "rr", "polygon", "g")
-			containment = "AND (rr.msgid IN (?) OR (rr.msgid IN (?) AND " +
-				"ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)))) "
-			args = []interface{}{in, partial, lng, lat, utils.SRID}
+			// Impossible for healthy rows (partial meant a legacy
+			// coarse-raster row); do not silently hide posts.
+			fmt.Printf("search: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
 		}
-		db.Table("rippling_reach rr"+join).
+		db.Table("rippling_reach rr").
 			Select("ms.msgid").
 			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
 			Joins("INNER JOIN messages m ON m.id = ms.msgid").
 			Joins("INNER JOIN users au ON au.id = m.fromuser").
 			Where("ms.successful = 0 AND rr.status != 'held' "+
-				containment+utils.AuthorReachCapWhere,
-				append(args, authorCapArgs...)...).
-			Scan(&reachIDs)
-		return reachIDs
-	}
-
-	if rippling.LegacyPolygonReady(db) {
-		// The pre-cells SQL form. The DRIVING index is rippling_reach_outer
-		// (the outer_bound conjunct), and the exact-polygon conjunct reads
-		// through the dedup COALESCE when that era's columns exist.
-		share := rippling.GeomShareReady(db)
-		containment := "AND ST_Contains(rr.outer_bound, ST_SRID(POINT(?, ?), ?)) " +
-			"AND ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)) "
-		args := []interface{}{lng, lat, utils.SRID, lng, lat, utils.SRID}
-		db.Table("rippling_reach rr"+rippling.GeomJoin(share, "rr", "polygon", "g")).
-			Select("ms.msgid").
-			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").
-			Joins("INNER JOIN messages m ON m.id = ms.msgid").
-			Joins("INNER JOIN users au ON au.id = m.fromuser").
-			Where("ms.successful = 0 AND rr.status != 'held' "+
-				containment+utils.AuthorReachCapWhere,
-				append(args, authorCapArgs...)...).
+				"AND rr.msgid IN (?) "+utils.AuthorReachCapWhere,
+				append([]interface{}{in}, authorCapArgs...)...).
 			Scan(&reachIDs)
 		return reachIDs
 	}

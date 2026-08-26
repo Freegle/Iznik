@@ -152,21 +152,16 @@ func (r reachCandidateRow) toSummary(viewerLat, viewerLng float64, w ScoreWeight
 // badge's existing "unseen only" semantics) both call it, so feed and count cannot drift on
 // membership OR on the columns each candidate's score/distance is derived from.
 func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOnly bool) []reachCandidateRow {
-	// reach_wkt is the BOUNDING-BOX envelope of the reach polygon (ST_Envelope), not the
-	// polygon itself. The reach-gate's exact display polygons are huge - up to ~1.25MB of WKT
-	// each - so ST_AsText(rr.polygon) for every in-reach post shipped tens of MB per browse
-	// load (one heavy user measured 64MB / 264 rows) and the query ran 30-50s, so clients
-	// timed out and saw NO posts. The WKT is only consumed by ReachRadiusMetres (the score's
-	// 'close' term), which takes the farthest vertex from the origin; the envelope's 5 points
-	// give that extent (a small, uniform over-estimate) for ~100 bytes instead of megabytes.
-	// Visibility is unaffected: the WHERE still tests containment on the FULL polygon
-	// (via the sandwich-bounds prefilter — see reachContainmentSQL).
-	// The reach geometry may live in rippling_reach_geom (content-addressed dedup,
-	// plans/2026-08-23-rippling-reach-polygon-dedup.md): COALESCE reads the shared
-	// row when rr.polygon_hash points at one, the local blob otherwise. The join is
-	// added by reachCandidateQuery's own JOIN chain, shared with reachCandidatePoints
-	// (which does not select reach_wkt, so the extra LEFT JOIN there costs a
-	// primary-key lookup and nothing more).
+	// reach_wkt is the BOUNDING-BOX envelope of the reach's outer bound
+	// (ST_Envelope), never an exact geometry. (The old exact display polygons
+	// were up to ~1.25MB of WKT each, which shipped tens of MB per browse
+	// load and timed clients out.) The WKT is only consumed by
+	// ReachRadiusMetres (the score's 'close' term), which takes the farthest
+	// vertex from the origin; the envelope's 5 points give that extent (a
+	// small, uniform over-estimate) for ~100 bytes.
+	// Visibility is unaffected: the WHERE still tests containment exactly
+	// (spatial-index id list, or the outer-bound + cells-probe degraded
+	// path - see reachContainmentSQL).
 	var candidates []reachCandidateRow
 	query, probe := reachCandidateQuery(db, myid, latlng, unseenOnly)
 	query.
@@ -201,13 +196,9 @@ func reachExtentSelect(db *gorm.DB, probe *reachProbe) string {
 	return sel
 }
 
-// reachEnvelopeExpr is the reach-extent envelope for whichever schema era is
-// live: the legacy polygon's envelope while it exists (through the dedup
-// COALESCE when that does), the outer bound's afterwards.
+// reachEnvelopeExpr is the reach-extent envelope: the outer bound's
+// envelope (a stored superset of the reach, as designed).
 func reachEnvelopeExpr(db *gorm.DB) string {
-	if rippling.LegacyPolygonReady(db) {
-		return "ST_AsText(ST_Envelope(" + rippling.GeomExpr(rippling.GeomShareReady(db), "rr", "polygon", "g") + "))"
-	}
 	return "ST_AsText(ST_Envelope(rr.outer_bound))"
 }
 
@@ -366,14 +357,6 @@ func reachCandidateQuery(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenOn
 		Joins("INNER JOIN rippling_reach rr ON rr.msgid = ms.msgid").
 		Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW)
 
-	// The reach geometry may live in rippling_reach_geom (content-addressed dedup);
-	// see fetchReachCandidates. A primary-key LEFT JOIN, harmless for the callers
-	// that never select reach_wkt (reachCandidatePoints, nearbyCount). Guarded on
-	// the legacy columns surviving: post-drop neither the hash nor the table exists.
-	if rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db) {
-		query = query.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
-	}
-
 	return query.Where(whereSQL, whereArgs...), probe
 }
 
@@ -501,9 +484,6 @@ func Messages(c *fiber.Ctx) error {
 		// (myid, MESSAGE_LIKES_VIEW), then Where (myid, start,
 		// COLLECTION_PENDING) - the same order the original literal string
 		// passed its args in.
-		// The reach geometry may live in rippling_reach_geom (content-addressed
-		// dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md).
-		ownShare := rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db)
 		ownQuery := db.Table("messages m").
 			Select("m.lat, m.lng, m.id, "+
 				"ANY_VALUE(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
@@ -525,9 +505,6 @@ func Messages(c *fiber.Ctx) error {
 			Joins("LEFT JOIN messages_promises mp ON mp.msgid = m.id").
 			Joins("LEFT JOIN messages_likes ml ON ml.msgid = m.id AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = m.id")
-		if ownShare {
-			ownQuery = ownQuery.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
-		}
 		ownQuery.
 			// Match My Posts' active-set exactly (message.go's HAVING clause): an
 			// Approved own post only counts as live while it is still in
@@ -705,9 +682,6 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		// itself), so this needed only the native GORM IN-list form, not a
 		// behaviour change.
 		var candidates []reachCandidateRow
-		// The reach geometry may live in rippling_reach_geom (content-addressed
-		// dedup, plans/2026-08-23-rippling-reach-polygon-dedup.md).
-		mgShare := rippling.LegacyPolygonReady(db) && rippling.GeomShareReady(db)
 		mgQuery := db.Table("messages_spatial ms").
 			Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
 				"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
@@ -725,9 +699,6 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			Joins("INNER JOIN messages m ON m.id = ms.msgid").
 			Joins("LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ?", myid, utils.MESSAGE_LIKES_VIEW).
 			Joins("LEFT JOIN rippling_reach rr ON rr.msgid = ms.msgid")
-		if mgShare {
-			mgQuery = mgQuery.Joins("LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash")
-		}
 		mgQuery.
 			Where("ms.msgid IN ?", msgIDs).
 			Scan(&candidates)
@@ -954,11 +925,10 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 		return count
 	}
 
-	// Reach containment via the spatial server when enabled (SPATIAL_REACH_MODE=on):
-	// the geometry test that was 95-98% of this query's cost is answered from the
-	// spatial index's rasters, and SQL only runs keyed lookups over the returned ids
-	// (plus the exact polygon test for the few boundary-band ids). Any failure falls
-	// through to the SQL containment path below, unchanged.
+	// Reach containment via the spatial server: the geometry test that was
+	// 95-98% of this query's cost is answered from the spatial index's
+	// rasters, and SQL only runs keyed lookups over the returned ids. Any
+	// failure falls through to the degraded path below.
 	spatialIn, spatialPartial, useSpatial := spatialReachIDs(db, latlng)
 
 	// The rasters answer only the committed reach. The feed additionally admits

@@ -777,7 +777,7 @@ func CreateChatMessage(c *fiber.Ctx) error {
 				// afterwards an undecidable row holds the reply (fail closed),
 				// which the release cron resolves exactly as it does for any
 				// held reply.
-				membership, gateErr := rippling.ReachMembership(db, []uint64{*payload.Refmsgid}, reach.lng, reach.lat, utils.SRID)
+				membership, gateErr := rippling.ReachMembership(db, []uint64{*payload.Refmsgid}, reach.lng, reach.lat)
 				rc.ReachRows = len(membership)
 				if info, ok := membership[*payload.Refmsgid]; ok && info.InReach {
 					rc.InReach = 1

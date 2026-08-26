@@ -17,8 +17,7 @@ use Illuminate\Support\Facades\Log;
  * ENCODING is centralised in ONE place: the spatial server's
  * POST /v1/reach/rasterize (iznik-spatial-go's cellset.FromPolygonWKT).
  * This class calls out to it rather than embedding a second, PHP
- * implementation of the rasteriser - the same discipline
- * GeomShareService established for content-hash canonicalisation. Two
+ * implementation of the rasteriser. Two
  * independently-written rasterisers could disagree at a boundary cell in
  * ways nothing would ever catch; one writer cannot disagree with itself.
  *

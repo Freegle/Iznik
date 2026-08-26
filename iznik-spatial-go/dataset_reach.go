@@ -9,8 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/peterstace/simplefeatures/geom"
-
 	"spatial-server/cellset"
 )
 
@@ -24,15 +22,12 @@ import (
 // fires — 65-84% of R-tree candidates have no inner bound, so they fall
 // through to exact ST_Contains against ~11k-vertex polygon BLOBs.
 //
-// The index prefers the stored cell grid (rippling_reach.polygon_cells,
+// The index is built from the stored cell grid (rippling_reach.polygon_cells,
 // plans/2026-08-24-rippling-reach-raster-storage.md): the item blob is the
 // encoded grid itself (~23KB), and a query point is answered EXACTLY by
 // walking its run stream — no boundary band, no `partial`, no fallback to the
-// geometry. Rows the backfill has not reached yet fall back per row to the
-// legacy path: parse the polygon WKB and rasterise it into the ~2KB tri-state
-// coarse grid (raster.go), whose boundary band still classifies as `partial`
-// for the caller to exact-test. Once the polygon column is dropped the legacy
-// path is unreachable and `partial` is empty by construction.
+// geometry. A row with no readable cells is skipped (fail-closed - it has no
+// reach anywhere).
 //
 // Status filtering is the caller's contract: rows with status='held' (reach
 // frozen because the origin post went back to Pending) are excluded here,
@@ -48,86 +43,34 @@ func (d *ReachDataset) Name() string { return "reach" }
 func (d *ReachDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *ReachDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
-// mysqlColumnExists reports whether a column is present — re-asked on every
-// Load/ApplyDelta (one information_schema row, microseconds against a
-// 2-minute cadence) so the operator dropping the legacy geometry mid-flight
-// is adopted within one delta interval rather than at the next restart.
-func mysqlColumnExists(db *sql.DB, table, column string) bool {
-	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns
-		WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
-		table, column).Scan(&n)
-	return err == nil && n > 0
-}
-
-// reachGeomExpr / reachGeomJoin: how the LEGACY polygon is read while it
-// still exists. The dedup change (#1402) may have drained a row's own blob to
-// a sentinel POINT with the real bytes in rippling_reach_geom, so the legacy
-// read COALESCEs the shared row over the local blob via a LEFT JOIN keyed on
-// polygon_hash — never an INNER JOIN (rows before the dedup backfill have no
-// hash) and never bare `polygon` (a drained row's blob is only the sentinel).
-// Both go away with the columns; the cells column needs none of it.
-const reachGeomExpr = `ST_AsWKB(COALESCE(g.geom, rr.polygon))`
-const reachGeomJoin = ` LEFT JOIN rippling_reach_geom g ON g.hash = rr.polygon_hash`
-
-// reachLegacyForms describes which legacy geometry columns are still present:
-// 2 = polygon + hash/geom-table (dedup era), 1 = polygon only, 0 = cells only.
-func reachLegacyForm(db *sql.DB) int {
-	if !mysqlColumnExists(db, "rippling_reach", "polygon") {
-		return 0
-	}
-	if mysqlColumnExists(db, "rippling_reach", "polygon_hash") {
-		return 2
-	}
-	return 1
-}
-
-// reachSelect builds the row query: the cells column always, the legacy
-// polygon only while it still exists, read through the dedup COALESCE while
-// THAT still exists.
-func reachSelect(legacyForm int, where string) string {
-	cols := "rr.msgid, rr.status, rr.polygon_cells"
-	join := ""
-	switch legacyForm {
-	case 2:
-		cols += ", " + reachGeomExpr
-		join = reachGeomJoin
-	case 1:
-		cols += ", ST_AsWKB(rr.polygon)"
-	}
-	return "SELECT " + cols + " FROM rippling_reach rr" + join + " " + where
+// reachSelect builds the row query.
+func reachSelect(where string) string {
+	return "SELECT rr.msgid, rr.status, rr.polygon_cells FROM rippling_reach rr " + where
 }
 
 type reachRawRow struct {
 	msgid  int64
 	status string
 	cells  []byte
-	wkb    []byte
 }
 
-func scanReachRaw(rows *sql.Rows, hasPolygon bool) (reachRawRow, error) {
+func scanReachRaw(rows *sql.Rows) (reachRawRow, error) {
 	var r reachRawRow
-	if hasPolygon {
-		return r, rows.Scan(&r.msgid, &r.status, &r.cells, &r.wkb)
-	}
 	return r, rows.Scan(&r.msgid, &r.status, &r.cells)
 }
 
 func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
-	legacyForm := reachLegacyForm(mysqlDB)
 	// Load ALL non-held statuses; held rows are simply absent (the delta
 	// re-adds them if released).
-	rows, err := mysqlDB.Query(reachSelect(legacyForm, `WHERE rr.status != 'held'`))
+	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.status != 'held'`))
 	if err != nil {
 		return fmt.Errorf("reach load query: %w", err)
 	}
 	defer rows.Close()
 
-	// A cells row is a header validation (microseconds); only legacy WKB rows
-	// pay the ~14ms rasterise (BenchmarkBuildRaster), so the worker fan-out
-	// mainly serves the pre-backfill state. Capped below NumCPU so a rebuild
-	// never starves the co-located apiv2/routing processes on the prod db
-	// nodes.
+	// A cells row is a header validation (microseconds). Capped below NumCPU
+	// so a rebuild never starves the co-located apiv2/routing processes on
+	// the prod db nodes.
 	workers := runtime.NumCPU() - 2
 	if workers < 1 {
 		workers = 1
@@ -141,7 +84,7 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 		go func() {
 			defer wg.Done()
 			for r := range in {
-				item, ok := buildReachItem(r.msgid, r.status, r.cells, r.wkb)
+				item, ok := buildReachItem(r.msgid, r.status, r.cells)
 				if !ok {
 					atomic.AddInt64(&skipped, 1)
 					continue
@@ -166,7 +109,7 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 
 	var scanErr error
 	for rows.Next() {
-		r, err := scanReachRaw(rows, legacyForm > 0)
+		r, err := scanReachRaw(rows)
 		if err != nil {
 			scanErr = err
 			break
@@ -187,11 +130,9 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 
 // ApplyDelta upserts reaches modified since `since` and removes newly-held
 // ones. Clips and expansions both arrive as plain updates: the item is
-// rebuilt from the row's current cells (or legacy polygon), so there is no
-// drift to reconcile.
+// rebuilt from the row's current cells, so there is no drift to reconcile.
 func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
-	legacyForm := reachLegacyForm(mysqlDB)
-	rows, err := mysqlDB.Query(reachSelect(legacyForm, `WHERE rr.updated_at > ?`), since.UTC())
+	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.updated_at > ?`), since.UTC())
 	if err != nil {
 		return fmt.Errorf("reach delta query: %w", err)
 	}
@@ -199,13 +140,13 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 
 	var upserted, removed, skipped int
 	for rows.Next() {
-		r, err := scanReachRaw(rows, legacyForm > 0)
+		r, err := scanReachRaw(rows)
 		if err != nil {
 			log.Printf("reach scan: %v", err)
 			skipped++
 			continue
 		}
-		item, ok := buildReachItem(r.msgid, r.status, r.cells, r.wkb)
+		item, ok := buildReachItem(r.msgid, r.status, r.cells)
 		if !ok {
 			skipped++
 			continue
@@ -238,12 +179,12 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 	// the first delta looks back only one interval). The id list is ~52k
 	// bigints ≈ 400KB per tick — cheap — and makes the index converge on the
 	// source within one delta interval regardless of what was missed.
-	return d.reconcile(mysqlDB, idx, legacyForm)
+	return d.reconcile(mysqlDB, idx)
 }
 
 // reconcile diffs the index's extids against rippling_reach's live msgids:
 // index-only entries are deleted, source-only msgids are fetched and built.
-func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index, legacyForm int) error {
+func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'`)
 	if err != nil {
 		return fmt.Errorf("reach reconcile ids: %w", err)
@@ -287,19 +228,13 @@ func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index, legacyForm int) er
 		if _, ok := indexed[id]; ok {
 			continue
 		}
-		row := mysqlDB.QueryRow(reachSelect(legacyForm, `WHERE rr.msgid = ?`), id)
+		row := mysqlDB.QueryRow(reachSelect(`WHERE rr.msgid = ?`), id)
 		var r reachRawRow
-		var scanErr error
-		if legacyForm > 0 {
-			scanErr = row.Scan(&r.msgid, &r.status, &r.cells, &r.wkb)
-		} else {
-			scanErr = row.Scan(&r.msgid, &r.status, &r.cells)
-		}
-		if scanErr != nil {
+		if scanErr := row.Scan(&r.msgid, &r.status, &r.cells); scanErr != nil {
 			// Row vanished between the id list and this fetch: fine, next tick.
 			continue
 		}
-		item, ok := buildReachItem(r.msgid, r.status, r.cells, r.wkb)
+		item, ok := buildReachItem(r.msgid, r.status, r.cells)
 		if !ok || r.status == "held" {
 			continue
 		}
@@ -315,18 +250,11 @@ func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index, legacyForm int) er
 	return nil
 }
 
-// buildReachItem builds one row's index Item. Preference order:
-//
-//  1. Valid cells: the item blob IS the encoded grid, giving exact answers.
-//     Validation walks the whole run stream (streaming, no allocation), so a
-//     corrupt blob is rejected here and the row falls to the next form.
-//  2. Legacy polygon WKB: rasterised into the coarse tri-state raster,
-//     exactly the pre-cells behaviour, including `partial`.
-//  3. Neither usable: the row is skipped. Pre-drop that degrades cost only
-//     (the badge's MySQL fallback still covers the post); post-drop a row
-//     with no readable cells has no reach anywhere, and skipping is the
-//     fail-closed direction.
-func buildReachItem(msgid int64, status string, cells []byte, wkbRaw []byte) (Item, bool) {
+// buildReachItem builds one row's index Item from its encoded grid: the item
+// blob IS the grid, giving exact answers. Validation walks the whole run
+// stream (streaming, no allocation), so a corrupt or absent blob skips the
+// row - it has no reach anywhere, and skipping is the fail-closed direction.
+func buildReachItem(msgid int64, status string, cells []byte) (Item, bool) {
 	if status == "held" {
 		// Only reachable from the delta (Load filters held in SQL); the caller
 		// removes it. Envelope fields are unused for removal.
@@ -348,41 +276,18 @@ func buildReachItem(msgid int64, status string, cells []byte, wkbRaw []byte) (It
 			}, true
 		}
 		if err != nil {
-			log.Printf("reach: msgid=%d cells rejected (%v), trying legacy polygon", msgid, err)
+			log.Printf("reach: msgid=%d cells rejected (%v), row skipped", msgid, err)
 		}
 	}
 
-	if len(wkbRaw) == 0 {
-		return Item{}, false
-	}
-	g, err := geom.UnmarshalWKB(stripSRIDPrefix(wkbRaw), geom.NoValidate{})
-	if err != nil {
-		return Item{}, false
-	}
-	raster := BuildRaster(g)
-	if raster == nil {
-		return Item{}, false
-	}
-	env := g.Envelope()
-	min, max, ok := env.MinMaxXYs()
-	if !ok {
-		return Item{}, false
-	}
-	return Item{
-		ExtID:  msgid,
-		MinLng: min.X, MaxLng: max.X,
-		MinLat: min.Y, MaxLat: max.Y,
-		Area:  g.Area(),
-		WKB:   raster.Serialize(),
-		Extra: map[string]any{"status": status},
-	}, true
+	return Item{}, false
 }
 
-// classifyReachBlob answers one point against one item blob, whichever form
-// it holds. The encoded-grid probe answers exactly; the legacy coarse raster
-// keeps its boundary band. A blob neither can read classifies as partial:
-// pre-drop the caller's exact test decides, post-drop the caller's own probe
-// of the same stored bytes fails the same way and fails closed there.
+// classifyReachBlob answers one point against one item blob. The encoded-grid
+// probe answers exactly. A coarse tri-state raster blob (only possible in an
+// on-disk index adopted from before the cells era; rebuilt away within one
+// rebuild interval) keeps its boundary band; a blob neither can read
+// classifies as partial, which the callers log and fail closed on.
 func classifyReachBlob(blob []byte, lng, lat float64) byte {
 	if in, ok := cellset.ContainsEncoded(blob, lng, lat); ok {
 		if in {

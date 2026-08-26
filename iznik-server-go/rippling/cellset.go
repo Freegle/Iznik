@@ -272,8 +272,7 @@ var polygonCellsExists bool
 // PolygonCellsReady reports whether rippling_reach.polygon_cells has been
 // migrated - the CURRENT-reach cell set (as opposed to MaxPolygonCellsReady's
 // eventual-reach one). Checked once per process, same discipline as
-// ReachBoundsReady/GeomShareReady: deploying ahead of the migration keeps
-// every consumer on the legacy exact-polygon path.
+// ReachBoundsReady.
 func PolygonCellsReady(db *gorm.DB) bool {
 	polygonCellsOnce.Do(func() {
 		var n int64

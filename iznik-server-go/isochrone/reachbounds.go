@@ -27,52 +27,25 @@ func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []in
 	// Spatial-index id-list first (the badge's proven shape, now the feed's
 	// too): the geometry test that was 95-98% of this query's cost is
 	// answered from the spatial index — exactly, from the stored cell grids —
-	// and SQL runs a keyed IN-list lookup. `partial` ids are legacy
-	// coarse-raster rows (no cells yet); they keep the exact-geometry arm,
-	// which exists only while the legacy columns do. Any spatial failure
-	// falls through to the SQL forms below, unchanged.
+	// and SQL runs a keyed IN-list lookup. Any spatial failure falls through
+	// to the degraded form below.
 	if in, partial, ok := spatialReachIDs(db, utils.LatLng{Lat: lat, Lng: lng}); ok {
-		legacy := rippling.LegacyPolygonReady(db)
-		if len(partial) > 0 && !legacy {
-			// Impossible for healthy rows post-drop (partial requires a row
-			// without cells, and post-drop cells are the only stored form) —
-			// surface it rather than silently dropping posts.
-			log.Printf("reach containment: %d partial ids with no legacy geometry to resolve them", len(partial))
-			partial = nil
-		}
 		if len(partial) > 0 {
-			share := rippling.GeomShareReady(db)
-			return "AND (ms.msgid IN (?) OR (ms.msgid IN (?) AND " +
-					"ST_Contains(" + rippling.GeomExpr(share, "rr", "polygon", "g") + ", ST_SRID(POINT(?, ?), ?)))) ",
-				[]interface{}{in, partial, lng, lat, utils.SRID}, false
+			// A partial id meant a legacy coarse-raster row whose boundary
+			// band needed the exact geometry; healthy rows no longer produce
+			// them. Surface it rather than silently dropping posts.
+			log.Printf("reach containment: %d partial ids with no legacy geometry to resolve them", len(partial))
 		}
 		// GORM renders an empty slice as IN (NULL) — matches nothing — which
 		// is right for a viewer no reach covers (the ring arm may still admit).
 		return "AND ms.msgid IN (?) ", []interface{}{in}, false
 	}
 
-	share := rippling.GeomShareReady(db)
-	if rippling.LegacyPolygonReady(db) {
-		if rippling.ReachBoundsReady(db) {
-			w, a := rippling.ReachBrowseWhere(share, float64(lng), float64(lat), utils.SRID)
-			return w, a, false
-		}
-
-		// Pre-sandwich fallback: no join here (the enclosing query owns the FROM), so
-		// test via a correlated PK-pair lookup when the geometry may be deduped.
-		if share {
-			return "AND ST_Contains(COALESCE((SELECT g2.geom FROM rippling_reach_geom g2 WHERE g2.hash = rr.polygon_hash), rr.polygon), ST_SRID(POINT(?, ?), ?)) ",
-				[]interface{}{lng, lat, utils.SRID}, false
-		}
-
-		return "AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) ", []interface{}{lng, lat, utils.SRID}, false
-	}
-
-	// Degraded: no spatial index AND no legacy geometry (post-drop with the
-	// spatial server unreachable). The outer bound — a stored SUPERSET of the
-	// reach — narrows in SQL, and the caller probes each candidate's stored
-	// cells in Go (reachCandidateQuery threads this flag up). Correct and
-	// bounded, just slower: the emergency path, not a second authority.
+	// Degraded: the spatial server is unreachable. The outer bound — a
+	// stored SUPERSET of the reach — narrows in SQL, and the caller probes
+	// each candidate's stored cells in Go (reachCandidateQuery threads this
+	// flag up). Correct and bounded, just slower: the emergency path, not a
+	// second authority.
 	w, a := rippling.ReachOuterOnlyWhere(float64(lng), float64(lat), utils.SRID)
 	return w, a, true
 }
