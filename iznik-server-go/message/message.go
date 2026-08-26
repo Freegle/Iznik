@@ -2670,7 +2670,22 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 //
 // Errors are ignored on purpose: until the reach engine (PR A) is live there is no
 // rippling_reach table/row to clip, in which case this is a harmless no-op.
+//
+// RIPPLE_CLIP_PAUSED exists for schema rollouts on rippling_reach. This function is
+// the ONLY api-side writer of that table, and the Stage 3 drop has to run node by
+// node under RSU with NO writes flowing: a full row-image replicated into a node
+// whose columns have already been dropped fails to apply, and the cluster then votes
+// that node out — which is exactly how db1 was expelled twice on 2026-08-26, one
+// second after the first ALTER completed. Batch writers stop with their container;
+// this flag silences the one writer that cannot be stopped without taking the API
+// down. A skipped clip is LOGGED with its msgid and group id because nothing re-runs
+// it later: re-apply each logged clip after the rollout (the rejected_groups append
+// below is also skipped, so a plain re-rejection or a manual call does the whole job).
 func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
+	if os.Getenv("RIPPLE_CLIP_PAUSED") != "" {
+		log.Printf("RIPPLE_CLIP_PAUSED: skipping reach clip for msgid=%d group=%d — re-apply after the rollout", msgid, gid)
+		return
+	}
 	// Record the rejected group BEFORE clipping the polygon, so the expander
 	// (ExpandService::advanceDue) re-subtracts it on every tick — otherwise the next tick
 	// overwrites `polygon` from the cached schedule and silently undoes this rejection.
