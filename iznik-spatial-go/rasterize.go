@@ -16,8 +16,8 @@ const maxRasterizeWKTBytes = 5 * 1024 * 1024
 // cellset.FromPolygonWKT). Exposed over HTTP as POST /v1/reach/rasterize so
 // every writer - iznik-batch's ExpandService/MaxReachService today, and any
 // future writer - calls through here rather than embedding its own copy of
-// the rasteriser, the same discipline GeomShareService established for
-// content-hash canonicalisation in the polygon-dedup change this stacks on.
+// the rasteriser: one implementation, or two disagree at a boundary cell and
+// nothing catches it.
 func rasterizeWKT(wkt string) ([]byte, error) {
 	if wkt == "" {
 		return nil, fmt.Errorf("empty WKT")
