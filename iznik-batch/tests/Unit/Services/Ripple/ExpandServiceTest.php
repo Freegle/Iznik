@@ -1206,6 +1206,10 @@ class ExpandServiceTest extends TestCase
             [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDay(), json_encode([$rippled->id, $origin->id])]
         );
 
+        // "Which groups does the reach still intersect" is the spatial
+        // server's question, answered here from the TEST groups.
+        $this->fakeSpatialHttp();
+
         $stats = [];
         $this->service()->retractOutOfReachCopies((int) $message->id, false, $stats);
 
@@ -3398,34 +3402,29 @@ class ExpandServiceTest extends TestCase
                 [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
             ]]],
         ];
-        Http::fake(function ($request) use ($polygon, $originGid, $groupBId, &$phase) {
-            if (str_contains($request->url(), 'reach/rasterize')) {
-                return null; // the real rasteriser answers
-            }
-            if (str_contains($request->url(), '/v1/catchment')) {
-                return Http::response(['catchment' => $polygon], 200);
-            }
-            if (!str_contains($request->url(), '/v1/ripple-schedule')) {
-                return Http::response('', 404);
-            }
-            $wide = $phase === 'wide';
-            $ids = $wide ? [$originGid, $groupBId] : [$originGid];
-            $schedule = [];
-            for ($k = 1; $k <= 3; $k++) {
-                $entry = [
-                    'tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k,
-                    'reachable_group_ids' => $ids,
-                ];
-                if ($wide) {
-                    $entry['polygon'] = $polygon;
+        $this->fakeSpatialHttp([
+            '*v1/catchment*' => fn () => Http::response(['catchment' => $polygon], 200),
+            '*v1/ripple-schedule*' => function () use ($polygon, $originGid, $groupBId, &$phase) {
+                $wide = $phase === 'wide';
+                $ids = $wide ? [$originGid, $groupBId] : [$originGid];
+                $schedule = [];
+                for ($k = 1; $k <= 3; $k++) {
+                    $entry = [
+                        'tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k,
+                        'reachable_group_ids' => $ids,
+                    ];
+                    if ($wide) {
+                        $entry['polygon'] = $polygon;
+                    }
+                    $schedule[] = $entry;
                 }
-                $schedule[] = $entry;
-            }
-            return Http::response([
-                'total_freeglers' => 90, 'max_drive_min' => 30,
-                'schedule' => $schedule, 'reachable_group_ids' => $ids,
-            ], 200);
-        });
+
+                return Http::response([
+                    'total_freeglers' => 90, 'max_drive_min' => 30,
+                    'schedule' => $schedule, 'reachable_group_ids' => $ids,
+                ], 200);
+            },
+        ]);
     }
 
     public function test_backfill_reach_dry_run_previews_without_writing(): void
