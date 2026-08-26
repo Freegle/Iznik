@@ -4,34 +4,23 @@ namespace Tests\Unit\Services\Ripple;
 
 use App\Models\Message;
 use App\Services\Ripple\CellSetService;
-use App\Services\Ripple\LegacyGeometry;
 use App\Services\Ripple\ReachBoundsService;
 use App\Services\Ripple\ReachQueryService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\FakesRingIndex;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 /**
- * The CELLS-ONLY era: what every reach read does once polygon, max_polygon and
- * overflow_bounds have been dropped (plans/2026-08-24-rippling-reach-raster-
- * storage.md Stage 3).
- *
- * Both eras have to be covered, and the rest of the suite covers the
- * transition one - which is the code production actually runs first, for as
- * long as the backfill takes, so it must not be the era that loses its tests.
- * These tests force the era guard instead of dropping the columns, which works
- * precisely BECAUSE the cells-only branches never name a dropped column: the
- * SQL they emit is valid against a schema that still has them, and asserting
- * that is the point. The migration proves the schema half by running.
- *
- * Every test here seeds a row whose polygon and cells describe the SAME shape,
- * so a disagreement is a bug in the cells-only branch rather than a difference
- * in the fixture.
+ * What every reach read answers from the stored cell grids - the only stored
+ * form of a reach (plans/2026-08-24-rippling-reach-raster-storage.md Stage 3;
+ * the legacy geometry columns are dropped by migration).
  */
 class PostDropEraTest extends TestCase
 {
     use FakesRingIndex;
+    use SeedsReachCells;
 
     /** A box covering lng [-0.2, 0.0], lat [51.4, 51.6]. */
     private const POLY = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
@@ -47,19 +36,6 @@ class PostDropEraTest extends TestCase
         DB::statement('DELETE FROM rippling_reach');
         $this->fakeRingIndex();
         $this->cells = new CellSetService();
-
-        // Pretend the legacy columns are gone. The schema still has them, so a
-        // branch that wrongly reads one would SUCCEED here rather than error -
-        // which is why these tests assert on ANSWERS, not on the absence of an
-        // exception. The query-shape assertions at the bottom cover the other
-        // half: that no dropped column is named at all.
-        LegacyGeometry::fake(polygon: false, overflow: false);
-    }
-
-    protected function tearDown(): void
-    {
-        LegacyGeometry::reset();
-        parent::tearDown();
     }
 
     /**
@@ -81,24 +57,21 @@ class PostDropEraTest extends TestCase
             'lng' => -0.1,
         ]);
 
-        $cells = $this->cells->rasterize(self::POLY);
-        if ($cells === null) {
-            $this->markTestSkipped('The spatial rasteriser is not reachable; these tests need real cell bytes.');
-        }
+        $cells = $this->reachCellsFor(self::POLY);
 
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ?,
+             VALUES (?, 51.5, -0.1, ?,
                      ST_Buffer(ST_Simplify(ST_GeomFromText(?, 3857), 0.002), 0.002),
                      NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::POLY, $cells, self::POLY]
+            [$message->id, $cells, self::POLY]
         );
 
         if ($withMax) {
-            $maxCells = $this->cells->rasterize(self::POLY);
-            $nowCells = $this->cells->rasterize(self::INNER_POLY);
+            $maxCells = $this->reachCellsFor(self::POLY);
+            $nowCells = $this->reachCellsFor(self::INNER_POLY);
             DB::statement(
                 'UPDATE rippling_reach SET polygon_cells = ?, max_polygon_cells = ? WHERE msgid = ?',
                 [$nowCells, $maxCells, $message->id]
@@ -123,9 +96,9 @@ class PostDropEraTest extends TestCase
     }
 
     /**
-     * Corrupt bytes must HOLD the reply (fail closed), not admit it. Pre-drop
-     * this fell back to the polygon; post-drop there is nothing to fall back
-     * to, and admitting on unreadable bytes would be the unsafe direction.
+     * Corrupt bytes must HOLD the reply (fail closed), not admit it: there is
+     * nothing to fall back to, and admitting on unreadable bytes would be the
+     * unsafe direction.
      */
     public function test_reply_gate_fails_closed_on_unreadable_cells(): void
     {
@@ -200,9 +173,9 @@ class PostDropEraTest extends TestCase
     }
 
     /**
-     * With no cells AND no polygon there is nothing to derive from. The bounds
-     * must be left alone (a stale outer is safe-loose) and the inner cleared
-     * (a stale inner would cheap-accept people who are no longer covered).
+     * With no cells there is nothing to derive from. The bounds must be left
+     * alone (a stale outer is safe-loose) and the inner cleared (a stale
+     * inner would cheap-accept people who are no longer covered).
      */
     public function test_bounds_derivation_clears_the_inner_when_it_cannot_measure(): void
     {
@@ -216,50 +189,4 @@ class PostDropEraTest extends TestCase
         $this->assertNull($inner, 'an unmeasurable reach must lose its cheap-accept bound');
     }
 
-    // ---- the shape assertions: no dropped column may be named ----
-
-    /**
-     * The other half of the guarantee. Forcing the era guard proves the
-     * ANSWERS are right, but only reading the emitted SQL proves the branch
-     * would not have crashed on a schema where the columns are actually gone.
-     * These are the queries a post-drop deploy runs first.
-     */
-    public function test_no_cells_only_read_names_a_dropped_column(): void
-    {
-        $msgid = $this->seedReach(withMax: true);
-
-        $statements = [];
-        DB::listen(function ($q) use (&$statements) {
-            $statements[] = $q->sql;
-        });
-
-        (new ReachQueryService())->isWithinReach($msgid, 51.5, -0.1);
-        app(\App\Services\FirstReply\MaxReachService::class)->isWithinMaxReach($msgid, 51.5, -0.1);
-        (new ReachBoundsService())->syncFromPolygon($msgid);
-
-        $this->assertNotEmpty($statements, 'expected the reads to issue SQL');
-
-        $dropped = ['polygon_hash', 'max_polygon_hash', 'rippling_reach_geom', 'overflow_bounds'];
-        foreach ($statements as $sql) {
-            foreach ($dropped as $col) {
-                $this->assertStringNotContainsString(
-                    $col,
-                    $sql,
-                    "a cells-only read still names the dropped {$col}: {$sql}"
-                );
-            }
-            // `polygon` needs care: polygon_cells and max_polygon_cells
-            // legitimately contain the word, so match the bare column only.
-            $this->assertDoesNotMatchRegularExpression(
-                '/\bpolygon\b(?!_cells)/',
-                $sql,
-                "a cells-only read still names the dropped polygon column: {$sql}"
-            );
-            $this->assertDoesNotMatchRegularExpression(
-                '/\bmax_polygon\b(?!_cells)/',
-                $sql,
-                "a cells-only read still names the dropped max_polygon column: {$sql}"
-            );
-        }
-    }
 }

@@ -9,17 +9,18 @@ use Tests\TestCase;
 /**
  * Runs the REAL drop DDL. That is the whole point of this file.
  *
- * The drop is gated behind RIPPLE_DROP_LEGACY_GEOMETRY, which CI never sets,
- * and PostDropEraTest covers the post-drop era by faking the schema guard rather
- * than issuing DDL. So no test executed these ALTER statements - and a version
- * of them that died on its FIRST statement, leaving every legacy column in
- * place, sat in the branch looking verified. It had been checked against a
- * simplified table that carried neither the generated columns nor the GIS index,
- * and both of those are what make MySQL refuse.
+ * The migration only drops columns that exist, so on the (post-drop) test
+ * schema it is a no-op - without this file no test would execute these ALTER
+ * statements at all, and a version of them that died on its FIRST statement,
+ * leaving every legacy column in place, once sat in the branch looking
+ * verified. It had been checked against a simplified table that carried
+ * neither the generated columns nor the GIS index, and both of those are what
+ * make MySQL refuse.
  *
- * These tests run the sequence against a `CREATE TABLE ... LIKE rippling_reach`
- * clone, so it is the real table shape - GIS index, generated columns, R-tree
- * and all - without destroying the schema the rest of the suite needs.
+ * These tests run the sequence against a clone rebuilt to the PRE-drop shape
+ * (the shape any straggler database still has) - GIS indexes, generated
+ * columns, dedup FKs and all - without touching the schema the rest of the
+ * suite needs.
  */
 class LegacyGeometryDropTest extends TestCase
 {
@@ -42,25 +43,19 @@ class LegacyGeometryDropTest extends TestCase
     {
         DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'`');
         DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'_geom`');
+
+        // The live table is post-drop (the migration runs by default), so the
+        // clone starts post-drop too and the PRE-drop shape - the one this
+        // sequence runs against on any straggler database - is rebuilt on it
+        // explicitly: the five legacy columns, their single-column indexes,
+        // the dedup FKs, and has_overflow deriving from overflow_bounds.
         DB::statement('CREATE TABLE `'.self::CLONE.'` LIKE rippling_reach');
 
-        // CREATE TABLE ... LIKE does NOT copy foreign keys, so they have to be
-        // added by hand or the FK-drop path inside the combined statement goes
-        // untested. binary(16) to match the real hash columns - CHAR(40) is
-        // rejected as an incompatible reference.
-        DB::statement(
-            'CREATE TABLE `'.self::CLONE.'_geom` (
-                hash BINARY(16) NOT NULL PRIMARY KEY,
-                geometry GEOMETRY NOT NULL SRID 3857)'
-        );
-
-        // CREATE TABLE ... LIKE copies index NAMES verbatim, so the clone would
-        // carry indexes called rippling_reach_*. Rename them to the clone's own
-        // prefix, which is what the sequence looks for - and is also how the
-        // real table's indexes are named relative to the real table.
-        foreach ([
-            'has_overflow', 'maxreach_candidates', 'polygon', 'polygon_hash', 'max_polygon_hash', 'outer',
-        ] as $suffix) {
+        // CREATE TABLE ... LIKE copies index NAMES verbatim, so the clone
+        // carries indexes called rippling_reach_*. Rename them to the clone's
+        // own prefix, which is what the sequence looks for - and is also how
+        // the real table's indexes are named relative to the real table.
+        foreach (['has_overflow', 'maxreach_candidates', 'outer'] as $suffix) {
             $old = 'rippling_reach_'.$suffix;
             $new = self::CLONE.'_'.$suffix;
             $exists = DB::selectOne(
@@ -73,6 +68,48 @@ class LegacyGeometryDropTest extends TestCase
             }
         }
 
+        // The post-drop generated columns come off first: pre-drop,
+        // has_overflow derived from overflow_bounds. (A virtual column may not
+        // be added or dropped in the same ALTER as non-virtual actions, hence
+        // the separate statements throughout.)
+        DB::statement(
+            'ALTER TABLE `'.self::CLONE.'`
+                DROP INDEX `'.self::CLONE.'_has_overflow`, DROP COLUMN has_overflow,
+                DROP INDEX `'.self::CLONE.'_maxreach_candidates`, DROP COLUMN has_max_reach'
+        );
+
+        DB::statement(
+            'ALTER TABLE `'.self::CLONE.'`
+                ADD COLUMN polygon GEOMETRY NOT NULL SRID 3857,
+                ADD COLUMN max_polygon GEOMETRY NULL SRID 3857,
+                ADD COLUMN overflow_bounds JSON NULL,
+                ADD COLUMN polygon_hash BINARY(16) NULL,
+                ADD COLUMN max_polygon_hash BINARY(16) NULL,
+                ADD SPATIAL INDEX `'.self::CLONE.'_polygon` (polygon),
+                ADD INDEX `'.self::CLONE.'_polygon_hash` (polygon_hash),
+                ADD INDEX `'.self::CLONE.'_max_polygon_hash` (max_polygon_hash)'
+        );
+
+        DB::statement(
+            'ALTER TABLE `'.self::CLONE.'`
+                ADD COLUMN has_overflow TINYINT(1) GENERATED ALWAYS AS (overflow_bounds IS NOT NULL) VIRTUAL,
+                ADD COLUMN has_max_reach TINYINT(1) GENERATED ALWAYS AS (max_polygon_cells IS NOT NULL) VIRTUAL'
+        );
+        DB::statement(
+            'ALTER TABLE `'.self::CLONE.'`
+                ADD INDEX `'.self::CLONE.'_has_overflow` (has_overflow, updated_at),
+                ADD INDEX `'.self::CLONE.'_maxreach_candidates` (status, has_max_reach, updated_at)'
+        );
+
+        // CREATE TABLE ... LIKE does NOT copy foreign keys, so they have to be
+        // added by hand or the FK-drop path inside the combined statement goes
+        // untested. binary(16) to match the real hash columns - CHAR(40) is
+        // rejected as an incompatible reference.
+        DB::statement(
+            'CREATE TABLE `'.self::CLONE.'_geom` (
+                hash BINARY(16) NOT NULL PRIMARY KEY,
+                geometry GEOMETRY NOT NULL SRID 3857)'
+        );
         DB::statement(
             'ALTER TABLE `'.self::CLONE.'`
                 ADD CONSTRAINT `'.self::CLONE.'_polygon_hash_foreign`

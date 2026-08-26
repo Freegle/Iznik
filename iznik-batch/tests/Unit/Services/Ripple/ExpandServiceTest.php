@@ -9,7 +9,6 @@ use App\Models\MessageGroup;
 use App\Models\User;
 use App\Services\Ripple\CellSetService;
 use App\Services\Ripple\ExpandService;
-use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\ReachService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Carbon;
@@ -40,9 +39,7 @@ class ExpandServiceTest extends TestCase
         config(['freegle.ripple.enabled_at' => '']);
         DB::statement('DELETE FROM rippling_held_replies');
         DB::statement('DELETE FROM rippling_reach');
-        DB::statement('DELETE FROM rippling_reach_geom');
         DB::statement('DELETE FROM messages_spatial');
-        GeomShareService::forgetReady();
     }
 
     private function service(): ExpandService
@@ -94,7 +91,7 @@ class ExpandServiceTest extends TestCase
         for ($k = 1; $k <= $ticks; $k++) {
             $schedule[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k, 'polygon' => $polygon];
         }
-        Http::fake(['*ripple-schedule*' => Http::response([
+        $this->fakeSpatialHttp(['*ripple-schedule*' => Http::response([
             'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
         ], 200)]);
     }
@@ -110,7 +107,7 @@ class ExpandServiceTest extends TestCase
             $offset = ($miles * ($i + 1) / $count) / 69.05;
             $results[] = ['id' => $i + 1, 'extra' => ['lat' => $lat + $offset, 'lng' => $lng]];
         }
-        Http::fake(['*userapproxlocs/knn*' => Http::response(['results' => $results], 200)]);
+        $this->fakeSpatialHttp(['*userapproxlocs/knn*' => Http::response(['results' => $results], 200)]);
     }
 
     /** The max_minutes asked of the routing server on the first ripple-schedule call. */
@@ -190,7 +187,7 @@ class ExpandServiceTest extends TestCase
         // The measurement decides how the row READS, not how far it goes: an unreachable
         // spatial server must not shrink a post's reach, only leave its band unrecorded.
         config(['freegle.ripple.density.enabled' => true, 'freegle.ripple.max_minutes' => 30]);
-        Http::fake(['*userapproxlocs/knn*' => Http::response('boom', 500)]);
+        $this->fakeSpatialHttp(['*userapproxlocs/knn*' => Http::response('boom', 500)]);
         $this->fakeRouting(3);
         $msgid = $this->seedSpatialPost(now()->subMinutes(90));
 
@@ -242,7 +239,7 @@ class ExpandServiceTest extends TestCase
         for ($k = 1; $k <= $ticks; $k++) {
             $schedule[] = ['tick' => $k, 'drive_min' => 5.0 * $k, 'cumulative_users' => 30 * $k, 'polygon' => $polygon];
         }
-        Http::fake(['*ripple-schedule*' => Http::response([
+        $this->fakeSpatialHttp(['*ripple-schedule*' => Http::response([
             'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
             'reachable_group_ids' => array_values($reachableIds),
         ], 200)]);
@@ -264,14 +261,14 @@ class ExpandServiceTest extends TestCase
         int $status = 200
     ): void {
         if ($status !== 200) {
-            Http::fake(['*group-proximity*' => Http::response('', $status)]);
+            $this->fakeSpatialHttp(['*group-proximity*' => Http::response('', $status)]);
             return;
         }
         if (!$reachable) {
-            Http::fake(['*group-proximity*' => Http::response(['reachable' => false], 200)]);
+            $this->fakeSpatialHttp(['*group-proximity*' => Http::response(['reachable' => false], 200)]);
             return;
         }
-        Http::fake(['*group-proximity*' => Http::response([
+        $this->fakeSpatialHttp(['*group-proximity*' => Http::response([
             'reachable' => true,
             'closest' => ['lat' => $pLat, 'lng' => $pLng, 'drive_min' => 4.0],
             'furthest' => ['lat' => $qLat, 'lng' => $qLng, 'drive_min' => 22.0],
@@ -361,9 +358,9 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(3, (int) $row->total_ticks);
         $this->assertSame('expanding', $row->status);
         $this->assertNotNull($row->next_expansion_at);
-        $this->assertSame(
-            'POLYGON',
-            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells'),
+            'the reach grid is stored'
         );
     }
 
@@ -392,6 +389,9 @@ class ExpandServiceTest extends TestCase
         // the raw coordinates. initialiseNew hits the blurred origin first, gets nothing, and must
         // retry with the raw origin (which differs by ~0.0006 lat / ~0.006 lng for this point).
         Http::fake(function ($request) use ($rawLat, $rawLng, $validSchedule) {
+            if (str_contains($request->url(), 'reach/rasterize')) {
+                return null; // the real rasteriser answers
+            }
             if (! str_contains($request->url(), 'ripple-schedule')) {
                 return Http::response([], 200);
             }
@@ -562,12 +562,12 @@ class ExpandServiceTest extends TestCase
         // Start the post stuck at tick 1 with an overdue expansion.
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
-            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
         );
-        Http::fake(); // no routing call expected on advance (uses cached schedule)
+        $this->fakeSpatialHttp(); // no routing call expected on advance (uses cached schedule)
 
         $stats = $this->service()->process(false, 500);
 
@@ -600,12 +600,12 @@ class ExpandServiceTest extends TestCase
         // Stuck at tick 1, overdue, with the rejected group recorded.
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
-            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+            [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
         );
-        Http::fake();
+        $this->fakeSpatialHttp();
 
         $this->service()->process(false, 500);
 
@@ -614,13 +614,8 @@ class ExpandServiceTest extends TestCase
         $this->assertSame(3, (int) $row->tick);
         // ...yet a point inside the rejected group's eastern area is NO LONGER covered,
         // while the western origin area still is — the clip survived the overwrite.
-        $covers = fn (float $lng, float $lat): int => (int) DB::selectOne(
-            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857)), 0) AS c
-             FROM rippling_reach WHERE msgid = ?',
-            [$lng, $lat, $msgid]
-        )->c;
-        $this->assertSame(0, $covers(-0.12, 51.55), 'rejected eastern area stays clipped after the tick');
-        $this->assertSame(1, $covers(-0.18, 51.55), 'western origin area is still covered after the tick');
+        $this->assertFalse($this->storedReachContains($msgid, -0.12, 51.55), 'rejected eastern area stays clipped after the tick');
+        $this->assertTrue($this->storedReachContains($msgid, -0.18, 51.55), 'western origin area is still covered after the tick');
     }
 
     public function test_blurs_poster_origin_for_reach(): void
@@ -667,7 +662,7 @@ class ExpandServiceTest extends TestCase
      */
     public function test_reach_survives_a_post_briefly_missing_from_spatial(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $message = Message::create([
@@ -685,10 +680,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDays(1)]
         );
 
         $stats = $this->service()->process(false, 500);
@@ -707,7 +702,7 @@ class ExpandServiceTest extends TestCase
      */
     public function test_reach_is_dropped_as_soon_as_the_post_has_really_gone(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $message = Message::create([
@@ -723,10 +718,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDays(1)]
         );
 
         $this->markPostGone((int) $message->id);
@@ -745,7 +740,7 @@ class ExpandServiceTest extends TestCase
      */
     public function test_reach_dropped_when_latest_outcome_is_withdrawn_despite_older_taken(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $message = Message::create([
@@ -761,10 +756,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDays(1)]
         );
 
         DB::table('messages_outcomes')->insert([
@@ -787,7 +782,7 @@ class ExpandServiceTest extends TestCase
      */
     public function test_reach_survives_when_latest_outcome_is_taken_despite_older_expired(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $message = Message::create([
@@ -803,10 +798,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDays(1)]
         );
 
         DB::table('messages_outcomes')->insert([
@@ -824,7 +819,7 @@ class ExpandServiceTest extends TestCase
 
     public function test_removes_reach_for_post_no_longer_in_spatial(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         // A message that has a reach row but is NOT in messages_spatial (taken/withdrawn).
         $user = $this->createTestUser();
         $message = Message::create([
@@ -834,10 +829,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDays(1)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDays(1)]
         );
 
         // Genuinely gone, not just absent from the index - see markPostGone.
@@ -855,7 +850,7 @@ class ExpandServiceTest extends TestCase
         // Pending on all its groups and FREEZES the reach (status='held'). The Pending
         // rippled-in copies must persist for per-group moderation and the reach row must NOT be
         // removed - so a later per-group re-approval brings a copy back without re-rippling.
-        Http::fake();
+        $this->fakeSpatialHttp();
         $user = $this->createTestUser();
         $origin = $this->createTestGroup();
         $rippled = $this->createTestGroup();
@@ -871,10 +866,10 @@ class ExpandServiceTest extends TestCase
         // retraction paths would normally fire and delete the copies + reach row.
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'held', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDay()]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'held', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDay()]
         );
 
         $this->service()->process(false, 500);
@@ -890,7 +885,7 @@ class ExpandServiceTest extends TestCase
     {
         // Contrast: an ordinary (non-held) reach whose post has left messages_spatial IS
         // removed - proving the 'held' guard is what protects the report/back-to-pending copies.
-        Http::fake();
+        $this->fakeSpatialHttp();
         $user = $this->createTestUser();
         $origin = $this->createTestGroup();
         $rippled = $this->createTestGroup();
@@ -904,10 +899,10 @@ class ExpandServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'done', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDay()]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'done', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDay()]
         );
 
         $this->service()->process(false, 500);
@@ -926,7 +921,7 @@ class ExpandServiceTest extends TestCase
             [-0.10, 51.50], [-0.20, 51.50], [-0.20, 51.60], [-0.10, 51.60], [-0.10, 51.50],
         ]]]];
         $empty = ['type' => 'Feature', 'geometry' => ['type' => 'Polygon', 'coordinates' => [[]]]];
-        Http::fake(['*ripple-schedule*' => Http::response([
+        $this->fakeSpatialHttp(['*ripple-schedule*' => Http::response([
             'total_freeglers' => 90, 'max_drive_min' => 30,
             'schedule' => [
                 ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'polygon' => $poly],
@@ -1161,10 +1156,10 @@ class ExpandServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDay(), json_encode(array_values($reachableIds))]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDay(), json_encode(array_values($reachableIds))]
         );
         return [(int) $message->id, (int) $rippled->id];
     }
@@ -1203,10 +1198,10 @@ class ExpandServiceTest extends TestCase
         DB::table('messages_groups')->where('msgid', $message->id)->where('groupid', $rippled->id)->update(['rippled_in' => 1]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, self::WKT, self::WKT, now()->subDay(), json_encode([$rippled->id, $origin->id])]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, ?, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor(self::WKT), self::WKT, now()->subDay(), json_encode([$rippled->id, $origin->id])]
         );
 
         $stats = [];
@@ -1519,22 +1514,18 @@ class ExpandServiceTest extends TestCase
 
         $this->service()->process(false, 500);
 
-        // The stored polygon must contain a point inside the group area.
-        $containsGroupPoint = (int) DB::selectOne(
-            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(-0.15, 51.55), 3857)), 0) AS c
-             FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
-        )->c;
-        $this->assertSame(1, $containsGroupPoint, 'stored polygon covers a point inside the origin group area');
+        // The stored reach must contain a point inside the group area.
+        $this->assertTrue(
+            $this->storedReachContains($msgid, -0.15, 51.55),
+            'stored reach covers a point inside the origin group area'
+        );
 
-        // The stored polygon must also contain a point outside the group but inside the reach,
+        // The stored reach must also contain a point outside the group but inside the reach,
         // confirming the union (not just the group area alone) was stored.
-        $containsReachPoint = (int) DB::selectOne(
-            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(-0.105, 51.505), 3857)), 0) AS c
-             FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
-        )->c;
-        $this->assertSame(1, $containsReachPoint, 'stored polygon also covers the original reach beyond the group');
+        $this->assertTrue(
+            $this->storedReachContains($msgid, -0.105, 51.505),
+            'stored reach also covers the original reach beyond the group'
+        );
     }
 
     /**
@@ -2789,10 +2780,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $lat, $lng, self::WKT, self::WKT, now()->subHours(2)]
+             VALUES (?, ?, ?, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(2)]
         );
 
         $this->markPostGone((int) $message->id);
@@ -2978,10 +2969,10 @@ class ExpandServiceTest extends TestCase
         );
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $lat, $lng, self::WKT, self::WKT, now()->subHours(2)]
+             VALUES (?, ?, ?, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(2)]
         );
 
         return [(int) $message->id, (int) $groupB->id, (int) $user->id];
@@ -2990,7 +2981,7 @@ class ExpandServiceTest extends TestCase
     /** Deleting the post on its home community pulls the rippled-in copies left live elsewhere. */
     public function test_delete_on_home_group_retracts_rippled_copies(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         [$msgid, $groupB, $posterId] = $this->seedRippledCopyWithOrigin('deleted');
         // Precondition: still in spatial, so the existing spatial-null retraction cannot be what fires.
         $this->assertSame(1, (int) DB::table('messages_spatial')->where('msgid', $msgid)->count());
@@ -3010,7 +3001,7 @@ class ExpandServiceTest extends TestCase
     /** Moving the post back to pending on its home community pulls the rippled-in copies. */
     public function test_back_to_pending_on_home_group_retracts_rippled_copies(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         [$msgid, $groupB] = $this->seedRippledCopyWithOrigin('pending');
 
         $this->service()->process(false, 500);
@@ -3023,7 +3014,7 @@ class ExpandServiceTest extends TestCase
     /** A post still live+approved on its home community keeps its rippled-in copies. */
     public function test_live_home_post_keeps_rippled_copies(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         [$msgid, $groupB] = $this->seedRippledCopyWithOrigin('approved');
 
         $this->service()->process(false, 500);
@@ -3037,7 +3028,7 @@ class ExpandServiceTest extends TestCase
     /** A scoped (onlyMsgid) run retracts only the in-scope post, leaving others untouched. */
     public function test_scoped_only_msgid_retracts_only_in_scope_post(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         [$m1, $g1] = $this->seedStaleReachWithRippledCopy();
         [$m2, $g2] = $this->seedStaleReachWithRippledCopy();
 
@@ -3059,7 +3050,7 @@ class ExpandServiceTest extends TestCase
      */
     public function test_scoped_within_poly_does_not_limit_retraction(): void
     {
-        Http::fake();
+        $this->fakeSpatialHttp();
         [$london] = $this->seedStaleReachWithRippledCopy(51.5, -0.1);
         [$edinburgh] = $this->seedStaleReachWithRippledCopy(55.95, -3.19);
 
@@ -3120,6 +3111,9 @@ class ExpandServiceTest extends TestCase
         // Http::fake() calls would NOT work — Laravel accumulates stubs and the first
         // registered match wins, so a later "capped" stub never overrides the first.)
         Http::fake(function ($request) {
+            if (str_contains($request->url(), 'reach/rasterize')) {
+                return null; // the real rasteriser answers
+            }
             parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $q);
             $total = 90;
             $cap = (int) ($q['target_users'] ?? 0);
@@ -3299,7 +3293,7 @@ class ExpandServiceTest extends TestCase
                 'reachable_group_ids' => $last,
             ];
         }
-        Http::fake([
+        $this->fakeSpatialHttp([
             '*ripple-schedule*' => Http::response([
                 'total_freeglers' => 90, 'max_drive_min' => 30, 'schedule' => $schedule,
                 'reachable_group_ids' => $last,
@@ -3322,10 +3316,9 @@ class ExpandServiceTest extends TestCase
 
         $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
         $this->assertNotNull($row, 'slim schedule still initialises a reach row');
-        $this->assertSame(
-            'POLYGON',
-            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t,
-            'the tick polygon is materialised from the catchment endpoint'
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells'),
+            'the tick geometry is materialised from the catchment endpoint into the stored grid'
         );
         Http::assertSent(fn ($req) => str_contains($req->url(), '/v1/catchment'));
 
@@ -3356,9 +3349,9 @@ class ExpandServiceTest extends TestCase
         ];
         DB::statement(
             'INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, reachable_group_ids, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, ?, 1, 3, 90, 30, ?, ?, ?, ?, NOW(), NOW())',
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, ?, 1, 3, 90, 30, ?, ?, ?, ?, NOW(), NOW())',
             [
                 $msgid, self::WKT, self::WKT, now()->subHours(4), 'drive',
                 json_encode($ticks), json_encode([$originGid]), now()->subMinutes(5), 'expanding',
@@ -3400,6 +3393,9 @@ class ExpandServiceTest extends TestCase
             ]]],
         ];
         Http::fake(function ($request) use ($polygon, $originGid, $groupBId, &$phase) {
+            if (str_contains($request->url(), 'reach/rasterize')) {
+                return null; // the real rasteriser answers
+            }
             if (str_contains($request->url(), '/v1/catchment')) {
                 return Http::response(['catchment' => $polygon], 200);
             }
@@ -3538,21 +3534,33 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * Every polygon write must leave a verified sandwich-bounds row behind
-     * (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): outer_bound ⊇ polygon and
-     * inner_bound ⊆ polygon (or NULL), derived from the FINAL stored polygon.
+     * Every reach write must leave a verified sandwich-bounds row behind
+     * (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): outer_bound ⊇ reach and
+     * inner_bound ⊆ reach (or NULL), derived from the FINAL stored grid.
+     *
+     * The check runs against the grid's bounding box (its header, no network):
+     * the outer must contain the whole box (it is derived buffered outward, so
+     * this holds exactly when the derivation ran on the final grid), and the
+     * inner must at least sit within it. The precise inner-inside-reach
+     * invariant is pinned in ReachBoundsServiceTest; this is the per-write-path
+     * smoke check.
      */
     private function assertBoundsSandwich(int $msgid, string $context): void
     {
+        $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+        $this->assertNotNull($cells, "$context: the reach row exists with a grid");
+        $bbox = $this->cellSets()->boundsWkt($cells);
+        $this->assertNotNull($bbox, "$context: the grid header is readable");
+
         $check = DB::selectOne(
-            'SELECT ST_Contains(outer_bound, polygon) AS o,
-                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+            'SELECT ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o,
+                    (inner_bound IS NULL OR MBRWithin(inner_bound, ST_GeomFromText(?, 3857))) AS i
                FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
+            [$bbox, $bbox, $msgid]
         );
         $this->assertNotNull($check, "$context: the reach row exists with bounds");
-        $this->assertSame(1, (int) $check->o, "$context: outer_bound contains the stored polygon");
-        $this->assertSame(1, (int) $check->i, "$context: inner_bound is NULL or inside the stored polygon");
+        $this->assertSame(1, (int) $check->o, "$context: outer_bound contains the stored reach");
+        $this->assertSame(1, (int) $check->i, "$context: inner_bound is NULL or within the reach extent");
     }
 
     public function test_initialise_writes_reach_bounds(): void
@@ -3580,7 +3588,7 @@ class ExpandServiceTest extends TestCase
         ];
         $outerWkt = 'POLYGON((-0.21 51.39, 0.01 51.39, 0.01 51.61, -0.21 51.61, -0.21 51.39))';
         $innerWkt = 'POLYGON((-0.19 51.41, -0.01 51.41, -0.01 51.59, -0.19 51.59, -0.19 51.41))';
-        Http::fake([
+        $this->fakeSpatialHttp([
             '*ripple-schedule*' => Http::response([
                 'total_freeglers' => 90, 'max_drive_min' => 30,
                 'schedule' => [
@@ -3624,17 +3632,17 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
-            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
         );
         DB::statement(
             "UPDATE rippling_reach SET outer_bound = ST_GeomFromText('POLYGON((5 5, 5.1 5, 5.1 5.1, 5 5.1, 5 5))', 3857),
                     inner_bound = NULL WHERE msgid = ?",
             [$msgid]
         );
-        Http::fake(); // no routing call expected on advance (uses cached schedule)
+        $this->fakeSpatialHttp(); // no routing call expected on advance (uses cached schedule)
 
         $this->service()->process(false, 500);
 
@@ -3663,12 +3671,12 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
-            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+            [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
         );
-        Http::fake();
+        $this->fakeSpatialHttp();
 
         $this->service()->process(false, 500);
 
@@ -3681,181 +3689,6 @@ class ExpandServiceTest extends TestCase
             [$msgid]
         )->c;
         $this->assertSame(0, $innerAccepts, 'inner bound must not cover the clipped-out rejected area');
-    }
-
-    // -- geometry dedup dual-write -------------------------------------------------
-
-    public function test_init_stores_a_polygon_hash_matching_its_own_bytes(): void
-    {
-        $this->fakeRouting(3);
-        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
-
-        $this->service()->process(false, 500);
-
-        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertNotNull($row->polygon_hash);
-        $expected = DB::selectOne(
-            'SELECT UNHEX(MD5(ST_AsBinary(polygon))) AS h FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
-        )->h;
-        $this->assertSame((string) $expected, (string) $row->polygon_hash);
-
-        $geom = DB::table('rippling_reach_geom')->where('hash', $row->polygon_hash)->first();
-        $this->assertNotNull($geom, 'the shared geom row was created alongside the reach row');
-    }
-
-    public function test_two_posts_with_identical_stored_polygons_share_one_geometry_row(): void
-    {
-        $this->fakeRouting(3);
-        $a = $this->seedSpatialPost(now()->subMinutes(30), 51.5, -0.1);
-        $b = $this->seedSpatialPost(now()->subMinutes(30), 51.5, -0.1);
-
-        $this->service()->process(false, 500);
-
-        $rows = DB::table('rippling_reach')->whereIn('msgid', [$a, $b])->get();
-        $this->assertCount(2, $rows);
-        $hashes = $rows->pluck('polygon_hash')->unique();
-        $this->assertCount(1, $hashes, 'identical stored polygons hash to the SAME geom row');
-        $this->assertNotNull($hashes->first());
-        $this->assertSame(
-            1,
-            DB::table('rippling_reach_geom')->count(),
-            'sharing means exactly one geom row, not one per post'
-        );
-    }
-
-    public function test_advance_repoints_hash_to_the_new_tick_leaving_the_old_geom_row_untouched(): void
-    {
-        $msgid = $this->seedSpatialPost(now()->subHours(7));
-        // Tick 1 and 2 share WKT; the final tick this post advances to is WKT2 - a
-        // genuinely different geometry, so advancing must move the hash.
-        $ticksJson = json_encode([
-            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
-            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
-            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT2],
-        ]);
-        DB::statement(
-            "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
-                max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
-            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
-        );
-        GeomShareService::upsertFromRow($msgid, 'polygon');
-        GeomShareService::rehashFromRow($msgid, 'polygon');
-        $oldHash = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_hash');
-        $this->assertNotNull($oldHash);
-        $oldBytesBefore = DB::selectOne(
-            'SELECT ST_AsBinary(geom) AS b FROM rippling_reach_geom WHERE hash = ?', [$oldHash]
-        )->b;
-
-        Http::fake(); // advance uses the cached schedule, no routing call expected
-
-        $this->service()->process(false, 500);
-
-        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertSame(3, (int) $row->tick, 'elapsed time carried the post to the final tick');
-        $newHash = $row->polygon_hash;
-        $this->assertNotNull($newHash);
-        $this->assertNotEquals($oldHash, $newHash, 'the hash moved to the new tick geometry');
-
-        $oldGeom = DB::table('rippling_reach_geom')->where('hash', $oldHash)->first();
-        $this->assertNotNull($oldGeom, 'the tick-1 shared geometry is not deleted by advancing past it');
-        $oldBytesAfter = DB::selectOne(
-            'SELECT ST_AsBinary(geom) AS b FROM rippling_reach_geom WHERE hash = ?', [$oldHash]
-        )->b;
-        $this->assertSame($oldBytesBefore, $oldBytesAfter, 'the old geom row is never mutated in place');
-
-        $newGeom = DB::table('rippling_reach_geom')->where('hash', $newHash)->first();
-        $this->assertNotNull($newGeom, 'the tick-3 geometry has its own shared row');
-    }
-
-    public function test_clip_repoints_only_the_clipped_posts_hash_leaving_the_shared_row_and_sibling_untouched(): void
-    {
-        // Two posts sharing one reach polygon and its hash - the setup the corruption
-        // guard exists for (up to 261 posts observed sharing one geometry live). Only
-        // one carries a secondary-group rejection.
-        $clippedMsgid = $this->seedSpatialPost(now()->subHours(7));
-        $siblingMsgid = $this->seedSpatialPost(now()->subHours(7));
-        $rejectGroup = $this->createTestGroup();
-        DB::statement(
-            "UPDATE `groups` SET polyindex = ST_GeomFromText(
-                'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', 3857)
-             WHERE id = ?",
-            [$rejectGroup->id]
-        );
-
-        $ticksJson = json_encode([
-            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
-            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
-            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
-        ]);
-        foreach ([
-            [$clippedMsgid, json_encode([(int) $rejectGroup->id])],
-            [$siblingMsgid, null],
-        ] as [$msgid, $rejected]) {
-            DB::statement(
-                "INSERT INTO rippling_reach
-                   (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
-                    max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
-                 VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
-                [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), $rejected]
-            );
-            GeomShareService::upsertFromRow($msgid, 'polygon');
-            GeomShareService::rehashFromRow($msgid, 'polygon');
-        }
-
-        $sharedHashBefore = DB::table('rippling_reach')->where('msgid', $clippedMsgid)->value('polygon_hash');
-        $siblingHashBefore = DB::table('rippling_reach')->where('msgid', $siblingMsgid)->value('polygon_hash');
-        $this->assertSame(
-            (string) $sharedHashBefore,
-            (string) $siblingHashBefore,
-            'both posts point at the same shared geometry before the clip'
-        );
-        $originalBytes = DB::selectOne(
-            'SELECT ST_AsBinary(geom) AS b FROM rippling_reach_geom WHERE hash = ?', [$sharedHashBefore]
-        )->b;
-
-        Http::fake();
-        $this->service()->process(false, 500);
-
-        $clipped = DB::table('rippling_reach')->where('msgid', $clippedMsgid)->first();
-        $untouched = DB::table('rippling_reach')->where('msgid', $siblingMsgid)->first();
-
-        $this->assertNotNull($clipped->polygon_hash);
-        $this->assertNotEquals(
-            $sharedHashBefore,
-            $clipped->polygon_hash,
-            'the clipped post repoints to a new hash rather than mutating the shared one'
-        );
-        $expectedClippedHash = DB::selectOne(
-            'SELECT UNHEX(MD5(ST_AsBinary(polygon))) AS h FROM rippling_reach WHERE msgid = ?', [$clippedMsgid]
-        )->h;
-        $this->assertSame((string) $expectedClippedHash, (string) $clipped->polygon_hash);
-
-        $this->assertSame(
-            (string) $siblingHashBefore,
-            (string) $untouched->polygon_hash,
-            'the sibling post keeps its original hash - it was never touched by the other post being clipped'
-        );
-        $untouchedBytes = DB::selectOne(
-            'SELECT ST_AsBinary(polygon) AS b FROM rippling_reach WHERE msgid = ?', [$siblingMsgid]
-        )->b;
-        $originalWktBytes = DB::selectOne('SELECT ST_AsBinary(ST_GeomFromText(?, 3857)) AS b', [self::WKT])->b;
-        $this->assertSame(
-            $originalWktBytes,
-            $untouchedBytes,
-            "the sibling's polygon bytes are byte-identical to before the clip"
-        );
-
-        $originalStillThere = DB::selectOne(
-            'SELECT ST_AsBinary(geom) AS b FROM rippling_reach_geom WHERE hash = ?', [$sharedHashBefore]
-        )->b;
-        $this->assertSame(
-            $originalBytes,
-            $originalStillThere,
-            'the ORIGINAL shared geom row was never mutated in place - this is the 261-post corruption guard'
-        );
     }
 
     // ── The compact cell-set columns (plans/2026-08-24-rippling-reach-raster-storage.md) ──
@@ -3905,7 +3738,16 @@ class ExpandServiceTest extends TestCase
         return new \App\Services\Ripple\CellSetService();
     }
 
-    public function test_init_stores_the_reach_as_a_cell_set_that_agrees_with_the_polygon(): void
+    /** Probe the stored reach grid - the only stored form - for one point. */
+    private function storedReachContains(int $msgid, float $lng, float $lat): bool
+    {
+        $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+        $this->assertNotNull($cells, 'the row must hold a reach grid to probe');
+
+        return $this->cellSets()->containsEncoded($cells, $lng, $lat) === true;
+    }
+
+    public function test_init_stores_the_reach_as_a_cell_set(): void
     {
         $this->fakeRoutingButNotRasterize(self::WKT);
         $msgid = $this->seedSpatialPost(now()->subMinutes(30));
@@ -3913,33 +3755,25 @@ class ExpandServiceTest extends TestCase
         $this->service()->process(false, 500);
 
         $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
-        $this->assertNotNull($cells, 'init must store the cell set alongside the polygon');
+        $this->assertNotNull($cells, 'init must store the cell set - it IS the reach');
 
-        // The cell set must classify points the same way the stored polygon
-        // does - it is a different representation of one shape, not a second
-        // opinion about which shape it is.
+        // The cell set must classify points as the routed shape (self::WKT,
+        // lng -0.2..-0.1, lat 51.5..51.6) does.
         $decoded = $this->cellSets()->decode($cells);
-        $polygonSays = fn (float $lng, float $lat): bool => (bool) DB::selectOne(
-            'SELECT IFNULL(ST_Contains(polygon, ST_SRID(POINT(?, ?), 3857)), 0) AS c
-             FROM rippling_reach WHERE msgid = ?',
-            [$lng, $lat, $msgid]
-        )->c;
-
-        foreach ([[-0.15, 51.55], [-0.12, 51.52], [-0.18, 51.58], [5.0, 5.0], [-1.0, 50.0]] as [$lng, $lat]) {
+        foreach ([[-0.15, 51.55, true], [-0.12, 51.52, true], [-0.18, 51.58, true], [5.0, 5.0, false], [-1.0, 50.0, false]] as [$lng, $lat, $want]) {
             $this->assertSame(
-                $polygonSays($lng, $lat),
+                $want,
                 $this->cellSets()->contains($decoded, $lng, $lat),
-                "cell set and polygon disagree about ($lng, $lat)"
+                "cell set classifies ($lng, $lat) wrongly"
             );
         }
     }
 
-    public function test_a_secondary_reject_clips_the_cell_set_as_well_as_the_polygon(): void
+    public function test_a_secondary_reject_clips_the_cell_set(): void
     {
-        // The whole point of the Subtract primitive: a rejection has to shrink
-        // BOTH representations, or the cell set keeps admitting people in the
-        // area the polygon has just stopped covering - and the cell set is what
-        // the reply gate reads.
+        // The Subtract primitive: a rejection has to shrink the stored grid,
+        // or it keeps admitting people in the area the reach has just stopped
+        // covering - and the grid is what the reply gate reads.
         $msgid = $this->seedSpatialPost(now()->subHours(7));
         $group = $this->createTestGroup();
         // Rejected group's area = the EASTERN half of the reach (lng -0.15..-0.10).
@@ -3957,10 +3791,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
-            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
+            [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
         );
         $this->fakeRoutingButNotRasterize(self::WKT);
 
@@ -3980,13 +3814,12 @@ class ExpandServiceTest extends TestCase
         );
     }
 
-    public function test_a_rasterise_failure_clears_the_cell_set_rather_than_leaving_a_stale_one(): void
+    public function test_a_rasterise_failure_fails_the_advance_rather_than_writing_a_stale_reach(): void
     {
-        // Two of the four polygon write paths SHRINK the reach, so a stale cell
-        // set left behind by a failed rasterise would be LARGER than the polygon
-        // it disagrees with - it would admit members the reach has just stopped
-        // covering, and the cell set is what the reply gate reads. NULL costs a
-        // fallback; stale costs correctness.
+        // The grid IS the stored reach, so an advance that cannot rasterise
+        // must not write anything: the post keeps its previous reach and tick
+        // and is retried next sweep. Writing a row whose reach nobody can
+        // read - or leaving a stale, larger grid - would misgate replies.
         $msgid = $this->seedSpatialPost(now()->subHours(7));
 
         $ticksJson = json_encode([
@@ -3996,10 +3829,10 @@ class ExpandServiceTest extends TestCase
         ]);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
-            [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', NOW(), NOW())",
+            [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4)]
         );
 
         // Give the row a real cell set first, from the real rasteriser.
@@ -4017,14 +3850,16 @@ class ExpandServiceTest extends TestCase
             return Http::response([], 200);
         });
 
-        $this->service()->process(false, 500);
+        $stats = $this->service()->process(false, 500);
 
         $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertSame(3, (int) $row->tick, 'the tick still advanced - the reach write does not depend on the cells');
-        $this->assertNull(
+        $this->assertSame(1, (int) $row->tick, 'a failed rasterise leaves the tick where it was, for the next sweep');
+        $this->assertSame(
+            $seeded,
             $row->polygon_cells,
-            'a failed rasterise must clear the cell set, not leave the previous reach behind'
+            'the previous reach grid survives untouched - never cleared, never replaced'
         );
+        $this->assertGreaterThanOrEqual(1, $stats['errors'], 'the failure is counted, not swallowed');
     }
 
     public function test_the_overflow_rings_are_stored_as_cell_sets_on_the_same_paths(): void
@@ -4069,19 +3904,16 @@ class ExpandServiceTest extends TestCase
         $this->service()->process(false, 500);
 
         $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertNotNull($row->overflow_bounds, 'the ring itself is still stored');
-        $this->assertNotNull($row->overflow_cells, 'the ring must also be stored as a cell set');
+        $this->assertNotNull($row->overflow_cells, 'the ring must be stored as a cell set');
 
-        $bounds = json_decode($row->overflow_bounds, true);
         $cellsByLane = json_decode($row->overflow_cells, true);
-        $this->assertArrayHasKey('sparse', $bounds['rural'] ?? [], 'sanity: the ring landed where expected');
         $this->assertArrayHasKey(
             'sparse',
             $cellsByLane['rural'] ?? [],
-            'the cell set must sit on the same lane path as the ring'
+            'the cell set must sit on the same lane path the ring WKT used'
         );
-        // The scalar members of overflow_bounds are deliberately NOT mirrored.
-        $this->assertArrayNotHasKey('bbox', $cellsByLane, 'bbox is a scalar read from overflow_bounds, not copied');
+        // The scalars ride in the same document - it is their only home now.
+        $this->assertArrayHasKey('bbox', $cellsByLane, 'the bbox scalar lives in the cells document');
 
         $decoded = $this->cellSets()->decode(base64_decode($cellsByLane['rural']['sparse']));
         $this->assertTrue(
@@ -4095,17 +3927,20 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * Regression test for the group-cells cache in reapplyClips: a TRANSIENT
+     * Regression test for the group-cells cache in the clip: a TRANSIENT
      * rasterise failure for a rejecting group's own area must not
-     * permanently disable cells-clipping for every later post rejected by
-     * the same group in the same run - only a SUCCESS may be cached. A stub
+     * permanently disable clipping for every later post rejected by the
+     * same group in the same run - only a SUCCESS may be cached. A stub
      * CellSetService fails exactly once, and only for the rejecting group's
-     * WKT (never the posts' own reach polygon), so the failure is isolated
-     * to the group-cells cache rather than writePolygonCells's own call.
+     * WKT, so the failure is isolated to the group-cells cache. The failed
+     * clip leaves its row UNCLIPPED (over-reaching for one more tick is
+     * visible and self-heals; a wrong grid would misgate replies), and the
+     * next post's clip must succeed.
      */
     public function test_group_cells_cache_retries_after_a_transient_rasterize_failure(): void
     {
         $group = $this->createTestGroup();
+        // Rejected group's area = the EASTERN half of the reach (lng -0.15..-0.10).
         DB::statement(
             "UPDATE `groups` SET polyindex = ST_GeomFromText(
                 'POLYGON((-0.15 51.49,-0.10 51.49,-0.10 51.61,-0.15 51.61,-0.15 51.49))', 3857)
@@ -4113,37 +3948,31 @@ class ExpandServiceTest extends TestCase
             [$group->id]
         );
 
-        $ticksJson = json_encode([
-            ['tick' => 1, 'drive_min' => 5, 'cumulative_users' => 30, 'wkt' => self::WKT],
-            ['tick' => 2, 'drive_min' => 10, 'cumulative_users' => 60, 'wkt' => self::WKT],
-            ['tick' => 3, 'drive_min' => 15, 'cumulative_users' => 90, 'wkt' => self::WKT],
-        ]);
         $msgidA = $this->seedSpatialPost(now()->subHours(7));
         $msgidB = $this->seedSpatialPost(now()->subHours(7));
         foreach ([$msgidA, $msgidB] as $msgid) {
             DB::statement(
                 "INSERT INTO rippling_reach
-                   (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+                   (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                     max_drive_min, schedule, next_expansion_at, status, rejected_groups, created_at, updated_at)
-                 VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 1, 3, 90, 30, ?, ?, 'expanding', ?, NOW(), NOW())",
-                [$msgid, self::WKT, self::WKT, now()->subHours(7), $ticksJson, now()->subHours(4), json_encode([(int) $group->id])]
+                 VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), ?, 'drive', 3, 3, 90, 30, NULL, NULL, 'done', ?, NOW(), NOW())",
+                [$msgid, $this->reachCellsFor(self::WKT), self::WKT, now()->subHours(7), json_encode([(int) $group->id])]
             );
         }
 
         $real = $this->cellSets();
-        $postWkt = self::WKT;
-        $flaky = new class($real, $postWkt) extends CellSetService {
+        $flaky = new class($real) extends CellSetService {
             private bool $failedOnce = false;
 
-            public function __construct(private CellSetService $real, private string $postWkt)
+            public function __construct(private CellSetService $real)
             {
             }
 
             public function rasterize(string $wkt): ?string
             {
-                // Only the REJECTING GROUP's own area (never the posts' own
-                // reach polygon) fails, and only the first time it is asked for.
-                if ($wkt !== $this->postWkt && !$this->failedOnce) {
+                // The clip only ever rasterises the rejecting group's area;
+                // fail the first ask, answer for real afterwards.
+                if (!$this->failedOnce) {
                     $this->failedOnce = true;
 
                     return null;
@@ -4154,14 +3983,22 @@ class ExpandServiceTest extends TestCase
         };
 
         $service = new ExpandService(new ReachService(), null, null, null, null, $flaky);
-        $service->process(false, 500);
+        $clip = new \ReflectionMethod($service, 'reapplyClips');
+        $clip->setAccessible(true);
+        $clip->invoke($service, $msgidA, json_encode([(int) $group->id]));
+        $clip->invoke($service, $msgidB, json_encode([(int) $group->id]));
 
         $cellsA = DB::table('rippling_reach')->where('msgid', $msgidA)->value('polygon_cells');
-        $this->assertNull($cellsA, 'the first post to hit the transient failure must fall back to NULL, not a stale grid');
+        $this->assertNotNull($cellsA, 'the failed clip leaves the row unclipped, never a wrong grid');
+        $this->assertTrue(
+            $this->cellSets()->contains($this->cellSets()->decode($cellsA), -0.12, 51.55),
+            'post A is genuinely unclipped: it still covers the rejected area until the retry'
+        );
 
         $cellsB = DB::table('rippling_reach')->where('msgid', $msgidB)->value('polygon_cells');
-        $this->assertNotNull(
-            $cellsB,
+        $this->assertNotNull($cellsB);
+        $this->assertFalse(
+            $this->cellSets()->contains($this->cellSets()->decode($cellsB), -0.12, 51.55),
             'the group-cells cache must retry after a transient failure, not stay poisoned for the rest of the run'
         );
     }

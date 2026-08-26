@@ -116,12 +116,13 @@ return new class extends Migration
             }
         }
 
-        // The whole DDL sequence lives in LegacyGeometryDrop so that a test can
-        // run it against a `CREATE TABLE ... LIKE rippling_reach` clone. Until it
-        // did, nothing executed these statements: CI never sets
-        // RIPPLE_DROP_LEGACY_GEOMETRY and PostDropEraTest fakes the era instead
-        // of issuing DDL - which is exactly how a version that died on its first
-        // ALTER survived review. See that class for why the order is forced.
+        // The whole DDL sequence lives in LegacyGeometryDrop so that a test
+        // (LegacyGeometryDropTest) can run it against a clone rebuilt to the
+        // pre-drop shape - on the post-drop test schema this migration itself
+        // is a no-op, so without that test nothing would execute these
+        // statements, which is exactly how a version that died on its first
+        // ALTER once survived review. See that class for why the order is
+        // forced.
         (new LegacyGeometryDrop())->run('rippling_reach');
 
         // And finally the shared geometry table, once nothing points at it. This

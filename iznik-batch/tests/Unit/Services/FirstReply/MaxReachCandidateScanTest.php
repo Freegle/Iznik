@@ -3,8 +3,6 @@
 namespace Tests\Unit\Services\FirstReply;
 
 use App\Services\FirstReply\MaxReachService;
-use App\Services\Ripple\GeomShareService;
-use App\Services\Ripple\LegacyGeometry;
 use App\Services\Ripple\MaxReachCandidateIndex;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -28,21 +26,18 @@ use Tests\TestCase;
  */
 class MaxReachCandidateScanTest extends TestCase
 {
-    /** A small box; nothing here reads the geometry, it just has to be valid. */
+    /** A small box for the outer bound; nothing here reads the geometry. */
     private const REACH = 'POLYGON((-0.10 51.50, -0.08 51.50, -0.08 51.52, -0.10 51.52, -0.10 51.50))';
 
     protected function setUp(): void
     {
         parent::setUp();
         MaxReachCandidateIndex::reset();
-        LegacyGeometry::reset();
-        GeomShareService::forgetReady();
     }
 
     protected function tearDown(): void
     {
         MaxReachCandidateIndex::reset();
-        LegacyGeometry::reset();
         parent::tearDown();
     }
 
@@ -275,20 +270,16 @@ class MaxReachCandidateScanTest extends TestCase
         $message = $this->createTestMessage($user, $group);
         $msgid = (int) $message->id;
 
-        // polygon is NOT NULL with no default, so it has to be supplied even
-        // though nothing here reads it - hence raw SQL rather than insert().
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, schedule, status, polygon, outer_bound, arrival, mode,
+               (msgid, lat, lng, schedule, status, outer_bound, arrival, mode,
                 tick, total_ticks, total_freeglers, max_drive_min, created_at, updated_at)
              VALUES (?, 51.51, -0.09, ?, 'expanding',
-                     ST_GeomFromText(?, 3857),
                      ST_Buffer(ST_GeomFromText(?, 3857), 0.002),
                      NOW(), 'drive', 1, 3, 0, 30, NOW(), NOW())",
             [
                 $msgid,
                 json_encode([['drive_min' => 30]]),
-                self::REACH,
                 self::REACH,
             ]
         );
