@@ -168,6 +168,70 @@ class TNSyncCommandTest extends TestCase
         );
     }
 
+    public function test_sync_falsy_rating_is_not_treated_as_a_deletion(): void
+    {
+        $user = $this->createTestUser();
+        $tnRatingId = random_int(100000, 999999);
+
+        DB::table('ratings')->insert([
+            'ratee' => $user->id,
+            'rating' => 'Up',
+            'timestamp' => self::DATE_OLD,
+            'visible' => 1,
+            'tn_rating_id' => $tnRatingId,
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => $tnRatingId,
+                    'ratee_fd_user_id' => $user->id,
+                    // Falsy but present. Only a null rating means "deleted".
+                    'rating' => 0,
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertTrue(
+            DB::table('ratings')->where('tn_rating_id', $tnRatingId)->exists(),
+            'A falsy-but-present rating must not delete the row.'
+        );
+    }
+
+    public function test_sync_rating_without_a_date_does_not_move_the_watermark(): void
+    {
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [
+                    [
+                        // No 'date' key at all — must neither warn nor clobber
+                        // the watermark the dated row below establishes.
+                        'rating_id' => random_int(100000, 999999),
+                        'ratee_fd_user_id' => $user->id,
+                        'rating' => 'Up',
+                    ],
+                    [
+                        'rating_id' => random_int(100000, 999999),
+                        'ratee_fd_user_id' => $user->id,
+                        'rating' => 'Down',
+                        'date' => self::DATE_SYNC,
+                    ],
+                ],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        $this->assertSame(self::DATE_SYNC, trim(file_get_contents($this->dateFile)));
+    }
+
     public function test_sync_skips_rating_without_fd_user_id(): void
     {
         Http::fake([
