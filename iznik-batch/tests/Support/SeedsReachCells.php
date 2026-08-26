@@ -21,11 +21,18 @@ trait SeedsReachCells
 
     /**
      * The encoded cell grid for an axis-aligned rectangle WKT - the shape
-     * every fixture here plants. Built locally with CellSetService::encode
-     * (proven byte-identical to the real Go encoder in CellSetServiceTest),
-     * so it works under any Http::fake and costs no network call. A cell is
-     * set when its centre lies inside the rectangle, which is the rasteriser's
-     * own rule for a shape with no boundary curvature.
+     * every fixture here plants. A cell is set when its centre lies inside
+     * the rectangle, which is the rasteriser's own rule for a shape with no
+     * boundary curvature; the grid is trimmed to the covered cells, and the
+     * run stream is emitted directly (a covered rectangle is one ON run), so
+     * this works under any Http::fake, costs no network call, and never
+     * materialises a per-cell array however large the box.
+     *
+     * Byte format per CellSetService: 20-byte header (magic, minCol, minRow,
+     * cols, rows as uint32 LE) then LEB128 varint runs alternating starting
+     * with an OFF run - here varint(0) then varint(total), the degenerate
+     * all-covered case, which the decoder and the streaming probe both
+     * accept.
      */
     protected function reachCellsFor(string $wkt): string
     {
@@ -38,32 +45,43 @@ trait SeedsReachCells
         [$minLat, $maxLat] = [min($ys), max($ys)];
 
         $cell = 0.0003;
-        $minCol = (int) floor($minLng / $cell);
-        $minRow = (int) floor($minLat / $cell);
-        $cols = max(1, (int) ceil($maxLng / $cell) - $minCol);
-        $rows = max(1, (int) ceil($maxLat / $cell) - $minRow);
-
-        $set = [];
-        for ($r = 0; $r < $rows; $r++) {
-            $latC = ($minRow + $r + 0.5) * $cell;
-            if ($latC <= $minLat || $latC >= $maxLat) {
-                continue;
-            }
-            for ($c = 0; $c < $cols; $c++) {
-                $lngC = ($minCol + $c + 0.5) * $cell;
-                if ($lngC > $minLng && $lngC < $maxLng) {
-                    $set[$r * $cols + $c] = true;
-                }
-            }
+        // First and last cell whose CENTRE lies strictly inside the box.
+        $firstCol = (int) ceil($minLng / $cell - 0.5);
+        if (($firstCol + 0.5) * $cell <= $minLng) {
+            $firstCol++;
+        }
+        $lastCol = (int) floor($maxLng / $cell - 0.5);
+        if (($lastCol + 0.5) * $cell >= $maxLng) {
+            $lastCol--;
+        }
+        $firstRow = (int) ceil($minLat / $cell - 0.5);
+        if (($firstRow + 0.5) * $cell <= $minLat) {
+            $firstRow++;
+        }
+        $lastRow = (int) floor($maxLat / $cell - 0.5);
+        if (($lastRow + 0.5) * $cell >= $maxLat) {
+            $lastRow--;
+        }
+        if ($lastCol < $firstCol || $lastRow < $firstRow) {
+            $this->fail("reachCellsFor: box too thin to cover any cell centre: {$wkt}");
         }
 
-        return $this->reachCellService()->encode([
-            'minCol' => $minCol,
-            'minRow' => $minRow,
-            'cols' => $cols,
-            'rows' => $rows,
-            'set' => $set,
-        ]);
+        $cols = $lastCol - $firstCol + 1;
+        $rows = $lastRow - $firstRow + 1;
+
+        $varint = static function (int $v): string {
+            $out = '';
+            while ($v >= 0x80) {
+                $out .= chr(($v & 0x7f) | 0x80);
+                $v >>= 7;
+            }
+
+            return $out . chr($v);
+        };
+
+        return pack('VVVVV', 0x31534343, $firstCol & 0xFFFFFFFF, $firstRow & 0xFFFFFFFF, $cols, $rows)
+            . $varint(0)
+            . $varint($cols * $rows);
     }
 
     /**

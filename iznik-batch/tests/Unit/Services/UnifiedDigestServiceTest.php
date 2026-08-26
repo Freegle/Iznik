@@ -332,10 +332,10 @@ class UnifiedDigestServiceTest extends TestCase
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
              VALUES (?, 51.5, -0.1, ?,
-                ST_Envelope(ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857)),
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
                 'held', NOW())
              ON DUPLICATE KEY UPDATE status = VALUES(status)",
-            [$message->id, $this->reachCellsFor('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))')]
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
         );
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
