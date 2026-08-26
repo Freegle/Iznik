@@ -15,6 +15,7 @@ import (
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -727,10 +728,34 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// The room type also scopes the attribution capture below (a refmsgid message in a
 	// User2Mod room is a REPORT, not a reply), so fetch it once here.
 	roomType := ""
+	roomGroupid := uint64(0)
 	reach := replyReachEvidence{}
 	holdReply := false
 	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		db.Table("chat_rooms").Select("chattype").Where("id = ?", id).Scan(&roomType)
+		var room struct {
+			Chattype string
+			Groupid  uint64
+		}
+		db.Table("chat_rooms").Select("chattype, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&room)
+		roomType = room.Chattype
+		roomGroupid = room.Groupid
+
+		// A report of an unaddressed TN post must never reach a moderator. No community
+		// chose to carry that post, so no mod team has any standing to act on it, and the
+		// report is instead a vote to take it down (a quorum of two removes it - see
+		// microvolunteering.RecordReportVerdict). Record the vote and stop: the chat
+		// message is never written, so the report cannot land in a mod inbox even from a
+		// client too old to know about the /message "Report" action - which matters
+		// because app bundles ship baked into the APK.
+		if roomType == utils.CHAT_TYPE_USER2MOD && modmessaging.PostIsUnaddressed(db, *payload.Refmsgid) {
+			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, roomGroupid, payload.Message)
+
+			ret := struct {
+				Id int64 `json:"id"`
+			}{}
+			return c.JSON(ret)
+		}
+
 		if roomType == utils.CHAT_TYPE_USER2USER {
 			latlng := user.GetLatLng(myid)
 			if latlng.Lat != 0 || latlng.Lng != 0 {
@@ -961,15 +986,8 @@ func CreateChatMessage(c *fiber.Ctx) error {
 	// chat's group. Only User2Mod refmsgid messages are reports - a User2User refmsgid
 	// message is an Interested reply to the poster, not a report. Best-effort: never
 	// blocks the report.
-	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil {
-		var reportRoom struct {
-			Chattype string
-			Groupid  uint64
-		}
-		db.Table("chat_rooms").Select("chattype, COALESCE(groupid, 0) AS groupid").Where("id = ?", id).Scan(&reportRoom)
-		if reportRoom.Chattype == utils.CHAT_TYPE_USER2MOD {
-			microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, reportRoom.Groupid, payload.Message)
-		}
+	if chattype == utils.CHAT_MESSAGE_INTERESTED && payload.Refmsgid != nil && roomType == utils.CHAT_TYPE_USER2MOD {
+		microvolunteering.RecordReportVerdict(db, myid, *payload.Refmsgid, roomGroupid, payload.Message)
 	}
 
 	if payload.Imageid != nil {

@@ -2789,6 +2789,203 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     }
 
     /**
+     * A TN post placed on a Freegle community its poster never chose carries no agreement
+     * to hear from that community's volunteers. ModTools offers no standard messages for
+     * one and the Go API refuses them, so a task arriving here with content came from a
+     * stale client - and must still send the poster nothing.
+     */
+    public function test_mod_stdmsg_on_an_unaddressed_tn_post_sends_the_poster_nothing(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test item',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'rippled_in' => 0,
+            'mod_messaging_allowed' => 0,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'About your post',
+                'body' => 'Please add a photo.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->once()->with($group->id)->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertNotSent(ModStdMessageMail::class);
+
+        // No modmail thread with them either - that is the relationship they never agreed to.
+        $this->assertDatabaseMissing('chat_rooms', [
+            'user1' => $poster->id,
+            'groupid' => $group->id,
+            'chattype' => 'User2Mod',
+        ]);
+
+        // The moderator's own audit trail still stands: the action happened, only the
+        // message to the poster did not.
+        $this->assertDatabaseHas('logs', [
+            'type' => 'Message',
+            'subtype' => 'Approved',
+            'msgid' => $msgId,
+            'byuser' => $mod->id,
+        ]);
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+    }
+
+    /**
+     * An ordinary post by the same kind of poster is unaffected - the rule is about the
+     * post nobody chose, not about Trash Nothing.
+     */
+    public function test_mod_stdmsg_still_reaches_the_poster_of_an_ordinary_post(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'OFFER: Test item',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'rippled_in' => 0,
+            'mod_messaging_allowed' => 1,
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_approved',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'About your post',
+                'body' => 'Please add a photo.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')->once()->with($group->id)->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        Mail::assertSent(ModStdMessageMail::class);
+    }
+
+    /**
+     * The member-level half: someone whose every post is unaddressed has not opted in to
+     * Freegle, so a direct mod message must not go out - while a "mixed" poster, who has
+     * also posted normally, is a real member and hears from their volunteers as usual.
+     */
+    public function test_mod_stdmsg_for_member_respects_whether_they_opted_in(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser(['fullname' => 'Test Moderator']);
+
+        $tnOnly = $this->createTestUser();
+        $this->createTestUserEmail($tnOnly, ['preferred' => 1]);
+        $this->createPostWithModMessaging($tnOnly, $group, 0);
+
+        $mixed = $this->createTestUser();
+        $this->createTestUserEmail($mixed, ['preferred' => 1]);
+        $this->createPostWithModMessaging($mixed, $group, 0);
+        $this->createPostWithModMessaging($mixed, $group, 1);
+
+        foreach ([$tnOnly, $mixed] as $target) {
+            DB::table('background_tasks')->insert([
+                'task_type' => 'email_mod_stdmsg',
+                'data' => json_encode([
+                    'userid' => $target->id,
+                    'byuser' => $mod->id,
+                    'groupid' => $group->id,
+                    'subject' => 'A note from your volunteers',
+                    'body' => 'Hello there, could you add a postcode please?',
+                    'action' => 'Leave Approved Member',
+                    'stdmsgid' => 0,
+                ]),
+                'created_at' => now(),
+            ]);
+        }
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 2,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // Exactly one message went out, and it was to the member who has actually posted
+        // to Freegle.
+        Mail::assertSent(ModStdMessageMail::class, 1);
+        Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($mixed) {
+            $this->assertEquals($mixed->id, $mail->recipientUserId);
+            return TRUE;
+        });
+    }
+
+    /**
+     * A post by $user on $group whose origin row carries the given mod_messaging_allowed.
+     */
+    private function createPostWithModMessaging($user, $group, int $allowed): int
+    {
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: Test item ' . $allowed,
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'rippled_in' => 0,
+            'mod_messaging_allowed' => $allowed,
+        ]);
+
+        return $msgId;
+    }
+
+    /**
      * Custom assertion for string containment (PHPUnit 10+ compatible).
      */
     private function assertStringContains(string $needle, string $haystack): void

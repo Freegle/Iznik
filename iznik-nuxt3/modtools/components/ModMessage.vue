@@ -221,6 +221,19 @@
                 </a>
               </span>
             </NoticeMessage>
+            <NoticeMessage
+              v-if="!modMessagingAllowed"
+              variant="warning"
+              class="mt-1 mb-2"
+              data-test="tn-unaddressed-warning"
+            >
+              This came from Trash Nothing. The person who posted it hasn't
+              joined Freegle and didn't choose to post to
+              <strong>{{ currentGroupName || 'this community' }}</strong> - we
+              matched it here from where they are. So you can
+              <strong>approve or delete</strong> it, but you can't edit it or
+              message them, and there's no chat with them.
+            </NoticeMessage>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -258,7 +271,11 @@
             </span>
             <div v-if="expanded" class="d-flex">
               <div class="d-flex flex-column align-content-end">
-                <b-button v-if="!editing" variant="white" @click="startEdit">
+                <b-button
+                  v-if="!editing && modMessagingAllowed"
+                  variant="white"
+                  @click="startEdit"
+                >
                   <v-icon icon="pen" /><span class="d-none d-sm-inline">
                     Edit</span
                   >
@@ -758,6 +775,7 @@
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
           :is-home-group="isHomeGroup"
+          :mod-messaging-allowed="modMessagingAllowed"
         />
         <b-button
           v-if="editing"
@@ -1151,6 +1169,15 @@ const reachArrival = computed(() => {
   }
   return message.value?.date || null
 })
+
+// False for a TN post whose poster never chose this - or any - Freegle community
+// (messages_groups.mod_messaging_allowed = 0 on its origin row). They have agreed to
+// nothing with the volunteers here, so the actions that talk to them or put words in their
+// mouth are withdrawn: Edit, Blank Reply, standard messages and chat. Approve and Delete
+// stay. Server-enforced too - see the Go modmessaging package.
+const modMessagingAllowed = computed(
+  () => message.value?.mod_messaging_allowed !== false
+)
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the
 // group this copy is being administered on, so it is "starting to become available" to

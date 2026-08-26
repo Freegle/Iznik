@@ -842,6 +842,9 @@ export const useMessageStore = defineStore('message', {
       )
       // Do not remove from list
     },
+    async report(id, groupid, message) {
+      await api(this.config).message.report(id, groupid, message)
+    },
     async hold(params) {
       await this.runHoldAware(params.id, () =>
         api(this.config).message.hold(params.id, params.groupid)
