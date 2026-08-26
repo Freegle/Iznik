@@ -25,9 +25,8 @@ func TestBrowseScopedSearchNearby(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("browsesearchnearby")
@@ -48,13 +47,17 @@ func TestBrowseScopedSearchNearby(t *testing.T) {
 		"JSON_OBJECT('lat', 51.5, 'lng', -0.1)) WHERE id = ?", viewerID)
 
 	// inReach: small reach polygon centred on the viewer.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", inReach)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", inReach, mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
 	// outOfReach: reach polygon well away from the viewer (~53N, 2E) - does not cover it.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 53.0, 2.0, "+
-		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon)", outOfReach)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 53.0, 2.0, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding') "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells)", outOfReach, mustRasterize(t, "POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))"))
+
+	// The reach universe must come from THESE fixtures, not the real
+	// index built from another database.
+	stubReachIndexFromDB(t, false)
 
 	words := message.GetWords("Zorbnak Sofa reach covers viewer (browsesearchnearby)")
 	searchWord := words[0]

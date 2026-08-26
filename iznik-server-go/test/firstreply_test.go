@@ -24,18 +24,18 @@ func seedRipplingReach(t *testing.T, msgID uint64, withMax bool) {
 	db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	res := db.Exec("INSERT INTO rippling_reach "+
-		"(msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers, "+
+		"(msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers, "+
 		" max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "+
-		"VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), "+
+		"VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), "+
 		" NOW(), 'drive', 1, 3, 4000, 30, NULL, NOW(), 'expanding', NOW(), NOW())",
-		msgID, frTick1, frTick1)
+		msgID, mustRasterize(t, frTick1), frTick1)
 	if res.Error != nil {
 		t.Fatalf("could not seed reach: %v", res.Error)
 	}
 
 	if withMax {
-		db.Exec("UPDATE rippling_reach SET max_polygon = ST_GeomFromText(?, 3857), "+
-			"max_cumulative_users = 4000 WHERE msgid = ?", frTick3, msgID)
+		db.Exec("UPDATE rippling_reach SET max_polygon_cells = ?, "+
+			"max_cumulative_users = 4000 WHERE msgid = ?", mustRasterize(t, frTick3), msgID)
 	}
 }
 
@@ -50,13 +50,10 @@ func seedRipplingReach(t *testing.T, msgID uint64, withMax bool) {
 // that could drift apart.
 const frCellsGoldenVectorB64 = "Q0NTMQAAAAAAAAAACwAAAAsAAAAACgEKAQoBCgEKAQoBCgEKAQoBCgw="
 
-// TestFirstReplyPassthrough_CellSetPathAgreesWithPolygonPath: plans/2026-08-24-
-// rippling-reach-raster-storage.md's compact form, exercised over real HTTP-free
-// Go decode rather than the SQL polygon/hash test. A row with ONLY
-// max_polygon_cells populated (max_polygon itself left NULL, the state a fully
-// drained row would be in) must still resolve correctly - the whole point of
-// the column is that readers cannot tell which source answered.
-func TestFirstReplyPassthrough_CellSetPathAgreesWithPolygonPath(t *testing.T) {
+// TestFirstReplyPassthrough_CellSetPath: plans/2026-08-24-
+// rippling-reach-raster-storage.md's compact form, exercised over an HTTP-free
+// Go probe of golden bytes shared with the PHP suite.
+func TestFirstReplyPassthrough_CellSetPath(t *testing.T) {
 	ensureFirstReplyTables(t)
 	db := database.DBConn
 	if !db.Migrator().HasColumn("rippling_reach", "max_polygon_cells") {
@@ -85,11 +82,11 @@ func TestFirstReplyPassthrough_CellSetPathAgreesWithPolygonPath(t *testing.T) {
 	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 10, 10))
 }
 
-// TestFirstReplyPassthrough_MalformedCellSetFallsBackToPolygonBlob: a decode
-// failure must fall back to the legacy max_polygon blob test, not fail closed -
-// same contract as iznik-batch's MaxReachServiceTest
-// test_a_malformed_cell_set_falls_back_to_the_polygon_blob_answer.
-func TestFirstReplyPassthrough_MalformedCellSetFallsBackToPolygonBlob(t *testing.T) {
+// TestFirstReplyPassthrough_MalformedCellSetFailsClosed: a decode failure has
+// nothing to fall back to, and admitting on unreadable bytes would be the
+// unsafe direction for a reply gate - same contract as iznik-batch's
+// MaxReachServiceTest test_a_malformed_cell_set_fails_closed.
+func TestFirstReplyPassthrough_MalformedCellSetFailsClosed(t *testing.T) {
 	ensureFirstReplyTables(t)
 	db := database.DBConn
 	if !db.Migrator().HasColumn("rippling_reach", "max_polygon_cells") {
@@ -106,12 +103,12 @@ func TestFirstReplyPassthrough_MalformedCellSetFallsBackToPolygonBlob(t *testing
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough bad cellset test", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
-	seedRipplingReach(t, msgID, true) // real max_polygon blob (tick 3) still intact underneath
+	seedRipplingReach(t, msgID, true)
 	res := db.Exec("UPDATE rippling_reach SET max_polygon_cells = ? WHERE msgid = ?", []byte("not a cellset"), msgID)
 	require.NoError(t, res.Error)
 
-	assert.True(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9),
-		"a decode failure must fall back to the legacy blob test, not fail closed to false")
+	assert.False(t, firstreply.ShouldPassThrough(db, msgID, 0.8, 51.9),
+		"a decode failure holds the reply - the conservative default this gate has always had")
 }
 
 // TestFirstReplyPassthrough_FirstReplyInsideEventualReach: the whole point of the
