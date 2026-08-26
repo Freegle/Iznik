@@ -12,7 +12,7 @@
       :left-label="showScaleLabels ? leftLabel : ''"
       :right-label="showScaleLabels ? rightLabel : ''"
       :aria-label="ariaLabel"
-      @change="onSliderChange"
+      @change="handleChange"
     />
     <NearbyTowns :minutes="sliderValue" :perspective="perspective" />
   </div>
@@ -51,6 +51,9 @@ const props = defineProps({
   // Whether this row carries the Nearer/Further labels for the scale. They describe the shared
   // axis rather than an individual slider, so when rows are stacked only the last one shows them.
   showScaleLabels: { type: Boolean, default: true },
+  // Awaited before this row persists its own change, so the owner can settle something that has to
+  // happen FIRST. Used for pinning - see DistanceSliders.
+  onBeforeChange: { type: Function, default: null },
   // Ask /town/near for the reach OUTLINE as well, for the browse map to shade.
   withPolygon: { type: Boolean, default: false },
   // Draw against the full ripple ceiling instead of this axis's own maximum, so two rows can be
@@ -68,6 +71,16 @@ const { sliderValue, maxMinutes, onSliderChange } = useReachDistance(
 )
 
 const axisMax = computed(() => (props.sharedAxis ? BROWSE_MINUTES_MAX : null))
+
+// The owner gets first refusal on a change, because pinning has to read the OTHER axis's value
+// before this one is written - once this row saves, a linked sibling has already followed it.
+async function handleChange(minutes) {
+  if (props.onBeforeChange) await props.onBeforeChange()
+  await onSliderChange(minutes)
+}
+
+// So the owner can pin this row where it currently sits (see DistanceSliders.pinOutbound).
+defineExpose({ sliderValue, onSliderChange })
 
 // Only the band-capped (inbound) axis can have a dead zone, and only when this member's area caps
 // them below the ripple ceiling. Explaining it on hover beats leaving a stretch of greyed track

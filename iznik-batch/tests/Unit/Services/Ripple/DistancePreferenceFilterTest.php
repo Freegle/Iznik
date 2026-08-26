@@ -281,8 +281,9 @@ class DistancePreferenceFilterTest extends TestCase
 
     public function test_outbound_null_reads_as_unset_and_falls_back(): void
     {
-        // Re-linking patches both outbound keys to null. apiv2's JSON_MERGE_PATCH then deletes
-        // them, but a leftover null must read as unset either way.
+        // Re-linking patches both outbound keys to null, and PATCH /session stores them AS JSON
+        // null (it replaces the blob wholesale). So this is the normal re-linked row, not an edge
+        // case, and it must read as unset.
         $user = $this->userWithSettings([
             'browseMaxDistance' => 10.0,
             'myPostsMaxDistance' => null,

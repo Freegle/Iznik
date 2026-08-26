@@ -23,11 +23,13 @@
       :with-polygon="withPolygon"
       :shared-axis="split"
       :show-scale-labels="!split"
+      :on-before-change="split ? pinOutbound : null"
       @persisted="(miles) => emit('persisted', miles)"
     />
 
     <DistanceSliderRow
       v-if="split"
+      ref="outboundRow"
       :id="idPrefix + 'Outbound'"
       axis="myPosts"
       label="Who sees my posts"
@@ -86,10 +88,11 @@ import { DISTANCE_AXES } from '~/constants'
 // browseReachMaxDistance), so their real outbound reach is already unlimited while their inbound is
 // their band radius.
 //
-// Splitting WRITES NOTHING. It only reveals the second slider; the outbound keys appear when, and
-// only when, the member drags it. That is what makes "no change unless you move that slider" literal
-// rather than approximate, and it means a member who splits, looks, and thinks better of it has
-// changed nothing.
+// Splitting WRITES NOTHING. It only reveals the second slider, so a member who splits, looks and
+// thinks better of it has changed nothing - which is what makes "no change unless you move that
+// slider" literal rather than approximate. The outbound keys appear on the first DRAG in split mode,
+// whichever slider is dragged: dragging the outbound one obviously writes it, and dragging the
+// inbound one pins it (see pinOutbound, and why it has to).
 const props = defineProps({
   // Ask /town/near for the reach outline too, for the browse map to shade. Browse only.
   withPolygon: { type: Boolean, default: false },
@@ -104,9 +107,33 @@ const emit = defineEmits(['persisted'])
 const { me } = useMe()
 const authStore = useAuthStore()
 
+const outboundRow = ref(null)
+
+// While the outbound axis is unset it FOLLOWS the inbound one - which is the truth (that is what
+// linked means), but after asking for the two to be set separately, watching the second slider move
+// when you drag the first reads as the control being broken.
+//
+// So the first drag of the inbound slider while split pins the outbound where it currently sits,
+// giving it a value of its own. This is still "no write unless the member changes something": it
+// takes a deliberate drag, in split mode, and revealing the second slider on its own persists
+// nothing. Pinning must happen BEFORE the inbound save, or the value we read has already followed.
+// A no-op once the outbound holds its own choice.
+async function pinOutbound() {
+  const settings = me.value?.settings
+  if (
+    !settings ||
+    typeof settings[DISTANCE_AXES.myPosts.minutesKey] === 'number'
+  ) {
+    return
+  }
+  const row = outboundRow.value
+  if (!row) return
+  await row.onSliderChange(row.sliderValue)
+}
+
 // Split when the member holds an outbound choice of their own, or has just asked to set one. The
-// local flag is what lets splitting be free: it survives until they either drag the outbound slider
-// (which persists a key, so the split then survives a reload) or link them again.
+// local flag is what lets splitting be free: it survives until they either drag a slider (which
+// persists the outbound key, so the split then survives a reload) or link them again.
 const splitLocal = ref(false)
 const split = computed({
   get: () =>
@@ -118,9 +145,15 @@ const split = computed({
 })
 
 // Give up the separate outbound choice: forget both outbound keys so the readers fall back to
-// browseMaxDistance again. Sending null rather than deleting the properties is deliberate - apiv2
-// saves settings with JSON_MERGE_PATCH, which deletes a key patched to null, so nothing is left
-// behind.
+// browseMaxDistance again.
+//
+// Sending null rather than `delete`ing the properties is deliberate, and it is the choice that
+// survives either write semantics. PATCH /session (what saveAndGet uses) replaces the settings blob
+// wholesale, so these persist as JSON null - which every outbound reader already treats as unset.
+// Were that endpoint ever to become JSON_MERGE_PATCH, as PatchUser is, null would delete the keys
+// instead: also correct. `delete` is the one that is only safe under wholesale replace - under a
+// merge patch an absent key leaves the OLD value in place, which is exactly how the ModMember
+// settings bug worked (see ModMember.vue).
 async function relink() {
   const settings = me.value?.settings
   if (settings) {

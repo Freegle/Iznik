@@ -104,10 +104,12 @@ class DistancePreferenceFilter
      * to the ceiling at all.
      *
      * Absent, null, non-numeric or <= 0 all mean "this key holds no choice" and fall through to
-     * the next one; the sentinel means an explicit "no limit" and stops there. Note the null case
-     * is reachable: re-linking the two axes patches the outbound keys to null, and although
-     * apiv2's JSON_MERGE_PATCH then deletes them, is_numeric(null) is false so a leftover null
-     * reads as unset either way.
+     * the next one; the sentinel means an explicit "no limit" and stops there.
+     *
+     * The null case is not hypothetical, it is the normal result of re-linking the two axes:
+     * PATCH /session replaces the settings blob wholesale, so the nulls the client sends are
+     * stored AS JSON null rather than removing the keys (verified on a live row). is_numeric(null)
+     * is false, so they read as unset - but that is load-bearing, not incidental.
      *
      * Non-positive falling THROUGH is a deliberate difference from the inbound maxDistanceMiles
      * above, which collapses it to unlimited. The two have different fallbacks and so want

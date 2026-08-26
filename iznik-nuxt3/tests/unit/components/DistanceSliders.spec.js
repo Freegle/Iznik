@@ -141,6 +141,63 @@ describe('DistanceSliders', () => {
     expect(saved.browseMaxDistance).toBe(12)
   })
 
+  // While the outbound axis is unset it follows the inbound one, because that IS what linked
+  // means. But after asking for the two to be set separately, seeing the second slider move when
+  // you drag the first reads as the control being broken - so the first drag in split mode pins
+  // the outbound where it sat.
+  it('pins the outbound value when the inbound slider is dragged while split', async () => {
+    const wrapper = mountWith({ browseMaxMinutes: 20, browseMaxDistance: 12 })
+    await flushPromises()
+    await buttonWithText(wrapper, 'Set separately').trigger('click')
+    await flushPromises()
+    saveAndGet.mockClear()
+
+    await sliders(wrapper)[0].vm.$emit('change', 10)
+    await flushPromises()
+
+    // Two saves, in this order: the outbound pinned at the value it was showing (20 - what it
+    // inherited while linked), then the inbound's own new value. Pinning must come FIRST, or it
+    // would read 10 - the value it had already followed to - and the pin would be a no-op.
+    expect(saveAndGet).toHaveBeenCalledTimes(2)
+    expect(saveAndGet.mock.calls[0][0].settings.myPostsMaxMinutes).toBe(20)
+    expect(saveAndGet.mock.calls[1][0].settings.browseMaxMinutes).toBe(10)
+  })
+
+  it('does not re-pin once the outbound holds its own choice', async () => {
+    const wrapper = mountWith({
+      browseMaxMinutes: 20,
+      browseMaxDistance: 12,
+      myPostsMaxMinutes: 35,
+      myPostsMaxDistance: 21,
+    })
+    await flushPromises()
+    saveAndGet.mockClear()
+
+    await sliders(wrapper)[0].vm.$emit('change', 10)
+    await flushPromises()
+
+    // Just the inbound save - the outbound already has a value of its own to keep.
+    expect(saveAndGet).toHaveBeenCalledTimes(1)
+    expect(saveAndGet.mock.calls[0][0].settings.browseMaxMinutes).toBe(10)
+    expect(saveAndGet.mock.calls[0][0].settings.myPostsMaxMinutes).toBe(35)
+  })
+
+  it('does not pin while the two are still linked', async () => {
+    // One slider on screen: there is no second value to pin, and writing one would split the
+    // member's axes apart without them asking.
+    const wrapper = mountWith({ browseMaxMinutes: 20, browseMaxDistance: 12 })
+    await flushPromises()
+    saveAndGet.mockClear()
+
+    await sliders(wrapper)[0].vm.$emit('change', 10)
+    await flushPromises()
+
+    expect(saveAndGet).toHaveBeenCalledTimes(1)
+    expect(
+      saveAndGet.mock.calls[0][0].settings.myPostsMaxMinutes
+    ).toBeUndefined()
+  })
+
   it('starts split when the member already holds an outbound choice', async () => {
     const wrapper = mountWith({
       browseMaxMinutes: 20,
@@ -168,8 +225,10 @@ describe('DistanceSliders', () => {
     await flushPromises()
 
     const saved = saveAndGet.mock.calls[0][0].settings
-    // null rather than absent: apiv2 saves settings with JSON_MERGE_PATCH, which deletes a key
-    // patched to null. Omitting the properties would leave the old values in place.
+    // null rather than absent. PATCH /session replaces the settings blob wholesale, so these are
+    // stored as JSON null, which every outbound reader treats as unset. Omitting the properties
+    // would be the fragile choice: under a merge patch (as PatchUser uses) an absent key leaves
+    // the OLD value in place.
     expect(saved.myPostsMaxMinutes).toBeNull()
     expect(saved.myPostsMaxDistance).toBeNull()
     expect(saved.browseMaxDistance).toBe(12)

@@ -24,12 +24,12 @@ package utils
 // reachable in production:
 //
 //	absent            JSON_EXTRACT gives SQL NULL -> CAST NULL -> GREATEST NULL -> NULLIF NULL.
-//	JSON null         a key patched to null. NOTE JSON_EXTRACT(...) IS NULL is FALSE for this, and
-//	                  JSON_UNQUOTE turns it into the *string* 'null', which CASTs to 0 - so it is the
-//	                  NULLIF(...,0) that catches it, never an IS NULL test. (apiv2 saves settings
-//	                  with JSON_MERGE_PATCH, which deletes a key patched to null, so this should be
-//	                  transient - but a value that only reads correctly by accident is not a
-//	                  contract.)
+//	JSON null         the normal result of re-linking the two axes, NOT a transient state: PATCH
+//	                  /session replaces the settings blob wholesale, so the nulls the client sends
+//	                  are stored as JSON null rather than removing the keys (verified on a live
+//	                  row). NOTE JSON_EXTRACT(...) IS NULL is FALSE for this, and JSON_UNQUOTE turns
+//	                  it into the *string* 'null', which CASTs to 0 - so it is the NULLIF(...,0)
+//	                  that catches it, never an IS NULL test.
 //	<= 0              a nonsense cap. GREATEST(...,0) folds negatives onto 0, NULLIF then drops it.
 //	the sentinel      9007199254740991, meaning "no limit". Handled by the caller's own arm below.
 //

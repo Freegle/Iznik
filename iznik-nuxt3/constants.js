@@ -109,10 +109,12 @@ export const BROWSE_MINUTES_STEP = 5
 //                      this axis at the member's own band would misreport a city member's real
 //                      reach as ~20 minutes when their posts already travel 45.
 //
-// The outbound keys are ABSENT until the member drags the outbound slider. Absent (and JSON null,
-// and <= 0) all mean "linked": every outbound reader falls back to browseMaxDistance, which is
-// exactly the behaviour before the split. Re-linking sends the keys as null, which apiv2's
-// JSON_MERGE_PATCH deletes.
+// The outbound keys are ABSENT until the member drags the outbound slider. Absent, JSON null and
+// <= 0 all mean "linked": every outbound reader falls back to browseMaxDistance, which is exactly
+// the behaviour before the split. Re-linking sends the keys as null, and they persist AS JSON null
+// (PATCH /session replaces the settings blob wholesale - JSON_MERGE_PATCH, which would delete
+// them, is the other endpoint), so "null means unset" is a contract the readers must honour rather
+// than a transient state. See DistanceSliders for why null and not delete.
 export const DISTANCE_AXES = {
   browse: {
     minutesKey: 'browseMaxMinutes',

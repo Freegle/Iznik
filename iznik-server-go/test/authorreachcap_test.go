@@ -58,7 +58,14 @@ func TestAuthorReachCapResolution(t *testing.T) {
 
 		// The four spellings of "outbound not set", all of which must fall back to the browse
 		// choice rather than being read as a cap or as no-limit.
+		//
+		// The JSON-null row is the NORMAL result of re-linking the two axes, not a curiosity:
+		// PATCH /session replaces the settings blob wholesale, so the nulls the client sends are
+		// stored as JSON null (confirmed on a live row after using "Link them again"). Both
+		// outbound keys are nulled together, which is the shape asserted last.
 		{"outbound JSON null falls back", `{"browseMaxDistance":2,"myPostsMaxDistance":null}`, false},
+		{"relinked row (both outbound keys null)", `{"browseMaxDistance":2,"myPostsMaxMinutes":null,"myPostsMaxDistance":null}`, false},
+		{"relinked row, browse cap allows", `{"browseMaxDistance":10,"myPostsMaxMinutes":null,"myPostsMaxDistance":null}`, true},
 		{"outbound zero falls back", `{"browseMaxDistance":2,"myPostsMaxDistance":0}`, false},
 		{"outbound negative falls back", `{"browseMaxDistance":2,"myPostsMaxDistance":-5}`, false},
 

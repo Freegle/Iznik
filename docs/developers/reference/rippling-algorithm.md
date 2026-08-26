@@ -717,8 +717,10 @@ rows, its latest row states its outcome.
   `myPostsMaxDistance`, and **their absence is what "linked" means** - every outbound reader
   falls back to `browseMaxDistance`, which is the pre-split behaviour exactly. Merely revealing
   the second slider writes nothing; only dragging it does, so a member who never touches it is
-  unaffected. "Link them again" patches both keys to `null`, which apiv2's `JSON_MERGE_PATCH`
-  deletes.
+  unaffected. "Link them again" patches both keys to `null`, and they are **stored as JSON null**:
+  `PATCH /session` replaces the settings blob wholesale (`JSON_MERGE_PATCH`, which would delete
+  them, is `PatchUser`). So "JSON null means unset" is a contract every outbound reader honours,
+  not a transient state.
 
   | Key | Set by | Inbound | Outbound |
   |---|---|---|---|
