@@ -2556,6 +2556,11 @@ class IncomingMailService
 
     /**
      * Handle group posts.
+     *
+     * MIRRORED BY HAND in GroupPostIngestionService (the TN API ingestion
+     * path). If you change anything here, decide whether the change applies
+     * there too — EmailPathMirrorDriftTest fails on any edit to this method
+     * precisely so that decision gets made rather than skipped.
      */
     private function handleGroupPost(ParsedEmail $email): RoutingResult
     {
@@ -2846,6 +2851,9 @@ class IncomingMailService
      *
      * This stores the message in the database with appropriate collection status.
      * For spam messages, sets spamtype/spamreason and collection=Pending for moderator review.
+     *
+     * MIRRORED BY HAND in GroupPostIngestionService::createMessage() (the TN API
+     * ingestion path) — see the note on handleGroupPost() above.
      *
      * @param  ParsedEmail  $email  The parsed email
      * @param  User  $user  The sender user

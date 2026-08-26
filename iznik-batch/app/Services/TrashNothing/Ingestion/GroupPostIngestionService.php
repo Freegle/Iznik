@@ -25,6 +25,12 @@ use Illuminate\Support\Facades\Log;
  * The email path (IncomingMailService) is never touched. Logic here is
  * duplicated — not extracted — until parity is proven.
  *
+ * Because the two are tied together only by hand, a fix made to one and not
+ * the other is invisible. Tests\Unit\Services\TrashNothing\EmailPathMirrorDriftTest
+ * pins a digest of both mirrored email-path methods and fails the moment
+ * either changes, so the mirror is at least LOOKED at on every such edit.
+ * tn:parity-check remains the thorough check of whether it is right.
+ *
  * With $dryRun = true, no DB writes occur. Every would-be write emits a
  * TN-SYNC-TRACE [WRITE] log line for diffing against the email path.
  */
