@@ -468,16 +468,21 @@ class GroupPostIngestionService
 
             $fromName = $user->fullname ?? $user->firstname ?? null;
 
+            // TN's own post date, however it arrived. The OpenAPI client hands
+            // us a DateTime; an array-shaped post (fixtures, --local-testing,
+            // the backfill path) carries the same value as an ISO-8601 string,
+            // and taking now() for those silently rewrote every such post's
+            // date to ingestion time.
+            $postedAt = $this->normalizePostDate($date);
+
             // Synthesize minimal RFC822 message blob so downstream code that
             // re-parses messages.message still recovers the key fields.
-            $dateStr = $date instanceof \DateTime
-                ? $date->format('D, d M Y H:i:s +0000')
-                : now()->format('D, d M Y H:i:s +0000');
+            $dateStr = ($postedAt ?? now())->format('D, d M Y H:i:s +0000');
             $groupEmail = $group->nameshort . '@' . config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
             $rfc822 = $this->synthesizeRfc822($fromName, $groupEmail, $subject, $dateStr, $messageid, $postId, $lat, $lng, $content);
 
             $msgData = [
-                'date'            => $date instanceof \DateTime ? $date->format('Y-m-d H:i:s') : now(),
+                'date'            => $postedAt !== null ? $postedAt->format('Y-m-d H:i:s') : now(),
                 'source'          => Message::SOURCE_EMAIL,
                 'sourceheader'    => self::SOURCEHEADER,
                 'message'         => $rfc822,
@@ -1004,6 +1009,31 @@ class GroupPostIngestionService
      * @param  string  $arrayKey  Key name for array (fixture) access
      * @param  string  $method    Getter method name for object access
      */
+    /**
+     * TN's post date as a DateTimeInterface, or null when there isn't a usable one.
+     *
+     * The API client returns a DateTime, but the same post reaches us as a plain
+     * array with an ISO-8601 string from fixtures, --local-testing and anything
+     * that rebuilt the post from JSON. Both must keep TN's date; only a missing
+     * or unparseable value falls back to now().
+     */
+    private function normalizePostDate(mixed $date): ?\DateTimeInterface
+    {
+        if ($date instanceof \DateTimeInterface) {
+            return $date;
+        }
+
+        if (is_string($date) && trim($date) !== '') {
+            try {
+                return new \DateTimeImmutable($date);
+            } catch (\Exception $e) {
+                Log::warning('TN post ingestion: unparseable post date, using now()', ['date' => $date]);
+            }
+        }
+
+        return null;
+    }
+
     private function getField(mixed $post, string $arrayKey, string $method): mixed
     {
         if (is_array($post)) {

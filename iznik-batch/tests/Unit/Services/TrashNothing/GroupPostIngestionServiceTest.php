@@ -127,6 +127,63 @@ class GroupPostIngestionServiceTest extends TestCase
         $this->assertSame(1, Message::where('tnpostid', $postId)->count(), 'Message row must be created');
     }
 
+    public function test_preserves_the_tn_post_date_from_an_iso_string(): void
+    {
+        // Array-shaped posts (fixtures, --local-testing, anything rebuilt from
+        // JSON) carry the date as an ISO-8601 string rather than a DateTime.
+        // It must still land in messages.date, not be replaced by now().
+        $group  = $this->createTestGroup();
+        $user   = $this->createTestUser();
+        $postId = 'tn-date-string-' . uniqid();
+        $post   = $this->makePost([
+            'post_id' => $postId,
+            'user_id' => $user->id,
+            'date'    => '2026-07-07T12:00:00Z',
+        ]);
+
+        $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message, 'Message row must be created');
+        $this->assertSame('2026-07-07 12:00:00', (string) $message->date);
+    }
+
+    public function test_preserves_the_tn_post_date_from_a_datetime(): void
+    {
+        $group  = $this->createTestGroup();
+        $user   = $this->createTestUser();
+        $postId = 'tn-date-object-' . uniqid();
+        $post   = $this->makePost([
+            'post_id' => $postId,
+            'user_id' => $user->id,
+            'date'    => new \DateTime('2026-07-07T12:00:00Z'),
+        ]);
+
+        $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message, 'Message row must be created');
+        $this->assertSame('2026-07-07 12:00:00', (string) $message->date);
+    }
+
+    public function test_falls_back_to_now_when_the_post_date_is_unusable(): void
+    {
+        $group  = $this->createTestGroup();
+        $user   = $this->createTestUser();
+        $postId = 'tn-date-bad-' . uniqid();
+        $post   = $this->makePost([
+            'post_id' => $postId,
+            'user_id' => $user->id,
+            'date'    => 'not a date',
+        ]);
+
+        $this->makeService(dryRun: false)->ingest($post, $group);
+
+        $message = Message::where('tnpostid', $postId)->first();
+        $this->assertNotNull($message, 'An unparseable date must not lose the post');
+        $this->assertEqualsWithDelta(now()->timestamp, strtotime((string) $message->date), 60);
+    }
+
     public function test_stub_user_creation_is_idempotent_on_second_ingest(): void
     {
         // If the same post arrives again (overlap window), the second call must detect
