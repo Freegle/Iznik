@@ -2,6 +2,7 @@ package test
 
 import (
 	"bytes"
+	"encoding/base64"
 	json2 "encoding/json"
 	"fmt"
 	"net/http"
@@ -31,14 +32,13 @@ func ringSchemaExec(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 	for _, alter := range []string{
 		"ALTER TABLE rippling_reach ADD COLUMN outer_bound GEOMETRY NULL",
 		"ALTER TABLE rippling_reach ADD COLUMN inner_bound GEOMETRY NULL",
-		"ALTER TABLE rippling_reach ADD COLUMN overflow_bounds JSON NULL",
+		"ALTER TABLE rippling_reach ADD COLUMN overflow_cells JSON NULL",
 		"ALTER TABLE rippling_reach ADD COLUMN schedule LONGTEXT NULL",
 		"ALTER TABLE rippling_reach ADD COLUMN arrival TIMESTAMP NULL",
 	} {
@@ -46,16 +46,18 @@ func ringSchemaExec(t *testing.T) {
 	}
 }
 
-// farReach inserts a reach row whose polygon is far from (51.5, -0.1) - the viewer in
+// farReach inserts a reach row whose reach is far from (51.5, -0.1) - the viewer in
 // all three tests - with a rural sparse ring (and bbox) that DOES cover them.
+// Rasterises BEFORE any stub repoints the spatial URL.
 func farReachWithSparseRing(t *testing.T, msgID uint64) {
 	db := database.DBConn
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, overflow_bounds) VALUES (?, 53.0, 2.0, "+
-		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), "+
+	reachCells := mustRasterize(t, "POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))")
+	ringCells := base64.StdEncoding.EncodeToString(mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, overflow_cells) VALUES (?, 53.0, 2.0, ?, "+
 		"ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding', "+
 		"JSON_OBJECT('bbox', JSON_ARRAY(-0.3, 51.3, 2.2, 53.2), "+
-		"'rural', JSON_OBJECT('sparse', 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))'))) "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), overflow_bounds = VALUES(overflow_bounds)", msgID)
+		"'rural', JSON_OBJECT('sparse', ?))) "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells), overflow_cells = VALUES(overflow_cells)", msgID, reachCells, ringCells)
 }
 
 // stubRingIndex points the spatial client at a server answering the ring
@@ -204,12 +206,13 @@ func TestReachBlocked_ClusterRingNeverRescuesTheMailer(t *testing.T) {
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	// Far reach, plus a cluster wedge that DOES cover (51.5, -0.1).
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, overflow_bounds) VALUES (?, 53.0, 2.0, "+
-		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), "+
+	wedgeCells := base64.StdEncoding.EncodeToString(mustRasterize(t, "POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))"))
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, overflow_cells) VALUES (?, 53.0, 2.0, ?, "+
 		"ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding', "+
 		"JSON_OBJECT('bbox', JSON_ARRAY(-0.3, 51.3, 2.2, 53.2), "+
-		"'cluster', JSON_OBJECT('w1', 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))'))) "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), overflow_bounds = VALUES(overflow_bounds)", msgID)
+		"'cluster', JSON_OBJECT('w1', ?))) "+
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells), overflow_cells = VALUES(overflow_cells)", msgID,
+		mustRasterize(t, "POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))"), wedgeCells)
 
 	stubRingIndex(t, "$.cluster.w1", msgID)
 
@@ -302,10 +305,10 @@ func TestReachBlocked_FrozenReachStillBlocksThoseOutsideIt(t *testing.T) {
 	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
 
 	// A live reach far from the viewer: they are genuinely not reached yet.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 53.0, 2.0, "+
-		"ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857), "+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 53.0, 2.0, ?, "+
 		"ST_Envelope(ST_GeomFromText('POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))', 3857)), 'expanding') "+
-		"ON DUPLICATE KEY UPDATE polygon = VALUES(polygon), status = VALUES(status)", msgID)
+		"ON DUPLICATE KEY UPDATE polygon_cells = VALUES(polygon_cells), status = VALUES(status)", msgID,
+		mustRasterize(t, "POLYGON((2.0 53.0, 2.1 53.0, 2.1 53.1, 2.0 53.1, 2.0 53.0))"))
 
 	blocked := message.ReachBlockedSet(viewerID, []uint64{msgID}, 51.5, -0.1)
 	assert.True(t, blocked[msgID], "a live reach that has not arrived yet blocks")

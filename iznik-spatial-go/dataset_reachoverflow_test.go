@@ -8,26 +8,27 @@ import (
 	"spatial-server/cellset"
 )
 
-// ringRow makes one reach row's lane slots, filling the named lanes with WKT
-// and leaving every lane's cell set absent (the pre-conversion state, which the
-// WKT fallback must keep serving).
-func ringRow(msgid int64, rings map[string]string) overflowRowScan {
+// ringRow makes one reach row's lane slots, rasterising the named lanes' WKT
+// into the base64 cell sets overflow_cells stores.
+func ringRow(t *testing.T, msgid int64, rings map[string]string) overflowRowScan {
+	t.Helper()
 	lanes := overflowLaneOrder()
 	r := newOverflowRowScan(len(lanes))
 	r.msgid = msgid
 	for i, lane := range lanes {
 		if wkt, ok := rings[lane]; ok {
-			r.rings[i] = sql.NullString{String: wkt, Valid: true}
+			r.cells[i] = sql.NullString{String: ringCellsB64(t, wkt), Valid: true}
 		}
 	}
 	return r
 }
 
-// ringRowWithCells is ringRow plus base64 cell sets for the named lanes - the
-// converted state, in which no ring WKT should be parsed at all.
-func ringRowWithCells(msgid int64, rings map[string]string, cells map[string]string) overflowRowScan {
-	r := ringRow(msgid, rings)
-	for i, lane := range overflowLaneOrder() {
+// rawRingRow fills the named lanes' cell slots verbatim, for malformed-bytes cases.
+func rawRingRow(msgid int64, cells map[string]string) overflowRowScan {
+	lanes := overflowLaneOrder()
+	r := newOverflowRowScan(len(lanes))
+	r.msgid = msgid
+	for i, lane := range lanes {
 		if b64, ok := cells[lane]; ok {
 			r.cells[i] = sql.NullString{String: b64, Valid: true}
 		}
@@ -86,28 +87,20 @@ func TestOverflowSelect_BindsLanesInOrder(t *testing.T) {
 	cols, args := overflowSelect()
 	lanes := overflowLaneOrder()
 
-	// Every lane is asked for twice - cells first, then WKT - and the scan
-	// pairs column i with lane i within each block, so the binds must run
-	// through the lane order twice in the same order.
-	if len(args) != 2*len(lanes) {
-		t.Fatalf("select binds %d paths, want %d (cells + WKT per lane)", len(args), 2*len(lanes))
+	// The scan pairs column i with lane i positionally, so the binds must run
+	// through the lane order in order.
+	if len(args) != len(lanes) {
+		t.Fatalf("select binds %d paths, want %d", len(args), len(lanes))
 	}
 	for i, lane := range lanes {
 		if args[i] != lane {
 			t.Errorf("cells bind %d = %v, want %q", i, args[i], lane)
 		}
-		if args[len(lanes)+i] != lane {
-			t.Errorf("wkt bind %d = %v, want %q", i, args[len(lanes)+i], lane)
-		}
 	}
-	// One extraction per lane per form, and the ring comes back as text to be
-	// parsed here rather than as geometry parsed by MySQL - the DB doing that
-	// work is what this dataset exists to stop.
+	// One extraction per lane, as text to be decoded here rather than parsed
+	// by MySQL - the DB doing that work is what this dataset exists to stop.
 	if got := countSubstr(cols, "JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?))"); got != len(lanes) {
 		t.Errorf("select has %d cell extractions, want %d: %s", got, len(lanes), cols)
-	}
-	if got := countSubstr(cols, "JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?))"); got != len(lanes) {
-		t.Errorf("select has %d lane extractions, want %d: %s", got, len(lanes), cols)
 	}
 }
 
@@ -137,9 +130,9 @@ func TestEncodeOverflowExtID_ShiftsBackToTheMsgid(t *testing.T) {
 // A post carrying two lanes becomes two items, each stamped with its own lane,
 // and the lanes it does not carry produce nothing.
 func TestBuildOverflowItems_OneItemPerLaneCarried(t *testing.T) {
-	items := buildOverflowItems(ringRow(1001, map[string]string{
-		"$.rural.sparse": "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))",
-		"$.cluster.w1":   "POLYGON((20 20, 30 20, 30 30, 20 30, 20 20))",
+	items := buildOverflowItems(ringRow(t, 1001, map[string]string{
+		"$.rural.sparse": "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))",
+		"$.cluster.w1":   "POLYGON((0.02 0.02, 0.03 0.02, 0.03 0.03, 0.02 0.03, 0.02 0.02))",
 	}), overflowLaneOrder())
 
 	if len(items) != 2 {
@@ -158,28 +151,29 @@ func TestBuildOverflowItems_OneItemPerLaneCarried(t *testing.T) {
 	if want := int64(1001)<<overflowLaneShift | 3; sparse.ExtID != want {
 		t.Errorf("sparse item id = %d, want %d (msgid stamped with lane 3)", sparse.ExtID, want)
 	}
-	if sparse.MinLng != 0 || sparse.MaxLng != 10 {
-		t.Errorf("sparse envelope = [%v,%v], want the ring's own bounds", sparse.MinLng, sparse.MaxLng)
+	if sparse.MinLng > 0.001 || sparse.MinLng < -0.001 || sparse.MaxLng < 0.009 || sparse.MaxLng > 0.011 {
+		t.Errorf("sparse envelope = [%v,%v], want the ring's own bounds (within a lattice cell)", sparse.MinLng, sparse.MaxLng)
 	}
-	if wedge := byLane["$.cluster.w1"]; wedge.MinLng != 20 {
+	if wedge := byLane["$.cluster.w1"]; wedge.MinLng < 0.019 || wedge.MinLng > 0.021 {
 		t.Errorf("wedge envelope = %v, want its own bounds, not the other lane's", wedge.MinLng)
 	}
 }
 
-// A ring that will not parse costs that lane its posts - the read surfaces fall
-// back to the committed reach - and must never take the row's other lanes with
-// it, nor be admitted on a guess.
-func TestBuildOverflowItems_SkipsUnparseableRings(t *testing.T) {
-	items := buildOverflowItems(ringRow(1002, map[string]string{
-		"$.rural.sparse": "NOT WKT AT ALL",
-		"$.rural.medium": "POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))",
+// A lane whose bytes will not decode costs that lane its posts - the read
+// surfaces fall back to the committed reach - and must never take the row's
+// other lanes with it, nor be admitted on a guess.
+func TestBuildOverflowItems_SkipsUndecodableLanes(t *testing.T) {
+	good := ringCellsB64(t, "POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))")
+	items := buildOverflowItems(rawRingRow(1002, map[string]string{
+		"$.rural.sparse": "!!!not base64 at all!!!",
+		"$.rural.medium": good,
 	}), overflowLaneOrder())
 
 	if len(items) != 1 {
 		t.Fatalf("expected the good lane only, got %d items", len(items))
 	}
 	if lane, _ := items[0].Extra["lane"].(string); lane != "$.rural.medium" {
-		t.Errorf("survivor is %q, want the medium ring", lane)
+		t.Errorf("survivor is %q, want the medium lane", lane)
 	}
 }
 
@@ -194,14 +188,12 @@ func ringCellsB64(t *testing.T, wkt string) string {
 	return base64.StdEncoding.EncodeToString(cs.Encode())
 }
 
-// A lane whose cells are stored classifies from the CELLS, never the WKT: the
-// WKT slot is deliberately filled with nonsense that would fail to parse, so
-// this only passes if the ring geometry was not consulted at all.
-func TestBuildOverflowItems_PrefersCellsOverRingWKT(t *testing.T) {
+// A lane classifies from its cells: interior points are definite, far points
+// are definite outs.
+func TestBuildOverflowItems_ClassifiesFromCells(t *testing.T) {
 	const wkt = "POLYGON((0 0, 0.003 0, 0.003 0.003, 0 0.003, 0 0))"
 
-	items := buildOverflowItems(ringRowWithCells(1003,
-		map[string]string{"$.rural.sparse": "NOT WKT AT ALL"},
+	items := buildOverflowItems(rawRingRow(1003,
 		map[string]string{"$.rural.sparse": ringCellsB64(t, wkt)},
 	), overflowLaneOrder())
 
@@ -220,61 +212,6 @@ func TestBuildOverflowItems_PrefersCellsOverRingWKT(t *testing.T) {
 	}
 }
 
-// Malformed cells must not darken a lane that still has its ring: the WKT is
-// still the authority, so a bad blob falls back rather than losing the lane.
-func TestBuildOverflowItems_FallsBackToWKTWhenCellsAreMalformed(t *testing.T) {
-	items := buildOverflowItems(ringRowWithCells(1004,
-		map[string]string{"$.rural.sparse": "POLYGON((0 0, 4 0, 4 4, 0 4, 0 0))"},
-		map[string]string{"$.rural.sparse": "!!!not base64 at all!!!"},
-	), overflowLaneOrder())
-
-	if len(items) != 1 {
-		t.Fatalf("expected the ring WKT to carry the lane, got %d items", len(items))
-	}
-	if items[0].MinLng != 0 || items[0].MaxLng != 4 {
-		t.Errorf("envelope = [%v,%v], want the ring's own bounds", items[0].MinLng, items[0].MaxLng)
-	}
-}
-
-// The two forms must agree about who is admitted, since a partly-converted
-// table serves some lanes from cells and others from WKT at the same time. The
-// cells' bounds are lattice-aligned so the envelopes differ by under a cell;
-// what must match is the classification of real points.
-func TestBuildOverflowItems_CellsAndWKTAgreeOnAdmission(t *testing.T) {
-	const wkt = "POLYGON((0 0, 0.03 0, 0.03 0.03, 0 0.03, 0 0))"
-
-	fromWKT := buildOverflowItems(ringRow(1005,
-		map[string]string{"$.rural.sparse": wkt}), overflowLaneOrder())
-	fromCells := buildOverflowItems(ringRowWithCells(1006,
-		map[string]string{"$.rural.sparse": wkt},
-		map[string]string{"$.rural.sparse": ringCellsB64(t, wkt)}), overflowLaneOrder())
-
-	if len(fromWKT) != 1 || len(fromCells) != 1 {
-		t.Fatalf("expected one item each, got %d and %d", len(fromWKT), len(fromCells))
-	}
-	rWKT, err := DeserializeRaster(fromWKT[0].WKB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rCells, err := DeserializeRaster(fromCells[0].WKB)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Well clear of the boundary band on both sides, where the two forms must
-	// not merely be close but identical - these are the points that decide
-	// whether a member is admitted.
-	for _, p := range [][2]float64{
-		{0.015, 0.015}, {0.005, 0.005}, {0.025, 0.025}, // inside
-		{-1, -1}, {5, 5}, {0.015, 1}, // outside
-	} {
-		a, b := rWKT.Classify(p[0], p[1]), rCells.Classify(p[0], p[1])
-		if a != b {
-			t.Errorf("point (%v,%v): WKT says %d, cells say %d", p[0], p[1], a, b)
-		}
-	}
-}
-
 // Containment end-to-end at the index level: a point inside one post's sparse
 // ring is definite, a point in nobody's ring is nothing, and a point on the
 // edge is partial so the caller exact-tests it rather than guessing.
@@ -285,11 +222,11 @@ func TestReachOverflowContaining(t *testing.T) {
 	}
 	defer idx.Close()
 
-	items := buildOverflowItems(ringRow(1001, map[string]string{
-		"$.rural.sparse": "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))",
+	items := buildOverflowItems(ringRow(t, 1001, map[string]string{
+		"$.rural.sparse": "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))",
 	}), overflowLaneOrder())
-	items = append(items, buildOverflowItems(ringRow(1002, map[string]string{
-		"$.rural.dense": "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))",
+	items = append(items, buildOverflowItems(ringRow(t, 1002, map[string]string{
+		"$.rural.dense": "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))",
 	}), overflowLaneOrder())...)
 	if err := InsertItems(idx, items, nil); err != nil {
 		t.Fatal(err)
@@ -297,7 +234,7 @@ func TestReachOverflowContaining(t *testing.T) {
 
 	d := &ReachOverflowDataset{}
 
-	in, partial, err := d.Containing(idx, 5, 5)
+	in, partial, err := d.Containing(idx, 0.005, 0.005)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,13 +261,15 @@ func TestReachOverflowContaining(t *testing.T) {
 		t.Fatalf("nothing covers (50,50): in=%v partial=%v", in, partial)
 	}
 
-	// On the edge: reported, and reported as uncertain rather than lost.
-	in, partial, err = d.Containing(idx, 9.999, 5)
+	// Near the edge but within the covered lattice: still reported. (The
+	// coarse ring raster keeps its boundary band, so this may come back as
+	// partial rather than definite - either way it must not be lost.)
+	in, partial, err = d.Containing(idx, 0.0095, 0.005)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(in)+len(partial) == 0 {
-		t.Fatal("a point on the ring's edge must still be reported, for the exact test to decide")
+		t.Fatal("a near-edge point inside the ring must still be reported")
 	}
 }
 
