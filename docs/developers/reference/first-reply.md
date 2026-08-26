@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-24
+last_reviewed: 2026-08-26
 covers:
   - iznik-batch/app/Services/FirstReply/**
   - iznik-batch/app/Console/Commands/FirstReply/**
@@ -93,7 +93,7 @@ eventually have.
 
 `rippling_reach.polygon` is the reach a post has now. The routing server returns the whole
 tick schedule at t=0, so the widest tick - what the reach becomes - is knowable immediately;
-nothing stored it. `rippling_reach.max_polygon` now does, populated by a background pass
+nothing stored it. `rippling_reach.max_polygon_cells` now does, populated by a background pass
 (`firstreply:maxreach`) rather than derived on demand, because some schedule entries carry no
 inline geometry and have to be re-fetched from the routing server. A point-in-polygon test on
 somebody's reply is not the place to discover that.
@@ -104,7 +104,7 @@ newest first, `LIMIT 200`, once a minute. Once every expanding post *has* one th
 matches nothing - and a `LIMIT` that is never satisfied cannot stop a scan early, so the
 planner's unaided choice walks the whole `updated_at` index to prove the empty set: 55,990 row
 lookups in a ~50GB table, 2m09s on an idle db1, on the read node. That is the live state
-today: `expanding AND max_polygon IS NULL` is exactly zero rows.
+today: `expanding AND max_polygon_cells IS NULL` is exactly zero rows.
 
 There are two correct forms, and which applies is a schema fact rather than a preference,
 guarded by `MaxReachCandidateIndex::ready()`. Measured on a 55,015-row clone matching
@@ -125,18 +125,18 @@ its nullness is hoisted into a `has_max_reach` virtual generated column (the sam
 `has_overflow` uses) - and **MySQL will not substitute that column for its own defining
 expression**, so written as `max_polygon_cells IS NULL` the planner ignores the index entirely.
 The query has to name `has_max_reach`. The column is also defined over `max_polygon_cells`
-alone on purpose: a generated column pins every column it references, so naming `max_polygon`
+alone on purpose: a generated column pins every column it references, so naming a legacy column
 or `max_polygon_hash` would make MySQL refuse to drop them later.
 
 | Where | What |
 |---|---|
-| `iznik-batch/app/Services/FirstReply/MaxReachService.php` | populates and tests `max_polygon` |
+| `iznik-batch/app/Services/FirstReply/MaxReachService.php` | populates and tests `max_polygon_cells` |
 | `iznik-batch/app/Services/Ripple/MaxReachCandidateIndex.php` | which of the two candidate-scan forms this schema supports |
 | `iznik-batch/app/Services/Ripple/RippleReplyService.php` | `shouldHold()` consults the passthrough - email and TrashNothing replies |
 | `iznik-server-go/firstreply/passthrough.go` | the same decision for in-app replies |
 
 Both sides have to agree, because which door a reply came through is not something the poster
-knows or should care about. Both are conservative at every step: switched off, `max_polygon`
+knows or should care about. Both are conservative at every step: switched off, `max_polygon_cells`
 not yet populated, a query error, or a post that already has repliers all mean "hold as
 before". Being wrong in that direction costs a delay; being wrong the other way would deliver
 a reply the reach never covers.
@@ -276,7 +276,7 @@ pairing against a shuffled one.
 ### A recipient is someone the ripple has NOT reached yet
 
 The geographic test is a band, not a radius: **outside `rippling_reach.polygon` (the reach the
-post has right now) and inside `max_polygon` (the reach it ends up with)**.
+post has right now) and inside `max_polygon_cells` (the reach it ends up with)**.
 
 Both halves matter. The upper bound stops us mailing someone the post will never legitimately
 reach. The lower bound is what makes this mail worth sending at all: somebody already inside the
@@ -514,8 +514,7 @@ them in a quiet channel would mean nobody ever answers them.
 
 | Table | What |
 |---|---|
-| `rippling_reach.max_polygon` | the reach the post ends up with. "Not computed yet" now means the blob AND `max_polygon_hash` are both NULL - the geometry may live content-addressed in `rippling_reach_geom` with the blob drained (see the rippling reference §9a); readers COALESCE through the hash and fall back to current-reach behaviour when neither is set |
-| `rippling_reach.max_polygon_cells` | the compact cell-set form of `max_polygon` (rippling reference §9b) - a decode-and-bit-test with no network call, tried first by `isWithinMaxReach`/`ShouldPassThrough` before falling back to the blob/hash test above. `ripple:backfill-max-reach-cells` fills it for rows the write path never touched |
+| `rippling_reach.max_polygon_cells` | the reach the post ends up with, as a compact cell grid (rippling reference §9b/§9c) - a run-stream probe with no network call, read by `isWithinMaxReach`/`ShouldPassThrough`. NULL means "no wider reach known yet" and every reader falls back to current-reach behaviour |
 | `rippling_reach.min_tick` | a floor the expander must not sit below, set when a matched member replies. NULL = expand on elapsed time alone, exactly as before |
 | `users_searches_embeddings` | a saved search term as a vector, embedded as a DOCUMENT so it shares the post threshold |
 | `chat_prompts` | options and answer for a `Prompt` chat message |
@@ -531,7 +530,7 @@ All are registered in `iznik-batch/routes/console.php` inside
 
 | Command | Cadence | What |
 |---|---|---|
-| `firstreply:maxreach` | every minute | fills in `max_polygon`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
+| `firstreply:maxreach` | every minute | fills in `max_polygon_cells`, and sizes recorded passthroughs. Kept out of `ripple:expand`, which is the hot single-writer loop |
 | `firstreply:matchmail` | every minute | attributes replies to earlier match mail - pulling the post's reach out to cover anyone who replied - then finds and mails new matches |
 | `embeddings:searches` | hourly | embeds saved search terms so the `search` signal can match by vector. Also re-embeds after a model change |
 | `firstreply:engage` | every 5 min, **not currently registered** | sends the next due prompt. Nested inside a second `if (config('freegle.firstreply.chat.enabled'))`, which is off, because `EngagementService` returns immediately when the chat is off and a cron whose only job is to rediscover that is a process spawn every five minutes for nothing |
@@ -549,7 +548,7 @@ The Go API needs `FIRSTREPLY_ENABLED` and `FIRSTREPLY_PASSTHROUGH_ENABLED` too, 
 in-app reply path is enforced there.
 
 Sensible order: turn on `FIRSTREPLY_ENABLED` alone first so `firstreply:maxreach` can drain,
-then the passthrough (which needs `max_polygon` to do anything), then match mail.
+then the passthrough (which needs `max_polygon_cells` to do anything), then match mail.
 
 ### One cap, and it should never bind
 
