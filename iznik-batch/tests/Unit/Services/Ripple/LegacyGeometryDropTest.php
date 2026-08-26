@@ -34,13 +34,25 @@ class LegacyGeometryDropTest extends TestCase
     protected function tearDown(): void
     {
         DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'`');
+        DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'_geom`');
         parent::tearDown();
     }
 
     private function makeClone(): void
     {
         DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'`');
+        DB::statement('DROP TABLE IF EXISTS `'.self::CLONE.'_geom`');
         DB::statement('CREATE TABLE `'.self::CLONE.'` LIKE rippling_reach');
+
+        // CREATE TABLE ... LIKE does NOT copy foreign keys, so they have to be
+        // added by hand or the FK-drop path inside the combined statement goes
+        // untested. binary(16) to match the real hash columns - CHAR(40) is
+        // rejected as an incompatible reference.
+        DB::statement(
+            'CREATE TABLE `'.self::CLONE.'_geom` (
+                hash BINARY(16) NOT NULL PRIMARY KEY,
+                geometry GEOMETRY NOT NULL SRID 3857)'
+        );
 
         // CREATE TABLE ... LIKE copies index NAMES verbatim, so the clone would
         // carry indexes called rippling_reach_*. Rename them to the clone's own
@@ -60,6 +72,14 @@ class LegacyGeometryDropTest extends TestCase
                 DB::statement('ALTER TABLE `'.self::CLONE."` RENAME INDEX `{$old}` TO `{$new}`");
             }
         }
+
+        DB::statement(
+            'ALTER TABLE `'.self::CLONE.'`
+                ADD CONSTRAINT `'.self::CLONE.'_polygon_hash_foreign`
+                    FOREIGN KEY (polygon_hash) REFERENCES `'.self::CLONE.'_geom` (hash),
+                ADD CONSTRAINT `'.self::CLONE.'_max_polygon_hash_foreign`
+                    FOREIGN KEY (max_polygon_hash) REFERENCES `'.self::CLONE.'_geom` (hash)'
+        );
     }
 
     private function columns(): array
@@ -107,11 +127,25 @@ class LegacyGeometryDropTest extends TestCase
     }
 
     /**
-     * The drop must be ONE combined ALTER pinned to INPLACE. Five separate
-     * drops would rebuild a ~50GB table five times, and INSTANT is refused
-     * outright here - so the shape of this statement is the design.
+     * THE OPERATION COUNT, which is the point of the current shape. Every
+     * statement here is a separate pass an operator runs node by node under RSU
+     * on a ~50GB table, so the count is a real cost and not a style question.
+     * It was fourteen; three is the floor MySQL permits.
      */
-    public function test_the_columns_go_in_a_single_inplace_alter(): void
+    public function test_it_takes_exactly_three_operations(): void
+    {
+        $issued = (new LegacyGeometryDrop())->run(self::CLONE);
+
+        $this->assertCount(3, $issued,
+            "the drop must be three statements, got:\n - ".implode("\n - ", $issued));
+    }
+
+    /**
+     * The middle one is the only statement that does real work, and everything
+     * expensive belongs in it: five column drops and both foreign keys, one
+     * INPLACE rebuild rather than five.
+     */
+    public function test_the_columns_and_foreign_keys_go_in_a_single_inplace_alter(): void
     {
         $issued = (new LegacyGeometryDrop())->run(self::CLONE);
 
@@ -127,9 +161,37 @@ class LegacyGeometryDropTest extends TestCase
                 "every legacy column belongs in the one rebuild, {$col} was not in it");
         }
 
+        // Both dedup FKs ride along rather than costing a pass each.
+        foreach (['polygon_hash', 'max_polygon_hash'] as $col) {
+            $this->assertStringContainsString('DROP FOREIGN KEY `'.self::CLONE."_{$col}_foreign`", $sql,
+                "the {$col} foreign key must be dropped inside the same statement");
+        }
+
         // And no separate FORCE: the INPLACE drop already rewrites the table.
         $this->assertSame([], array_values(array_filter($issued, fn ($s) => str_contains($s, 'FORCE'))),
             'a separate FORCE rebuild is redundant once the drop is INPLACE');
+    }
+
+    /**
+     * The single-column indexes are NOT dropped by their own statements, because
+     * dropping the column takes them with it. Asserting that keeps someone from
+     * "helpfully" adding three statements back.
+     */
+    public function test_single_column_indexes_are_left_implicit(): void
+    {
+        $issued = (new LegacyGeometryDrop())->run(self::CLONE);
+        $all = implode(' | ', $issued);
+
+        foreach (['polygon', 'polygon_hash', 'max_polygon_hash'] as $suffix) {
+            $this->assertStringNotContainsString('DROP INDEX `'.self::CLONE."_{$suffix}`", $all,
+                "dropping the column already drops {$suffix}; an explicit statement is a wasted pass");
+        }
+
+        // And they really are gone afterwards.
+        foreach (['polygon', 'polygon_hash', 'max_polygon_hash'] as $suffix) {
+            $this->assertSame([], $this->indexColumns(self::CLONE.'_'.$suffix),
+                "index {$suffix} should have gone with its column");
+        }
     }
 
     /**

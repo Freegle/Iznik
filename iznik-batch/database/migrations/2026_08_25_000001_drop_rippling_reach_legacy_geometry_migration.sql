@@ -87,200 +87,186 @@ SET @ddl := IF(@bad = 0, 'SELECT 1',
     'SELECT 1 FROM `REFUSING__rows_have_overflow_bounds_but_no_overflow_cells`');
 PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
 
--- 1. Dedup FKs, then their indexes and columns (each guarded).
-SET @fk := (SELECT COUNT(*) FROM information_schema.referential_constraints
-    WHERE constraint_schema = DATABASE() AND table_name = 'rippling_reach'
-      AND constraint_name = 'rippling_reach_polygon_hash_foreign');
-SET @ddl := IF(@fk > 0, 'ALTER TABLE rippling_reach DROP FOREIGN KEY rippling_reach_polygon_hash_foreign', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
+-- ============================================================================
+-- THREE operations against rippling_reach, down from fourteen. Each one was a
+-- separate pass to run node by node under RSU on a ~50GB table.
+--
+-- Only STATEMENT 2 does real work. 1 and 3 touch metadata only.
+--
+-- THREE AND NOT ONE. Fewer statements is not automatically less work, and here
+-- it is not even permitted: a virtual generated column may not be added or
+-- dropped in the same ALTER as anything else ("INPLACE ADD or DROP of virtual
+-- columns cannot be combined with other ALTER TABLE actions"), and has_overflow
+-- additionally has to go before overflow_bounds, which it derives from. Pushing
+-- further would also backfire - measured on the additive side, folding an
+-- INSTANT column add into an index build turned a metadata-only change into a
+-- full table rebuild that could not even run LOCK=NONE.
+--
+-- ALGORITHM=INSTANT IS NOT AVAILABLE ON THIS TABLE AT ALL, twice over: while
+-- any virtual generated column exists InnoDB refuses to drop any column, and
+-- with those removed it refuses again because of the GIS index on outer_bound
+-- that this change deliberately KEEPS. An earlier version of this file pinned
+-- INSTANT on each drop and died on the very first one, leaving every legacy
+-- column in place; it read as verified because it had only been exercised
+-- against a simplified table carrying neither of those things.
+--
+-- TWO THINGS ARE NOW IMPLICIT, verified rather than assumed:
+--   * single-column indexes. Dropping a column drops any index over just that
+--     column, so rippling_reach_polygon (the R-tree), _polygon_hash and
+--     _max_polygon_hash need no statement of their own.
+--   * the foreign keys, which ride along inside statement 2.
+--     rippling_reach_shadow_msgid_foreign is NOT named and must survive.
+--
+-- Safe to re-run: all three are guarded, and if no legacy column remains the
+-- whole file does nothing. That guard is load-bearing - without it a repeat
+-- would take both generated columns off and put them back, rebuilding two
+-- indexes for no reason.
+-- ============================================================================
 
-SET @fk := (SELECT COUNT(*) FROM information_schema.referential_constraints
-    WHERE constraint_schema = DATABASE() AND table_name = 'rippling_reach'
-      AND constraint_name = 'rippling_reach_max_polygon_hash_foreign');
-SET @ddl := IF(@fk > 0, 'ALTER TABLE rippling_reach DROP FOREIGN KEY rippling_reach_max_polygon_hash_foreign', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
-SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_polygon_hash');
-SET @ddl := IF(@idx > 0, 'ALTER TABLE rippling_reach DROP INDEX rippling_reach_polygon_hash', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
-SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_max_polygon_hash');
-SET @ddl := IF(@idx > 0, 'ALTER TABLE rippling_reach DROP INDEX rippling_reach_max_polygon_hash', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
--- 2. THE VIRTUAL GENERATED COLUMNS MUST GO FIRST, AND THAT IS NOT OPTIONAL.
---
---    While ANY virtual generated column exists on this table, InnoDB refuses to
---    drop ANY column by INSTANT or INPLACE - even a column no generated column
---    references:
---
---      ERROR 1846 (0A000): ALGORITHM=INSTANT is not supported. Reason: INPLACE
---      ADD or DROP of virtual columns cannot be combined with other ALTER TABLE
---      actions. Try ALGORITHM=COPY/INPLACE.
---
---    An earlier version of this file pinned ALGORITHM=INSTANT on each DROP
---    COLUMN and failed on the very first one, leaving every legacy column in
---    place. It passed review because it had only been exercised against a
---    simplified table that carried neither the generated columns nor the GIS
---    index. Run against a real CREATE TABLE ... LIKE rippling_reach clone it
---    stops at the first drop, every time.
---
---    (INSTANT is doubly unavailable here anyway: with the generated columns
---    removed the same statement is refused a second time, "Do not support
---    online operation on table with GIS index" - that being the outer_bound
---    R-tree this change deliberately KEEPS.)
---
---    So both generated columns come off first, each in its own statement, and
---    are regenerated afterwards. has_overflow additionally HAS to go before
---    overflow_bounds, which it derives from, or the drop is refused with
---    "Column 'overflow_bounds' has a generated column dependency".
--- Is there any legacy column left at all? If not, everything from here is a
--- no-op, and that matters rather than being tidiness: without this check a
--- re-run would take both generated columns off and put them straight back,
--- rebuilding two indexes on a ~50GB table to achieve nothing. An RSU pass is
--- exactly the sort of thing an operator repeats.
+-- Is there any legacy column left? If not, everything below is a no-op.
 SET @legacy := (SELECT COUNT(*) FROM information_schema.columns
     WHERE table_schema = DATABASE() AND table_name = 'rippling_reach'
       AND column_name IN ('polygon','max_polygon','overflow_bounds','polygon_hash','max_polygon_hash'));
 
-SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_maxreach_candidates');
-SET @ddl := IF(@idx > 0 AND @legacy > 0, 'ALTER TABLE rippling_reach DROP INDEX rippling_reach_maxreach_candidates', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
-SET @col := (SELECT COUNT(*) FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'has_max_reach');
-SET @ddl := IF(@col > 0 AND @legacy > 0, 'ALTER TABLE rippling_reach DROP COLUMN has_max_reach', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
-SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_has_overflow');
-SET @ddl := IF(@idx > 0 AND @legacy > 0, 'ALTER TABLE rippling_reach DROP INDEX rippling_reach_has_overflow', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
-SET @col := (SELECT COUNT(*) FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'has_overflow');
-SET @ddl := IF(@col > 0 AND @legacy > 0, 'ALTER TABLE rippling_reach DROP COLUMN has_overflow', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
--- 3. The polygon R-tree, before the column it indexes.
-SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_polygon');
-SET @ddl := IF(@idx > 0 AND @legacy > 0, 'ALTER TABLE rippling_reach DROP INDEX rippling_reach_polygon', 'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
--- 4. ONE COMBINED DROP, AND IT IS ALSO THE REBUILD.
+-- ============================================================================
+-- 1 of 3: both generated columns and their indexes. Metadata only - a virtual
+--         column stores nothing, so this is fast regardless of table size.
 --
---    Every legacy column goes in a single ALTER, ALGORITHM=INPLACE. That is one
---    rebuild of a ~50GB table rather than five, and - measured - it returns the
---    disk on its own: a clone holding 400 rows of ~200KB in each fat column went
---    from 90,784KB to 192KB with no further statement, and
---    INNODB_TABLES.TOTAL_ROW_VERSIONS stayed at 0 throughout.
---
---    So there is NO separate ALTER TABLE ... FORCE at the end any more. The
---    earlier file had one because it believed the drops above were INSTANT and
---    therefore metadata-only. They cannot be INSTANT on this table at all, and
---    an INPLACE drop rewrites the table by definition, so the extra rebuild was
---    both unreachable (the file errored before it) and redundant.
---
---    LOCK=SHARED, NOT LOCK=NONE, and that is not a choice either: InnoDB
---    refuses an online rebuild of a table carrying a GIS index, and outer_bound
---    is one. Reads continue; writes to rippling_reach block for the duration.
---    That is survivable only because this runs node by node under RSU, on a
---    node desynced and out of rotation. Do NOT run it on a node in rotation,
---    and do not reach for LOCK=EXCLUSIVE. If blocking writes even on a desynced
---    node is unacceptable, use a shadow-table copy (pt-online-schema-change /
---    gh-ost) instead; that is an operator decision, not one this file should
---    make silently.
---
---    The statement is assembled from whichever columns are still present, so a
---    partially-applied run finishes cleanly and a fully-applied one is a no-op.
-SET @drops := CONCAT_WS(', ',
-    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN polygon_hash', NULL) FROM information_schema.columns
-      WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'polygon_hash'),
-    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN max_polygon_hash', NULL) FROM information_schema.columns
-      WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'max_polygon_hash'),
-    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN overflow_bounds', NULL) FROM information_schema.columns
-      WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'overflow_bounds'),
-    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN polygon', NULL) FROM information_schema.columns
-      WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'polygon'),
-    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN max_polygon', NULL) FROM information_schema.columns
-      WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'max_polygon')
+--         The index goes before its column in each pair, and NOT because MySQL
+--         would refuse otherwise. It would not: dropping a generated column
+--         SILENTLY REWRITES any index naming it, so
+--         (status, has_max_reach, updated_at) becomes (status, updated_at)
+--         under the same name - and the guarded re-create in statement 3 checks
+--         the NAME, so it would decline to fix it. Confirmed on 8.0.43-34.
+-- ============================================================================
+SET @parts := CONCAT_WS(', ',
+    (SELECT IF(COUNT(*) > 0, 'DROP INDEX rippling_reach_has_overflow', NULL)
+       FROM information_schema.statistics WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_has_overflow'),
+    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN has_overflow', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'has_overflow'),
+    (SELECT IF(COUNT(*) > 0, 'DROP INDEX rippling_reach_maxreach_candidates', NULL)
+       FROM information_schema.statistics WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_maxreach_candidates'),
+    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN has_max_reach', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'has_max_reach')
 );
-SET @ddl := IF(@drops IS NULL OR @drops = '', 'SELECT 1',
-    CONCAT('ALTER TABLE rippling_reach ', @drops, ', ALGORITHM=INPLACE, LOCK=SHARED'));
-SELECT @ddl AS the_rebuild;
+SET @ddl := IF(@legacy = 0 OR @parts IS NULL OR @parts = '', 'SELECT 1',
+    CONCAT('ALTER TABLE rippling_reach ', @parts));
+SELECT @ddl AS statement_1_of_3;
 PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
 
--- 5. Regenerate the two virtual columns and their indexes, now over the
---    surviving cell columns. Each ADD is its own statement for the same reason
---    the drops were: a virtual column cannot share an ALTER with anything else.
-SET @col := (SELECT COUNT(*) FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'has_overflow');
-SET @cells := (SELECT COUNT(*) FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'overflow_cells');
-SET @ddl := IF(@col = 0 AND @cells > 0,
-    'ALTER TABLE rippling_reach ADD COLUMN has_overflow TINYINT(1) GENERATED ALWAYS AS (overflow_cells IS NOT NULL) VIRTUAL',
-    'SELECT 1');
+-- ============================================================================
+-- 2 of 3: THE ONE THAT DOES THE WORK. Both dedup foreign keys and all five
+--         legacy columns, in a single ALGORITHM=INPLACE alter - which succeeds
+--         where INSTANT cannot, and rewrites the table, which is what actually
+--         returns the disk. Measured: a clone of 400 rows carrying ~200KB in
+--         each fat column went 91,808KB -> 1,696KB in this one statement, with
+--         TOTAL_ROW_VERSIONS staying at 0. One rebuild instead of five.
+--
+--         LOCK=SHARED, not LOCK=NONE, and not a choice: InnoDB refuses an
+--         online rebuild of a table carrying a GIS index, and outer_bound is
+--         one. Reads continue; writes to rippling_reach block for the duration.
+--         Survivable only because this runs on a node already desynced and out
+--         of rotation. Do NOT run it on a node in rotation, and do not reach
+--         for LOCK=EXCLUSIVE. If blocking writes even on a desynced node is
+--         unacceptable, use pt-online-schema-change instead - an operator
+--         decision, not one this file should make silently.
+-- ============================================================================
+SET @parts := CONCAT_WS(', ',
+    (SELECT IF(COUNT(*) > 0, 'DROP FOREIGN KEY rippling_reach_polygon_hash_foreign', NULL)
+       FROM information_schema.referential_constraints WHERE constraint_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND constraint_name = 'rippling_reach_polygon_hash_foreign'),
+    (SELECT IF(COUNT(*) > 0, 'DROP FOREIGN KEY rippling_reach_max_polygon_hash_foreign', NULL)
+       FROM information_schema.referential_constraints WHERE constraint_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND constraint_name = 'rippling_reach_max_polygon_hash_foreign'),
+    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN polygon_hash', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'polygon_hash'),
+    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN max_polygon_hash', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'max_polygon_hash'),
+    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN overflow_bounds', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'overflow_bounds'),
+    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN polygon', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'polygon'),
+    (SELECT IF(COUNT(*) > 0, 'DROP COLUMN max_polygon', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'max_polygon')
+);
+SET @ddl := IF(@parts IS NULL OR @parts = '', 'SELECT 1',
+    CONCAT('ALTER TABLE rippling_reach ', @parts, ', ALGORITHM=INPLACE, LOCK=SHARED'));
+SELECT @ddl AS statement_2_of_3;
 PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
 
-SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_has_overflow');
-SET @col := (SELECT COUNT(*) FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'has_overflow');
-SET @ddl := IF(@idx = 0 AND @col > 0,
-    'ALTER TABLE rippling_reach ADD INDEX rippling_reach_has_overflow (has_overflow, updated_at), ALGORITHM=INPLACE, LOCK=NONE',
-    'SELECT 1');
+-- ============================================================================
+-- 3 of 3: both generated columns and both indexes, restored over the surviving
+--         cell columns. has_overflow changes meaning here (overflow_bounds ->
+--         overflow_cells); has_max_reach does not, but had to come off to let
+--         statement 2 through. Measured: no rebuild, TOTAL_ROW_VERSIONS
+--         unchanged.
+--
+--         Restoring has_max_reach matters rather than being tidiness: without
+--         it MaxReachService falls back to its FORCE INDEX form, which is
+--         13,696 rows and a filesort instead of one row.
+-- ============================================================================
+SET @parts := CONCAT_WS(', ',
+    (SELECT IF(COUNT(*) = 0,
+        'ADD COLUMN has_overflow TINYINT(1) GENERATED ALWAYS AS (overflow_cells IS NOT NULL) VIRTUAL', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'has_overflow'),
+    (SELECT IF(COUNT(*) = 0,
+        'ADD COLUMN has_max_reach TINYINT(1) GENERATED ALWAYS AS (max_polygon_cells IS NOT NULL) VIRTUAL', NULL)
+       FROM information_schema.columns WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND column_name = 'has_max_reach'),
+    (SELECT IF(COUNT(*) = 0, 'ADD INDEX rippling_reach_has_overflow (has_overflow, updated_at)', NULL)
+       FROM information_schema.statistics WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_has_overflow'),
+    (SELECT IF(COUNT(*) = 0,
+        'ADD INDEX rippling_reach_maxreach_candidates (status, has_max_reach, updated_at)', NULL)
+       FROM information_schema.statistics WHERE table_schema = DATABASE()
+        AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_maxreach_candidates')
+);
+SET @ddl := IF(@parts IS NULL OR @parts = '', 'SELECT 1',
+    CONCAT('ALTER TABLE rippling_reach ', @parts));
+SELECT @ddl AS statement_3_of_3;
 PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
 
--- has_max_reach is unchanged in meaning - it derives from max_polygon_cells,
--- which survives - but it had to come off to let the drop through, so it is put
--- back here. Restoring it matters: without it MaxReachService falls back to the
--- FORCE INDEX form, which is 13,696 rows and a filesort instead of one row.
-SET @col := (SELECT COUNT(*) FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'has_max_reach');
-SET @cells := (SELECT COUNT(*) FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'max_polygon_cells');
-SET @ddl := IF(@col = 0 AND @cells > 0,
-    'ALTER TABLE rippling_reach ADD COLUMN has_max_reach TINYINT(1) GENERATED ALWAYS AS (max_polygon_cells IS NOT NULL) VIRTUAL',
-    'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
-SET @idx := (SELECT COUNT(*) FROM information_schema.statistics
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND index_name = 'rippling_reach_maxreach_candidates');
-SET @col := (SELECT COUNT(*) FROM information_schema.columns
-    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'has_max_reach');
-SET @ddl := IF(@idx = 0 AND @col > 0,
-    'ALTER TABLE rippling_reach ADD INDEX rippling_reach_maxreach_candidates (status, has_max_reach, updated_at), ALGORITHM=INPLACE, LOCK=NONE',
-    'SELECT 1');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
-
--- 6. The shared geometry table, once nothing references it.
+-- The shared geometry table, once nothing references it. Not an ALTER, and the
+-- cheapest part of the whole exercise: it takes ~21.5GB a node with it.
 DROP TABLE IF EXISTS rippling_reach_geom;
 
--- VERIFYING IT ACTUALLY HAPPENED. Two checks, and the second cannot be fooled:
+-- ============================================================================
+-- VERIFY. Three checks, and the second is the one that cannot be fooled.
 --
 --   -- (a) the space came back
 --   SELECT ROUND(data_length/1024/1024/1024, 1) AS gb
 --     FROM information_schema.tables
 --    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach';
 --
---   -- (b) no instantly-dropped column is still lurking in the rows. MUST be 0.
+--   -- (b) nothing instantly-dropped is still lurking in the rows. MUST be 0.
 --   SELECT TOTAL_ROW_VERSIONS FROM information_schema.INNODB_TABLES
 --    WHERE NAME = CONCAT(DATABASE(), '/rippling_reach');
 --
--- Check (a) alone is not enough: data_length can look plausible while dropped
--- bytes are still present, because an INSTANT change edits only metadata. Check
--- (b) counts them directly. It reads 3 on this table in dev today, from earlier
--- INSTANT column additions, so it is a live counter rather than a formality -
--- and it is also a budget, since InnoDB permits 64 row versions per table and
--- then refuses all further INSTANT DDL. The INPLACE rebuild above returns it
--- to 0, which is what keeps that fast path available for later changes.
---
---   -- (c) and the columns are genuinely gone
---   SELECT COUNT(*) FROM information_schema.columns
+--   -- (c) the columns are genuinely gone, and the right indexes survive
+--   SELECT COUNT(*) AS legacy_left FROM information_schema.columns
 --    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach'
 --      AND column_name IN ('polygon','max_polygon','overflow_bounds',
 --                          'polygon_hash','max_polygon_hash');
+--   SELECT index_name, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols
+--     FROM information_schema.statistics
+--    WHERE table_schema = DATABASE() AND table_name = 'rippling_reach'
+--    GROUP BY index_name ORDER BY index_name;
+--   -- rippling_reach_outer MUST still be there (outer_bound), and
+--   -- rippling_reach_maxreach_candidates MUST read status,has_max_reach,updated_at.
+--
+-- (a) alone is not enough: data_length can look plausible while dropped bytes
+-- remain, because an INSTANT change edits only metadata. (b) counts them
+-- directly. It also matters as a BUDGET - InnoDB allows 64 row versions per
+-- table then refuses all further INSTANT DDL, and the rebuild in statement 2
+-- returns it to 0, which is what keeps that fast path available later.
+-- ============================================================================

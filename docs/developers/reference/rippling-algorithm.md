@@ -1267,6 +1267,33 @@ shrink agree exactly rather than approximately.
 (`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`), then
 `ripple:verify-cells-parity` and read it, then the drop DDL node by node under RSU.
 
+**FIVE schema operations in total, and only ONE of them does real work.** Every statement is a
+separate pass under RSU on a ~50GB table, so the count is a real cost rather than a tidiness
+question. It was nineteen.
+
+| # | When | Statement | Cost |
+|---|---|---|---|
+| 1 | Deploy | add `polygon_cells`, `max_polygon_cells`, `overflow_cells`, `has_max_reach`, `ALGORITHM=INSTANT` | metadata only, seconds |
+| 2 | Deploy | add `rippling_reach_maxreach_candidates`, `ALGORITHM=INPLACE, LOCK=NONE` | online index build |
+| 3 | Drop | drop both generated columns and their indexes | metadata only |
+| 4 | Drop | drop both dedup FKs and all five legacy columns, `ALGORITHM=INPLACE, LOCK=SHARED` | **the rebuild; blocks writes** |
+| 5 | Drop | restore both generated columns and both indexes | no rebuild |
+
+Plus `DROP TABLE rippling_reach_geom`, which is not an ALTER and takes ~21.5GB a node with it.
+
+**FEWER STATEMENTS IS NOT AUTOMATICALLY LESS WORK, which is why this is five and not fewer.**
+1 and 2 look mergeable and must not be: measured, folding the `INSTANT` column adds into the
+index build resets `TOTAL_ROW_VERSIONS` to 0, meaning it **rebuilt the whole table** - and that
+form cannot be `LOCK=NONE` either, so it would block writes for the length of a 50GB rebuild.
+Two cheap passes beat one expensive one. 3 and 5 cannot merge into 4 at all: a virtual
+generated column may not be added or dropped in the same ALTER as anything else.
+
+Two things that used to cost a statement each and are now implicit, verified rather than
+assumed: **single-column indexes** go automatically when their column is dropped (so
+`rippling_reach_polygon`, `_polygon_hash` and `_max_polygon_hash` need no statement), and the
+**foreign keys** ride along inside statement 4. Only the two dedup FKs are named there;
+`rippling_reach_shadow_msgid_foreign` also exists and must survive.
+
 **How long the backfill takes, and how to make it shorter.** The defaults
 (`--limit=100 --sleep-ms=50`) are cron-shaped: deliberately slow, so a sweep running
 alongside normal traffic cannot saturate the rasterise endpoint. For a one-off migration they
