@@ -73,5 +73,8 @@
         <env name="NIGHTWATCH_ENABLED" value="false"/>
         <env name="FREEGLE_MAIL_ENABLED_TYPES" value="Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter" force="true"/>
         <env name="VIEW_CHECK_TIMESTAMPS" value="false" force="true"/>
+        <!-- The TN API throttle would sleep 750ms before every Http::fake()d
+             request. Tests that exercise the throttle set their own interval. -->
+        <env name="FREEGLE_TN_MIN_REQUEST_INTERVAL_US" value="0" force="true"/>
     </php>
 </phpunit>

@@ -276,6 +276,14 @@ return [
         // instead, neither of which needs the email path switched off.
         'ingest_posts_via_api' => env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
 
+        // Minimum gap between ANY two Trash Nothing API requests, in
+        // microseconds. TN allows 2 requests/second and rate-limits per API
+        // key, so this is enforced once for the whole run by
+        // TrashNothingRateLimiter rather than per endpoint. Set to 0 to
+        // disable (the test suite does, via phpunit.xml — Http::fake() never
+        // reaches TN, and 750ms per faked request would add minutes).
+        'min_request_interval_us' => (int) env('FREEGLE_TN_MIN_REQUEST_INTERVAL_US', 750000),
+
         // Post-cutover coverage verification — tn:verify-email-coverage.
         // See plans/tn-api-post-ingestion.md section S.
         'verify_coverage' => [

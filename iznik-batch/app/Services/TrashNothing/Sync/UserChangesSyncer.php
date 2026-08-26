@@ -20,6 +20,10 @@ class UserChangesSyncer
         private readonly string $apiKey,
         private readonly string $apiBaseUrl,
         private readonly LokiService $loki,
+        // Shared with the other TN syncers — TN rate-limits per API key and one
+        // tn:sync run calls three endpoints with the same key, so a throttle
+        // that only paces this class's own requests protects nothing.
+        private readonly ?TrashNothingRateLimiter $rateLimiter = null,
     ) {}
 
     /**
@@ -178,6 +182,8 @@ class UserChangesSyncer
             $payload = json_decode(file_get_contents($file), true);
             return is_array($payload) ? ($payload['changes'] ?? []) : [];
         }
+
+        ($this->rateLimiter ?? app(TrashNothingRateLimiter::class))->await();
 
         $response = Http::get("{$this->apiBaseUrl}/user-changes", [
             'key'      => $this->apiKey,
