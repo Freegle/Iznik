@@ -21,14 +21,14 @@ Worktree: /home/edward/FreegleDocker-reach-raster.
 | # | Task | Status | Notes |
 |---|------|--------|-------|
 | 1 | Scope survey (era-guard call sites, commands, spatial-go) | ✅ | ~34 PHP sites, ~25 Go sites, 2 spatial-go files |
-| 2 | Worktree on new branch, containers up, status port known | 🔄 | branch created; container state unchecked |
-| 3 | Migration on by default (RIPPLE_DROP_LEGACY_GEOMETRY) | ⬜ | keep the "refuse while rows lack cells" guards |
-| 4 | PHP: delete legacy branches + GeomShareService + era guard | ⬜ | ~34 call sites |
-| 5 | PHP: delete transition-era commands (backfill-*-cells, shrink-overflow-bounds, verify-*-parity) | ⬜ | check BackfillRingsCommand + BackfillInnerBounds too |
-| 6 | Go: delete legacygeom.go + geomshare.go, unconditionalize call sites | ⬜ | SpatialReachIDs survives (post-drop read path) |
-| 7 | spatial-go: dataset_reach.go + dataset_reachoverflow.go cells-only | ⬜ | |
-| 8 | Fixtures/tests: polygon-writers -> cells; era-fake tests collapse to one era | ⬜ | |
-| 9 | Docs: rippling-algorithm.md + freshness check | ⬜ | |
+| 2 | Worktree on new branch, containers up, status port known | ✅ | status port 12019 |
+| 3 | Migration on by default (RIPPLE_DROP_LEGACY_GEOMETRY) | ✅ | opt-OUT now; refusal guards kept |
+| 4 | PHP: delete legacy branches + GeomShareService + era guard | ✅ | all call sites cells-only |
+| 5 | PHP: delete transition-era commands | ✅ | 7 commands gone; BackfillRings too (wrote overflow_bounds); BackfillInnerBounds kept, ratio vs outer_bound |
+| 6 | Go: delete legacygeom.go + geomshare.go, unconditionalize call sites | ✅ | SpatialReachIDs moved to reachmembership.go; SPATIAL_REACH_MODE gone |
+| 7 | spatial-go: dataset_reach.go + dataset_reachoverflow.go cells-only | ✅ | module suite green (go test ./...) |
+| 8 | Fixtures/tests: polygon-writers -> cells; era-fake tests collapse to one era | ✅ | PHP: SeedsReachCells trait (offline rect grids) + FakesRingIndex serves reach/containing; Go: reachindexstub_test serves index from test rows |
+| 9 | Docs: rippling-algorithm.md + first-reply.md + freshness green | ✅ | |
 | 10 | Full suites green via status API: Laravel + Go + spatial-go | ⬜ | worktree status port TBD |
 | 11 | Review pass + PR | ⬜ | merge gate in body |
 
