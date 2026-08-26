@@ -37,10 +37,12 @@ use Illuminate\Support\Facades\DB;
  *   3. AN UNREADABLE GRID - stored bytes that will not decode. Post-drop this
  *      is a lane with no recoverable meaning.
  *   4. A DIFFERENT AREA - the stored grid against a fresh rasterise of the
- *      same WKT, measured as the SYMMETRIC DIFFERENCE IN CELLS. Byte equality
- *      is reported when it holds (it is the common case, since both sides go
- *      through the same endpoint) but is not required: what matters is
- *      whether the covered set moved, not how it was packed.
+ *      same WKT. Byte equality is reported when it holds (it is the common
+ *      case, since both sides go through the same endpoint) but is not
+ *      required: what matters is whether the covered area moved, not how it
+ *      was packed. When the bytes differ the two are compared by PROBING a
+ *      bounded sample of points, never by decoding them - see the note in
+ *      checkRing for why decoding these particular grids runs out of memory.
  *
  * Read-only - SELECTs plus the rasterise endpoint - so it is safe to point at
  * production, which is the only place the real rings exist.
@@ -57,10 +59,18 @@ class VerifyRingCellsParityCommand extends Command
     protected $signature = 'ripple:verify-ring-cells-parity
                             {--limit=20 : How many ringed rows to sample}
                             {--after=0 : Start after this msgid}
-                            {--max-cell-difference=0 : Symmetric difference in cells counted as a failure}
+                            {--max-disagreements=0 : Probe points that may disagree before it is a failure}
+                            {--probe-points=400 : Points sampled per ring when the bytes differ}
                             {--json= : Also write the full per-ring report to this path}';
 
     protected $description = 'Compare every stored overflow ring grid against a fresh rasterise of the ring WKT it replaced';
+
+    /** Mirrors CellSetService's own private constants - the wire format is fixed. */
+    private const CELL_DEGREES = 0.0003;
+
+    private const FORMAT_MAGIC = 0x31534343;
+
+    private const HEADER_SIZE = 20;
 
     public function __construct(private CellSetService $cellSets)
     {
@@ -97,7 +107,8 @@ class VerifyRingCellsParityCommand extends Command
             return self::FAILURE;
         }
 
-        $maxDiff = max(0, (int) $this->option('max-cell-difference'));
+        $maxDiff = max(0, (int) $this->option('max-disagreements'));
+        $probePoints = max(16, (int) $this->option('probe-points'));
 
         $report = [
             'rows' => 0,
@@ -108,14 +119,14 @@ class VerifyRingCellsParityCommand extends Command
             'inventedRings' => 0,
             'unreadableGrids' => 0,
             'rasteriseFailures' => 0,
-            'worstCellDifference' => 0,
+            'worstDisagreements' => 0,
             'failures' => [],
         ];
         $detail = [];
 
         foreach ($rows as $row) {
             $report['rows']++;
-            $detail[] = $this->checkRow($row, $maxDiff, $report);
+            $detail[] = $this->checkRow($row, $maxDiff, $probePoints, $report);
             $this->output->write('.');
         }
         $this->newLine(2);
@@ -134,7 +145,7 @@ class VerifyRingCellsParityCommand extends Command
     }
 
     /** @return array<string,mixed> */
-    private function checkRow(object $row, int $maxDiff, array &$report): array
+    private function checkRow(object $row, int $maxDiff, int $probePoints, array &$report): array
     {
         $msgid = (int) $row->msgid;
         $rowDetail = ['msgid' => $msgid, 'rings' => []];
@@ -160,7 +171,7 @@ class VerifyRingCellsParityCommand extends Command
                     continue;
                 }
                 $report['rings']++;
-                $rowDetail['rings'][] = $this->checkRing($msgid, (string) $lane, (string) $band, $wkt, $cells, $maxDiff, $report);
+                $rowDetail['rings'][] = $this->checkRing($msgid, (string) $lane, (string) $band, $wkt, $cells, $maxDiff, $probePoints, $report);
             }
         }
 
@@ -192,6 +203,7 @@ class VerifyRingCellsParityCommand extends Command
         string $wkt,
         array $cells,
         int $maxDiff,
+        int $probePoints,
         array &$report
     ): array {
         $detail = ['lane' => $lane, 'band' => $band];
@@ -241,32 +253,71 @@ class VerifyRingCellsParityCommand extends Command
         }
 
         // Different bytes are not automatically wrong - what matters is whether
-        // the COVERED SET moved. Decoding is the expensive path (allocation is
-        // proportional to covered area), which is why it only runs when the
-        // cheap byte comparison has already failed.
-        try {
-            $a = $this->cellSets->decode($stored);
-            $b = $this->cellSets->decode($fresh);
-        } catch (\Throwable $e) {
+        // the COVERED AREA moved. That comparison is made by PROBING both
+        // blobs, never by decoding them.
+        //
+        // decode() + subtract() is the obvious way to write this and it cannot
+        // be used here. decode() allocates one PHP array entry per COVERED
+        // CELL, so the cost follows the area rather than the compressed size,
+        // and rings are the largest geometries on the table. A ring spanning
+        // 3 x 2 degrees is 10,000 x 6,667 cells - about 67 million entries.
+        // Measured: the first version of this command died with "Allowed
+        // memory size of 2147483648 bytes exhausted" inside
+        // CellSetService::subtract, on a ring smaller than production carries.
+        //
+        // containsEncoded() walks the run stream for one point and allocates
+        // nothing, so a bounded sample of points costs a bounded amount of
+        // memory whatever the ring's size.
+        $probes = $this->probePoints($stored, $fresh, $probePoints);
+        if ($probes === []) {
             $report['unreadableGrids']++;
-            $report['failures'][] = sprintf('msgid %d lane %s band %s: stored grid will not decode (%s)', $msgid, $lane, $band, $e->getMessage());
+            $report['failures'][] = sprintf(
+                'msgid %d lane %s band %s: neither grid has a readable header, so the areas cannot be compared',
+                $msgid, $lane, $band
+            );
             $detail['result'] = 'unreadable';
 
             return $detail;
         }
 
-        $onlyStored = count($this->cellSets->subtract($a, $b)['set']);
-        $onlyFresh = count($this->cellSets->subtract($b, $a)['set']);
-        $diff = $onlyStored + $onlyFresh;
-        $detail['cellDifference'] = $diff;
-        $detail['onlyStored'] = $onlyStored;
-        $detail['onlyFresh'] = $onlyFresh;
-        $report['worstCellDifference'] = max($report['worstCellDifference'], $diff);
+        $disagree = 0;
+        $cannotSay = 0;
+        foreach ($probes as [$lng, $lat]) {
+            $inStored = $this->cellSets->containsEncoded($stored, $lng, $lat);
+            $inFresh = $this->cellSets->containsEncoded($fresh, $lng, $lat);
+            if ($inStored === null || $inFresh === null) {
+                $cannotSay++;
 
-        if ($diff > $maxDiff) {
+                continue;
+            }
+            if ($inStored !== $inFresh) {
+                $disagree++;
+            }
+        }
+
+        $detail['probes'] = count($probes);
+        $detail['disagree'] = $disagree;
+        $detail['cannotSay'] = $cannotSay;
+        $report['worstDisagreements'] = max($report['worstDisagreements'], $disagree);
+
+        // A point neither grid can answer is not agreement. Post-drop the
+        // stored bytes are all there is, so "cannot say" is a lane that cannot
+        // decide - counted as a failure rather than passed over.
+        if ($cannotSay > 0) {
+            $report['unreadableGrids']++;
             $report['failures'][] = sprintf(
-                'msgid %d lane %s band %s: stored grid covers a different area - %d cell(s) differ (%d only stored, %d only in a fresh rasterise)',
-                $msgid, $lane, $band, $diff, $onlyStored, $onlyFresh
+                'msgid %d lane %s band %s: %d probe(s) could not be answered from the stored bytes',
+                $msgid, $lane, $band, $cannotSay
+            );
+            $detail['result'] = 'unreadable';
+
+            return $detail;
+        }
+
+        if ($disagree > $maxDiff) {
+            $report['failures'][] = sprintf(
+                'msgid %d lane %s band %s: stored grid covers a different area - %d of %d probe(s) disagree with a fresh rasterise',
+                $msgid, $lane, $band, $disagree, count($probes)
             );
             $detail['result'] = 'different';
 
@@ -279,14 +330,77 @@ class VerifyRingCellsParityCommand extends Command
         return $detail;
     }
 
+    /**
+     * Points to probe both grids at, spread over the union of their extents.
+     *
+     * Read from the 20-byte HEADERS only (magic, minCol, minRow, cols, rows),
+     * which is the whole reason this is affordable: the header gives the
+     * extent without touching the run stream, so nothing here scales with the
+     * covered area. The union rather than either grid alone, because a grid
+     * that has SHRUNK is only visible by probing where the other one still
+     * covers.
+     *
+     * A deterministic lattice, not random points: this output is quoted as
+     * evidence, and a check that samples somewhere different on every run
+     * cannot be re-run to confirm a fix.
+     *
+     * @return array<int,array{0:float,1:float}>
+     */
+    private function probePoints(string $a, string $b, int $wanted): array
+    {
+        $ext = [];
+        foreach ([$a, $b] as $bytes) {
+            if (strlen($bytes) < self::HEADER_SIZE) {
+                continue;
+            }
+            $h = unpack('Vmagic/VminCol/VminRow/Vcols/Vrows', $bytes);
+            if ($h === false || $h['magic'] !== self::FORMAT_MAGIC || $h['cols'] === 0 || $h['rows'] === 0) {
+                continue;
+            }
+            // minCol/minRow are signed 32-bit written as unsigned.
+            $minCol = $h['minCol'] >= 0x80000000 ? $h['minCol'] - 0x100000000 : $h['minCol'];
+            $minRow = $h['minRow'] >= 0x80000000 ? $h['minRow'] - 0x100000000 : $h['minRow'];
+            $ext[] = [
+                $minCol * self::CELL_DEGREES,
+                $minRow * self::CELL_DEGREES,
+                ($minCol + $h['cols']) * self::CELL_DEGREES,
+                ($minRow + $h['rows']) * self::CELL_DEGREES,
+            ];
+        }
+        if ($ext === []) {
+            return [];
+        }
+
+        $minLng = min(array_column($ext, 0));
+        $minLat = min(array_column($ext, 1));
+        $maxLng = max(array_column($ext, 2));
+        $maxLat = max(array_column($ext, 3));
+
+        $side = max(4, (int) floor(sqrt($wanted)));
+        $points = [];
+        for ($i = 0; $i < $side; $i++) {
+            for ($j = 0; $j < $side; $j++) {
+                // Cell CENTRES ((i + 0.5) / side), so no probe lands exactly on
+                // a lattice boundary where the two grids could round apart for
+                // reasons that say nothing about whether the areas match.
+                $points[] = [
+                    $minLng + ($maxLng - $minLng) * (($i + 0.5) / $side),
+                    $minLat + ($maxLat - $minLat) * (($j + 0.5) / $side),
+                ];
+            }
+        }
+
+        return $points;
+    }
+
     private function render(array $r): void
     {
         $this->line(sprintf('Rows compared: %d   rings compared: %d', $r['rows'], $r['rings']));
         $this->newLine();
 
         $this->line('Stored ring grid against a fresh rasterise of the same WKT');
-        $this->line(sprintf('  byte-identical %d   same coverage, different packing %d   worst difference %d cell(s)',
-            $r['byteIdentical'], $r['sameCoverage'], $r['worstCellDifference']));
+        $this->line(sprintf('  byte-identical %d   same coverage, different packing %d   worst disagreement %d probe(s)',
+            $r['byteIdentical'], $r['sameCoverage'], $r['worstDisagreements']));
         $this->newLine();
 
         $this->line('Ring presence (what the drop migration cannot check for itself)');

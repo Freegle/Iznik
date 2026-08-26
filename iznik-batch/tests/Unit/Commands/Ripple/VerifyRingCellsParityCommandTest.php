@@ -25,10 +25,21 @@ class VerifyRingCellsParityCommandTest extends TestCase
 {
     private const REACH = 'POLYGON((-1.0 51.0, 1.0 51.0, 1.0 52.0, -1.0 52.0, -1.0 51.0))';
 
-    private const SPARSE_RING = 'POLYGON((-1.5 50.5, 1.5 50.5, 1.5 52.5, -1.5 52.5, -1.5 50.5))';
+    // SMALL ON PURPOSE. The lattice is 0.0003 degrees, so area translates
+    // directly into work: the first draft of this file used a 3 x 2 degree ring,
+    // which is ~67 million cells, and the command's old decode()-based
+    // comparison died on it with "Allowed memory size of 2147483648 bytes
+    // exhausted". The comparison no longer decodes, but there is still no
+    // reason for a unit test to rasterise a county. 0.06 degrees square is
+    // ~200 x 200 cells and exercises exactly the same paths.
+    private const SPARSE_RING = 'POLYGON((-0.10 51.50, -0.04 51.50, -0.04 51.56, -0.10 51.56, -0.10 51.50))';
 
-    /** Somewhere else entirely, for the wrong-area case. */
-    private const ELSEWHERE = 'POLYGON((5.0 55.0, 5.2 55.0, 5.2 55.2, 5.0 55.2, 5.0 55.0))';
+    // A ring of the same size ADJACENT to SPARSE_RING rather than far away.
+    // Adjacency keeps the union of the two extents tight, so the probe lattice
+    // the command lays over it puts plenty of points inside each ring - a
+    // distant pair would spread the same probes thinly and could disagree at
+    // only a handful of points.
+    private const ELSEWHERE = 'POLYGON((-0.02 51.50, 0.04 51.50, 0.04 51.56, -0.02 51.56, -0.02 51.50))';
 
     protected function setUp(): void
     {
