@@ -98,9 +98,40 @@ nothing stored it. `rippling_reach.max_polygon` now does, populated by a backgro
 inline geometry and have to be re-fetched from the routing server. A point-in-polygon test on
 somebody's reply is not the place to discover that.
 
+**The pass that fills it is index-sensitive in a way worth knowing about.**
+`MaxReachService::candidateQuery` looks for expanding posts that still lack a max reach,
+newest first, `LIMIT 200`, once a minute. Once every expanding post *has* one the predicate
+matches nothing - and a `LIMIT` that is never satisfied cannot stop a scan early, so the
+planner's unaided choice walks the whole `updated_at` index to prove the empty set: 55,990 row
+lookups in a ~50GB table, 2m09s on an idle db1, on the read node. That is the live state
+today: `expanding AND max_polygon IS NULL` is exactly zero rows.
+
+There are two correct forms, and which applies is a schema fact rather than a preference,
+guarded by `MaxReachCandidateIndex::ready()`. Measured on a 55,015-row clone matching
+production:
+
+| form | rows examined | sort |
+|---|---|---|
+| planner unaided | whole `updated_at` walk | backward scan |
+| `FORCE INDEX (rippling_reach_status_index)` | 13,696 | filesort |
+| `rippling_reach_maxreach_candidates` | 1 | none |
+
+**The two do not stack.** Leaving the hint in place once the composite index exists pins the
+planner to the status index, so the composite is never used at all - 15,177 rows and a
+filesort, worse than no hint. The hint is strictly the fallback for before the DDL has run.
+
+Two traps in the index itself. `max_polygon_cells` is a `MEDIUMBLOB` and cannot be indexed, so
+its nullness is hoisted into a `has_max_reach` virtual generated column (the same idiom
+`has_overflow` uses) - and **MySQL will not substitute that column for its own defining
+expression**, so written as `max_polygon_cells IS NULL` the planner ignores the index entirely.
+The query has to name `has_max_reach`. The column is also defined over `max_polygon_cells`
+alone on purpose: a generated column pins every column it references, so naming `max_polygon`
+or `max_polygon_hash` would make MySQL refuse to drop them later.
+
 | Where | What |
 |---|---|
 | `iznik-batch/app/Services/FirstReply/MaxReachService.php` | populates and tests `max_polygon` |
+| `iznik-batch/app/Services/Ripple/MaxReachCandidateIndex.php` | which of the two candidate-scan forms this schema supports |
 | `iznik-batch/app/Services/Ripple/RippleReplyService.php` | `shouldHold()` consults the passthrough - email and TrashNothing replies |
 | `iznik-server-go/firstreply/passthrough.go` | the same decision for in-app replies |
 

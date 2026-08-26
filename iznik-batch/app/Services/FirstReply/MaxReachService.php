@@ -5,6 +5,7 @@ namespace App\Services\FirstReply;
 use App\Services\Ripple\CellSetService;
 use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\LegacyGeometry;
+use App\Services\Ripple\MaxReachCandidateIndex;
 use App\Services\Ripple\ReachService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -240,33 +241,66 @@ class MaxReachService
      *
      * @return array{scanned:int, filled:int, routed:int, skipped:int}
      */
-    public function populate(int $limit = 200, int $routingBudget = 20): array
+    /**
+     * The candidate scan: expanding posts that still lack a max reach, newest
+     * first. Public so a test can EXPLAIN the query this actually runs rather
+     * than a copy of it - the failure mode being guarded against is a silent
+     * change of PLAN, which reading the SQL cannot detect.
+     *
+     * The planner's unaided choice here is pathological (PR #1404, folded into
+     * this branch because the fix it deferred is DDL and this branch is doing
+     * DDL). ORDER BY updated_at DESC LIMIT 200 makes it drive off
+     * rippling_reach_updated_at and filter row by row - fine while a backlog
+     * existed, since the LIMIT filled early. Once every expanding post HAS a
+     * max reach the predicate matches NOTHING, and a LIMIT that is never
+     * satisfied cannot stop a scan early, so it walks the whole index to prove
+     * the empty set: 55,990 row lookups in a ~50GB table, 2m09s on an idle db1,
+     * once a minute, on the read node.
+     *
+     * Two correct forms, and which one is correct is a schema fact rather than
+     * a preference. Measured on a 55,015-row clone matching production
+     * (8,299 expanding, zero matching rows - the live state):
+     *
+     *   planner unaided        full updated_at walk
+     *   FORCE INDEX (status)   13,696 rows + filesort   <- #1404's fix
+     *   composite index             1 row, no filesort  <- once the DDL lands
+     *
+     * THE TWO DO NOT STACK. Leaving #1404's hint in place once the composite
+     * exists pins the planner to the status index, so the composite is never
+     * used at all: 15,177 rows and a filesort, worse than no hint. The hint is
+     * strictly the pre-DDL fallback, which is why it is one branch or the other
+     * and never both.
+     */
+    public function candidateQuery(int $limit = 200): \Illuminate\Database\Query\Builder
     {
-        $stats = ['scanned' => 0, 'filled' => 0, 'routed' => 0, 'skipped' => 0];
+        // Both halves, so the invariant is explicit rather than inferred: the
+        // index is built ON has_max_reach, which is generated FROM
+        // max_polygon_cells, so it cannot exist without the column. If that
+        // ever stops holding, this takes the older, always-valid branch.
+        $indexed = MaxReachCandidateIndex::ready() && $this->cellsAvailable();
 
-        if (!$this->available()) {
-            return $stats;
-        }
-
-        // FORCE INDEX, because the planner's natural choice here is pathological
-        // (PR #1404, carried through the cells rewrite because the pathology is
-        // about the DRIVING index, not the columns tested). ORDER BY updated_at
-        // DESC LIMIT 200 makes it drive off rippling_reach_updated_at and filter
-        // each row - fine while there was a backlog, since the LIMIT was
-        // satisfied early. Once every expanding post has a max reach the
-        // predicate matches NOTHING, so it walks the WHOLE index to prove it:
-        // 55,990 row lookups in a ~50GB table, 2m09s on an idle db1, once a
-        // minute. Driving off status bounds it by the expanding rows (8.5k) and
-        // the same empty answer takes 5.3s. Measured 2026-08-24.
-        $rows = DB::query()
-            ->fromRaw('rippling_reach FORCE INDEX (rippling_reach_status_index)')
+        return DB::query()
+            ->when(
+                $indexed,
+                fn ($q) => $q->from('rippling_reach'),
+                fn ($q) => $q->fromRaw('rippling_reach FORCE INDEX (rippling_reach_status_index)')
+            )
             ->select('msgid', 'lat', 'lng', 'schedule')
-            ->when($this->cellsAvailable(), fn ($q) => $q->whereNull('max_polygon_cells'))
-            // Legacy era: "lacks a max reach" additionally means BOTH the blob and
-            // the hash are absent - after ripple:drain-deduped-blobs the blob is
-            // NULL while the hash still points at the shared geometry, and
-            // refilling such a row would undo the drain. Post-drop these columns
-            // are gone and the cells test above is the whole predicate.
+            // The same condition, written the only way that reaches the index.
+            // MySQL does NOT substitute a generated column for its own defining
+            // expression: written as `max_polygon_cells IS NULL` the planner
+            // ignores the composite entirely and goes back to the updated_at
+            // walk. Verified by EXPLAIN, both ways.
+            ->when(
+                $indexed,
+                fn ($q) => $q->where('has_max_reach', 0),
+                fn ($q) => $q->when($this->cellsAvailable(), fn ($q2) => $q2->whereNull('max_polygon_cells'))
+            )
+            // Legacy era: "lacks a max reach" additionally means BOTH the blob
+            // and the hash are absent - after ripple:drain-deduped-blobs the
+            // blob is NULL while the hash still points at the shared geometry,
+            // and refilling such a row would undo the drain. Post-drop these
+            // columns are gone and the test above is the whole predicate.
             ->when(LegacyGeometry::polygonReady(), fn ($q) => $q->whereNull('max_polygon'))
             ->when(LegacyGeometry::polygonReady() && GeomShareService::ready(), fn ($q) => $q->whereNull('max_polygon_hash'))
             ->whereNotNull('schedule')
@@ -279,9 +313,18 @@ class MaxReachService
             // emptied).
             ->where('status', 'expanding')
             ->orderByDesc('updated_at')
-            ->limit($limit)
-            ->get()
-            ->all();
+            ->limit($limit);
+    }
+
+    public function populate(int $limit = 200, int $routingBudget = 20): array
+    {
+        $stats = ['scanned' => 0, 'filled' => 0, 'routed' => 0, 'skipped' => 0];
+
+        if (!$this->available()) {
+            return $stats;
+        }
+
+        $rows = $this->candidateQuery($limit)->get()->all();
 
         foreach ($rows as $row) {
             $stats['scanned']++;

@@ -1,5 +1,6 @@
 <?php
 
+use App\Services\Ripple\LegacyGeometryDrop;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -62,11 +63,21 @@ use Illuminate\Support\Facades\Schema;
  *
  * Set RIPPLE_DROP_LEGACY_GEOMETRY=1 to run it before then.
  *
- * THE DROPS ALONE DO NOT RECLAIM ANYTHING. Percona 8.0.29+ performs DROP
- * COLUMN as ALGORITHM=INSTANT - metadata only - so the old bytes stay in every
- * existing row until it is rewritten. The final ALTER ... FORCE is what
- * returns the ~50GB .ibd (plus ~19.4GB a node of rippling_reach_geom) to the
- * operating system, and it is the long one.
+ * THE ALGORITHM IS NOT A FREE CHOICE HERE, AND GETTING IT WRONG IS SILENT
+ * UNTIL IT IS NOT. Percona 8.0.29+ would normally do DROP COLUMN as
+ * ALGORITHM=INSTANT, which is metadata only and reclaims nothing - but on THIS
+ * table INSTANT is refused outright, twice over: once because virtual generated
+ * columns exist (has_overflow, has_max_reach), and again, after those are
+ * removed, because of the GIS index on outer_bound that this change keeps.
+ *
+ * So every legacy column is dropped in ONE combined ALTER with
+ * ALGORITHM=INPLACE, which both succeeds and rewrites the table - measured, a
+ * 400-row clone with ~200KB in each fat column went 91,808KB -> 1,696KB with no
+ * follow-up statement. That is what returns the ~50GB .ibd (plus ~19.4GB a node
+ * of rippling_reach_geom) to the operating system, and it is the long one.
+ * There is deliberately no separate ALTER ... FORCE: an earlier version had
+ * one, believing the drops were metadata-only, and that version could never
+ * reach it because it errored on the first drop.
  *
  * NOT REVERSIBLE, and down() says so rather than pretending. The polygons are
  * a traced approximation of a routing grid; the cells are that same grid at a
@@ -122,76 +133,19 @@ return new class extends Migration
             }
         }
 
-        // 1. The dedup layer: FKs, then indexes, then columns, then the table.
-        foreach (['rippling_reach_polygon_hash_foreign', 'rippling_reach_max_polygon_hash_foreign'] as $fk) {
-            if ($this->hasForeignKey($fk)) {
-                DB::statement("ALTER TABLE rippling_reach DROP FOREIGN KEY {$fk}");
-            }
-        }
-        foreach (['rippling_reach_polygon_hash', 'rippling_reach_max_polygon_hash'] as $idx) {
-            if ($this->hasIndex($idx)) {
-                DB::statement("ALTER TABLE rippling_reach DROP INDEX {$idx}");
-            }
-        }
-        foreach (['polygon_hash', 'max_polygon_hash'] as $col) {
-            if (Schema::hasColumn('rippling_reach', $col)) {
-                DB::statement("ALTER TABLE rippling_reach DROP COLUMN {$col}, ALGORITHM=INSTANT");
-            }
-        }
+        // The whole DDL sequence lives in LegacyGeometryDrop so that a test can
+        // run it against a `CREATE TABLE ... LIKE rippling_reach` clone. Until it
+        // did, nothing executed these statements: CI never sets
+        // RIPPLE_DROP_LEGACY_GEOMETRY and PostDropEraTest fakes the era instead
+        // of issuing DDL - which is exactly how a version that died on its first
+        // ALTER survived review. See that class for why the order is forced.
+        (new LegacyGeometryDrop())->run('rippling_reach');
 
-        // 2. has_overflow is GENERATED from overflow_bounds, so it and its
-        //    index must go BEFORE the column they derive from, and come back
-        //    derived from overflow_cells instead.
-        if ($this->hasIndex('rippling_reach_has_overflow')) {
-            DB::statement('ALTER TABLE rippling_reach DROP INDEX rippling_reach_has_overflow');
-        }
-        if (Schema::hasColumn('rippling_reach', 'has_overflow')) {
-            DB::statement('ALTER TABLE rippling_reach DROP COLUMN has_overflow, ALGORITHM=INSTANT');
-        }
-        if (Schema::hasColumn('rippling_reach', 'overflow_bounds')) {
-            DB::statement('ALTER TABLE rippling_reach DROP COLUMN overflow_bounds, ALGORITHM=INSTANT');
-        }
-        if (Schema::hasColumn('rippling_reach', 'overflow_cells')
-            && !Schema::hasColumn('rippling_reach', 'has_overflow')) {
-            DB::statement(
-                'ALTER TABLE rippling_reach
-                    ADD COLUMN has_overflow TINYINT(1)
-                        GENERATED ALWAYS AS (overflow_cells IS NOT NULL) VIRTUAL'
-            );
-            DB::statement(
-                'ALTER TABLE rippling_reach
-                    ADD INDEX rippling_reach_has_overflow (has_overflow, updated_at)'
-            );
-        }
-
-        // 3. The fat geometry, and the R-tree that drove the browse feed until
-        //    the spatial index took that job over.
-        if ($this->hasIndex('rippling_reach_polygon')) {
-            DB::statement('ALTER TABLE rippling_reach DROP INDEX rippling_reach_polygon');
-        }
-        foreach (['polygon', 'max_polygon'] as $col) {
-            if (Schema::hasColumn('rippling_reach', $col)) {
-                DB::statement("ALTER TABLE rippling_reach DROP COLUMN {$col}, ALGORITHM=INSTANT");
-            }
-        }
-
-        // 4. The shared geometry table, once nothing points at it.
+        // And finally the shared geometry table, once nothing points at it. This
+        // stays here rather than in LegacyGeometryDrop because it is not part of
+        // the rippling_reach column surgery, and a test running the sequence
+        // against a clone must not drop the real shared table.
         Schema::dropIfExists('rippling_reach_geom');
-
-        // 5. The rebuild, which is what actually returns the disk. Everything
-        // above is metadata only: Percona 8.0.29+ does DROP COLUMN as
-        // ALGORITHM=INSTANT, so the dropped columns' bytes stay in every
-        // existing row until it is rewritten. Measured on 8.0.43-34: a table
-        // of five 200KB blobs reported 1,552KB after an INSTANT drop and 16KB
-        // after this. One rebuild rather than pinning INPLACE on each drop,
-        // which would rebuild the table six times.
-        //
-        // LOCK=SHARED because InnoDB REFUSES LOCK=NONE here: "Do not support
-        // online operation on table with GIS index" - the index on
-        // outer_bound, which this change keeps. Reads continue, writes block.
-        // On production that is why the whole file is run node-by-node under
-        // RSU, on a node already out of rotation.
-        DB::statement('ALTER TABLE rippling_reach FORCE, ALGORITHM=INPLACE, LOCK=SHARED');
     }
 
     public function down(): void
@@ -205,21 +159,4 @@ return new class extends Migration
         );
     }
 
-    private function hasIndex(string $name): bool
-    {
-        return DB::table('information_schema.statistics')
-            ->whereRaw('table_schema = DATABASE()')
-            ->where('table_name', 'rippling_reach')
-            ->where('index_name', $name)
-            ->exists();
-    }
-
-    private function hasForeignKey(string $name): bool
-    {
-        return DB::table('information_schema.referential_constraints')
-            ->whereRaw('constraint_schema = DATABASE()')
-            ->where('table_name', 'rippling_reach')
-            ->where('constraint_name', $name)
-            ->exists();
-    }
 };

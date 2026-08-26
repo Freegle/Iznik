@@ -1296,16 +1296,39 @@ migration and the production SQL both REFUSE while any live row has no `polygon_
 because such a row would simply stop having a reach. The drop is not reversible: `down()`
 throws rather than re-adding empty columns, since every reader would then find NULL where
 it expects a reach and quietly decide nobody is covered. The rollback is to not run it.
-**`DROP COLUMN` does NOT return the space, and that trap is the whole reason the DDL has a
-final step.** MySQL 8 defaults these drops to `ALGORITHM=INSTANT`, which edits metadata and
-leaves every dropped column's bytes sitting in every existing row: the columns vanish from
-`SHOW CREATE TABLE` while `data_length` barely moves. Measured on a structure clone of this
-table, 1,552KB remained after an instant drop against 16KB after a rebuild. So each drop is
-pinned `ALGORITHM=INSTANT` on purpose - fast and cheap, six times - and then ONE
-`ALTER TABLE rippling_reach FORCE` rewrites the table without them. That rebuild is the long
-ALTER, and it is what the exercise is actually for.
+**`ALGORITHM=INSTANT` IS REFUSED ON THIS TABLE, and an earlier version of the DDL that pinned
+it failed on its first statement and left every legacy column in place.** In general MySQL 8
+would default a `DROP COLUMN` to INSTANT, which edits metadata and leaves the dropped bytes in
+every existing row - the columns vanish from `SHOW CREATE TABLE` while `data_length` barely
+moves. That much is true and was measured (1,552KB after an instant drop against 16KB after a
+rebuild). But it was measured on a *simplified* table, and this one refuses INSTANT twice over:
 
-It runs `LOCK=SHARED`, which is **not** a choice: InnoDB refuses `LOCK=NONE` on this table
+1. **While any VIRTUAL generated column exists** (`has_overflow`, `has_max_reach`), InnoDB
+   refuses to drop *any* column, even one nothing derives from - "INPLACE ADD or DROP of
+   virtual columns cannot be combined with other ALTER TABLE actions".
+2. **And with those removed, because of the GIS index** on `outer_bound` that the change keeps
+   - "Do not support online operation on table with GIS index".
+
+So the shape is: take both generated columns off (each in its own statement, index before
+column), then drop **every** legacy column in ONE `ALTER ... ALGORITHM=INPLACE`, then put the
+generated columns back over the cell columns. An INPLACE drop rewrites the table by definition,
+so that single statement is also the rebuild - measured, a 400-row clone with ~200KB in each fat
+column went 91,808KB to 1,696KB with no follow-up. There is deliberately **no** separate
+`ALTER TABLE ... FORCE`: it was redundant, and the version that had one could never reach it.
+
+**Index before column, every time** - and not because MySQL would refuse otherwise. It does
+not: dropping a generated column **silently rewrites** any index naming it, so
+`(status, has_max_reach, updated_at)` becomes `(status, updated_at)` under the same name. A
+guard checking only the index name would then skip re-creating it, leaving the wrong index in
+place permanently.
+
+The sequence lives in `App\Services\Ripple\LegacyGeometryDrop` rather than inline in the
+migration, so `LegacyGeometryDropTest` can run **the real statements** against a
+`CREATE TABLE ... LIKE rippling_reach` clone. That is the gap which let the broken version
+through: CI never sets `RIPPLE_DROP_LEGACY_GEOMETRY`, and the post-drop tests fake the schema
+guard rather than issuing DDL, so nothing executed these ALTERs at all.
+
+That combined drop runs `LOCK=SHARED`, which is **not** a choice: InnoDB refuses `LOCK=NONE` on this table
 outright ("Do not support online operation on table with GIS index"), and the GIS index in
 question is the one on `outer_bound` that this change deliberately keeps. Reads continue;
 writes to `rippling_reach` block for the duration. That is survivable only because the drop
