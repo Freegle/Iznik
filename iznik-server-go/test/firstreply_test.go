@@ -70,7 +70,7 @@ func TestFirstReplyPassthrough_CellSetPath(t *testing.T) {
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: passthrough cellset test", 51.5, -0.1)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
-	seedRipplingReach(t, msgID, false) // max_polygon left NULL - only the cells column carries the eventual reach
+	seedRipplingReach(t, msgID, false) // max_polygon_cells left NULL - no eventual reach recorded
 	cells, err := base64.StdEncoding.DecodeString(frCellsGoldenVectorB64)
 	require.NoError(t, err)
 	res := db.Exec("UPDATE rippling_reach SET max_polygon_cells = ? WHERE msgid = ?", cells, msgID)
