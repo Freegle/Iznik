@@ -83,13 +83,18 @@ export function useReachDistance(
   // inbound-only browseReachMaxDistance). Gating on the minutes would therefore show an outbound
   // cap to members who have none.
   //
-  // KNOWN GAP: a member with browseMaxDistance but NO browseMaxMinutes - a pre-2026-07-10
-  // miles-slider write, which the backfill exists to convert - has a real outbound cap that we
-  // cannot place on a minutes scale without a routing lookup, so the `??` below shows the top stop
-  // and thereby claims "no limit". The INBOUND slider has read the same way since the slider became
-  // time-based, so this is not new, but it does mean pinning such a member (see
-  // DistanceSliders.pinOutbound) persists the "no limit" the control was showing them rather than
-  // the narrower cap they actually had.
+  // A member with browseMaxDistance but NO browseMaxMinutes - a pre-2026-07-10 miles-slider write -
+  // has a stored cap we cannot place on a minutes scale without inverting miles back to minutes,
+  // which would take several routing calls. The `??` therefore shows the top stop. That is the
+  // SAME reading the inbound slider has had since it became time-based (on master:
+  // `browseMaxMinutes ?? maxMinutes.value`), and it is a known state with a designed remedy rather
+  // than an open hole: browse:backfill-max-distance rewrites BOTH keys for these members, giving
+  // them their band cap in minutes and reconciling the radius to match, so the top stop the control
+  // shows becomes true instead of remaining a claim. See
+  // BackfillBrowseMaxDistanceCommandTest::testOverridesALegacyMilesOnlyCapToTheBandCap, whose own
+  // comment puts it as "the time-based slider shows this member no limit - storage must match".
+  // So pinning such a member (DistanceSliders.pinOutbound) at the top stop agrees with that
+  // decision rather than fighting it.
   const savedMinutes = computed(() => {
     const settings = me.value?.settings
     const own = settings?.[minutesKey]
