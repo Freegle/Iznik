@@ -235,6 +235,29 @@ describe('DistanceSliders', () => {
     expect(sliders(wrapper)).toHaveLength(1)
   })
 
+  // Re-linking must take the outbound shape off the browse map. The row that published it
+  // unmounts, and an unmount does not empty the overlay slot - so without an explicit clear the
+  // dashed outline stays shaded over a cap that no longer exists until the page is reloaded.
+  it('clears the outbound map shape when linked again', async () => {
+    const { useReachOverlay } = await import('~/composables/useReachOverlay')
+    const myPosts = useReachOverlay('myPosts')
+    myPosts.publishReach(myPosts.nextReachSeq(), { type: 'Feature' })
+    expect(myPosts.reachGeoJSON.value).not.toBeNull()
+
+    const wrapper = mountWith({
+      browseMaxMinutes: 20,
+      browseMaxDistance: 12,
+      myPostsMaxMinutes: 30,
+      myPostsMaxDistance: 18,
+    })
+    await flushPromises()
+
+    await buttonWithText(wrapper, 'Link them again').trigger('click')
+    await flushPromises()
+
+    expect(myPosts.reachGeoJSON.value).toBeNull()
+  })
+
   // Only the inbound half changes what this member is looking at, so only it should make the page
   // refetch. An outbound change alters who sees their posts and nothing on their own screen.
   it('emits persisted for an inbound change but not an outbound one', async () => {

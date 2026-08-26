@@ -76,6 +76,20 @@ export function useReachDistance(
   //     inbound-only browseReachMaxDistance key) -> their posts are not capped at all, so show the
   //     top stop, which means "no limit".
   // Showing the band default here instead would understate a city member's reach by more than half.
+  //
+  // The gate is browseMaxDistance and NOT browseMaxMinutes, deliberately: browseMaxDistance is
+  // exactly the key the outbound readers fall back to, while browseMaxMinutes is also written by
+  // browse:backfill-max-distance for members who never chose (their radius goes to the separate,
+  // inbound-only browseReachMaxDistance). Gating on the minutes would therefore show an outbound
+  // cap to members who have none.
+  //
+  // KNOWN GAP: a member with browseMaxDistance but NO browseMaxMinutes - a pre-2026-07-10
+  // miles-slider write, which the backfill exists to convert - has a real outbound cap that we
+  // cannot place on a minutes scale without a routing lookup, so the `??` below shows the top stop
+  // and thereby claims "no limit". The INBOUND slider has read the same way since the slider became
+  // time-based, so this is not new, but it does mean pinning such a member (see
+  // DistanceSliders.pinOutbound) persists the "no limit" the control was showing them rather than
+  // the narrower cap they actually had.
   const savedMinutes = computed(() => {
     const settings = me.value?.settings
     const own = settings?.[minutesKey]

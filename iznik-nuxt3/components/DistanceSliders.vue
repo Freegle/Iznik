@@ -72,6 +72,7 @@ import { ref, computed } from 'vue'
 import DistanceSliderRow from '~/components/DistanceSliderRow.vue'
 import { useMe } from '~/composables/useMe'
 import { useAuthStore } from '~/stores/auth'
+import { useReachOverlay } from '~/composables/useReachOverlay'
 import { DISTANCE_AXES } from '~/constants'
 
 // The "How far away" control. One question asked in two directions - how far away a post may be for
@@ -106,6 +107,7 @@ const emit = defineEmits(['persisted'])
 
 const { me } = useMe()
 const authStore = useAuthStore()
+const { clearReach: clearMyPostsReach } = useReachOverlay('myPosts')
 
 const outboundRow = ref(null)
 
@@ -161,6 +163,11 @@ async function relink() {
     settings[DISTANCE_AXES.myPosts.milesKey] = null
     await authStore.saveAndGet({ settings })
   }
+  // Take the outbound shape off the map. The row that published it is about to unmount, and an
+  // unmount does not empty the overlay slot - so without this the dashed outline stays shaded over
+  // a cap that no longer exists, until a reload. Same reason fetchNear clears rather than leaving
+  // the last shape behind: a shape the control no longer shows is worse than no shape.
+  clearMyPostsReach()
   splitLocal.value = false
 }
 </script>

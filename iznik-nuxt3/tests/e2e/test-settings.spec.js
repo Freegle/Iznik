@@ -310,11 +310,15 @@ test.describe('Settings Page - Email Level Settings', () => {
     await expect(feed).toContainText('road distance and travel time')
     await takeScreenshot('Distance sliders linked')
 
-    // Any PATCH /session between here and the assertion below is a save we did not want.
-    const saves = []
+    // Watch for a save that writes the OUTBOUND keys specifically, rather than any PATCH at all:
+    // the settings page has other things that can save, and an unrelated one landing in this
+    // window would fail the test for the wrong reason. The claim being tested is narrow - that
+    // revealing the second slider persists no outbound choice - so the check should be too.
+    const outboundSaves = []
     page.on('request', (r) => {
       if (r.url().includes('/api/session') && r.method() === 'PATCH') {
-        saves.push(r.url())
+        const body = r.postData() || ''
+        if (body.includes('myPostsMax')) outboundSaves.push(body.slice(0, 200))
       }
     })
 
@@ -334,11 +338,12 @@ test.describe('Settings Page - Email Level Settings', () => {
       .evaluateAll((els) => els.map((el) => Number(el.max)))
     expect(maxima[1]).toBeGreaterThanOrEqual(maxima[0])
 
-    // The promise: revealing it wrote nothing.
+    // The promise: revealing it wrote no outbound choice.
     await page.waitForTimeout(timeouts.ui.settleTime)
-    expect(saves, 'revealing the second slider must not save anything').toEqual(
-      []
-    )
+    expect(
+      outboundSaves,
+      'revealing the second slider must not persist an outbound choice'
+    ).toEqual([])
 
     // And it is not sticky, precisely because nothing was saved.
     await page.reload()

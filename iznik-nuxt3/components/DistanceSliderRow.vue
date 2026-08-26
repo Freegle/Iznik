@@ -75,7 +75,20 @@ const axisMax = computed(() => (props.sharedAxis ? BROWSE_MINUTES_MAX : null))
 // The owner gets first refusal on a change, because pinning has to read the OTHER axis's value
 // before this one is written - once this row saves, a linked sibling has already followed it.
 async function handleChange(minutes) {
-  if (props.onBeforeChange) await props.onBeforeChange()
+  if (props.onBeforeChange) {
+    try {
+      await props.onBeforeChange()
+    } catch (e) {
+      // The hook is bookkeeping on the member's behalf (pinning the other axis), not the thing
+      // they just did. A failed save in there must not swallow the drag they actually made -
+      // losing the visible action to fix an invisible one is the worse of the two outcomes, and
+      // the pin is retried on their next drag anyway.
+      console.warn(
+        'Distance slider: pre-change hook failed, persisting anyway',
+        e
+      )
+    }
+  }
   await onSliderChange(minutes)
 }
 
