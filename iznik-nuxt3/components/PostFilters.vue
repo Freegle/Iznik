@@ -2,6 +2,19 @@
   <div :class="{ 'mb-2': !showFilters }">
     <h2 class="visually-hidden">Post Filters</h2>
     <b-collapse v-model="showFilters" class="p-2 bg-primary-subtle">
+      <!-- The panel's top-right corner, and deliberately OUTSIDE the filters grid. It used to be a
+           cell in that grid, whose first row starts below the help text - so the close control could
+           never reach the corner and instead sat halfway down, beside the "Show these posts"
+           select, reading as part of that field rather than as the panel's dismiss. First in the
+           flow so the float puts it in the corner. -->
+      <b-button
+        variant="link"
+        title="Hide map and post filters"
+        class="noborder panel-close text-dark"
+        @click="showFilters = false"
+      >
+        <v-icon icon="times" />
+      </b-button>
       <!-- Generic "how the nearby feed works" help - kept above the filters (and the
            "How far away" control) so the explanation reads before the controls. -->
       <div v-if="browseView === 'nearby'" class="nearby-help">
@@ -50,16 +63,6 @@
             :options="sortOptions"
             class="shrink"
           />
-        </div>
-        <div class="close d-flex justify-content-end">
-          <b-button
-            variant="link"
-            title="Hide map and post filters"
-            class="noborder close text-dark"
-            @click="showFilters = false"
-          >
-            <v-icon icon="times" />
-          </b-button>
         </div>
       </div>
       <!-- Rippling-out (#1): the catchment is worked out automatically and ripples
@@ -445,16 +448,30 @@ const hasNonDefaultFilters = computed(() => {
   color: $color-gray--darker;
 }
 
+/* Top-right of the panel, as the first thing in its content flow. FLOATED rather than absolutely
+   positioned: BCollapse's root element does not inherit this component's scope attribute (checked
+   in a browser - its attributes are id/class/is-nav/style, no data-v-*), so a scoped
+   `position: relative` on it silently does not apply, the button's containing block becomes the
+   viewport, and it lands behind the fixed navbar. A float needs no containing block, and it also
+   reserves its own space so the help text beside it wraps instead of running underneath. */
+.panel-close {
+  float: right;
+  margin: -0.25rem -0.25rem 0 0.5rem;
+  background-color: transparent !important;
+}
+
 .filters {
   display: grid;
 
-  grid-template-columns: 1fr 3rem;
+  /* No 3rem gutter column any more: the close button left the grid, and keeping its column
+     reserved would indent every filter away from the panel edge for nothing. */
+  grid-template-columns: 1fr;
   grid-template-rows: min-content min-content min-content min-content;
   grid-column-gap: 10px;
   grid-row-gap: 10px;
 
   @include media-breakpoint-up(md) {
-    grid-template-columns: 2fr 1fr 3rem;
+    grid-template-columns: 2fr 1fr;
     grid-template-rows: min-content min-content min-content;
   }
 
@@ -488,8 +505,10 @@ const hasNonDefaultFilters = computed(() => {
       /* Span the FULL panel width on its own row rather than sharing the 2fr column
          with Sort. The reach hint / nearby-towns list then has the whole panel to use,
          so its (deliberate) ellipsis-truncation only bites when genuinely tight instead
-         of at every larger width (Discourse 9808, Neville #600). */
-      grid-column: 1 / 4;
+         of at every larger width (Discourse 9808, Neville #600). Ends at line 3, not 4:
+         the grid is two columns wide now that the close button no longer occupies one, and
+         asking for a fourth line would have grid invent an empty third column to reach it. */
+      grid-column: 1 / 3;
       grid-row: 2 / 3;
     }
   }
@@ -505,25 +524,9 @@ const hasNonDefaultFilters = computed(() => {
     }
   }
 
-  .close {
-    grid-column: 2 / 3;
-    grid-row: 1 / 2;
-    background-color: transparent !important;
-
-    @include media-breakpoint-up(md) {
-      grid-column: 3 / 4;
-    }
-  }
-
-  .nearby-help {
-    grid-column: 1 / 3;
-    grid-row: 4 / 5;
-
-    @include media-breakpoint-up(md) {
-      grid-column: 1 / 4;
-      grid-row: 3 / 4;
-    }
-  }
+  /* No .close rule: the close button is positioned against the panel now, not laid out here.
+     No .nearby-help rule either - that div is a SIBLING of .filters, never a child, so the
+     placement it used to declare here never applied to anything. */
 }
 
 // Help text - the whole rippling explanation ("We show posts near you first ..." plus the
