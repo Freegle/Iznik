@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"spatial-server/cellset"
@@ -131,9 +132,16 @@ func TestOverflowSelect_PostDropUsesNullsNotTheDroppedColumn(t *testing.T) {
 		t.Errorf("select has %d cell extractions, want %d: %s", got, len(lanes), cols)
 	}
 	// The scanner pairs columns positionally, so the NULL placeholders must
-	// keep the column COUNT identical to the pre-drop era.
-	if got := countSubstr(cols, ", "); got != 2*len(lanes)-1 {
-		t.Errorf("select has %d columns, want %d (shape must not change across eras)", got+1, 2*len(lanes))
+	// keep the column COUNT identical to the pre-drop era. Asserted by
+	// building the exact expected string - counting ", " separators is a trap
+	// this test fell into on its first run: every cells extraction contains
+	// ", " INSIDE it ("overflow_cells, ?"), so the separator count read 29
+	// where the assertion expected 19, and the suite failed on every master
+	// build (invisible to PR builds, which do not run the spatial step).
+	want := strings.Repeat("JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), ", len(lanes)) +
+		strings.TrimSuffix(strings.Repeat("NULL, ", len(lanes)), ", ")
+	if cols != want {
+		t.Errorf("post-drop select shape:\n got: %s\nwant: %s", cols, want)
 	}
 }
 
