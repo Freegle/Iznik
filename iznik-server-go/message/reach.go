@@ -3,7 +3,6 @@ package message
 import (
 	"database/sql"
 	"encoding/base64"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
