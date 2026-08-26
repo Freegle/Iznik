@@ -30,7 +30,7 @@ Worktree: /home/edward/FreegleDocker-reach-raster.
 | 8 | Fixtures/tests: polygon-writers -> cells; era-fake tests collapse to one era | ✅ | PHP: SeedsReachCells trait (offline rect grids) + FakesRingIndex serves reach/containing; Go: reachindexstub_test serves index from test rows |
 | 9 | Docs: rippling-algorithm.md + first-reply.md + freshness green | ✅ | |
 | 10 | Full suites green via status API: Laravel + Go + spatial-go | ✅ | Laravel 5955/5955, Go 4277/4277, spatial-go green, docs freshness OK |
-| 11 | Review pass + PR | 🔄 | review done; PR opening |
+| 11 | Review pass + PR | 🔄 | PR #1419 open; CI running |
 
 ## Key decisions (planned)
 
