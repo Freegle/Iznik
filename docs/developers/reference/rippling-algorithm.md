@@ -1291,6 +1291,17 @@ shrink agree exactly rather than approximately.
 (`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`), then
 `ripple:verify-cells-parity` and read it, then the drop DDL node by node under RSU.
 
+**Run `ripple:verify-ring-cells-parity` as well - the other one does not cover the rings.**
+`ripple:verify-cells-parity` has eight read cases, seven over `polygon_cells` and one over
+`max_polygon_cells`; none of them reads `overflow_cells`. Without the ring command the rings
+convert with their *presence* guarded by the drop migration and their *correctness* guarded by
+nothing, which is a poor position from which to run an irreversible DDL. It compares each
+stored ring grid against a fresh rasterise of the WKT it replaced, and catches the three
+things the migration cannot see for itself: a ring with no grid (that lane admits nobody once
+the WKT is gone), a grid with no ring behind it (that lane admits people no ring covered), and
+a grid whose covered cells have moved. Read-only, so it is safe against production - which is
+the only place the real rings exist.
+
 **FIVE schema operations in total, and only ONE of them does real work.** Every statement is a
 separate pass under RSU on a ~50GB table, so the count is a real cost rather than a tidiness
 question. It was nineteen.
