@@ -439,6 +439,16 @@ func TestVolunteeringRenew(t *testing.T) {
 	db.Raw("SELECT expired, renewed FROM volunteering WHERE id = ?", volunteeringID).Row().Scan(&expired, &renewed)
 	assert.Equal(t, 0, expired)
 	assert.NotNil(t, renewed)
+
+	// The renewal timestamp must come back to the client, which uses it to decide
+	// whether a confirmation is due. Without it the site asks the owner to confirm
+	// on every single visit, however recently they last did.
+	resp2, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/volunteering/%d?jwt=%s", volunteeringID, token), nil))
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var fetched volunteering2.Volunteering
+	json2.Unmarshal(rsp(resp2), &fetched)
+	assert.NotNil(t, fetched.Renewed)
 }
 
 func TestVolunteeringExpire(t *testing.T) {
