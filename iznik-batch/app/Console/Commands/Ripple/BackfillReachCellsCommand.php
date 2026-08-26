@@ -43,6 +43,7 @@ class BackfillReachCellsCommand extends Command
                             {--sleep-ms=50 : Pause between rows, to go easy on the rasterise endpoint. Set 0 and shard by --after to go as fast as the rasteriser allows.}
                             {--after= : Start BELOW this msgid instead of the stored mark (the sweep runs newest-first, so this is a ceiling). Also how to shard: give each worker its own range.}
                             {--reset-mark : Start from the beginning again}
+                            {--include-expanding : Also convert rows still expanding (safe: the write is compare-and-swap; use to converge the drop guard at sweep speed instead of tick speed)}
                             {--dry-run : Report what would be filled without writing}';
 
     protected $description = 'Backfill rippling_reach.polygon_cells for rows whose current reach predates the raster-storage change';
@@ -102,17 +103,33 @@ class BackfillReachCellsCommand extends Command
         $poly = GeomShareService::sourceExpr('rippling_reach', 'polygon', 'gp');
 
         // Candidates are the rows that have a reach but no cells for it, MINUS
-        // the ones still expanding. `polygon` is NOT NULL on this table, so
-        // unlike max_polygon there is no "does it have one at all" question -
-        // only the drained case, which the COALESCE join covers.
+        // (by default) the ones still expanding. `polygon` is NOT NULL on this
+        // table, so unlike max_polygon there is no "does it have one at all"
+        // question - only the drained case, which the COALESCE join covers.
         //
-        // EXPANDING ROWS ARE SKIPPED, for two reasons that point the same way.
-        // ExpandService rewrites both the polygon and the cells on every tick,
-        // so those rows fill themselves in within a tick or two and any work
-        // done here is thrown away; and doing it anyway is what created the
-        // race the compare-and-swap below defends against. Measured on
-        // production 2026-08-25: 8,390 of 56,317 rows are expanding, so this
-        // is ~15% less work as well as one less way to go wrong.
+        // EXPANDING ROWS ARE SKIPPED BY DEFAULT, as an optimisation rather
+        // than a safety requirement. ExpandService rewrites both the polygon
+        // and the cells on every tick, so a row that ticks soon fills itself
+        // and any work done here is thrown away; the compare-and-swap below
+        // is what makes racing a tick harmless either way. Measured on
+        // production 2026-08-25: 8,390 of 56,317 rows were expanding, so the
+        // skip was ~15% less work.
+        //
+        // --include-expanding EXISTS BECAUSE "fills itself within a tick or
+        // two" proved wrong for the tail. A tick only comes when
+        // next_expansion_at falls due - hours or days away late in a schedule
+        // - and a post's FINAL tick flips it to 'done' WITHOUT writing a
+        // polygon (there is nothing left to expand to), so a pre-cells
+        // expander whose only remaining step was "finish" lands in 'done'
+        // with no cells, behind this sweep's mark, invisible to ticks.
+        // Measured on production 2026-08-26: five hours after the deploy,
+        // 5,839 expanding rows still had no cells and finishers were joining
+        // 'done' cell-less at ~0.8/minute. Converting expanding rows directly
+        // both drains that population at sweep speed instead of tick speed
+        // and STOPS the finisher leak - a finisher then already carries
+        // cells. Safe because every post-deploy polygon write includes cells:
+        // a row with NULL cells has a polygon last written pre-deploy, i.e.
+        // static, and if a tick does land mid-flight the CAS loses cleanly.
         //
         // NEWEST FIRST, deliberately. Every reach row is deleted by the
         // 90-day message purge, so the oldest rows are the ones with least
@@ -121,13 +138,17 @@ class BackfillReachCellsCommand extends Command
         // months until last. (Nothing has reached the purge yet: the oldest
         // row is 2026-06-22, so today this only changes the order work is
         // done in, not the total. It will matter later.)
+        $statusFilter = $this->option('include-expanding')
+            ? ''
+            : "AND rippling_reach.status <> 'expanding'";
+
         // keep-raw: the COALESCE-through-join WKT read has no query-builder equivalent
         $rows = DB::select(
             "SELECT rippling_reach.msgid, ST_AsText($poly) AS wkt
                FROM rippling_reach$pJoin
               WHERE rippling_reach.msgid < ?
                 AND rippling_reach.polygon_cells IS NULL
-                AND rippling_reach.status <> 'expanding'
+                $statusFilter
               ORDER BY rippling_reach.msgid DESC
               LIMIT ?",
             [$before, $limit]

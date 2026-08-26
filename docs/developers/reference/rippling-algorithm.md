@@ -1301,10 +1301,17 @@ on production 2026-08-26: 155 such rows three hours after the one-off backfill f
 growing steadily as the ~6,400 pre-cells expanders drained. The nightly scheduled sweeps in
 `console.php` (02:35/03:35/04:35, each with `--reset-mark` because the stored mark would
 otherwise resume from the bottom of a finished sweep and find nothing forever) converge this
-population; expect the drop migration's guards to pass only once the pre-cells expanding
-population has fully drained. The guards themselves are full-table scans - the ring guard
-alone took 42 s on production - so several quiet minutes before the first DDL statement is
-the guards working, not a hang.
+population. The guards themselves are full-table scans - the ring guard alone took 42 s on
+production - so several quiet minutes before the first DDL statement is the guards working,
+not a hang.
+
+**To run the drop sooner, finish with `ripple:backfill-reach-cells --include-expanding`.**
+The flag lifts the expanding-rows skip so the sweep converts them directly: the guard then
+converges at sweep speed instead of tick speed, and the finisher leak above stops at its
+source, since a finisher already carries cells when it flips to `done`. Safe because the
+write is the same compare-and-swap - a tick landing mid-flight wins, and both wrote a grid
+for a reach the row really had. Run on production 2026-08-26: 5,721 rows converted in ten
+minutes, 70 harmless CAS losses to live ticks, and all three drop guards read zero.
 
 **Run `ripple:verify-ring-cells-parity` as well - the other one does not cover the rings.**
 `ripple:verify-cells-parity` has eight read cases, seven over `polygon_cells` and one over

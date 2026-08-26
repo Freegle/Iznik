@@ -140,6 +140,34 @@ class BackfillReachCellsCommandTest extends TestCase
     }
 
     /**
+     * --include-expanding converts expanding rows too. It exists because
+     * "fills itself within a tick or two" proved wrong for the tail on
+     * production: a tick only comes when next_expansion_at falls due, and a
+     * post's FINAL tick flips it to 'done' without writing a polygon, so a
+     * pre-cells expander whose only remaining step was "finish" lands in
+     * 'done' cell-less, behind the sweep's mark, invisible to ticks - and the
+     * drop migration's guard counts it forever. Converting expanding rows
+     * directly is what lets the guard converge at sweep speed, and it is safe
+     * because the write is the same compare-and-swap: a tick landing
+     * mid-flight wins, and both wrote a grid for a reach the row really had.
+     */
+    public function test_include_expanding_converts_expanding_rows(): void
+    {
+        $msgid = $this->seedRowNeedingBackfill();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['status' => 'expanding']);
+
+        $this->artisan('ripple:backfill-reach-cells', ['--include-expanding' => true])
+            ->assertExitCode(0);
+
+        $cells = $this->cellsFor($msgid);
+        $this->assertNotNull($cells, 'with the flag, an expanding row must be converted');
+
+        // And the row is otherwise untouched: still expanding, polygon intact.
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame('expanding', $row->status);
+    }
+
+    /**
      * --after is a CEILING now, not a floor. Getting that backwards would make
      * a sharded run silently sweep the wrong half of the table.
      */
