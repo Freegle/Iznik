@@ -45,7 +45,7 @@ class CoverageVerifierTest extends TestCase
 
         $syncer->method('lookupPostById')
             ->willReturnCallback(fn (string $postId) => $lookups[$postId]
-                ?? ['status' => 'error', 'date' => null, 'outcome' => null, 'group_id' => null, 'post' => null]);
+                ?? ['status' => 'error', 'date' => null, 'outcome' => null, 'group_id' => null, 'lat' => null, 'lng' => null, 'post' => null]);
 
         return $syncer;
     }
@@ -57,6 +57,8 @@ class CoverageVerifierTest extends TestCase
             'date'     => '2026-08-14T09:00:00Z',
             'outcome'  => null,
             'group_id' => null,
+            'lat'      => self::PLACEABLE_LAT,
+            'lng'      => self::PLACEABLE_LNG,
             'post'     => ['post_id' => 'stub'],
         ], $overrides);
     }
@@ -145,15 +147,77 @@ class CoverageVerifierTest extends TestCase
         $this->assertSame(['tn-oob'], $result[CoverageVerifier::UNPLACEABLE]);
     }
 
-    public function test_a_post_with_no_coordinates_is_expected_absent(): void
+    public function test_a_post_the_live_api_never_mapped_is_expected_absent(): void
     {
-        $syncer = $this->syncerReturning([]);
+        // TN's own latitude/longitude are nullable ("may be null if a post
+        // hasn't been mapped"), and PostSyncer drops such a post as
+        // no-coordinates. Only the API can say so — the email header cannot.
+        $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
+
+        $syncer = $this->syncerReturning([
+            'tn-unmapped' => $this->lookup(['lat' => null, 'lng' => null]),
+        ]);
+
+        $result = $this->verify(['tn-unmapped' => $this->inventoryEntry('tn-unmapped')], $syncer);
+
+        $this->assertSame(['tn-unmapped'], $result[CoverageVerifier::UNPLACEABLE]);
+        $this->assertSame([], $result[CoverageVerifier::GENUINE]);
+    }
+
+    public function test_a_post_whose_live_coordinates_moved_out_of_bounds_is_expected_absent(): void
+    {
+        // The header placed it in our group, but TN's current location for it is
+        // in the Atlantic — and the current location is what the API path would
+        // have placed it from.
+        $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
+
+        $syncer = $this->syncerReturning([
+            'tn-moved' => $this->lookup(['lat' => 35.0, 'lng' => -40.0]),
+        ]);
+
+        $result = $this->verify(['tn-moved' => $this->inventoryEntry('tn-moved')], $syncer);
+
+        $this->assertSame(['tn-moved'], $result[CoverageVerifier::UNPLACEABLE]);
+    }
+
+    public function test_a_missing_coordinates_header_is_judged_on_the_live_post_not_assumed_unplaceable(): void
+    {
+        // THE regression this guards: an email whose coordinates header is
+        // absent (or malformed, which ArchiveInventoryService also reports as
+        // null) says nothing about where TN thinks the post is. Filing it as
+        // "unplaceable" without asking would bury a real coverage gap in the
+        // bucket the report describes as expected.
+        $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
+
+        $syncer = $this->syncerReturning([
+            'tn-noheader' => $this->lookup(['post' => ['post_id' => 'tn-noheader']]),
+        ]);
 
         $result = $this->verify([
-            'tn-nocoords' => $this->inventoryEntry('tn-nocoords', ['lat' => null, 'lng' => null]),
+            'tn-noheader' => $this->inventoryEntry('tn-noheader', ['lat' => null, 'lng' => null]),
         ], $syncer);
 
-        $this->assertSame(['tn-nocoords'], $result[CoverageVerifier::UNPLACEABLE]);
+        $this->assertArrayHasKey('tn-noheader', $result[CoverageVerifier::GENUINE]);
+        $this->assertSame([], $result[CoverageVerifier::UNPLACEABLE]);
+        $this->assertSame(1, $result['api_lookups']);
+    }
+
+    public function test_a_missing_coordinates_header_on_a_crosspost_copy_is_still_a_crosspost(): void
+    {
+        // The old short-circuit also mislabelled these: no header meant
+        // "unplaceable", so the copy never reached the group_id check that
+        // explains its absence.
+        $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
+
+        $syncer = $this->syncerReturning([
+            'tn-copy-noheader' => $this->lookup(['group_id' => '55123']),
+        ]);
+
+        $result = $this->verify([
+            'tn-copy-noheader' => $this->inventoryEntry('tn-copy-noheader', ['lat' => null, 'lng' => null]),
+        ], $syncer);
+
+        $this->assertSame(['tn-copy-noheader'], $result[CoverageVerifier::CROSSPOST]);
     }
 
     public function test_a_deleted_post_is_expected_absent(): void
@@ -161,7 +225,7 @@ class CoverageVerifierTest extends TestCase
         $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
 
         $syncer = $this->syncerReturning([
-            'tn-deleted' => ['status' => 'not_found', 'date' => null, 'outcome' => null, 'group_id' => null, 'post' => null],
+            'tn-deleted' => ['status' => 'not_found', 'date' => null, 'outcome' => null, 'group_id' => null, 'lat' => null, 'lng' => null, 'post' => null],
         ]);
 
         $result = $this->verify(['tn-deleted' => $this->inventoryEntry('tn-deleted')], $syncer);
@@ -204,7 +268,7 @@ class CoverageVerifierTest extends TestCase
         $this->createTestGroup(['lat' => self::PLACEABLE_LAT, 'lng' => self::PLACEABLE_LNG]);
 
         $syncer = $this->syncerReturning([
-            'tn-error' => ['status' => 'error', 'date' => null, 'outcome' => null, 'group_id' => null, 'post' => null],
+            'tn-error' => ['status' => 'error', 'date' => null, 'outcome' => null, 'group_id' => null, 'lat' => null, 'lng' => null, 'post' => null],
         ]);
 
         $result = $this->verify(['tn-error' => $this->inventoryEntry('tn-error')], $syncer);

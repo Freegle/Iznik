@@ -211,6 +211,23 @@ class ArchiveInventoryServiceTest extends TestCase
         $this->assertNull($result['posts']['no-coords']['lat']);
     }
 
+    public function test_a_malformed_coordinates_header_yields_no_coordinates_not_zero(): void
+    {
+        // (float) 'unknown' is 0.0 — a real point off West Africa that places in
+        // no group, so casting blind would let a malformed header masquerade as
+        // a confident "outside every group boundary" verdict and hide a miss.
+        $this->archive('2026-08-14T09:00:00Z', $this->tnEmail('bad-coords', coordinates: 'unknown,unknown'), $this->groupAddress());
+
+        $result = $this->service()->collect(
+            CarbonImmutable::parse('2026-08-14T08:00:00Z'),
+            CarbonImmutable::parse('2026-08-14T10:00:00Z'),
+        );
+
+        $this->assertArrayHasKey('bad-coords', $result['posts']);
+        $this->assertNull($result['posts']['bad-coords']['lat']);
+        $this->assertNull($result['posts']['bad-coords']['lng']);
+    }
+
     public function test_a_truncated_file_is_counted_not_fatal(): void
     {
         // Files are read while Postfix may still be writing others.

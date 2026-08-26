@@ -230,6 +230,12 @@ class ArchiveInventoryService
      * Split the X-Trash-Nothing-Post-Coordinates header, matching how the email
      * path itself reads it (IncomingMailService::createGroupPostMessage).
      *
+     * Anything that is not a pair of numbers yields nulls rather than a cast:
+     * `(float) 'unknown'` is 0.0, a real point in the Gulf of Guinea that
+     * places in no group, so casting blind would turn a malformed header into a
+     * confident "unplaceable" verdict. Nulls tell CoverageVerifier the header
+     * knows nothing, and it asks TN instead.
+     *
      * @return array{float|null, float|null}
      */
     private function parseCoordinates(?string $header): array
@@ -243,6 +249,13 @@ class ArchiveInventoryService
             return [null, null];
         }
 
-        return [(float) trim($parts[0]), (float) trim($parts[1])];
+        $lat = trim($parts[0]);
+        $lng = trim($parts[1]);
+
+        if (! is_numeric($lat) || ! is_numeric($lng)) {
+            return [null, null];
+        }
+
+        return [(float) $lat, (float) $lng];
     }
 }

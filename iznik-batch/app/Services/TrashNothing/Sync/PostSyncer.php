@@ -383,16 +383,21 @@ class PostSyncer
      * going to be posted to FD in the first place. See plans/
      * tn-api-post-ingestion.md section Q for the confirmed live examples.
      *
-     * `group_id` and `post` additionally serve tn:verify-email-coverage (see
-     * plans/tn-api-post-ingestion.md section S.4): a non-empty `group_id` marks
-     * a TN per-group COPY of a source post, which the API path discards by
-     * design (GroupPostIngestionService::REASON_CROSSPOST), so its absence from
-     * `messages` is expected rather than a coverage gap. `post` is the fetched
+     * `group_id`, `lat`/`lng` and `post` additionally serve
+     * tn:verify-email-coverage (see plans/tn-api-post-ingestion.md section
+     * S.4): a non-empty `group_id` marks a TN per-group COPY of a source post,
+     * which the API path discards by design
+     * (GroupPostIngestionService::REASON_CROSSPOST), so its absence from
+     * `messages` is expected rather than a coverage gap. `lat`/`lng` are the
+     * coordinates processPost() would place the post from — the only
+     * authoritative answer to "would the API path have dropped this as
+     * unplaceable?", since TN can edit a post's location after it was emailed
+     * and a post that was never mapped has none at all. `post` is the fetched
      * model itself, returned so a caller that decides to ingest the post can
      * hand it straight to ingestFetchedPost() instead of spending a second
      * request against a 2-req/s rate limit.
      *
-     * @return array{status: 'found'|'not_found'|'error', date: string|null, outcome: string|null, group_id: string|null, post: \OpenAPI\Client\Model\Post|null}
+     * @return array{status: 'found'|'not_found'|'error', date: string|null, outcome: string|null, group_id: string|null, lat: float|null, lng: float|null, post: \OpenAPI\Client\Model\Post|null}
      */
     public function lookupPostById(string $postId): array
     {
@@ -400,19 +405,24 @@ class PostSyncer
 
         try {
             $post = $this->buildApiClient()->getPost($postId);
+            $lat  = $post->getLatitude();
+            $lng  = $post->getLongitude();
+
             return [
                 'status'   => 'found',
                 'date'     => $post->getDate()?->format(self::ISO_UTC),
                 'outcome'  => $post->getOutcome(),
                 'group_id' => $post->getGroupId(),
+                'lat'      => $lat === null ? null : (float) $lat,
+                'lng'      => $lng === null ? null : (float) $lng,
                 'post'     => $post,
             ];
         } catch (ApiException $e) {
             if ($e->getCode() === 404) {
-                return ['status' => 'not_found', 'date' => null, 'outcome' => null, 'group_id' => null, 'post' => null];
+                return ['status' => 'not_found', 'date' => null, 'outcome' => null, 'group_id' => null, 'lat' => null, 'lng' => null, 'post' => null];
             }
             Log::warning('TN parity: single-post lookup failed', ['post_id' => $postId, 'error' => $e->getMessage()]);
-            return ['status' => 'error', 'date' => null, 'outcome' => null, 'group_id' => null, 'post' => null];
+            return ['status' => 'error', 'date' => null, 'outcome' => null, 'group_id' => null, 'lat' => null, 'lng' => null, 'post' => null];
         }
     }
 

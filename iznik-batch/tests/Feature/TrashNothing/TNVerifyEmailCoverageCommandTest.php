@@ -115,6 +115,11 @@ class TNVerifyEmailCoverageCommandTest extends TestCase
             'date'     => $date ?? CarbonImmutable::now('UTC')->subHours(9)->format('Y-m-d\TH:i:s\Z'),
             'outcome'  => null,
             'group_id' => null,
+            // The verifier places an absentee from the LIVE post, not from the
+            // email header, so a source post has to carry coordinates here or
+            // it is expected-absent rather than a miss.
+            'lat'      => self::LAT,
+            'lng'      => self::LNG,
             'post'     => ['post_id' => $postId],
         ]);
 

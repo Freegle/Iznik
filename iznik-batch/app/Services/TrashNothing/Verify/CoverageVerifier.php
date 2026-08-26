@@ -29,7 +29,10 @@ use Carbon\CarbonImmutable;
  *    of those post ids will never have a messages row, and never should.
  *  - UNPLACEABLE. The post's coordinates fall outside every Freegle group's
  *    bounds (or are absent), so the API path dropped it. Not a Freegle
- *    regression — it is out of our area.
+ *    regression — it is out of our area. Decided from the LIVE post wherever
+ *    a lookup happens: the archived email's coordinates header is only ever
+ *    allowed to confirm out-of-area, never to assume it — see
+ *    headerPlacesNowhere().
  *  - DELETED / RESOLVED / BUMPED. Handled exactly as tn:parity-check's Layer 1
  *    reclassification handles them.
  *
@@ -100,11 +103,17 @@ class CoverageVerifier
                 continue;
             }
 
-            // Free local check before the rate-limited remote one. A post whose
-            // own coordinates place it nowhere was dropped by the API path on
-            // purpose, so there is nothing to ask TN about. Crossposts always
-            // carry real coordinates, so this cannot swallow one.
-            if (! $this->isPlaceable($entry)) {
+            // Free local check before the rate-limited remote one — but only
+            // when the email's header actually said something. A header that
+            // names coordinates outside every group's bounds is a post the
+            // email path would itself have dropped as an unknown group, so
+            // there is nothing to ask TN about. Crossposts always carry real
+            // coordinates, so this cannot swallow one. A missing or malformed
+            // header says nothing at all, and must NOT be read as
+            // "unplaceable" — that is exactly the coverage gap this check
+            // exists to catch, so those go to the API like any other absentee
+            // and are judged on the live post's own coordinates.
+            if ($this->headerPlacesNowhere($entry)) {
                 $buckets[self::UNPLACEABLE][] = $postId;
                 continue;
             }
@@ -163,30 +172,50 @@ class CoverageVerifier
     }
 
     /**
-     * Reconstruct the API path's placement decision from the email's own
-     * coordinates.
+     * Does the archived email's own header place this post outside every group?
      *
-     * Post-cutover there is no email-path verdict to compare against, but the
-     * X-Trash-Nothing-Post-Coordinates header carries the same lat/lng the API
-     * would have used, so running the same Location::groupsNear() lookup
-     * recovers the decision independently. If the coordinates DO resolve to a
-     * group and the post is still missing, that is the Layer 1 coverage
-     * regression this whole check exists to catch — so this must only return
-     * false when the post genuinely places nowhere.
+     * Purely an optimisation: a `true` here saves a request against a 2-req/s
+     * limit, and it is safe because the X-Trash-Nothing-Post-Coordinates header
+     * is what the email path itself placed the post from — a post it would have
+     * dropped as an unknown group cannot be evidence that the API path lost
+     * one.
+     *
+     * The reverse inference is NOT safe, so this returns false for anything it
+     * cannot positively establish. An absent header, a malformed one, or one
+     * that does resolve to a group all mean "ask TN"; isPlaceable() then
+     * decides from the live post. Short-circuiting to UNPLACEABLE on a missing
+     * header would file the Layer 1 coverage regression this whole check exists
+     * to catch as expected-absent, and file it in the very bucket nobody reads.
      */
-    private function isPlaceable(array $entry): bool
+    private function headerPlacesNowhere(array $entry): bool
     {
         if ($entry['lat'] === null || $entry['lng'] === null) {
             return false;
         }
 
-        return ! empty(Location::groupsNear((float) $entry['lat'], (float) $entry['lng'], limit: 1));
+        return ! $this->isPlaceable((float) $entry['lat'], (float) $entry['lng']);
+    }
+
+    /**
+     * Would PostSyncer have found a group for these coordinates?
+     *
+     * The same Location::groupsNear() call processPost() places a post with, so
+     * the answer reconstructs the API path's own decision rather than guessing
+     * at it.
+     */
+    private function isPlaceable(?float $lat, ?float $lng): bool
+    {
+        if ($lat === null || $lng === null) {
+            return false;
+        }
+
+        return ! empty(Location::groupsNear($lat, $lng, limit: 1));
     }
 
     /**
      * Map a lookupPostById() result onto a bucket.
      *
-     * @param  array{status: string, date: string|null, outcome: string|null, group_id: string|null, post: mixed}  $result
+     * @param  array{status: string, date: string|null, outcome: string|null, group_id: string|null, lat: float|null, lng: float|null, post: mixed}  $result
      */
     private function classifyLookup(array $result, CarbonImmutable $from, CarbonImmutable $to): string
     {
@@ -214,6 +243,17 @@ class CoverageVerifier
         // that window was never offered it.
         if ($this->isOutsideWindow($result['date'], $from, $to)) {
             return self::BUMPED;
+        }
+
+        // Last, and against the live post rather than the email: processPost()
+        // places a post from the coordinates TN holds NOW, so these are the
+        // ones that decide whether it was dropped as no-coordinates /
+        // not-in-any-group-bounds. A post TN never mapped has none at all, and
+        // one whose location was edited after the email may place differently
+        // from the header. Backfilling either would be a no-op that comes back
+        // as a repeat miss on the next run.
+        if (! $this->isPlaceable($result['lat'], $result['lng'])) {
+            return self::UNPLACEABLE;
         }
 
         return self::GENUINE;

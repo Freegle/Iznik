@@ -209,6 +209,14 @@ posts outside every group boundary, deleted posts, resolved outcomes
 window, from genuine gaps. Distinguishing them needs a single-post
 `GET /posts/{id}` per absence — `PostSyncer::lookupPostById()`.
 
+The out-of-boundary verdict comes from the **live** post's coordinates, which are
+the ones `PostSyncer::processPost()` would have placed it from. The archived
+email's `X-Trash-Nothing-Post-Coordinates` header is only allowed to skip the
+lookup when it names coordinates that resolve to no group — a post the email path
+would itself have dropped as an unknown group. A header that is missing or
+unparseable establishes nothing and must never be read as "unplaceable": that
+would file a real coverage gap in a bucket the report labels expected.
+
 Genuine misses can be backfilled automatically (`FREEGLE_TN_VERIFY_AUTO_INGEST`,
 off by default) via `PostSyncer::ingestFetchedPost()`, which reuses the normal
 ingestion path and tags the resulting Loki entry `backfill`. The rails are in the
