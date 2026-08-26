@@ -3181,6 +3181,14 @@ class ExpandService
             'tick' => $tick,
             'drive_min' => $entry['drive_min'] ?? null,
             'cumulative_users' => $entry['cumulative_users'] ?? null,
+            // Memory growth diagnostics: ripple:expand accumulated its way to
+            // the 1GB limit over hundreds of advances on 2026-08-26 (post-drop
+            // evening) with no single poison post - the per-advance curve is
+            // what identifies WHICH advances leak and how fast. Cheap (two
+            // ints) and load-bearing until that is understood; see the
+            // incident notes on PR #1420.
+            'mem_mb' => (int) (memory_get_usage(true) / 1048576),
+            'mem_peak_mb' => (int) (memory_get_peak_usage(true) / 1048576),
         ]);
     }
 }
