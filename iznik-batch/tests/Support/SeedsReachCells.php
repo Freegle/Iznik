@@ -85,13 +85,14 @@ trait SeedsReachCells
     }
 
     /**
-     * An Http fake that lets the spatial server's rasterise/vectorise calls
-     * through to the REAL service (the one canonical encoder), answers
-     * /v1/groups/intersecting from the TEST database's own groups (the real
-     * index is built from a different database, so it cannot see test
-     * fixtures), dispatches any extra pattern stubs, and stubs everything
-     * else with an empty 200. Replaces a bare Http::fake() in tests of write
-     * paths that now rasterise as part of every store.
+     * An Http fake that answers /v1/groups/intersecting from the TEST
+     * database's own groups (the real index is built from a different
+     * database, so it cannot see test fixtures), dispatches any extra
+     * pattern stubs, and passes everything else through to the real network -
+     * the same semantics Laravel's array-form Http::fake has for unmatched
+     * requests, so the rasterise/vectorise calls every reach write now makes
+     * reach the real service. Replaces a bare Http::fake() in tests of those
+     * write paths.
      *
      * The intersecting answer compares the grid's bounding box against each
      * group's polyindex - exact for the rectangles test fixtures plant.
@@ -134,7 +135,9 @@ trait SeedsReachCells
                 }
             }
 
-            return \Illuminate\Support\Facades\Http::response([], 200);
+            // Unmatched: the real network answers, exactly as the array-form
+            // fake behaves for unmatched requests.
+            return null;
         });
     }
 

@@ -3190,12 +3190,16 @@ class ExpandServiceTest extends TestCase
                 'collection' => 'Approved', 'rippled' => 1,
             ]);
         }
-        // Capped reach polygon = unit square at origin (overlaps near, not far).
+        // Capped reach grid = unit square at origin (overlaps near, not far).
         DB::statement(
-            "INSERT INTO rippling_reach (msgid,lat,lng,polygon, outer_bound,arrival,mode,tick,total_ticks,total_freeglers,max_drive_min,schedule,next_expansion_at,status,created_at,updated_at)
-             VALUES (?,?,?,ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid),ST_Envelope(ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid)),?,?,?,?,?,?,?,?,?,NOW(),NOW())",
-            [$msg->id, 0.5, 0.5, now(), 'drive', 1, 1, 5000, 10, json_encode([]), null, 'expanding']
+            "INSERT INTO rippling_reach (msgid,lat,lng,polygon_cells, outer_bound,arrival,mode,tick,total_ticks,total_freeglers,max_drive_min,schedule,next_expansion_at,status,created_at,updated_at)
+             VALUES (?,?,?,?,ST_Envelope(ST_GeomFromText('POLYGON((0 0,0 1,1 1,1 0,0 0))',$srid)),?,?,?,?,?,?,?,?,?,NOW(),NOW())",
+            [$msg->id, 0.5, 0.5, $this->reachCellsFor('POLYGON((0 0,0 1,1 1,1 0,0 0))'), now(), 'drive', 1, 1, 5000, 10, json_encode([]), null, 'expanding']
         );
+
+        // "Which groups does the reach still intersect" is the spatial
+        // server's question, answered here from the TEST groups.
+        $this->fakeSpatialHttp();
 
         $stats = [];
         $n = $this->service()->retractOutOfReachCopies($msg->id, false, $stats);

@@ -1430,7 +1430,7 @@ class ExpandService
                            (msgid, lat, lng, polygon_cells' . $cols . ', arrival, mode, tick, total_ticks,
                             total_freeglers, max_drive_min, schedule, reachable_group_ids,
                             next_expansion_at, status' . $dCols . ', created_at, updated_at)
-                         VALUES (?, ?, ?, ?' . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
+                         VALUES (?, ?, ?, ?' . $vals . ', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?' . $dVals . ', NOW(), NOW())
                          ON DUPLICATE KEY UPDATE
                             lat = VALUES(lat), lng = VALUES(lng), polygon_cells = VALUES(polygon_cells)' . $dup . ',
                             arrival = VALUES(arrival), mode = VALUES(mode), tick = VALUES(tick),

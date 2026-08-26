@@ -2437,14 +2437,17 @@ class UnifiedDigestServiceTest extends TestCase
         };
         // Max over all four corners (the southern corners are marginally farther
         // because east-west distance grows with cos(latitude)) — mirrors the
-        // implementation, which takes the greatest origin->vertex distance.
+        // implementation, which takes the greatest origin->covered-cell
+        // distance over the stored grid. The grid covers cells whose CENTRES
+        // lie inside the box, so the farthest covered point sits within one
+        // 33m lattice cell of the true corner - hence the tolerance.
         $expected = 0.0;
         foreach ([[-0.2, 51.4], [0.0, 51.4], [0.0, 51.6], [-0.2, 51.6]] as [$lng, $lat]) {
             $expected = max($expected, $haversine(51.5, -0.1, $lat, $lng));
         }
 
         $r = $this->callPrivate($svc, 'reachRadiusMetres', [$msg->id]);
-        $this->assertEqualsWithDelta($expected, $r, 1.0);
+        $this->assertEqualsWithDelta($expected, $r, 50.0);
         // Sanity: a ~0.1deg box corner from this origin is ~13km — kilometre-scale metres.
         $this->assertGreaterThan(10000, $r);
         $this->assertLessThan(16000, $r);
