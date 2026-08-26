@@ -1252,6 +1252,16 @@ than one cell from the edge, a radius more than a configurable percentage out, a
 changes coverage, or a difference it cannot measure. Run it BEFORE the drop, on a database
 that still has both forms.
 
+The group-relations case measures how much a group and a reach actually share by
+inclusion-exclusion - `|A| + |B| - ST_Area(ST_Union(A, B))` - rather than by
+`ST_Area(ST_Intersection(A, B))`. Two polygons that meet along a boundary as well as
+(or instead of) an area intersect to a `LINESTRING` or a `GEOMETRYCOLLECTION`, and
+`ST_Area` rejects those outright with `ERROR 3516 ... unexpected type GEOMCOLLECTION`;
+real group boundaries follow shared edges, so on production data that is the common case,
+not a corner. `ST_Union` of two areal geometries is always areal, so the arithmetic is
+always defined - see
+[`VerifyCellsParityCommand`](../../../iznik-batch/app/Console/Commands/Ripple/VerifyCellsParityCommand.php).
+
 Measured on eight real isochrones (2026-08-25): 640 containment probes, 88 differences -
 87 boundary probes at *exactly* 0.000m from the edge and one interior probe at 7.98m, none
 beyond a cell, exterior 0/80. The 87 are `ST_Contains` excluding a point lying ON the

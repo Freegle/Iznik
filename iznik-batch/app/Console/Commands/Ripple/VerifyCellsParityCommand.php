@@ -574,18 +574,46 @@ class VerifyCellsParityCommand extends Command
         // Compare against the SQL answer for a bounded set of groups: the ones
         // the grid named, plus groups whose own envelope meets the reach's
         // (so a group the grid MISSED can still be caught).
-        // keep-raw: ST_Intersects/ST_Within/ST_GeometryType spatial predicates - the builder cannot render these
+        // The overlap area is measured by INCLUSION-EXCLUSION,
+        // |A n B| = |A| + |B| - |A u B|, and not by the obvious
+        // ST_Area(ST_Intersection(...)).
+        //
+        // ST_Intersection of two polygons that share a BOUNDARY as well as an
+        // area returns a GEOMETRYCOLLECTION - the areal part plus the
+        // degenerate line/point parts - and ST_Area refuses that outright:
+        // "ERROR 3516: POLYGON/MULTIPOLYGON value is a geometry of unexpected
+        // type GEOMCOLLECTION in st_area". Real group boundaries are drawn
+        // along shared edges, so this is the COMMON case on production data,
+        // not a corner: it aborted the whole report on the first sampled row
+        // (2026-08-26, msgid ~121.6M against a group near Oxford). MySQL has
+        // no ST_CollectionExtract to pick the areal members back out.
+        //
+        // ST_Union of two areal geometries is always POLYGON or MULTIPOLYGON,
+        // so every ST_Area below is called on something it accepts. The
+        // subtraction is safe in double precision: group areas are ~1e-2 deg2
+        // and one cell is ~9e-8 deg2, which is ten orders of magnitude above
+        // the cancellation error.
+        //
+        // The CASE keeps a non-areal g.polyindex (the WHERE only excludes
+        // POINT) out of ST_Area. Such a group has no area to share, and the
+        // caller reads NULL as an overlap of zero, which is the true answer
+        // rather than a fudge.
+        // keep-raw: ST_Intersects/ST_Within/ST_Union/ST_GeometryType spatial predicates - the builder cannot render these
         $sql = DB::select(
             'SELECT g.id,
                     ST_Intersects(g.polyindex, ST_GeomFromText(?, 3857)) AS ints,
                     ST_Within(ST_GeomFromText(?, 3857), g.polyindex) AS wthn,
-                    ST_Area(ST_Intersection(g.polyindex, ST_GeomFromText(?, 3857))) AS overlap
+                    CASE WHEN ST_GeometryType(g.polyindex) IN (\'POLYGON\', \'MULTIPOLYGON\')
+                         THEN ST_Area(g.polyindex)
+                              + ST_Area(ST_GeomFromText(?, 3857))
+                              - ST_Area(ST_Union(g.polyindex, ST_GeomFromText(?, 3857)))
+                         ELSE NULL END AS overlap
                FROM `groups` g
               WHERE g.polyindex IS NOT NULL
                 AND ST_GeometryType(g.polyindex) <> \'POINT\'
                 AND MBRIntersects(g.polyindex, ST_GeomFromText(?, 3857))
               LIMIT ' . max(1, (int) $this->option('groups')),
-            [$row->poly_wkt, $row->poly_wkt, $row->poly_wkt, $row->poly_wkt]
+            [$row->poly_wkt, $row->poly_wkt, $row->poly_wkt, $row->poly_wkt, $row->poly_wkt]
         );
 
         $cellArea = self::CELL_DEGREES * self::CELL_DEGREES;
