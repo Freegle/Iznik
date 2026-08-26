@@ -12,12 +12,24 @@ import (
 
 // ensureRippleReachTable stands up rippling_reach with the columns the reach endpoint reads,
 // so these tests run regardless of whether the reach-engine migration is in this schema yet.
+// Also stands up rippling_reach_geom (plans/2026-08-23-rippling-reach-polygon-dedup.md) so a
+// from-scratch bootstrap - never exercised while the real migrated schema is cloned in first,
+// but a latent trap if that assumption ever breaks - carries the dedup columns too, rather
+// than silently lacking polygon_hash/max_polygon_hash.
 func ensureRippleReachTable() {
 	db := database.DBConn
+	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach_geom (
+		hash BINARY(16) NOT NULL PRIMARY KEY,
+		geom GEOMETRY NOT NULL SRID 3857,
+		createdat TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		SPATIAL INDEX rippling_reach_geom_geom (geom)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
 		polygon GEOMETRY NOT NULL SRID 3857,
+		polygon_hash BINARY(16) NULL,
+		max_polygon_hash BINARY(16) NULL,
 		arrival TIMESTAMP NULL DEFAULT NULL,
 		tick SMALLINT UNSIGNED NOT NULL DEFAULT 0,
 		total_ticks SMALLINT UNSIGNED NOT NULL DEFAULT 0,
@@ -73,6 +85,54 @@ func TestMessageReachAsMod(t *testing.T) {
 	assert.NotEmpty(t, geo.Coordinates, "polygon has at least one ring")
 	// Coordinates are [lng, lat] in degrees, matching how the reach geometry is stored.
 	assert.InDelta(t, -0.2, geo.Coordinates[0][0][0], 0.001)
+	assert.InDelta(t, 51.4, geo.Coordinates[0][0][1], 0.001)
+}
+
+// A drained row (polygon blob replaced by the sentinel POINT, real geometry only in
+// rippling_reach_geom - the end state of ripple:drain-deduped-blobs) must still serve
+// the REAL outline: the reach modal reading a dot instead of the reach is exactly the
+// failure the COALESCE join exists to prevent.
+func TestMessageReachServesDrainedGeometryFromSharedRow(t *testing.T) {
+	ensureRippleReachTable()
+	db := database.DBConn
+
+	prefix := uniquePrefix("reachdrained")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	group := CreateTestGroup(t, prefix)
+	mid := CreateTestMessage(t, posterID, group, "OFFER: reach drained test", 51.5, -0.1)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, group, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	insertReach(mid, 3, 9)
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
+
+	// Dedup then drain, the way the real commands do: shared row from the stored
+	// bytes, hash pointed at it, blob replaced by the sentinel.
+	db.Exec("INSERT INTO rippling_reach_geom (hash, geom) "+
+		"SELECT UNHEX(MD5(ST_AsBinary(polygon))), polygon FROM rippling_reach WHERE msgid = ? "+
+		"ON DUPLICATE KEY UPDATE createdat = CURRENT_TIMESTAMP", mid)
+	db.Exec("UPDATE rippling_reach SET polygon_hash = UNHEX(MD5(ST_AsBinary(polygon))) WHERE msgid = ?", mid)
+	db.Exec("UPDATE rippling_reach SET polygon = ST_GeomFromText('POINT(0 0)', 3857) WHERE msgid = ?", mid)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d/reach?jwt=%s", mid, token), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, true, result["rippling"])
+
+	polyStr, ok := result["polygon"].(string)
+	assert.True(t, ok, "polygon returned as a GeoJSON string")
+	var geo struct {
+		Type        string         `json:"type"`
+		Coordinates [][][2]float64 `json:"coordinates"`
+	}
+	assert.NoError(t, json.Unmarshal([]byte(polyStr), &geo))
+	assert.Equal(t, "Polygon", geo.Type, "the REAL polygon, not the drained sentinel POINT")
+	assert.NotEmpty(t, geo.Coordinates)
+	assert.InDelta(t, -0.2, geo.Coordinates[0][0][0], 0.001, "real reach outline served from rippling_reach_geom")
 	assert.InDelta(t, 51.4, geo.Coordinates[0][0][1], 0.001)
 }
 
@@ -207,9 +267,31 @@ func TestMessageReachIncludesTheRings(t *testing.T) {
 	assert.NoError(t, json.Unmarshal([]byte(sparse), &geo), "each ring parses as GeoJSON")
 	assert.Equal(t, "Polygon", geo.Type)
 	assert.NotEmpty(t, geo.Coordinates)
+
+	// Assert the ring's EXTENT, not its first vertex: simplifying normalises the
+	// winding and start point, so which corner comes first is MySQL's business and
+	// asserting it tests nothing about whether the right area came back.
 	// Coordinates are [lng, lat] degrees, as the reach polygon's are.
-	assert.InDelta(t, 0.5, geo.Coordinates[0][0][0], 0.01)
-	assert.InDelta(t, 51.9, geo.Coordinates[0][0][1], 0.01)
+	minLng, maxLng := geo.Coordinates[0][0][0], geo.Coordinates[0][0][0]
+	minLat, maxLat := geo.Coordinates[0][0][1], geo.Coordinates[0][0][1]
+	for _, p := range geo.Coordinates[0] {
+		if p[0] < minLng {
+			minLng = p[0]
+		}
+		if p[0] > maxLng {
+			maxLng = p[0]
+		}
+		if p[1] < minLat {
+			minLat = p[1]
+		}
+		if p[1] > maxLat {
+			maxLat = p[1]
+		}
+	}
+	assert.InDelta(t, 0.5, minLng, 0.01, "the ring spans the longitudes it was seeded with")
+	assert.InDelta(t, 1.5, maxLng, 0.01)
+	assert.InDelta(t, 51.9, minLat, 0.01, "and the latitudes")
+	assert.InDelta(t, 52.5, maxLat, 0.01)
 }
 
 // A post with no rings says nothing about them, rather than shipping ten nulls.

@@ -143,6 +143,21 @@ export const useNewsfeedStore = defineStore('newsfeed', {
         this.markAllSeen()
       }, delayMs)
     },
+    // Clear the count without needing to have loaded the items. markAllSeen below can
+    // only raise the watermark as far as the highest item this session happens to have
+    // fetched, which is why a member with a backlog had to scroll weeks back to shift it.
+    async markAllRead() {
+      if (this.delayedSeenTimer) {
+        clearTimeout(this.delayedSeenTimer)
+        this.delayedSeenTimer = null
+      }
+
+      this.delayedSeenMode = false
+
+      await api(this.config).news.seenAll()
+      this.count = 0
+    },
+
     markAllSeen() {
       // Mark all items as seen and update the count.
       if (this.delayedSeenTimer) {

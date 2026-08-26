@@ -2,6 +2,7 @@ package message
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -108,53 +110,31 @@ func ReachBlockedOrigins(myid uint64, msgids []uint64, lat, lng float64) map[uin
 		rippling.ViewerOverflowPaths(db, myid, float32(lat), float32(lng))) {
 		admitted[id] = struct{}{}
 	}
-	var rows []struct {
-		Msgid    uint64     `gorm:"column:msgid"`
-		Lat      *float64   `gorm:"column:lat"`
-		Lng      *float64   `gorm:"column:lng"`
-		Schedule *string    `gorm:"column:schedule"`
-		Arrival  *time.Time `gorm:"column:arrival"`
-	}
-	var err error
-	if rippling.ReachBoundsReady(db) {
-		// ReachInReachExpr always returns the same expression text (only the
-		// bind args vary per call), so this has exactly one rendered form,
-		// proven by the retired ormharness (shapes.json /
-		// TestTier3Shapes_ff9be67577e8, removed in d22ba1d6c).
-		// WHERE built as a single string for ONE Where() call: GORM's
-		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
-		// paren pair once there is more than one Where expression to
-		// combine (clause/where.go buildExprs), which would diverge from
-		// the golden.
-		expr, exprArgs := rippling.ReachInReachExpr(lng, lat, utils.SRID)
-		whereArgs := append([]interface{}{msgids}, exprArgs...)
-		err = db.Table("rippling_reach rr").
-			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
-			Where("rr.msgid IN (?) AND NOT "+expr, whereArgs...).
-			Scan(&rows).Error
-	} else {
-		err = db.Table("rippling_reach rr").
-			Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
-			Where("rr.msgid IN ? AND ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?)) = 0",
-				msgids, lng, lat, utils.SRID).
-			Scan(&rows).Error
-	}
+	// Containment from each row's stored cell grid by primary key
+	// (rippling.ReachMembership), with the legacy sandwich/exact SQL as the
+	// helper's own per-row fallback while those columns exist. A failed
+	// fetch keeps the old behaviour for a failed query: nothing is reported
+	// blocked.
+	membership, err := rippling.ReachMembership(db, msgids, lng, lat, utils.SRID)
 	if err == nil {
-		for _, r := range rows {
-			// A ring admits them: the post is not blocked, whatever the polygon
-			// said. Applied after the query so the ring answer comes from one
-			// place for every surface.
-			if _, ok := admitted[r.Msgid]; ok {
+		for id, info := range membership {
+			if info.InReach {
 				continue
 			}
-			origin := ReachOrigin{Arrival: r.Arrival}
-			if r.Lat != nil && r.Lng != nil {
-				origin.Lat, origin.Lng, origin.Ok = *r.Lat, *r.Lng, true
+			// A ring admits them: the post is not blocked, whatever the
+			// committed reach said. Applied after the lookup so the ring
+			// answer comes from one place for every surface.
+			if _, ok := admitted[id]; ok {
+				continue
 			}
-			if r.Schedule != nil {
-				origin.Schedule = rippling.ParseSchedule(*r.Schedule)
+			origin := ReachOrigin{Arrival: info.Arrival}
+			if info.Lat != nil && info.Lng != nil {
+				origin.Lat, origin.Lng, origin.Ok = *info.Lat, *info.Lng, true
 			}
-			blocked[r.Msgid] = origin
+			if info.Schedule != nil {
+				origin.Schedule = rippling.ParseSchedule(*info.Schedule)
+			}
+			blocked[id] = origin
 		}
 	}
 	return blocked
@@ -229,24 +209,41 @@ const ringSimplifyDegrees = 0.0015
 // Mod-only and one post per request, so the parse cost this pays - a handful of rings,
 // once - is affordable here in a way it never was on a read surface (see
 // rippling.AdmittedMsgids for what asking this per candidate row cost).
+// Each lane's outline comes from its stored cell grid (overflow_cells, the
+// same JSON paths as the ring WKT by design), traced back to a vector by the
+// spatial server (spatial.VectorizeCells) at the same display tolerance the
+// old ST_Simplify used. A lane without cells falls back to its legacy ring
+// WKT while that column exists.
 func overflowRings(db *gorm.DB, msgid uint64) map[string]string {
-	cols := make([]string, 0, len(overflowLanePaths))
-	args := make([]interface{}, 0, len(overflowLanePaths))
-	for i, lane := range overflowLanePaths {
-		cols = append(cols, fmt.Sprintf(
-			"ST_AsGeoJSON(ST_Simplify(ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?)), %d), %v), 5) AS g%d",
-			utils.SRID, ringSimplifyDegrees, i))
+	legacy := rippling.LegacyOverflowReady(db)
+
+	cols := make([]string, 0, 2*len(overflowLanePaths))
+	args := make([]interface{}, 0, 2*len(overflowLanePaths))
+	for _, lane := range overflowLanePaths {
+		cols = append(cols, "JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?))")
 		args = append(args, lane.Path)
 	}
+	if legacy {
+		for i, lane := range overflowLanePaths {
+			cols = append(cols, fmt.Sprintf(
+				"ST_AsGeoJSON(ST_Simplify(ST_GeomFromText(JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?)), %d), %v), 5) AS g%d",
+				utils.SRID, ringSimplifyDegrees, i))
+			args = append(args, lane.Path)
+		}
+	}
 
-	dest := make([]sql.NullString, len(overflowLanePaths))
-	scan := make([]interface{}, len(overflowLanePaths))
+	dest := make([]sql.NullString, len(cols))
+	scan := make([]interface{}, len(cols))
 	for i := range dest {
 		scan[i] = &dest[i]
 	}
 
+	// keep-raw: the SELECT list is built dynamically (one JSON_EXTRACT per
+	// lane, doubled for the legacy fallback era) with per-column spatial
+	// functions - GORM cannot render a variable-width select into positional
+	// NullString scan targets.
 	row := db.Raw("SELECT "+strings.Join(cols, ", ")+
-		" FROM rippling_reach WHERE msgid = ? AND overflow_bounds IS NOT NULL",
+		" FROM rippling_reach WHERE msgid = ?",
 		append(args, msgid)...).Row()
 	if row == nil || row.Scan(scan...) != nil {
 		return nil
@@ -255,7 +252,18 @@ func overflowRings(db *gorm.DB, msgid uint64) map[string]string {
 	rings := map[string]string{}
 	for i, lane := range overflowLanePaths {
 		if dest[i].Valid && dest[i].String != "" {
-			rings[lane.Key] = dest[i].String
+			if cells, err := base64.StdEncoding.DecodeString(dest[i].String); err == nil {
+				if _, geojson, verr := spatial.VectorizeCells(cells, ringSimplifyDegrees); verr == nil {
+					rings[lane.Key] = geojson
+					continue
+				}
+			}
+		}
+		if legacy {
+			j := len(overflowLanePaths) + i
+			if dest[j].Valid && dest[j].String != "" {
+				rings[lane.Key] = dest[j].String
+			}
 		}
 	}
 	if len(rings) == 0 {
@@ -271,7 +279,16 @@ type reachRow struct {
 	Arrival         *string
 	NextExpansionAt *string
 	Polygon         *string
+	// Cells is the stored cell grid, vectorized for display when present.
+	Cells []byte `gorm:"column:cells"`
 }
+
+// reachDisplayToleranceDegrees is the simplify tolerance for the reach
+// boundary drawn on the moderation map: ~50m, which takes an exact lattice
+// trace (tens of thousands of right-angle corners) to a vertex count
+// comparable to the ~11k-vertex traced isochrone it replaces. Display only -
+// nothing that feeds a decision uses a simplified trace.
+const reachDisplayToleranceDegrees = 0.0005
 
 // Reach returns a post's current ACTUAL rippling-out progress (the hazard-schedule tick it has
 // really reached), which is what the moderation reach map draws.
@@ -315,15 +332,39 @@ func Reach(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Moderator required")
 	}
 
-	// 5 decimal places ≈ 1m - plenty for a map overlay, and it keeps the grid-fill polygons
-	// (~11k vertices) to a fraction of their full-precision WKT size. The stored geometry's
-	// coordinates are lng/lat degrees (the SRID label notwithstanding), which is exactly
-	// GeoJSON's [lng, lat] order, so no transform is needed.
+	// The map overlay's boundary comes from the stored cell grid, traced back
+	// to a vector by the spatial server (spatial.VectorizeCells - the one
+	// place that judgement lives) at a display tolerance comparable to the
+	// old geometry's density. Read the row and its cells first; the legacy
+	// geometry SQL below stands in per row while its columns exist (through
+	// the dedup COALESCE when that era's tables do - on a drained row the
+	// local blob is only a sentinel POINT).
 	var row reachRow
-	found := db.Table("rippling_reach").
-		Select("tick, total_ticks, status, arrival, next_expansion_at, ST_AsGeoJSON(polygon, 5) AS polygon").
-		Where("msgid = ?", id).
+	found := db.Table("rippling_reach rr").
+		Select("rr.tick, rr.total_ticks, rr.status, rr.arrival, rr.next_expansion_at, rr.polygon_cells AS cells").
+		Where("rr.msgid = ?", id).
 		Scan(&row)
+	if found.RowsAffected > 0 {
+		if len(row.Cells) > 0 {
+			if _, geojson, err := spatial.VectorizeCells(row.Cells, reachDisplayToleranceDegrees); err == nil {
+				row.Polygon = &geojson
+			}
+		}
+		if row.Polygon == nil && rippling.LegacyPolygonReady(db) {
+			// 5 decimal places ≈ 1m - plenty for a map overlay. The stored
+			// coordinates are lng/lat degrees (the SRID label
+			// notwithstanding), which is exactly GeoJSON's [lng, lat] order.
+			share := rippling.GeomShareReady(db)
+			var legacy struct {
+				Polygon *string `gorm:"column:polygon"`
+			}
+			db.Table("rippling_reach rr"+rippling.GeomJoin(share, "rr", "polygon", "g")).
+				Select("ST_AsGeoJSON("+rippling.GeomExpr(share, "rr", "polygon", "g")+", 5) AS polygon").
+				Where("rr.msgid = ?", id).
+				Scan(&legacy)
+			row.Polygon = legacy.Polygon
+		}
+	}
 
 	if found.RowsAffected == 0 {
 		// No actual reach row. Work out WHY so the UI doesn't imply the engine is behind when

@@ -80,18 +80,32 @@ describe('RipplingLegend', () => {
   })
 
   describe('inbound mode', () => {
-    it('explains that the number on a pin is its digest position', () => {
+    it('reads the boundary the other way round: posts inside it reach you', () => {
       const wrapper = mountLegend({ mode: 'inbound' })
 
-      expect(wrapper.text()).toContain('number = digest position')
+      expect(wrapper.text()).toContain(
+        'Posts made inside this line can reach you'
+      )
+      // Outbound's wording for the same red ring would be exactly backwards here.
+      expect(wrapper.text()).not.toContain('Travel time boundary')
     })
 
-    it('distinguishes a rippled-in group from the home group', () => {
+    it('keys nothing from the retired digest preview', () => {
+      // The inbound view used to plot ranked digest posts, with colours for
+      // promised/completed and a number per pin. It draws a reach boundary now, so a
+      // key for post lifecycle states would describe marks that are no longer there.
       const wrapper = mountLegend({ mode: 'inbound' })
 
-      expect(wrapper.text()).toContain('Active home-group')
-      expect(wrapper.text()).toContain('Active rippled in')
-      expect(wrapper.text()).toContain('Home-group area')
+      expect(wrapper.text()).not.toContain('digest position')
+      expect(wrapper.text()).not.toContain('Promised')
+      expect(wrapper.text()).not.toContain('Completed')
+      expect(wrapper.text()).not.toContain('Home-group area')
+    })
+
+    it('says which groups the green outlines are', () => {
+      const wrapper = mountLegend({ mode: 'inbound' })
+
+      expect(wrapper.text()).toContain('Freegle group you would see posts from')
     })
 
     it('is not the catchment key', () => {

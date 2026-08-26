@@ -4,6 +4,26 @@
       One of our volunteers has posted {{ whatWasPosted }} for you, so more
       people will see it. You don't need to do anything.
     </p>
+    <!-- The member posted in ChitChat because they didn't know an OFFER/WANTED
+         was the thing to use, so say what one is and where the button lives.
+         Without this the notice tells them something happened but not what,
+         and they post in ChitChat again next time. -->
+    <p v-if="msgtype === 'Offer'">
+      An OFFER is how you give something away on Freegle. It goes out to
+      everyone nearby who might want it, so you get a better response. Next time
+      you can post one yourself with the <strong>Give</strong> button.
+    </p>
+    <p v-else-if="msgtype === 'Wanted'">
+      A WANTED is how you ask for something on Freegle. It goes out to everyone
+      nearby who might have one, so you get a better response. Next time you can
+      post one yourself with the <strong>Ask</strong> button.
+    </p>
+    <p v-else>
+      OFFERs and WANTEDs are how you give and ask for things on Freegle. They go
+      out to everyone nearby who can help, so you get a better response. Next
+      time you can post one yourself with the <strong>Give</strong> or
+      <strong>Ask</strong> buttons.
+    </p>
     <p>
       You'll find it in My Posts, along with any replies, and you can edit or
       withdraw it from there.

@@ -81,6 +81,11 @@ func Groups(c *fiber.Ctx) error {
 		"MAX(messages_spatial.promised) AS promised, " +
 		"ANY_VALUE(messages_spatial.groupid) AS groupid, " +
 		"ANY_VALUE(messages_spatial.msgtype) AS type, " +
+		// fromuser drives the `mine` flag below. The client pins the viewer's own posts to
+		// the top of every sort order and lifts them into the "posts by you" row, and this
+		// feed is what "All my communities" and a single-group view render - so without it
+		// own posts were pinned on the nearby feed and buried here.
+		"m.fromuser AS fromuser, " +
 		"MAX(messages_spatial.arrival) AS arrival, " +
 		// posted = the ORIGINAL post time (messages.arrival), stable across rippling.
 		// The client's "Newest posted" sort keys on posted; messages_spatial.arrival is
@@ -100,6 +105,7 @@ func Groups(c *fiber.Ctx) error {
 		"ANY_VALUE(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, " +
 		"ANY_VALUE(messages_groups.groupid) AS groupid, " +
 		"messages.type, " +
+		"messages.fromuser AS fromuser, " +
 		"MAX(messages_groups.arrival) AS arrival, " +
 		"messages.arrival AS posted, " +
 		"ANY_VALUE(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen " +
@@ -133,6 +139,11 @@ func Groups(c *fiber.Ctx) error {
 		// Protect anonymity of poster a bit.
 		blurLat, blurLng := utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
 		msgs[ix].Lat, msgs[ix].Lng = blurLat, blurLng
+
+		// Flag the viewer's own posts, exactly as the nearby feed does
+		// (isochrone.reachCandidateRow.toSummary). This is what lets the client pin them
+		// above the feed; the author id itself is json:"-" and never leaves the server.
+		msgs[ix].Mine = r.Fromuser != 0 && r.Fromuser == myid
 
 		// Per-post distance in miles from the viewer to the BLURRED point, so the "All my
 		// communities" browse view can be narrowed by the client's distance slider. Computed

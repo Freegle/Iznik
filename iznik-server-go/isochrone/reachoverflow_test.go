@@ -143,7 +143,7 @@ func TestViewerFairnessPath_EmptyWhenDeprivationCannotBeAnswered(t *testing.T) {
 func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
 
-	plain, plainArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, nil)
+	plain, plainArgs := fromIDsWhere(false, true, []int64{1}, []int64{2}, latlng, nil)
 	if strings.Contains(plain, "ms.msgid IN (?) AND EXISTS") == false {
 		t.Fatalf("raster arms must stay keyed on the id lists, got %q", plain)
 	}
@@ -154,7 +154,7 @@ func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 		t.Fatalf("plain arg count = %d, want 9 (in, partial, lng, lat, srid + 4 author-cap)", len(plainArgs))
 	}
 
-	ringed, ringedArgs := fromIDsWhere([]int64{1}, []int64{2}, latlng, []uint64{101, 102})
+	ringed, ringedArgs := fromIDsWhere(false, true, []int64{1}, []int64{2}, latlng, []uint64{101, 102})
 	if strings.Count(ringed, "ms.msgid IN (?)") != 3 {
 		t.Fatalf("admitted posts must add a third id-list arm, got %q", ringed)
 	}
@@ -172,6 +172,36 @@ func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 	}
 }
 
+// The partial bucket's exact test must fall back to the join-free legacy shape
+// when sharing is off (byte-for-byte, so an unmigrated deploy is unaffected),
+// and pick up the PK join + COALESCE when it is on - the same contract as
+// rippling.ReachBrowseWhere/ReachInReachExpr, proved here without a live DB
+// since share is an explicit bool.
+func TestFromIDsWhere_SharedGeometryJoin(t *testing.T) {
+	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
+
+	legacy, _ := fromIDsWhere(false, true, []int64{1}, []int64{2}, latlng, nil)
+	if strings.Contains(legacy, "rippling_reach_geom") {
+		t.Fatalf("share=false must be the byte-for-byte legacy shape, got %q", legacy)
+	}
+	if !strings.Contains(legacy, "ST_Contains(r2.polygon, ST_SRID(POINT(?, ?), ?))") {
+		t.Fatalf("share=false must test r2.polygon directly, got %q", legacy)
+	}
+
+	shared, _ := fromIDsWhere(true, true, []int64{1}, []int64{2}, latlng, nil)
+	if !strings.Contains(shared, "LEFT JOIN rippling_reach_geom g2 ON g2.hash = r2.polygon_hash") {
+		t.Fatalf("share=true must join the shared geometry table by hash, got %q", shared)
+	}
+	if !strings.Contains(shared, "ST_Contains(COALESCE(g2.geom, r2.polygon), ST_SRID(POINT(?, ?), ?))") {
+		t.Fatalf("share=true must COALESCE the shared row over the local blob, got %q", shared)
+	}
+	// The raster ids arm and the ring arm are unaffected either way - only the
+	// partial bucket's exact test changes shape.
+	if strings.Count(shared, "ms.msgid IN (?)") != strings.Count(legacy, "ms.msgid IN (?)") {
+		t.Fatalf("sharing must not change which arms are id-list-keyed: legacy=%q shared=%q", legacy, shared)
+	}
+}
+
 // The ring test is JSON_EXTRACT over a column. In this WHERE it can only be
 // carried by an EXISTS correlated on ms.msgid, which is true for rows in NEITHER
 // raster bucket - so the id lists stop bounding the scan and the badge walks
@@ -181,7 +211,7 @@ func TestFromIDsWhere_RingArmOnlyForRingViewers(t *testing.T) {
 func TestFromIDsWhere_NeverCarriesTheJSONRingTest(t *testing.T) {
 	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
 
-	ringed, _ := fromIDsWhere([]int64{1}, []int64{2}, latlng, []uint64{101})
+	ringed, _ := fromIDsWhere(false, true, []int64{1}, []int64{2}, latlng, []uint64{101})
 	for _, banned := range []string{"overflow_bounds", "ST_GeomFromText"} {
 		if strings.Contains(ringed, banned) {
 			t.Errorf("the JSON ring test must not reach the badge query (%s): %q", banned, ringed)
@@ -194,5 +224,26 @@ func TestFromIDsWhere_NeverCarriesTheJSONRingTest(t *testing.T) {
 	// occurrence must be that one.
 	if strings.Count(ringed, "JSON_EXTRACT") != strings.Count(ringed, "JSON_EXTRACT(au.settings") {
 		t.Errorf("the only JSON_EXTRACT allowed here is the author cap's settings lookup: %q", ringed)
+	}
+}
+
+// Post-drop (legacy=false) the partial arm must vanish entirely: no reference
+// to the dropped polygon columns may survive in the rendered SQL, and the
+// remaining shape keeps its keyed IN-list form.
+func TestFromIDsWhere_PostDropHasNoPolygonArm(t *testing.T) {
+	latlng := utils.LatLng{Lat: 51.5, Lng: -0.1}
+	where, args := fromIDsWhere(false, false, []int64{1}, []int64{2}, latlng, nil)
+	for _, banned := range []string{"polygon", "rippling_reach_geom", "ST_Contains"} {
+		if strings.Contains(where, banned) {
+			t.Fatalf("post-drop WHERE must not reference %q: %s", banned, where)
+		}
+	}
+	if !strings.Contains(where, "ms.msgid IN (?)") {
+		t.Fatalf("post-drop WHERE lost its id-list arm: %s", where)
+	}
+	// One id list, then the author-cap args - the partial bucket's four
+	// binds are gone with its arm.
+	if len(args) != 1+4 {
+		t.Fatalf("post-drop args should be idlist + 4 author-cap binds, got %d: %v", len(args), args)
 	}
 }

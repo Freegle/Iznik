@@ -3,6 +3,7 @@ import {
   updateOverflowRingLayers,
   ringLegend,
   laneLabel,
+  laneExplanation,
   laneStyle,
 } from '~/modtools/composables/rippling/overflowrings.js'
 
@@ -77,15 +78,18 @@ describe('overflow ring layers', () => {
     expect(colours).toContain(laneStyle('cluster.w1').color)
   })
 
-  it('says which lane it is on hover', () => {
+  // A moderator hovering an outline wants to know who is in it and why it is there,
+  // in words they would use themselves - not the lane's name in our vocabulary.
+  it('explains on hover who is in the outline and why', () => {
     const { L, map } = stubs()
 
     const [layer] = updateOverflowRingLayers(L, map, [], {
       'rural.sparse': RING,
     })
 
-    expect(layer.tooltip).toContain('Rural ring')
-    expect(layer.tooltip).toContain('sparse')
+    expect(layer.tooltip).toContain('can see this post and reply to it')
+    expect(layer.tooltip).toMatch(/thinly populated|longer journey/)
+    expect(layer.tooltip).not.toMatch(/sparse|lane|ring\b/i)
   })
 
   // The reach is the subject and the rings are additions to it, so they must not paint
@@ -130,6 +134,8 @@ describe('overflow ring layers', () => {
 })
 
 describe('ring legend', () => {
+  // Three wedges are one idea to a moderator - the post was carried toward town -
+  // so the legend says it once rather than listing w1, w2 and w3.
   it('names one entry per lane family, not per lane', () => {
     const legend = ringLegend({
       'cluster.w1': RING,
@@ -138,7 +144,7 @@ describe('ring legend', () => {
     })
 
     expect(legend).toHaveLength(1)
-    expect(legend[0].label).toBe('Cluster wedge')
+    expect(legend[0].label).toBe('Road to the nearest town')
   })
 
   it('is empty for a post with no rings, so the caption stays as it was', () => {
@@ -146,8 +152,29 @@ describe('ring legend', () => {
     expect(ringLegend({})).toEqual([])
   })
 
-  it('labels a lane with its variant', () => {
-    expect(laneLabel('rural.medium')).toBe('Rural ring (medium)')
-    expect(laneLabel('fairness.2')).toBe('Deprivation ring (2)')
+  // The labels are what a moderator reads on the map, so they say who is included
+  // rather than which mechanism included them - and they never leak the variant, which
+  // is meaningless outside the engine ("w1", "sparse", a quintile number).
+  it('names lanes in words a moderator would use', () => {
+    expect(laneLabel('rural.medium')).toBe(
+      'Countryside — people who travel further'
+    )
+    expect(laneLabel('cluster.w1')).toBe('Road to the nearest town')
+    expect(laneLabel('fairness.2')).toBe('Extra area, to even things out')
+  })
+
+  it('keeps our own vocabulary off the map', () => {
+    const shown = [
+      laneLabel('rural.sparse'),
+      laneLabel('cluster.w2'),
+      laneLabel('fairness.1'),
+      laneExplanation('rural.sparse'),
+      laneExplanation('cluster.w1'),
+      laneExplanation('fairness.1'),
+    ].join(' ')
+
+    expect(shown).not.toMatch(
+      /wedge|overflow|lane|deprivation|quintile|cluster|w1|w2/i
+    )
   })
 })

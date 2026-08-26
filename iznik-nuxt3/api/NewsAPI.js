@@ -87,6 +87,13 @@ export default class NewsAPI extends BaseAPI {
     await this.$postv2('/newsfeed?bump=' + id, { id, action: 'Seen' })
   }
 
+  // Clear the ChitChat count outright. seen() above needs an id, and the browser only ever
+  // has the items it has loaded, so it cannot clear a backlog it has not scrolled through.
+  // The server resolves the watermark itself.
+  async seenAll() {
+    await this.$postv2('/newsfeed', { action: 'SeenAll' })
+  }
+
   del(id) {
     return this.$requestv2('DELETE', `/newsfeed/${id}`, {})
   }

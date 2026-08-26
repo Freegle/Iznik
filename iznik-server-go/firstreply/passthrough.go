@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/utils"
 	"gorm.io/gorm"
 )
@@ -140,14 +141,49 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 		return false
 	}
 
-	// max_polygon is populated by the firstreply:maxreach batch pass and is NULL
-	// until it gets there (and on any deploy that predates the migration), so a
-	// missing column or value degrades to the existing hold behaviour.
-	var within int
+	// max_polygon_cells (plans/2026-08-24-rippling-reach-raster-storage.md) is
+	// the compact form: one keyed read and a walk of its run stream, with no
+	// further round trip once populated. Fetched alongside so a
+	// not-yet-backfilled row costs nothing extra - it just falls through to
+	// the exact behaviour this had before that column existed. Row().Scan (the
+	// database/sql idiom), not GORM's chain Scan(&dest): that variant treats a
+	// []byte destination as a slice of rows to scan into (one uint8 per row),
+	// not a single BLOB value, and either errors or silently mis-populates it.
+	var cells []byte
 	if err := db.Table("rippling_reach").
-		Select("COALESCE(MAX(ST_Contains(max_polygon, ST_SRID(POINT(?, ?), ?))), 0)",
+		Select("max_polygon_cells").
+		Where("msgid = ?", refmsgid).
+		Row().Scan(&cells); err == nil && cells != nil {
+		// CellSetContains, not DecodeCellSet+Contains: decoding builds the
+		// whole grid to test one bit, which on a production-sized reach is
+		// 885KB and seven million iterations - on the reply gate, per reply.
+		// A blob that cannot answer must not silently pass every reply
+		// through, so it falls back to the exact test below.
+		if inside, ok := rippling.CellSetContains(cells, lng, lat); ok {
+			return inside
+		}
+	}
+
+	// Legacy geometry fallback, only while the max_polygon column exists: it
+	// is populated by the firstreply:maxreach batch pass and is NULL until it
+	// gets there, so a missing value degrades to the existing hold behaviour.
+	// The geometry may live in rippling_reach_geom (content-addressed dedup,
+	// plans/2026-08-23-rippling-reach-polygon-dedup.md): COALESCE reads the
+	// shared row when max_polygon_hash points at one, the local blob otherwise;
+	// "IS NOT NULL" tests the SAME expression so it keeps meaning "a max reach
+	// is known" after the drain, which NULLs the blob but not the hash. Once
+	// the columns are dropped a row without usable cells simply holds the
+	// reply - the conservative default this gate has always had.
+	if !rippling.LegacyPolygonReady(db) {
+		return false
+	}
+	share := rippling.GeomShareReady(db)
+	maxPoly := rippling.GeomExpr(share, "rippling_reach", "max_polygon", "g")
+	var within int
+	if err := db.Table("rippling_reach"+rippling.GeomJoin(share, "rippling_reach", "max_polygon", "g")).
+		Select("COALESCE(MAX(ST_Contains("+maxPoly+", ST_SRID(POINT(?, ?), ?))), 0)",
 			lng, lat, utils.SRID).
-		Where("msgid = ? AND max_polygon IS NOT NULL", refmsgid).
+		Where("msgid = ? AND ("+maxPoly+") IS NOT NULL", refmsgid).
 		Scan(&within).Error; err != nil {
 		return false
 	}

@@ -162,18 +162,55 @@ Four things that catch people out every time:
   passing `start`/`end` will suggest a label is unused when it simply had no traffic in the
   last hour.
 
-And a modelling point rather than a syntax one: **`user_id` and `session_id` are JSON fields,
-not labels.** They must be filtered after a `| json` stage, not in the `{}` selector. Only
-low-cardinality things belong in labels - a user id as a label would mean a Loki stream per
-user, which is exactly what Loki is not for.
+### Finding one user's logs
+
+This changed on **2026-08-23** and the two eras look different, so read this before
+writing a query against `user_id`.
+
+**What was wrong.** On the production database nodes `user_id` was promoted to a real Loki
+**stream label** - despite this page previously saying it was not. One stream per user is the
+pattern Loki's own guidance warns against, and it did exactly what you would expect: 11,565
+distinct values in 24 hours against Loki's default ceiling of 5,000 active streams, with the
+overflow **discarded silently** - 535,859 entries in two days. Anything built on those logs,
+the subject-access dump included, was quietly incomplete.
+
+**Why it was not simply moved to a JSON field.** Structured metadata and JSON fields are not
+indexed. Measured over a one-hour window, `{app="freegle"} | user_id="x"` reads 115MB and
+138,594 lines where the label lookup reads 324KB and 239 - roughly **356x the work**. The dump
+queries a 30-day window under a timeout, so that trade was not available either.
+
+**What it is now.** Both, deliberately:
+
+- **`user_bucket`** is a stream label holding `user_id % 32` - coarse, so it is 32 values
+  instead of tens of thousands, and it keeps the query index-narrowed.
+- **`user_id`** is **structured metadata** - attached to each entry, exact, and creating no
+  streams. Match it with a `| user_id="..."` filter, not inside `{}`.
+
+The bucket count lives in `misc.UserBucket` in `iznik-server-go`, and **every reader recomputes
+it**. Change it there and the JS support tools must change with it, or a user's logs go
+missing without an error.
 
 ```logql
-# Wrong - user_id is not a label, so this matches nothing
+# Entries written from 2026-08-23 onwards
+{app="freegle", user_bucket="25"} | user_id="12345"      # 12345 % 32 = 25
+
+# Entries written before then - still inside retention until late September 2026
 {app="freegle", user_id="12345"}
 
-# Right
-{app="freegle"} | json | user_id="12345"
+# Anonymous / pre-login traffic has no user in either era
+{app="freegle", source="client"} | user_id=""
 ```
+
+Until nothing older than 2026-08-23 is left in retention, **a complete answer needs both
+forms merged**. That is what `iznik-server-go/userdump/loki.go` and the support tools in
+`claude-agent-sdk/` do; they are disjoint - a stream selector cannot match structured
+metadata - so there is nothing to de-duplicate.
+
+Put the `| user_id="..."` filter **before** any `| json` stage. `| json` also pulls a
+`user_id` out of the line body, and the parsed one is renamed rather than replacing the
+structured-metadata value.
+
+`session_id` remains a JSON field on every source: filter it after `| json`.
 
 `trace_id` is the awkward one: it is a **JSON field on most sources but a real label on
 `source="email"`**, which is the only source that promotes it. So

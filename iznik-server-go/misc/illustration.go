@@ -50,6 +50,9 @@ func GetIllustration(c *fiber.Ctx) error {
 	// Remove location suffix in parentheses if present.
 	itemName = suffixPattern.ReplaceAllString(itemName, "")
 
+	// Remove courtesy words ("iron please"), so the lookup matches the cached clean name.
+	itemName = StripCourtesy(itemName)
+
 	itemName = strings.TrimSpace(itemName)
 
 	if itemName == "" {

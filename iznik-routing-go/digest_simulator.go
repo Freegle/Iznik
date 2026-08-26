@@ -94,8 +94,9 @@ func appendUniqueStr(s []string, v string) []string {
 // this post" — the eyeballs-budget signal the user proposed.
 //
 // GET /v1/digest-simulator?lat=...&lng=...&max_minutes=30
-//   &w_closeness=1.0&w_freshness=0.5&w_budget=1.0&w_anchor=0
-//   &cap=50&group_by_poster=false
+//
+//	&w_closeness=1.0&w_freshness=0.5&w_budget=1.0&w_anchor=0
+//	&cap=50&group_by_poster=false
 func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		latStr := c.Query("lat")
@@ -276,8 +277,8 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			PostedToGroups []int64  `json:"posted_to_groups,omitempty"`
 			PostedToNames  []string `json:"posted_to_names,omitempty"`
 		}
-		pool := make([]scored, 0, 128)      // available (!has_outcome) -> Top picks
-		completed := make([]scored, 0, 16)  // has_success -> "came and went"
+		pool := make([]scored, 0, 128)     // available (!has_outcome) -> Top picks
+		completed := make([]scored, 0, 16) // has_success -> "came and went"
 		now := time.Now()
 		for rows.Next() {
 			var p scored
@@ -468,10 +469,10 @@ type digestSimScores struct {
 // digest simulator.  Pulled out as a free function so it can be unit-
 // tested in isolation from the database + isochrone integration.
 //
-//   close:  1 - drive_min / max_drive_min  (closer = higher; clamped ≥ 0)
-//   fresh:  1 - age_h / window_h           (newer  = higher; clamped ≥ 0)
-//   budget: exp(-engagement_rate / k)      (fewer eyeballs per hour = higher)
-//   anchor: 1 if homeGroup else 0
+//	close:  1 - drive_min / max_drive_min  (closer = higher; clamped ≥ 0)
+//	fresh:  1 - age_h / window_h           (newer  = higher; clamped ≥ 0)
+//	budget: exp(-engagement_rate / k)      (fewer eyeballs per hour = higher)
+//	anchor: 1 if homeGroup else 0
 //
 // engagement_rate is (views + 3*replies) / max(ageH, 1) — a per-hour
 // rate so an 18-h-old post with 1 view isn't unfairly penalised vs a

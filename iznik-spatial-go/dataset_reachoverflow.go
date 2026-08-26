@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/peterstace/simplefeatures/geom"
+	"spatial-server/cellset"
 )
 
 // ReachOverflowDataset serves point-in-RING for the overflow lanes: "which
@@ -112,29 +114,129 @@ func overflowLaneOrder() []string {
 // move the same bytes and then re-walk the JSON in Go; asking MySQL for each
 // path costs one keyed extraction per lane and returns NULL for the lanes a
 // post does not carry (most of them).
+//
+// Each lane is asked for TWICE: once from overflow_cells (the compact cell-set
+// form, plans/2026-08-24-rippling-reach-raster-storage.md) and once from
+// overflow_bounds (the ring WKT). Both, not one or the other, because a lane's
+// cells are filled in per lane by the backfill, so a partly-converted table is
+// a normal state - the cells are preferred when present and the WKT is the
+// fallback. Reading both costs one extra keyed extraction per lane and returns
+// NULL for the absent one, which is far cheaper than a second query would be.
 func overflowSelect() (cols string, args []interface{}) {
 	var parts []string
-	for _, path := range overflowLaneOrder() {
+	lanes := overflowLaneOrder()
+	for _, path := range lanes {
+		parts = append(parts, "JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?))")
+		args = append(args, path)
+	}
+	for _, path := range lanes {
 		parts = append(parts, "JSON_UNQUOTE(JSON_EXTRACT(overflow_bounds, ?))")
 		args = append(args, path)
 	}
 	return strings.Join(parts, ", "), args
 }
 
-// overflowRowScan holds one reach row's rings, one slot per lane in code order.
+// overflowRowScan holds one reach row's rings, one slot per lane in code order
+// for each form: cells (base64 cell set, preferred) and rings (WKT, fallback).
 type overflowRowScan struct {
 	msgid int64
+	cells []sql.NullString
 	rings []sql.NullString
 }
 
-func scanOverflowRow(rows *sql.Rows, laneCount int) (overflowRowScan, error) {
-	r := overflowRowScan{rings: make([]sql.NullString, laneCount)}
-	dest := make([]interface{}, 0, laneCount+1)
-	dest = append(dest, &r.msgid)
+func newOverflowRowScan(laneCount int) overflowRowScan {
+	return overflowRowScan{
+		cells: make([]sql.NullString, laneCount),
+		rings: make([]sql.NullString, laneCount),
+	}
+}
+
+// scanDest is the destination list matching overflowSelect's column order:
+// the caller's own leading columns, then all lanes' cells, then all lanes' WKT.
+func (r *overflowRowScan) scanDest(leading ...interface{}) []interface{} {
+	dest := make([]interface{}, 0, len(leading)+len(r.cells)+len(r.rings))
+	dest = append(dest, leading...)
+	for i := range r.cells {
+		dest = append(dest, &r.cells[i])
+	}
 	for i := range r.rings {
 		dest = append(dest, &r.rings[i])
 	}
-	return r, rows.Scan(dest...)
+	return dest
+}
+
+func scanOverflowRow(rows *sql.Rows, laneCount int) (overflowRowScan, error) {
+	r := newOverflowRowScan(laneCount)
+	return r, rows.Scan(r.scanDest(&r.msgid)...)
+}
+
+// ringRasterFor builds one lane's coarse accelerator, and its bounding box.
+//
+// The CELL SET is preferred over the ring WKT, and the saving is the whole
+// point of the raster-storage change: a ring averages 37,000 vertices and
+// ~0.8MB of WKT, and turning that into this same 192-cell raster meant a
+// full vector parse plus a supercover+scanline fill. A cell set is already a
+// membership grid on the 0.0003-degree lattice the ring's own vertices sit on
+// (they are traced from a routing-server raster - see
+// ripple:shrink-overflow-bounds), so building the raster from it is bit-array
+// sampling with no geometry parsed at all.
+//
+// The coarse raster itself is UNCHANGED, deliberately: 192 cells at 2 bits is
+// ~9KB per ring and ~62MB across the ~6,700 live ring items, a measured
+// figure this must not quietly inflate. A cell set held in the index instead
+// would be megabytes per ring decoded. So the cells replace the PARSE, not
+// the accelerator, and the in/partial/out contract every caller relies on is
+// the same one BuildRasterFromCellSet and BuildRasterDim both implement.
+func ringRasterFor(cells, ring sql.NullString) (ringItem, bool) {
+	if cells.Valid && strings.TrimSpace(cells.String) != "" {
+		if raw, err := base64.StdEncoding.DecodeString(cells.String); err == nil {
+			if cs, derr := cellset.Decode(raw); derr == nil {
+				if raster := BuildRasterFromCellSet(cs, ringRasterDim); raster != nil {
+					minLng, minLat, maxLng, maxLat := cs.Bounds()
+					return ringItem{
+						raster: raster,
+						minLng: minLng, minLat: minLat,
+						maxLng: maxLng, maxLat: maxLat,
+						// The covered area, not the bbox: a cell set knows
+						// exactly how much ground it covers, so this is the
+						// same measure g.Area() gives on the WKT path.
+						area: float64(cs.SetCellCount()) * cellset.CellDegrees * cellset.CellDegrees,
+					}, true
+				}
+			}
+		}
+		// Malformed or unrasterisable cells fall through to the WKT rather
+		// than darkening the lane: overflow_bounds is still the authority.
+	}
+
+	if !ring.Valid || strings.TrimSpace(ring.String) == "" {
+		return ringItem{}, false
+	}
+	g, err := geom.UnmarshalWKT(ring.String, geom.NoValidate{})
+	if err != nil {
+		return ringItem{}, false
+	}
+	raster := BuildRasterDim(g, ringRasterDim)
+	if raster == nil {
+		return ringItem{}, false
+	}
+	min, max, ok := g.Envelope().MinMaxXYs()
+	if !ok {
+		return ringItem{}, false
+	}
+	return ringItem{
+		raster: raster,
+		minLng: min.X, minLat: min.Y,
+		maxLng: max.X, maxLat: max.Y,
+		area: g.Area(),
+	}, true
+}
+
+// ringItem is one lane's built accelerator and the index fields derived with it.
+type ringItem struct {
+	raster                         *Raster
+	minLng, minLat, maxLng, maxLat float64
+	area                           float64
 }
 
 // buildOverflowItems rasterises every ring a row carries. A ring that will not
@@ -143,29 +245,17 @@ func scanOverflowRow(rows *sql.Rows, laneCount int) (overflowRowScan, error) {
 // degradation a missing index row causes, never a wrong admission.
 func buildOverflowItems(r overflowRowScan, lanes []string) []Item {
 	var items []Item
-	for i, ring := range r.rings {
-		if !ring.Valid || strings.TrimSpace(ring.String) == "" {
-			continue
-		}
-		g, err := geom.UnmarshalWKT(ring.String, geom.NoValidate{})
-		if err != nil {
-			continue
-		}
-		raster := BuildRasterDim(g, ringRasterDim)
-		if raster == nil {
-			continue
-		}
-		env := g.Envelope()
-		min, max, ok := env.MinMaxXYs()
+	for i := range lanes {
+		built, ok := ringRasterFor(r.cells[i], r.rings[i])
 		if !ok {
 			continue
 		}
 		items = append(items, Item{
 			ExtID:  encodeOverflowExtID(r.msgid, overflowLaneCodes[lanes[i]]),
-			MinLng: min.X, MaxLng: max.X,
-			MinLat: min.Y, MaxLat: max.Y,
-			Area:  g.Area(),
-			WKB:   raster.Serialize(),
+			MinLng: built.minLng, MaxLng: built.maxLng,
+			MinLat: built.minLat, MaxLat: built.maxLat,
+			Area:  built.area,
+			WKB:   built.raster.Serialize(),
 			Extra: map[string]any{"msgid": r.msgid, "lane": lanes[i]},
 		})
 	}
@@ -280,12 +370,9 @@ func (d *ReachOverflowDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since tim
 
 	var touched, upserted int
 	for rows.Next() {
-		r := overflowRowScan{rings: make([]sql.NullString, len(lanes))}
+		r := newOverflowRowScan(len(lanes))
 		var status string
-		dest := []interface{}{&r.msgid, &status}
-		for i := range r.rings {
-			dest = append(dest, &r.rings[i])
-		}
+		dest := r.scanDest(&r.msgid, &status)
 		if err := rows.Scan(dest...); err != nil {
 			log.Printf("reachoverflow delta scan: %v", err)
 			continue

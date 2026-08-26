@@ -768,35 +768,19 @@ func CreateChatMessage(c *fiber.Ctx) error {
 						break
 					}
 				}
-				var gateErr error
-				if rippling.ReachBoundsReady(db) {
-					// ReachInReachExpr always returns the same expression text
-					// (only the bind args vary per call) - the extractor
-					// couldn't fold that across a function call, but there is
-					// exactly one rendered form. Proven (as a single shape)
-					// by the retired ormharness (shapes.json /
-					// TestTier3Shapes_67cd5e1cc4ec, removed in d22ba1d6c).
-					expr, exprArgs := rippling.ReachInReachExpr(reach.lng, reach.lat, utils.SRID)
-					// Select takes ONLY the expression's own binds. Appending
-					// Refmsgid here as well - while Where binds it too - sent one
-					// argument more than the statement had placeholders, and
-					// MySQL rejected it with "expected 13 arguments, got 14".
-					//
-					// Layer 1 did not catch it: the rendered SQL TEXT is identical
-					// either way, and the golden comparison never counts binds.
-					// Only executing it fails, which is what the chat tests did.
-					gateErr = db.Table("rippling_reach rr").
-						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+expr+"), 0) AS in_reach", exprArgs...).
-						Where("rr.msgid = ?", *payload.Refmsgid).
-						Scan(&rc).Error
-				} else {
-					legacyExpr := "ST_Contains(rr.polygon, ST_SRID(POINT(?, ?), ?))"
-					legacyArgs := []interface{}{latlng.Lng, latlng.Lat, utils.SRID}
-					gateErr = db.Table("rippling_reach rr").
-						Select("COUNT(*) AS reach_rows, COALESCE(MAX("+legacyExpr+"), 0) AS in_reach",
-							legacyArgs...).
-						Where("rr.msgid = ?", *payload.Refmsgid).
-						Scan(&rc).Error
+				// Containment from the stored cell grid by primary key
+				// (rippling.ReachMembership): a ~23KB blob fetch plus a
+				// run-stream probe, replacing the ST_Contains against a
+				// megabyte polygon this gate used to pay per reply. Rows the
+				// cells backfill has not reached fall back inside the helper
+				// to the legacy sandwich/exact SQL while those columns exist;
+				// afterwards an undecidable row holds the reply (fail closed),
+				// which the release cron resolves exactly as it does for any
+				// held reply.
+				membership, gateErr := rippling.ReachMembership(db, []uint64{*payload.Refmsgid}, reach.lng, reach.lat, utils.SRID)
+				rc.ReachRows = len(membership)
+				if info, ok := membership[*payload.Refmsgid]; ok && info.InReach {
+					rc.InReach = 1
 				}
 				if gateErr == nil {
 					// A ring admits them: in reach, whatever the polygon said.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -12,6 +13,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 	"github.com/peterstace/simplefeatures/geom"
+
+	"spatial-server/cellset"
 )
 
 func main() {
@@ -228,6 +231,144 @@ func main() {
 			admitted = []int{}
 		}
 		return c.JSON(fiber.Map{"admitted": admitted})
+	})
+
+	// POST /v1/reach/rasterize — WKT in (raw text/plain body), the compact
+	// cellset form out (application/octet-stream). This is the only place a
+	// rippling reach polygon is converted to its canonical stored
+	// representation (plans/2026-08-24-rippling-reach-raster-storage.md) -
+	// callers store the returned bytes verbatim; they never rasterise it
+	// themselves.
+	api.Post("/v1/reach/rasterize", func(c *fiber.Ctx) error {
+		out, err := rasterizeWKT(string(c.Body()))
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		c.Set("Content-Type", "application/octet-stream")
+		return c.Send(out)
+	})
+
+	// POST /v1/reach/vectorize — the inverse valve: encoded cell bytes in
+	// (application/octet-stream), a boundary out, for the few places that
+	// genuinely need a vector now the grid is the stored form (the map
+	// overlay; re-deriving the sandwich bounds after a clip). `tolerance` is
+	// a query param in degrees: 0 (default) keeps the exact lattice outline,
+	// whose rasterisation reproduces the input grid bit for bit; positive
+	// values simplify for display. Returns {"wkt": ..., "geojson": ...}.
+	// Tracing, like rasterising, exists ONLY here - it carries judgement
+	// (pinch handling, hole nesting) that must not live twice.
+	api.Post("/v1/reach/vectorize", func(c *fiber.Ctx) error {
+		body := c.Body()
+		cs, err := cellset.Decode(body)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		tol := c.QueryFloat("tolerance", 0)
+		if tol < 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "tolerance must be >= 0"})
+		}
+		wkt, err := cs.ToMultiPolygonWKT(tol)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		g, err := geom.UnmarshalWKT(wkt, geom.NoValidate{})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "traced WKT does not parse: " + err.Error()})
+		}
+		gj, err := g.MarshalJSON()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"wkt": wkt, "geojson": json.RawMessage(gj)})
+	})
+
+	// POST /v1/reach/admits — the committed-reach question from the MAIL's
+	// end, twin of /v1/reachoverflow/admits: one post, many candidate member
+	// points, which does its CURRENT reach cover?
+	// Body: {"msgid": N, "points": [{"lng": x, "lat": y}]}
+	// Returns indexes: admitted (definitely covered), uncertain (a legacy
+	// coarse-raster row's boundary band - impossible once every row carries
+	// cells), and known=false when the post has no live entry here at all,
+	// which callers treat as fail-closed.
+	api.Post("/v1/reach/admits", func(c *fiber.Ctx) error {
+		state, ok := srv.getDataset("reach")
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+		ds, ok := state.ds.(*ReachDataset)
+		if !ok {
+			return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "dataset does not answer admits"})
+		}
+
+		var body struct {
+			Msgid  int64        `json:"msgid"`
+			Points []ReachPoint `json:"points"`
+		}
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "bad body: " + err.Error()})
+		}
+		if body.Msgid <= 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "msgid required"})
+		}
+
+		var admitted, uncertain []int
+		known := false
+		err := state.withIndex(func(idx *Index) error {
+			var e error
+			admitted, uncertain, known, e = ds.AdmitsPoints(idx, body.Msgid, body.Points)
+			return e
+		})
+		if err == errIndexNotReady {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		if admitted == nil {
+			admitted = []int{}
+		}
+		if uncertain == nil {
+			uncertain = []int{}
+		}
+		return c.JSON(fiber.Map{"admitted": admitted, "uncertain": uncertain, "known": known})
+	})
+
+	// POST /v1/groups/intersecting — encoded cell bytes in, the groups whose
+	// area shares at least one covered cell out, each flagged with whether
+	// the grid lies entirely WITHIN that group. The cell form of the
+	// ST_Intersects/ST_Within pair the rejection clip, the retraction pass
+	// and the crosspost count ask; answered here so the comparison happens on
+	// the same lattice as the reach itself.
+	api.Post("/v1/groups/intersecting", func(c *fiber.Ctx) error {
+		state, ok := srv.getDataset("groups")
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+		ds, ok := state.ds.(*GroupsDataset)
+		if !ok {
+			return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "dataset does not answer intersecting"})
+		}
+		cs, err := cellset.Decode(c.Body())
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		var rel []GroupCellRelation
+		err = state.withIndex(func(idx *Index) error {
+			var e error
+			rel, e = ds.IntersectingCells(idx, cs)
+			return e
+		})
+		if err == errIndexNotReady {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		if rel == nil {
+			rel = []GroupCellRelation{}
+		}
+		return c.JSON(fiber.Map{"groups": rel})
 	})
 
 	// GET /v1/:dataset/knn	// GET /v1/:dataset/knn

@@ -18,9 +18,9 @@ import (
 // candidate instead of returning null.
 func TestRippleEvalPointFallsBackPastOnewaySourceSnap(t *testing.T) {
 	nodes := []RawNodeSpec{
-		{OSMID: 1, Lat: 51.500, Lng: -1.000},  // origin
-		{OSMID: 2, Lat: 51.501, Lng: -1.000},  // B: on the two-way chain
-		{OSMID: 3, Lat: 51.502, Lng: -1.000},  // C
+		{OSMID: 1, Lat: 51.500, Lng: -1.000},   // origin
+		{OSMID: 2, Lat: 51.501, Lng: -1.000},   // B: on the two-way chain
+		{OSMID: 3, Lat: 51.502, Lng: -1.000},   // C
 		{OSMID: 4, Lat: 51.5013, Lng: -1.0015}, // A: one-way source, A->B only
 	}
 	ways := []RawWaySpec{

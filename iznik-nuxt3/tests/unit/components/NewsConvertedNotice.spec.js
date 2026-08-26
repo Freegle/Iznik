@@ -53,6 +53,37 @@ describe('NewsConvertedNotice', () => {
     )
   })
 
+  // The member posted in ChitChat because they didn't know an OFFER/WANTED was
+  // the thing to use. A notice that only says "we posted it for you" leaves
+  // them none the wiser, so it has to say what one is and which button posts
+  // it.
+  it('explains that an OFFER is how you give something away, and names the button', () => {
+    const wrapper = createWrapper({ msgtype: 'Offer' })
+    expect(wrapper.text()).toContain(
+      'An OFFER is how you give something away on Freegle'
+    )
+    expect(wrapper.text()).toContain('with the Give button')
+    expect(wrapper.text()).not.toContain('A WANTED is how you ask')
+  })
+
+  it('explains that a WANTED is how you ask for something, and names the button', () => {
+    const wrapper = createWrapper({ msgtype: 'Wanted' })
+    expect(wrapper.text()).toContain(
+      'A WANTED is how you ask for something on Freegle'
+    )
+    expect(wrapper.text()).toContain('with the Ask button')
+    expect(wrapper.text()).not.toContain('An OFFER is how you give')
+  })
+
+  it('explains both when the post type is unknown', () => {
+    // Notices written before msgtype was recorded must still explain what an
+    // OFFER/WANTED is, without claiming which one this was.
+    const wrapper = createWrapper()
+    expect(wrapper.text()).toContain(
+      'OFFERs and WANTEDs are how you give and ask for things on Freegle'
+    )
+  })
+
   it('never says "properly" - that reads as a telling-off', () => {
     for (const msgtype of ['Wanted', 'Offer', undefined]) {
       const wrapper = createWrapper(msgtype ? { msgtype } : {})
@@ -83,9 +114,14 @@ describe('NewsConvertedNotice', () => {
     // soon as the convert modal opens.
     expect(wrapper.find('.b-button').attributes('data-to')).toBe('absent')
 
-    // Preview must not change the wording - that is the whole point.
+    // Preview must not change the wording - that is the whole point. That
+    // includes the explanation of what a WANTED is, which is the part the
+    // moderator most needs to see before it goes out in the member's name.
     expect(wrapper.text()).toContain(
       'One of our volunteers has posted a WANTED for you'
+    )
+    expect(wrapper.text()).toContain(
+      'A WANTED is how you ask for something on Freegle'
     )
   })
 })

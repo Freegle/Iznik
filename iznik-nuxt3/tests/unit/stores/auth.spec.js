@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 // Import with .js extension to bypass vitest.config alias that maps
@@ -113,6 +113,27 @@ vi.mock('~/stores/misc', () => ({
 
 describe('auth store', () => {
   let store
+  let logSpy
+
+  // The real auth store logs from fire-and-forget async paths - the Google and
+  // Facebook logout catch blocks, and the marketing-consent sync - which can
+  // emit AFTER the test that triggered them has finished. Vitest forwards every
+  // console call to the main process over the worker RPC, so a log still in
+  // flight when the worker closes surfaces as
+  //   EnvironmentTeardownError: Closing rpc while "onUserConsoleLog" was pending
+  // and vitest exits non-zero even though every test passed (observed on
+  // CircleCI 33421: 16,148 passed, 1 unhandled error, build failed).
+  //
+  // beforeAll/afterAll rather than the per-test spy used elsewhere in these
+  // specs: the racing log arrives between tests, so the stub has to outlive
+  // any single one of them.
+  beforeAll(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterAll(() => {
+    logSpy.mockRestore()
+  })
 
   beforeEach(() => {
     setActivePinia(createPinia())

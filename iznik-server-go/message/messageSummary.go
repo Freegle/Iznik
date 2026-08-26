@@ -59,9 +59,15 @@ type MessageSummary struct {
 	// clearance): the browse feed floats it to the top whenever it already qualifies
 	// to appear. Only set on the browse feed; omitted (false) elsewhere.
 	Pinned bool `json:"pinned,omitempty" gorm:"-"`
-	// Mine is true when the post's author is the viewer. The browse feed sets it so the
+	// Fromuser is the post's author, scanned only so a feed can derive Mine below. It is
+	// never exposed to clients (json:"-"): the browse feeds already blur a post's location,
+	// so handing out the author's user id alongside it would give back what the blurring
+	// takes away. Populated only where a feed selects it; zero elsewhere.
+	Fromuser uint64 `json:"-" gorm:"column:fromuser"`
+	// Mine is true when the post's author is the viewer. Every browse feed sets it so the
 	// client can float the viewer's own recent posts to the top of every sort order —
 	// members otherwise lose track of their own posts among the reach-ordered feed and
-	// assume they are not showing (Discourse 9933). Only set on the browse feed.
+	// assume they are not showing (Discourse 9933). Always derived in Go from Fromuser (or
+	// from an arm that is own-posts-only by construction), never scanned from SQL.
 	Mine bool `json:"mine,omitempty" gorm:"-"`
 }

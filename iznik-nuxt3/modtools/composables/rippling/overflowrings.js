@@ -13,14 +13,28 @@
 // stubs.
 import { geoJsonToLatLngs } from './polygon.js'
 
-// Each lane gets its own colour, because which lane admitted somebody is the question a
-// moderator asks next: a band ring means the poster's own cap bound and rural members
-// were let back in, a wedge means the post was too small to bind the cap and was aimed
-// at a town instead. Same hue family per lane so the map reads as one thing.
+// Each lane gets its own colour and its own plain-English name, because the moderator's
+// next question is why a particular patch is included - and the answer differs by lane.
+//
+// The names are deliberately NOT ours. "Rural ring", "cluster wedge" and "deprivation
+// fifth" are how the engine thinks; a moderator wants to know who can see the post and
+// why, in the words they would use themselves.
 const LANE_STYLE = {
-  rural: { color: '#c2410c', label: 'Rural ring' },
-  fairness: { color: '#7c3aed', label: 'Deprivation ring' },
-  cluster: { color: '#0f766e', label: 'Cluster wedge' },
+  rural: {
+    color: '#c2410c',
+    label: 'Countryside — people who travel further',
+    why: 'People out here can see this post and reply to it. Their area is thinly populated, so they are allowed a longer journey than this post normally covers.',
+  },
+  fairness: {
+    color: '#7c3aed',
+    label: 'Extra area, to even things out',
+    why: 'People out here can see this post and reply to it. This area is included so that places which would otherwise see fewer posts get more of them.',
+  },
+  cluster: {
+    color: '#0f766e',
+    label: 'Road to the nearest town',
+    why: 'People along here can see this post and reply to it. The post could not reach many people nearby, so it was carried along the road to the nearest town with enough freeglers in it.',
+  },
 }
 
 // A lane key is "family.variant" — rural.sparse, cluster.w1, fairness.2.
@@ -29,11 +43,16 @@ export function laneStyle(key) {
   return LANE_STYLE[family] || { color: '#525252', label: 'Ring' }
 }
 
-// A human name for one lane, for the tooltip: "Rural ring (sparse)".
+// The plain-English name for a lane. The variant (sparse, w1, the quintile number) is
+// deliberately dropped: it tells a moderator nothing they can act on, and three wedges
+// labelled w1/w2/w3 read as a system's internals leaking onto a map.
 export function laneLabel(key) {
-  const [, variant] = String(key || '').split('.')
-  const { label } = laneStyle(key)
-  return variant ? `${label} (${variant})` : label
+  return laneStyle(key).label
+}
+
+// One sentence saying who is in this outline and why, for the tooltip.
+export function laneExplanation(key) {
+  return laneStyle(key).why || 'People here can see this post and reply to it.'
 }
 
 // Replace `existing` layers with ones drawn from `rings` — the { lane: geojson } map
@@ -60,9 +79,7 @@ export function updateOverflowRingLayers(L, map, existing, rings) {
         fillColor: color,
         fillOpacity: 0.1,
       })
-        .bindTooltip(`${laneLabel(key)} — reaches members beyond the reach`, {
-          sticky: true,
-        })
+        .bindTooltip(laneExplanation(key), { sticky: true })
         .addTo(map)
     })
     .filter(Boolean)
