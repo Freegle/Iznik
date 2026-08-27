@@ -221,13 +221,29 @@ Full build can proceed on this design. The two defects the harness caught (bound
 matrix scope; mode-disjoint parallel edges) are exactly the class of thing the gate
 existed to find, and both carry regression tests now.
 
-## What the full build still needs (not this branch)
+## Delivered in this branch beyond the gate
 
-- Server integration: load artifacts on start; /v1/reach-labels endpoint; per-request
-  thread-safe region-table cache (the prototype cache is single-threaded by design).
-- Batch storage of labels + membership read path (replacing polygon_cells as the
-  membership TRUTH, with cells/polygons kept as display/prefilter projections).
+- Server integration: STAGE2_DIR artifact boot (missing partition/matrices derive at
+  boot ~3min and save back; unset = the old PBF path untouched), GET /v1/reach-labels
+  (gated) + POST /v1/reach-arrival (ungated), 503 until configured; endpoint +
+  concurrency tests on bristol (suite now 182). Thread-safe region-table cache
+  (mutex, 512-region cap) with arbitrary-source rows.
+- Stored label wire format FRL1: encode/decode + seed-based evaluation proven
+  IDENTICAL to live queries across the full UK sweep (every probe checked both ways).
+- Docs: REACH-ENGINE.md plain-English walkthrough (incl. what the structure unlocks:
+  point-to-point ~1-3ms with one extra reverse-tables artifact, many-to-many
+  matrices, 1.8s metric refills, walk/cycle as metric fills), routing README
+  (endpoints + STAGE2_DIR), spatial-servers page, architecture overview.
+
+## What the full build still needs (next PRs)
+
+- Batch adoption: store labels per post + membership read path (replacing
+  polygon_cells as the membership TRUTH, with cells/polygons kept as
+  display/prefilter projections).
+- Reverse-direction region tables (enables point-to-point drive times).
 - Walk/cycle metric fills (structures already carry per-mode seconds).
-- Monthly artifact rebuild pipeline + OSM refresh hook.
+- Monthly artifact rebuild pipeline + OSM refresh hook; moving the remaining
+  flat-search endpoints onto the corridor graph, after which a slim boot can skip
+  the 2.1GB base edge list.
 - The multi-level roll-up (tree labels above leaf level) if label sizes ever matter —
   at 0.6-3.8KB/post they do not yet.
