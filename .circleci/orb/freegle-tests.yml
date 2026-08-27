@@ -113,7 +113,13 @@ executors:
   android-executor:
     docker:
       - image: cimg/android:2025.10-node
-    resource_class: large
+    # xlarge (16GB), not large (8GB). R8 minification was turned on for release builds
+    # in #1428, and the first production bundle after it had the Gradle daemon killed by
+    # the OS during packageReleaseBundle - no OutOfMemoryError and no heap dump, despite
+    # -XX:+HeapDumpOnOutOfMemoryError, which is what an outside kill looks like rather
+    # than the JVM hitting its own -Xmx. The JVM alone is allowed 4GB heap plus 1GB
+    # metaspace, and R8 wants a lot more headroom on top of that than 8GB leaves.
+    resource_class: xlarge
 
   macos-executor:
     macos:
