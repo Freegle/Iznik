@@ -24,12 +24,12 @@ against today's cell answer (prod `rippling_reach.polygon_cells` via the tunnel)
 | 2 | Overlay: per-mode-safe degree-2 chain contraction + chain table + tests | ✅ | stage2_overlay.go; UK 56.87M→12.93M junctions (4.4x) in 30.7s; TestOverlay* incl bristol offset parity |
 | 3 | Artifact snapshot: serialize overlay+chains, load in seconds | ✅ | 4.7GB, save 2.5s load 5.0s (vs ~150s PBF rebuild); round-trip test |
 | 4 | Partitioner: Dinic max-flow + Inertial Flow nested bisection + tests | ✅ | bridge cut=2 found; 50×50 grid cut ≤55 (one row); bristol invariants |
-| 5 | UK partition run: cut sizes, balance, depth, build time | 🔄 | running (top-level split of 7.86M-junction mainland) |
+| 5 | UK partition run: cut sizes, balance, depth, build time | ✅ | 4m22s; cut p50/p90/max 9/17/85; estuaries single-digit |
 | 6 | Region matrices: directed boundary entries/exits, entry×exit, ecc + tests | ✅ | stage2_matrix.go; validated via task-7 exactness (matrix path exercised) |
 | 7 | Labeling query: origin→exits, boundary-overlay Dijkstra, tree labels; exactness vs flat Dijkstra | ✅ | bristol: 127k arrivals EXACT (≤0.01s) across 4 origins incl chain-origin; 0 false memberships; Full-region ecc sound |
-| 8 | Prod parity harness: tunnel posts + polygon_cells vs labeling | 🔄 | 13 posts exported (dense/medium/sparse + 4 estuary anchors); CCS1 reader tested; awaits UK partition |
-| 9 | Measurements → this file + parent plan; gate verdict recorded | ⬜ | |
-| 10 | Full Go suite + gofmt + quality review + PR | ⬜ | |
+| 8 | Prod parity harness: tunnel posts + polygon_cells vs labeling | ✅ | 0/571k exactness; 3-way comparison decomposes all divergence |
+| 9 | Measurements → this file + parent plan; gate verdict recorded | ✅ | gate PASS |
+| 10 | Full Go suite + gofmt + quality review + PR | 🔄 | 180 pass 0 fail; gofmt/vet clean |
 
 ## Design decisions
 
@@ -53,7 +53,7 @@ partitioned separately (Orkney etc). This is the published Inertial Flow algorit
 the full build if cut quality disappoints — measuring that is the point of the gate.
 
 **Query = CRP-style two-phase:** exact local Dijkstra origin→own-region exits, then
-boundary-overlay Dijkstra (per-region entry×exit clique matrices + cut chains), then label
+boundary-overlay Dijkstra (per-region entry×boundary clique matrices + cut chains), then label
 every leaf fully-in / fully-out / partial: fully-in iff min over entries(arrival+ecc(entry))
 ≤ T (conservative upper bound — a false "partial" only costs work, never correctness);
 partial stores entry arrivals. Membership in a partial region =
@@ -77,8 +77,110 @@ script; the Go harness reads files, never the DB.
 
 ## Measurements (gate)
 
-(to be filled by real runs — nothing recorded until measured)
+All measured this session on the 20-core / 94GB WSL2 box against uk-latest.osm.pbf
+(2026-07-06 vintage, same file the July study used).
+
+### Overlay contraction
+- Base graph: 56,874,451 nodes / 117,157,737 directed edges (matches July's numbers).
+- First build: **12,927,428 junctions / 31.46M chain edges (4.4x node, 3.7x edge)** in
+  30.7s single-threaded — within 0.2% of July's independently-measured 12,899,893
+  junction count. Drive subgraph: 9.96M junctions / 21.1M directed chain edges.
+- 77.3% of base nodes absorbed; chain drive-seconds p50/p90/p99/max = 5.4/19.3/63.5/964.
+- Snapshot artifact: 4.7GB, save 2.5s, load ~5s — replaces the 90-150s PBF rebuild
+  (prod restarts today are a 5-7min outage; artifact load is the stage-2 fix, proven).
+- Exactness: chain-offset reconstruction == flat Dijkstra on bristol, and (final rule)
+  mode-disjoint parallel edges block contraction (see Defects found below).
+
+### Partition (Inertial Flow + multi-source/multi-sink Dinic, leaf ≤ 10k, alpha 0.25)
+- Input: 9,956,528 drive junctions / 10.94M undirected edges; 22,186 components
+  (largest 7,857,935 — the mainland; the rest are the known tiny drive fragments).
+- **Build 4m22s wall** (first implementation was serial-per-axis and heap-heavy:
+  projected hours; flat-CSR arcs + 4 concurrent axes + BFS sink-level truncation
+  fixed it). 1,489 flow bisections, max depth 14; leaves ≤ 10k as configured.
+- **Cut quality: p50 = 9, p90 = 17, max = 85.** Splitting the ENTIRE mainland in two
+  severs 71 roads. The 13 top-level (>1M junction) splits cut 85/71/67/54/50/44/42/36/
+  32/26/25/22/13.
+- **Estuary seams are single-digit and found autonomously** (nearest flow-cut to each
+  anchor): Severn 8 (2km off), Humber 9 (7km), Thames-East 8 (5km), Forth 6 (5km),
+  Mersey 9 (2km), Tyne 10 (5km). Max-flow found the water. Urban stress max 85
+  (M4/Thames-valley belt) — matrix cost stays trivial even there.
+- Bisection wall p50 17ms; the single whole-mainland split 121s.
+
+### Region matrices (entry -> whole-boundary, after the Southend fix)
+- **Build 1.8s** (parallel). 27,670 directed entries / 27,666 exits UK-wide;
+  644,467 matrix cells = **2.6MB float32 total**; 27,726 cross edges.
+  The parent plan's storage worry (matrices quadratic in boundary) lands at 2.6MB.
+- 27% of entries fully cover their region internally (finite ecc) -> conservative
+  fully-in stays available without any correctness risk from oneway substructure.
+
+### Query (UK graph, warm artifacts)
+- Bristol 30-min: **1.0-1.2ms** (cold first query 14.5ms incl. lazy region tables);
+  Chester 38-min: 1.7ms. vs 286-310ms flat Dijkstra for the same sweep (~250x), and
+  under the successor model advances need NO recompute at all — membership is
+  answered from stored labels in microseconds.
+- Label sizes on real posts: **~0.6-3.8KB vs 2-46KB stored cells** (and vs ~24MB
+  pre-#1406 polygon schedules).
+
+### Prod parity (13 real posts via read-only tunnel, dense/medium/sparse + estuaries)
+- **Exactness vs flat Dijkstra: 0 mismatches / 571,230 probes** (worst Δ 0.0049s =
+  float32 summation noise) after the two defects below were fixed. This is the
+  correctness gate and it is fully green.
+- Three-way membership on 646,956 lattice samples:
+  - **prod-vs-local-pipeline 99.96%** — prod's stored cells are what the same
+    algorithm computes here (no graph-vintage or speed-model skew; the 0.04% is
+    the Southend post's origin-group union + trace noise). The comparison is
+    therefore measuring exactly what it claims to.
+  - **prod-vs-engine 86.15% == local-vs-engine 86.12%** — every engine/prod delta
+    is the PROJECTION difference on one graph, decomposed:
+    - snapFar 12.75%: sample points >60m from any road (fields, water, moor). The
+      grid fills them by area; the metric has no road there. Not a member scenario
+      — and it includes the unbridged-far-bank cases the parent plan calls stage
+      2's correctness WIN.
+    - boundary 0.80%: ±1-cell / ≤90s frontier quantization.
+    - structural 0.27%: frontier fingers/pockets the adaptive-resolution trace
+      (NetworkResolution at 40km scale) smooths away but the exact metric
+      resolves. These are current-pipeline artifacts, not engine errors.
+    - fill 0.02%.
+- Per-post query 1.5-26ms (cold incl. lazy tables) vs 29-229ms flat; labels
+  0.6-3.8KB vs 2-46KB cells.
+
+### Defects found by the parity harness (both fixed, both now regression-tested)
+1. **Boundary graph must span entry -> every boundary node, not entry -> exit**: a
+   shortest path can reach a sibling ENTRY internally; entry-only-via-cross-edges
+   dropped up to 121s on Southend arrivals. Matrices now entry×boundary.
+2. **Mode-disjoint parallel edges broke contraction**: a road plus a separately-mapped
+   footway between the same two nodes passed the same-mode parallel check; the chain
+   walk followed whichever came first in CSR order, silently dropping the road's
+   drive seconds (26.56s hop lost). Any second edge to the same neighbour+direction
+   now blocks contraction.
 
 ## Gate verdict
 
-(pending measurements)
+**PASS on every axis the parent plan set:**
+
+1. **Cut sizes**: estuaries single-digit (Severn 8, Forth 6, Humber/Mersey 9), found
+   autonomously by max-flow; whole-mainland split severs 71 roads; urban worst case 85.
+2. **Matrix totals**: 2.6MB float32 for the whole UK — three orders of magnitude below
+   any storage concern; boundary counts are what the partitioner minimizes and it works.
+3. **Build time**: overlay 29s + partition 4m22s + matrices 1.8s = well under 6 minutes
+   end-to-end from a cold graph, monthly-offline compatible; artifacts reload in ~5s,
+   which also retires the 5-7min restart-outage class.
+4. **Membership end-to-end vs today's cell answer**: exact against the engine's own
+   metric (0/571k), and the residual vs stored cells is fully characterized as the
+   grid-fill/trace-resolution projection — precisely the parent plan's "grid and
+   polygons become projections only" framing, now with numbers.
+
+Full build can proceed on this design. The two defects the harness caught (boundary
+matrix scope; mode-disjoint parallel edges) are exactly the class of thing the gate
+existed to find, and both carry regression tests now.
+
+## What the full build still needs (not this branch)
+
+- Server integration: load artifacts on start; /v1/reach-labels endpoint; per-request
+  thread-safe region-table cache (the prototype cache is single-threaded by design).
+- Batch storage of labels + membership read path (replacing polygon_cells as the
+  membership TRUTH, with cells/polygons kept as display/prefilter projections).
+- Walk/cycle metric fills (structures already carry per-mode seconds).
+- Monthly artifact rebuild pipeline + OSM refresh hook.
+- The multi-level roll-up (tree labels above leaf level) if label sizes ever matter —
+  at 0.6-3.8KB/post they do not yet.

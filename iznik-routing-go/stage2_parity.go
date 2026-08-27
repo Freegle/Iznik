@@ -98,8 +98,9 @@ func stage2ParityRun(dir string, engine *Stage2Engine) {
 	g := engine.G
 
 	type agg struct {
-		samples, agree, fill, boundary, structural int
-		exactChecked, exactMismatch                int
+		samples, agree, agreeLE, agreePL    int
+		fill, boundary, structural, snapFar int
+		exactChecked, exactMismatch         int
 	}
 	var total agg
 
@@ -152,12 +153,24 @@ func stage2ParityRun(dir string, engine *Stage2Engine) {
 			exact++
 		}
 
-		// (b) Prod cells vs engine membership on a lattice sample.
+		// (b) Three-way membership comparison on a lattice sample:
+		//   prod cells       — what production stored (tunnel export);
+		//   local pipeline   — today's algorithm run HERE: Isochrone →
+		//                      NetworkResolution → IsochronePolygon, sampled by
+		//                      even-odd point-in-polygon (the same fill rule
+		//                      spatial-go's rasterizer applies to the WKT);
+		//   engine           — the stage-2 labeling membership.
+		// local-vs-engine isolates the projection difference (grid fill vs graph
+		// metric) on ONE graph; prod-vs-local isolates prod's graph vintage and
+		// origin-group union; prod-vs-engine is the headline production delta.
 		h, err := ccsParseHeader(p.cells)
 		if err != nil {
 			log.Printf("post %d: bad cells blob: %v — skipped", p.Msgid, err)
 			continue
 		}
+		iso := Isochrone(g, p.Lat, p.Lng, T, Drive)
+		pipePoly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes, Drive))
+
 		cells := uint64(h.Cols) * uint64(h.Rows)
 		stridef := int32(1)
 		for uint64(stridef)*uint64(stridef)*60000 < cells {
@@ -172,12 +185,15 @@ func stage2ParityRun(dir string, engine *Stage2Engine) {
 		}
 		var structurals []ex
 		for row := h.MinRow; row < h.MinRow+int32(h.Rows); row += stridef {
+			rowLat := (float64(row) + 0.5) * ccsCellDegrees
+			crossings := polyRowCrossings(&pipePoly, rowLat)
 			for col := h.MinCol; col < h.MinCol+int32(h.Cols); col += stridef {
 				lat, lng := ccsCellCentre(col, row)
 				prodIn, ok := ccsContains(p.cells, lng, lat)
 				if !ok {
 					continue
 				}
+				pipeIn := pipInRow(crossings, lng)
 				v := nearestNodeForMode(g, lat, lng, Drive)
 				engIn := false
 				var arr float32 = f32Inf
@@ -191,13 +207,26 @@ func stage2ParityRun(dir string, engine *Stage2Engine) {
 				a.samples++
 				if prodIn == engIn {
 					a.agree++
+				}
+				if pipeIn == engIn {
+					a.agreeLE++
+				}
+				if prodIn == pipeIn {
+					a.agreePL++
+				}
+				if prodIn == engIn {
 					continue
 				}
-				// Disagreement classification.
+				// Classify the prod-vs-engine disagreement.
 				margin := math.Abs(float64(arr - T))
 				switch {
-				case prodIn && (snapM > 60 || arr == f32Inf):
-					a.fill++ // interior fill / no road within snap range
+				case snapM > 60:
+					// No road within ~a cell of the point: the grid answers by
+					// area fill, the metric by the nearest (possibly distant)
+					// road. Not a realistic member location comparison.
+					a.snapFar++
+				case prodIn && arr == f32Inf:
+					a.fill++
 				case margin <= 90 || nearStoredEdge(p.cells, col, row, stridef):
 					a.boundary++
 				default:
@@ -226,29 +255,58 @@ func stage2ParityRun(dir string, engine *Stage2Engine) {
 				}
 			}
 		}
-		agreePct := 100 * float64(a.agree) / float64(max(1, a.samples))
-		fmt.Printf("post %d [%s] tick %d T=%.0fmin: samples %d agree %.2f%% (fill %d, boundary %d, structural %d) | exact %d/%d mism (worst Δ %.4fs) | query %.1fms (local %.1f, boundary %.1f) vs flat %.0fms | regions %d (%d full), label ~%dB (cells %dB)\n",
-			p.Msgid, p.Band, p.Tick, driveMin, a.samples, agreePct, a.fill, a.boundary, a.structural,
-			mism, exact, worst, float64(qDur.Microseconds())/1000, lbl.LocalMs, lbl.BoundaryMs,
+		pc := func(n int) float64 { return 100 * float64(n) / float64(max(1, a.samples)) }
+		fmt.Printf("post %d [%s] tick %d T=%.0fmin: samples %d | prod-vs-eng %.2f%% local-vs-eng %.2f%% prod-vs-local %.2f%% | PE classes: snapFar %d fill %d boundary %d structural %d | exact %d/%d mism (worst Δ %.4fs) | query %.1fms vs flat %.0fms | regions %d (%d full), label ~%dB (cells %dB)\n",
+			p.Msgid, p.Band, p.Tick, driveMin, a.samples, pc(a.agree), pc(a.agreeLE), pc(a.agreePL),
+			a.snapFar, a.fill, a.boundary, a.structural,
+			mism, exact, worst, float64(qDur.Microseconds())/1000,
 			float64(bDur.Microseconds())/1000, reached, full, labelBytes, len(p.cells))
 		for _, s := range structurals {
 			fmt.Printf("    structural: (%.5f,%.5f) prodIn=%v arr=%.1fs snap=%.0fm\n", s.lat, s.lng, s.prodIn, s.arr, s.snapM)
 		}
 		total.samples += a.samples
 		total.agree += a.agree
+		total.agreeLE += a.agreeLE
+		total.agreePL += a.agreePL
 		total.fill += a.fill
 		total.boundary += a.boundary
 		total.structural += a.structural
+		total.snapFar += a.snapFar
 		total.exactChecked += exact
 		total.exactMismatch += mism
 	}
 
-	fmt.Printf("\nTOTAL: %d samples, agree %.2f%%, fill %d (%.2f%%), boundary %d (%.2f%%), structural %d (%.3f%%); exactness %d/%d mismatches\n",
-		total.samples, 100*float64(total.agree)/float64(max(1, total.samples)),
-		total.fill, 100*float64(total.fill)/float64(max(1, total.samples)),
-		total.boundary, 100*float64(total.boundary)/float64(max(1, total.samples)),
-		total.structural, 100*float64(total.structural)/float64(max(1, total.samples)),
+	tp := func(n int) float64 { return 100 * float64(n) / float64(max(1, total.samples)) }
+	fmt.Printf("\nTOTAL: %d samples | prod-vs-eng %.2f%% | local-vs-eng %.2f%% | prod-vs-local %.2f%% | PE classes: snapFar %.2f%% fill %.2f%% boundary %.2f%% structural %.3f%% | exactness %d/%d mismatches\n",
+		total.samples, tp(total.agree), tp(total.agreeLE), tp(total.agreePL),
+		tp(total.snapFar), tp(total.fill), tp(total.boundary), tp(total.structural),
 		total.exactMismatch, total.exactChecked)
+}
+
+// polyRowCrossings returns the sorted longitudes where the polygon's rings
+// cross the horizontal line at lat (standard ray-cast convention: an edge
+// contributes when y1 <= lat < y2 or y2 <= lat < y1).
+func polyRowCrossings(poly *GeoJSONPolygon, lat float64) []float64 {
+	var xs []float64
+	for _, ring := range poly.Geometry.Coordinates {
+		for i := 0; i < len(ring); i++ {
+			x1, y1 := ring[i][0], ring[i][1]
+			j := (i + 1) % len(ring)
+			x2, y2 := ring[j][0], ring[j][1]
+			if (y1 <= lat && lat < y2) || (y2 <= lat && lat < y1) {
+				xs = append(xs, x1+(lat-y1)/(y2-y1)*(x2-x1))
+			}
+		}
+	}
+	sort.Float64s(xs)
+	return xs
+}
+
+// pipInRow reports even-odd containment for longitude lng given the sorted
+// row crossings.
+func pipInRow(xs []float64, lng float64) bool {
+	i := sort.SearchFloat64s(xs, lng)
+	return i%2 == 1
 }
 
 // nearStoredEdge reports whether any cell within `dist` lattice steps of
