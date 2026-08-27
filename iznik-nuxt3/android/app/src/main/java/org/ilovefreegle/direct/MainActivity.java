@@ -4,6 +4,7 @@ import android.util.Log;
 import android.webkit.WebView;
 import android.webkit.JavascriptInterface;
 import com.getcapacitor.BridgeActivity;
+import org.freegle.blockstore.BlockStorePlugin;
 import android.os.Bundle;
 import ee.forgr.capacitor.social.login.GoogleProvider;
 import ee.forgr.capacitor.social.login.SocialLoginPlugin;
@@ -37,6 +38,11 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
 
   public void onCreate(Bundle savedInstanceState) {
     //Log.e("PHDCC","org.ilovefreegle.direct onCreate A");
+    // Plugins declared in this project (rather than pulled from node_modules, which
+    // capacitor.plugins.json registers for us) have to be registered before the bridge is
+    // built in super.onCreate.
+    registerPlugin(BlockStorePlugin.class);
+
     super.onCreate(savedInstanceState);
 
     // Enable WebView debugging for chrome://inspect only in debuggable builds

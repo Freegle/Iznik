@@ -79,7 +79,7 @@ orbs:
   # source is what carries it, and master picks it up when this branch lands -
   # master must not pin 1.1.383 before then, because it also carries the cap8
   # push-fork rename that only exists on this branch.
-  freegle: freegle/tests@1.1.383
+  freegle: freegle/tests@1.1.384
 
 jobs:
   mark-ci-passed:

@@ -625,6 +625,48 @@ The `GOOGLE_PLAY_JSON_KEY` environment variable is **CRITICAL** for:
 
 ---
 
+Google Play's technical-quality thresholds land in 2027 and both apps are in scope.
+
+<details>
+<summary><h2>Google Play Technical Quality (R8, Zero-Tap Sign-In)</h2></summary>
+
+Full write-up, including the measured numbers and the memory thresholds:
+[`docs/developers/reference/play-technical-quality.md`](../docs/developers/reference/play-technical-quality.md).
+
+### Release builds are minified (R8)
+
+`android/app/build.gradle` sets `minifyEnabled true` on the release build type, with
+`proguard-android-optimize.txt` (the plain `proguard-android.txt` carries `-dontoptimize`, which
+would leave Play's optimization metric at zero). Play requires >=25% shrinking, optimization and
+obfuscation from February 2027 for apps whose DEX exceeds 10MB: Freegle's was 40.4MB and
+ModTools' 14.9MB, both at 0%.
+
+Keep rules live in `android/app/proguard-rules.pro` and deliberately never name
+`org.ilovefreegle.direct`, because the ModTools build rewrites that package everywhere except
+that file.
+
+**R8 removes or renames whatever only reflection or JS reaches, so smoke-test on a device
+before a release goes out**: Google / Facebook / Apple sign-in, push and the home-screen badge,
+camera and share-into-app, and the Stripe donation flow. Native crash reports stay readable
+because the mapping file travels inside the AAB.
+
+### Sign-in survives a new device (Block Store)
+
+From April 2027 Play requires apps with sign-in to restore the session when someone moves to a
+new Android device. An integration with Block Store shipped by 30 September 2026 counts as
+compliant, and that is the route taken: the `persistent` token the app already holds goes into
+Block Store, which Android carries to the new device.
+
+- Native: `android/app/src/main/java/org/freegle/blockstore/BlockStorePlugin.java`, registered
+  in `MainActivity.onCreate` before `super.onCreate`.
+- Web layer: `composables/useSessionRestore.js`, called from `stores/auth.js` (`setAuth` saves,
+  `logout` clears, `adoptRestoredSession` reads) and from both boot paths.
+- Android only. iOS restores a session from the encrypted keychain backup already.
+
+</details>
+
+---
+
 Production builds are fully automated via CircleCI. Local builds are useful for testing.
 
 <details>

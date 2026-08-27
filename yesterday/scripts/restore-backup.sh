@@ -304,10 +304,16 @@ echo ""
 echo "✅ Preparation complete!"
 echo ""
 
+# Read the uid from the image the percona service actually runs, not from a tag built
+# out of the backup's server_version: that version names a Percona release, not a Docker
+# tag that is guaranteed to exist, so it breaks whenever production upgrades ahead of
+# the published images. A wrong owner leaves mysqld unable to create auto.cnf.
 echo "Detecting MySQL user ID from Percona image..."
-MYSQL_UID=$(docker run --rm percona:$PERCONA_VERSION id -u mysql)
-MYSQL_GID=$(docker run --rm percona:$PERCONA_VERSION id -g mysql)
-echo "MySQL runs as UID:GID ${MYSQL_UID}:${MYSQL_GID} in this Percona version"
+PERCONA_IMAGE=$(cd /var/www/FreegleDocker && docker compose config --images percona 2>/dev/null | head -1)
+[ -n "$PERCONA_IMAGE" ] || { echo "❌ Cannot read the percona image from docker compose config"; exit 1; }
+MYSQL_UID=$(docker run --rm "$PERCONA_IMAGE" id -u mysql)
+MYSQL_GID=$(docker run --rm "$PERCONA_IMAGE" id -g mysql)
+echo "MySQL runs as UID:GID ${MYSQL_UID}:${MYSQL_GID} in $PERCONA_IMAGE"
 
 echo "Setting ownership..."
 sudo chown -R ${MYSQL_UID}:${MYSQL_GID} "${VOLUME_PATH}"

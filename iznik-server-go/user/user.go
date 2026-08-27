@@ -1229,7 +1229,11 @@ func SearchUsers(c *fiber.Ctx) error {
 	db.Table("("+
 		"(SELECT userid FROM users_emails WHERE email LIKE ? OR canon LIKE ? OR backwards LIKE ?) "+
 		"UNION "+
-		"(SELECT id AS userid FROM users WHERE fullname LIKE ?) "+
+		// firstname/lastname and their concatenation as well as fullname: LoveJunk-origin
+		// members have fullname NULL and their name split across the two columns, and the
+		// displayname shown is "firstname lastname" (Discourse 9518/379).
+		"(SELECT id AS userid FROM users WHERE fullname LIKE ? OR firstname LIKE ? "+
+		"OR lastname LIKE ? OR CONCAT_WS(' ', firstname, lastname) LIKE ?) "+
 		"UNION "+
 		"(SELECT id AS userid FROM users WHERE yahooid LIKE ?) "+
 		"UNION "+
@@ -1237,7 +1241,9 @@ func SearchUsers(c *fiber.Ctx) error {
 		"UNION "+
 		"(SELECT userid FROM users_logins WHERE uid LIKE ?) "+
 		") t",
-		emailLikeTerm, prefixTerm, backwardsTerm, prefixTerm, prefixTerm, numericID, prefixTerm).
+		emailLikeTerm, prefixTerm, backwardsTerm,
+		prefixTerm, prefixTerm, prefixTerm, prefixTerm,
+		prefixTerm, numericID, prefixTerm).
 		Select("DISTINCT userid").
 		Order("userid ASC").
 		Limit(100).
@@ -1383,10 +1389,14 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 				Lng float64
 			}
 			var locs []groupLatLng
+			// mh.rippled = 0: exclude memberships created by rippling auto-join (Rippling Out,
+			// ExpandService::addPosterMembershipToRippledGroups). Those follow a post's reach, not
+			// a choice by the member, so counting them flags/bans innocent freeglers for spread they
+			// never caused (Discourse 10064/1).
 			db.Table("memberships_history mh").
 				Select("DISTINCT g.lat, g.lng").
 				Joins("INNER JOIN `groups` g ON mh.groupid = g.id").
-				Where("mh.userid = ? AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0", id).
+				Where("mh.userid = ? AND mh.rippled = 0 AND DATEDIFF(NOW(), mh.added) <= 31 AND g.publish = 1 AND g.onmap = 1 AND g.lat != 0 AND g.lng != 0", id).
 				Scan(&locs)
 			if len(locs) >= 2 {
 				var swlat, swlng, nelat, nelng float64

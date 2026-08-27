@@ -577,21 +577,24 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	} else {
 		v1 = app.Group("/v1")
 	}
-	v1.Get("/isochrone", handleIsochrone(g))
-	v1.Get("/fairness", handleFairness(g))
+	// gated() routes run graph computations (Dijkstra working sets sized by
+	// the reached area) and share the bounded compute pool — see computegate.go.
+	// Ungated routes are lookups that never traverse the graph.
+	v1.Get("/isochrone", gated(handleIsochrone(g)))
+	v1.Get("/fairness", gated(handleFairness(g)))
 	v1.Get("/quintile", handleQuintile(g))
 	v1.Post("/quintiles", handleQuintiles(g))
-	v1.Get("/catchment", handleCatchment(g))
-	v1.Get("/group-proximity", handleGroupProximity(g))
-	v1.Get("/drive-time", handleDriveTime(g))
-	v1.Get("/group-extent", handleGroupExtent(g))
+	v1.Get("/catchment", gated(handleCatchment(g)))
+	v1.Get("/group-proximity", gated(handleGroupProximity(g)))
+	v1.Get("/drive-time", gated(handleDriveTime(g)))
+	v1.Get("/group-extent", gated(handleGroupExtent(g)))
 	v1.Get("/group-actives", handleGroupActives())
-	v1.Get("/nearby-freeglers", handleNearbyFreeglers(g, spatialURL))
-	v1.Get("/ripple-schedule", handleRippleSchedule(g, spatialURL))
-	v1.Get("/reachable-groups", handleReachableGroups(g))
-	v1.Post("/ripple-eval", handleRippleEval(g, spatialURL))
-	v1.Get("/posts-for-member", handlePostsForMember(g, spatialURL))
-	v1.Get("/digest-simulator", handleDigestSimulator(g, spatialURL))
+	v1.Get("/nearby-freeglers", gated(handleNearbyFreeglers(g, spatialURL)))
+	v1.Get("/ripple-schedule", gated(handleRippleSchedule(g, spatialURL)))
+	v1.Get("/reachable-groups", gated(handleReachableGroups(g)))
+	v1.Post("/ripple-eval", gated(handleRippleEval(g, spatialURL)))
+	v1.Get("/posts-for-member", gated(handlePostsForMember(g, spatialURL)))
+	v1.Get("/digest-simulator", gated(handleDigestSimulator(g, spatialURL)))
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	v1.Get("/groups/list", handleGroupsList())
 

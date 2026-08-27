@@ -24,8 +24,7 @@ import (
 
 // ringSchemaExec makes the shared rippling_reach stand-in carry every column these tests
 // touch, whichever test's CREATE TABLE IF NOT EXISTS won. MySQL 8 has no ADD COLUMN IF
-// NOT EXISTS, so each ALTER is fired blind and an "already exists" error is ignored -
-// db.Exec here never checks errors anyway.
+// NOT EXISTS, so addColumnIfMissing asks information_schema first.
 func ringSchemaExec(t *testing.T) {
 	t.Helper()
 	db := database.DBConn
@@ -35,15 +34,14 @@ func ringSchemaExec(t *testing.T) {
 		polygon_cells MEDIUMBLOB NULL,
 		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
-	for _, alter := range []string{
-		"ALTER TABLE rippling_reach ADD COLUMN outer_bound GEOMETRY NULL",
-		"ALTER TABLE rippling_reach ADD COLUMN inner_bound GEOMETRY NULL",
-		"ALTER TABLE rippling_reach ADD COLUMN overflow_cells JSON NULL",
-		"ALTER TABLE rippling_reach ADD COLUMN schedule LONGTEXT NULL",
-		"ALTER TABLE rippling_reach ADD COLUMN arrival TIMESTAMP NULL",
-	} {
-		db.Exec(alter)
-	}
+	// Checked before adding rather than added-and-let-it-fail: on a database that
+	// already has these, the unconditional form logged five duplicate-column errors
+	// per call, which land above the first real failure and read like its cause.
+	addColumnIfMissing("rippling_reach", "outer_bound", "GEOMETRY NULL")
+	addColumnIfMissing("rippling_reach", "inner_bound", "GEOMETRY NULL")
+	addColumnIfMissing("rippling_reach", "overflow_cells", "JSON NULL")
+	addColumnIfMissing("rippling_reach", "schedule", "LONGTEXT NULL")
+	addColumnIfMissing("rippling_reach", "arrival", "TIMESTAMP NULL")
 }
 
 // farReach inserts a reach row whose reach is far from (51.5, -0.1) - the viewer in

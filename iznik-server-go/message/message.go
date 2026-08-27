@@ -1269,11 +1269,92 @@ func checkWorryWords(db *gorm.DB, messages []Message) {
 	}
 }
 
+// fuzzyLevenshteinMinKwLen mirrors ContentCheckService::FUZZY_LEVENSHTEIN_MIN_KW_LEN:
+// below this length, edit-distance fuzzy matching is skipped and only exact /
+// inflectional matches count, to avoid short-word false positives.
+const fuzzyLevenshteinMinKwLen = 8
+
+// inflectionVariants mirrors PHP's ContentCheckService::inflectionVariants:
+// the plural/-ing/-ed forms accepted as equivalent to kwLower, without
+// admitting arbitrary 1-edit neighbours.
+func inflectionVariants(kwLower string) []string {
+	variants := []string{kwLower + "s", kwLower + "es"}
+	l := len(kwLower)
+
+	if l > 1 && strings.HasSuffix(kwLower, "y") {
+		variants = append(variants, kwLower[:l-1]+"ies")
+	}
+
+	if strings.HasSuffix(kwLower, "e") {
+		// English: drop the trailing 'e' before -ing; add only 'd' for -ed.
+		variants = append(variants, kwLower+"d", kwLower[:l-1]+"ing")
+	} else {
+		variants = append(variants, kwLower+"ed", kwLower+"ing")
+		// CVC rule: double the final consonant before -ed/-ing ("swap" -> "swapped").
+		if l >= 3 {
+			last := kwLower[l-1]
+			pen := kwLower[l-2]
+			if !strings.ContainsRune("aeiou", rune(last)) && strings.ContainsRune("aeiou", rune(pen)) {
+				variants = append(variants, kwLower+string(last)+"ed", kwLower+string(last)+"ing")
+			}
+		}
+	}
+
+	return variants
+}
+
+// matchesFuzzyToken reports whether token equals kw, one of its inflectional
+// variants, or (for keywords at least fuzzyLevenshteinMinKwLen long) is within
+// Damerau-Levenshtein distance 1 of kw with a comparable length. Mirrors
+// ContentCheckService::matchesFuzzy's per-token branch so Go and PHP flag the
+// same misspellings from the same match_mode='fuzzy' concern_keywords rows
+// (Discourse 9939/44). Both token and kw must already be lower-cased.
+func matchesFuzzyToken(token, kw string) bool {
+	if token == kw {
+		return true
+	}
+
+	for _, v := range inflectionVariants(kw) {
+		if token == v {
+			return true
+		}
+	}
+
+	kwLen := len(kw)
+	if kwLen < fuzzyLevenshteinMinKwLen {
+		return false
+	}
+
+	tokLen := len(token)
+	ratio := float64(tokLen) / float64(kwLen)
+	if ratio < 0.75 || ratio > 1.25 {
+		return false
+	}
+
+	if user.DamerauLevenshtein(token, kw, 1) > 1 {
+		return false
+	}
+
+	// Reject initial-consonant swaps: "hangers" vs "bangers" differ only at
+	// position 0 and are a different word, not a typo.
+	minLen := tokLen
+	if kwLen < minLen {
+		minLen = kwLen
+	}
+	for i := 0; i < minLen; i++ {
+		if token[i] != kw[i] {
+			return i != 0
+		}
+	}
+
+	return true
+}
+
 // matchWorryWords scans subject and textbody for worry word matches.
 // checks for pound sign, removes Allowed words before scanning,
 // uses case-insensitive contains for phrases (keywords with spaces), and
-// levenshtein distance < 1 (i.e. exact match) for single words with
-// length-ratio filtering.
+// fuzzy matching (exact, inflectional, or Damerau-Levenshtein distance 1 for
+// longer words) for single words, mirroring PHP's matchesFuzzy.
 func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 	var matches []WorryMatch
 	found := map[string]bool{}
@@ -1331,9 +1412,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 				if w.Type == "Allowed" || found[kw] || len(kw) == 0 {
 					continue
 				}
-				// V1: ratio 0.75-1.25 and levenshtein < 1 (exact match).
-				ratio := float64(len(token)) / float64(len(kw))
-				if ratio >= 0.75 && ratio <= 1.25 && strings.EqualFold(token, kw) {
+				if matchesFuzzyToken(token, kw) {
 					matches = append(matches, WorryMatch{
 						Word:      w.Keyword,
 						Worryword: WorryWord{Keyword: w.Keyword, Type: w.Type},

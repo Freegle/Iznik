@@ -21,6 +21,9 @@ const { mockAuthStore, mockCheckWork, mockResetCheckWork } = vi.hoisted(() => {
     work: null,
     fetchUser: () => Promise.resolve(null),
     logout: () => Promise.resolve(undefined),
+    // The layout adopts a session transferred from a previous device before it
+    // looks at jwt/persistent.
+    adoptRestoredSession: () => Promise.resolve(false),
   })
   return {
     mockAuthStore,

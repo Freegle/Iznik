@@ -20,6 +20,12 @@ export const BOOT_SESSION_FRESH_MS = 30_000
 // caller gets whatever user state we ended up with.
 export async function bootSession() {
   const authStore = useAuthStore()
+
+  // A phone the user has just moved to has nothing in localStorage, but Block Store may hold
+  // the session from their previous Android device. Adopt it before we conclude there are no
+  // credentials. No-op off Android, and when we already have some.
+  await authStore.adoptRestoredSession()
+
   const { jwt, persistent } = authStore.auth
 
   // fetchMe's dedup uses module-scope state, which the server would share
