@@ -31,6 +31,19 @@
         <NoticeMessage v-if="banned" variant="danger" class="mb-2">
           This freegler is banned from this group.
         </NoticeMessage>
+        <NoticeMessage
+          v-if="!modMessagingAllowed"
+          variant="warning"
+          class="mb-2"
+          data-test="tn-unaddressed-member-warning"
+        >
+          This is a <strong>Trash Nothing</strong> user who hasn't opted in to
+          Freegle. Everything they've posted here was matched to a community
+          from where they are, not chosen by them, so
+          <strong>they can't be contacted</strong> - there's no chat, no mail
+          and no standard messages. If they post to Freegle properly, this goes
+          away by itself.
+        </NoticeMessage>
         <div v-if="heldByUser">
           <NoticeMessage variant="warning" class="mb-2">
             <p v-if="me.id === heldByUser.id">
@@ -283,6 +296,7 @@
             :role="member.role"
           />
           <ChatButton
+            v-if="modMessagingAllowed"
             :userid="member.userid"
             :groupid="member.groupid"
             title="Chat"
@@ -410,6 +424,15 @@ const user = computed(() => {
 })
 
 const email = usePreferredEmail(user)
+
+// False when everything this person has posted is a TN post matched to a Freegle community
+// they never chose - they have not opted in to Freegle, so there is no relationship for a
+// volunteer to use and no way to reach them. Someone who has ALSO posted to Freegle
+// properly is a real member and is unaffected. Server-derived (memberships payload) and
+// server-enforced - see the Go modmessaging package.
+const modMessagingAllowed = computed(
+  () => member.value?.mod_messaging_allowed !== false
+)
 
 // V2 API returns heldby as a numeric user ID, not an object.
 const heldByUser = computed(() => {

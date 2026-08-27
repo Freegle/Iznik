@@ -643,4 +643,82 @@ describe('ModMemberButtons', () => {
       expect(wrapper.vm.filterByAction.length).toBe(0)
     })
   })
+
+  // Someone whose only presence on Freegle is TN posts matched to communities they never
+  // chose has agreed to nothing with these volunteers, so everything that writes to them
+  // is withdrawn. ModMember carries the notice explaining why. A "mixed" poster is a real
+  // member and is unaffected - see modmessaging in the Go API.
+  describe('a member who has not opted in to Freegle', () => {
+    const stdmsgs = [
+      {
+        id: 1,
+        title: 'Welcome note',
+        action: 'Leave Approved Member',
+        rarelyused: 0,
+      },
+      {
+        id: 2,
+        title: 'Removing you',
+        action: 'Delete Approved Member',
+        rarelyused: 0,
+      },
+    ]
+
+    function mountUnaddressed() {
+      return mountComponent({
+        member: createMember({
+          collection: 'Approved',
+          mod_messaging_allowed: false,
+        }),
+        modconfig: createModConfig(stdmsgs),
+        actions: true,
+      })
+    }
+
+    function mountOrdinary() {
+      return mountComponent({
+        member: createMember({
+          collection: 'Approved',
+          mod_messaging_allowed: true,
+        }),
+        modconfig: createModConfig(stdmsgs),
+        actions: true,
+      })
+    }
+
+    it('offers Mail and the standard messages to an ordinary member', () => {
+      const labels = mountOrdinary()
+        .findAll('button')
+        .map((b) => b.text())
+
+      expect(labels).toContain('Mail')
+      expect(labels).toContain('Welcome note')
+      expect(labels).toContain('Removing you')
+    })
+
+    it('offers them no Mail button', () => {
+      const labels = mountUnaddressed()
+        .findAll('button')
+        .map((b) => b.text())
+
+      expect(labels).not.toContain('Mail')
+    })
+
+    it('offers them no standard messages', () => {
+      const wrapper = mountUnaddressed()
+
+      expect(wrapper.vm.filtered).toEqual([])
+      const labels = wrapper.findAll('button').map((b) => b.text())
+      expect(labels).not.toContain('Welcome note')
+      expect(labels).not.toContain('Removing you')
+    })
+
+    it('hides the autosend toggle, which now controls nothing', () => {
+      expect(mountUnaddressed().find('.our-toggle').exists()).toBe(false)
+    })
+
+    it('keeps the membership actions, so they can still be removed', () => {
+      expect(mountUnaddressed().find('.mod-member-actions').exists()).toBe(true)
+    })
+  })
 })

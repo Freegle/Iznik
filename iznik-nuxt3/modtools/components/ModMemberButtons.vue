@@ -121,6 +121,7 @@
         label="Ignore"
       />
       <ModMemberButton
+        v-if="modMessagingAllowed"
         class="ms-1 me-1"
         :userid="member.userid"
         :groupid="member.groupid"
@@ -155,7 +156,7 @@
       </b-button>
     </div>
     <client-only>
-      <div class="mt-1 mb-1 d-flex flex-wrap">
+      <div v-if="modMessagingAllowed" class="mt-1 mb-1 d-flex flex-wrap">
         <OurToggle
           v-model="allowAutoSend"
           :height="30"
@@ -221,6 +222,14 @@ const modconfig = computed(
 )
 const member = computed(() => memberStore.get(props.membershipid))
 
+// False for someone whose only presence on Freegle is TN posts matched to a community they
+// never chose. Every standard message and the Mail button write to the member, so none of
+// them is offered; ModMember carries the notice explaining why. See the Go modmessaging
+// package for the server-side half.
+const modMessagingAllowed = computed(
+  () => member.value?.mod_messaging_allowed !== false
+)
+
 const showRare = ref(false)
 const allowAutoSend = ref(true)
 const showAddCommentModal = ref(false)
@@ -254,6 +263,13 @@ const spam = computed(() => {
 })
 
 const validActions = computed(() => {
+  // Every standard message here writes to the member, so a member who cannot be contacted
+  // gets none of them - not even Delete Approved Member, whose whole purpose is to explain
+  // the removal. Removing them stays available through ModMemberActions.
+  if (!modMessagingAllowed.value) {
+    return []
+  }
+
   // The standard messages we show depend on the valid ones for this type of member.
   if (approved.value) {
     return ['Leave Approved Member', 'Delete Approved Member']

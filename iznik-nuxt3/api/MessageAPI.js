@@ -230,6 +230,18 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
+  // Report a post whose poster never joined Freegle (mod_messaging_allowed false). Every
+  // other post is reported by messaging the community's volunteers; these have no
+  // community that could act, so the report is a vote to take the post down instead.
+  report(id, groupid, message) {
+    return this.$postv2('/message', {
+      action: 'Report',
+      id,
+      groupid,
+      message,
+    })
+  }
+
   reject(id, groupid, subject = null, stdmsgid = null, body = null) {
     return this.$postv2(
       '/message',

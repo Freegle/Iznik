@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/modmessaging"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -729,9 +730,10 @@ func PostResponse(c *fiber.Ctx) error {
 					// Quorum reached — pull the post back to Pending on ALL the
 					// groups it is live on (home + rippled-out copies), so every
 					// affected community's moderators review it, not only the group
-					// where this vote happened, then freeze the ripple.
-					SendForReviewAllGroups(db, req.Msgid, "Members think there is something wrong with this message.")
-					FreezeReachIfOriginPending(db, req.Msgid)
+					// where this vote happened, then freeze the ripple. An
+					// unaddressed TN post has no moderators to review it, so it is
+					// removed instead - see applyRejectQuorum.
+					applyRejectQuorum(db, req.Msgid, "Members think there is something wrong with this message.")
 				}
 			}
 		}
@@ -1042,22 +1044,55 @@ func RecordReportVerdict(db *gorm.DB, reporterID uint64, msgid uint64, groupid u
 
 	const reason = "Members or moderators think there is something wrong with this message."
 
+	// An unaddressed TN post has no community that can act on it - which is why the report
+	// never reached a moderator in the first place - so sending it for review would strand
+	// it live in browse forever. It is removed from the platform instead, on the SAME
+	// quorum of two distinct reporters. The mod-is-quorum shortcut below deliberately does
+	// NOT apply to it: a moderator who wants one of these gone has Delete, and one click
+	// should not silently delete a post network-wide with nobody able to see it happen.
+	if modmessaging.PostIsUnaddressed(db, msgid) {
+		if distinctRejectCount(db, msgid) >= int64(ApprovalQuorum) {
+			modmessaging.RemoveUnaddressedPost(db, msgid)
+		}
+		return
+	}
+
 	// A moderator's report is quorum on its own: pull the post to Pending everywhere.
 	if reporterIsModOf(db, reporterID, groupid) {
 		SendForReviewAllGroups(db, msgid, reason)
-	} else {
+	} else if distinctRejectCount(db, msgid) >= int64(ApprovalQuorum) {
 		// Aggregate quorum (all distinct Reject verdicts, reports or in-app checks)
 		// pulls the post to Pending on every community it is on.
-		var rejectCount int64
-		db.Table("microactions").
-			Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
-			Count(&rejectCount)
-		if rejectCount >= int64(ApprovalQuorum) {
-			SendForReviewAllGroups(db, msgid, reason)
-		}
+		SendForReviewAllGroups(db, msgid, reason)
 	}
 
 	// If the origin copy is now Pending, freeze the ripple (stops spread + re-reach).
+	FreezeReachIfOriginPending(db, msgid)
+}
+
+// distinctRejectCount counts the Reject verdicts standing against a post - website reports
+// and in-app CheckMessage checks alike. The microactions (userid, msgid) unique key is what
+// makes these distinct PEOPLE rather than distinct clicks.
+func distinctRejectCount(db *gorm.DB, msgid uint64) int64 {
+	var n int64
+	db.Table("microactions").
+		Where("msgid = ? AND result = 'Reject' AND comments IS NOT NULL AND (msgcategory IS NULL OR msgcategory = 'ShouldntBeHere')", msgid).
+		Count(&n)
+	return n
+}
+
+// applyRejectQuorum is what happens once enough people have said a post shouldn't be here.
+// For an ordinary post that is a review: every community's copy goes back to Pending and
+// the ripple freezes, and its own moderators decide. An unaddressed TN post has no such
+// moderators, so it is removed from the platform outright (soft, audited - see
+// modmessaging.RemoveUnaddressedPost).
+func applyRejectQuorum(db *gorm.DB, msgid uint64, reason string) {
+	if modmessaging.PostIsUnaddressed(db, msgid) {
+		modmessaging.RemoveUnaddressedPost(db, msgid)
+		return
+	}
+
+	SendForReviewAllGroups(db, msgid, reason)
 	FreezeReachIfOriginPending(db, msgid)
 }
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-26
+last_reviewed: 2026-08-27
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -9,6 +9,12 @@ covers:
   - iznik-batch/app/Services/Mail/Incoming/IncomingMailService.php
   - iznik-batch/app/Console/Commands/Dedup/**
   - iznik-batch/app/Services/UnifiedDigestService.php
+  - iznik-batch/app/Services/TrashNothing/Ingestion/**
+  - iznik-batch/app/Services/TrashNothing/Sync/**
+  - iznik-server-go/modmessaging/**
+  - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
+  # cross-stack behaviour tests (change when the behaviour changes)
+  - iznik-server-go/test/modmessaging_test.go
 ---
 
 # TrashNothing Integration Documentation
@@ -155,6 +161,16 @@ Because these posts often have no membership row, `ContentCheckService::isUserMo
 applies the same `DEFAULT` fallback for a post with a `tnpostid`; without that they
 would sit in the mod queue with nothing able to promote them.
 
+**A stale spatial-index location costs the post its location, not the post.** The
+spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
+nearest-postcode answer can name a `locations` row that has since been purged or
+renumbered. `users.lastlocation` is a foreign key, and both paths write it *inside*
+message creation, so an id that is no longer in `locations` throws there and takes
+the whole post down rather than just its location - it routes Pending and creates no
+`messages` row at all. `GroupPostIngestionService` and
+`IncomingMailService::createGroupPostMessage()` therefore both check the id exists
+before trusting it, and log `TN-SYNC-TRACE [LOCATION-STALE]` when it does not.
+
 Photos come from the API's own `photos[].images` array rather than being scraped
 out of the post body. TN documents that array as ordered *smallest to largest*
 (`PublicApi/docs/Model/Photo.md`), so `GroupPostIngestionService::bestPhotoUrl()`
@@ -182,6 +198,68 @@ every post vanishes and Layers 3-5 compare zero pairs — a PASS that checked
 nothing. `ParityComparer::parseUnknownGroupDrops()` counts those drops per
 group, the report lists them, and `tn:parity-check` fails outright when they
 account for the whole email side.
+
+### Posts nobody chose: unaddressed TN posts
+
+Because the API path picks the group from the post's coordinates, a TN poster
+frequently ends up on a Freegle community they never asked for. TN's out-of-spec
+`freegle_group_ids` field says which Freegle groups that poster *did* choose, and
+`PostSyncer::processPost()` compares the resolved group against it, storing the answer
+as `messages_groups.mod_messaging_allowed` (default-deny for TN posts, table default 1
+for everything else). A post with 0 there is **unaddressed**: nobody on Freegle has any
+standing to moderate it in the usual sense, because the person behind it has not joined
+Freegle at all.
+
+The rule is read off the **origin** row (`rippled_in = 0`). The rippling engine inserts
+its copies without the column, so they take the table default and would otherwise make
+every rippled copy of an unaddressed post read as addressed.
+
+`iznik-server-go/modmessaging` is the one place that decides this, and everything else
+asks it:
+
+| Question | Function |
+|---|---|
+| Is this post unaddressed? | `PostIsUnaddressed` |
+| Is every post this person has made unaddressed? | `UserIsUnaddressedOnly` / `UsersUnaddressedOnly` |
+| Take an unaddressed post off the platform | `RemoveUnaddressedPost` |
+
+A **mixed** poster - one unaddressed post plus any ordinary Freegle post - is a real
+member and is not restricted at all. That is the case `UserIsUnaddressedOnly` exists to
+get right.
+
+What changes as a result:
+
+- **Reporting never reaches a moderator.** An ordinary report is a User2Mod chat message
+  that `CreateChatMessage` turns into a review verdict. For an unaddressed post there is
+  no team to send it to, so `MessageReportModal` calls the `Report` action on
+  `POST /message` instead, and `CreateChatMessage` intercepts the legacy route (stale app
+  bundles) and writes no chat message at all. Either way the verdict is recorded, and at
+  the SAME quorum of two distinct reporters (`microvolunteering.ApprovalQuorum`) the post
+  is removed rather than sent for review. The mod-is-quorum shortcut deliberately does not
+  apply: a single click must not delete a post network-wide with nobody able to see it.
+- **Removal is soft and audited.** `RemoveUnaddressedPost` soft-deletes every
+  `messages_groups` row and the message, freezes `rippling_reach` to `held`, queues the
+  freebie-alerts removal, and writes one `logs` Message/Deleted row per group with
+  `byuser` NULL. Nothing reviewed it, so it has to stay recoverable and visible.
+- **Moderators get Approve and Delete, not Edit or Reply.** ModTools hides Edit, Blank
+  Reply and every standard message, and forces Reject onto the existing no-message path.
+  The server enforces it too: `handleReply` and `PatchMessage` 403, `PutChatRoom` refuses
+  a mod opening a chat to such a member, `PostMemberships` refuses `Leave (Approved)
+  Member`, and `ProcessBackgroundTasksCommand` sends nothing for a task that reaches it
+  anyway.
+- **The member is flagged on the members page.** The memberships payload carries
+  `mod_messaging_allowed` per member (batched in `enrichMembers`), and `ModMember.vue`
+  shows a notice saying this is a Trash Nothing user who has not opted in to Freegle and
+  cannot be contacted.
+- **The post is flagged in the mod queue.** `ModMessageTnNotice.vue` explains the same
+  thing about the post, in two variants keyed on whether the copy being administered is
+  live: awaiting a decision reads "approve or delete on what you can see", live reads what
+  a report will do. Keyed on the CONTEXT copy's collection, not the message-wide `pending`
+  - a post can be live on one community while still pending on another.
+
+Members are **not** restricted: an ordinary freegler can still reply to one of these
+posts, and the reply relays back to TN as it always has. The restriction is about
+moderators, who are the ones with no relationship to the poster.
 
 ### Verifying nothing is dropped after the cutover
 

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-25
+last_reviewed: 2026-08-27
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -10,6 +10,7 @@ covers:
   - iznik-nuxt3/tests/e2e/test-modtools-pending-messages.spec.js
   - iznik-nuxt3/tests/e2e/test-modtools-edits.spec.js
   - iznik-server-go/test/modtools_edits_rippled_in_test.go
+  - iznik-server-go/test/modmessaging_test.go
   - iznik-batch/tests/Unit/Services/Ripple/**
 ---
 
@@ -169,6 +170,34 @@ When a post reappears in your Pending queue this way - even one you had already 
 the pending post now shows the reason (for example *"A moderator moved this post back to
 pending for review."*), so you can see why it is back rather than assuming your Approve did
 not work.
+
+## Posts from Trash Nothing that nobody chose
+
+Some posts arrive from Trash Nothing without the person choosing a Freegle community at
+all - we match them to a community from where they are. Those posts carry a warning saying
+so, worded for where the post has got to: on one waiting in **Pending** it says approve or
+delete is the whole of it, and on one already **live** it says what happens if members
+report it. They behave differently from an ordinary post, because the person behind them
+has not joined Freegle and never agreed to hear from you:
+
+- You can **approve** or **delete** them as normal, and hold and release them.
+- You **cannot edit** them, send a **Blank Reply**, or use any **standard message** - those
+  buttons aren't shown, because there is nobody to send them to.
+- **Reject** still works, and simply takes the post off your community without sending
+  anything.
+
+If a member **reports** one of these posts, the report does **not** come to you - there is
+no community that could act on it. Two different people reporting the same post takes it
+off Freegle automatically instead. It is a soft delete, so Support can still see it and put
+it back.
+
+The same applies to the person on the **members page**: they show a warning saying they are
+a Trash Nothing user who hasn't opted in to Freegle, and the Chat, Mail and standard-message
+buttons are not offered. If they later post to Freegle properly, all of this goes away by
+itself and they become an ordinary member.
+
+Ordinary freeglers are unaffected - they can still reply to the post, and the reply reaches
+the poster on Trash Nothing as usual.
 
 ## Next steps
 

@@ -18,6 +18,7 @@
         label="Reject Edit"
       />
       <ModMessageButton
+        v-if="modMessagingAllowed"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -40,6 +41,7 @@
         :messageid="message.id"
         :groupid="groupid"
         :is-home-group="isHomeGroup"
+        :no-member-message="!modMessagingAllowed"
         variant="warning"
         icon="times"
         reject
@@ -84,6 +86,7 @@
     </div>
     <div v-else-if="approved" class="d-inline">
       <ModMessageButton
+        v-if="modMessagingAllowed"
         :messageid="message.id"
         :groupid="groupid"
         variant="primary"
@@ -163,7 +166,7 @@
       </b-button>
     </div>
     <client-only>
-      <div class="mt-1 mb-1 d-flex flex-wrap">
+      <div v-if="modMessagingAllowed" class="mt-1 mb-1 d-flex flex-wrap">
         <OurToggle
           v-model="allowAutoSend"
           :height="30"
@@ -217,6 +220,15 @@ const props = defineProps({
   // offered on the post's home/origin group - not on a rippled-in copy. Defaults true so
   // non-rippling contexts are unaffected.
   isHomeGroup: {
+    type: Boolean,
+    required: false,
+    default: true,
+  },
+  // False for a TN post whose poster never joined Freegle. Every action that would send
+  // them something - Blank Reply, the standard messages, a Reject with an explanation -
+  // is withdrawn; Approve, Delete and Hold are not. Defaults true so ordinary posts are
+  // untouched. See the Go modmessaging package for the server-side half.
+  modMessagingAllowed: {
     type: Boolean,
     required: false,
     default: true,
@@ -308,6 +320,10 @@ const stdmsgs = computed(() => {
 })
 
 const filterByAction = computed(() => {
+  if (!props.modMessagingAllowed) {
+    return []
+  }
+
   if (modconfig.value) {
     return stdmsgs.value.filter((stdmsg) => {
       return validActions.value.includes(stdmsg.action)

@@ -221,6 +221,11 @@
                 </a>
               </span>
             </NoticeMessage>
+            <ModMessageTnNotice
+              :mod-messaging-allowed="modMessagingAllowed"
+              :live="contextCopyIsLive"
+              :group-name="currentGroupName"
+            />
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -258,7 +263,11 @@
             </span>
             <div v-if="expanded" class="d-flex">
               <div class="d-flex flex-column align-content-end">
-                <b-button v-if="!editing" variant="white" @click="startEdit">
+                <b-button
+                  v-if="!editing && modMessagingAllowed"
+                  variant="white"
+                  @click="startEdit"
+                >
                   <v-icon icon="pen" /><span class="d-none d-sm-inline">
                     Edit</span
                   >
@@ -758,6 +767,7 @@
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
           :is-home-group="isHomeGroup"
+          :mod-messaging-allowed="modMessagingAllowed"
         />
         <b-button
           v-if="editing"
@@ -1151,6 +1161,24 @@ const reachArrival = computed(() => {
   }
   return message.value?.date || null
 })
+
+// False for a TN post whose poster never chose this - or any - Freegle community
+// (messages_groups.mod_messaging_allowed = 0 on its origin row). They have agreed to
+// nothing with the volunteers here, so the actions that talk to them or put words in their
+// mouth are withdrawn: Edit, Blank Reply, standard messages and chat. Approve and Delete
+// stay. Server-enforced too - see the Go modmessaging package.
+const modMessagingAllowed = computed(
+  () => message.value?.mod_messaging_allowed !== false
+)
+
+// Whether the copy being administered is live on the community. Only Approved is;
+// Pending and Spam are both still awaiting a decision. Read off contextGroup rather
+// than the message-wide `pending`, because the notice above speaks about THIS copy -
+// a post can be live on one community while still pending on another, and telling a
+// moderator their pending copy "is live" would be wrong.
+const contextCopyIsLive = computed(
+  () => contextGroup.value?.collection === 'Approved'
+)
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the
 // group this copy is being administered on, so it is "starting to become available" to

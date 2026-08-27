@@ -1158,4 +1158,87 @@ class GroupPostIngestionServiceTest extends TestCase
     {
         $this->assertNull($this->bestPhotoUrl(['images' => []]));
     }
+    /**
+     * The array form above only ever appears in fixtures; a live run gets the generated
+     * OpenAPI Photo object, and the same smallest-to-largest rule has to hold for it.
+     */
+    public function test_best_photo_url_reads_an_openapi_photo_object_the_same_way(): void
+    {
+        $image = fn (?string $url) => new class($url)
+        {
+            public function __construct(private ?string $url) {}
+
+            public function getUrl(): ?string
+            {
+                return $this->url;
+            }
+        };
+
+        $photo = fn (array $images) => new class($images)
+        {
+            public function __construct(private array $images) {}
+
+            public function getImages(): array
+            {
+                return $this->images;
+            }
+
+            public function getUrl(): ?string
+            {
+                return 'https://trashnothing.com/img/object-fallback.jpg';
+            }
+        };
+
+        $this->assertSame(
+            'https://trashnothing.com/img/object-1200x900.jpg',
+            $this->bestPhotoUrl($photo([
+                $image('https://trashnothing.com/img/object-220x294.jpg'),
+                $image('https://trashnothing.com/img/object-1200x900.jpg'),
+            ]))
+        );
+
+        // Every field on TN's models is optional, so a largest entry with no url of its own
+        // must fall back rather than lose the photo.
+        $this->assertSame(
+            'https://trashnothing.com/img/object-fallback.jpg',
+            $this->bestPhotoUrl($photo([$image(null)]))
+        );
+
+        $this->assertSame(
+            'https://trashnothing.com/img/object-fallback.jpg',
+            $this->bestPhotoUrl($photo([]))
+        );
+    }
+
+    /**
+     * The hash exists to deduplicate images, so it has to produce something for every byte
+     * string it is handed. Returning null on data GD cannot decode would quietly switch dedup
+     * off for exactly the files most likely to be repeat uploads of one photo.
+     */
+    public function test_image_hash_falls_back_to_a_digest_for_undecodable_data(): void
+    {
+        $method = new \ReflectionMethod(GroupPostIngestionService::class, 'computeImageHash');
+        $method->setAccessible(true);
+        $hash = fn (string $data) => $method->invoke($this->makeService(), $data);
+
+        $notAnImage = $hash('this is not an image');
+
+        $this->assertNotNull($notAnImage);
+        $this->assertSame(16, strlen($notAnImage));
+
+        // Deterministic, and different data hashes differently - without both, dedup either
+        // never matches or matches everything.
+        $this->assertSame($notAnImage, $hash('this is not an image'));
+        $this->assertNotSame($notAnImage, $hash('different bytes entirely'));
+
+        // A real image goes down the perceptual-hash path instead, and must still give 16 hex
+        // characters so the two kinds of hash are interchangeable in the same column.
+        $png = imagecreatetruecolor(8, 8);
+        ob_start();
+        imagepng($png);
+        $pngData = (string) ob_get_clean();
+        imagedestroy($png);
+
+        $this->assertSame(16, strlen($hash($pngData)));
+    }
 }
