@@ -71,6 +71,7 @@ Both derived, no new columns:
 | 10 | Tests: Go (modmessaging, report quorum, guards), vitest (modal + mod components), Laravel if touched | ✅ | Go 4288 pass, vitest 16170 pass, Laravel 6183 pass. |
 | 11 | Docs: `docs/moderators/02-moderating-posts.md`, `docs/developers/reference/trashnothing.md` | ✅ | Freshness check covers these paths |
 | 12 | CI red on this branch AND its base: stale spatial-index location loses the whole post on the email path | ✅ | `IncomingMailService::createGroupPostMessage()` now checks the id is in `locations` before writing `users.lastlocation`, as `GroupPostIngestionService` already did. Regression test seeds a postcodes point absent from `locations`; red without the guard, green with it |
+| 13 | Coveralls red on laravel and go: the stack adds 619 statements no test touches | ✅ | Measured per file from the clover report and `coverage.out` (aggregate per block first - `-coverpkg ./...` writes one set per test binary). Covered `TNParityCheckCommand` 0/204 -> 147/204, `PostLogCsvFetcher` 0/58 -> 41/58, `GroupPostIngestionService` 305/413 -> 315/413, plus the reachable go blocks. Project laravel coverage 71.757% -> 72.196% |
 
 ## Test plan
 
@@ -79,8 +80,13 @@ Both derived, no new columns:
 - Laravel: `curl -X POST http://localhost:12066/api/tests/laravel`
 - Docs: `node scripts/check-docs-freshness.mjs`
 
-All three green: Go 4288 pass / 0 fail, vitest 16170 pass / 0 fail, Laravel 6183 pass /
+All three green: Go 4292 pass / 0 fail, vitest 16177 pass / 0 fail, Laravel 6203 pass /
 0 fail, docs freshness OK.
+
+The status API takes a filter, which turns a 35-minute suite into about four minutes:
+`curl -X POST http://localhost:12066/api/tests/laravel -d '{"filter":"SomeTest"}'`. Every run
+leaves its clover report at /tmp/laravel-coverage.xml in the batch container, and go's
+profile at /app/coverage.out in apiv2, so finding coverage holes needs no extra run.
 
 Run the suites ONE AT A TIME. Running Go and Laravel together starves
 `MigrateReachBoundsSchemaCommandTest`, whose spatial-index DDL then exceeds phpunit.xml's
