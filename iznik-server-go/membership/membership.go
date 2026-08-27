@@ -615,7 +615,7 @@ func GetMemberships(c *fiber.Ctx) error {
 			// (shapes.json / TestTier3Shapes_5f742c0fcf1f, removed in
 			// d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() +
-				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR CONCAT(u.firstname, ' ', u.lastname) LIKE ? OR ue.email LIKE ?)"
+				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR CONCAT_WS(' ', u.firstname, u.lastname) LIKE ? OR ue.email LIKE ?)"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
 				searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
 			// Same cursor handling as the numeric branch above - see comment there.
