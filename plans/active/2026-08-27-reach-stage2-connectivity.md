@@ -144,7 +144,33 @@ All measured this session on the 20-core / 94GB WSL2 box against uk-latest.osm.p
 - Per-post query 1.5-26ms (cold incl. lazy tables) vs 29-229ms flat; labels
   0.6-3.8KB vs 2-46KB cells.
 
-### Defects found by the parity harness (both fixed, both now regression-tested)
+### UK-wide sweep (after the 13-post parity)
+- 359 real posts, one to three per half-degree cell across the UK (read-only tunnel,
+  no blobs), plus 266 synthetic origins planted in every sizable partition region the
+  posts did not touch — all 1,508 sizable regions of the network exercised.
+- **5,117,959 arrival checks vs the current engine's own metric: 0 mismatches**, on
+  BOTH the live query result and the stored-label round trip (encode → decode → seed
+  path). 7 membership flips of 5.1M = arrivals tying the budget within 10ms (float
+  noise exactly at the threshold), not path errors.
+- Query mean 6.5ms (cold caches at each new origin) vs 62ms flat-search mean.
+- The sweep caught a third defect the 13 posts missed: two distinct parallel chains
+  joining the SAME junction pair (a circular lane) fooled the origin-same-chain
+  shortcut into applying one chain's offsets to the other. The shortcut now walks the
+  origin's actual chain. Fixed + covered by the sweep.
+
+### Memory (measured, ReadMemStats after GC)
+- Base graph alone (what the server holds today): **3.18GB**.
+- Full stage-2 engine (graph + overlay + chains + partition + matrices): **5.15GB**.
+  The +1.97GB is the price of running BOTH worlds in one process during migration —
+  every existing endpoint still needs the base graph. End-state (all endpoints on the
+  overlay) drops the base edge list (~2.1GB) from reach's requirements.
+- Per-query scratch: current flat search ≈ two hash maps over every reached node
+  (~40MB at 30min, ~730MB at 120min — the class that piled up to 26GB in the
+  death-spirals); engine query ≈ 2-4MB. ~100x smaller where it caused incidents.
+
+### Defects found by the harnesses (all fixed, all regression-covered)
+0. **Two parallel chains can join the same junction pair** (circular lanes): the
+   origin-same-chain shortcut must walk the chain, not compare end pairs.
 1. **Boundary graph must span entry -> every boundary node, not entry -> exit**: a
    shortest path can reach a sibling ENTRY internally; entry-only-via-cross-edges
    dropped up to 121s on Southend arrivals. Matrices now entry×boundary.
