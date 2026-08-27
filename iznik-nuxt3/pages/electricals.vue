@@ -31,8 +31,6 @@
                   {{ stats.counts.electrical.toLocaleString() }}
                   <br />
                   ELECTRICALS
-                  <br />
-                  <span class="text-muted small">{{ rangeLabel }}</span>
                 </h3>
               </b-col>
               <b-col class="text-center">
@@ -41,8 +39,6 @@
                   {{ stats.counts.electrical_pct }}%
                   <br />
                   OF ALL ITEMS
-                  <br />
-                  <span class="text-muted small">{{ rangeLabel }}</span>
                 </h3>
               </b-col>
               <b-col v-if="stats.impact.tonnes !== null" class="text-center">
@@ -51,8 +47,6 @@
                   {{ stats.impact.tonnes.toLocaleString() }}
                   <br />
                   TONNES
-                  <br />
-                  <span class="text-muted small">{{ rangeLabel }}</span>
                 </h3>
               </b-col>
               <b-col
@@ -64,11 +58,12 @@
                   {{ stats.impact.tonnes_co2e.toLocaleString() }}
                   <br />
                   TONNES CO2
-                  <br />
-                  <span class="text-muted small">{{ rangeLabel }}</span>
                 </h3>
               </b-col>
             </b-row>
+          </b-card-body>
+          <b-card-body class="pt-0 text-center">
+            <span class="text-muted small">{{ rangeLabel }}</span>
           </b-card-body>
         </b-card>
 
@@ -180,8 +175,8 @@
           </b-card-text>
         </b-card>
 
-        <b-row class="mt-2">
-          <b-col md="6" class="mb-2 mb-md-0">
+        <b-row class="mt-2 mx-0">
+          <b-col md="6" class="mb-2 mb-md-0 px-0 pe-md-1">
             <b-card variant="white" class="h-100">
               <b-card-text>
                 <h3>Most offered</h3>
@@ -200,7 +195,7 @@
               </b-card-text>
             </b-card>
           </b-col>
-          <b-col md="6">
+          <b-col md="6" class="px-0 ps-md-1">
             <b-card variant="white" class="h-100">
               <b-card-text>
                 <h3>More unusual</h3>
@@ -261,7 +256,7 @@ const {
   error,
 } = await useAsyncData('electricals-stats', () => api.electricals.stats())
 
-const rangeLabel = 'last 12 months'
+const rangeLabel = 'in the last 12 months'
 
 // Damaged sits second deliberately: that broken things still get taken is the
 // point of the table, and burying it under the unremarkable majority loses it.
