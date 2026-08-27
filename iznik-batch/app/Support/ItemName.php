@@ -32,17 +32,28 @@ final class ItemName
     private const TRAILING_THANKS = '/(?:[\s,;:.!?]*\b(?:thanks?(?:\s+you)?(?:\s+very\s+much)?(?:\s+in\s+advance)?|thankyou|thx)\b)+[\s,;:.!?]*$/i';
 
     /**
-     * Remove courtesy words from an item name: members write "iron please", and an image
-     * generator has no way to know that is not part of the item, so it tries to draw it -
-     * the WANTED post for "iron please" came out as a smooth white blob (Discourse 9209/98).
+     * Standalone words that are not part of the item but bias the AI image generator away
+     * from it - "adult" pulls the model toward pharmacy/supplement imagery (Discourse topic
+     * 9630/60: a WANTED post for "Adult bike" got a medicine bottle). Stripped anywhere in
+     * the name, the same way please/pls/plz are, because it can lead ("Adult bike") or
+     * trail ("mountain bike, adult size") the item.
+     */
+    private const BIAS_WORD = '/\badults?\b[!?.,]*/i';
+
+    /**
+     * Remove courtesy words and other bias words from an item name: members write "iron
+     * please", and an image generator has no way to know that is not part of the item, so
+     * it tries to draw it - the WANTED post for "iron please" came out as a smooth white
+     * blob (Discourse 9209/98).
      *
-     * A name that is nothing BUT a courtesy word is returned unchanged: there is no item to
-     * draw either way, and callers read an empty name as "no item at all".
+     * A name that is nothing BUT a courtesy/bias word is returned unchanged: there is no
+     * item to draw either way, and callers read an empty name as "no item at all".
      */
     public static function stripCourtesy(string $name): string
     {
         $cleaned = preg_replace(self::TRAILING_THANKS, '', $name) ?? $name;
         $cleaned = preg_replace(self::COURTESY, ' ', $cleaned) ?? $cleaned;
+        $cleaned = preg_replace(self::BIAS_WORD, ' ', $cleaned) ?? $cleaned;
         $cleaned = trim(preg_replace('/\s+/', ' ', $cleaned) ?? $cleaned);
         $cleaned = rtrim($cleaned, " \t,;:");
 

@@ -48,6 +48,15 @@ class ItemNameTest extends TestCase
             'ta inside a longer job title' => ['Early Years Teaching Assistant (TA)', 'Early Years Teaching Assistant (TA)'],
             'tia is Siemens software' => ['Junior Controls Engineer (TIA Portal)', 'Junior Controls Engineer (TIA Portal)'],
             'thanksgiving is not thanks' => ['decorations for Thanksgiving', 'decorations for Thanksgiving'],
+
+            // Bias words, stripped anywhere like please/pls/plz - regression coverage for
+            // Discourse topic 9630/60: "Adult bike" got a medicine/supplement bottle because
+            // "adult" biases the image generator toward pharmacy imagery.
+            'leading adult' => ['Adult bike', 'bike'],
+            'adult mid-name' => ['large adult bike', 'large bike'],
+            'trailing adult plural' => ['mountain bike, adults', 'mountain bike'],
+            'adult alone falls back' => ['Adult', 'Adult'],
+            'adult prefix of real word is kept' => ['Adulting for beginners book', 'Adulting for beginners book'],
         ];
     }
 

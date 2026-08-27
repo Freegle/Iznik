@@ -30,14 +30,24 @@ var trailingThanksPattern = regexp.MustCompile(`(?i)(?:[\s,;:.!?]*\b(?:thanks?(?
 
 var whitespacePattern = regexp.MustCompile(`\s+`)
 
-// StripCourtesy removes courtesy words from an item name. It is applied both when looking an
-// illustration up in the cache and when building the prompt to generate one, because the two
-// have to agree: otherwise every "please" post misses the cache and generates its own copy of
-// an image we already have. A name that is nothing BUT courtesy is returned unchanged - there
-// is no item to draw either way, and callers read an empty name as "no item at all".
+// biasWordPattern matches standalone words that are not part of the item but bias the AI
+// image generator away from it - "adult" pulls the model toward pharmacy/supplement imagery
+// (Discourse topic 9630/60: a WANTED post for "Adult bike" got a medicine bottle). Stripped
+// anywhere in the name, the same way please/pls/plz are, because it can lead ("Adult bike")
+// or trail ("mountain bike, adult size") the item. Word boundaries keep "adulting"/"adults"-
+// adjacent real words intact where they are not this exact word.
+var biasWordPattern = regexp.MustCompile(`(?i)\badults?\b[!?.,]*`)
+
+// StripCourtesy removes courtesy words and other bias words from an item name. It is applied
+// both when looking an illustration up in the cache and when building the prompt to generate
+// one, because the two have to agree: otherwise every "please" (or "adult") post misses the
+// cache and generates its own copy of an image we already have. A name that is nothing BUT
+// courtesy/bias words is returned unchanged - there is no item to draw either way, and callers
+// read an empty name as "no item at all".
 func StripCourtesy(name string) string {
 	cleaned := trailingThanksPattern.ReplaceAllString(name, "")
 	cleaned = courtesyPattern.ReplaceAllString(cleaned, " ")
+	cleaned = biasWordPattern.ReplaceAllString(cleaned, " ")
 	cleaned = strings.TrimSpace(whitespacePattern.ReplaceAllString(cleaned, " "))
 	cleaned = strings.TrimRight(cleaned, " ,;:")
 
