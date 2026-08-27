@@ -1229,7 +1229,11 @@ func SearchUsers(c *fiber.Ctx) error {
 	db.Table("("+
 		"(SELECT userid FROM users_emails WHERE email LIKE ? OR canon LIKE ? OR backwards LIKE ?) "+
 		"UNION "+
-		"(SELECT id AS userid FROM users WHERE fullname LIKE ?) "+
+		// firstname/lastname and their concatenation as well as fullname: LoveJunk-origin
+		// members have fullname NULL and their name split across the two columns, and the
+		// displayname shown is "firstname lastname" (Discourse 9518/379).
+		"(SELECT id AS userid FROM users WHERE fullname LIKE ? OR firstname LIKE ? "+
+		"OR lastname LIKE ? OR CONCAT_WS(' ', firstname, lastname) LIKE ?) "+
 		"UNION "+
 		"(SELECT id AS userid FROM users WHERE yahooid LIKE ?) "+
 		"UNION "+
@@ -1237,7 +1241,9 @@ func SearchUsers(c *fiber.Ctx) error {
 		"UNION "+
 		"(SELECT userid FROM users_logins WHERE uid LIKE ?) "+
 		") t",
-		emailLikeTerm, prefixTerm, backwardsTerm, prefixTerm, prefixTerm, numericID, prefixTerm).
+		emailLikeTerm, prefixTerm, backwardsTerm,
+		prefixTerm, prefixTerm, prefixTerm, prefixTerm,
+		prefixTerm, numericID, prefixTerm).
 		Select("DISTINCT userid").
 		Order("userid ASC").
 		Limit(100).

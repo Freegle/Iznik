@@ -6010,6 +6010,43 @@ func TestListMessagesSearchMemb(t *testing.T) {
 	assert.Greater(t, len(result.Messages), 0, "Should find messages by member name")
 }
 
+// A LoveJunk-origin member has fullname NULL and their name split across firstname and
+// lastname, so the displayname a mod is shown - and types back into search - is
+// "firstname lastname", which matches neither column on its own. Searching a member's
+// posts by that full name found nothing while the numeric ID worked (Discourse 9518/379).
+func TestListMessagesSearchMembFullNameLoveJunk(t *testing.T) {
+	prefix := uniquePrefix("lstmsg_lj")
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	firstname := prefix + "First"
+	lastname := prefix + "Last"
+	db := database.DBConn
+	res := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole) VALUES (?, ?, NULL, 'User')",
+		firstname, lastname)
+	assert.NoError(t, res.Error)
+	var userID uint64
+	db.Raw("SELECT id FROM users WHERE firstname = ? AND lastname = ? AND fullname IS NULL ORDER BY id DESC LIMIT 1",
+		firstname, lastname).Scan(&userID)
+	assert.NotZero(t, userID)
+	CreateTestMembership(t, userID, groupID, "Member")
+	CreateTestMessage(t, userID, groupID, prefix+" Offer LoveJunk Sofa", 55.9533, -3.1883)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/messages?groupid=%d&collection=Approved&subaction=searchmemb&search=%s&jwt=%s",
+			groupID, url.QueryEscape(firstname+" "+lastname), modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result message.ListMessagesResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Greater(t, len(result.Messages), 0,
+		"a member whose displayname is firstname+lastname must be findable by that full name")
+}
+
 func TestListMessagesSearchMembByID(t *testing.T) {
 	prefix := uniquePrefix("lstmsg_srchmid")
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -2016,6 +2017,76 @@ func TestGetMembershipsSearchNullFullname(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "member with NULL fullname should be found by lastname search")
+}
+
+// A LoveJunk member's full displayed name ("firstname lastname", the string ModTools
+// actually shows a mod and the one they will type/paste back into search) matches no
+// single column, so even after 9518/371 (firstname/lastname LIKE) a mod searching by
+// the full name still gets nothing, while searching by numeric ID works. Reproduces
+// the Hackney Freegle reports for users 43506372/43428022 (Discourse 9518/379).
+func TestGetMembershipsSearchFullNameLoveJunk(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("lj_fullname")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Simulate a LoveJunk member: fullname NULL, name split across firstname/lastname.
+	firstname := prefix + "_First"
+	lastname := prefix + "_Last"
+	settings := `{"mylocation": {"lat": 55.9533, "lng": -3.1883}}`
+	res := db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+		"VALUES (?, ?, NULL, 'User', NULL, ?)", firstname, lastname, settings)
+	assert.NoError(t, res.Error)
+	var targetID uint64
+	db.Raw("SELECT id FROM users WHERE firstname = ? AND lastname = ? AND fullname IS NULL ORDER BY id DESC LIMIT 1", firstname, lastname).Scan(&targetID)
+	assert.NotZero(t, targetID, "LoveJunk-style user should have been created")
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	// Numeric-ID search works today - confirms the reported asymmetry.
+	idURL := fmt.Sprintf("/api/memberships?groupid=%d&search=%d&jwt=%s", groupID, targetID, token)
+	idReq := httptest.NewRequest("GET", idURL, nil)
+	idResp, err := getApp().Test(idReq, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, idResp.StatusCode)
+	var idResponse map[string]interface{}
+	json.NewDecoder(idResp.Body).Decode(&idResponse)
+	idMembersRaw, _ := idResponse["members"].([]interface{})
+	foundByID := false
+	for _, raw := range idMembersRaw {
+		m := raw.(map[string]interface{})
+		if uint64(m["userid"].(float64)) == targetID {
+			foundByID = true
+			break
+		}
+	}
+	assert.True(t, foundByID, "member should be found by numeric ID search")
+
+	// Search using the full displayed name, exactly as ModTools shows it and as a
+	// mod would type/paste it back in - "firstname lastname".
+	fullName := firstname + " " + lastname
+	reqURL := fmt.Sprintf("/api/memberships?groupid=%d&search=%s&jwt=%s", groupID, url.QueryEscape(fullName), token)
+	req := httptest.NewRequest("GET", reqURL, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+
+	found := false
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
+		uid := uint64(m["userid"].(float64))
+		if uid == targetID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "member with NULL fullname should be found by full 'firstname lastname' search")
 }
 
 func TestGetMembershipsPendingCollection(t *testing.T) {
