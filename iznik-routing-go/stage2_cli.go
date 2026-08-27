@@ -207,8 +207,9 @@ func stage2SweepCmd(args []string) {
 	fs := flag.NewFlagSet("sweep", flag.ExitOnError)
 	file := fs.String("file", "data/stage2/sweep.jsonl", "jsonl of exported origins")
 	synth := fs.Int("synthetic", 400, "max synthetic origins for untouched regions")
+	fuzz := fs.Int("fuzz", 600, "fictional origins (0 disables)")
 	_ = fs.Parse(args)
-	stage2SweepRun(*file, *synth, stage2LoadEngine())
+	stage2SweepRun(*file, *synth, *fuzz, stage2LoadEngine())
 }
 
 func stage2NodeDebugCmd(args []string) {

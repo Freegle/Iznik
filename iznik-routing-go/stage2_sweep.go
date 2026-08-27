@@ -17,6 +17,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -29,11 +30,15 @@ type sweepOrigin struct {
 		Tick     int     `json:"tick"`
 		DriveMin float64 `json:"drive_min"`
 	} `json:"schedule"`
-	synthetic bool
+	synthetic  bool
+	fuzzBudget float64 // seconds; used when synthetic
 }
 
 func (s *sweepOrigin) budget() (float32, bool) {
 	if s.synthetic {
+		if s.fuzzBudget > 0 {
+			return float32(s.fuzzBudget), true
+		}
 		return 30 * 60, true
 	}
 	best, ok := 0.0, false
@@ -48,7 +53,7 @@ func (s *sweepOrigin) budget() (float32, bool) {
 	return float32(best * 60), ok
 }
 
-func stage2SweepRun(file string, maxSynthetic int, engine *Stage2Engine) {
+func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 	f, err := os.Open(file)
 	if err != nil {
 		log.Fatalf("sweep: %v", err)
@@ -75,25 +80,31 @@ func stage2SweepRun(file string, maxSynthetic int, engine *Stage2Engine) {
 
 	type totals struct {
 		origins, skipped, probes, mismLive, mismStored, flips int
+		unreachedProbes, falseIn                              int
 		worstLive, worstStored                                float64
 		baseMs, queryMs                                       float64
 	}
 	var t totals
+	var mu sync.Mutex
 
 	runOne := func(o *sweepOrigin) {
 		T, ok := o.budget()
 		if !ok {
+			mu.Lock()
 			t.skipped++
+			mu.Unlock()
 			return
 		}
 		origin := nearestNodeForMode(g, o.Lat, o.Lng, Drive)
 		if origin == noNode {
+			mu.Lock()
 			t.skipped++
+			mu.Unlock()
 			return
 		}
 		q0 := time.Now()
 		lbl := engine.QueryLabels(o.Lat, o.Lng, T)
-		t.queryMs += float64(time.Since(q0).Microseconds()) / 1000
+		qMs := float64(time.Since(q0).Microseconds()) / 1000
 		blob := EncodeLabels(lbl)
 		stored, err := engine.DecodeLabels(blob)
 		if err != nil {
@@ -101,12 +112,15 @@ func stage2SweepRun(file string, maxSynthetic int, engine *Stage2Engine) {
 		}
 		b0 := time.Now()
 		base := baseDriveDijkstra(g, origin, initialCostFor(Drive), T)
-		t.baseMs += float64(time.Since(b0).Microseconds()) / 1000
+		bMs := float64(time.Since(b0).Microseconds()) / 1000
 
-		for leaf := range lbl.Reached {
-			touched[leaf] = struct{}{}
+		type mism struct {
+			id        NodeID
+			got, want float32
+			stored    bool
 		}
-
+		var misms []mism
+		probes, flips := 0, 0
 		stride := 1
 		if len(base) > 8000 {
 			stride = len(base) / 8000
@@ -117,41 +131,151 @@ func stage2SweepRun(file string, maxSynthetic int, engine *Stage2Engine) {
 			if i%stride != 0 {
 				continue
 			}
-			t.probes++
+			probes++
 			live := engine.ArrivalAtBaseNode(lbl, id)
 			if d := math.Abs(float64(live - want)); d > 0.01 {
-				t.mismLive++
-				if d > t.worstLive {
-					t.worstLive = d
-				}
-				if t.mismLive <= 3 {
-					nd := g.Nodes[id]
-					log.Printf("sweep LIVE MISMATCH origin %d node %d (%.5f,%.5f): %.3f vs %.3f", o.Msgid, id, nd.Lat, nd.Lng, live, want)
-				}
+				misms = append(misms, mism{id, live, want, false})
 			}
 			st := engine.arrivalAtBaseNodeStored(stored, id)
 			if d := math.Abs(float64(st - want)); d > 0.01 {
+				misms = append(misms, mism{id, st, want, true})
+			}
+			if (live <= T) != (want <= T) || (st <= T) != (want <= T) {
+				flips++
+			}
+		}
+
+		// False-membership probes: pseudo-random nodes the base search did NOT
+		// reach must not be claimed in reach by either evaluation path.
+		unreached, falseIn := 0, 0
+		seed := uint64(o.Msgid)*6364136223846793005 + 1442695040888963407
+		nNodes := uint64(g.NodeCount())
+		for k := 0; k < 4000; k++ {
+			seed = seed*6364136223846793005 + 1442695040888963407
+			id := NodeID(seed%nNodes) + 1
+			if _, in := base[id]; in {
+				continue
+			}
+			unreached++
+			if engine.ArrivalAtBaseNode(lbl, id) <= T || engine.arrivalAtBaseNodeStored(stored, id) <= T {
+				falseIn++
+				if falseIn <= 3 {
+					nd := g.Nodes[id]
+					log.Printf("sweep FALSE-IN origin %d node %d (%.5f,%.5f)", o.Msgid, id, nd.Lat, nd.Lng)
+				}
+			}
+		}
+
+		mu.Lock()
+		t.queryMs += qMs
+		t.baseMs += bMs
+		for leaf := range lbl.Reached {
+			touched[leaf] = struct{}{}
+		}
+		t.probes += probes
+		t.flips += flips
+		t.unreachedProbes += unreached
+		t.falseIn += falseIn
+		for _, m := range misms {
+			d := math.Abs(float64(m.got - m.want))
+			if m.stored {
 				t.mismStored++
 				if d > t.worstStored {
 					t.worstStored = d
 				}
-				if t.mismStored <= 3 {
-					nd := g.Nodes[id]
-					log.Printf("sweep STORED MISMATCH origin %d node %d (%.5f,%.5f): %.3f vs %.3f", o.Msgid, id, nd.Lat, nd.Lng, st, want)
+			} else {
+				t.mismLive++
+				if d > t.worstLive {
+					t.worstLive = d
 				}
 			}
-			if (live <= T) != (want <= T) || (st <= T) != (want <= T) {
-				t.flips++
+			if t.mismLive+t.mismStored <= 6 {
+				nd := g.Nodes[m.id]
+				log.Printf("sweep MISMATCH (stored=%v) origin %d node %d (%.5f,%.5f): %.3f vs %.3f",
+					m.stored, o.Msgid, m.id, nd.Lat, nd.Lng, m.got, m.want)
 			}
 		}
 		t.origins++
+		mu.Unlock()
 	}
 
-	for _, o := range origins {
-		runOne(o)
+	// Fictional origins: deterministic pseudo-random coordinates over the UK
+	// (sea and moorland included — they snap wherever a member would snap),
+	// random chain-interior and junction origins, origins in sliver regions,
+	// and a spread of budgets from 1 to 120 minutes.
+	if fuzz > 0 {
+		seed := uint64(20260827)
+		next := func() uint64 { seed = seed*6364136223846793005 + 1442695040888963407; return seed }
+		budgets := []float64{1, 3, 5, 10, 15, 20, 30, 30, 45, 45, 60}
+		nNodes := uint64(g.NodeCount())
+		for k := 0; k < fuzz; k++ {
+			o := &sweepOrigin{Msgid: -1000000 - int64(k), synthetic: true}
+			switch next() % 4 {
+			case 0: // uniform UK box
+				o.Lat = 49.9 + float64(next()%880000)/100000
+				o.Lng = -7.6 + float64(next()%940000)/100000
+			case 1: // random chain-interior node
+				for {
+					id := NodeID(next()%nNodes) + 1
+					if engine.Ov.Idx[id] == 0 && engine.Ov.ChainEndA[id] != 0 {
+						o.Lat, o.Lng = float64(g.Nodes[id].Lat), float64(g.Nodes[id].Lng)
+						break
+					}
+				}
+			case 2: // random junction
+				for {
+					id := NodeID(next()%nNodes) + 1
+					if engine.Ov.Idx[id] != 0 {
+						o.Lat, o.Lng = float64(g.Nodes[id].Lat), float64(g.Nodes[id].Lng)
+						break
+					}
+				}
+			default: // sliver region (2..500 junctions)
+				for {
+					leaf := int(next() % uint64(len(engine.Part.LeafNodes)))
+					if n := len(engine.Part.LeafNodes[leaf]); n >= 2 && n <= 500 {
+						oi := engine.Part.LeafNodes[leaf][int(next()%uint64(n))]
+						nd := g.Nodes[engine.Ov.BaseNode[oi]]
+						o.Lat, o.Lng = float64(nd.Lat), float64(nd.Lng)
+						break
+					}
+				}
+			}
+			o.fuzzBudget = budgets[int(next()%uint64(len(budgets)))] * 60
+			origins = append(origins, o)
+		}
+		// A few heavy long-range cases, run with everything else but rarer.
+		for k := 0; k < 12; k++ {
+			o := &sweepOrigin{Msgid: -2000000 - int64(k), synthetic: true}
+			id := NodeID(next()%nNodes) + 1
+			o.Lat, o.Lng = float64(g.Nodes[id].Lat), float64(g.Nodes[id].Lng)
+			if k < 8 {
+				o.fuzzBudget = 90 * 60
+			} else {
+				o.fuzzBudget = 120 * 60
+			}
+			origins = append(origins, o)
+		}
+		log.Printf("sweep: added %d fictional origins", fuzz+12)
 	}
-	log.Printf("sweep: real posts done: %d origins, %d probes, %d live / %d stored mismatches, %d flips; %d leaves touched",
-		t.origins, t.probes, t.mismLive, t.mismStored, t.flips, len(touched))
+
+	// Parallel execution: origins are independent; the engine caches are
+	// mutex-guarded. Concurrency bounded so heavy base searches cannot stack
+	// unbounded scratch.
+	sem := make(chan struct{}, 6)
+	var wg sync.WaitGroup
+	for _, o := range origins {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(o *sweepOrigin) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			runOne(o)
+		}(o)
+	}
+	wg.Wait()
+	log.Printf("sweep: real+fictional done: %d origins, %d probes, %d live / %d stored mismatches, %d flips, %d/%d false-in; %d leaves touched",
+		t.origins, t.probes, t.mismLive, t.mismStored, t.flips, t.falseIn, t.unreachedProbes, len(touched))
 
 	// Synthetic origins: one per untouched sizable leaf, planted at a leaf
 	// junction, so every populated region of the network gets exercised.
@@ -178,14 +302,22 @@ func stage2SweepRun(file string, maxSynthetic int, engine *Stage2Engine) {
 		oi := engine.Part.LeafNodes[c.leaf][0]
 		nd := g.Nodes[engine.Ov.BaseNode[oi]]
 		o := &sweepOrigin{Msgid: -int64(c.leaf), Lat: float64(nd.Lat), Lng: float64(nd.Lng), synthetic: true}
-		runOne(o)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(o *sweepOrigin) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			runOne(o)
+		}(o)
 		synth++
 	}
+	wg.Wait()
 
 	fmt.Printf("SWEEP TOTAL: %d origins (%d synthetic for %d untouched sizable regions), %d skipped, %d probes\n",
 		t.origins, synth, len(cands), t.skipped, t.probes)
 	fmt.Printf("  exactness: live mismatches %d (worst %.4fs), stored-roundtrip mismatches %d (worst %.4fs), membership flips %d\n",
 		t.mismLive, t.worstLive, t.mismStored, t.worstStored, t.flips)
+	fmt.Printf("  false membership: %d of %d probes on nodes the base search did not reach\n", t.falseIn, t.unreachedProbes)
 	fmt.Printf("  coverage: %d/%d partition leaves exercised (sizable leaves only get synthetics)\n",
 		len(touched), len(engine.Part.LeafNodes))
 	fmt.Printf("  timing: query mean %.1fms, flat-Dijkstra mean %.0fms over %d origins\n",

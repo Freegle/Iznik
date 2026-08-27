@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -367,12 +368,16 @@ func (p *partitioner) bisect(lo, hi int32, depth, parent int) {
 // window is reordered so A = order[lo:mid], B = order[mid:hi]), the cut size,
 // the winning axis and the mean cut-edge coordinates.
 //
-// The internal arc structure (flat CSR, unit-capacity arc pairs) is built ONCE
-// per split with local ids = original window positions; the four projection
-// axes then run CONCURRENTLY, each with its own cap/level/iter buffers and its
-// own source/sink node sets (extreme alpha fraction along the axis). Sinks and
-// sources are node sets — no supernodes — so per-axis setup is just a cap
-// memcopy.
+// inertialFlowSplit bisects order[lo:hi] and returns the split point (the
+// window is reordered so A = order[lo:mid], B = order[mid:hi]), the cut size,
+// the winning axis and the mean cut-edge coordinates.
+//
+// The four projection axes run CONCURRENTLY. Each axis CONTRACTS its extreme
+// alpha fractions into a single super-source and super-sink — exact for
+// Inertial Flow (edges inside a contracted set can never cross an s-t cut) —
+// so the flow network holds only the middle band, roughly halving the arcs
+// the big splits sweep. Dinic's BFS goes level-synchronous and parallel once
+// the band is large; the blocking-flow phase stays serial per axis.
 func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64, float64) {
 	ug := p.ug
 	sub := p.order[lo:hi]
@@ -384,43 +389,6 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 	for i, u := range sub {
 		sc.pos[u] = int32(i)
 		sc.epoch[u] = sc.cur
-	}
-
-	// ── Internal arcs, built once: undirected edge -> arc pair (i, i^1) ──────
-	deg := make([]int32, n+1)
-	for i, u := range sub {
-		for _, v := range ug.edgeTo[ug.edgeStart[u]:ug.edgeStart[u+1]] {
-			if sc.epoch[v] == sc.cur {
-				deg[i+1]++
-			}
-		}
-	}
-	for i := 0; i < n; i++ {
-		deg[i+1] += deg[i]
-	}
-	mArcs := int(deg[n]) // one arc per (node, incident-internal-edge)
-	csrArc := make([]int32, mArcs)
-	arcTo := make([]int32, mArcs)
-	fill := make([]int32, n)
-	// Assign arc pair ids: walk edges u<v once.
-	arcN := int32(0)
-	for i, u := range sub {
-		for _, v := range ug.edgeTo[ug.edgeStart[u]:ug.edgeStart[u+1]] {
-			if sc.epoch[v] != sc.cur {
-				continue
-			}
-			lv := sc.pos[v]
-			if int32(i) < lv {
-				a0, a1 := arcN, arcN+1
-				arcN += 2
-				arcTo[a0] = lv
-				arcTo[a1] = int32(i)
-				csrArc[deg[i]+fill[i]] = a0
-				fill[i]++
-				csrArc[deg[lv]+fill[lv]] = a1
-				fill[lv]++
-			}
-		}
 	}
 
 	proj := func(axis int, u int32) float32 {
@@ -445,7 +413,7 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 	}
 
 	type axisResult struct {
-		side    []bool // by local id, true = source side
+		side    []bool // by window position (original order), true = source side
 		cut     int
 		aLen    int
 		phases  int
@@ -458,7 +426,7 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 		go func(axis int) {
 			defer awg.Done()
 			astart := time.Now()
-			// Axis ordering of local ids.
+			// Axis ordering of window positions.
 			locals := make([]int32, n)
 			for i := range locals {
 				locals[i] = int32(i)
@@ -466,17 +434,12 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 			sort.Slice(locals, func(a, b int) bool {
 				return proj(axis, sub[locals[a]]) < proj(axis, sub[locals[b]])
 			})
-			isSrc := make([]bool, n)
-			isSink := make([]bool, n)
-			for i := 0; i < nsrc; i++ {
-				isSrc[locals[i]] = true
-				isSink[locals[n-1-i]] = true
+			// rank[windowPos] = position along the axis.
+			rank := make([]int32, n)
+			for r, li := range locals {
+				rank[li] = int32(r)
 			}
-			caps := make([]int8, int(arcN))
-			for i := range caps {
-				caps[i] = 1
-			}
-			side, cut, phases := dinicNodeSets(n, deg, csrArc, arcTo, caps, isSrc, isSink)
+			side, cut, phases := p.bandedDinic(sub, sc, rank, int32(nsrc))
 			aLen := 0
 			for _, s := range side {
 				if s {
@@ -519,9 +482,7 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 	}
 	mid := lo + int32(len(a))
 
-	// Cut edge coordinate summary (estuary/urban characterisation). side is
-	// indexed by ORIGINAL window position, still available via nothing — so
-	// recompute membership from the reordered window: A = pos < mid.
+	// Cut edge coordinate summary (estuary/urban characterisation).
 	var cLat, cLng float64
 	cn := 0
 	for _, u := range sub {
@@ -545,56 +506,224 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 	return mid, bestR.cut, best, cLat, cLng
 }
 
-// dinicNodeSets computes a max-flow / min-cut between the SOURCE NODE SET and
-// SINK NODE SET over unit-capacity arc pairs (arc i's reverse is i^1), and
-// returns the min-cut side (true = reachable from sources in the residual),
-// the cut value and the phase count. Sources have unlimited supply; a path
-// terminates on reaching any sink.
-func dinicNodeSets(n int, csrStart, csrArc, arcTo []int32, caps []int8, isSrc, isSink []bool) ([]bool, int, int) {
-	level := make([]int32, n)
-	iter := make([]int32, n)
-	queue := make([]int32, 0, n)
+// bandedDinic computes the max-flow / min-cut between the first nsrc and last
+// nsrc window positions along an axis (given by rank), with both extreme sets
+// CONTRACTED into super nodes: the flow network holds only the middle band.
+// Returns the cut side per WINDOW POSITION (true = source side), the cut
+// value, and the phase count.
+func (p *partitioner) bandedDinic(sub []int32, sc *splitScratch, rank []int32, nsrc int32) ([]bool, int, int) {
+	ug := p.ug
+	n := int32(len(sub))
+	loBand, hiBand := nsrc, n-nsrc // ranks [loBand, hiBand) are the band
+
+	// Band numbering by window position.
+	bandIdx := make([]int32, n)
+	for i := range bandIdx {
+		bandIdx[i] = -1
+	}
+	bcount := int32(0)
+	for li := int32(0); li < n; li++ {
+		if r := rank[li]; r >= loBand && r < hiBand {
+			bandIdx[li] = bcount
+			bcount++
+		}
+	}
+	S, T := bcount, bcount+1
+
+	// Arc build: band-band edges once (lu<lv), band-source/sink edges from the
+	// band side, and rare direct source-sink edges from the source side.
+	deg := make([]int32, bcount+2)
+	countArc := func(u, v int32) {
+		deg[u]++
+		deg[v]++
+	}
+	for li := int32(0); li < n; li++ {
+		u := sub[li]
+		ru := rank[li]
+		uBand := ru >= loBand && ru < hiBand
+		uSrc := ru < loBand
+		for _, v := range ug.edgeTo[ug.edgeStart[u]:ug.edgeStart[u+1]] {
+			if sc.epoch[v] != sc.cur {
+				continue
+			}
+			lv := sc.pos[v]
+			rv := rank[lv]
+			vBand := rv >= loBand && rv < hiBand
+			switch {
+			case uBand && vBand:
+				if li < lv {
+					countArc(bandIdx[li], bandIdx[lv])
+				}
+			case uBand && !vBand:
+				if rv < loBand {
+					countArc(S, bandIdx[li])
+				} else {
+					countArc(bandIdx[li], T)
+				}
+			case uSrc && rv >= hiBand:
+				countArc(S, T)
+			}
+		}
+	}
+	csrStart := make([]int32, bcount+3)
+	for i := int32(0); i < bcount+2; i++ {
+		csrStart[i+1] = csrStart[i] + deg[i]
+	}
+	totArcs := csrStart[bcount+2]
+	csrArc := make([]int32, totArcs)
+	arcTo := make([]int32, totArcs)
+	caps := make([]int8, totArcs)
+	fill := make([]int32, bcount+2)
+	arcN := int32(0)
+	addArc := func(u, v int32) {
+		a0, a1 := arcN, arcN+1
+		arcN += 2
+		arcTo[a0] = v
+		arcTo[a1] = u
+		caps[a0] = 1
+		caps[a1] = 1
+		csrArc[csrStart[u]+fill[u]] = a0
+		fill[u]++
+		csrArc[csrStart[v]+fill[v]] = a1
+		fill[v]++
+	}
+	for li := int32(0); li < n; li++ {
+		u := sub[li]
+		ru := rank[li]
+		uBand := ru >= loBand && ru < hiBand
+		uSrc := ru < loBand
+		for _, v := range ug.edgeTo[ug.edgeStart[u]:ug.edgeStart[u+1]] {
+			if sc.epoch[v] != sc.cur {
+				continue
+			}
+			lv := sc.pos[v]
+			rv := rank[lv]
+			vBand := rv >= loBand && rv < hiBand
+			switch {
+			case uBand && vBand:
+				if li < lv {
+					addArc(bandIdx[li], bandIdx[lv])
+				}
+			case uBand && !vBand:
+				if rv < loBand {
+					addArc(S, bandIdx[li])
+				} else {
+					addArc(bandIdx[li], T)
+				}
+			case uSrc && rv >= hiBand:
+				addArc(S, T)
+			}
+		}
+	}
+
+	side, cut, phases := dinicSuperST(int(bcount), csrStart, csrArc, arcTo, caps)
+
+	// Expand to window positions: sources true, sinks false, band by residual.
+	out := make([]bool, n)
+	for li := int32(0); li < n; li++ {
+		r := rank[li]
+		switch {
+		case r < loBand:
+			out[li] = true
+		case r >= hiBand:
+			out[li] = false
+		default:
+			out[li] = side[bandIdx[li]]
+		}
+	}
+	return out, cut, phases
+}
+
+// dinicSuperST runs unit-capacity Dinic between super source b and super sink
+// b+1 over the banded arc network (arc pairs at i, i^1). BFS is
+// level-synchronous, and parallel once the band is large. Returns the residual
+// source side over band nodes, the flow value and the phase count.
+func dinicSuperST(b int, csrStart, csrArc, arcTo []int32, caps []int8) ([]bool, int, int) {
+	S, T := int32(b), int32(b+1)
+	level := make([]int32, b+2)
+	iter := make([]int32, b+2)
+
+	parallel := b > 400_000
+	workers := 1
+	if parallel {
+		workers = max(2, runtime.NumCPU()/4)
+	}
 
 	bfs := func() bool {
 		for i := range level {
 			level[i] = -1
 		}
-		queue = queue[:0]
-		for i := 0; i < n; i++ {
-			if isSrc[i] {
-				level[i] = 0
-				queue = append(queue, int32(i))
+		level[S] = 0
+		frontier := []int32{S}
+		depth := int32(0)
+		for len(frontier) > 0 {
+			if level[T] >= 0 {
+				return true // sink reached in a previous round: levels final enough
 			}
-		}
-		sinkLevel := int32(-1)
-		for qi := 0; qi < len(queue); qi++ {
-			u := queue[qi]
-			if sinkLevel >= 0 && level[u] >= sinkLevel {
-				continue
-			}
-			if isSink[u] {
-				if sinkLevel < 0 || level[u] < sinkLevel {
-					sinkLevel = level[u]
-				}
-				continue // paths end at sinks; do not expand through them
-			}
-			for p := csrStart[u]; p < csrStart[u+1]; p++ {
-				ai := csrArc[p]
-				if caps[ai] > 0 {
-					v := arcTo[ai]
-					if level[v] < 0 {
-						level[v] = level[u] + 1
-						queue = append(queue, v)
+			depth++
+			if !parallel || len(frontier) < 4096 {
+				var next []int32
+				for _, u := range frontier {
+					if u == T {
+						continue // paths end at the sink
+					}
+					for pp := csrStart[u]; pp < csrStart[u+1]; pp++ {
+						ai := csrArc[pp]
+						if caps[ai] > 0 {
+							v := arcTo[ai]
+							if level[v] < 0 {
+								level[v] = depth
+								next = append(next, v)
+							}
+						}
 					}
 				}
+				frontier = next
+				continue
 			}
+			nexts := make([][]int32, workers)
+			var fwg sync.WaitGroup
+			chunk := (len(frontier) + workers - 1) / workers
+			for w := 0; w < workers; w++ {
+				lo := w * chunk
+				if lo >= len(frontier) {
+					break
+				}
+				hi := min(lo+chunk, len(frontier))
+				fwg.Add(1)
+				go func(w, lo, hi int) {
+					defer fwg.Done()
+					var local []int32
+					for _, u := range frontier[lo:hi] {
+						if u == T {
+							continue // paths end at the sink
+						}
+						for pp := csrStart[u]; pp < csrStart[u+1]; pp++ {
+							ai := csrArc[pp]
+							if caps[ai] > 0 {
+								v := arcTo[ai]
+								if atomic.CompareAndSwapInt32(&level[v], -1, depth) {
+									local = append(local, v)
+								}
+							}
+						}
+					}
+					nexts[w] = local
+				}(w, lo, hi)
+			}
+			fwg.Wait()
+			var next []int32
+			for _, l := range nexts {
+				next = append(next, l...)
+			}
+			frontier = next
 		}
-		return sinkLevel >= 0
+		return level[T] >= 0
 	}
 
 	var dfs func(u int32) bool
 	dfs = func(u int32) bool {
-		if isSink[u] {
+		if u == T {
 			return true
 		}
 		for ; iter[u] < csrStart[u+1]-csrStart[u]; iter[u]++ {
@@ -621,33 +750,27 @@ func dinicNodeSets(n int, csrStart, csrArc, arcTo []int32, caps []int8, isSrc, i
 		for i := range iter {
 			iter[i] = 0
 		}
-		for i := 0; i < n; i++ {
-			if !isSrc[i] {
-				continue
-			}
-			for dfs(int32(i)) {
-				flow++
-			}
+		for dfs(S) {
+			flow++
 		}
 	}
 
-	// Residual reachability from sources = cut side A.
-	side := make([]bool, n)
-	queue = queue[:0]
-	for i := 0; i < n; i++ {
-		if isSrc[i] {
-			side[i] = true
-			queue = append(queue, int32(i))
-		}
-	}
+	// Residual reachability from S = cut side A.
+	side := make([]bool, b)
+	seen := make([]bool, b+2)
+	queue := []int32{S}
+	seen[S] = true
 	for qi := 0; qi < len(queue); qi++ {
 		u := queue[qi]
-		for p := csrStart[u]; p < csrStart[u+1]; p++ {
-			ai := csrArc[p]
+		for pp := csrStart[u]; pp < csrStart[u+1]; pp++ {
+			ai := csrArc[pp]
 			if caps[ai] > 0 {
 				v := arcTo[ai]
-				if !side[v] {
-					side[v] = true
+				if !seen[v] {
+					seen[v] = true
+					if v < int32(b) {
+						side[v] = true
+					}
 					queue = append(queue, v)
 				}
 			}

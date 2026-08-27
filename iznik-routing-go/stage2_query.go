@@ -165,7 +165,7 @@ func NewStage2Engine(g *Graph, ov *Overlay, part *Stage2Partition, rm *RegionMat
 	return &Stage2Engine{
 		G: g, Ov: ov, Part: part, RM: rm,
 		BI:     buildBoundaryIndex(rm, part),
-		tables: newRegionTableCache(64),
+		tables: newRegionTableCache(512),
 	}
 }
 
