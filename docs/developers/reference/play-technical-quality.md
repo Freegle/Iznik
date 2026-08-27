@@ -173,5 +173,11 @@ with "App updates with these issues will be rejected" from 31 August. Production
 - **ModTools**: open testing serves 0.4.7 (507.apk, uploaded 17 August 2025), target SDK 35.
 
 Play takes the highest non-compliant target across active tracks, which is why an old test-track
-release blocks an app whose production build already targets 36. Superseding those releases with
-current builds, or halting them, clears it.
+release blocks an app whose production build already targets 36.
+
+**Both were superseded on 2026-08-27.** Freegle internal testing now serves 2350 (100.0.984,
+target 36), live immediately. ModTools open testing has 1303 (1.0.29, target 36) submitted and in
+Google review, so 0.4.7 keeps serving until that clears; if it has not cleared by 30 August,
+pausing the open testing track removes the stale artifact without needing a review. Note that
+moving that track from 0.4.7 to 1.0.29 drops 1,405 device models, because minSdk went 24 to 26 -
+production dropped them long ago, so those devices were already frozen.
