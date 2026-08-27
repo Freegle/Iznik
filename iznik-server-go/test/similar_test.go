@@ -229,9 +229,9 @@ func TestSimilarOverfetchSurvivesReachRejection(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("similaroverfetch")
@@ -260,9 +260,9 @@ func TestSimilarOverfetchSurvivesReachRejection(t *testing.T) {
 		entries = append(entries, embedding.Entry{Msgid: mid, Fromuser: poster, Groupid: 100, Msgtype: "Offer", Lat: 51.5, Lng: -0.1, Subject: fmt.Sprintf("blocked %d", i), Arrival: time.Now(), SubjectVec: strong})
 		blocked = append(blocked, mid)
 		db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", mid)
-		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-			"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), "+
-			"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", mid)
+		db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+			"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", mid,
+			mustRasterize(t, "POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))"))
 	}
 	t.Cleanup(func() {
 		for _, m := range blocked {
@@ -321,9 +321,9 @@ func TestSimilarReachFiltered(t *testing.T) {
 	db.Exec(`CREATE TABLE IF NOT EXISTS rippling_reach (
 		msgid BIGINT UNSIGNED NOT NULL PRIMARY KEY,
 		lat DOUBLE NOT NULL, lng DOUBLE NOT NULL,
-		polygon GEOMETRY NOT NULL SRID 3857,
-		status VARCHAR(16) NOT NULL DEFAULT 'expanding',
-		SPATIAL INDEX msgreach_poly (polygon)
+		polygon_cells MEDIUMBLOB NULL,
+		outer_bound GEOMETRY NULL,
+		status VARCHAR(16) NOT NULL DEFAULT 'expanding'
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
 	prefix := uniquePrefix("similarreach")
@@ -352,9 +352,9 @@ func TestSimilarReachFiltered(t *testing.T) {
 	// outReachID's reach polygon is far from the viewer's (51.5, -0.1) → blocked.
 	// inReachID has NO reach row → fail-open (kept).
 	db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?, ?)", srcID, inReachID, outReachID)
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status) VALUES (?, 51.5, -0.1, "+
-		"ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857), "+
-		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", outReachID)
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status) VALUES (?, 51.5, -0.1, ?, "+
+		"ST_Envelope(ST_GeomFromText('POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))', 3857)), 'expanding')", outReachID,
+		mustRasterize(t, "POLYGON((2.4 53.4, 2.6 53.4, 2.6 53.6, 2.4 53.6, 2.4 53.4))"))
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid IN (?, ?, ?)", srcID, inReachID, outReachID)
 
 	// Authenticated viewer: reach filter applies.

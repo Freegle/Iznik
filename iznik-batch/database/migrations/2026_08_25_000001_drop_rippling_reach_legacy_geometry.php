@@ -30,38 +30,20 @@ use Illuminate\Support\Facades\Schema;
  *   has_overflow is kept too, but REGENERATED from overflow_cells - same
  *   meaning, same index shape.
  *
- * WHY THIS IS SAFE TO RUN, AND WHEN. Every reader has been two-era since the
- * code that ships with this migration: App\Services\Ripple\LegacyGeometry
- * (PHP) and rippling.LegacyPolygonReady / LegacyOverflowReady (Go) ask the
- * schema which era they are in, and the legacy branches are simply dead once
- * the columns are absent. So the ONLY precondition is that every live row
- * carries polygon_cells - which the guard below enforces rather than trusts,
- * because a row without cells has no reach at all afterwards.
+ * WHY THIS IS SAFE TO RUN, AND WHEN. Nothing reads the legacy columns any
+ * more (the two-era guards and their legacy branches were deleted once
+ * production dropped the columns). So the ONLY precondition is that every
+ * live row carries polygon_cells - which the guard below enforces rather
+ * than trusts, because a row without cells has no reach at all afterwards.
  *
- * OPT-IN, AND NOT YET ON BY DEFAULT ANYWHERE - a deliberate decision, not a
- * fudge, and the reason is test coverage rather than caution about the DDL
- * (which is proven: it has been run twice against a clone of the real table
- * structure, refusing correctly on an uncovered row and doing nothing on the
- * second pass).
- *
- * The code that ships with this migration is two-era, and the TRANSITION era -
- * legacy columns present, cells preferred - is what production runs FIRST, for
- * as long as the three backfills take. If dev and CI dropped the columns now,
- * every fixture that writes a polygon would have to be converted, and the
- * transition era would lose the only tests that execute its SQL rather than
- * merely inspect it. Trading away coverage of the era that runs first, to gain
- * coverage of the era that runs later, is the wrong way round.
- *
- * So: dev and CI keep both forms and keep testing both eras (the cells-only
- * branches are covered by PostDropEraTest, which forces the era guard rather
- * than the schema - see LegacyGeometry::fake). Production drops via the
- * companion .sql file, node by node under RSU, AFTER the backfills report
- * complete and ripple:verify-cells-parity has been run and READ. The follow-up
- * PR that deletes the now-dead legacy branches also converts the fixtures and
- * turns this migration on by default, so the schema and the code stop
- * diverging at the same moment.
- *
- * Set RIPPLE_DROP_LEGACY_GEOMETRY=1 to run it before then.
+ * ON BY DEFAULT since the legacy branches were deleted: the code no longer
+ * reads the legacy columns anywhere, so a schema that keeps them is testing
+ * nothing. Production ran the companion .sql files node by node under RSU,
+ * after the backfills completed and ripple:verify-cells-parity was read;
+ * dev and CI drop here, on migrate. Set RIPPLE_DROP_LEGACY_GEOMETRY=0 to
+ * keep the columns on a database that still needs the transition era - that
+ * requires a checkout from before the legacy-branch removal, since this code
+ * cannot read them.
  *
  * THE ALGORITHM IS NOT A FREE CHOICE HERE, AND GETTING IT WRONG IS SILENT
  * UNTIL IT IS NOT. Percona 8.0.29+ would normally do DROP COLUMN as
@@ -94,9 +76,9 @@ return new class extends Migration
             return;
         }
 
-        // Opt-in - see the class comment for why this is off by default, and
-        // when it turns on.
-        if (!filter_var(env('RIPPLE_DROP_LEGACY_GEOMETRY', false), FILTER_VALIDATE_BOOLEAN)) {
+        // Opt-out - see the class comment. Default on: the legacy branches are
+        // gone, so keeping the columns tests nothing this code can read.
+        if (!filter_var(env('RIPPLE_DROP_LEGACY_GEOMETRY', true), FILTER_VALIDATE_BOOLEAN)) {
             return;
         }
 
@@ -128,17 +110,19 @@ return new class extends Migration
             if ($uncovered > 0) {
                 throw new RuntimeException(
                     "Refusing to drop rippling_reach.{$old}: {$uncovered} row(s) have it but have no {$new}. "
-                    . "Run {$command} to completion first."
+                    . "Run {$command} to completion first (removed with the legacy branches - "
+                    . 'run it from a checkout predating the removal, or set RIPPLE_DROP_LEGACY_GEOMETRY=0).'
                 );
             }
         }
 
-        // The whole DDL sequence lives in LegacyGeometryDrop so that a test can
-        // run it against a `CREATE TABLE ... LIKE rippling_reach` clone. Until it
-        // did, nothing executed these statements: CI never sets
-        // RIPPLE_DROP_LEGACY_GEOMETRY and PostDropEraTest fakes the era instead
-        // of issuing DDL - which is exactly how a version that died on its first
-        // ALTER survived review. See that class for why the order is forced.
+        // The whole DDL sequence lives in LegacyGeometryDrop so that a test
+        // (LegacyGeometryDropTest) can run it against a clone rebuilt to the
+        // pre-drop shape - on the post-drop test schema this migration itself
+        // is a no-op, so without that test nothing would execute these
+        // statements, which is exactly how a version that died on its first
+        // ALTER once survived review. See that class for why the order is
+        // forced.
         (new LegacyGeometryDrop())->run('rippling_reach');
 
         // And finally the shared geometry table, once nothing points at it. This

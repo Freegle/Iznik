@@ -144,9 +144,10 @@ var spatialMockOnce sync.Once
 // which is pure computation with no index behind it, and which must not be
 // reimplemented anywhere (a second rasteriser could disagree with the real one
 // at a boundary cell and nothing would catch it - see
-// plans/2026-08-24-rippling-reach-raster-storage.md). So that one path is
-// forwarded to the real server, whose address is captured here before the
-// override replaces it.
+// plans/2026-08-24-rippling-reach-raster-storage.md). The same holds for
+// /v1/reach/vectorize (the inverse conversion, also pure computation). So
+// those paths are forwarded to the real server, whose address is captured
+// here before the override replaces it.
 //
 // Without the forward, the catch-all below answers a rasterise request with
 // `{"results":[],"ids":[]}` and HTTP 200 - a perfectly valid-looking response
@@ -165,7 +166,8 @@ func ensureSpatialMock() {
 			{1687412, -4.939858, 52.006292},
 		}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if strings.Contains(r.URL.Path, "/reach/rasterize") && realSpatial != "" {
+			if (strings.Contains(r.URL.Path, "/reach/rasterize") ||
+				strings.Contains(r.URL.Path, "/reach/vectorize")) && realSpatial != "" {
 				proxyToRealSpatial(w, r, realSpatial)
 				return
 			}

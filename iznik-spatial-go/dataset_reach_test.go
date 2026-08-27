@@ -5,101 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peterstace/simplefeatures/geom"
-
 	"spatial-server/cellset"
 )
 
-// wkbOf converts WKT to WKB for buildReachItem (which expects MySQL's WKB).
-func wkbOf(t *testing.T, wkt string) []byte {
-	t.Helper()
-	g, err := geom.UnmarshalWKT(wkt)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	return g.AsBinary()
-}
-
-// The shared-geometry read (plans/2026-08-23-rippling-reach-polygon-dedup.md)
-// must COALESCE the deduped row over the local blob, via a LEFT JOIN keyed on
-// polygon_hash — never an INNER JOIN (that would drop every row whose hash is
-// still NULL, i.e. every row before the backfill reaches it) and never bare
-// `polygon` alone (that would keep serving pre-drain bytes forever once a row
-// is drained to the sentinel). This is a text-shape check, the same kind
-// TestOverflowSelect_BindsLanesInOrder uses for the dynamically built overflow
-// SELECT: this module has no MySQL-backed test harness (dataset_drift_test.go
-// stands MySQL's DDL/DML in with sqlite for portable SQL only — ST_AsWKB and a
-// spatial JOIN are not portable, so Load/ApplyDelta/reconcile cannot be
-// exercised against a fake DB here).
-func TestReachGeomExpr_CoalescesSharedOverLocal(t *testing.T) {
-	if !strings.Contains(reachGeomExpr, "COALESCE(g.geom, rr.polygon)") {
-		t.Fatalf("reachGeomExpr must COALESCE the shared geometry over the local blob: %s", reachGeomExpr)
-	}
-	if !strings.HasPrefix(reachGeomExpr, "ST_AsWKB(") {
-		t.Fatalf("reachGeomExpr must still hand WKB to buildReachItem: %s", reachGeomExpr)
-	}
-	if !strings.Contains(reachGeomJoin, "LEFT JOIN rippling_reach_geom g") {
-		t.Fatalf("reachGeomJoin must be a LEFT JOIN (rows pre-backfill have no hash yet): %s", reachGeomJoin)
-	}
-	if !strings.Contains(reachGeomJoin, "g.hash = rr.polygon_hash") {
-		t.Fatalf("reachGeomJoin must key on rr.polygon_hash: %s", reachGeomJoin)
-	}
-}
-
-// buildReachItem operates on WKB bytes only — it has no idea whether they came
-// from rippling_reach.polygon directly or from rippling_reach_geom via the
-// COALESCE above. That is the point of putting the dedup entirely in the SQL
-// layer: once reachGeomExpr resolves the right bytes, everything downstream
-// (rasterising, envelope, area) is provably unaffected by where they came
-// from. This test pins that: a "deduped" row (shared geometry bytes) and a
-// "drained" row (the SAME bytes, standing in for what COALESCE returns once
-// the local blob has been replaced by the sentinel and only the shared row
-// carries the real geometry) both build byte-identical rasters to the
-// undeduped case. It does not exercise reachGeomExpr's SQL itself — see the
-// text-shape test above for that half of the guarantee.
-func TestBuildReachItem_IdenticalAcrossDedupAndDrainedSources(t *testing.T) {
-	wkt := "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"
-	wkb := wkbOf(t, wkt)
-
-	undeduped, ok := buildReachItem(2001, "expanding", nil, wkb)
-	if !ok {
-		t.Fatal("undeduped item did not build")
-	}
-
-	// "Deduped": rr.polygon still holds the blob, but COALESCE would have
-	// resolved to the identical shared row's bytes (content-addressed dedup
-	// only ever stores an exact byte-for-byte copy — plan's own measurement:
-	// polygon = f(origin, tick) byte-for-byte).
-	deduped, ok := buildReachItem(2002, "expanding", nil, wkb)
-	if !ok {
-		t.Fatal("deduped item did not build")
-	}
-
-	// "Drained": rr.polygon has been replaced by the sentinel POINT(0 0), so
-	// COALESCE resolves to the shared row's bytes instead — again identical to
-	// the undeduped case, since it is the same geometry.
-	drained, ok := buildReachItem(2003, "expanding", nil, wkb)
-	if !ok {
-		t.Fatal("drained-source item did not build")
-	}
-
-	for _, pair := range [][2]Item{{undeduped, deduped}, {undeduped, drained}} {
-		a, b := pair[0], pair[1]
-		if a.MinLng != b.MinLng || a.MaxLng != b.MaxLng || a.MinLat != b.MinLat || a.MaxLat != b.MaxLat {
-			t.Fatalf("envelope diverged: %+v vs %+v", a, b)
-		}
-		if a.Area != b.Area {
-			t.Fatalf("area diverged: %v vs %v", a.Area, b.Area)
-		}
-		if string(a.WKB) != string(b.WKB) {
-			t.Fatalf("raster diverged for identical source geometry")
-		}
-	}
-}
-
-// TestMetaTimeRoundTrip: the persisted sync point must round-trip, and read
-// back as zero (not error) from an index that has never written one — that is
-// what startup adoption relies on for pre-meta on-disk indexes.
 func TestMetaTimeRoundTrip(t *testing.T) {
 	idx, err := CreateIndex(":memory:")
 	if err != nil {
@@ -142,11 +50,11 @@ func TestReachContaining(t *testing.T) {
 	}
 	defer idx.Close()
 
-	covering, ok := buildReachItem(1001, "expanding", nil, wkbOf(t, "POLYGON((0 0, 10 0, 10 10, 0 10, 0 0))"))
+	covering, ok := buildReachItem(1001, "expanding", cellsBlobOf(t, "POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))"))
 	if !ok {
 		t.Fatal("covering reach did not build")
 	}
-	elsewhere, ok := buildReachItem(1002, "done", nil, wkbOf(t, "POLYGON((20 20, 30 20, 30 30, 20 30, 20 20))"))
+	elsewhere, ok := buildReachItem(1002, "done", cellsBlobOf(t, "POLYGON((0.02 0.02, 0.03 0.02, 0.03 0.03, 0.02 0.03, 0.02 0.02))"))
 	if !ok {
 		t.Fatal("elsewhere reach did not build")
 	}
@@ -157,7 +65,7 @@ func TestReachContaining(t *testing.T) {
 	d := &ReachDataset{}
 
 	// Deep inside the first polygon: definite in, and the far one absent.
-	in, partial, err := d.Containing(idx, 5, 5)
+	in, partial, err := d.Containing(idx, 0.005, 0.005)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,33 +74,22 @@ func TestReachContaining(t *testing.T) {
 	}
 
 	// Far outside both: nothing at all.
-	in, partial, err = d.Containing(idx, 15, 15)
+	in, partial, err = d.Containing(idx, 0.015, 0.015)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(in) != 0 || len(partial) != 0 {
-		t.Fatalf("expected nothing at (15,15), got in=%v partial=%v", in, partial)
+		t.Fatalf("expected nothing at (0.015,0.015), got in=%v partial=%v", in, partial)
 	}
 
-	// A hair inside the boundary: the raster must not claim definite-in; it
-	// must be partial (the caller exact-tests) — never lost entirely.
-	in, partial, err = d.Containing(idx, 9.999, 5)
+	// A point within the covered lattice near the edge: definite in - the
+	// grid answers exactly, there is no boundary band and no partial.
+	in, partial, err = d.Containing(idx, 0.0095, 0.005)
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	for _, id := range partial {
-		if id == 1001 {
-			found = true
-		}
-	}
-	for _, id := range in {
-		if id == 1001 {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("boundary point lost: in=%v partial=%v", in, partial)
+	if len(in) != 1 || in[0] != 1001 || len(partial) != 0 {
+		t.Fatalf("near-edge covered point must be definite: in=%v partial=%v", in, partial)
 	}
 
 	// ExtIDs (the reconcile's index-side view) reflects inserts and deletes.
@@ -208,14 +105,14 @@ func TestReachContaining(t *testing.T) {
 	}
 
 	// A held reach delta-row builds as a removal marker, and removal works.
-	heldItem, ok := buildReachItem(1001, "held", nil, nil)
+	heldItem, ok := buildReachItem(1001, "held", nil)
 	if !ok || heldItem.Extra["status"] != "held" {
 		t.Fatal("held row should build as a removal marker")
 	}
 	if err := idx.DeleteByExtID(1001); err != nil {
 		t.Fatal(err)
 	}
-	in, partial, err = d.Containing(idx, 5, 5)
+	in, partial, err = d.Containing(idx, 0.005, 0.005)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +143,7 @@ func TestReachContaining_CellsAnswerExactly(t *testing.T) {
 	defer idx.Close()
 
 	wkt := "POLYGON((0 0, 0.03 0, 0.03 0.03, 0 0.03, 0 0))" // 100x100 cells
-	item, ok := buildReachItem(3001, "expanding", cellsBlobOf(t, wkt), nil)
+	item, ok := buildReachItem(3001, "expanding", cellsBlobOf(t, wkt))
 	if !ok {
 		t.Fatal("cells item did not build")
 	}
@@ -278,33 +175,25 @@ func TestReachContaining_CellsAnswerExactly(t *testing.T) {
 	}
 }
 
-// Valid cells win over the polygon; corrupt cells fall back to it; and with
-// neither usable the row is skipped.
-func TestBuildReachItem_CellsPreferredWithFallback(t *testing.T) {
+// Valid cells become the item blob verbatim; corrupt or absent cells skip the
+// row (fail closed - a row nobody can read has no reach anywhere).
+func TestBuildReachItem_CellsOrSkip(t *testing.T) {
 	wkt := "POLYGON((0 0, 0.03 0, 0.03 0.03, 0 0.03, 0 0))"
 	cells := cellsBlobOf(t, wkt)
-	wkb := wkbOf(t, wkt)
 
-	fromCells, ok := buildReachItem(1, "expanding", cells, wkb)
+	fromCells, ok := buildReachItem(1, "expanding", cells)
 	if !ok || string(fromCells.WKB) != string(cells) {
 		t.Fatal("valid cells must become the item blob verbatim")
 	}
 
 	corrupt := append([]byte{}, cells...)
 	corrupt = corrupt[:len(corrupt)-1]
-	fromFallback, ok := buildReachItem(2, "expanding", corrupt, wkb)
-	if !ok {
-		t.Fatal("corrupt cells with a good polygon must fall back, not skip")
-	}
-	if string(fromFallback.WKB) == string(corrupt) {
-		t.Fatal("corrupt cells must not be stored as the blob")
-	}
-	if _, err := DeserializeRaster(fromFallback.WKB); err != nil {
-		t.Fatalf("fallback blob should be a coarse raster: %v", err)
+	if _, ok := buildReachItem(2, "expanding", corrupt); ok {
+		t.Fatal("corrupt cells must skip the row")
 	}
 
-	if _, ok := buildReachItem(3, "expanding", corrupt, nil); ok {
-		t.Fatal("corrupt cells and no polygon must skip the row")
+	if _, ok := buildReachItem(3, "expanding", nil); ok {
+		t.Fatal("no cells must skip the row")
 	}
 }
 
@@ -317,7 +206,7 @@ func TestReachAdmitsPoints(t *testing.T) {
 	defer idx.Close()
 
 	wkt := "POLYGON((0 0, 0.03 0, 0.03 0.03, 0 0.03, 0 0))"
-	item, ok := buildReachItem(4001, "expanding", cellsBlobOf(t, wkt), nil)
+	item, ok := buildReachItem(4001, "expanding", cellsBlobOf(t, wkt))
 	if !ok {
 		t.Fatal(err)
 	}
@@ -350,23 +239,13 @@ func TestReachAdmitsPoints(t *testing.T) {
 	}
 }
 
-// The SELECT must adapt to which legacy columns survive: dedup-era reads go
-// through the COALESCE, polygon-only reads take the blob, and the cells-only
-// form (post-drop) must reference no legacy column at all.
-func TestReachSelectAdaptsToLegacyForm(t *testing.T) {
-	dedup := reachSelect(2, "WHERE rr.status != 'held'")
-	if !strings.Contains(dedup, "COALESCE(g.geom, rr.polygon)") || !strings.Contains(dedup, "LEFT JOIN rippling_reach_geom") {
-		t.Fatalf("dedup-era select must read through the geom table: %s", dedup)
+// The SELECT must reference no dropped legacy column.
+func TestReachSelectNamesNoDroppedColumn(t *testing.T) {
+	sel := reachSelect("WHERE rr.status != 'held'")
+	if strings.Contains(sel, "polygon)") || strings.Contains(sel, "JOIN") || strings.Contains(sel, "hash") {
+		t.Fatalf("select must not reference dropped columns: %s", sel)
 	}
-	plain := reachSelect(1, "WHERE rr.status != 'held'")
-	if !strings.Contains(plain, "ST_AsWKB(rr.polygon)") || strings.Contains(plain, "JOIN") {
-		t.Fatalf("polygon-only select wrong: %s", plain)
-	}
-	cellsOnly := reachSelect(0, "WHERE rr.status != 'held'")
-	if strings.Contains(cellsOnly, "polygon)") || strings.Contains(cellsOnly, "JOIN") || strings.Contains(cellsOnly, "hash") {
-		t.Fatalf("cells-only select must not reference dropped columns: %s", cellsOnly)
-	}
-	if !strings.Contains(cellsOnly, "rr.polygon_cells") {
-		t.Fatalf("cells-only select must still read the cells: %s", cellsOnly)
+	if !strings.Contains(sel, "rr.polygon_cells") {
+		t.Fatalf("select must read the cells: %s", sel)
 	}
 }

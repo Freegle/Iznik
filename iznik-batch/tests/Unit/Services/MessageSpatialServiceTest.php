@@ -11,6 +11,8 @@ use Tests\TestCase;
 
 class MessageSpatialServiceTest extends TestCase
 {
+    use \Tests\Support\SeedsReachCells;
+
     protected MessageSpatialService $service;
     protected SpatialAdminService $spatialAdmin;
 
@@ -585,13 +587,13 @@ class MessageSpatialServiceTest extends TestCase
             [$message->id, $group->id, Message::TYPE_OFFER, now()->subDays(2)]
         );
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
              VALUES (?, 51.5, -0.1,
-                     ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857),
+                     ?,
                      ST_Envelope(ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)),
                      ?, 'drive', 1, 3, 90, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, now()->subDays(2)]
+            [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), now()->subDays(2)]
         );
         DB::statement(
             "UPDATE rippling_reach
@@ -604,11 +606,11 @@ class MessageSpatialServiceTest extends TestCase
         return (int) $message->id;
     }
 
-    public function test_completed_post_degrades_reach_bounds_but_not_polygon(): void
+    public function test_completed_post_degrades_reach_bounds_but_not_the_grid(): void
     {
         // A Taken/Received post leaves the browsable candidate set. Its sandwich bounds
         // are degraded (degenerate outer, no inner) so reach queries stop matching it
-        // cheaply — but the exact polygon must stay untouched: the digest's "came and
+        // cheaply — but the stored reach grid must stay untouched: the digest's "came and
         // went" section, held replies to taken posts and un-completion all still read it
         // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md: pruning rippling_reach itself
         // was verified UNSAFE).
@@ -630,21 +632,21 @@ class MessageSpatialServiceTest extends TestCase
                FROM rippling_reach WHERE msgid = ?',
             [$msgid]
         );
-        $this->assertNotNull($row, 'the reach row survives completion (bounds degraded, polygon intact)');
+        $this->assertNotNull($row, 'the reach row survives completion (bounds degraded, grid intact)');
         $this->assertSame('POINT', $row->outer_type, 'outer bound degrades to a degenerate point');
         $this->assertSame(1, (int) $row->inner_null, 'inner bound is cleared');
-        $this->assertSame(
-            'POLYGON',
-            DB::selectOne('SELECT ST_GeometryType(polygon) AS t FROM rippling_reach WHERE msgid = ?', [$msgid])->t,
-            'the exact reach polygon is untouched'
+        $this->assertNotNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells'),
+            'the stored reach grid is untouched'
         );
     }
 
-    public function test_reopened_post_restores_reach_bounds_from_stored_polygon(): void
+    public function test_reopened_post_restores_reach_bounds_from_stored_grid(): void
     {
         // Un-completion is a real automated flow (outcome removed → successful flips back
-        // to 0). The bounds must be re-derived from the stored polygon — pure SQL, no
-        // routing call — or the reopened post would stay invisible to the cheap path.
+        // to 0). The bounds must be re-derived from the stored grid (traced back to a
+        // scratch geometry by the spatial server) — no routing call — or the reopened
+        // post would stay invisible to the cheap path.
         $msgid = $this->seedSpatialWithReachAndBounds();
 
         // Completed first…
@@ -666,15 +668,15 @@ class MessageSpatialServiceTest extends TestCase
         );
         $check = DB::selectOne(
             'SELECT ST_GeometryType(outer_bound) AS outer_type,
-                    ST_Contains(outer_bound, polygon) AS o,
-                    (inner_bound IS NULL OR ST_Contains(polygon, inner_bound)) AS i
+                    ST_Contains(outer_bound, ST_GeomFromText(?, 3857)) AS o,
+                    (inner_bound IS NULL OR ST_Contains(ST_GeomFromText(?, 3857), inner_bound)) AS i
                FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
+            ['POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', $msgid]
         );
         $this->assertNotNull($check);
         $this->assertNotSame('POINT', $check->outer_type, 'real bounds are restored on reopen');
-        $this->assertSame(1, (int) $check->o, 'restored outer bound contains the polygon');
-        $this->assertSame(1, (int) $check->i, 'restored inner bound is NULL or inside the polygon');
+        $this->assertSame(1, (int) $check->o, 'restored outer bound contains the reach');
+        $this->assertSame(1, (int) $check->i, 'restored inner bound is NULL or inside the reach');
     }
 
     /** Seed a live, approved, located post that fully qualifies for the index. Returns msgid. */

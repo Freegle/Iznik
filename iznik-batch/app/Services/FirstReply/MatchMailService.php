@@ -3,8 +3,6 @@
 namespace App\Services\FirstReply;
 
 use App\Services\Ripple\CellSetService;
-use App\Services\Ripple\GeomShareService;
-use App\Services\Ripple\LegacyGeometry;
 use App\Services\Ripple\RingIndex;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
@@ -724,63 +722,33 @@ class MatchMailService
         // this file is exactly how the mail came to invite people the site refused.
 
         // The band test - outside the reach the post has NOW, inside the reach
-        // it will eventually have - is the only geometry in this query, and it
-        // moves era by era. While the legacy columns exist it stays exactly the
-        // SQL it always was (both geometries may live in rippling_reach_geom
-        // after the content-addressed dedup; COALESCE reads the shared row when
-        // the hash points at one, and "IS NOT NULL" keeps meaning "a max reach
-        // is known" across the drain, which NULLs the blob but not the hash).
-        //
-        // Post-drop the same three questions are answered from the post's two
-        // stored grids, fetched ONCE for the post rather than tested per
-        // candidate: a run-stream probe for each containment and
-        // distanceToNearestCellMetres for the nearest-edge ordering. That is
-        // strictly less work than the SQL form, which measured ST_Distance
-        // against a megabyte polygon once per candidate.
-        $legacyPolygon = LegacyGeometry::polygonReady();
-
-        if ($legacyPolygon) {
-            $pJoin = GeomShareService::joinSql('rr', 'polygon', 'gp');
-            $mJoin = GeomShareService::joinSql('rr', 'max_polygon', 'gm');
-            $poly = GeomShareService::sourceExpr('rr', 'polygon', 'gp');
-            $maxPoly = GeomShareService::sourceExpr('rr', 'max_polygon', 'gm');
-            $bandSelect = "ST_Distance($poly, $pointExpr) AS dist,";
-            $bandWhere = "AND ($maxPoly) IS NOT NULL
-               AND NOT ST_Contains($poly, $pointExpr)
-               AND ST_Contains($maxPoly, $pointExpr) = 1";
-            $bandSelectParams = [self::SRID];
-            $bandWhereParams = [self::SRID, self::SRID];
-        } else {
-            $pJoin = '';
-            $mJoin = '';
-            // NULL placeholder so the scan shape and the row property are the
-            // same in both eras; filled in below from the grids.
-            $bandSelect = 'NULL AS dist,';
-            $bandWhere = 'AND rr.max_polygon_cells IS NOT NULL';
-            $bandSelectParams = [];
-            $bandWhereParams = [];
-        }
-
-        // keep-raw: spatial ST_Contains/ST_Distance band tests over a JSON-vs-locations CASE point expression - the builder cannot render this shape
+        // it will eventually have - is answered from the post's two stored
+        // grids, fetched ONCE for the post rather than tested per candidate
+        // (applyCellBand below): a run-stream probe for each containment and
+        // distanceToNearestCellMetres for the nearest-edge ordering. dist is a
+        // NULL placeholder here; applyCellBand fills it in from the grids.
+        // keep-raw: JSON-vs-locations CASE point expression and a dynamic IN list - the builder cannot render this shape
         $rows = DB::select(
             "SELECT u.id AS id,
-                    $bandSelect
+                    NULL AS dist,
                     ST_Y($pointExpr) AS cand_lat,
                     ST_X($pointExpr) AS cand_lng,
                     JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band
              FROM users u
              LEFT JOIN locations l ON l.id = u.lastlocation
-             JOIN rippling_reach rr ON rr.msgid = ?$pJoin$mJoin
+             JOIN rippling_reach rr ON rr.msgid = ?
              WHERE u.id IN (" . implode(',', array_fill(0, count($userIds), '?')) . ")
                AND u.deleted IS NULL
                AND (u.lastaccess IS NULL OR u.lastaccess > DATE_SUB(NOW(), INTERVAL 90 DAY))
                AND EXISTS (SELECT 1 FROM users_emails ue WHERE ue.userid = u.id{$mailableSql})
                -- OUTSIDE the reach the post has right now, INSIDE the reach it
                -- will eventually have. Someone already inside the current
-               -- polygon is going to be told anyway, by the ordinary ripple, so
+               -- reach is going to be told anyway, by the ordinary ripple, so
                -- mailing them spends a slot and a mail to change nothing.
-               -- The whole point of this mail is to reach past the current edge.
-               $bandWhere
+               -- The whole point of this mail is to reach past the current
+               -- edge. SQL only requires a max reach to exist; the band itself
+               -- is applied by applyCellBand from the stored grids.
+               AND rr.max_polygon_cells IS NOT NULL
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
                      WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
@@ -797,18 +765,14 @@ class MatchMailService
                -- engagement and non-essential admin mails honour.
                AND u.relevantallowed = 1",
             array_merge(
-                $bandSelectParams,
                 [self::SRID, self::SRID, $msgid],
                 $userIds,
                 $unmailableParams,
-                $bandWhereParams,
                 [$cooldown, $weekCap, $msgid]
             )
         );
 
-        if (!$legacyPolygon) {
-            $rows = $this->applyCellBand($msgid, $rows);
-        }
+        $rows = $this->applyCellBand($msgid, $rows);
 
         // Someone an overflow lane has already admitted is NOT a candidate for this
         // mail: they can see the post on browse, find it in search and reply to it,

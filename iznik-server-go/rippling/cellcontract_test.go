@@ -6,18 +6,8 @@ import (
 	"testing"
 )
 
-// The CELLS-ONLY era on the Go side: what the query builders emit once
-// polygon, max_polygon and overflow_bounds have been dropped
-// (plans/2026-08-24-rippling-reach-raster-storage.md Stage 3).
-//
-// These are shape tests, deliberately. The answers are covered by the
-// integration suite in test/, but the failure that actually matters here is a
-// query naming a column that no longer exists - which is a runtime error on a
-// schema this suite does not have, and therefore invisible to any assertion
-// about answers. Reading the emitted SQL is the only way to catch it before
-// the drop rather than after.
-
-func boolPtr(b bool) *bool { return &b }
+// The cell-grid contract on the Go side: the SQL the builders emit names only
+// surviving columns, and the byte probes every gate depends on fail closed.
 
 // droppedNames are the identifiers that must not appear in any SQL the
 // cells-only branches build. Checked with word boundaries because
@@ -79,41 +69,10 @@ func TestReachOuterOnlyWhere_SurvivesTheDrop(t *testing.T) {
 	}
 }
 
-// The era guards are what make every legacy branch dead code after the drop,
-// so the override that lets both eras be tested has to work in both
-// directions and restore cleanly.
-func TestLegacyGeomOverride(t *testing.T) {
-	defer SetLegacyGeomForTest(nil, nil)
-
-	SetLegacyGeomForTest(boolPtr(false), boolPtr(false))
-	if LegacyPolygonReady(nil) {
-		t.Fatal("override to false must report the post-drop era")
-	}
-	if LegacyOverflowReady(nil) {
-		t.Fatal("override to false must report the post-drop era for rings too")
-	}
-
-	SetLegacyGeomForTest(boolPtr(true), boolPtr(true))
-	if !LegacyPolygonReady(nil) {
-		t.Fatal("override to true must report the legacy era")
-	}
-	if !LegacyOverflowReady(nil) {
-		t.Fatal("override to true must report the legacy era for rings too")
-	}
-
-	// Restoring must fall back to the real schema check rather than sticking
-	// on the last override - a test that leaked its era would silently change
-	// every later test's meaning.
-	SetLegacyGeomForTest(nil, nil)
-	if LegacyPolygonReady(nil) {
-		t.Fatal("with no db and no override the guard must answer false, not the stale override")
-	}
-}
-
-// The single-point gate helpers must be usable without a database at all in
-// the cells-only era: the answer comes from bytes, so the only SQL is a keyed
-// blob fetch. Here the probe is exercised directly against real encoded bytes
-// to pin the fail-closed contract the gate depends on.
+// The single-point gate helpers must be usable without a database at all:
+// the answer comes from bytes, so the only SQL is a keyed blob fetch. Here
+// the probe is exercised directly against real encoded bytes to pin the
+// fail-closed contract the gate depends on.
 func TestCellSetContains_FailClosedContract(t *testing.T) {
 	cases := map[string][]byte{
 		"nil":          nil,

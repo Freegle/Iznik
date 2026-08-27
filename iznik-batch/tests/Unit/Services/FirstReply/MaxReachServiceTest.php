@@ -3,13 +3,15 @@
 namespace Tests\Unit\Services\FirstReply;
 
 use App\Services\FirstReply\MaxReachService;
-use App\Services\Ripple\GeomShareService;
 use App\Services\Ripple\ReachService;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 class MaxReachServiceTest extends TestCase
 {
+    use SeedsReachCells;
+
     // Tick 1: a small box around (51.5, -0.1). Tick 3: a much bigger one that
     // contains it, which is what the eventual reach looks like.
     private const TICK1 = 'POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))';
@@ -26,13 +28,10 @@ class MaxReachServiceTest extends TestCase
     {
         parent::setUp();
         MaxReachService::forgetAvailability();
-        MaxReachService::forgetCellsAvailability();
-        GeomShareService::forgetReady();
         // The sizing sweep works on every pending row, so leftovers from another
         // test would show up in this one's counts.
         DB::statement('DELETE FROM firstreply_passthroughs');
         DB::statement('DELETE FROM rippling_reach');
-        DB::statement('DELETE FROM rippling_reach_geom');
     }
 
     private function service(): MaxReachService
@@ -55,11 +54,11 @@ class MaxReachServiceTest extends TestCase
 
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)),
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)),
                      NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
-            [$message->id, self::TICK1, self::TICK1, $withSchedule ? $schedule : null]
+            [$message->id, $this->reachCellsFor(self::TICK1), self::TICK1, $withSchedule ? $schedule : null]
         );
 
         return (int) $message->id;
@@ -147,11 +146,11 @@ class MaxReachServiceTest extends TestCase
 
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)),
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)),
                      NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
-            [$message->id, self::TICK1, self::TICK1, $schedule]
+            [$message->id, $this->reachCellsFor(self::TICK1), self::TICK1, $schedule]
         );
 
         $this->service()->populate();
@@ -252,8 +251,6 @@ class MaxReachServiceTest extends TestCase
         $this->assertSame(0, $this->service()->computePassthroughSavings()['scanned']);
     }
 
-    // -- geometry dedup dual-write -------------------------------------------------
-
     /**
      * The real end-to-end proof for plans/2026-08-24-rippling-reach-raster-
      * storage.md: populate() must not just leave max_polygon_cells alone -
@@ -283,77 +280,35 @@ class MaxReachServiceTest extends TestCase
         $this->assertFalse($cellSets->contains($decoded, -3.0, 55.0));
     }
 
-    public function test_populate_stores_a_max_polygon_hash_and_shares_the_geom_row(): void
-    {
-        $msgid = $this->seedRipplingPost();
-
-        $this->service()->populate();
-
-        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
-        $this->assertNotNull($row->max_polygon_hash);
-        $expected = DB::selectOne(
-            'SELECT UNHEX(MD5(ST_AsBinary(max_polygon))) AS h FROM rippling_reach WHERE msgid = ?',
-            [$msgid]
-        )->h;
-        $this->assertSame((string) $expected, (string) $row->max_polygon_hash);
-        $this->assertNotNull(DB::table('rippling_reach_geom')->where('hash', $row->max_polygon_hash)->first());
-    }
-
-    public function test_populate_does_not_refill_a_drained_max_polygon(): void
-    {
-        $msgid = $this->seedRipplingPost();
-        $this->service()->populate();
-        $hash = DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon_hash');
-        $this->assertNotNull($hash, 'the dual-write set a hash before we simulate the drain');
-
-        // Simulate ripple:drain-deduped-blobs: blob gone, hash stays.
-        DB::table('rippling_reach')->where('msgid', $msgid)->update(['max_polygon' => null]);
-
-        $stats = $this->service()->populate();
-
-        $this->assertSame(
-            0,
-            $stats['scanned'],
-            'a drained row (hash set, blob gone) still HAS a max reach and must not be re-scanned'
-        );
-        $this->assertNull(
-            DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon'),
-            'the drain is not undone'
-        );
-    }
-
-    public function test_populate_for_post_does_not_refill_a_drained_max_polygon(): void
-    {
-        $msgid = $this->seedRipplingPost();
-        $this->assertTrue($this->service()->populateForPost($msgid));
-        $hash = DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon_hash');
-        $this->assertNotNull($hash);
-
-        DB::table('rippling_reach')->where('msgid', $msgid)->update(['max_polygon' => null]);
-
-        $this->assertFalse(
-            $this->service()->populateForPost($msgid),
-            'a drained row (hash set, blob gone) must not be treated as still needing a fill'
-        );
-        $this->assertNull(DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon'));
-    }
-
-    public function test_a_malformed_cell_set_falls_back_to_the_polygon_blob_answer(): void
+    public function test_a_malformed_cell_set_fails_closed(): void
     {
         $msgid = $this->seedRipplingPost();
         $this->service()->populate();
 
         // Corrupt the cell set in place - a bad magic number, the way a
-        // truncated write or a format mismatch would present - while the
-        // real max_polygon blob (tick 3) is still intact underneath it.
+        // truncated write or a format mismatch would present. There is
+        // nothing to fall back to, and admitting on unreadable bytes would
+        // be the unsafe direction for a reply gate.
         DB::table('rippling_reach')->where('msgid', $msgid)->update(['max_polygon_cells' => 'not a cellset']);
 
-        $this->assertTrue(
-            $this->service()->isWithinMaxReach($msgid, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]),
-            'a decode failure must fall back to the legacy blob test, not fail closed to false'
-        );
         $this->assertFalse(
-            $this->service()->isWithinMaxReach($msgid, self::OUTSIDE_EVERYTHING[0], self::OUTSIDE_EVERYTHING[1])
+            $this->service()->isWithinMaxReach($msgid, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1])
+        );
+    }
+
+    public function test_populate_fails_the_fill_when_the_rasteriser_is_unreachable(): void
+    {
+        // The grid IS the stored form, so a failed rasterise must not mark the
+        // row filled - it stays a candidate for the next pass.
+        $msgid = $this->seedRipplingPost();
+        \Illuminate\Support\Facades\Http::fake(['*' => \Illuminate\Support\Facades\Http::response(null, 500)]);
+
+        $stats = $this->service()->populate();
+
+        $this->assertSame(0, $stats['filled']);
+        $this->assertNull(
+            DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon_cells'),
+            'a failed rasterise must leave the row unfilled for the next pass'
         );
     }
 }

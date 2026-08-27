@@ -7,11 +7,13 @@ use App\Services\Ripple\ReachQueryService;
 use App\Services\Ripple\RippleReplyService;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\FakesRingIndex;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 class RippleReplyServiceTest extends TestCase
 {
     use FakesRingIndex;
+    use SeedsReachCells;
 
     // Box covering lng [-0.2, 0.0], lat [51.4, 51.6].
     private const POLY = 'POLYGON((-0.2 51.4, 0.0 51.4, 0.0 51.6, -0.2 51.6, -0.2 51.4))';
@@ -46,10 +48,10 @@ class RippleReplyServiceTest extends TestCase
         $message = $this->createTestMessage($user, $group);
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, total_freeglers,
                 max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, ?, ?, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, $lat, $lng, $poly, $poly]
+             VALUES (?, ?, ?, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $lat, $lng, $this->reachCellsFor($poly), $poly]
         );
 
         return (int) $message->id;
@@ -100,10 +102,10 @@ class RippleReplyServiceTest extends TestCase
         config(['freegle.ripple.rural_access.enabled' => true]);
         $msgid = $this->seedReachedPost();
         DB::table('rippling_reach')->where('msgid', $msgid)->update([
-            'overflow_bounds' => json_encode([
-                'rural' => ['sparse' => 'POLYGON((0.5 51.9,1.5 51.9,1.5 52.5,0.5 52.5,0.5 51.9))'],
-                'bbox' => [0.5, 51.9, 1.5, 52.5],
-            ]),
+            'overflow_cells' => $this->overflowCellsDoc(
+                ['rural' => ['sparse' => 'POLYGON((0.5 51.9,1.5 51.9,1.5 52.5,0.5 52.5,0.5 51.9))']],
+                ['bbox' => [0.5, 51.9, 1.5, 52.5]],
+            ),
         ]);
 
         $svc = $this->service();

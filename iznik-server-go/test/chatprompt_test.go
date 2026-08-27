@@ -37,12 +37,9 @@ func ensureFirstReplyTables(t *testing.T) {
 		PRIMARY KEY (day, event)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`)
 
-	// max_polygon is added by migration; add it here too so a schema-loaded test
-	// database has it. Errors are ignored: the column may already exist.
-	db.Exec("ALTER TABLE rippling_reach ADD COLUMN max_polygon GEOMETRY NULL SRID 3857")
+	// Columns added by later migrations; add them here too so a schema-loaded
+	// test database has them. Errors are ignored: they may already exist.
 	db.Exec("ALTER TABLE rippling_reach ADD COLUMN max_cumulative_users INT UNSIGNED NULL")
-	// max_polygon_cells (plans/2026-08-24-rippling-reach-raster-storage.md) -
-	// same belt-and-braces reasoning as max_polygon above.
 	db.Exec("ALTER TABLE rippling_reach ADD COLUMN max_polygon_cells MEDIUMBLOB NULL")
 
 	// Likewise chat_prompts.msgids. The CREATE TABLE above only fires when the

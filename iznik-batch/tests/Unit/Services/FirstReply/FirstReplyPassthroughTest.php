@@ -16,6 +16,8 @@ use Tests\TestCase;
  */
 class FirstReplyPassthroughTest extends TestCase
 {
+    use \Tests\Support\SeedsReachCells;
+
     private const TICK1 = 'POLYGON((-0.15 51.45, -0.05 51.45, -0.05 51.55, -0.15 51.55, -0.15 51.45))';
 
     private const TICK3 = 'POLYGON((-1.0 51.0, 1.0 51.0, 1.0 52.0, -1.0 52.0, -1.0 51.0))';
@@ -62,11 +64,11 @@ class FirstReplyPassthroughTest extends TestCase
 
         DB::statement(
             "INSERT INTO rippling_reach
-               (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks,
+               (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks,
                 total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
-             VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)),
+             VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)),
                      NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
-            [$message->id, self::TICK1, self::TICK1, $schedule]
+            [$message->id, $this->reachCellsFor(self::TICK1), self::TICK1, $schedule]
         );
 
         app(MaxReachService::class)->populate();
@@ -164,15 +166,12 @@ class FirstReplyPassthroughTest extends TestCase
 
     public function test_unpopulated_max_reach_leaves_the_hold_in_place(): void
     {
-        // Deploying ahead of the backfill must change nothing. "Unpopulated" means
-        // the blob, its hash, AND the cell set (plans/2026-08-24-rippling-reach-
-        // raster-storage.md) are all absent: with either the geometry dedup or the
-        // raster storage alone, a NULL blob does not mean "unknown" - the max reach
-        // may still be known via rippling_reach_geom or max_polygon_cells, and the
-        // passthrough is right to fire from either.
+        // A row whose max reach has not been populated yet must change nothing:
+        // NULL max_polygon_cells means "no wider reach known", and the hold
+        // stands.
         [$msgid] = $this->seedRipplingPost();
         DB::statement(
-            'UPDATE rippling_reach SET max_polygon = NULL, max_polygon_hash = NULL, max_polygon_cells = NULL WHERE msgid = ?',
+            'UPDATE rippling_reach SET max_polygon_cells = NULL WHERE msgid = ?',
             [$msgid]
         );
 

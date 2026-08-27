@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-25
+last_reviewed: 2026-08-26
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -367,11 +367,10 @@ reading, so it is inside the noise the data already carries. It cannot merge two
 neighbours either - lattice points are three whole units apart at 0.0001 resolution
 and rounding moves each by at most half a unit (checked over 632,152 consecutive
 pairs; none collapsed). Measured **1.70x** on its own. Rows written before that
-are rewritten by `ripple:shrink-overflow-bounds`, which is bounded, resumable, refuses once
-`overflow_bounds` has been dropped (§9c),
-holds `updated_at` still so the reach mailer does not reconsider the row, and
-checks every coordinate before writing. Dry-run over production rows: **1.70x**,
-nothing refused.
+were rewritten by `ripple:shrink-overflow-bounds` (removed with `overflow_bounds`
+itself in §9c's follow-up), which was bounded, resumable, held `updated_at` still
+so the reach mailer did not reconsider the row, and checked every coordinate
+before writing. Dry-run over production rows: **1.70x**, nothing refused.
 
 **Precision is the small lever; compression is the big one.** Measured on real rows:
 
@@ -459,8 +458,9 @@ colour per lane family. Without them the map under-reports where a post went, fo
 exactly the rural posts a moderator is most likely to be checking: a Hawes post's
 outline stops in the dale while two wedges carry it to Penrith and Lancaster.
 
-**Backfilling rings** (`ripple:backfill-rings`, paced by `scripts/ring-backfill-drain.sh`)
-visits posts with no rings yet. It skips sub-cap posts ONLY when rural is the sole lane
+**Backfilling rings** was `ripple:backfill-rings` (paced by
+`scripts/ring-backfill-drain.sh`; removed with `overflow_bounds` in §9c's follow-up),
+visiting posts with no rings yet. It skipped sub-cap posts ONLY when rural is the sole lane
 running - with cluster on, sub-cap posts are precisely what earns a wedge, and filtering
 them out would let a drain report "nothing left" without asking about a single
 semi-rural post.
@@ -1034,9 +1034,13 @@ one community in either direction (§4a), set only via `php artisan ripple:opt-o
   rippled into that group and we auto-joined them (§5). Every statistic that asks "were they
   already a member?" must exclude these - see §10a.
 
-### 9a. Shared geometry (`rippling_reach_geom`)
+### 9a. Shared geometry (`rippling_reach_geom`) - RETIRED
 
-`polygon` is byte-for-byte a function of (origin, tick), so posts from the same origin store
+**This layer is GONE**: the drop (§9c) removed the shared table, the hash columns and, once
+production had dropped them, the `GeomShareService` / `rippling/geomshare.go` code itself.
+This section stays as the design record for the interim it served.
+
+`polygon` was byte-for-byte a function of (origin, tick), so posts from the same origin stored
 identical multi-hundred-KB blobs - measured 42% redundant across the table, which is the
 estate's binding disk constraint (design: `plans/2026-08-23-rippling-reach-polygon-dedup.md`).
 Each distinct geometry is therefore stored once in `rippling_reach_geom`, keyed by the MD5 of
@@ -1061,17 +1065,14 @@ The contract, defined once per language in `GeomShareService` (PHP) and
   instead PROVES a geometry unreferenced: age grace, two passes agreeing across at least the
   grace interval, an anti-join re-checked inside the DELETE itself, and the FK as backstop.
 
-**This layer is being RETIRED, not maintained (§9c).** It existed to shrink the polygons,
-and the polygons are going entirely - so deduplicating them is wasted work and the shared
-table becomes pure overhead. Its four operator commands (`ripple:dedup-geometry`,
-`ripple:verify-geometry-dedup`, `ripple:drain-deduped-blobs`, `ripple:gc-reach-geometry`)
-have been deleted, and the scheduling PR that would have kept them running (#1403) was
-closed as obsolete. What remains of `GeomShareService` / `rippling/geomshare.go` is the
-READ path only: those `COALESCE`s are how a legacy row is read during the window between
-this code deploying and the operator dropping the columns, so they survive until the drop
-and then become dead code, removed in the follow-up. `overflow_bounds` was never
-deduplicated here anyway: it is JSON-of-WKT rather than a GEOMETRY, and `has_overflow` is
-generated from it.
+It existed to shrink the polygons, and the polygons went entirely (§9c) - so deduplicating
+them became wasted work and the shared table pure overhead. Its four operator commands
+(`ripple:dedup-geometry`, `ripple:verify-geometry-dedup`, `ripple:drain-deduped-blobs`,
+`ripple:gc-reach-geometry`) were deleted first, and the scheduling PR that would have kept
+them running (#1403) was closed as obsolete. The read path (`COALESCE` over the shared row)
+survived only until production dropped the columns, and was then removed with the other
+legacy branches. `overflow_bounds` was never deduplicated here anyway: it was JSON-of-WKT
+rather than a GEOMETRY.
 
 ### 9b. Cell-set (raster) storage (stacked on §9a)
 
@@ -1241,13 +1242,15 @@ along with the whole §9a dedup layer (hash columns, their indexes and FKs, and
 `rippling_reach_geom`). Measured against the whole-table sizes in §9b: **40.6GB a node
 today, ~3.5GB immediately after the drop and ~11GB at the steady state** - about 12x.
 
-**Every reader is two-era, and the schema decides which era it is in.**
-`App\Services\Ripple\LegacyGeometry::polygonReady()` / `::overflowReady()` (PHP),
-`rippling.LegacyPolygonReady` / `LegacyOverflowReady` (Go) and `reachLegacyForm()` (the
-spatial server) each ask `information_schema` once per process. With the columns present
-every legacy branch behaves exactly as it did; with them absent those branches are
-unreachable. Nothing is feature-flagged, because a flag can disagree with the schema and
-this cannot.
+**During the transition every reader was two-era, and the schema decided which era it was
+in**: `LegacyGeometry` (PHP), `rippling.LegacyPolygonReady`/`LegacyOverflowReady` (Go) and
+`reachLegacyForm()` (the spatial server) each asked `information_schema` once per process.
+Nothing was feature-flagged, because a flag can disagree with the schema and that cannot.
+Once production dropped the columns, the guards and every legacy branch were deleted (the
+follow-up PR to #1406), the transition-era commands with them, and the drop migration was
+turned on by default so dev/CI schemas match production. A straggler database that still
+carries legacy rows needs a checkout from before the removal (or
+`RIPPLE_DROP_LEGACY_GEOMETRY=0` to hold the drop while it backfills there).
 
 Where each question is answered once the columns are gone:
 
@@ -1312,32 +1315,29 @@ radius worst 0.63%. Traced coverage identical on all eight. Group intersects/wit
 came out with **zero** cells of symmetric difference, so the two implementations of the
 shrink agree exactly rather than approximately.
 
-**Operator order.** Deploy, then run the three backfills to completion
-(`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`), then
-`ripple:verify-cells-parity` and read it, then the drop DDL - **with the table's writers
-silenced estate-wide first**; see the rollout procedure in §9c below, learned the hard way.
+**Operator order (as run, completed on production 2026-08-26).** Deploy, then the three
+backfills to completion (`ripple:backfill-reach-cells`, `-max-reach-cells`, `-ring-cells`),
+then `ripple:verify-cells-parity` read by a human, then the drop DDL - **with the table's
+writers silenced estate-wide first**; see the rollout procedure in §9c below, learned the
+hard way. The backfill and parity commands (and their scheduled mop-up sweeps) were removed
+with the legacy branches once the transition completed - run them from a checkout predating
+the removal if a straggler database needs them.
 
-**"Completion" regrows until the drop, which is why the backfills are also scheduled.**
-`ripple:backfill-reach-cells` deliberately skips `status='expanding'` rows - ExpandService
-rewrites their cells on every tick - but a post's *final* tick flips it to `done` without
-writing a polygon, since there is nothing left to expand to. So a pre-cells expander whose
-only remaining step was "finish" lands in `done` with `polygon_cells` still NULL, invisible
-to ticks (nothing revisits a done row) and already behind the sweep's resume mark. Measured
-on production 2026-08-26: 155 such rows three hours after the one-off backfill finished,
-growing steadily as the ~6,400 pre-cells expanders drained. The nightly scheduled sweeps in
-`console.php` (02:35/03:35/04:35, each with `--reset-mark` because the stored mark would
-otherwise resume from the bottom of a finished sweep and find nothing forever) converge this
-population. The guards themselves are full-table scans - the ring guard alone took 42 s on
-production - so several quiet minutes before the first DDL statement is the guards working,
-not a hang.
+**Two production lessons from the run, kept for the next migration of this shape:**
 
-**To run the drop sooner, finish with `ripple:backfill-reach-cells --include-expanding`.**
-The flag lifts the expanding-rows skip so the sweep converts them directly: the guard then
-converges at sweep speed instead of tick speed, and the finisher leak above stops at its
-source, since a finisher already carries cells when it flips to `done`. Safe because the
-write is the same compare-and-swap - a tick landing mid-flight wins, and both wrote a grid
-for a reach the row really had. Run on production 2026-08-26: 5,721 rows converted in ten
-minutes, 70 harmless CAS losses to live ticks, and all three drop guards read zero.
+- **"Completion" regrows until the drop.** `ripple:backfill-reach-cells` deliberately
+  skipped `status='expanding'` rows - ExpandService rewrites their cells on every tick -
+  but a post's *final* tick flips it to `done` without writing cells (nothing left to
+  expand to), so a pre-cells expander whose only remaining step was "finish" landed in
+  `done` with `polygon_cells` still NULL, invisible to ticks and already behind the sweep's
+  resume mark. Measured: 155 such rows three hours after the one-off backfill finished.
+  Nightly `--reset-mark` sweeps converged the population. The drop guards themselves are
+  full-table scans (the ring guard alone took 42s on production), so quiet minutes before
+  the first DDL statement are the guards working, not a hang.
+- **`--include-expanding` finished it at sweep speed**: lifting the expanding-rows skip
+  converted the stragglers directly (safe: the write was the same compare-and-swap, a tick
+  landing mid-flight won). Run on production 2026-08-26: 5,721 rows in ten minutes, 70
+  harmless CAS losses to live ticks, and all three drop guards read zero.
 
 **Run `ripple:verify-ring-cells-parity` as well - the other one does not cover the rings.**
 `ripple:verify-cells-parity` has eight read cases, seven over `polygon_cells` and one over

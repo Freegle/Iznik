@@ -322,9 +322,7 @@ class RippleReplyService
         // The stored cell grid answers this with one keyed blob read and a
         // streaming walk of its run stream (distance to the nearest covered
         // cell, exact at the 33m lattice - noise against the miles this
-        // feeds): no megabyte polygon fetched, no ST_Distance. Rows the
-        // backfill has not reached fall through to the legacy geometry while
-        // its columns exist.
+        // feeds): no megabyte polygon fetched, no ST_Distance.
         try {
             $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
             if ($cells !== null && $cells !== '') {
@@ -337,32 +335,7 @@ class RippleReplyService
             Log::warning("ripple: milesOutsideReach cells read failed for {$msgid}: {$e->getMessage()}");
         }
 
-        if (!LegacyGeometry::polygonReady()) {
-            return null;
-        }
-
-        try {
-            // keep-raw: ST_Distance over the deduped-or-local geometry - the builder cannot render this
-            $row = DB::selectOne(
-                'SELECT ST_Distance(
-                        ST_SRID(' . GeomShareService::sourceExpr('rippling_reach', 'polygon', 'g') . ', 4326),
-                        ST_SRID(POINT(?, ?), 4326)
-                    ) AS metres
-                 FROM rippling_reach' . GeomShareService::joinSql('rippling_reach', 'polygon', 'g') . '
-                 WHERE msgid = ?',
-                [$lng, $lat, $msgid]
-            );
-        } catch (\Throwable $e) {
-            Log::warning("ripple: milesOutsideReach failed for {$msgid}: {$e->getMessage()}");
-
-            return null;
-        }
-
-        if ($row === null || $row->metres === null) {
-            return null;
-        }
-
-        return ((float) $row->metres) / 1609.344;
+        return null;
     }
 
     /** @return array{lat:float,lng:float}|null */
