@@ -2926,6 +2926,19 @@ class IncomingMailService
                 $locationId = $this->findClosestPostcodeId($lat, $lng);
             }
 
+            // The id came from the spatial index, which is a separate store and can
+            // outlive the row it points at - a purged or renumbered location leaves a
+            // stale entry behind. users.lastlocation is a foreign key, so writing an id
+            // that is no longer in `locations` throws, and because that happens inside
+            // createGroupPostMessage the whole post is lost rather than just its
+            // location. A post with no location is still worth having, so verify before
+            // trusting it. GroupPostIngestionService does the same for the API path.
+            if ($locationId !== null && ! DB::table('locations')->where('id', $locationId)->exists()) {
+                Log::info('TN-SYNC-TRACE [LOCATION-STALE] spatial index returned locationid=' . $locationId
+                    . ' which is not in locations; posting without a location');
+                $locationId = null;
+            }
+
             // Update user's lastlocation if we found a location
             if ($locationId && $user->id) {
                 Log::info('TN-SYNC-TRACE [WRITE] table=users op=update where=id=' . $user->id . ' set=lastlocation=' . $locationId);

@@ -70,6 +70,7 @@ Both derived, no new columns:
 | 9b | Frontend: warning notice on the member card - "Trash Nothing user who has not opted into Freegle, so they cannot be contacted" | ✅ | Explicit requirement: the mod must be told WHY the buttons are gone, not just find them missing |
 | 10 | Tests: Go (modmessaging, report quorum, guards), vitest (modal + mod components), Laravel if touched | ✅ | Go 4288 pass, vitest 16170 pass, Laravel 6183 pass. |
 | 11 | Docs: `docs/moderators/02-moderating-posts.md`, `docs/developers/reference/trashnothing.md` | ✅ | Freshness check covers these paths |
+| 12 | CI red on this branch AND its base: stale spatial-index location loses the whole post on the email path | ✅ | `IncomingMailService::createGroupPostMessage()` now checks the id is in `locations` before writing `users.lastlocation`, as `GroupPostIngestionService` already did. Regression test seeds a postcodes point absent from `locations`; red without the guard, green with it |
 
 ## Test plan
 

@@ -161,6 +161,16 @@ Because these posts often have no membership row, `ContentCheckService::isUserMo
 applies the same `DEFAULT` fallback for a post with a `tnpostid`; without that they
 would sit in the mod queue with nothing able to promote them.
 
+**A stale spatial-index location costs the post its location, not the post.** The
+spatial server keeps its own R-tree, rebuilt from MySQL on its own schedule, so its
+nearest-postcode answer can name a `locations` row that has since been purged or
+renumbered. `users.lastlocation` is a foreign key, and both paths write it *inside*
+message creation, so an id that is no longer in `locations` throws there and takes
+the whole post down rather than just its location - it routes Pending and creates no
+`messages` row at all. `GroupPostIngestionService` and
+`IncomingMailService::createGroupPostMessage()` therefore both check the id exists
+before trusting it, and log `TN-SYNC-TRACE [LOCATION-STALE]` when it does not.
+
 Photos come from the API's own `photos[].images` array rather than being scraped
 out of the post body. TN documents that array as ordered *smallest to largest*
 (`PublicApi/docs/Model/Photo.md`), so `GroupPostIngestionService::bestPhotoUrl()`
