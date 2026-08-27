@@ -146,6 +146,36 @@ func TestRemoveUnaddressedPostTakesItOffEveryGroupAndAudits(t *testing.T) {
 	assert.Equal(t, int64(2), logs, "one Message/Deleted log per group the post was live on")
 }
 
+// Removal is reached from a report quorum, which two reporters can hit concurrently and
+// which a task retry can replay - so running it twice must not double up the audit trail or
+// re-freeze a ripple somebody has since released. A missing id has to be a no-op for the
+// same reason it is elsewhere in this package: these functions only ever take things away.
+func TestRemoveUnaddressedPostIsIdempotentAndIgnoresAMissingId(t *testing.T) {
+	prefix := uniquePrefix("mmanoop")
+	db := database.DBConn
+	group := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	msg := CreateTestMessage(t, poster, group, "OFFER: twice "+prefix, 51.5, -0.1)
+	makeUnaddressed(msg)
+
+	modmessaging.RemoveUnaddressedPost(db, msg)
+	modmessaging.RemoveUnaddressedPost(db, msg)
+
+	var logs int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ?",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, msg).Scan(&logs)
+	assert.Equal(t, int64(1), logs, "a second removal must not write a second audit row")
+
+	// A malformed call - no id at all - must do nothing rather than match every row.
+	modmessaging.RemoveUnaddressedPost(db, 0)
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ?",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, msg).Scan(&logs)
+	assert.Equal(t, int64(1), logs)
+
+	assert.False(t, modmessaging.UserIsUnaddressedOnly(db, 0),
+		"no user id cannot be restricted - it says nothing about who they are")
+}
+
 // --- The report quorum ---
 
 func TestReportsRemoveAnUnaddressedPostAtQuorumInsteadOfPendingIt(t *testing.T) {

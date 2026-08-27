@@ -2,6 +2,7 @@
 
 namespace Tests\Unit\Queue;
 
+use App\Console\Commands\Queue\ProcessBackgroundTasksCommand;
 use App\Mail\Chat\ChatSpamReportMail;
 use App\Mail\Chat\ReferToSupportMail;
 use App\Mail\Donation\DonateExternalMail;
@@ -2962,6 +2963,27 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             $this->assertEquals($mixed->id, $mail->recipientUserId);
             return TRUE;
         });
+    }
+
+    /**
+     * An absent id must read as "not restricted", not as "restricted".
+     *
+     * A task whose payload carries no msgid or no userid tells us nothing about whether the
+     * person opted in, and these checks only ever REMOVE a moderator's ability to write to
+     * someone. Answering true on a missing id would silence perfectly ordinary standard
+     * messages whenever a payload was malformed or came from an older client.
+     */
+    public function test_missing_ids_read_as_unrestricted(): void
+    {
+        $command = new ProcessBackgroundTasksCommand();
+
+        foreach (['postIsUnaddressed', 'userIsUnaddressedOnly'] as $method) {
+            $check = new \ReflectionMethod(ProcessBackgroundTasksCommand::class, $method);
+            $check->setAccessible(true);
+
+            $this->assertFalse($check->invoke($command, 0), "{$method}(0) must not restrict");
+            $this->assertFalse($check->invoke($command, -1), "{$method}(-1) must not restrict");
+        }
     }
 
     /**
