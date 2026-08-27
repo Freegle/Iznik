@@ -23,7 +23,7 @@ site or the iOS builds.
 | Requirement | Enforced from | Applies to us | Where we stand |
 |---|---|---|---|
 | DEX optimized >=25% (shrink, optimize, obfuscate), if DEX > 10MB | February 2027 | Freegle 40.4MB, ModTools 14.9MB in the shipped builds | R8 on: 54.5MB -> 10.0MB |
-| Memory + bitmap thresholds per app state | February 2027 | Both | Not yet measured, see below |
+| Memory + bitmap thresholds per app state | February 2027 | Both | Measured 2026-08-27: ~10x inside the limits |
 | Zero-Tap Sign-In restoration | April 2027 | Both (Freegle and ModTools both have sign-in) | Met via Block Store |
 
 The IRCOBI conference app (separate repo) was measured at the same time: 9.6MB DEX, so under
@@ -120,11 +120,58 @@ Thresholds are 90th-percentile anonymous RSS plus swap, per app state and per de
 (2GB foreground and 1GB background on a 4GB device, rising to 4.25GB and 2GB on 16GB), plus
 bitmap caps that apply only outside the foreground: 200MB background, 400MB cached.
 
-Nothing has been changed for this yet, deliberately: the right first step is reading the new
-Android Vitals memory panels and the OOM crash filter for `org.ilovefreegle.direct` and
-`org.ilovefreegle.modtools`, which are collecting data now. Two things make it worth actually
-looking rather than assuming a WebView app passes: the manifest sets
-`android:largeHeap="true"`, which raises the ceiling rather than the usage but says the app has
-pushed against heap limits before; and Capacitor keeps the WebView and its rendered image
-buffers alive when the app is backgrounded, which is exactly what the background and cached
-bitmap thresholds target. Freegle's photo-heavy browse feed is the plausible offender.
+**Read from Play Console on 2026-08-27, 28-day window. Nothing needs doing.** Freegle sits an
+order of magnitude inside every threshold:
+
+| App state | Memory P50 | Memory P90 | Bitmap P90 | Tightest threshold |
+|---|---|---|---|---|
+| Foreground | 125MB | 165MB | - | 2GB (4GB device) |
+| Cached | 101MB | 142MB | 2MB | 1GB memory, 400MB bitmap |
+| Background | no data | no data | no data | 1GB memory, 200MB bitmap |
+
+By RAM tier the foreground P90 is 153MB on 4GB devices, 184MB on 8GB and 150MB on 12GB, against
+thresholds of 2GB, 2.25GB and 3.25GB. Bitmap P90 is 27MB overall and falling (94MB lower than 28
+days earlier). Only Android 16 devices report these metrics, so the sample is a few hundred
+sessions rather than the whole install base.
+
+Two things that write-up needed and now has answers for:
+
+- **The WebView renderer process is counted as ours.** The per-process breakdown lists
+  `com.google.android.webview:sandboxed_process` alongside `org.ilovefreegle.direct`, and in the
+  cached state the renderer is the larger of the two (P90 149MB vs 136MB). So a Capacitor app
+  cannot assume its WebView memory sits outside Play's accounting. It is still tiny in absolute
+  terms, and `android:largeHeap="true"` is not causing a problem.
+- **The OOM crash filter has not reached this account.** The Crashes and ANRs type filter offers
+  only user-perceived crashes and ANRs, all crashes, all ANRs and all non-fatal. The nearest
+  existing signal, user-perceived LMK rate, reports no data. Re-check when Google finishes
+  rolling it out.
+
+ModTools reports no vitals data at all - crash rate, ANR rate, memory and bitmap are all blank,
+which its 89 installs explain. The DEX requirement still applies to it, because that is measured
+on the uploaded bundle rather than on field data.
+
+## What Play says about our bundles today
+
+The App bundle explorer confirms the starting point for the DEX work, on the newest bundle of
+each app (Freegle 2349 / 100.0.983, ModTools 1303 / 1.0.29):
+
+> App optimization: **Low**. Optimization percentage `-`, Obfuscation percentage 2%, Shrinking
+> percentage `-`, R8 configuration `-`, Total uncompressed DEX size Unknown.
+
+Identical for both, which is what `minifyEnabled false` looks like from Play's side. The panel
+also suggests AGP 9.0 for best results; we are on 8.13, and the thresholds do not require it.
+This is the page to check after the first minified release ships.
+
+## Also outstanding: target API level, by 31 August 2026
+
+Not one of the three thresholds, but found while reading the console on 2026-08-27 and far more
+urgent. Both apps carry the policy warning "App must target Android 16 (API level 36) or higher",
+with "App updates with these issues will be rejected" from 31 August. Production is fine on both
+(target SDK 36). The blocker is a stale artifact still Active on a testing track:
+
+- **Freegle**: internal testing serves 3.2.30 (bundle 1301, uploaded 21 October 2025), target SDK 35.
+- **ModTools**: open testing serves 0.4.7 (507.apk, uploaded 17 August 2025), target SDK 35.
+
+Play takes the highest non-compliant target across active tracks, which is why an old test-track
+release blocks an app whose production build already targets 36. Superseding those releases with
+current builds, or halting them, clears it.

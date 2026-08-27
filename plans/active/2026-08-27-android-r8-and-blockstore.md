@@ -28,7 +28,7 @@ Nuxt layer with `extends: ['../']`), so both requirements are one change each.
 | 5 | JS wiring: save / restore / clear | ✅ | `useSessionRestore.js`; setAuth saves, logout clears, both boot paths adopt |
 | 6 | Unit tests | ✅ | 22 composable + 5 store + 2 boot; fixed 3 mocks the new action broke |
 | 7 | Docs | ✅ | new `docs/developers/reference/play-technical-quality.md` + README-APP section |
-| 8 | Play Console memory + OOM panels | ⬜ | Needs Edward logged in to the headed Chrome |
+| 8 | Play Console memory + OOM panels | ✅ | Read 2026-08-27: ~10x inside limits; OOM filter not rolled out; found the target-API warning |
 
 ## Design decisions
 
@@ -86,3 +86,21 @@ fixed, not dismissed.** `DISTANCE_AXES[axis]` was undefined because the vitest c
 baked `/app/constants.js` (121 lines) predates the host's (154 lines) - the known
 never-syncs-into-the-container trap. `docker cp constants.js` into
 `freegle-modtools-dev-local` and all 32 pass.
+
+## Read from Play Console, 2026-08-27
+
+Freegle memory P90: 165MB foreground, 142MB cached, against 2GB and 1GB. Bitmap P90 2MB cached
+against 400MB. Background reports no data. Only Android 16 devices report, so a few hundred
+sessions. ModTools reports no vitals data at all (89 installs).
+
+The WebView renderer counts as ours: the per-process breakdown lists
+`com.google.android.webview:sandboxed_process` next to the app process, and in the cached state
+it is the larger of the two. The OOM crash filter is not on this account yet; LMK rate has no data.
+
+Both bundles read "App optimization: Low, obfuscation 2%, optimization -, shrinking -,
+DEX size Unknown", which is the before-picture for this branch.
+
+**Separate and urgent: target API level, deadline 31 August 2026, updates rejected after that.**
+Production targets 36 on both apps. The blockers are stale test-track artifacts: Freegle internal
+testing 3.2.30 (bundle 1301, Oct 2025, target 35) and ModTools open testing 0.4.7 (507.apk,
+Aug 2025, target 35). Play takes the highest non-compliant target across active tracks.
