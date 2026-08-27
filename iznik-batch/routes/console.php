@@ -1069,13 +1069,8 @@ Schedule::command('users:update-approx-locs')
     ->sendOutputTo(cronLog('users:update-approx-locs'))
     ->runInBackground();
 
-// Remove search index entries for messages older than 30 days.
-// V1: cron/message_deindex.php (daily at 01:00)
-Schedule::command('messages:deindex')
-    ->dailyAt('01:00')
-    ->withoutOverlapping(360)
-    ->sendOutputTo(cronLog('messages:deindex'))
-    ->runInBackground();
+// (Retired) The keyword search index (messages_index) is no longer maintained;
+// search is served from vector embeddings, so there is nothing to deindex.
 
 // Score microvolunteering actions and promote accurate users to Moderate trust.
 // V1: cron/microactions_score.php (daily at 23:00)
@@ -1419,15 +1414,42 @@ Schedule::command('embeddings:searches')
     ->sendOutputTo(cronLog('embeddings:searches'))
     ->runInBackground();
 
+// (Retired) The keyword search index (messages_index) is no longer maintained;
+// search is served from vector embeddings (embeddings:generate above).
+
 // =============================================================================
 // NOT YET ENABLED - pending review / sign-off
-// Index unindexed messages for search.
-// V1: cron/message_unindexed.php (every 30 min)
-Schedule::command('messages:update-index')
-    ->everyThirtyMinutes()
-    ->withoutOverlapping(60)
-    ->sendOutputTo(cronLog('messages:update-index'))
-    ->runInBackground();
+// Remove confirmed spammers from groups.
+// V1: cron/check_spammers.php
+// Schedule::command('users:remove-spammers')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remove-spammers'))
+//     ->runInBackground();
+
+// Process chat spam messages.
+// V1: cron/chat_spam.php
+// Schedule::command('chats:process-spam')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-spam'))
+//     ->runInBackground();
+
+// Send mod notifications.
+// V1: cron/mod_notifs.php
+// Schedule::command('mail:mod-notifs')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:mod-notifs'))
+//     ->runInBackground();
+
+// Update GiftAid donations.
+// V1: cron/donations_giftaid.php
+// Schedule::command('donations:update-giftaid')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('donations:update-giftaid'))
+//     ->runInBackground();
 
 // Volunteering opportunity maintenance — daily. Asks owners of dateless
 // opportunities approaching expiry whether they are still active (renewal

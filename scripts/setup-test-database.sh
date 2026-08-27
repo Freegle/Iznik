@@ -61,6 +61,27 @@ docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik \
   mysql -u root -piznik \
   -e \"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\""
 
+# 2.5. Verify every table referenced in test-fixtures.sql still exists in the
+# just-migrated schema. A migration that drops a table (e.g. drop_keyword_search_index)
+# without also removing its LOCK TABLES/INSERT block from test-fixtures.sql breaks
+# the fixture load below with a cryptic "ERROR 1146 ... doesn't exist" that aborts on
+# the FIRST stale table and hides any others. Catch ALL stale blocks here up front.
+echo "Checking test-fixtures.sql tables against migrated schema..."
+FIXTURE_TABLES=$(grep -oP "(?<=^LOCK TABLES \`)[^\`]+" "${REPO_DIR}/scripts/test-fixtures.sql" | sort -u)
+STALE_TABLES=""
+for table in $FIXTURE_TABLES; do
+  exists=$(docker exec "${PREFIX}-percona" sh -c "mysql -u root -piznik -N -B -e \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='iznik' AND table_name='${table}'\"")
+  if [ "$exists" = "0" ]; then
+    STALE_TABLES="${STALE_TABLES} ${table}"
+  fi
+done
+if [ -n "$STALE_TABLES" ]; then
+  echo "ERROR: scripts/test-fixtures.sql references tables that no longer exist in the migrated schema:${STALE_TABLES}"
+  echo "A migration dropped these tables. Remove their LOCK TABLES/INSERT blocks from scripts/test-fixtures.sql."
+  exit 1
+fi
+echo "Fixture tables OK"
+
 # 3. Load captured fixture data into iznik (replaces the retired V1 testenv.php seeding).
 # Fixtures are idempotent (INSERT IGNORE, explicit ids) so this is safe on a fresh or
 # already-populated iznik. Used by the running dev/prod stack + Playwright E2E; the Go

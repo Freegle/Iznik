@@ -38,17 +38,10 @@ type EEELabelChallenge struct {
 type Challenge struct {
 	Type     string             `json:"type"`
 	Msgid    *uint64            `json:"msgid,omitempty"`
-	Terms    []SearchTerm       `json:"terms,omitempty"`
 	Photos   []Photo            `json:"photos,omitempty"`
 	URL      *string            `json:"url,omitempty"`
 	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
 	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
-}
-
-// SearchTerm represents a search term for matching
-type SearchTerm struct {
-	ID   uint64 `json:"id"`
-	Term string `json:"term"`
 }
 
 // Photo represents a photo for rotation challenge
@@ -60,7 +53,6 @@ type Photo struct {
 // Challenge types
 const (
 	ChallengeCheckMessage  = "CheckMessage"
-	ChallengeSearchTerm    = "SearchTerm"
 	ChallengePhotoRotate   = "PhotoRotate"
 	ChallengeSurvey        = "Survey2"
 	ChallengeInvite        = "Invite"
@@ -256,69 +248,9 @@ func GetChallenge(c *fiber.Ctx) error {
 		}
 	}
 
-	// Try search term challenge
-	if contains(challengeTypes, ChallengeSearchTerm) {
-		// Check if user is in a group with word matching enabled.
-		//
-		// groupID>0
-		// is the only toggle - 2 possible rendered forms, both proven by the
-		// retired ormharness (shapes.json / TestTier3Shapes_80c36f2da91e,
-		// removed in d22ba1d6c).
-		// WHERE built as a single string for ONE Where() call: GORM's
-		// clause.Where wraps any fragment containing "AND"/"OR" in an extra
-		// paren pair once there is more than one Where expression to
-		// combine (clause/where.go buildExprs), which would diverge from
-		// the golden.
-		enabledWhereSQL := "memberships.userid = ?"
-		enabledWhereArgs := []interface{}{userID}
-		if groupID > 0 {
-			// Filter to specific group if provided
-			enabledWhereSQL += " AND memberships.groupid = ?"
-			enabledWhereArgs = append(enabledWhereArgs, groupID)
-		}
-		enabledWhereSQL += " AND (microvolunteeringoptions IS NULL OR JSON_EXTRACT(microvolunteeringoptions, '$.wordmatch') = 1)"
-
-		var enabled int
-		db.Table("memberships").
-			Select("COUNT(*)").
-			Joins("INNER JOIN `groups` ON memberships.groupid = `groups`.id").
-			Where(enabledWhereSQL, enabledWhereArgs...).
-			Scan(&enabled)
-
-		if enabled > 0 {
-			// Get 10 random popular items
-			type ItemTerm struct {
-				ID   uint64 `json:"id"`
-				Term string `json:"term"`
-			}
-			var terms []ItemTerm
-
-			// Derived-table trick: GORM's
-			// Table() passes its name argument through verbatim (no quoting) once it
-			// contains a space, so a parenthesized subquery can be given as the
-			// "table name".
-			db.Table("(SELECT id, name FROM items WHERE LENGTH(name) > 2 ORDER BY popularity DESC LIMIT 300) t").
-				Select("DISTINCT id, name AS term").
-				Order("RAND()").
-				Limit(10).
-				Scan(&terms)
-
-			if len(terms) > 0 {
-				var searchTerms []SearchTerm
-				for _, t := range terms {
-					searchTerms = append(searchTerms, SearchTerm{
-						ID:   t.ID,
-						Term: t.Term,
-					})
-				}
-
-				return c.JSON(Challenge{
-					Type:  ChallengeSearchTerm,
-					Terms: searchTerms,
-				})
-			}
-		}
-	}
+	// (Retired) The SearchTerm challenge built a keyword-similarity dataset for
+	// the old keyword search index. Search is now served from vector embeddings,
+	// so the challenge is gone.
 
 	// If no challenge found, return empty object
 	return c.JSON(fiber.Map{})
@@ -626,8 +558,6 @@ type PostResponseRequest struct {
 	MsgCategory    *string `json:"msgcategory,omitempty"`
 	Response       *string `json:"response,omitempty"`
 	Comments       *string `json:"comments,omitempty"`
-	Searchterm1    uint64  `json:"searchterm1"`
-	Searchterm2    uint64  `json:"searchterm2"`
 	Photoid        uint64  `json:"photoid"`
 	Invite         bool    `json:"invite"`
 	Deg            int     `json:"deg"`
@@ -735,26 +665,6 @@ func PostResponse(c *fiber.Ctx) error {
 				}
 			}
 		}
-
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
-
-	} else if req.Searchterm1 > 0 && req.Searchterm2 > 0 {
-		// Response to a SearchTerm challenge.
-		// The result column is enum('Approve','Reject') NOT NULL with no default.
-		// Set to 'Approve' since search term responses don't map to approve/reject.
-		db.Table("microactions").Clauses(clause.OnConflict{
-			DoUpdates: clause.Assignments(map[string]interface{}{
-				"userid": gorm.Expr("userid"), "version": Version,
-			}),
-		}).Create(map[string]interface{}{
-			"actiontype":     ChallengeSearchTerm,
-			"userid":         myid,
-			"item1":          req.Searchterm1,
-			"item2":          req.Searchterm2,
-			"version":        Version,
-			"result":         gorm.Expr("'Approve'"),
-			"score_negative": gorm.Expr("0"),
-		})
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
