@@ -61,6 +61,15 @@ vi.mock('~/composables/useTrackConversion', () => ({
   trackConversion: (...args) => mockTrackConversion(...args),
 }))
 
+const mockSaveSessionForRestore = vi.fn()
+const mockRestoreSessionFromDevice = vi.fn()
+const mockClearRestoredSession = vi.fn()
+vi.mock('~/composables/useSessionRestore', () => ({
+  saveSessionForRestore: (...args) => mockSaveSessionForRestore(...args),
+  restoreSessionFromDevice: (...args) => mockRestoreSessionFromDevice(...args),
+  clearRestoredSession: (...args) => mockClearRestoredSession(...args),
+}))
+
 vi.mock('~/api/BaseAPI', () => ({
   abortAllPendingRequests: vi.fn(),
   enterLogoutMode: vi.fn(),
@@ -174,6 +183,45 @@ describe('auth store', () => {
       store.setAuth('test-jwt', 'test-persistent')
       expect(store.auth.jwt).toBe('test-jwt')
       expect(store.auth.persistent).toBe('test-persistent')
+    })
+
+    it('hands the persistent token to Block Store for the next device', () => {
+      store.setAuth('test-jwt', 'test-persistent')
+      expect(mockSaveSessionForRestore).toHaveBeenCalledWith('test-persistent')
+    })
+  })
+
+  describe('adoptRestoredSession', () => {
+    it('adopts the session a previous device left in Block Store', async () => {
+      mockRestoreSessionFromDevice.mockResolvedValue('transferred-persistent')
+
+      expect(await store.adoptRestoredSession()).toBe(true)
+      expect(store.auth.persistent).toBe('transferred-persistent')
+      // No JWT: the persistent token alone authenticates, and GET /session mints one.
+      expect(store.auth.jwt).toBeNull()
+    })
+
+    it('returns false when Block Store holds nothing', async () => {
+      mockRestoreSessionFromDevice.mockResolvedValue(null)
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(store.auth.persistent).toBeNull()
+    })
+
+    it('leaves an existing jwt alone', async () => {
+      store.setAuth('live-jwt', null)
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(mockRestoreSessionFromDevice).not.toHaveBeenCalled()
+      expect(store.auth.jwt).toBe('live-jwt')
+    })
+
+    it('leaves an existing persistent token alone', async () => {
+      store.setAuth(null, 'live-persistent')
+
+      expect(await store.adoptRestoredSession()).toBe(false)
+      expect(mockRestoreSessionFromDevice).not.toHaveBeenCalled()
+      expect(store.auth.persistent).toBe('live-persistent')
     })
   })
 
@@ -393,6 +441,16 @@ describe('auth store', () => {
       expect(store.auth.jwt).toBeNull()
       expect(store.loginCount).toBe(1)
       expect(store.loggedInEver).toBe(true)
+    })
+
+    it('clears the transferable session, so a device restore does not sign us back in', async () => {
+      mockLogin.mockResolvedValue({ jwt: 'jwt', persistent: 'p' })
+      mockFetchv2.mockResolvedValue({ me: { id: 1 }, groups: [] })
+      await store.login({ email: 'a@b.com', password: 'x' })
+
+      await store.logout()
+
+      expect(mockClearRestoredSession).toHaveBeenCalled()
     })
   })
 

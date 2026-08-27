@@ -340,6 +340,11 @@ const bumpLogin = ref(0)
 const ready = ref(false)
 const oneTap = ref(false)
 const authStore = useAuthStore()
+
+// Same as Freegle's bootSession(): on a device the user has just moved to, Block Store may
+// hold the session from their previous Android one before anything reaches localStorage.
+await authStore.adoptRestoredSession()
+
 const jwt = authStore.auth.jwt
 const chatStore = useChatStore()
 const miscStore = useMiscStore()
