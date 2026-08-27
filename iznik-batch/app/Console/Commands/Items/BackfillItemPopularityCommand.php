@@ -20,9 +20,11 @@ use Illuminate\Support\Facades\DB;
  * safe to re-run and safe to run while the forward increment is live (a row touched
  * mid-pass is corrected on the next pass, and the drift is one post).
  *
- * Walks the id space in chunks so nothing takes a long lock. messages_items is large, so
- * the count comes from one grouped query per chunk rather than a correlated subquery per
- * row.
+ * Walks the rows in keyset chunks so nothing takes a long lock, and so the cost tracks the
+ * number of items rather than the size of the id space - stepping through the space by a
+ * fixed increment spends a round trip on every empty window, which on a catalogue with
+ * 3.6M rows and large gaps is nearly all of them. messages_items is large, so the count
+ * comes from one grouped query per chunk rather than a correlated subquery per row.
  *
  *   php artisan items:backfill-popularity --dry-run
  *   php artisan items:backfill-popularity --chunk=5000
@@ -30,7 +32,7 @@ use Illuminate\Support\Facades\DB;
 class BackfillItemPopularityCommand extends Command
 {
     protected $signature = 'items:backfill-popularity
-                            {--chunk=5000 : Item ids to process per pass}
+                            {--chunk=5000 : Items to process per pass}
                             {--limit=0    : Stop after this many items (0 = all)}
                             {--dry-run    : Report what would change without writing}';
 
@@ -42,8 +44,7 @@ class BackfillItemPopularityCommand extends Command
         $limit  = (int) $this->option('limit');
         $dryRun = (bool) $this->option('dry-run');
 
-        $maxId = (int) DB::table('items')->max('id');
-        if ($maxId === 0) {
+        if (!DB::table('items')->exists()) {
             $this->info('No items.');
             return Command::SUCCESS;
         }
@@ -52,29 +53,36 @@ class BackfillItemPopularityCommand extends Command
             $this->warn('[DRY RUN] nothing will be written');
         }
 
-        $this->info("Backfilling items.popularity up to id {$maxId}, chunk {$chunk}");
+        $this->info("Backfilling items.popularity, chunk {$chunk}");
 
         $seen = 0;
         $changed = 0;
         $totalPopularity = 0;
+        $lastId = 0;
 
-        for ($start = 0; $start <= $maxId; $start += $chunk) {
-            $end = $start + $chunk;
-
-            // Current values for the window, so we only write rows that actually differ.
+        // Keyset pagination over the rows that exist, not over the id space. Walking the
+        // space by a fixed step costs one round trip per step whether or not any item
+        // falls in it, so a small chunk on a catalogue with 3.6M rows and large id gaps
+        // spends nearly all its time on empty windows.
+        while (true) {
             $current = DB::table('items')
-                ->where('id', '>', $start)
-                ->where('id', '<=', $end)
+                ->where('id', '>', $lastId)
+                ->orderBy('id')
+                ->limit($chunk)
                 ->pluck('popularity', 'id');
 
             if ($current->isEmpty()) {
-                continue;
+                break;
             }
 
+            $ids     = $current->keys()->all();
+            $lastId  = (int) end($ids);
+
             $counts = DB::table('messages_items')
+                // keep-raw: aliased COUNT aggregate; the builder has no first-class
+                // grouped-count-into-map form.
                 ->select('itemid', DB::raw('COUNT(*) AS n'))
-                ->where('itemid', '>', $start)
-                ->where('itemid', '<=', $end)
+                ->whereIn('itemid', $ids)
                 ->groupBy('itemid')
                 ->pluck('n', 'itemid');
 
@@ -94,7 +102,7 @@ class BackfillItemPopularityCommand extends Command
             }
 
             if ($limit > 0 && $seen >= $limit) {
-                $this->warn("Stopped at --limit={$limit}; {$maxId} is the full id range.");
+                $this->warn("Stopped at --limit={$limit}; more items remain.");
                 break;
             }
         }

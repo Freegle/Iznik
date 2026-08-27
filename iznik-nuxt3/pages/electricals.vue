@@ -1,142 +1,162 @@
 <template>
-  <b-container fluid class="p-0">
-    <b-row class="m-0">
-      <b-col cols="12" lg="10" offset-lg="1" class="p-3">
-        <h1>Electricals on Freegle</h1>
-
-        <p class="text-muted">
-          Anything with a plug, battery or cable counts as an electrical. We
-          look at the photo on each item offered and work out whether it is one,
-          so we can show how much electrical equipment gets reused rather than
-          thrown away.
-        </p>
-
-        <b-alert v-if="error" :model-value="true" variant="warning">
-          These figures are not available at the moment.
-        </b-alert>
-
-        <div v-else-if="pending" class="d-flex justify-content-center p-5">
-          <b-spinner />
+  <b-row class="m-0 pt-4">
+    <b-col cols="12" lg="8" class="p-0" offset-lg="2">
+      <div class="d-flex ps-1 bg-white">
+        <b-img thumbnail src="/icon.png" class="titlelogo" />
+        <div class="ms-2">
+          <h2>Electricals on Freegle</h2>
+          <h5>
+            Anything with a plug, a battery or a cable. Here's how much of it
+            gets used again instead of thrown away.
+          </h5>
         </div>
+      </div>
 
-        <div v-else-if="stats">
-          <!-- Headline -->
-          <b-card class="mb-3">
-            <b-row>
-              <b-col md="4" class="text-center mb-3 mb-md-0">
-                <div class="display-5 text-success">
+      <b-alert v-if="error" :model-value="true" variant="warning" class="mt-2">
+        These figures aren't available at the moment.
+      </b-alert>
+
+      <div v-else-if="pending" class="text-center mt-4">
+        <Spinner :size="50" />
+      </div>
+
+      <div v-else-if="stats">
+        <!-- Headline figures, in the same shape as the impact banner on /stats. -->
+        <b-card variant="white" class="border-white mt-2" no-body>
+          <b-card-body class="pb-0">
+            <b-row class="p-0">
+              <b-col class="text-center">
+                <v-icon icon="gift" class="purple titleicon" />
+                <h3 class="purple">
                   {{ stats.counts.electrical.toLocaleString() }}
-                </div>
-                <div class="text-muted">electrical items offered</div>
-                <div class="small text-muted">in the last 12 months</div>
+                  <br />
+                  ELECTRICALS
+                  <br />
+                  <span class="text-muted small">{{ rangeLabel }}</span>
+                </h3>
               </b-col>
-              <b-col md="4" class="text-center mb-3 mb-md-0">
-                <div class="display-5 text-success">
+              <b-col class="text-center">
+                <v-icon icon="chart-bar" class="green titleicon" />
+                <h3 class="green">
                   {{ stats.counts.electrical_pct }}%
-                </div>
-                <div class="text-muted">of everything offered</div>
-                <div class="small text-muted">
-                  of {{ stats.counts.classified.toLocaleString() }} items we
-                  could check
-                </div>
+                  <br />
+                  OF ALL ITEMS
+                  <br />
+                  <span class="text-muted small">{{ rangeLabel }}</span>
+                </h3>
               </b-col>
-              <b-col md="4" class="text-center">
-                <div class="display-5 text-success">
-                  {{ stats.impact.tonnes ?? '—' }}
-                </div>
-                <div class="text-muted">tonnes passed on</div>
-                <div class="small text-muted">
-                  {{ stats.impact.items_taken.toLocaleString() }} items actually
-                  taken
-                </div>
+              <b-col v-if="stats.impact.tonnes !== null" class="text-center">
+                <v-icon icon="balance-scale-left" class="gold titleicon" />
+                <h3 class="gold">
+                  {{ stats.impact.tonnes.toLocaleString() }}
+                  <br />
+                  TONNES
+                  <br />
+                  <span class="text-muted small">{{ rangeLabel }}</span>
+                </h3>
               </b-col>
-            </b-row>
-          </b-card>
-
-          <!-- Impact. Hidden entirely when there is no weight basis: a null tonnage
-               means we do not know, which is not the same as knowing it is zero. -->
-          <b-card
-            v-if="stats.impact.tonnes !== null"
-            header="What that adds up to"
-            class="mb-3"
-          >
-            <b-row>
-              <b-col md="6" class="mb-3 mb-md-0">
-                <p class="mb-1">
-                  <strong>{{ stats.impact.tonnes_co2e }} tonnes</strong> of CO2e
-                  avoided, worth about
-                  <strong
-                    >£{{
-                      stats.impact.carbon_value_gbp.toLocaleString()
-                    }}</strong
-                  >
-                  using the National TOMs carbon value of £{{
-                    stats.impact.carbon_proxy_gbp_per_tonne
-                  }}
-                  per tonne.
-                </p>
-                <p class="small text-muted mb-0">
-                  The average electrical item passed on weighs
-                  {{ stats.impact.mean_item_kg }}kg. That is an average, not a
-                  best case.
-                </p>
-              </b-col>
-              <b-col md="6">
-                <p class="small text-muted mb-0">
-                  Weights come from our item catalogue, not from the photo. We
-                  measured how well the model estimates weight from a picture
-                  and it was only
-                  {{ accuracy.weight?.pct }}% accurate, so we do not use it for
-                  this.
-                </p>
-              </b-col>
-            </b-row>
-          </b-card>
-
-          <!-- Success rate -->
-          <b-card header="Do electricals find a new home?" class="mb-3">
-            <!-- Render whichever side we have. Requiring both meant a missing
-                 comparison group blanked the electrical figure too. -->
-            <b-row v-if="stats.success.electrical || stats.success.other">
               <b-col
-                v-if="stats.success.electrical"
-                sm="6"
-                class="text-center mb-3 mb-sm-0"
+                v-if="stats.impact.tonnes_co2e !== null"
+                class="text-center"
               >
-                <div class="h2 mb-0">
-                  {{ stats.success.electrical.taken_pct }}%
-                </div>
-                <div class="text-muted">of electricals were taken</div>
-                <div class="small text-muted">
-                  {{ stats.success.electrical.posts.toLocaleString() }} posts
-                </div>
-              </b-col>
-              <b-col v-if="stats.success.other" sm="6" class="text-center">
-                <div class="h2 mb-0">{{ stats.success.other.taken_pct }}%</div>
-                <div class="text-muted">of everything else</div>
-                <div class="small text-muted">
-                  {{ stats.success.other.posts.toLocaleString() }} posts
-                </div>
+                <v-icon icon="cloud" class="green titleicon" />
+                <h3 class="green">
+                  {{ stats.impact.tonnes_co2e.toLocaleString() }}
+                  <br />
+                  TONNES CO2
+                  <br />
+                  <span class="text-muted small">{{ rangeLabel }}</span>
+                </h3>
               </b-col>
             </b-row>
-            <p
-              v-if="stats.success.electrical || stats.success.other"
-              class="small text-muted mb-0 mt-3"
-            >
-              Only counts posts old enough to have settled, so nothing here is
-              still waiting for a reply.
-            </p>
-            <p v-else class="small text-muted mb-0">
-              Not enough settled posts yet to compare.
-            </p>
-          </b-card>
+          </b-card-body>
+        </b-card>
 
-          <!-- Condition, including broken -->
-          <b-card
-            v-if="conditionRows.length"
-            header="Even broken ones get taken"
-            class="mb-3"
-          >
+        <b-card variant="white" class="mt-2">
+          <b-card-text>
+            <h3>What counts as an electrical</h3>
+            <p>
+              Anything with a plug, a battery or a cable. That is the definition
+              <ExternalLink href="https://www.materialfocus.org.uk/"
+                >Material Focus</ExternalLink
+              >
+              use for the national electricals recycling campaign, and it covers
+              more than the obvious things: a kettle, but also a fish tank with
+              a pump in it, a baby bouncer with a music box, or a jacket with a
+              heater in the lining.
+            </p>
+            <p>
+              We look at the photo on each item somebody offers and work out
+              whether it is electrical. Of
+              {{ stats.counts.classified.toLocaleString() }} items we looked at
+              in the last 12 months,
+              {{ stats.counts.electrical.toLocaleString() }} were. Checked
+              against items sorted by hand, we get this right
+              {{ stats.accuracy.is_electrical.pct }}% of the time.
+            </p>
+          </b-card-text>
+        </b-card>
+
+        <b-card
+          v-if="stats.impact.tonnes !== null"
+          variant="white"
+          class="mt-2"
+        >
+          <b-card-text>
+            <h3>Weights</h3>
+            <p>
+              The electricals given away in the last 12 months weighed
+              {{ stats.impact.tonnes.toLocaleString() }} tonnes. That is
+              {{ stats.impact.tonnes_co2e.toLocaleString() }} tonnes of CO2 kept
+              out of the air, worth £{{
+                stats.impact.carbon_value_gbp.toLocaleString()
+              }}
+              at the government's carbon value of £{{
+                stats.impact.carbon_proxy_gbp_per_tonne
+              }}
+              a tonne. The average electrical item weighs
+              {{ stats.impact.mean_item_kg }}kg.
+            </p>
+            <p>
+              We work weights out from our catalogue of item types rather than
+              from the photo. People don't always tell us when things have
+              worked, so it's likely to be an underestimate.
+            </p>
+          </b-card-text>
+        </b-card>
+
+        <b-card
+          v-if="stats.success.electrical || stats.success.other"
+          variant="white"
+          class="mt-2"
+        >
+          <b-card-text>
+            <h3>Do electricals find a new home?</h3>
+            <p v-if="stats.success.electrical && stats.success.other">
+              {{ stats.success.electrical.taken_pct }}% of the electricals
+              people offer get taken, against
+              {{ stats.success.other.taken_pct }}% of everything else.
+            </p>
+            <p v-else-if="stats.success.electrical">
+              {{ stats.success.electrical.taken_pct }}% of the electricals
+              people offer get taken.
+            </p>
+            <p>
+              This counts only posts old enough to have run their course. People
+              don't always tell us when things have worked, so it's likely to be
+              an underestimate.
+            </p>
+          </b-card-text>
+        </b-card>
+
+        <b-card v-if="conditionRows.length" variant="white" class="mt-2">
+          <b-card-text>
+            <h3>Even broken ones get taken</h3>
+            <p>
+              A lot of what gets offered is damaged or only good for spares, and
+              it still finds someone who wants it, usually to fix or to strip
+              for parts.
+            </p>
             <b-table-simple small responsive class="mb-2">
               <b-thead>
                 <b-tr>
@@ -153,19 +173,18 @@
                 </b-tr>
               </b-tbody>
             </b-table-simple>
-            <p class="small text-muted mb-0">
-              Condition is read from the photo. When our volunteers last checked
-              it, it was right about {{ accuracy.condition?.pct }}% of the time.
-              <span v-if="!accuracyIsCurrent">
-                That check was done on an earlier version of the model.
-              </span>
+            <p class="text-muted small mb-0">
+              Condition comes from the photo, and matches what our volunteers
+              said {{ stats.accuracy.condition.pct }}% of the time.
             </p>
-          </b-card>
+          </b-card-text>
+        </b-card>
 
-          <!-- Popular and unusual -->
-          <b-row class="mb-3">
-            <b-col md="6" class="mb-3 mb-md-0">
-              <b-card header="Most offered" class="h-100">
+        <b-row class="mt-2">
+          <b-col md="6" class="mb-2 mb-md-0">
+            <b-card variant="white" class="h-100">
+              <b-card-text>
+                <h3>Most offered</h3>
                 <b-list-group flush>
                   <b-list-group-item
                     v-for="item in stats.popular"
@@ -178,10 +197,18 @@
                     </b-badge>
                   </b-list-group-item>
                 </b-list-group>
-              </b-card>
-            </b-col>
-            <b-col md="6">
-              <b-card header="More unusual" class="h-100">
+              </b-card-text>
+            </b-card>
+          </b-col>
+          <b-col md="6">
+            <b-card variant="white" class="h-100">
+              <b-card-text>
+                <h3>More unusual</h3>
+                <p>
+                  Rarer things people have passed on. An item appears here only
+                  once several different people in more than one community have
+                  offered one, so a single odd listing can't get in.
+                </p>
                 <b-list-group v-if="stats.unusual.items.length" flush>
                   <b-list-group-item
                     v-for="item in stats.unusual.items"
@@ -194,44 +221,25 @@
                     </b-badge>
                   </b-list-group-item>
                 </b-list-group>
-                <p v-if="!stats.unusual.items.length" class="text-muted mb-2">
-                  Nothing qualifies yet.
-                </p>
-                <p class="small text-muted mb-0 mt-2">
-                  {{ stats.unusual.guard.note }}
-                </p>
-              </b-card>
-            </b-col>
-          </b-row>
+                <p v-else class="text-muted mb-0">Nothing qualifies yet.</p>
+              </b-card-text>
+            </b-card>
+          </b-col>
+        </b-row>
 
-          <p class="small text-muted">
-            Figures cover the last 12 months and were worked out on
-            {{ generatedOn }}. We check the photo on each item to decide whether
-            it is an electrical.
-            <span v-if="accuracyIsCurrent">
-              That judgement is right about
-              {{ accuracy.is_electrical?.pct }}% of the time, measured against
-              items labelled by hand.
-            </span>
-            <span v-else>
-              When we last checked that judgement against items labelled by hand
-              it was right about {{ accuracy.is_electrical?.pct }}% of the time.
-              That check was done on an earlier version of the model ({{
-                accuracy.measured_on
-              }}), which is no longer available, so we have not yet re-measured
-              it for the one running now ({{ accuracy.current_model }}).
-            </span>
-          </p>
-        </div>
-      </b-col>
-    </b-row>
-  </b-container>
+        <p class="text-muted small mt-2">
+          Covers the last 12 months. Worked out on {{ generatedOn }}.
+        </p>
+      </div>
+    </b-col>
+  </b-row>
 </template>
 
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRuntimeConfig, useHead, useAsyncData } from '#imports'
 import Api from '~/api'
+import ExternalLink from '~/components/ExternalLink.vue'
 import { buildHead } from '~/composables/useBuildHead'
 
 const route = useRoute()
@@ -243,7 +251,7 @@ useHead(
     route,
     runtimeConfig,
     'Electricals on Freegle',
-    'How much electrical equipment gets reused rather than thrown away, and what happens to it.'
+    'How much electrical equipment gets used again instead of thrown away, and what happens to it.'
   )
 )
 
@@ -253,16 +261,10 @@ const {
   error,
 } = await useAsyncData('electricals-stats', () => api.electricals.stats())
 
-const accuracy = computed(() => stats.value?.accuracy ?? {})
+const rangeLabel = 'last 12 months'
 
-// The published percentages were measured on a model Google has since retired. Say so
-// rather than quoting them as if they describe the classifier running today.
-const accuracyIsCurrent = computed(
-  () => accuracy.value?.measured_for_current_model === true
-)
-
-// Order the condition rows so the interesting one - damaged items still being taken -
-// is not buried underneath the unremarkable majority.
+// Damaged sits second deliberately: that broken things still get taken is the
+// point of the table, and burying it under the unremarkable majority loses it.
 const CONDITION_LABELS = {
   reusable: 'Working',
   damaged: 'Damaged or for spares',
@@ -290,3 +292,27 @@ const generatedOn = computed(() => {
     : ''
 })
 </script>
+
+<style scoped lang="scss">
+.titlelogo {
+  width: 60px;
+  height: 60px;
+}
+
+.titleicon {
+  width: 2rem;
+  height: 2rem;
+}
+
+.purple {
+  color: $color-purple !important;
+}
+
+.gold {
+  color: $color-gold !important;
+}
+
+.green {
+  color: $color-green--darker !important;
+}
+</style>
