@@ -2023,6 +2023,35 @@ describe('ModMessage', () => {
       expect(wrapper.vm.isHomeGroup).toBe(true)
     })
 
+    // The safety property isHomeGroup exists for: Delete and Delete as Spam remove the
+    // post itself, so they must stay off a genuine rippled-in copy. Without this, a later
+    // change to isRippledIn could start offering them on rippled copies with the suite green.
+    it('does not treat a genuine rippled-in copy as a home group', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            {
+              groupid: 999,
+              namedisplay: 'Origin Group',
+              collection: 'Approved',
+              arrival: rippleEarlier,
+              rippled_in: 0,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Rippled-in Group',
+              collection: 'Approved',
+              arrival: rippleLater,
+              rippled_in: 1,
+            },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(true)
+      expect(wrapper.vm.isHomeGroup).toBe(false)
+    })
+
     // Discourse #10024 post 2: a mod covering several communities browsing Approved
     // Messages (no explicit contextGroupid - the all-communities view) was shown "This
     // member's posts were moderated..." on a post that had already gone out. The
