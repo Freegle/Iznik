@@ -8,28 +8,13 @@
     <div class="section-content">
       <div class="option-info mb-2">
         <span class="option-label">How far away</span>
-        <span class="option-desc">
-          You'll see mostly nearby posts, but some from further away.
-          <span class="drag-hint"
-            >Drag towards <strong>Nearer</strong> or
-            <strong>Further</strong>. </span
-          >We use road distance and travel time, not crow flies. Applies to
-          Browse, notifications and who sees your posts.
-        </span>
       </div>
 
       <div class="slider-frame">
-        <RangeSlider
-          v-model="sliderValue"
-          :min="BROWSE_MINUTES_MIN"
-          :max="maxMinutes"
-          :step="BROWSE_MINUTES_STEP"
-          left-label="Nearer"
-          right-label="Further"
-          aria-label="How far away"
-          @change="onSliderChange"
+        <DistanceSliders
+          id-prefix="feedDistance"
+          @persisted="() => emit('update')"
         />
-        <NearbyTowns :minutes="sliderValue" />
       </div>
     </div>
   </div>
@@ -37,22 +22,15 @@
 
 <script setup>
 import { defineEmits } from 'vue'
-import RangeSlider from '~/components/RangeSlider.vue'
-import NearbyTowns from '~/components/NearbyTowns.vue'
-import { BROWSE_MINUTES_MIN, BROWSE_MINUTES_STEP } from '~/constants'
-import { useReachDistance } from '~/composables/useReachDistance'
+import DistanceSliders from '~/components/DistanceSliders.vue'
 
 const emit = defineEmits(['update'])
 
-// Time-based "How far away" slider - a travel-time budget in MINUTES (matching the reach system), not
-// miles. The shared composable persists both the chosen minutes (so the slider restores) and the
-// routing-derived crow-flies mile radius (settings.browseMaxDistance, for the fast feed filter). The
-// far-right stop means "no limit". Deliberately no numeric readout - Nearer/Further is enough, and a
-// per-tick readout made the drag janky. Only persists on release (RangeSlider's `change`). The top
-// of the slider is the member's own density-sized reach cap, not a fixed 30 minutes.
-const { sliderValue, maxMinutes, onSliderChange } = useReachDistance(() =>
-  emit('update')
-)
+// The "How far away" control - travel-time budgets in MINUTES (matching the reach system), not
+// miles, and two of them once the member separates "posts I see" from "who sees my posts". See
+// DistanceSliders for the linked-by-default behaviour and DistanceSliderRow for why there is
+// deliberately no numeric readout. No polygon here: Feed settings has no map to shade, so it does
+// not pay for the boundary trace the browse page needs.
 </script>
 
 <style scoped lang="scss">
@@ -100,22 +78,7 @@ const { sliderValue, maxMinutes, onSliderChange } = useReachDistance(() =>
   font-size: 0.95rem;
 }
 
-.option-desc {
-  font-size: 0.8rem;
-  color: var(--color-gray-600);
-}
-
-/* The drag instruction is redundant on a touch screen and costs a line, so hide it on mobile. */
-.drag-hint {
-  display: none;
-}
-@media (min-width: 768px) {
-  .drag-hint {
-    display: inline;
-  }
-}
-
-/* Framed rounded box around the slider + its reach hint, matching the settings card curves. */
+/* Framed rounded box around the sliders + their reach hints, matching the settings card curves. */
 .slider-frame {
   border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: var(--radius-lg, 0.75rem);

@@ -37,6 +37,16 @@ const props = defineProps({
   // The slider's travel-time budget in MINUTES. The reach hint it drives is still shown in road
   // miles (the frontier the isochrone reaches), which is what members find meaningful.
   minutes: { type: Number, required: true },
+  // Which way round the same reach is being described. The geometry is identical either way - a
+  // radius around the member - so both perspectives share one routing call and one town list, and
+  // only the wording differs.
+  //   'inbound'  how far the member can go to collect: "Max 10-12 miles by road, e.g. Ely".
+  //   'outbound' how far their posts are seen: "Seen up to 10-12 miles away, e.g. Ely".
+  perspective: {
+    type: String,
+    default: 'inbound',
+    validator: (v) => ['inbound', 'outbound'].includes(v),
+  },
 })
 
 const runtimeConfig = useRuntimeConfig()
@@ -65,7 +75,10 @@ const bits = computed(() => {
     if (b > 0) {
       const unit = b === 1 ? 'mile' : 'miles'
       const dist = a > 0 && a < b ? `${a}-${b}` : `${b}`
-      lead = `Max ${dist} ${unit} by road`
+      lead =
+        props.perspective === 'outbound'
+          ? `Seen up to ${dist} ${unit} away by road`
+          : `Max ${dist} ${unit} by road`
     }
   }
   if (towns.value.length) {
@@ -86,7 +99,10 @@ const bits = computed(() => {
     return {
       lead,
       sep: lead ? '. ' : '',
-      tail: `Close to ${closer.value}`,
+      tail:
+        props.perspective === 'outbound'
+          ? `Seen close to ${closer.value}`
+          : `Close to ${closer.value}`,
       wrap: true,
     }
   }

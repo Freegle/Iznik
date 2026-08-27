@@ -705,20 +705,45 @@ rows, its latest row states its outcome.
 
   **`browseReachMaxDistance` is a separate key from `browseMaxDistance`, and the split is
   load-bearing.** `browseMaxDistance` is the member's own choice and applies in BOTH
-  directions, so writing a band default into it would silently cap how far away other people
-  see that member's posts: a city member's band radius is ~4.8 miles, so their giveaways would
-  stop travelling almost immediately - the exact opposite of growing the ripple to the ceiling.
-  How far someone will travel to collect is not the same question as how far their own post
-  should travel to find a taker. So:
+  directions unless they have separated them, so writing a band default into it would silently
+  cap how far away other people see that member's posts: a city member's band radius is ~4.8
+  miles, so their giveaways would stop travelling almost immediately - the exact opposite of
+  growing the ripple to the ceiling. How far someone will travel to collect is not the same
+  question as how far their own post should travel to find a taker.
+
+  Because those really are two questions, the member can answer them separately: the "How far
+  away" control is one slider by default, with a "Set separately" action that reveals a second
+  one ("Who sees my posts") on the same scale. That writes `myPostsMaxMinutes` /
+  `myPostsMaxDistance`, and **their absence is what "linked" means** - every outbound reader
+  falls back to `browseMaxDistance`, which is the pre-split behaviour exactly. Merely revealing
+  the second slider writes nothing; only dragging it does, so a member who never touches it is
+  unaffected. "Link them again" patches both keys to `null`, and they are **stored as JSON null**:
+  `PATCH /session` replaces the settings blob wholesale (`JSON_MERGE_PATCH`, which would delete
+  them, is `PatchUser`). So "JSON null means unset" is a contract every outbound reader honours,
+  not a transient state.
 
   | Key | Set by | Inbound | Outbound |
   |---|---|---|---|
-  | `browseMaxDistance` | the member, via the slider | yes | yes |
+  | `browseMaxDistance` | the member, via the slider | yes | yes, unless `myPostsMaxDistance` is set |
+  | `myPostsMaxDistance` | the member, via the second slider (absent until they use it) | **never** | yes, wins over `browseMaxDistance` |
   | `browseReachMaxDistance` | the backfill, from their band | yes (only when the member has not chosen) | **never** |
 
-  Readers: `DistancePreferenceFilter::maxDistanceMiles` (inbound, falls back to the default)
-  and `authorMaxDistanceMiles` (outbound, own choice only); Go `isochrone.resolveMaxDistance`
-  (inbound, same fallback) and `utils.AuthorReachCapWhere` (outbound, own choice only).
+  The two sliders do NOT share a maximum. The inbound one tops out at the member's own band cap
+  (`town/near cap_minutes`), because that is as far as the reach engine will admit them; the
+  outbound one tops out at `DensityService::ceiling()` for everyone, because a post's reach grows
+  to the ceiling whatever band its origin is in. Band-capping the outbound slider would tell a
+  city member their posts reach 20 minutes when they already reach 45. On the shared scale the
+  inbound track is greyed past its cap rather than being drawn short.
+
+  Readers: `DistancePreferenceFilter::maxDistanceMiles` (inbound, falls back to the band default)
+  and `authorMaxDistanceMiles` (outbound, `myPostsMaxDistance` then `browseMaxDistance`, never the
+  band default); Go `isochrone.resolveMaxDistance` (inbound, same fallback) and
+  `utils.AuthorReachCapWhere` (outbound, the same two keys in SQL). The Go and PHP outbound
+  resolvers must agree exactly: absent, JSON null and `<= 0` all fall through to
+  `browseMaxDistance`, while the sentinel stops there and means "no limit". Note
+  `JSON_EXTRACT(...) IS NULL` is **false** for a JSON null, so "unset" is tested through the
+  `NULLIF`/`COALESCE` chain, and the cast is `DECIMAL(30,6)` because the 16-digit sentinel does
+  not fit in `DECIMAL(20,6)`.
 
   The command also RESCALES an explicit choice rather than carrying it across. The old slider
   was a fixed 5-30, so a stored value said what FRACTION of the range the member wanted, not an

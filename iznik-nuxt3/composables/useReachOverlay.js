@@ -24,8 +24,12 @@ function emptyState() {
   return { geojson: null, seq: 0 }
 }
 
-export function useReachOverlay() {
-  const state = useState(STATE_KEY, emptyState)
+// One slot per distance axis (see DISTANCE_AXES): 'browse' is the shape of what the member can
+// see, 'myPosts' the shape of who can see their posts. They are separate slots rather than one
+// because the two sliders fetch independently, so a shared sequence number would let a change on
+// one axis discard the other axis's in-flight shape and blank half the map.
+export function useReachOverlay(axis = 'browse') {
+  const state = useState(STATE_KEY + ':' + axis, emptyState)
 
   // The GeoJSON Feature to shade, or null when we have nothing (no location, routing
   // unavailable, or a reach too small to trace). Callers fall back rather than draw nothing.

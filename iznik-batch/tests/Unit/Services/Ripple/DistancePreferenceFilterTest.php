@@ -221,11 +221,129 @@ class DistancePreferenceFilterTest extends TestCase
 
     public function test_the_band_default_is_not_an_outbound_cap(): void
     {
-        // authorMaxDistanceMiles must read ONLY the member's own choice.
+        // authorMaxDistanceMiles must read ONLY the member's own choices.
         $user = $this->userWithSettings(['browseReachMaxDistance' => 4.8]);
         $this->assertSame(
             (float) DistancePreferenceFilter::DISTANCE_UNLIMITED,
             $this->filter()->authorMaxDistanceMiles($user)
         );
+    }
+
+    /*
+     * The inbound/outbound split. myPostsMaxDistance is the member's own answer to "how far away
+     * can people see my posts"; browseMaxDistance is the fallback, so a member who has never
+     * separated the two keeps exactly the behaviour they had before the split.
+     *
+     * These cases must stay in step with iznik-server-go/utils/reachcap.go's authorCapMiles, which
+     * resolves the same two keys in SQL. TestAuthorReachCapResolution in
+     * iznik-server-go/test/authorreachcap_test.go is the same table.
+     */
+
+    public function test_outbound_falls_back_to_the_browse_choice_when_not_split(): void
+    {
+        // The linked case, and the whole point of the fallback: unchanged behaviour.
+        $user = $this->userWithSettings(['browseMaxDistance' => 10.0]);
+        $this->assertSame(10.0, $this->filter()->authorMaxDistanceMiles($user));
+    }
+
+    public function test_outbound_own_choice_wins_over_the_browse_choice(): void
+    {
+        $user = $this->userWithSettings([
+            'browseMaxDistance' => 10.0,
+            'myPostsMaxDistance' => 30.0,
+        ]);
+        $this->assertSame(30.0, $this->filter()->authorMaxDistanceMiles($user));
+    }
+
+    public function test_outbound_own_choice_wins_when_narrower_too(): void
+    {
+        // Narrower is just as much a choice as wider - it must not be second-guessed.
+        $user = $this->userWithSettings([
+            'browseMaxDistance' => 30.0,
+            'myPostsMaxDistance' => 5.0,
+        ]);
+        $this->assertSame(5.0, $this->filter()->authorMaxDistanceMiles($user));
+    }
+
+    public function test_outbound_sentinel_means_no_limit_and_does_not_fall_back(): void
+    {
+        // The top stop on the outbound slider. It must NOT fall through to the narrower
+        // browse choice, or "no limit" would silently mean "10 miles".
+        $user = $this->userWithSettings([
+            'browseMaxDistance' => 10.0,
+            'myPostsMaxDistance' => DistancePreferenceFilter::DISTANCE_UNLIMITED,
+        ]);
+        $this->assertSame(
+            (float) DistancePreferenceFilter::DISTANCE_UNLIMITED,
+            $this->filter()->authorMaxDistanceMiles($user)
+        );
+    }
+
+    public function test_outbound_null_reads_as_unset_and_falls_back(): void
+    {
+        // Re-linking patches both outbound keys to null, and PATCH /session stores them AS JSON
+        // null (it replaces the blob wholesale). So this is the normal re-linked row, not an edge
+        // case, and it must read as unset.
+        $user = $this->userWithSettings([
+            'browseMaxDistance' => 10.0,
+            'myPostsMaxDistance' => null,
+        ]);
+        $this->assertSame(10.0, $this->filter()->authorMaxDistanceMiles($user));
+    }
+
+    public function test_outbound_non_positive_falls_back_rather_than_meaning_no_limit(): void
+    {
+        // A 0 or negative radius can only be a derivation artefact: it cannot mean "show my
+        // posts to nobody" and it cannot mean "no limit", so the key is ignored. Deliberately
+        // different from the inbound maxDistanceMiles, which has a different fallback - see the
+        // method docblock.
+        foreach ([0, -5.0] as $bad) {
+            $user = $this->userWithSettings([
+                'browseMaxDistance' => 10.0,
+                'myPostsMaxDistance' => $bad,
+            ]);
+            $this->assertSame(
+                10.0,
+                $this->filter()->authorMaxDistanceMiles($user),
+                'outbound ' . var_export($bad, true) . ' should fall back'
+            );
+        }
+    }
+
+    public function test_outbound_with_neither_key_is_unlimited(): void
+    {
+        $user = $this->userWithSettings(['browseReachMaxDistance' => 4.8]);
+        $this->assertSame(
+            (float) DistancePreferenceFilter::DISTANCE_UNLIMITED,
+            $this->filter()->authorMaxDistanceMiles($user)
+        );
+    }
+
+    public function test_outbound_reads_a_json_string_settings_blob(): void
+    {
+        $user = new User();
+        $user->settings = json_encode(['myPostsMaxDistance' => 22.5]);
+        $this->assertSame(22.5, $this->filter()->authorMaxDistanceMiles($user));
+    }
+
+    public function test_splitting_outbound_does_not_change_the_inbound_cap(): void
+    {
+        // The two halves must stay independent: an outbound choice is not an inbound one.
+        $user = $this->userWithSettings([
+            'browseMaxDistance' => 10.0,
+            'myPostsMaxDistance' => 30.0,
+        ]);
+        $this->assertSame(10.0, $this->filter()->maxDistanceMiles($user));
+    }
+
+    public function test_an_outbound_only_choice_leaves_inbound_on_the_band_default(): void
+    {
+        // A member who has never narrowed what they see, but has narrowed who sees them.
+        $user = $this->userWithSettings([
+            'browseReachMaxDistance' => 4.8,
+            'myPostsMaxDistance' => 30.0,
+        ]);
+        $this->assertSame(4.8, $this->filter()->maxDistanceMiles($user));
+        $this->assertSame(30.0, $this->filter()->authorMaxDistanceMiles($user));
     }
 }

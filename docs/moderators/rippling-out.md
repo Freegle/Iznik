@@ -170,10 +170,16 @@ Importantly, this preference now applies in **three** ways:
 
 - **What they see when browsing** - moving it "Nearer" hides posts from further away.
 - **The posts we email them** (their daily digest and immediate emails) - the same narrowing.
-- **How far away other people see their own posts** (new). Setting it "Nearer" also caps who
+- **How far away other people see their own posts**. Setting it "Nearer" also caps who
   their own offers and wanteds reach: someone far away won't see the post in their Nearby feed
   or be emailed about it, even though rippling had carried it that far. Left at "Further" (the
   default), there is no such cap and the post reaches as far as rippling takes it.
+
+Members who want those to differ can now say so. Under the slider there is a **Set separately**
+link, which splits it into two: "Posts I see" and "Who sees my posts". Until they use it the two
+move together exactly as before, so nothing changes for the great majority. The second slider can
+go further than the first - a member may reasonably want to browse only their own town while
+still letting their giveaways travel as far as rippling will carry them.
 
 It still has **no effect on the rippling engine itself** (what it approves or joins, or how far
 it carries a post) **or on moderation**, and their choice is remembered between visits.
