@@ -152,53 +152,52 @@ Two environment problems found and fixed along the way:
   by `scripts/setup-test-database.sh`, not migrated by the suite, so it needs re-running after
   any new migration.
 
-## The red suite: root-caused and mostly fixed
+## The red suite
 
-Started at 159 Laravel failures and 28 Go. Now 36 Laravel and **0 Go**.
+Two separate things, one real and one a measurement error on my part.
 
-**Root cause of 117 Laravel + all 28 Go failures: a stale `spatial-knn` image.**
-`CellSetService::rasterize()` posts to `/v1/reach/rasterize` on `spatial_server_url`
-(`spatial-knn`), and the running container answered 404 - it predated the cellset work. Every
-reach write silently produced no row, so tests read `density_band` off null. CI builds the
-image fresh, which is why CI was green on the same commit while local was not. Fixed with
-`docker-compose build spatial-knn && docker-compose up -d spatial-knn`. `ExpandServiceTest`
-went 77 failures to 108/108 passing; the Go suite went to 4285 passing, 0 failing.
+**Real: a stale `spatial-knn` image.** `CellSetService::rasterize()` posts to
+`/v1/reach/rasterize` on `spatial_server_url` (which is `spatial-knn`, not `spatial`), and the
+running image predated that endpoint and answered 404. Rasterising fails soft by design, so every
+reach write quietly produced no row and the failure surfaced far away as "Attempt to read property
+`density_band` on null". `docker-compose build spatial-knn` took local Laravel failures from 159
+down to the digest ones, and the Go suite from 28 failures to zero. CI builds the image fresh each
+run, which is why CI was green while local was red on the same commit.
 
-Also fixed along the way:
+Two neighbours found with it:
 
-- **Orphan test files inside containers.** `rippling/reachbounds_test.go` and
-  `test/singlepoint_reach_bounds_test.go` existed in `freegle-apiv2` but not on the host,
-  left by a branch switch (file sync never deletes). They referenced removed symbols, so the
-  whole Go suite would not build.
-- **`iznik_go_test` needs `scripts/setup-test-database.sh` re-run** after any new migration; it
-  is cloned, not migrated by the suite.
-- **`SeedsReachCells::fakeSpatialHttp()` shadowed its own stubs.** `Http::fake()` appends and
-  first-match-wins, so a test calling it twice (density then routing) lost the second set. Now
-  accumulates.
+- **Orphan `*_test.go` inside `freegle-apiv2`** that do not exist on the host, left by a branch
+  switch since file sync never deletes. They referenced removed symbols and broke the whole Go
+  build.
+- **`iznik_go_test` needs `scripts/setup-test-database.sh` re-run** after any new migration. It is
+  cloned from `iznik`, not migrated by the suite.
 
-### What remains: one application bug, 36 failures
+**A measurement error: `rippling_reach.polygon` exists on CI and not here.** Migration
+`2026_08_25_000001` drops it, gated on `env('RIPPLE_DROP_LEGACY_GEOMETRY', true)`, and that runs on
+this machine but not on CI even though neither sets the variable. So the same code fails in
+opposite directions in the two places, and a local test result is not evidence about CI for
+anything touching reach. Check first:
 
-All 36 trace to `UnifiedDigestService` still reading `rippling_reach.polygon`, which
-`2026_08_25_000001` drops. Five live sites: lines 933, 965, 2096, 2118, 2375, 2417.
-
-```
-Unknown column 'r2.polygon' in 'where clause'
+```sql
+SELECT COLUMN_NAME FROM information_schema.COLUMNS
+ WHERE TABLE_NAME='rippling_reach' AND COLUMN_NAME IN ('polygon','polygon_cells');
 ```
 
-The reach gate and `mailNewlyReachedForPost` are therefore broken against the post-drop
-schema, so **applying that migration to production would break daily digests**. It has not
-bitten because the migration's own guard keeps production on the old columns until a human
-reads the parity report.
+This cost a bad commit. Converting `UnifiedDigestServiceTest` to plant cell grids looked right
+locally (41 failures to 35) and broke 36 previously-passing tests on CI, because with the column
+present a grid fixture leaves the shape empty and the service matches nobody. Reverted. The
+fixtures have to move at the same time as the service, not ahead of it.
 
-Not attempted here, deliberately. The polygon test happens inside SQL across many candidate
-rows, and a cell grid cannot be probed from SQL. The fix needs the query restructured to
-narrow on the `outer_bound`/`inner_bound` sandwich and then call
-`CellSetService::containsEncoded()` in PHP for the boundary band only - decoding is
-area-proportional, so probing every candidate would cost far more than the geometry it
-replaces. That work belongs with the cellset migration in the `reach-raster` worktree.
+Master's `build-and-test` passes. Its only red job is an Android build, unrelated to any of this.
 
-`UnifiedDigestServiceTest` is converted to cell fixtures, which is what makes this bug
-visible rather than masked behind a fixture that could not insert.
+### Latent, for whoever finishes the grid migration
+
+`UnifiedDigestService` reads `rippling_reach.polygon` at lines 933, 965, 2096, 2118, 2375 and 2417
+with no `hasColumn` guard, so it cannot survive that migration being applied for real. Not a
+rename: the shape test happens inside SQL across many candidate rows and a cell grid cannot be
+queried from SQL. It needs the query narrowed on the `outer_bound`/`inner_bound` sandwich, then
+`CellSetService::containsEncoded()` in PHP for the boundary band only, since decoding is
+area-proportional.
 
 ## Not done
 
