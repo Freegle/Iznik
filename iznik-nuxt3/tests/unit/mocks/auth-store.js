@@ -18,6 +18,8 @@ export function useAuthStore() {
       userlist: [],
       loginType: null,
       loginCount: 0,
+      // The boot paths call this before deciding there are no credentials.
+      adoptRestoredSession: async () => false,
     }
   )
 }

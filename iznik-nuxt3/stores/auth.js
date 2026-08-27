@@ -14,6 +14,11 @@ import { useMobileStore } from '@/stores/mobile'
 import { useMiscStore } from '~/stores/misc'
 import { useDebugStore } from '~/stores/debug'
 import { trackConversion } from '~/composables/useTrackConversion'
+import {
+  clearRestoredSession,
+  restoreSessionFromDevice,
+  saveSessionForRestore,
+} from '~/composables/useSessionRestore'
 
 // A login that lands on an account created this recently is treated as the
 // registration itself (social logins create the account server-side, so the
@@ -62,6 +67,30 @@ export const useAuthStore = defineStore('auth', {
     setAuth(jwt, persistent) {
       this.auth.jwt = jwt
       this.auth.persistent = persistent
+
+      // Hand the long-lived token to Block Store so the user's next Android device picks the
+      // session up (Play Zero-Tap restoration). Deliberately not awaited: this runs on every
+      // session refresh and must not add latency to an API response. It never rejects.
+      saveSessionForRestore(persistent)
+    },
+    // Called from the boot paths on a device we have not logged in on yet: Block Store may
+    // hold the session transferred from the user's previous Android device, before anything
+    // is in localStorage. Returns whether we adopted one.
+    async adoptRestoredSession() {
+      if (this.auth.jwt || this.auth.persistent) {
+        return false
+      }
+
+      const persistent = await restoreSessionFromDevice()
+
+      if (!persistent) {
+        return false
+      }
+
+      // No JWT: the persistent token alone authenticates, and GET /session mints a fresh JWT.
+      this.setAuth(null, persistent)
+
+      return true
     },
     setUser(value) {
       if (value) {
@@ -209,6 +238,10 @@ export const useAuthStore = defineStore('auth', {
 
         this.logoutPushId()
       }
+      // Drop the transferable copy too, or a restore onto a new device would sign a user
+      // back in after they deliberately signed out.
+      await clearRestoredSession()
+
       // We are going to reset the store, but there are a few things we want to preserve.
       const loginCount = this.loginCount
       const config = this.config
