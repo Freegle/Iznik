@@ -42,7 +42,7 @@
               </b-col>
               <b-col md="4" class="text-center">
                 <div class="display-5 text-success">
-                  {{ stats.impact.tonnes }}
+                  {{ stats.impact.tonnes ?? '—' }}
                 </div>
                 <div class="text-muted">tonnes passed on</div>
                 <div class="small text-muted">
@@ -53,8 +53,13 @@
             </b-row>
           </b-card>
 
-          <!-- Impact -->
-          <b-card header="What that adds up to" class="mb-3">
+          <!-- Impact. Hidden entirely when there is no weight basis: a null tonnage
+               means we do not know, which is not the same as knowing it is zero. -->
+          <b-card
+            v-if="stats.impact.tonnes !== null"
+            header="What that adds up to"
+            class="mb-3"
+          >
             <b-row>
               <b-col md="6" class="mb-3 mb-md-0">
                 <p class="mb-1">
@@ -184,9 +189,21 @@
 
           <p class="small text-muted">
             Figures cover the last 12 months and were worked out on
-            {{ generatedOn }}. We check the photo on each item; that judgement
-            is right about {{ accuracy.is_electrical?.pct }}% of the time,
-            measured against items labelled by hand.
+            {{ generatedOn }}. We check the photo on each item to decide whether
+            it is an electrical.
+            <span v-if="accuracyIsCurrent">
+              That judgement is right about
+              {{ accuracy.is_electrical?.pct }}% of the time, measured against
+              items labelled by hand.
+            </span>
+            <span v-else>
+              When we last checked that judgement against items labelled by hand
+              it was right about {{ accuracy.is_electrical?.pct }}% of the time.
+              That check was done on an earlier version of the model ({{
+                accuracy.measured_on
+              }}), which is no longer available, so we have not yet re-measured
+              it for the one running now ({{ accuracy.current_model }}).
+            </span>
           </p>
         </div>
       </b-col>
@@ -220,6 +237,12 @@ const {
 } = await useAsyncData('electricals-stats', () => api.electricals.stats())
 
 const accuracy = computed(() => stats.value?.accuracy ?? {})
+
+// The published percentages were measured on a model Google has since retired. Say so
+// rather than quoting them as if they describe the classifier running today.
+const accuracyIsCurrent = computed(
+  () => accuracy.value?.measured_for_current_model === true
+)
 
 // Order the condition rows so the interesting one - damaged items still being taken -
 // is not buried underneath the unremarkable majority.

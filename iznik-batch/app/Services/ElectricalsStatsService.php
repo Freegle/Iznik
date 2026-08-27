@@ -7,12 +7,17 @@ use Illuminate\Support\Facades\DB;
 /**
  * Builds the payload for the public /electricals page.
  *
- * Every figure here is chosen against measured accuracy. Against volunteer quorum the
- * model is 96% on is-electrical and 93% on condition, so those carry public figures. It is
- * 72% on size and 65% on weight, so neither of those may become a published number: size
- * appears only as a coarse split with its accuracy stated, and weight does not appear at
- * all. Published tonnage comes from the `items.weight` catalog instead, which is the same
- * basis the rest of the site's weight figures already use.
+ * Every figure here is chosen against measured accuracy. Measured against human labels the
+ * classifier was 96% on is-electrical and 93% on condition, so those carry public figures;
+ * it was 72% on size and 65% on weight, so neither of those may become a published number.
+ * Size appears only as a coarse split with its accuracy stated, and weight does not appear
+ * at all - published tonnage comes from the `items.weight` catalog, the same basis the rest
+ * of the site's weight figures use.
+ *
+ * Those figures were measured on gemini-2.0-flash-lite, which Google has since retired, so
+ * they do not describe the model running today. The payload says so explicitly via
+ * accuracy.measured_for_current_model, and the page has to present them accordingly. See
+ * ACCURACY_MEASURED_ON.
  *
  * Two counting traps this deliberately avoids:
  *
@@ -148,29 +153,52 @@ class ElectricalsStatsService
         $kg     = (float) ($row->total_kg ?? 0);
         $co2e   = $kg * self::CO2E_KG_PER_KG_REUSED / 1000;
 
+        // No weight basis at all means we do not know the tonnage, which is not the same as
+        // knowing it to be zero. Report null so the page can omit the claim rather than
+        // publish "0 tonnes reused" as though it were a finding.
+        $haveWeights = $kg > 0;
+
         return [
             'items_taken'                => $items,
-            'tonnes'                     => round($kg / 1000, 1),
-            'tonnes_co2e'                => round($co2e, 1),
-            'carbon_value_gbp'           => round($co2e * self::CARBON_VALUE_PER_TONNE_GBP),
-            'mean_item_kg'               => $items > 0 ? round($kg / $items, 1) : null,
+            'tonnes'                     => $haveWeights ? round($kg / 1000, 1) : null,
+            'tonnes_co2e'                => $haveWeights ? round($co2e, 1) : null,
+            'carbon_value_gbp'           => $haveWeights ? round($co2e * self::CARBON_VALUE_PER_TONNE_GBP) : null,
+            'mean_item_kg'               => ($haveWeights && $items > 0) ? round($kg / $items, 1) : null,
             'carbon_proxy_gbp_per_tonne' => self::CARBON_VALUE_PER_TONNE_GBP,
             'basis'                      => 'items.weight catalog, population mean where unknown; '
                                             . 'not the vision model, whose per-item weight is 65% accurate',
         ];
     }
 
-    /** Popularity-weighted mean item weight, the fallback for items with no catalog weight. */
+    /**
+     * Mean item weight, the fallback for items with no catalog weight of their own.
+     *
+     * Popularity-weighted where possible, because a kettle should count for more than an
+     * obscure one-off. But popularity is only meaningful once items:backfill-popularity has
+     * run, and it had been dead for a long time - so a bare popularity-weighted query
+     * returns nothing on a database where the backfill has not happened yet, and the
+     * tonnage silently reads as zero. Falls back to an unweighted mean rather than letting
+     * that happen.
+     */
     protected function populationAverageWeight(): float
     {
         // keep-raw: SUM(a*b)/SUM(b) is a single scalar expression the builder would need
         // selectRaw for anyway.
-        $row = DB::selectOne(
+        $weighted = DB::selectOne(
             'SELECT SUM(popularity * weight) / SUM(popularity) AS average
              FROM items WHERE weight IS NOT NULL AND weight != 0 AND popularity > 0'
         );
 
-        return (float) ($row->average ?? 0);
+        if ((float) ($weighted->average ?? 0) > 0) {
+            return (float) $weighted->average;
+        }
+
+        $plain = DB::table('items')
+            ->whereNotNull('weight')
+            ->where('weight', '!=', 0)
+            ->avg('weight');
+
+        return (float) ($plain ?? 0);
     }
 
     /** Most-offered electrical item types in the window. */
@@ -379,12 +407,33 @@ class ElectricalsStatsService
     }
 
     /**
+     * The model the published accuracy figures were actually measured against.
+     *
+     * Google retired this model in 2026 ("no longer available ... use
+     * gemini-3.5-flash-lite"), so nothing we can run today has been measured. The figures
+     * are kept because they are real and were expensively obtained, but the payload has to
+     * say which model they describe, or the page would quote 96% accuracy for a model
+     * nobody ever tested.
+     */
+    public const ACCURACY_MEASURED_ON = 'gemini-2.0-flash-lite';
+
+    /**
      * Measured accuracy, carried in the payload so the page can state it next to each
      * figure rather than presenting everything as equally certain.
+     *
+     * `measured_for_current_model` is the honest part: when it is false the page must
+     * present the figures as indicative of the approach rather than as this run's accuracy,
+     * and re-measurement against the current model is outstanding work.
      */
     protected function accuracyNotes(): array
     {
+        $current  = $this->vision->getModelName();
+        $measured = $current === self::ACCURACY_MEASURED_ON;
+
         return [
+            'measured_on'                => self::ACCURACY_MEASURED_ON,
+            'current_model'              => $current,
+            'measured_for_current_model' => $measured,
             'is_electrical' => ['pct' => 96, 'basis' => '193 human labels', 'publish' => true],
             'condition'     => ['pct' => 93, 'basis' => 'volunteer quorum, 218 items', 'publish' => true],
             'size'          => ['pct' => 72, 'basis' => 'volunteer quorum, 228 items', 'publish' => false],

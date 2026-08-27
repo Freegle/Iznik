@@ -134,7 +134,18 @@ class EeeClassificationService
                 })
                 ->whereNotNull('ma.externaluid')
                 ->where('ma.archived', 0)
-                ->where('ma.primary', 1)
+                // Same canonical rule as below. Left as a filter here because this query
+                // samples across many messages for one item type and only needs
+                // representative photos, not exactly one per message.
+                ->where(function ($q) {
+                    $q->where('ma.primary', 1)
+                      ->orWhereNotExists(function ($inner) {
+                          $inner->selectRaw('1')
+                                ->from('messages_attachments as p')
+                                ->whereColumn('p.msgid', 'ma.msgid')
+                                ->where('p.primary', 1);
+                      });
+                })
                 ->where('m.type', 'Offer')   // WANTED posts use stock illustrations — exclude
                 ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
                 ->orderByDesc('m.arrival')
@@ -238,7 +249,13 @@ class EeeClassificationService
             ->where('msgid', $messageid)
             ->whereNotNull('externaluid')
             ->where('archived', 0)
-            ->where('primary', 1)
+            // Canonical primary-photo rule: prefer the flagged primary, else the lowest id.
+            // A bare `where('primary', 1)` looks right but silently drops 47% of posts - on
+            // live only 5,432 of 10,307 OFFERs in a week have any attachment flagged primary.
+            // This is the same rule message_list.go uses for thumbnails and the
+            // micro-volunteering challenge uses to pick one photo per message.
+            ->orderByDesc('primary')
+            ->orderBy('id')
             ->first(['id as attid', 'externaluid']);
 
         if (!$att) {
@@ -359,8 +376,15 @@ class EeeClassificationService
             ->where('msgid', $message->id)
             ->whereNotNull('externaluid')
             ->where('archived', 0)
-            ->where('primary', 1)
+            // keep-raw: JSON_EXTRACT path test, excluding AI-generated illustrations.
             ->whereRaw("(externalmods IS NULL OR JSON_EXTRACT(externalmods, '$.ai') IS NULL)")
+            // Canonical primary-photo rule: prefer the flagged primary, else the lowest id.
+            // A bare `where('primary', 1)` looks right but silently drops 47% of posts - on
+            // live only 5,432 of 10,307 OFFERs in a week have any attachment flagged primary.
+            // This is the same rule message_list.go uses for thumbnails and the
+            // micro-volunteering challenge uses to pick one photo per message.
+            ->orderByDesc('primary')
+            ->orderBy('id')
             ->first(['id as attid', 'externaluid']);
 
         $context = [
