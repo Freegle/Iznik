@@ -327,6 +327,24 @@ func TestMatchWorryWordsMultipleMatches(t *testing.T) {
 	assert.True(t, keywords["knife"], "Expected 'knife' in matches")
 }
 
+func TestMatchWorryWordsFuzzyMisspelling(t *testing.T) {
+	// concern_keywords rows read by checkWorryWords all carry match_mode='fuzzy'
+	// (global) or come from the legacy per-group worrywords list, which PHP's
+	// checkPerGroupWorryWords documents as using "the same fuzzy matching as
+	// global concern keywords". A one-edit misspelling of an 8+ char keyword
+	// (PHP's FUZZY_LEVENSHTEIN_MIN_KW_LEN) must still be flagged for moderators,
+	// mirroring ContentCheckService::matchesFuzzy (Discourse 9939/44).
+	words := []WorryWord{{Keyword: "cannabis", Type: "Review"}}
+	matches := matchWorryWords("selling canabis for cheap", "", words)
+	found := false
+	for _, m := range matches {
+		if m.Worryword.Keyword == "cannabis" {
+			found = true
+		}
+	}
+	assert.True(t, found, "Expected misspelled 'canabis' to fuzzy-match worry word 'cannabis'")
+}
+
 // ── containsUint64 ────────────────────────────────────────────────────────
 
 func TestContainsUint64_ValuePresent(t *testing.T) {
