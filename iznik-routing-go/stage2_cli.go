@@ -31,6 +31,14 @@ func stage2Main(args []string) {
 		stage2MatricesCmd(args[1:])
 	case "query":
 		stage2QueryCmd(args[1:])
+	case "leafcheck":
+		stage2LeafCheckCmd(args[1:])
+	case "tracepath":
+		stage2TracePathCmd(args[1:])
+	case "boundarydebug":
+		stage2BoundaryDebugCmd(args[1:])
+	case "exactdebug":
+		stage2ExactDebugCmd(args[1:])
 	case "parity":
 		stage2ParityCmd(args[1:])
 	default:
@@ -156,4 +164,34 @@ func stage2ParityCmd(args []string) {
 	dir := fs.String("dir", "data/stage2/prod", "directory of exported prod posts")
 	_ = fs.Parse(args)
 	stage2ParityRun(*dir, stage2LoadEngine())
+}
+
+func stage2ExactDebugCmd(args []string) {
+	fs := flag.NewFlagSet("exactdebug", flag.ExitOnError)
+	path := fs.String("json", "", "path to one exported post .json")
+	_ = fs.Parse(args)
+	stage2ExactDebugRun(*path, stage2LoadEngine())
+}
+
+func stage2BoundaryDebugCmd(args []string) {
+	fs := flag.NewFlagSet("boundarydebug", flag.ExitOnError)
+	path := fs.String("json", "", "path to one exported post .json")
+	_ = fs.Parse(args)
+	stage2BoundaryDebugRun(*path, stage2LoadEngine())
+}
+
+func stage2TracePathCmd(args []string) {
+	fs := flag.NewFlagSet("tracepath", flag.ExitOnError)
+	path := fs.String("json", "", "post json")
+	node := fs.Uint64("node", 0, "target base node id")
+	_ = fs.Parse(args)
+	stage2TracePathRun(*path, NodeID(*node), stage2LoadEngine())
+}
+
+func stage2LeafCheckCmd(args []string) {
+	fs := flag.NewFlagSet("leafcheck", flag.ExitOnError)
+	path := fs.String("json", "", "post json")
+	node := fs.Uint64("node", 0, "target base node id")
+	_ = fs.Parse(args)
+	stage2LeafCheckRun(*path, NodeID(*node), stage2LoadEngine())
 }

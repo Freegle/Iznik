@@ -5,7 +5,7 @@ package main
 // Phase 1: snap the origin (a junction, or a chain node with departure-side
 // offsets walked on demand) and run exact local Dijkstras inside the seed
 // regions, collecting their exits.
-// Phase 2: Dijkstra over the boundary graph — per-region entry×exit matrix
+// Phase 2: Dijkstra over the boundary graph — per-region entry×boundary matrix
 // rows as clique edges, cross chains as inter-region edges — bounded by T.
 // Phase 3: label every region with a reached entry: fully-in iff
 // min_e(arrival_e + ecc_e) <= T (conservative), else partial with entry
@@ -43,6 +43,8 @@ type ReachLabels struct {
 	// Origin chain info for the same-chain direct case (base-node space).
 	originChain NodeID // the absorbed origin node, 0 if origin was a junction
 	seedBase    float32
+	// BoundaryDist: raw phase-2 arrivals at boundary nodes (debug/diagnostics).
+	BoundaryDist map[uint32]float32
 	// Phase timings for the gate measurements.
 	LocalMs, BoundaryMs, LabelMs float64
 }
@@ -266,7 +268,7 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 				out.OriginArr[node] = arr
 			}
 		}
-		for _, x := range e.RM.LeafExits(leaf) {
+		for _, x := range e.RM.LeafBoundary(leaf) {
 			if d := dist[t.ls.localOf[x]]; d != f32Inf && s+d <= limitSeconds {
 				exitArrs = append(exitArrs, exitArr{x, s + d})
 			}
@@ -306,13 +308,14 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 				push(e.BI.crossTo[i], cur.c+e.BI.crossSec[i])
 			}
 		}
-		// Matrix row (this node as an entry).
+		// Matrix row (this node as an entry): relaxes EVERY boundary node of
+		// its leaf, sibling entries included.
 		if ei, ok := e.BI.entryIdx[cur.oi]; ok {
 			leaf := e.BI.leafOf[cur.oi]
-			exts := e.RM.LeafExits(leaf)
-			nx := len(exts)
+			bnd := e.RM.LeafBoundary(leaf)
+			nx := len(bnd)
 			base := e.RM.MatOff[leaf] + int64(int(ei)*nx)
-			for xi, x := range exts {
+			for xi, x := range bnd {
 				m := e.RM.Mat[base+int64(xi)]
 				if m != f32Inf {
 					push(x, cur.c+m)
@@ -321,6 +324,7 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 		}
 	}
 	out.BoundaryMs = float64(time.Since(t1).Microseconds()) / 1000
+	out.BoundaryDist = dist
 
 	// Phase 3: labels.
 	t2 := time.Now()

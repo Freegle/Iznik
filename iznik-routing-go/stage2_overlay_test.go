@@ -383,3 +383,32 @@ func compareOverlayVsBase(t *testing.T, g *Graph, ov *Overlay, lat, lng float64,
 	t.Logf("overlay-vs-base OK: %d junctions, %d absorbed nodes (overlay %d/%d nodes of base)",
 		checkedJ, checkedC, ov.NodeCount(), g.NodeCount())
 }
+
+func TestOverlayModeDisjointParallelStaysJunction(t *testing.T) {
+	// A(1)-B(2)-C(3) road, PLUS a footway directly between B and C: B and C
+	// have parallel edges with disjoint mode sets. Both must stay junctions —
+	// contracting them would let the chain walk follow the footway and
+	// silently drop the road's drive seconds (the Southend parity bug).
+	nodes := lineNodes(3, 100)
+	nodes = append(nodes, RawNodeSpec{OSMID: 300, Lat: 51.451, Lng: -2.60})
+	ways := []RawWaySpec{
+		{NodeIDs: []int64{100, 101, 102}, Highway: "residential"},
+		{NodeIDs: []int64{101, 102}, Highway: "footway"},
+		{NodeIDs: []int64{100, 300}, Highway: "residential"},
+	}
+	g := BuildGraphFromRaw(nodes, ways, nil)
+	ov := BuildOverlay(g)
+	if ov.Idx[2] == 0 || ov.Idx[3] == 0 {
+		t.Fatalf("mode-disjoint parallel endpoints must stay junctions (Idx B=%d C=%d)", ov.Idx[2], ov.Idx[3])
+	}
+	// The overlay must retain a DRIVABLE B->C edge.
+	found := false
+	for _, e := range ov.EdgesFrom(ov.Idx[2]) {
+		if e.To == ov.Idx[3] && e.Seconds[Drive] >= 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("drivable B->C overlay edge lost")
+	}
+}

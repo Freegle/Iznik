@@ -210,17 +210,27 @@ func stage2ParityRun(dir string, engine *Stage2Engine) {
 		}
 		reached := 0
 		full := 0
+		labelBytes := 0
 		for _, rl := range lbl.Reached {
 			reached++
+			// Stored form: leaf id (4B) + full flag (1B), plus per reached
+			// entry (index uint16 + arrival float32) for partial regions.
+			labelBytes += 5
 			if rl.Full {
 				full++
+				continue
+			}
+			for _, a := range rl.EntryArr {
+				if a != f32Inf {
+					labelBytes += 6
+				}
 			}
 		}
 		agreePct := 100 * float64(a.agree) / float64(max(1, a.samples))
-		fmt.Printf("post %d [%s] tick %d T=%.0fmin: samples %d agree %.2f%% (fill %d, boundary %d, structural %d) | exact %d/%d mism (worst Δ %.4fs) | query %.1fms (local %.1f, boundary %.1f) vs flat %.0fms | regions %d (%d full)\n",
+		fmt.Printf("post %d [%s] tick %d T=%.0fmin: samples %d agree %.2f%% (fill %d, boundary %d, structural %d) | exact %d/%d mism (worst Δ %.4fs) | query %.1fms (local %.1f, boundary %.1f) vs flat %.0fms | regions %d (%d full), label ~%dB (cells %dB)\n",
 			p.Msgid, p.Band, p.Tick, driveMin, a.samples, agreePct, a.fill, a.boundary, a.structural,
 			mism, exact, worst, float64(qDur.Microseconds())/1000, lbl.LocalMs, lbl.BoundaryMs,
-			float64(bDur.Microseconds())/1000, reached, full)
+			float64(bDur.Microseconds())/1000, reached, full, labelBytes, len(p.cells))
 		for _, s := range structurals {
 			fmt.Printf("    structural: (%.5f,%.5f) prodIn=%v arr=%.1fs snap=%.0fm\n", s.lat, s.lng, s.prodIn, s.arr, s.snapM)
 		}
@@ -406,4 +416,362 @@ func baseDriveDijkstra(g *Graph, origin NodeID, seed float32, limit float32) map
 		}
 	}
 	return dist
+}
+
+// stage2ExactDebugRun re-runs the exactness sweep for one exported post and
+// prints full diagnostics for every mismatching node — used to root-cause any
+// engine-vs-flat-Dijkstra divergence (which must be zero).
+func stage2ExactDebugRun(jsonPath string, engine *Stage2Engine) {
+	dir := filepath.Dir(jsonPath)
+	posts, err := loadProdPosts(dir)
+	if err != nil {
+		log.Fatalf("exactdebug: %v", err)
+	}
+	var p *prodPost
+	base := filepath.Base(jsonPath)
+	for _, c := range posts {
+		if fmt.Sprintf("%d.json", c.Msgid) == base {
+			p = c
+		}
+	}
+	if p == nil {
+		log.Fatalf("exactdebug: %s not found in %s", base, dir)
+	}
+	driveMin, _ := p.driveMinForTick()
+	T := float32(driveMin * 60)
+	g, ov, part := engine.G, engine.Ov, engine.Part
+
+	lbl := engine.QueryLabels(p.Lat, p.Lng, T)
+	origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
+	baseArr := baseDriveDijkstra(g, origin, initialCostFor(Drive), T)
+
+	shown := 0
+	for id, want := range baseArr {
+		got := engine.ArrivalAtBaseNode(lbl, id)
+		if math.Abs(float64(got-want)) <= 0.01 {
+			continue
+		}
+		if shown >= 12 {
+			continue
+		}
+		shown++
+		nd := g.Nodes[id]
+		if oi := ov.Idx[id]; oi != 0 {
+			leaf := part.LeafOf[oi]
+			var rl *RegionLabel
+			var entArr []float32
+			if leaf >= 0 {
+				rl = lbl.Reached[leaf]
+			}
+			if rl != nil {
+				entArr = rl.EntryArr
+			}
+			nEnt, minEnt := 0, float32(math.Inf(1))
+			for _, a := range entArr {
+				if a != f32Inf {
+					nEnt++
+					if a < minEnt {
+						minEnt = a
+					}
+				}
+			}
+			_, hasOrigin := lbl.OriginArr[oi]
+			fmt.Printf("MISMATCH junction base=%d oi=%d (%.5f,%.5f) leaf=%d leafSize=%d got=%.2f want=%.2f label=%v entriesReached=%d minEntryArr=%.2f originArr=%v\n",
+				id, oi, nd.Lat, nd.Lng, leaf, leafSizeOf(part, leaf), got, want, rl != nil, nEnt, minEnt, hasOrigin)
+		} else {
+			a, b := ov.ChainEndA[id], ov.ChainEndB[id]
+			fmt.Printf("MISMATCH chain base=%d (%.5f,%.5f) got=%.2f want=%.2f ends=%d(leaf %d, arr %.2f, offA %.1f)/%d(leaf %d, arr %.2f, offB %.1f)\n",
+				id, nd.Lat, nd.Lng, got, want,
+				a, leafOfBase(engine, a), engine.junctionArrival(lbl, a), ov.OffFromA[id],
+				b, leafOfBase(engine, b), engine.junctionArrival(lbl, b), ov.OffFromB[id])
+		}
+	}
+	fmt.Printf("total mismatches shown %d (cap 12)\n", shown)
+}
+
+func leafSizeOf(part *Stage2Partition, leaf int32) int {
+	if leaf < 0 || int(leaf) >= len(part.LeafNodes) {
+		return -1
+	}
+	return len(part.LeafNodes[leaf])
+}
+
+func leafOfBase(e *Stage2Engine, j NodeID) int32 {
+	if j == 0 || e.Ov.Idx[j] == 0 {
+		return -2
+	}
+	return e.Part.LeafOf[e.Ov.Idx[j]]
+}
+
+// stage2BoundaryDebugRun compares the engine's boundary-node arrivals with
+// flat-Dijkstra truth for one post, printing the earliest divergences — the
+// point where the boundary graph first misses a faster path.
+func stage2BoundaryDebugRun(jsonPath string, engine *Stage2Engine) {
+	posts, err := loadProdPosts(filepath.Dir(jsonPath))
+	if err != nil {
+		log.Fatalf("boundarydebug: %v", err)
+	}
+	var p *prodPost
+	for _, c := range posts {
+		if fmt.Sprintf("%d.json", c.Msgid) == filepath.Base(jsonPath) {
+			p = c
+		}
+	}
+	if p == nil {
+		log.Fatal("post not found")
+	}
+	driveMin, _ := p.driveMinForTick()
+	T := float32(driveMin * 60)
+	g, ov := engine.G, engine.Ov
+
+	lbl := engine.QueryLabels(p.Lat, p.Lng, T)
+	origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
+	base := baseDriveDijkstra(g, origin, initialCostFor(Drive), T)
+
+	type div struct {
+		oi      uint32
+		trueArr float32
+		engArr  float32
+	}
+	var divs []div
+	for oi, leaf := range engine.BI.leafOf {
+		_ = leaf
+		baseID := ov.BaseNode[oi]
+		want, reached := base[baseID]
+		if !reached {
+			continue
+		}
+		got, ok := lbl.BoundaryDist[oi]
+		if !ok {
+			got = f32Inf
+		}
+		if float64(got-want) > 0.01 {
+			divs = append(divs, div{oi, want, got})
+		}
+	}
+	sort.Slice(divs, func(i, j int) bool { return divs[i].trueArr < divs[j].trueArr })
+	fmt.Printf("boundary divergences: %d of %d boundary nodes; earliest 10:\n", len(divs), len(engine.BI.leafOf))
+	for i, d := range divs {
+		if i >= 10 {
+			break
+		}
+		baseID := ov.BaseNode[d.oi]
+		nd := g.Nodes[baseID]
+		leaf := engine.BI.leafOf[d.oi]
+		_, isEntry := engine.BI.entryIdx[d.oi]
+		cr, hasCross := engine.BI.cross[d.oi]
+		fmt.Printf("  oi=%d base=%d (%.5f,%.5f) leaf=%d entry=%v crossOut=%v(%d) true=%.2f eng=%.2f Δ=%.2f\n",
+			d.oi, baseID, nd.Lat, nd.Lng, leaf, isEntry, hasCross, cr.count, d.trueArr, d.engArr, d.engArr-d.trueArr)
+		// Print the base-graph overlay predecessors: which overlay neighbours
+		// could have relaxed this node, with their true arrivals.
+		for _, e := range ov.EdgesFrom(d.oi) {
+			_ = e
+		}
+		// Reverse relaxation check: find overlay nodes u with edge u->oi.
+		cnt := 0
+		for u := uint32(1); u <= uint32(ov.NodeCount()) && cnt < 6; u++ {
+			for _, e := range ov.EdgesFrom(u) {
+				if e.To == d.oi && e.Seconds[Drive] >= 0 {
+					ub := ov.BaseNode[u]
+					uw, ur := base[ub]
+					if ur && uw+e.Seconds[Drive] <= d.trueArr+1 {
+						uleaf := int32(-9)
+						if engine.Ov.Idx[ub] != 0 {
+							uleaf = engine.Part.LeafOf[engine.Ov.Idx[ub]]
+						}
+						ue, uisEntry := engine.BI.leafOf[u], false
+						_, uisEntry = engine.BI.entryIdx[u]
+						ud, uhas := lbl.BoundaryDist[u]
+						fmt.Printf("      pred u=%d (leaf %d, boundary=%v entry=%v engDist=%.2f has=%v) + edge %.2fs = %.2f\n",
+							u, uleaf, ue != 0 || uhas, uisEntry, ud, uhas, e.Seconds[Drive], uw+e.Seconds[Drive])
+						cnt++
+					}
+				}
+			}
+		}
+	}
+}
+
+// baseDriveDijkstraPrev is baseDriveDijkstra with predecessor tracking.
+func baseDriveDijkstraPrev(g *Graph, origin NodeID, seed float32, limit float32) (map[NodeID]float32, map[NodeID]NodeID) {
+	dist := map[NodeID]float32{origin: seed}
+	prev := map[NodeID]NodeID{}
+	type qi struct {
+		id NodeID
+		c  float32
+	}
+	h := []qi{{origin, seed}}
+	push := func(x qi) {
+		h = append(h, x)
+		i := len(h) - 1
+		for i > 0 {
+			p := (i - 1) / 2
+			if h[p].c <= h[i].c {
+				break
+			}
+			h[p], h[i] = h[i], h[p]
+			i = p
+		}
+	}
+	pop := func() qi {
+		top := h[0]
+		last := len(h) - 1
+		h[0] = h[last]
+		h = h[:last]
+		i := 0
+		for {
+			l, r := 2*i+1, 2*i+2
+			s := i
+			if l < len(h) && h[l].c < h[s].c {
+				s = l
+			}
+			if r < len(h) && h[r].c < h[s].c {
+				s = r
+			}
+			if s == i {
+				break
+			}
+			h[i], h[s] = h[s], h[i]
+			i = s
+		}
+		return top
+	}
+	for len(h) > 0 {
+		cur := pop()
+		if d, ok := dist[cur.id]; ok && cur.c > d {
+			continue
+		}
+		for _, e := range g.EdgesFrom(cur.id) {
+			if e.Seconds[Drive] < 0 {
+				continue
+			}
+			nc := cur.c + e.Seconds[Drive]
+			if nc > limit {
+				continue
+			}
+			if d, ok := dist[e.To]; !ok || nc < d {
+				dist[e.To] = nc
+				prev[e.To] = cur.id
+				push(qi{e.To, nc})
+			}
+		}
+	}
+	return dist, prev
+}
+
+// stage2TracePathRun prints the true shortest path to a base node, projected
+// onto overlay junctions with partition annotations.
+func stage2TracePathRun(jsonPath string, target NodeID, engine *Stage2Engine) {
+	posts, _ := loadProdPosts(filepath.Dir(jsonPath))
+	var p *prodPost
+	for _, c := range posts {
+		if fmt.Sprintf("%d.json", c.Msgid) == filepath.Base(jsonPath) {
+			p = c
+		}
+	}
+	if p == nil {
+		log.Fatal("post not found")
+	}
+	driveMin, _ := p.driveMinForTick()
+	T := float32(driveMin * 60)
+	g, ov := engine.G, engine.Ov
+	lbl := engine.QueryLabels(p.Lat, p.Lng, T)
+	origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
+	dist, prevMap := baseDriveDijkstraPrev(g, origin, initialCostFor(Drive), T)
+
+	var path []NodeID
+	for cur := target; ; {
+		path = append(path, cur)
+		pv, ok := prevMap[cur]
+		if !ok {
+			break
+		}
+		cur = pv
+	}
+	fmt.Printf("true path to base=%d (%d hops), overlay junctions only:\n", target, len(path))
+	for i := len(path) - 1; i >= 0; i-- {
+		v := path[i]
+		oi := ov.Idx[v]
+		if oi == 0 {
+			continue
+		}
+		leaf := engine.Part.LeafOf[oi]
+		_, isEntry := engine.BI.entryIdx[oi]
+		_, isBnd := engine.BI.leafOf[oi]
+		bd, hasBd := lbl.BoundaryDist[oi]
+		fmt.Printf("  base=%d oi=%d leaf=%d entry=%v bnd=%v true=%.2f engBd=%.2f(%v)\n",
+			v, oi, leaf, isEntry, isBnd, dist[v], bd, hasBd)
+	}
+}
+
+// stage2LeafCheckRun walks the true-path segment inside one leaf, verifying
+// every overlay hop exists in the leaf subgraph with the base-path weight.
+func stage2LeafCheckRun(jsonPath string, target NodeID, engine *Stage2Engine) {
+	posts, _ := loadProdPosts(filepath.Dir(jsonPath))
+	var p *prodPost
+	for _, c := range posts {
+		if fmt.Sprintf("%d.json", c.Msgid) == filepath.Base(jsonPath) {
+			p = c
+		}
+	}
+	driveMin, _ := p.driveMinForTick()
+	T := float32(driveMin * 60)
+	g, ov := engine.G, engine.Ov
+	origin := nearestNodeForMode(g, p.Lat, p.Lng, Drive)
+	dist, prevMap := baseDriveDijkstraPrev(g, origin, initialCostFor(Drive), T)
+
+	// Full base path, then project to overlay junctions.
+	var path []NodeID
+	for cur := target; ; {
+		path = append(path, cur)
+		pv, ok := prevMap[cur]
+		if !ok {
+			break
+		}
+		cur = pv
+	}
+	// Reverse to origin->target and keep junctions.
+	var junctions []NodeID
+	for i := len(path) - 1; i >= 0; i-- {
+		if ov.Idx[path[i]] != 0 {
+			junctions = append(junctions, path[i])
+		}
+	}
+	leaf := engine.Part.LeafOf[ov.Idx[target]]
+	ls := buildLeafSubgraph(ov, engine.Part, leaf)
+	fmt.Printf("leaf %d: %d nodes; checking hops of the internal segment:\n", leaf, len(ls.nodes))
+	inSeg := false
+	for i := 0; i+1 < len(junctions); i++ {
+		u, v := junctions[i], junctions[i+1]
+		uoi, voi := ov.Idx[u], ov.Idx[v]
+		ul := engine.Part.LeafOf[uoi]
+		vl := engine.Part.LeafOf[voi]
+		if ul != leaf || vl != leaf {
+			inSeg = false
+			continue
+		}
+		if !inSeg {
+			fmt.Printf("  segment start at base=%d true=%.2f\n", u, dist[u])
+			inSeg = true
+		}
+		wantW := dist[v] - dist[u]
+		uli, uin := ls.localOf[uoi]
+		vli, vin := ls.localOf[voi]
+		if !uin || !vin {
+			fmt.Printf("  HOP NODE MISSING from subgraph: u(base %d, oi %d, in=%v) v(base %d, oi %d, in=%v)\n", u, uoi, uin, v, voi, vin)
+			continue
+		}
+		best := f32Inf
+		for pp := ls.start[uli]; pp < ls.start[uli+1]; pp++ {
+			if ls.to[pp] == vli && ls.secs[pp] < best {
+				best = ls.secs[pp]
+			}
+		}
+		if best == f32Inf {
+			fmt.Printf("  HOP EDGE MISSING: base %d->%d (oi %d->%d) wantW=%.2f\n", u, v, uoi, voi, wantW)
+		} else if float64(best-wantW) > 0.01 {
+			fmt.Printf("  HOP WEIGHT HIGH: base %d->%d ls=%.2f want=%.2f\n", u, v, best, wantW)
+		}
+	}
+	fmt.Println("hop check complete")
 }

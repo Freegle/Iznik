@@ -75,13 +75,19 @@ func usableBits(e Edge) uint8 {
 }
 
 // nbInfo accumulates, per base node, up to three distinct neighbours with
-// per-mode in/out usability bits. More than three distinct neighbours, or a
-// duplicate (parallel) edge for the same mode+direction+neighbour, marks the
-// node an automatic junction via the flags field.
+// per-mode in/out usability bits. More than three distinct neighbours, or ANY
+// second edge to the same neighbour in the same direction (parallel edges —
+// even with disjoint mode sets, e.g. a road plus a separately-mapped footway
+// between the same two nodes), marks the node an automatic junction: the
+// chain walk can only follow one of the parallels, and following the wrong
+// one silently drops the other's modes from the contracted edge (found as a
+// missing drivable edge in the Southend parity divergence).
 type nbInfo struct {
 	nb      [3]NodeID
 	outBits [3]uint8
 	inBits  [3]uint8
+	outCnt  [3]uint8
+	inCnt   [3]uint8
 	n       uint8
 	flags   uint8 // 1 = overflow (>3 neighbours), 2 = parallel edge
 }
@@ -112,14 +118,16 @@ func (ni *nbInfo) add(other NodeID, bits uint8, out bool) {
 		ni.n++
 	}
 	if out {
-		if ni.outBits[slot]&bits != 0 {
+		if ni.outCnt[slot] > 0 {
 			ni.flags |= nbParallel
 		}
+		ni.outCnt[slot]++
 		ni.outBits[slot] |= bits
 	} else {
-		if ni.inBits[slot]&bits != 0 {
+		if ni.inCnt[slot] > 0 {
 			ni.flags |= nbParallel
 		}
+		ni.inCnt[slot]++
 		ni.inBits[slot] |= bits
 	}
 }

@@ -32,9 +32,16 @@ type RegionMatrices struct {
 	ExitOff  []int32  // len = leaves+1
 	Entries  []uint32 // overlay indices
 	Exits    []uint32
-	MatOff   []int64   // len = leaves+1; Mat[MatOff[l]:] is entries×exits row-major
-	Mat      []float32 // +Inf = internally unreachable
-	Ecc      []float32 // parallel to Entries; +Inf = entry does not cover region
+	// Boundary = sorted union of entries and exits. The matrix must span
+	// entry -> EVERY boundary node (not just exits): a shortest path can
+	// reach a sibling ENTRY internally (found by the Southend parity
+	// divergence), and those arrivals both feed the stored labels and relay
+	// onward through cross edges.
+	BndOff []int32
+	Bnd    []uint32
+	MatOff []int64   // len = leaves+1; Mat[MatOff[l]:] is entries×boundary row-major
+	Mat    []float32 // +Inf = internally unreachable
+	Ecc    []float32 // parallel to Entries; +Inf = entry does not cover region
 
 	// Cross edges between leaves (drive): from exit to entry with chain secs.
 	CrossFrom []uint32
@@ -48,14 +55,17 @@ func (rm *RegionMatrices) LeafEntries(l int32) []uint32 {
 func (rm *RegionMatrices) LeafExits(l int32) []uint32 {
 	return rm.Exits[rm.ExitOff[l]:rm.ExitOff[l+1]]
 }
+func (rm *RegionMatrices) LeafBoundary(l int32) []uint32 {
+	return rm.Bnd[rm.BndOff[l]:rm.BndOff[l+1]]
+}
 func (rm *RegionMatrices) LeafEcc(l int32) []float32 {
 	return rm.Ecc[rm.EntryOff[l]:rm.EntryOff[l+1]]
 }
 
-// MatAt returns the internal entry→exit seconds for leaf l.
-func (rm *RegionMatrices) MatAt(l int32, entryIdx, exitIdx int) float32 {
-	nx := int(rm.ExitOff[l+1] - rm.ExitOff[l])
-	return rm.Mat[rm.MatOff[l]+int64(entryIdx*nx+exitIdx)]
+// MatAt returns the internal entry→boundary seconds for leaf l.
+func (rm *RegionMatrices) MatAt(l int32, entryIdx, bndIdx int) float32 {
+	nx := int(rm.BndOff[l+1] - rm.BndOff[l])
+	return rm.Mat[rm.MatOff[l]+int64(entryIdx*nx+bndIdx)]
 }
 
 var f32Inf = float32(math.Inf(1))
@@ -163,6 +173,7 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 	rm := &RegionMatrices{
 		EntryOff: make([]int32, nLeaves+1),
 		ExitOff:  make([]int32, nLeaves+1),
+		BndOff:   make([]int32, nLeaves+1),
 		MatOff:   make([]int64, nLeaves+1),
 	}
 
@@ -204,11 +215,25 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 			ext = append(ext, oi)
 		}
 		sort.Slice(ext, func(i, j int) bool { return ext[i] < ext[j] })
+		bndSet := make(map[uint32]struct{}, len(ent)+len(ext))
+		for _, oi := range ent {
+			bndSet[oi] = struct{}{}
+		}
+		for _, oi := range ext {
+			bndSet[oi] = struct{}{}
+		}
+		bnd := make([]uint32, 0, len(bndSet))
+		for oi := range bndSet {
+			bnd = append(bnd, oi)
+		}
+		sort.Slice(bnd, func(i, j int) bool { return bnd[i] < bnd[j] })
 		rm.EntryOff[l+1] = rm.EntryOff[l] + int32(len(ent))
 		rm.ExitOff[l+1] = rm.ExitOff[l] + int32(len(ext))
+		rm.BndOff[l+1] = rm.BndOff[l] + int32(len(bnd))
 		rm.Entries = append(rm.Entries, ent...)
 		rm.Exits = append(rm.Exits, ext...)
-		rm.MatOff[l+1] = rm.MatOff[l] + int64(len(ent)*len(ext))
+		rm.Bnd = append(rm.Bnd, bnd...)
+		rm.MatOff[l+1] = rm.MatOff[l] + int64(len(ent)*len(bnd))
 	}
 	rm.Mat = make([]float32, rm.MatOff[nLeaves])
 	rm.Ecc = make([]float32, len(rm.Entries))
@@ -224,9 +249,9 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 			defer func() { <-sem }()
 			ls := buildLeafSubgraph(ov, part, int32(l))
 			ents := rm.LeafEntries(int32(l))
-			exts := rm.LeafExits(int32(l))
+			bnd := rm.LeafBoundary(int32(l))
 			dist := make([]float32, len(ls.nodes))
-			nx := len(exts)
+			nx := len(bnd)
 			for ei, ent := range ents {
 				ls.dijkstraFrom(ls.localOf[ent], dist)
 				ecc := float32(0)
@@ -237,7 +262,7 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 				}
 				rm.Ecc[int(rm.EntryOff[l])+ei] = ecc
 				base := rm.MatOff[l] + int64(ei*nx)
-				for xi, ex := range exts {
+				for xi, ex := range bnd {
 					rm.Mat[base+int64(xi)] = dist[ls.localOf[ex]]
 				}
 			}
@@ -260,7 +285,7 @@ func saveMatrices(path string, rm *RegionMatrices) error {
 	if _, err := f.WriteString(stage2SnapMagic); err != nil {
 		return err
 	}
-	for _, s := range [][]int32{rm.EntryOff, rm.ExitOff} {
+	for _, s := range [][]int32{rm.EntryOff, rm.ExitOff, rm.BndOff} {
 		if err := writeSlice(f, s); err != nil {
 			return err
 		}
@@ -269,6 +294,9 @@ func saveMatrices(path string, rm *RegionMatrices) error {
 		return err
 	}
 	if err := writeSlice(f, rm.Exits); err != nil {
+		return err
+	}
+	if err := writeSlice(f, rm.Bnd); err != nil {
 		return err
 	}
 	if err := writeSlice(f, rm.MatOff); err != nil {
@@ -306,10 +334,16 @@ func loadMatrices(path string) (*RegionMatrices, error) {
 	if rm.ExitOff, err = readSlice[int32](f); err != nil {
 		return nil, err
 	}
+	if rm.BndOff, err = readSlice[int32](f); err != nil {
+		return nil, err
+	}
 	if rm.Entries, err = readSlice[uint32](f); err != nil {
 		return nil, err
 	}
 	if rm.Exits, err = readSlice[uint32](f); err != nil {
+		return nil, err
+	}
+	if rm.Bnd, err = readSlice[uint32](f); err != nil {
 		return nil, err
 	}
 	if rm.MatOff, err = readSlice[int64](f); err != nil {
