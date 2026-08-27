@@ -97,6 +97,8 @@ describe('ModMessageButtons', () => {
     ModMessageButton: {
       template: `<button
         class="mod-message-button"
+        :data-stdmsgid="String(stdmsgid)"
+        :data-no-member-message="String(noMemberMessage)"
         :class="{
           [variant]: true,
           approve: approve === '' || approve === true,
@@ -125,6 +127,8 @@ describe('ModMessageButtons', () => {
         'approveedits',
         'revertedits',
         'leave',
+        'isHomeGroup',
+        'noMemberMessage',
       ],
     },
     SpinButton: {
@@ -766,6 +770,81 @@ describe('ModMessageButtons', () => {
 
       const wrapper = mountComponent({ modconfigid: 1 })
       expect(wrapper.vm.filtered).toEqual([])
+    })
+  })
+
+  // A TN post placed on a community its poster never chose: the moderator keeps the queue
+  // actions but loses everything that would write to the poster, because there is nobody
+  // on the other end who agreed to hear from them. See modmessaging in the Go API.
+  describe('a post whose poster never joined Freegle', () => {
+    function mountUnaddressed(props = {}, messageOverrides = {}) {
+      mockModConfigStore.configsById = { 1: createModConfig() }
+      return mountComponent(
+        { modconfigid: 1, modMessagingAllowed: false, ...props },
+        messageOverrides
+      )
+    }
+
+    it('still offers Approve, Delete and Hold', () => {
+      const labels = mountUnaddressed()
+        .findAll('.mod-message-button')
+        .map((b) => b.text())
+
+      expect(labels).toContain('Approve')
+      expect(labels).toContain('Delete')
+      expect(labels).toContain('Delete as Spam')
+      expect(labels).toContain('Hold')
+    })
+
+    it('offers no standard messages - every one of them writes to the poster', () => {
+      const withStdmsg = mountUnaddressed()
+        .findAll('.mod-message-button')
+        .filter((b) => /^\d+$/.test(b.attributes('data-stdmsgid') || ''))
+
+      expect(withStdmsg.length).toBe(0)
+      expect(mountUnaddressed().vm.filtered).toEqual([])
+    })
+
+    it('offers the standard messages for an ordinary post, so the check above means something', () => {
+      mockModConfigStore.configsById = { 1: createModConfig() }
+      const wrapper = mountComponent({ modconfigid: 1 })
+
+      expect(wrapper.vm.filtered.length).toBeGreaterThan(0)
+    })
+
+    it('hides the autosend toggle, which now controls nothing', () => {
+      expect(mountUnaddressed().find('.our-toggle').exists()).toBe(false)
+    })
+
+    it('tells Reject to send the poster nothing', () => {
+      const reject = mountUnaddressed()
+        .findAll('.mod-message-button')
+        .find((b) => b.text() === 'Reject')
+
+      expect(reject.attributes('data-no-member-message')).toBe('true')
+    })
+
+    it('offers no Blank Reply on an approved copy either', () => {
+      const labels = mountUnaddressed(
+        {},
+        { groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
+        .findAll('.mod-message-button')
+        .map((b) => b.text())
+
+      expect(labels).not.toContain('Blank Reply')
+      expect(labels).toContain('Delete')
+    })
+
+    it('offers Blank Reply on an approved ordinary post', () => {
+      const labels = mountComponent(
+        {},
+        { groups: [{ groupid: 456, collection: 'Approved' }] }
+      )
+        .findAll('.mod-message-button')
+        .map((b) => b.text())
+
+      expect(labels).toContain('Blank Reply')
     })
   })
 })

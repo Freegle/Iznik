@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-26
+last_reviewed: 2026-08-27
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/modtools/pages/messages/**
@@ -175,8 +175,10 @@ not work.
 
 Some posts arrive from Trash Nothing without the person choosing a Freegle community at
 all - we match them to a community from where they are. Those posts carry a warning saying
-so, and they behave differently, because the person behind them has not joined Freegle and
-never agreed to hear from you:
+so, worded for where the post has got to: on one waiting in **Pending** it says approve or
+delete is the whole of it, and on one already **live** it says what happens if members
+report it. They behave differently from an ordinary post, because the person behind them
+has not joined Freegle and never agreed to hear from you:
 
 - You can **approve** or **delete** them as normal, and hold and release them.
 - You **cannot edit** them, send a **Blank Reply**, or use any **standard message** - those

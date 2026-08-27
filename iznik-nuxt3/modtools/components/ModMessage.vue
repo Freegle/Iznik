@@ -221,19 +221,11 @@
                 </a>
               </span>
             </NoticeMessage>
-            <NoticeMessage
-              v-if="!modMessagingAllowed"
-              variant="warning"
-              class="mt-1 mb-2"
-              data-test="tn-unaddressed-warning"
-            >
-              This came from Trash Nothing. The person who posted it hasn't
-              joined Freegle and didn't choose to post to
-              <strong>{{ currentGroupName || 'this community' }}</strong> - we
-              matched it here from where they are. So you can
-              <strong>approve or delete</strong> it, but you can't edit it or
-              message them, and there's no chat with them.
-            </NoticeMessage>
+            <ModMessageTnNotice
+              :mod-messaging-allowed="modMessagingAllowed"
+              :live="contextCopyIsLive"
+              :group-name="currentGroupName"
+            />
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -1177,6 +1169,15 @@ const reachArrival = computed(() => {
 // stay. Server-enforced too - see the Go modmessaging package.
 const modMessagingAllowed = computed(
   () => message.value?.mod_messaging_allowed !== false
+)
+
+// Whether the copy being administered is live on the community. Only Approved is;
+// Pending and Spam are both still awaiting a decision. Read off contextGroup rather
+// than the message-wide `pending`, because the notice above speaks about THIS copy -
+// a post can be live on one community while still pending on another, and telling a
+// moderator their pending copy "is live" would be wrong.
+const contextCopyIsLive = computed(
+  () => contextGroup.value?.collection === 'Approved'
 )
 
 // Rippling-out (#6): the post originated on another group and has rippled in to the

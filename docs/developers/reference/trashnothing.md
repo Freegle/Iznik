@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-26
+last_reviewed: 2026-08-27
 owner: Freegle dev team
 covers:
   - iznik-server-go/changes/**
@@ -12,6 +12,7 @@ covers:
   - iznik-batch/app/Services/TrashNothing/Ingestion/**
   - iznik-batch/app/Services/TrashNothing/Sync/**
   - iznik-server-go/modmessaging/**
+  - iznik-nuxt3/modtools/components/ModMessageTnNotice.vue
   # cross-stack behaviour tests (change when the behaviour changes)
   - iznik-server-go/test/modmessaging_test.go
 ---
@@ -240,6 +241,11 @@ What changes as a result:
   `mod_messaging_allowed` per member (batched in `enrichMembers`), and `ModMember.vue`
   shows a notice saying this is a Trash Nothing user who has not opted in to Freegle and
   cannot be contacted.
+- **The post is flagged in the mod queue.** `ModMessageTnNotice.vue` explains the same
+  thing about the post, in two variants keyed on whether the copy being administered is
+  live: awaiting a decision reads "approve or delete on what you can see", live reads what
+  a report will do. Keyed on the CONTEXT copy's collection, not the message-wide `pending`
+  - a post can be live on one community while still pending on another.
 
 Members are **not** restricted: an ordinary freegler can still reply to one of these
 posts, and the reply relays back to TN as it always has. The restriction is about
