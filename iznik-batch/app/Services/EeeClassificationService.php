@@ -38,6 +38,7 @@ class EeeClassificationService
         protected EeeVisionService $vision,
         protected EeeSqliteService $sqlite,
         protected EeeComponentService $componentService,
+        protected EeeProductionStore $productionStore,
     ) {}
 
     public function withDriver(string $driver): static
@@ -305,6 +306,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->productionStore->upsert($data);
         $this->recordClassifiedAttachment((int) $message->id, (int) $att->attid);
         return $data;
     }
@@ -410,6 +412,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->productionStore->upsert($data);
         return $data;
     }
 
@@ -427,16 +430,27 @@ class EeeClassificationService
         }
 
         // Component-index derived EEE verdict (deterministic, no model judgment).
-        // Empty component list = evidence of absence → Not EEE (0).
-        // Supplementary-only components → Uncertain (null).
-        // Primary EEE component found → EEE (1).
+        //
+        // Material Focus line, per plans/2026-08-25-eee-definition-decision.md: any electrical
+        // component is enough, including support/control ones, EXCEPT for the products the
+        // Environment Agency names as not EEE. Those are matched on the item name, which is
+        // why the name is passed in - a gas cooker's ignition looks identical to any other
+        // ignition from the component string alone.
+        //
+        // Empty component list stays "not EEE" rather than unknown: if the model looked and
+        // listed nothing electrical, that is evidence of absence.
         $compDesc = $result['electrical_components_description'] ?? null;
+        $itemName = trim((string) ($message->item_name ?? '')) ?: (string) ($message->subject ?? '');
+        $isEeeReason = null;
+
         if (!$compDesc) {
-            $isEeeFromComponents = 0; // model listed nothing electrical — treat as not EEE
+            $isEeeFromComponents = 0;
+            $isEeeReason = 'no_electrical_components';
         } elseif (!$this->componentService->needsBuilding()) {
             $components = array_filter(array_map('trim', explode(';', $compDesc)));
-            $verdict = $this->componentService->classifyComponents($components);
+            $verdict = $this->componentService->classifyComponents($components, $itemName);
             $isEeeFromComponents = $verdict['is_eee'] !== null ? ($verdict['is_eee'] ? 1 : 0) : null;
+            $isEeeReason = $verdict['is_eee_reason'] ?? null;
         } else {
             $isEeeFromComponents = null; // components exist but index not built yet
         }
@@ -452,6 +466,7 @@ class EeeClassificationService
             'is_eee_confidence'                => round($isEeeConfidence, 4),
             'is_eee_reasoning'                 => $result['is_eee_reasoning'] ?? null,
             'is_eee_from_components'           => $isEeeFromComponents,
+            'is_eee_reason'                    => $isEeeReason,
             'contains_eee_components'          => ($result['contains_eee_components'] ?? false) ? 1 : 0,
             'electrical_components_description'=> $result['electrical_components_description'] ?? null,
             'weee_category'                    => $result['weee_category'] ?? null,
@@ -494,6 +509,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->productionStore->upsert($data);
         $this->recordClassifiedAttachment((int) $message->id, $attid);
         return $data;
     }
@@ -518,6 +534,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->productionStore->upsert($data);
         return $data;
     }
 
