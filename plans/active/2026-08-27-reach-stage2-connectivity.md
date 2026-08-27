@@ -29,7 +29,7 @@ against today's cell answer (prod `rippling_reach.polygon_cells` via the tunnel)
 | 7 | Labeling query: origin→exits, boundary-overlay Dijkstra, tree labels; exactness vs flat Dijkstra | ✅ | bristol: 127k arrivals EXACT (≤0.01s) across 4 origins incl chain-origin; 0 false memberships; Full-region ecc sound |
 | 8 | Prod parity harness: tunnel posts + polygon_cells vs labeling | ✅ | 0/571k exactness; 3-way comparison decomposes all divergence |
 | 9 | Measurements → this file + parent plan; gate verdict recorded | ✅ | gate PASS |
-| 10 | Full Go suite + gofmt + quality review + PR | 🔄 | 180 pass 0 fail; gofmt/vet clean |
+| 10 | Full Go suite + gofmt + quality review + PR | ✅ | 180 pass 0 fail; PR #1438 |
 
 ## Design decisions
 
