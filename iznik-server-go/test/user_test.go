@@ -4486,6 +4486,93 @@ func TestUserLocationChangesModInfo(t *testing.T) {
 	})
 }
 
+// Rippling Out auto-joins a poster to every group their post ripples into (memberships.rippled
+// = 1 / memberships_history.rippled = 1), which can legitimately span a wide geographic area with
+// no action by the member at all. enrichUserForModtools' activedistance spread must exclude those
+// ripple-created memberships_history rows - counting them flags/bans innocent freeglers purely for
+// having a post ripple out (Discourse 10064/1).
+func TestActivedistanceExcludesRippleOnlyMemberships(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("activedist")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	group1 := CreateTestGroup(t, prefix+"_g1")
+	group2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, modID, group1, "Moderator")
+	// The target is a genuine current member of group1 (as a ripple auto-join leaves them) - this
+	// is what makes the mod a mod of this member (IsModOfUser) and gates activedistance into the response.
+	CreateTestMembership(t, targetID, group1, "Member")
+
+	// Edinburgh and London - far enough apart to trigger the "miles apart" warning.
+	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, publish = 1, onmap = 1 WHERE id = ?", group1)
+	db.Exec("UPDATE `groups` SET lat = 51.5074, lng = -0.1278, publish = 1, onmap = 1 WHERE id = ?", group2)
+
+	// Both memberships_history rows are ripple-created (rippled = 1), within the 31-day window -
+	// the member never joined either group themselves.
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled) "+
+		"VALUES (?, ?, 'Approved', NOW(), 1)", targetID, group1)
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled) "+
+		"VALUES (?, ?, 'Approved', NOW(), 1)", targetID, group2)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM memberships_history WHERE userid = ?", targetID)
+	})
+
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	assert.NoError(t, err)
+	assert.Equal(t, targetID, u.ID)
+
+	// FAILS on current code: activedistance is computed from ALL memberships_history rows in the
+	// window with no `rippled` filter, so a member who never chose to spread out still gets flagged.
+	assert.Nil(t, u.Activedistance,
+		"activedistance must not be computed from memberships created purely by rippling auto-join")
+}
+
+// Regression guard for the fix above: a member who genuinely joined distant groups themselves
+// (rippled = 0) must still be flagged - the fix must exclude only ripple-created rows, not
+// activedistance altogether.
+func TestActivedistanceStillFlagsGenuineSpread(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("activedistgenuine")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	group1 := CreateTestGroup(t, prefix+"_g1")
+	group2 := CreateTestGroup(t, prefix+"_g2")
+	CreateTestMembership(t, modID, group1, "Moderator")
+	CreateTestMembership(t, targetID, group1, "Member")
+
+	db.Exec("UPDATE `groups` SET lat = 55.9533, lng = -3.1883, publish = 1, onmap = 1 WHERE id = ?", group1)
+	db.Exec("UPDATE `groups` SET lat = 51.5074, lng = -0.1278, publish = 1, onmap = 1 WHERE id = ?", group2)
+
+	// The member chose to join both groups themselves (rippled = 0).
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0)", targetID, group1)
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, added, rippled) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0)", targetID, group2)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM memberships_history WHERE userid = ?", targetID)
+	})
+
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	err = json.NewDecoder(resp.Body).Decode(&u)
+	assert.NoError(t, err)
+	assert.NotNil(t, u.Activedistance, "genuine (non-rippled) group spread must still be flagged to mods")
+}
+
 // TestGetUserMessageHistory_IncludesPending verifies that Pending messages appear in the
 // messagehistory returned by GET /api/user/:id?modtools=true.
 //
