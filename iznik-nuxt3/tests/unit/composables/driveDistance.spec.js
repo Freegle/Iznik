@@ -13,7 +13,7 @@ vi.mock('~/api', () => ({
 }))
 
 vi.mock('#app', () => ({
-  useRuntimeConfig: () => ({}),
+  useRuntimeConfig: () => ({ public: { APIv2: 'https://api.test' } }),
 }))
 
 let mockUser = { lat: 51.45, lng: -2.58 }

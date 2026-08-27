@@ -119,19 +119,53 @@ circular lane sharing both endpoints). They are kept in the tree as regression
 tooling — `stage2 parity`, `stage2 sweep` — and the arguments above are only as
 good as their continued green.
 
+## Road distance on the site (implemented)
+
+Every arrival the engine computes carries the road METRES of the winning path
+alongside its seconds (verified across the same 5.1-million-check UK sweep:
+none missing, 0.005% differing only where two routes tie on time). On top of
+that sit batch-first interfaces at every hop — routing `POST /v1/drive-metrics`
+(one origin, up to 1000 targets, one call), apiv2 `POST /drivedistance` (the
+logged-in member to up to 100 points), and a frontend composable that collects
+every card rendered in a pass and issues ONE request — so post lists, chat
+headers and profiles show "N miles by road" instead of crow-flies, falling
+back to crow-flies automatically wherever the engine is not deployed. The
+far-away warning when replying deliberately still uses crow-flies: it is a
+logic threshold, and road distance over blurred coordinates can exaggerate.
+
+Which is the caveat that matters: displayed locations are BLURRED for privacy,
+and a few hundred metres of circular blur can put a point on the wrong side of
+a river — a tiny crow-flies error but a huge road-distance one. The engine
+makes the fix cheap: `GET /v1/blur` blurs ALONG the road network (a
+deterministic pseudo-random road node between R/2 and 3R/2 road-metres away),
+so a blurred location stays on its own bank by construction. Switching member
+display blurring over to it is a deliberate, privacy-visible decision left
+open; the primitive and its tests are in.
+
+## Fairness is untouched
+
+The deprivation-quintile fairness machinery (the fairness weight, the overflow
+lanes, `/v1/fairness`) runs on the existing pipeline: no fairness, overflow or
+deprivation file changes anywhere in this work, and the full fairness test set
+passes unchanged. The new road-distance answers are plain drive metric —
+display values, not allocation decisions. When batch later adopts labels as
+the membership truth, overflow cells remain a separate additive geometry: the
+labels do not subsume them.
+
 ## What else this structure unlocks
 
 The regions-plus-boundary-tables structure is the core of "Customizable Route
 Planning", the method built for general routing, so reach is only its first
 customer:
 
-- **Point-to-point drive times in ~1-3ms anywhere in the UK.** Snap both ends,
-  search locally inside each end's region, hop between the two boundaries via
-  the tables. Today's `/v1/drive-time` explores the entire disc around the
-  origin — a long cross-country question sweeps millions of points; this
-  answers it in milliseconds. The only missing artifact is the reverse
-  direction of the per-region tables (same ~2s build, transposed). The same
-  machinery makes the proximity-notes "is it quicker?" checks near-free.
+- **Point-to-point drive times, now served.** `/v1/drive-time` answers from
+  the engine when it is live (exact, milliseconds, road miles included, the
+  sweep kept as fallback), and `/v1/drive-metrics` answers one-to-many in a
+  single call. The remaining refinement is reverse-direction region tables so
+  unbounded point-to-point avoids computing the whole origin reach — the
+  current form is bounded by the 120-minute cap, which every current caller
+  is under. The same machinery makes the proximity-notes "is it quicker?"
+  checks near-free.
 - **One-to-many and many-to-many.** Arrival from one origin to many points is
   already the membership path; region-to-region time matrices compose from the
   boundary tables in milliseconds — useful for volunteer/collection

@@ -34,6 +34,10 @@ function flush() {
   }
 
   const runtimeConfig = useRuntimeConfig()
+  if (!runtimeConfig?.public?.APIv2) {
+    // No API base configured (unit tests, storybook): stay on crow-flies.
+    return
+  }
   const api = Api(runtimeConfig)
   const targets = batch.map((b, i) => ({ id: i, lat: b.lat, lng: b.lng }))
 
