@@ -494,3 +494,101 @@ func TestMessagePayloadSaysWhenAPostCannotBeRepliedTo(t *testing.T) {
 	assert.Equal(t, msg, payload.ID)
 	assert.False(t, payload.ModMessagingAllowed)
 }
+
+// The mod queue is where a moderator meets one of these posts, and it renders from a leaner
+// group row than GET /message does. Same rule, different struct, so it needs its own check -
+// a queue that said the post could be replied to would put the Reply button back.
+func TestModQueueListSaysWhenAPostCannotBeRepliedTo(t *testing.T) {
+	prefix := uniquePrefix("mmaqueue")
+	group := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	mod := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, mod, group, "Moderator")
+	_, modToken := CreateTestSession(t, mod)
+
+	unaddressed := CreateTestMessage(t, poster, group, "OFFER: queueun "+prefix, 51.5, -0.1)
+	makeUnaddressed(unaddressed)
+	ordinary := CreateTestMessage(t, poster, group, "OFFER: queueord "+prefix, 51.5, -0.1)
+
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/api/messages?collection=Approved&groupid=%d&limit=100&jwt=%s", group, modToken), nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var payload struct {
+		Messages []struct {
+			ID                  uint64 `json:"id"`
+			ModMessagingAllowed bool   `json:"mod_messaging_allowed"`
+		} `json:"messages"`
+	}
+	assert.NoError(t, json.NewDecoder(resp.Body).Decode(&payload))
+
+	seen := map[uint64]bool{}
+	for _, r := range payload.Messages {
+		seen[r.ID] = r.ModMessagingAllowed
+	}
+	assert.Contains(t, seen, unaddressed)
+	assert.False(t, seen[unaddressed], "the queue must say this one cannot be replied to")
+	assert.Contains(t, seen, ordinary)
+	assert.True(t, seen[ordinary], "an ordinary post in the same queue must be unaffected")
+}
+
+// An anonymous report counts towards nothing - the quorum counts distinct PEOPLE - so it has
+// to be refused rather than accepted and silently dropped. And a report with no post named is
+// a client bug, not a verdict.
+func TestReportActionRefusesAnonymousAndUnidentifiedReports(t *testing.T) {
+	prefix := uniquePrefix("mmarepguard")
+	group := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	reporter := CreateTestUser(t, prefix+"_reporter", "User")
+	_, token := CreateTestSession(t, reporter)
+	msg := CreateTestMessage(t, poster, group, "OFFER: repguard "+prefix, 51.5, -0.1)
+	makeUnaddressed(msg)
+
+	status, _ := postMessageActionResult(t, "", map[string]interface{}{
+		"id": msg, "action": "Report", "groupid": group, "message": "Looks like spam",
+	})
+	assert.Equal(t, 401, status, "an anonymous report cannot be counted, so it must be refused")
+
+	status, _ = postMessageActionResult(t, token, map[string]interface{}{
+		"action": "Report", "groupid": group, "message": "Looks like spam",
+	})
+	assert.Equal(t, 400, status, "a report naming no post is a client bug")
+}
+
+// The other way a quorum of "this shouldn't be here" is reached: the microvolunteering task,
+// not the report button. It has to end the same way for an unaddressed post, since the
+// reason is the same - there are no moderators to send it back to.
+func TestMicrovolunteeringRejectQuorumRemovesAnUnaddressedPost(t *testing.T) {
+	prefix := uniquePrefix("mmamicro")
+	db := database.DBConn
+	group := CreateTestGroup(t, prefix)
+	poster := CreateTestUser(t, prefix+"_poster", "User")
+	msg := CreateTestMessage(t, poster, group, "OFFER: micro "+prefix, 51.5, -0.1)
+	makeUnaddressed(msg)
+
+	for i := 0; i < microvolunteering.ApprovalQuorum; i++ {
+		volunteer := CreateTestUser(t, fmt.Sprintf("%s_v%d", prefix, i), "User")
+		CreateTestMembership(t, volunteer, group, "Member")
+		_, token := CreateTestSession(t, volunteer)
+
+		body, _ := json.Marshal(map[string]interface{}{
+			"msgid": msg, "response": "Reject", "comments": "Shouldn't be here",
+		})
+		req := httptest.NewRequest("POST",
+			fmt.Sprintf("/api/microvolunteering?jwt=%s", token), bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req, -1)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+	}
+
+	assert.Equal(t, int64(0), liveGroupRows(msg), "quorum here must remove it, not pend it")
+	assert.NotNil(t, messageDeletedAt(msg))
+
+	var logs int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ? AND byuser IS NULL",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, msg).Scan(&logs)
+	assert.Equal(t, int64(1), logs, "the removal must be audited exactly as the report route's is")
+}
