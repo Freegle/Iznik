@@ -21,6 +21,7 @@ class RestartProjectService
         $added         = 0;
         $updated       = 0;
         $deleted       = 0;
+        $duplicates    = 0;
         $now           = date('Y-m-d');
         $latest        = date('Y-m-d', strtotime('+' . self::DAYS_AHEAD . ' days'));
         $externalsSeen = [];
@@ -29,7 +30,7 @@ class RestartProjectService
 
         if ($groups === null) {
             Log::error('Restart: failed to fetch groups list');
-            return ['added' => $added, 'updated' => $updated, 'deleted' => $deleted];
+            return ['added' => $added, 'updated' => $updated, 'deleted' => $deleted, 'duplicates' => $duplicates];
         }
 
         foreach ($groups as $group) {
@@ -103,6 +104,31 @@ class RestartProjectService
 
                 $existing = $this->events->findByExternalId($externalId);
 
+                if (!$existing) {
+                    // Upstream sometimes lists one session twice under different event
+                    // ids, so a new id is not proof of a new event. Keep the copy we
+                    // already hold rather than sending moderators a second identical one.
+                    $alreadyHave = $this->events->findSameOccurrence('Restart-', $title, $location, $event['start']);
+
+                    if ($alreadyHave) {
+                        // Count the id we are holding as seen. Upstream sometimes drops
+                        // the id we first imported and keeps only the other one, and
+                        // without this the cleanup below would delete a live event and
+                        // re-import it for approval the next night.
+                        $externalsSeen[$alreadyHave->externalid] = true;
+
+                        Log::info('Restart: second listing of an event we already have', [
+                            'external_id' => $externalId,
+                            'holding'     => $alreadyHave->externalid,
+                            'title'       => $title,
+                            'start'       => $event['start'],
+                        ]);
+
+                        $duplicates++;
+                        continue;
+                    }
+                }
+
                 if ($existing) {
                     if ($dryRun) {
                         Log::debug('Restart: dry run — would update event', ['external_id' => $externalId]);
@@ -171,7 +197,7 @@ class RestartProjectService
             }
         }
 
-        return ['added' => $added, 'updated' => $updated, 'deleted' => $deleted];
+        return ['added' => $added, 'updated' => $updated, 'deleted' => $deleted, 'duplicates' => $duplicates];
     }
 
     private function apiGet(string $path, array $params = []): ?array

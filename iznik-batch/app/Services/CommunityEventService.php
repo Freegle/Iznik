@@ -11,6 +11,39 @@ class CommunityEventService
         return DB::table('communityevents')->where('externalid', $externalId)->first();
     }
 
+    /**
+     * An event already imported from the same source that is the same real-world
+     * occurrence: same title, same place, same start.
+     *
+     * Restarters.net publishes one repair cafe session under two of its own event ids
+     * often enough to matter (a double submit in one batch, or a re-publish weeks
+     * later), and keying only on externalid let both through as separate events for
+     * moderators to approve. Restricted to rows we imported ourselves - an event a
+     * moderator typed in by hand must not be adopted into the import, or the cleanup
+     * pass would start deleting it.
+     */
+    public function findSameOccurrence(string $externalIdPrefix, string $title, string $location, string $start): ?object
+    {
+        $when = strtotime($start);
+
+        // A start we cannot read is not evidence of anything. Over a thousand date rows
+        // in this table already hold a zero date, and treating those as one moment would
+        // collapse every event at a venue into the first one we happened to import.
+        if ($when === false) {
+            return null;
+        }
+
+        return DB::table('communityevents')
+            ->join('communityevents_dates', 'communityevents.id', '=', 'communityevents_dates.eventid')
+            ->where('communityevents.externalid', 'LIKE', $externalIdPrefix . '%')
+            ->where('communityevents.deleted', 0)
+            ->where('communityevents.title', $title)
+            ->where('communityevents.location', $location)
+            ->where('communityevents_dates.start', date('Y-m-d H:i:s', $when))
+            ->select('communityevents.id', 'communityevents.externalid')
+            ->first();
+    }
+
     public function createEvent(
         ?int $userId,
         string $title,
