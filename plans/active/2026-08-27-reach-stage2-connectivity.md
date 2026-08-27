@@ -144,6 +144,27 @@ All measured this session on the 20-core / 94GB WSL2 box against uk-latest.osm.p
 - Per-post query 1.5-26ms (cold incl. lazy tables) vs 29-229ms flat; labels
   0.6-3.8KB vs 2-46KB cells.
 
+### Fictional fuzz sweep (final, after partition speed-up + relative tolerance)
+- 754 origins = 359 real posts + 612 fictional (random UK points incl. sea/moor —
+  256 legitimately fail to snap and are skipped — mid-chain starts, junction starts,
+  sliver regions, budgets 1-120min) + 39 region synthetics. 5,167,704 arrival probes:
+  **0 mismatches** live AND stored (tolerance 0.01s + 10ppm — float32 summation order
+  legitimately wobbles ~3ppm at 90-minute arrivals). 8 flips = budget ties.
+- **False membership: 0 of 3,004,250 probes** on nodes the true search did not reach.
+- Query mean 12.9ms (scattered cold origins), flat search mean 73ms.
+- The fuzzer itself had a signed-modulo bug on first run (crash, fixed); the fixed
+  0.01s absolute tolerance was replaced by the relative one after 790 ppm-scale
+  "mismatches" at 90/120-min budgets were confirmed to be summation-order noise.
+
+### Partition speed-up (second round)
+- Each axis contracts its extreme alpha sets into super source/sink (exact — edges
+  inside a contracted set can never cross an s-t cut) so the flow network holds only
+  the middle band; BFS is level-synchronous and parallel on big bands.
+- Whole-mainland split 121s -> 49s; whole-UK partition **4m22s -> 2m54s**, identical
+  winning cuts. Boot-time choice: derive partition+tables in ~3min from the graph
+  snapshot, or load 95MB of stored artifacts in ~1s. Table cache 64 -> 512 regions
+  (~300MB worst) after concurrent sweeps thrashed it.
+
 ### UK-wide sweep (after the 13-post parity)
 - 359 real posts, one to three per half-degree cell across the UK (read-only tunnel,
   no blobs), plus 266 synthetic origins planted in every sizable partition region the

@@ -132,12 +132,16 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 				continue
 			}
 			probes++
+			// Tolerance is relative: float32 summation order across hundreds
+			// of hops legitimately differs by a few parts per million, which
+			// at a 90-minute arrival is ~0.01-0.02s.
+			tol := 0.01 + float64(want)*1e-5
 			live := engine.ArrivalAtBaseNode(lbl, id)
-			if d := math.Abs(float64(live - want)); d > 0.01 {
+			if d := math.Abs(float64(live - want)); d > tol {
 				misms = append(misms, mism{id, live, want, false})
 			}
 			st := engine.arrivalAtBaseNodeStored(stored, id)
-			if d := math.Abs(float64(st - want)); d > 0.01 {
+			if d := math.Abs(float64(st - want)); d > tol {
 				misms = append(misms, mism{id, st, want, true})
 			}
 			if (live <= T) != (want <= T) || (st <= T) != (want <= T) {
