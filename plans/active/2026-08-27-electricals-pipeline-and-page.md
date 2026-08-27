@@ -152,53 +152,53 @@ Two environment problems found and fixed along the way:
   by `scripts/setup-test-database.sh`, not migrated by the suite, so it needs re-running after
   any new migration.
 
-## Master is red locally, and this branch is not the cause
+## The red suite: root-caused and mostly fixed
 
-Proven by reproducing on a clean `origin/master` checkout: 95 Ripple failures of 420 and 22
-FirstReply of 92, identical to the counts on this branch. The Go suite shows the same
-subsystem: 28 failures, all Reach/Nearby/FirstReply/CellSet.
+Started at 159 Laravel failures and 28 Go. Now 36 Laravel and **0 Go**.
 
-**Root cause found.** Migration `2026_08_25_000001_drop_rippling_reach_legacy_geometry` dropped
-the legacy geometry columns, and a swathe of tests still write to them:
+**Root cause of 117 Laravel + all 28 Go failures: a stale `spatial-knn` image.**
+`CellSetService::rasterize()` posts to `/v1/reach/rasterize` on `spatial_server_url`
+(`spatial-knn`), and the running container answered 404 - it predated the cellset work. Every
+reach write silently produced no row, so tests read `density_band` off null. CI builds the
+image fresh, which is why CI was green on the same commit while local was not. Fixed with
+`docker-compose build spatial-knn && docker-compose up -d spatial-knn`. `ExpandServiceTest`
+went 77 failures to 108/108 passing; the Go suite went to 4285 passing, 0 failing.
+
+Also fixed along the way:
+
+- **Orphan test files inside containers.** `rippling/reachbounds_test.go` and
+  `test/singlepoint_reach_bounds_test.go` existed in `freegle-apiv2` but not on the host,
+  left by a branch switch (file sync never deletes). They referenced removed symbols, so the
+  whole Go suite would not build.
+- **`iznik_go_test` needs `scripts/setup-test-database.sh` re-run** after any new migration; it
+  is cloned, not migrated by the suite.
+- **`SeedsReachCells::fakeSpatialHttp()` shadowed its own stubs.** `Http::fake()` appends and
+  first-match-wins, so a test calling it twice (density then routing) lost the second set. Now
+  accumulates.
+
+### What remains: one application bug, 36 failures
+
+All 36 trace to `UnifiedDigestService` still reading `rippling_reach.polygon`, which
+`2026_08_25_000001` drops. Five live sites: lines 933, 965, 2096, 2118, 2375, 2417.
 
 ```
-Unknown column 'polygon' in 'field list'
-INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, ...)
+Unknown column 'r2.polygon' in 'where clause'
 ```
 
-That is the cellset legacy removal being mid-flight; the follow-up work is in the
-`reach-raster` worktree and gated on prod phase 2. CircleCI is green on the same commit
-(`be74a3df3`, pipeline #11278), so CI's database is evidently not built the way the local one
-is. Left alone deliberately: it is a different subsystem with active work in another worktree,
-and touching it here would collide.
+The reach gate and `mailNewlyReachedForPost` are therefore broken against the post-drop
+schema, so **applying that migration to production would break daily digests**. It has not
+bitten because the migration's own guard keeps production on the old columns until a human
+reads the parity report.
 
-**This blocks the PR.** CLAUDE.md allows pushing only after the full relevant suite passes
-locally. It does not, for reasons that are not this branch's, so nothing is pushed.
+Not attempted here, deliberately. The polygon test happens inside SQL across many candidate
+rows, and a cell grid cannot be probed from SQL. The fix needs the query restructured to
+narrow on the `outer_bound`/`inner_bound` sandwich and then call
+`CellSetService::containsEncoded()` in PHP for the boundary band only - decoding is
+area-proportional, so probing every candidate would cost far more than the geometry it
+replaces. That work belongs with the cellset migration in the `reach-raster` worktree.
 
-## Verified end to end on dev
-
-Classifier -> MySQL -> `electricals:stats` -> `GET /electricals/stats` -> page. 30 messages
-classified for $0.0019, page rendered and screenshotted at desktop and 375px, no console errors
-from the page.
-
-Four production-breaking defects the end-to-end run exposed, all now fixed:
-
-1. **`GOOGLE_GEMINI_API_KEY` never reached the batch container.** It was set only on the separate
-   `eee-batch` research container, so the hourly job would have failed every hour with "Vision
-   service not configured".
-2. **`gemini-2.0-flash-lite` is retired.** The API answers "no longer available". That is the model
-   the published accuracy was measured on, so nothing runnable today has been measured. Pinned to
-   `gemini-3.5-flash-lite`, and the payload now carries `measured_on` / `current_model` /
-   `measured_for_current_model` so the page states the figures describe an earlier model.
-3. **The primary-photo filter dropped 47% of posts.** On live only 5,432 of 10,307 OFFERs in a
-   week have any attachment flagged `primary = 1`. Now uses the canonical
-   `ORDER BY primary DESC, id ASC`.
-4. **Tonnage read as a confident zero with no weight basis.** `populationAverageWeight()` required
-   `popularity > 0`, which is empty until the backfill runs, so the page would have published
-   "0 tonnes reused" as a finding. Falls back to an unweighted mean and reports null when there is
-   genuinely no basis.
-
-`items:backfill-popularity` also ran for real on dev: 154 of 181 items corrected.
+`UnifiedDigestServiceTest` is converted to cell fixtures, which is what makes this bug
+visible rather than masked behind a fixture that could not insert.
 
 ## Not done
 
