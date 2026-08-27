@@ -366,10 +366,62 @@ func (p *partitioner) bisect(lo, hi int32, depth, parent int) {
 // inertialFlowSplit bisects order[lo:hi] and returns the split point (the
 // window is reordered so A = order[lo:mid], B = order[mid:hi]), the cut size,
 // the winning axis and the mean cut-edge coordinates.
+//
+// The internal arc structure (flat CSR, unit-capacity arc pairs) is built ONCE
+// per split with local ids = original window positions; the four projection
+// axes then run CONCURRENTLY, each with its own cap/level/iter buffers and its
+// own source/sink node sets (extreme alpha fraction along the axis). Sinks and
+// sources are node sets — no supernodes — so per-axis setup is just a cap
+// memcopy.
 func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64, float64) {
 	ug := p.ug
 	sub := p.order[lo:hi]
 	n := len(sub)
+
+	sc := p.scratch.Get().(*splitScratch)
+	defer p.scratch.Put(sc)
+	sc.nextEpoch()
+	for i, u := range sub {
+		sc.pos[u] = int32(i)
+		sc.epoch[u] = sc.cur
+	}
+
+	// ── Internal arcs, built once: undirected edge -> arc pair (i, i^1) ──────
+	deg := make([]int32, n+1)
+	for i, u := range sub {
+		for _, v := range ug.edgeTo[ug.edgeStart[u]:ug.edgeStart[u+1]] {
+			if sc.epoch[v] == sc.cur {
+				deg[i+1]++
+			}
+		}
+	}
+	for i := 0; i < n; i++ {
+		deg[i+1] += deg[i]
+	}
+	mArcs := int(deg[n]) // one arc per (node, incident-internal-edge)
+	csrArc := make([]int32, mArcs)
+	arcTo := make([]int32, mArcs)
+	fill := make([]int32, n)
+	// Assign arc pair ids: walk edges u<v once.
+	arcN := int32(0)
+	for i, u := range sub {
+		for _, v := range ug.edgeTo[ug.edgeStart[u]:ug.edgeStart[u+1]] {
+			if sc.epoch[v] != sc.cur {
+				continue
+			}
+			lv := sc.pos[v]
+			if int32(i) < lv {
+				a0, a1 := arcN, arcN+1
+				arcN += 2
+				arcTo[a0] = lv
+				arcTo[a1] = int32(i)
+				csrArc[deg[i]+fill[i]] = a0
+				fill[i]++
+				csrArc[deg[lv]+fill[lv]] = a1
+				fill[lv]++
+			}
+		}
+	}
 
 	proj := func(axis int, u int32) float32 {
 		switch axis {
@@ -384,60 +436,77 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 		}
 	}
 
-	// Window membership + local index via pooled epoch-stamped scratch,
-	// private to this call while held (sem bounds concurrent splits).
-	sc := p.scratch.Get().(*splitScratch)
-	defer p.scratch.Put(sc)
-	sc.nextEpoch()
-	for i, u := range sub {
-		sc.pos[u] = int32(i)
-		sc.epoch[u] = sc.cur
-	}
-
-	bestCut := math.MaxInt
-	bestAxis := -1
-	// Winning axis capture: node ordering + positional side flags.
-	bestNodes := make([]int32, 0, n)
-	var bestSide []bool
-
 	nsrc := int(float64(n) * p.alpha)
 	if nsrc < 1 {
 		nsrc = 1
 	}
+	if nsrc > n/3 {
+		nsrc = n / 3
+	}
 
-	// A per-axis node ordering, independent of the shared order slice.
-	axisNodes := make([]int32, n)
-	copy(axisNodes, sub)
-
+	type axisResult struct {
+		side    []bool // by local id, true = source side
+		cut     int
+		aLen    int
+		phases  int
+		elapsed time.Duration
+	}
+	results := make([]axisResult, 4)
+	var awg sync.WaitGroup
 	for axis := 0; axis < 4; axis++ {
-		sort.Slice(axisNodes, func(i, j int) bool { return proj(axis, axisNodes[i]) < proj(axis, axisNodes[j]) })
-		for i, u := range axisNodes {
-			sc.pos[u] = int32(i)
+		awg.Add(1)
+		go func(axis int) {
+			defer awg.Done()
+			astart := time.Now()
+			// Axis ordering of local ids.
+			locals := make([]int32, n)
+			for i := range locals {
+				locals[i] = int32(i)
+			}
+			sort.Slice(locals, func(a, b int) bool {
+				return proj(axis, sub[locals[a]]) < proj(axis, sub[locals[b]])
+			})
+			isSrc := make([]bool, n)
+			isSink := make([]bool, n)
+			for i := 0; i < nsrc; i++ {
+				isSrc[locals[i]] = true
+				isSink[locals[n-1-i]] = true
+			}
+			caps := make([]int8, int(arcN))
+			for i := range caps {
+				caps[i] = 1
+			}
+			side, cut, phases := dinicNodeSets(n, deg, csrArc, arcTo, caps, isSrc, isSink)
+			aLen := 0
+			for _, s := range side {
+				if s {
+					aLen++
+				}
+			}
+			results[axis] = axisResult{side, cut, aLen, phases, time.Since(astart)}
+		}(axis)
+	}
+	awg.Wait()
+
+	best := 0
+	for axis := 1; axis < 4; axis++ {
+		r, b := results[axis], results[best]
+		if r.cut < b.cut || (r.cut == b.cut && absInt(r.aLen*2-n) < absInt(b.aLen*2-n)) {
+			best = axis
 		}
-		side, cut := p.dinicCut(axisNodes, sc, nsrc)
-		if cut < bestCut {
-			bestCut = cut
-			bestAxis = axis
-			bestNodes = append(bestNodes[:0], axisNodes...)
-			bestSide = side
-		}
+	}
+	bestR := results[best]
+	if n > 500000 {
+		log.Printf("stage2: split n=%d: axis %d wins cut=%d balance=%.2f (phases %d, %v; all cuts %d/%d/%d/%d)",
+			n, best, bestR.cut, float64(min(bestR.aLen, n-bestR.aLen))/float64(n), bestR.phases, bestR.elapsed.Round(time.Millisecond),
+			results[0].cut, results[1].cut, results[2].cut, results[3].cut)
 	}
 
-	// Apply the winning side: stable-partition the shared window into A then B
-	// (in original window order) and refresh pos for our own nodes only.
-	inA := func(u int32) bool { return false }
-	{
-		// Mark A-side nodes using sc.pos as a positional side lookup for the
-		// winning ordering.
-		for i, u := range bestNodes {
-			sc.pos[u] = int32(i)
-		}
-		inA = func(u int32) bool { return bestSide[sc.pos[u]] }
-	}
-	a := make([]int32, 0, n)
-	b := make([]int32, 0, n)
-	for _, u := range sub {
-		if inA(u) {
+	// Apply: stable-partition the window into A (source side) then B.
+	a := make([]int32, 0, bestR.aLen)
+	b := make([]int32, 0, n-bestR.aLen)
+	for i, u := range sub {
+		if bestR.side[i] {
 			a = append(a, u)
 		} else {
 			b = append(b, u)
@@ -450,16 +519,18 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 	}
 	mid := lo + int32(len(a))
 
-	// Cut edge coordinate summary (for estuary/urban characterisation).
+	// Cut edge coordinate summary (estuary/urban characterisation). side is
+	// indexed by ORIGINAL window position, still available via nothing — so
+	// recompute membership from the reordered window: A = pos < mid.
 	var cLat, cLng float64
 	cn := 0
 	for _, u := range sub {
-		ua := inA(u)
+		ua := p.pos[u] < mid
 		for _, v := range ug.edgeTo[ug.edgeStart[u]:ug.edgeStart[u+1]] {
 			if sc.epoch[v] != sc.cur {
 				continue
 			}
-			va := inA(v)
+			va := p.pos[v] < mid
 			if ua != va && u < v {
 				cLat += float64(ug.y[u]) / 111.2
 				cLng += float64(ug.x[u]) / (111.2 * math.Cos(54*math.Pi/180))
@@ -471,135 +542,125 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 		cLat /= float64(cn)
 		cLng /= float64(cn)
 	}
-	return mid, bestCut, bestAxis, cLat, cLng
+	return mid, bestR.cut, best, cLat, cLng
 }
 
-// dinicCut runs unit-capacity Dinic between the first nsrc (sources) and last
-// nsrc (sinks) of nodes (in projection order), returning the min-cut side
-// assignment indexed by position in nodes (true = source side) and the cut
-// value. sc carries window membership (epoch) and local positions.
-func (p *partitioner) dinicCut(nodes []int32, sc *splitScratch, nsrc int) ([]bool, int) {
-	ug := p.ug
-	sub := nodes
-	n := len(sub)
-	S, T := int32(n), int32(n+1) // virtual super source/sink
-
-	// Build local arc lists. Arc pairs are adjacent (i, i^1).
-	type arc struct {
-		to  int32
-		cap int32
-	}
-	// Estimate arcs: internal edges *2 + 2*nsrc.
-	arcs := make([]arc, 0, 4*n)
-	head := make([][]int32, n+2)
-	addArc := func(u, v int32, c int32) {
-		head[u] = append(head[u], int32(len(arcs)))
-		arcs = append(arcs, arc{v, c})
-		head[v] = append(head[v], int32(len(arcs)))
-		arcs = append(arcs, arc{u, c}) // undirected: both directions capacity c
-	}
-	for i, u := range sub {
-		for _, v := range ug.edgeTo[ug.edgeStart[u]:ug.edgeStart[u+1]] {
-			if sc.epoch[v] != sc.cur {
-				continue
-			}
-			lv := sc.pos[v]
-			if int32(i) < lv { // add each undirected edge once
-				addArc(int32(i), lv, 1)
-			}
-		}
-	}
-	const inf = int32(1 << 30)
-	for i := 0; i < nsrc; i++ {
-		addArc(S, int32(i), inf)
-		// Note: reverse arc S<-node gets cap inf too; harmless (S has no in-arcs used).
-	}
-	for i := n - nsrc; i < n; i++ {
-		addArc(int32(i), T, inf)
-	}
-
-	level := make([]int32, n+2)
-	iter := make([]int32, n+2)
-	queue := make([]int32, 0, n+2)
+// dinicNodeSets computes a max-flow / min-cut between the SOURCE NODE SET and
+// SINK NODE SET over unit-capacity arc pairs (arc i's reverse is i^1), and
+// returns the min-cut side (true = reachable from sources in the residual),
+// the cut value and the phase count. Sources have unlimited supply; a path
+// terminates on reaching any sink.
+func dinicNodeSets(n int, csrStart, csrArc, arcTo []int32, caps []int8, isSrc, isSink []bool) ([]bool, int, int) {
+	level := make([]int32, n)
+	iter := make([]int32, n)
+	queue := make([]int32, 0, n)
 
 	bfs := func() bool {
 		for i := range level {
 			level[i] = -1
 		}
 		queue = queue[:0]
-		queue = append(queue, S)
-		level[S] = 0
+		for i := 0; i < n; i++ {
+			if isSrc[i] {
+				level[i] = 0
+				queue = append(queue, int32(i))
+			}
+		}
+		sinkLevel := int32(-1)
 		for qi := 0; qi < len(queue); qi++ {
 			u := queue[qi]
-			for _, ai := range head[u] {
-				a := arcs[ai]
-				if a.cap > 0 && level[a.to] < 0 {
-					level[a.to] = level[u] + 1
-					queue = append(queue, a.to)
+			if sinkLevel >= 0 && level[u] >= sinkLevel {
+				continue
+			}
+			if isSink[u] {
+				if sinkLevel < 0 || level[u] < sinkLevel {
+					sinkLevel = level[u]
+				}
+				continue // paths end at sinks; do not expand through them
+			}
+			for p := csrStart[u]; p < csrStart[u+1]; p++ {
+				ai := csrArc[p]
+				if caps[ai] > 0 {
+					v := arcTo[ai]
+					if level[v] < 0 {
+						level[v] = level[u] + 1
+						queue = append(queue, v)
+					}
 				}
 			}
 		}
-		return level[T] >= 0
+		return sinkLevel >= 0
 	}
 
-	var dfs func(u int32, f int32) int32
-	dfs = func(u int32, f int32) int32 {
-		if u == T {
-			return f
+	var dfs func(u int32) bool
+	dfs = func(u int32) bool {
+		if isSink[u] {
+			return true
 		}
-		for ; iter[u] < int32(len(head[u])); iter[u]++ {
-			ai := head[u][iter[u]]
-			a := &arcs[ai]
-			if a.cap > 0 && level[a.to] == level[u]+1 {
-				d := dfs(a.to, min32(f, a.cap))
-				if d > 0 {
-					a.cap -= d
-					arcs[ai^1].cap += d
-					return d
-				}
+		for ; iter[u] < csrStart[u+1]-csrStart[u]; iter[u]++ {
+			ai := csrArc[csrStart[u]+iter[u]]
+			if caps[ai] <= 0 {
+				continue
+			}
+			v := arcTo[ai]
+			if level[v] != level[u]+1 {
+				continue
+			}
+			if dfs(v) {
+				caps[ai]--
+				caps[ai^1]++
+				return true
 			}
 		}
-		return 0
+		return false
 	}
 
-	flow := 0
+	flow, phases := 0, 0
 	for bfs() {
+		phases++
 		for i := range iter {
 			iter[i] = 0
 		}
-		for {
-			f := dfs(S, inf)
-			if f == 0 {
-				break
+		for i := 0; i < n; i++ {
+			if !isSrc[i] {
+				continue
 			}
-			flow += int(f)
+			for dfs(int32(i)) {
+				flow++
+			}
 		}
 	}
 
-	// Min-cut side: nodes reachable from S in the residual graph.
-	sideLocal := make([]bool, n)
-	for i := range level {
-		level[i] = -1
-	}
+	// Residual reachability from sources = cut side A.
+	side := make([]bool, n)
 	queue = queue[:0]
-	queue = append(queue, S)
-	level[S] = 0
+	for i := 0; i < n; i++ {
+		if isSrc[i] {
+			side[i] = true
+			queue = append(queue, int32(i))
+		}
+	}
 	for qi := 0; qi < len(queue); qi++ {
 		u := queue[qi]
-		for _, ai := range head[u] {
-			a := arcs[ai]
-			if a.cap > 0 && level[a.to] < 0 {
-				level[a.to] = 0
-				queue = append(queue, a.to)
+		for p := csrStart[u]; p < csrStart[u+1]; p++ {
+			ai := csrArc[p]
+			if caps[ai] > 0 {
+				v := arcTo[ai]
+				if !side[v] {
+					side[v] = true
+					queue = append(queue, v)
+				}
 			}
 		}
 	}
-	for i := 0; i < n; i++ {
-		if level[i] == 0 {
-			sideLocal[i] = true
-		}
+	return side, flow, phases
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
 	}
-	return sideLocal, flow
+	return v
 }
 
 func min32(a, b int32) int32 {
