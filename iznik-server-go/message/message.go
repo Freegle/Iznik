@@ -3482,7 +3482,7 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		return fiber.NewError(fiber.StatusForbidden, "Not your message")
 	}
 
-	return JoinAndPostAs(c, author, req)
+	return JoinAndPostAs(c, myid, author, req)
 }
 
 // JoinAndPostAs joins author to the destination group and submits the draft as
@@ -3491,8 +3491,11 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 // path instead requires the caller to be a ChitChat moderator or support/admin
 // (newsfeed.canHidePost) and passes the member as author.
 //
-// No other caller should pass an author other than the caller.
-func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
+// No other caller should pass an author other than the caller. The caller is
+// passed too because the new-user password below must only ever go to the
+// person it belongs to.
+func JoinAndPostAs(c *fiber.Ctx, caller uint64, author uint64, req PostMessageRequest) error {
+	myid := author
 	db := database.DBConn
 
 	// Look up the existing draft message.
@@ -3694,7 +3697,13 @@ func JoinAndPostAs(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		"groupid": groupid,
 	}
 
-	if hasPassword == 0 {
+	// Only for a poster submitting THEIR OWN draft. On the ChitChat convert
+	// path the "new user" is the member and the response goes to the
+	// moderator's client (and from there into the API response logs), so
+	// minting a password here would hand out live credentials to the member's
+	// account - observed doing exactly that on 2026-08-26 (Discourse #6999).
+	// The member already has whatever login they signed up with; leave it be.
+	if hasPassword == 0 && author == caller {
 		// New user without a password — generate one and return it.
 		password := utils.RandomHex(8)
 		salt := auth.GetPasswordSalt()
@@ -4753,6 +4762,14 @@ type OnBehalfPosting struct {
 	Locationname string `json:"locationname"`
 	Groupid      uint64 `json:"groupid"`
 	Groupname    string `json:"groupname"`
+	// Moderated says the post will WAIT in Pending for a human moderator
+	// rather than being auto-promoted by the content check - true for a
+	// fully-moderated group or a member with no/MODERATED/PROHIBITED
+	// posting status (V1 User::postToCollection semantics, the same answer
+	// the batch content check gives). The modal warns the converting
+	// moderator, because a post they cannot then see looks like a failed
+	// convert (Discourse #6999).
+	Moderated bool `json:"moderated"`
 }
 
 // ResolveOnBehalfPosting works out the location and group a post for `author`
@@ -4816,7 +4833,31 @@ func ResolveOnBehalfPosting(author uint64) (*OnBehalfPosting, error) {
 		Locationname: chosen.Locationname,
 		Groupid:      groupid,
 		Groupname:    groupname,
+		Moderated:    postingWouldBeModerated(author, groupid),
 	}, nil
+}
+
+// postingWouldBeModerated says whether a post by author on groupid waits in
+// Pending for a human moderator. Same tests the content check batch job
+// applies (and applyPatchMessageCore's edit-review path above): the group's
+// "moderate everything" setting, else the member's posting status, where no
+// membership row, NULL, empty, MODERATED and PROHIBITED all mean a human
+// looks first.
+func postingWouldBeModerated(author uint64, groupid uint64) bool {
+	db := database.DBConn
+
+	var groupModerated, groupClosed int
+	db.Table("groups").Select("COALESCE(JSON_EXTRACT(settings, '$.moderated'), 0), COALESCE(JSON_EXTRACT(settings, '$.closed'), 0)").Where("id = ?", groupid).Row().Scan(&groupModerated, &groupClosed)
+	if groupModerated == 1 || groupClosed == 1 {
+		return true
+	}
+
+	var ps *string
+	db.Table("memberships").Select("ourPostingStatus").Where("userid = ? AND groupid = ?", author, groupid).Scan(&ps)
+
+	return ps == nil || *ps == "" ||
+		strings.EqualFold(*ps, utils.POSTING_STATUS_MODERATED) ||
+		strings.EqualFold(*ps, utils.POSTING_STATUS_PROHIBITED)
 }
 
 func onBehalfOf(c *fiber.Ctx, myid uint64) (uint64, error) {
