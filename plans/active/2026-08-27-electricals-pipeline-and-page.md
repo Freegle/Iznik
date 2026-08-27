@@ -11,18 +11,17 @@ NOT a primary-function test.
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 1 | Live-data recon: volumes, weight basis, outcome rates | ✅ | See Findings below |
-| 2 | Rework `EeeComponentService` to the Material Focus rule | ✅ | Named lists + `is_eee_reason`; 12 worked cases correct |
-| 3 | MySQL schema: `messages_eee` + migration | ✅ | Laravel migration + idempotent prod SQL; migrates clean |
+| 1 | Live-data recon: volumes, weight basis, outcome rates | ✅ | See Findings |
+| 2 | `EeeComponentService` on the Material Focus rule | ✅ | Named lists + `is_eee_reason` |
+| 3 | MySQL schema `messages_eee` + `electricals_stats` | ✅ | Laravel migrations + idempotent prod SQL |
 | 4 | `EeeProductionStore` writes classifications to MySQL | ✅ | Mirrors all 4 SQLite call sites |
-| 5 | Resurrect `items.popularity` | 🔄 | Forward fix done; backfill command done; needs tests |
-| 6 | Schedule `eee:classify-new` (Gemini Flash) | ⬜ | Nothing schedules it today |
-| 7 | Broken/damaged extraction in the vision prompt | ⬜ | condition already extracted, 93% accurate |
-| 8 | `eee:stats` -> read MySQL, emit the designed stat set | ⬜ | currently reads dev SQLite |
-| 9 | Go API endpoint for the stats | ⬜ | `iznik-server-go` |
-| 10 | `/electricals` Nuxt page | ⬜ | `iznik-nuxt3/pages/` |
-| 11 | Tests: Laravel + Go + vitest, via status API 8081 | 🔄 | EEE suite green pending; Ripple baseline to establish |
-| 12 | Quality review + PR | ⬜ | Do not merge |
+| 5 | Resurrect `items.popularity` | ✅ | Forward fix + `items:backfill-popularity`, 8 tests |
+| 6 | Schedule `eee:classify-new` hourly (Gemini Flash) | ✅ | High-water mark now reads MySQL |
+| 7 | `ElectricalsStatsService` + `electricals:stats` daily | ✅ | Runs clean end to end |
+| 8 | Go endpoint `GET /electricals/stats` | ✅ | 4 tests pass |
+| 9 | `/electricals` Nuxt page + API class | ✅ | Lint clean; NOT browser-verified |
+| 10 | Tests | 🔄 | All mine green; full suite blocked, see below |
+| 11 | PR | ❌ | Blocked: full Laravel suite red on master
 
 ---
 
@@ -130,6 +129,61 @@ This trades some genuine rarities for the guarantee that everything shown is a r
 Record the threshold on the page so the number is interpretable.
 
 ---
+
+## Test results
+
+All new code is green:
+
+| Suite | Result |
+|---|---|
+| Go, filtered to electricals | 4/4 pass; full run 2997 pass, no electricals failures |
+| Laravel `Eee*` unit | 438/438 pass |
+| `ItemServiceTest` (incl. 3 new popularity tests) | 13/13 pass |
+| `ElectricalsStatsServiceTest` | 14/14 pass |
+| `BackfillItemPopularityCommandTest` | 5/5 pass |
+| `electricals:stats --dry-run` | runs end to end |
+
+Two environment problems found and fixed along the way:
+
+- The Go suite would not build: `rippling/reachbounds_test.go` and
+  `test/singlepoint_reach_bounds_test.go` existed **inside the apiv2 container but not on the
+  host**, orphans left by file sync after a branch switch (sync never deletes). Removed.
+- The Go test database had no `messages_eee` or `electricals_stats`. `iznik_go_test` is cloned
+  by `scripts/setup-test-database.sh`, not migrated by the suite, so it needs re-running after
+  any new migration.
+
+## Master is red locally, and this branch is not the cause
+
+Proven by reproducing on a clean `origin/master` checkout: 95 Ripple failures of 420 and 22
+FirstReply of 92, identical to the counts on this branch. The Go suite shows the same
+subsystem: 28 failures, all Reach/Nearby/FirstReply/CellSet.
+
+**Root cause found.** Migration `2026_08_25_000001_drop_rippling_reach_legacy_geometry` dropped
+the legacy geometry columns, and a swathe of tests still write to them:
+
+```
+Unknown column 'polygon' in 'field list'
+INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, ...)
+```
+
+That is the cellset legacy removal being mid-flight; the follow-up work is in the
+`reach-raster` worktree and gated on prod phase 2. CircleCI is green on the same commit
+(`be74a3df3`, pipeline #11278), so CI's database is evidently not built the way the local one
+is. Left alone deliberately: it is a different subsystem with active work in another worktree,
+and touching it here would collide.
+
+**This blocks the PR.** CLAUDE.md allows pushing only after the full relevant suite passes
+locally. It does not, for reasons that are not this branch's, so nothing is pushed.
+
+## Not done
+
+- The `/electricals` page has **not been opened in a browser**. iznik-nuxt3/CLAUDE.md requires
+  visual changes to be verified with Chrome DevTools MCP. It needs generated data to render
+  anything, and nothing has classified yet in dev.
+- No classifier run has happened, so every figure is currently zero. The first real numbers
+  need `eee:classify-new` to run against Gemini.
+- Production migrations not applied; `*_migration.sql` files are ready and idempotent.
+- `items:backfill-popularity` not run against production.
 
 ## Local test-environment divergence (not this branch)
 

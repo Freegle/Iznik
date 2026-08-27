@@ -49,9 +49,12 @@ class ElectricalsStatsServiceTest extends TestCase
         string $arrival,
         ?string $outcome = null,
         ?string $condition = null,
-        ?int $userid = null,
-        ?int $groupid = null,
+        mixed $userid = null,
+        mixed $groupid = null,
     ): int {
+        // createTestUser()/createTestGroup() hand back models, and createTestMessage()
+        // wants those models. Callers reusing one across several offers pass the model
+        // straight back in, so these stay as objects; idOf() is only for raw inserts.
         $user  = $userid ?? $this->createTestUser();
         $group = $groupid ?? $this->createTestGroup();
 
@@ -85,6 +88,12 @@ class ElectricalsStatsServiceTest extends TestCase
         }
 
         return (int) $message->id;
+    }
+
+    /** Accept a model or a bare id and return the id. */
+    private function idOf(mixed $value): int
+    {
+        return (int) (is_object($value) ? $value->id : $value);
     }
 
     private function recent(int $daysAgo = 60): string
@@ -143,7 +152,7 @@ class ElectricalsStatsServiceTest extends TestCase
         // A ripple copy: same message, another group, flagged as rippled in.
         DB::table('messages_groups')->insert([
             'msgid'      => $msgid,
-            'groupid'    => $this->createTestGroup(),
+            'groupid'    => $this->idOf($this->createTestGroup()),
             'arrival'    => $this->recent(),
             'collection' => 'Approved',
             'rippled_in' => 1,
