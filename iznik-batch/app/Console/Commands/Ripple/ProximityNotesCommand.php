@@ -4,6 +4,7 @@ namespace App\Console\Commands\Ripple;
 
 use App\Models\Location;
 use App\Services\Ripple\ReachService;
+use App\Traits\SingleInstanceLock;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -34,11 +35,24 @@ class ProximityNotesCommand extends Command
 
     protected $description = 'Best-effort: compute the rippled-in "quicker to get to" moderator note';
 
+    use SingleInstanceLock;
+
     public function handle(ReachService $reach): int
     {
+        // The config gate stays outside the lock: a disabled run should not
+        // touch cache_locks at all.
         if (!config('freegle.ripple.proximity_notes', true)) {
             return Command::SUCCESS;
         }
+
+        // Overlap guard - withoutOverlapping() is a no-op for runInBackground()
+        // (see SingleInstanceLock); 10 of these were running at once during the
+        // 2026-08-27 spiral, all hammering the routing server.
+        return $this->runSingleInstance('ripple:proximity-notes:run', 900, fn (): int => $this->runGuarded($reach));
+    }
+
+    private function runGuarded(ReachService $reach): int
+    {
 
         // Purge markers past any possible candidacy: candidates require mg.arrival within 8
         // days, so a marker older than that can never match again. 14 days keeps a margin;
