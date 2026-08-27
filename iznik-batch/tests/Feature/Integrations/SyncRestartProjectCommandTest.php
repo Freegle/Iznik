@@ -441,6 +441,24 @@ class SyncRestartProjectCommandTest extends TestCase
         $this->assertEquals(1, DB::table('communityevents')->where('externalid', 'Restart-21110')->count());
     }
 
+    public function test_the_command_reports_listings_it_skipped(): void
+    {
+        $this->makeGroup();
+
+        $first  = $this->restartEvent(23001, 'Barking Fixing Factory');
+        $second = $this->duplicateListing(23002, $first);
+
+        $this->fakeApi(55, $this->restartGroupData(), [$first, $second], [
+            23001 => $this->restartEventData(23001),
+            23002 => $this->restartEventData(23002),
+        ]);
+
+        $this->artisan('integrations:sync-restartproject')
+            ->expectsOutputToContain('Processed 1 new event(s)')
+            ->expectsOutputToContain('Skipped 1 listing(s) already held under another Restart id.')
+            ->assertExitCode(0);
+    }
+
     public function test_an_unreadable_start_is_never_treated_as_a_duplicate(): void
     {
         $this->makeGroup();
