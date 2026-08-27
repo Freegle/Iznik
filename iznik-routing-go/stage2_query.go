@@ -22,6 +22,7 @@ package main
 
 import (
 	"container/heap"
+	"sync"
 	"time"
 )
 
@@ -168,12 +169,23 @@ func NewStage2Engine(g *Graph, ov *Overlay, part *Stage2Partition, rm *RegionMat
 	}
 }
 
-// regionTableCache: lazy per-region entry→node internal distance tables.
-// Post-independent, so shared across queries; LRU-capped.
+// regionTableCache: lazy per-region entry→node internal distance tables, plus
+// arbitrary-source rows for stored-label seed evaluation. Post-independent, so
+// shared across queries; LRU-capped; guarded by a coarse mutex (a miss holds
+// the lock while it builds ~ms-scale tables — acceptable at current QPS, and
+// trivially shardable later).
 type regionTableCache struct {
-	cap   int
-	order []int32
-	m     map[int32]*regionTable
+	mu       sync.Mutex
+	cap      int
+	order    []int32
+	m        map[int32]*regionTable
+	srcOrder []srcKey
+	src      map[srcKey][]float32
+}
+
+type srcKey struct {
+	leaf int32
+	oi   uint32
 }
 
 type regionTable struct {
@@ -182,10 +194,16 @@ type regionTable struct {
 }
 
 func newRegionTableCache(cap int) *regionTableCache {
-	return &regionTableCache{cap: cap, m: make(map[int32]*regionTable)}
+	return &regionTableCache{cap: cap, m: make(map[int32]*regionTable), src: make(map[srcKey][]float32)}
 }
 
 func (c *regionTableCache) get(e *Stage2Engine, leaf int32) *regionTable {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.getLocked(e, leaf)
+}
+
+func (c *regionTableCache) getLocked(e *Stage2Engine, leaf int32) *regionTable {
 	if t, ok := c.m[leaf]; ok {
 		return t
 	}
@@ -205,6 +223,32 @@ func (c *regionTableCache) get(e *Stage2Engine, leaf int32) *regionTable {
 		delete(c.m, old)
 	}
 	return t
+}
+
+// sourceRow returns intra-region distances from an arbitrary junction of the
+// leaf (used for stored-label seeds), nil if the source is not in the leaf.
+func (c *regionTableCache) sourceRow(e *Stage2Engine, leaf int32, srcOi uint32) []float32 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	k := srcKey{leaf, srcOi}
+	if row, ok := c.src[k]; ok {
+		return row
+	}
+	t := c.getLocked(e, leaf)
+	li, in := t.ls.localOf[srcOi]
+	if !in {
+		return nil
+	}
+	row := make([]float32, len(t.ls.nodes))
+	t.ls.dijkstraFrom(li, row)
+	c.src[k] = row
+	c.srcOrder = append(c.srcOrder, k)
+	if len(c.srcOrder) > 4*c.cap {
+		old := c.srcOrder[0]
+		c.srcOrder = c.srcOrder[1:]
+		delete(c.src, old)
+	}
+	return row
 }
 
 // QueryLabels computes the reach labeling from (lat,lng) within limitSeconds.
@@ -432,20 +476,53 @@ func (e *Stage2Engine) ArrivalAtBaseNode(lbl *ReachLabels, v NodeID) float32 {
 		}
 	}
 	// Origin on the same chain: direct along-chain travel with no junction.
+	// End-pair equality is NOT sufficient — two distinct parallel chains can
+	// join the same junction pair (found by the UK sweep: a circular lane in
+	// Aberdeenshire) — so walk the origin's actual chain to confirm v is on
+	// it and price the hop-exact departure cost.
 	if o := lbl.originChain; o != 0 && e.Ov.ChainEndA[o] == e.Ov.ChainEndA[v] && e.Ov.ChainEndB[o] == e.Ov.ChainEndB[v] {
-		// Forward direction A→B: cumulative forward sums.
-		oA, vA := e.Ov.OffFromA[o], e.Ov.OffFromA[v]
-		if oA >= 0 && vA >= oA {
-			if c := lbl.seedBase + (vA - oA); c < best {
-				best = c
-			}
+		if c := sameChainDepartCost(e.G, e.Ov, o, v); c >= 0 && lbl.seedBase+c < best {
+			best = lbl.seedBase + c
 		}
-		// Reverse direction B→A: cumulative reverse sums.
-		oB, vB := e.Ov.OffFromB[o], e.Ov.OffFromB[v]
-		if oB >= 0 && vB >= oB {
-			if c := lbl.seedBase + (vB - oB); c < best {
-				best = c
+	}
+	return best
+}
+
+// sameChainDepartCost walks from chain node o along its own chain in both
+// drivable directions, returning the drive seconds to v if v lies on the SAME
+// chain, else -1. Bounded by the chain length.
+func sameChainDepartCost(g *Graph, ov *Overlay, o, v NodeID) float32 {
+	if o == v {
+		return 0
+	}
+	best := float32(-1)
+	for i := range g.EdgesFrom(o) {
+		e := &g.Edges[g.EdgeStart[o]+int32(i)]
+		if e.Seconds[Drive] < 0 {
+			continue
+		}
+		sum := e.Seconds[Drive]
+		prev, cur := o, e.To
+		for ov.Idx[cur] == 0 {
+			if cur == v {
+				if best < 0 || sum < best {
+					best = sum
+				}
+				break
 			}
+			var next *Edge
+			for j := range g.EdgesFrom(cur) {
+				e2 := &g.Edges[g.EdgeStart[cur]+int32(j)]
+				if e2.To != prev {
+					next = e2
+					break
+				}
+			}
+			if next == nil || next.Seconds[Drive] < 0 {
+				break
+			}
+			sum += next.Seconds[Drive]
+			prev, cur = cur, next.To
 		}
 	}
 	return best

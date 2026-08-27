@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 )
 
@@ -39,6 +40,12 @@ func stage2Main(args []string) {
 		stage2BoundaryDebugCmd(args[1:])
 	case "exactdebug":
 		stage2ExactDebugCmd(args[1:])
+	case "graphmem":
+		stage2GraphMemCmd()
+	case "nodedebug":
+		stage2NodeDebugCmd(args[1:])
+	case "sweep":
+		stage2SweepCmd(args[1:])
 	case "parity":
 		stage2ParityCmd(args[1:])
 	default:
@@ -194,4 +201,35 @@ func stage2LeafCheckCmd(args []string) {
 	node := fs.Uint64("node", 0, "target base node id")
 	_ = fs.Parse(args)
 	stage2LeafCheckRun(*path, NodeID(*node), stage2LoadEngine())
+}
+
+func stage2SweepCmd(args []string) {
+	fs := flag.NewFlagSet("sweep", flag.ExitOnError)
+	file := fs.String("file", "data/stage2/sweep.jsonl", "jsonl of exported origins")
+	synth := fs.Int("synthetic", 400, "max synthetic origins for untouched regions")
+	_ = fs.Parse(args)
+	stage2SweepRun(*file, *synth, stage2LoadEngine())
+}
+
+func stage2NodeDebugCmd(args []string) {
+	fs := flag.NewFlagSet("nodedebug", flag.ExitOnError)
+	lat := fs.Float64("lat", 0, "origin lat")
+	lng := fs.Float64("lng", 0, "origin lng")
+	minutes := fs.Float64("minutes", 30, "budget minutes")
+	node := fs.Uint64("node", 0, "target base node")
+	_ = fs.Parse(args)
+	stage2NodeDebugRun(*lat, *lng, *minutes, NodeID(*node), stage2LoadEngine())
+}
+
+// stage2GraphMemCmd measures the base graph's resident heap alone — the
+// like-for-like baseline for what the routing server holds today.
+func stage2GraphMemCmd() {
+	g, ov := stage2LoadOrBuild()
+	ov.BaseNode, ov.Idx, ov.EdgeStart, ov.Edges = nil, nil, nil, nil
+	ov.ChainEndA, ov.ChainEndB, ov.OffFromA, ov.OffFromB = nil, nil, nil, nil
+	var ms runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&ms)
+	fmt.Printf("base graph only: heap %.2fGB (sys %.2fGB); nodes %d edges %d\n",
+		float64(ms.HeapAlloc)/1e9, float64(ms.Sys)/1e9, g.NodeCount(), len(g.Edges))
 }

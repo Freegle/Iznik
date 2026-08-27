@@ -24,6 +24,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -386,6 +387,10 @@ func stage2MatricesRun() {
 
 func stage2QueryRun(lat, lng, minutes float64) {
 	engine := stage2LoadEngine()
+	var ms runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&ms)
+	fmt.Printf("resident after engine load: heap %.2fGB (sys %.2fGB)\n", float64(ms.HeapAlloc)/1e9, float64(ms.Sys)/1e9)
 	for i := 0; i < 3; i++ {
 		start := time.Now()
 		lbl := engine.QueryLabels(lat, lng, float32(minutes*60))
