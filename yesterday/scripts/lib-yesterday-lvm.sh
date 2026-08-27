@@ -152,22 +152,48 @@ EOF
     ylvm_log "✅ Staging prepared for $date8"
 }
 
+# uid:gid that mysqld runs as inside the container, read from the image the percona
+# service is actually configured to run.
+#
+# This is deliberately NOT derived from the backup's server_version. That version names
+# a Percona release, not a Docker tag that is guaranteed to exist: when production moved
+# to 8.0.46-38 the probe `docker run percona:8.0.46-38` failed, the old `|| echo 999`
+# fallback silently produced 999, and the datadir was chowned to a uid mysqld does not
+# run as. mysqld could then not create auto.cnf, crash-looped, and every nightly restore
+# failed at the password-reset step for six days.
+#
+# A wrong owner is unrecoverable without a re-chown, so refuse to guess.
+ylvm_mysql_uid_gid() {
+    local image uid gid
+    image="$(cd "$YLVM_COMPOSE_DIR" && docker compose config --images percona 2>/dev/null | head -1)"
+    [ -n "$image" ] || ylvm_die "Cannot read the percona image from docker compose config"
+    uid="$(docker run --rm "$image" id -u mysql 2>/dev/null)"
+    gid="$(docker run --rm "$image" id -g mysql 2>/dev/null)"
+    case "${uid}:${gid}" in
+        *[!0-9:]*|:*|*:) ylvm_die "Cannot read the mysql uid/gid from $image - refusing to guess, the wrong owner leaves mysqld unable to write its datadir" ;;
+    esac
+    printf '%s %s\n' "$uid" "$gid"
+}
+
+# Give the active datadir to the in-container mysql user. Needed after any change of
+# what is mounted there - a fresh apply, and also a clone of an older snapshot, which
+# carries whatever ownership was correct when that snapshot was taken.
+ylvm_chown_datadir() {
+    local uid gid
+    read -r uid gid <<<"$(ylvm_mysql_uid_gid)"
+    ylvm_log "Setting datadir ownership to ${uid}:${gid} ..."
+    chown -R "${uid}:${gid}" "$YLVM_ACTIVE_MNT"
+}
+
 # Apply the prepared staging datadir onto the live active datadir IN PLACE so
 # the thin pool only allocates changed blocks. Caller MUST ensure percona is
 # NOT using $YLVM_ACTIVE_MNT (stopped, or still on the old volume during prime).
 ylvm_apply_stage_to_active() {
-    local percona_version; percona_version="$(cat "$YLVM_COMPOSE_DIR/yesterday/data/percona-version" 2>/dev/null || echo)"
     mountpoint -q "$YLVM_ACTIVE_MNT" || ylvm_die "Active $YLVM_ACTIVE_MNT not mounted"
     ylvm_log "rsync --inplace staging -> active (changed blocks only) ..."
     rsync -a --inplace --no-whole-file --delete \
         "$YLVM_STAGE_MNT/" "$YLVM_ACTIVE_MNT/"
-    # Ownership for the in-container mysql user (detected like restore-backup.sh)
-    if [ -n "$percona_version" ]; then
-        local uid gid
-        uid="$(docker run --rm "percona:$percona_version" id -u mysql 2>/dev/null || echo 999)"
-        gid="$(docker run --rm "percona:$percona_version" id -g mysql 2>/dev/null || echo 999)"
-        chown -R "${uid}:${gid}" "$YLVM_ACTIVE_MNT"
-    fi
+    ylvm_chown_datadir
     sync
     ylvm_log "✅ Active updated in place"
 }
@@ -370,7 +396,13 @@ ylvm_reset_root_password() {
             && { ok=1; break; }
         sleep 2
     done
-    [ -n "$ok" ] || ylvm_die "percona socket not ready for password reset"
+    if [ -z "$ok" ]; then
+        # Take skip-grant-tables back out before giving up. Leaving it in means the next
+        # start of percona has authentication disabled entirely.
+        sed -i '/skip-grant-tables/d' "$cnf"
+        docker compose up -d percona >/dev/null 2>&1 || true
+        ylvm_die "percona socket not ready for password reset - see: docker logs ${project}-percona"
+    fi
     docker exec "${project}-percona" mysql --socket=/var/lib/mysql/mysql.sock -u root -e \
         "FLUSH PRIVILEGES; ALTER USER 'root'@'localhost' IDENTIFIED BY '${pw}'; ALTER USER 'root'@'%' IDENTIFIED BY '${pw}'; FLUSH PRIVILEGES;" 2>/dev/null \
         || ylvm_log "⚠️  password reset query failed"
