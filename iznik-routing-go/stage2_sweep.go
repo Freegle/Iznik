@@ -81,6 +81,7 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 	type totals struct {
 		origins, skipped, probes, mismLive, mismStored, flips int
 		unreachedProbes, falseIn                              int
+		metChecked, metMissing, metDev                        int
 		worstLive, worstStored                                float64
 		baseMs, queryMs                                       float64
 	}
@@ -111,7 +112,7 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 			log.Fatalf("sweep: decode round trip failed for %d: %v", o.Msgid, err)
 		}
 		b0 := time.Now()
-		base := baseDriveDijkstra(g, origin, initialCostFor(Drive), T)
+		base, baseMet := baseDriveDijkstraM(g, origin, initialCostFor(Drive), T)
 		bMs := float64(time.Since(b0).Microseconds()) / 1000
 
 		type mism struct {
@@ -126,6 +127,7 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 			stride = len(base) / 8000
 		}
 		i := 0
+		metChecked, metMissing, metDev := 0, 0, 0
 		for id, want := range base {
 			i++
 			if i%stride != 0 {
@@ -136,7 +138,7 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 			// of hops legitimately differs by a few parts per million, which
 			// at a 90-minute arrival is ~0.01-0.02s.
 			tol := 0.01 + float64(want)*1e-5
-			live := engine.ArrivalAtBaseNode(lbl, id)
+			live, liveM := engine.ArrivalAtBaseNodeM(lbl, id)
 			if d := math.Abs(float64(live - want)); d > tol {
 				misms = append(misms, mism{id, live, want, false})
 			}
@@ -146,6 +148,19 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 			}
 			if (live <= T) != (want <= T) || (st <= T) != (want <= T) {
 				flips++
+			}
+			// Road-metres verification: must be present, and track the base
+			// path's metres except on equal-time alternate-path ties.
+			if live != f32Inf {
+				if liveM == f32Inf {
+					metMissing++
+				} else {
+					metChecked++
+					wm := float64(baseMet[id])
+					if d := math.Abs(float64(liveM) - wm); d > math.Max(150, 0.05*wm) {
+						metDev++
+					}
+				}
 			}
 		}
 
@@ -171,6 +186,9 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 		}
 
 		mu.Lock()
+		t.metChecked += metChecked
+		t.metMissing += metMissing
+		t.metDev += metDev
 		t.queryMs += qMs
 		t.baseMs += bMs
 		for leaf := range lbl.Reached {
@@ -322,6 +340,8 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 	fmt.Printf("  exactness: live mismatches %d (worst %.4fs), stored-roundtrip mismatches %d (worst %.4fs), membership flips %d\n",
 		t.mismLive, t.worstLive, t.mismStored, t.worstStored, t.flips)
 	fmt.Printf("  false membership: %d of %d probes on nodes the base search did not reach\n", t.falseIn, t.unreachedProbes)
+	fmt.Printf("  road metres: %d checked, %d missing, %d tie deviations beyond max(150m, 5%%) (%.3f%%)\n",
+		t.metChecked, t.metMissing, t.metDev, 100*float64(t.metDev)/float64(max(1, t.metChecked)))
 	fmt.Printf("  coverage: %d/%d partition leaves exercised (sizable leaves only get synthetics)\n",
 		len(touched), len(engine.Part.LeafNodes))
 	fmt.Printf("  timing: query mean %.1fms, flat-Dijkstra mean %.0fms over %d origins\n",
@@ -339,7 +359,7 @@ func stage2NodeDebugRun(lat, lng, minutes float64, target NodeID, engine *Stage2
 
 	fmt.Printf("origin snap base=%d (junction=%v)", origin, ov.Idx[origin] != 0)
 	if ov.Idx[origin] == 0 {
-		a, sa, b, sb := chainDepartOffsets(g, ov, origin)
+		a, sa, _, b, sb, _ := chainDepartOffsets(g, ov, origin)
 		fmt.Printf(" chain ends A=%d(+%.2f) B=%d(+%.2f)", a, sa, b, sb)
 	}
 	fmt.Println()

@@ -78,6 +78,10 @@
 import { ref, computed } from 'vue'
 import pluralize from 'pluralize'
 import { milesAway } from '~/composables/useDistance'
+import {
+  roadDistance,
+  roadMilesRounded,
+} from '~/composables/useDriveDistance'
 import { useUserStore } from '~/stores/user'
 import ProfileImage from '~/components/ProfileImage'
 import { useMessageStore } from '~/stores/message'
@@ -116,7 +120,18 @@ const fromuser = computed(() => {
     : null
 })
 
+const roadDist = computed(() => {
+  if (!message.value?.lat) {
+    return null
+  }
+  return roadDistance(message.value.lat, message.value.lng).value
+})
+
 const milesaway = computed(() => {
+  const road = roadDist.value
+  if (road?.miles != null) {
+    return roadMilesRounded(road.miles)
+  }
   return milesAway(me?.lat, me?.lng, message.value?.lat, message.value?.lng)
 })
 

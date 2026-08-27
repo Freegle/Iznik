@@ -296,6 +296,12 @@ func handleDriveTime(g *Graph) fiber.Handler {
 		}
 		mode := parseMode(c.Query("mode", "drive"))
 
+		// Reach-engine fast path: exact answer in milliseconds, with road
+		// miles included, when the engine is live (drive mode only).
+		if resp, handled := engineDriveTime(lat, lng, toLat, toLng, minutes, mode); handled {
+			return c.JSON(resp)
+		}
+
 		dest := nearestNodeForMode(g, toLat, toLng, mode)
 		if dest == noNode {
 			// Off the road graph entirely (mid-sea coordinates, or a mode with no
@@ -599,6 +605,8 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	// graph computation (gated); arrival evaluation is table lookups (ungated).
 	v1.Get("/reach-labels", gated(handleReachLabels()))
 	v1.Post("/reach-arrival", handleReachArrival())
+	v1.Post("/drive-metrics", gated(handleDriveMetrics()))
+	v1.Get("/blur", handleBlur(g))
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	v1.Get("/groups/list", handleGroupsList())
 

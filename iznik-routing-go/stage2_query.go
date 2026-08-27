@@ -30,17 +30,25 @@ import (
 type RegionLabel struct {
 	Full     bool
 	EntryArr []float32 // aligned to rm.LeafEntries(leaf); +Inf = entry unreached
+	EntryMet []float32 // road metres for EntryArr (live queries only; nil when decoded)
 }
 
-// ReachLabels is the stored per-post reach representation.
+// ReachLabels is the stored per-post reach representation. Live queries also
+// carry road METRES along every time-optimal path (DistM semantics) so
+// consumers can show road distance; the stored FRL1 form keeps seconds only
+// (membership needs nothing else) and decoded labels leave the metre maps nil.
 type ReachLabels struct {
 	T       float32
 	Reached map[int32]*RegionLabel
 	// OriginArr: exact internal arrivals within the origin's seed region(s),
 	// keyed by overlay idx.
 	OriginArr map[uint32]float32
+	// OriginMet: road metres for OriginArr's arrivals (live queries only).
+	OriginMet map[uint32]float32
 	// Seeds: overlay idx -> departure cost (origin snap).
 	Seeds map[uint32]float32
+	// SeedMet: road metres of the departure walks (live queries only).
+	SeedMet map[uint32]float32
 	// Origin chain info for the same-chain direct case (base-node space).
 	originChain NodeID // the absorbed origin node, 0 if origin was a junction
 	seedBase    float32
@@ -51,18 +59,25 @@ type ReachLabels struct {
 }
 
 // chainDepartOffsets walks from an absorbed chain node v to both chain ends
-// following OUT-edges (departure direction), returning each end junction and
-// the drive seconds v→end (-1 = that direction not drivable).
-func chainDepartOffsets(g *Graph, ov *Overlay, v NodeID) (NodeID, float32, NodeID, float32) {
+// following OUT-edges (departure direction), returning each end junction, the
+// drive seconds v→end (-1 = that direction not drivable) and the road metres
+// of the walk.
+func chainDepartOffsets(g *Graph, ov *Overlay, v NodeID) (NodeID, float32, float32, NodeID, float32, float32) {
 	var ends [2]NodeID
 	var secs [2]float32
+	var mets [2]float32
 	found := 0
+	hop := func(a, b NodeID) float32 {
+		na, nb := g.Nodes[a], g.Nodes[b]
+		return float32(haversineM(float64(na.Lat), float64(na.Lng), float64(nb.Lat), float64(nb.Lng)))
+	}
 	for i := range g.EdgesFrom(v) {
 		e := &g.Edges[g.EdgeStart[v]+int32(i)]
 		if usableBits(*e) == 0 || e.Seconds[Drive] < 0 {
 			continue
 		}
 		sum := e.Seconds[Drive]
+		msum := hop(v, e.To)
 		ok := true
 		prev, cur := v, e.To
 		for ov.Idx[cur] == 0 {
@@ -79,6 +94,7 @@ func chainDepartOffsets(g *Graph, ov *Overlay, v NodeID) (NodeID, float32, NodeI
 				break
 			}
 			sum += next.Seconds[Drive]
+			msum += hop(cur, next.To)
 			prev, cur = cur, next.To
 		}
 		if !ok || ov.Idx[cur] == 0 {
@@ -87,17 +103,56 @@ func chainDepartOffsets(g *Graph, ov *Overlay, v NodeID) (NodeID, float32, NodeI
 		if found < 2 {
 			ends[found] = cur
 			secs[found] = sum
+			mets[found] = msum
 			found++
 		}
 	}
 	switch found {
 	case 0:
-		return 0, -1, 0, -1
+		return 0, -1, -1, 0, -1, -1
 	case 1:
-		return ends[0], secs[0], 0, -1
+		return ends[0], secs[0], mets[0], 0, -1, -1
 	default:
-		return ends[0], secs[0], ends[1], secs[1]
+		return ends[0], secs[0], mets[0], ends[1], secs[1], mets[1]
 	}
+}
+
+// chainMetresFromEnd walks from an end junction INTO the chain along its
+// out-edges (the arrival direction — valid on oneway chains, where the
+// absorbed node has no out-edge back toward the entry end), returning the
+// road metres from the end to absorbed node v (-1 if no walk reaches v).
+func chainMetresFromEnd(g *Graph, ov *Overlay, end, v NodeID) float32 {
+	hop := func(a, b NodeID) float32 {
+		na, nb := g.Nodes[a], g.Nodes[b]
+		return float32(haversineM(float64(na.Lat), float64(na.Lng), float64(nb.Lat), float64(nb.Lng)))
+	}
+	for i := range g.EdgesFrom(end) {
+		e := &g.Edges[g.EdgeStart[end]+int32(i)]
+		if usableBits(*e) == 0 || ov.Idx[e.To] != 0 {
+			continue // direct junction-junction edge: not a chain walk
+		}
+		msum := hop(end, e.To)
+		prev, cur := end, e.To
+		for ov.Idx[cur] == 0 {
+			if cur == v {
+				return msum
+			}
+			var next *Edge
+			for j := range g.EdgesFrom(cur) {
+				e2 := &g.Edges[g.EdgeStart[cur]+int32(j)]
+				if e2.To != prev {
+					next = e2
+					break
+				}
+			}
+			if next == nil {
+				break
+			}
+			msum += hop(cur, next.To)
+			prev, cur = cur, next.To
+		}
+	}
+	return -1
 }
 
 // boundaryIndex precomputes lookups for the boundary Dijkstra; built once per
@@ -110,6 +165,7 @@ type boundaryIndex struct {
 	cross    map[uint32]crossRange
 	crossTo  []uint32
 	crossSec []float32
+	crossMet []float32
 }
 
 func buildBoundaryIndex(rm *RegionMatrices, part *Stage2Partition) *boundaryIndex {
@@ -135,6 +191,7 @@ func buildBoundaryIndex(rm *RegionMatrices, part *Stage2Partition) *boundaryInde
 	}
 	bi.crossTo = make([]uint32, len(rm.CrossFrom))
 	bi.crossSec = make([]float32, len(rm.CrossFrom))
+	bi.crossMet = make([]float32, len(rm.CrossFrom))
 	next := int32(0)
 	for from, c := range counts {
 		bi.cross[from] = crossRange{start: next, count: 0}
@@ -144,6 +201,9 @@ func buildBoundaryIndex(rm *RegionMatrices, part *Stage2Partition) *boundaryInde
 		cr := bi.cross[from]
 		bi.crossTo[cr.start+cr.count] = rm.CrossTo[i]
 		bi.crossSec[cr.start+cr.count] = rm.CrossSecs[i]
+		if rm.CrossMet != nil {
+			bi.crossMet[cr.start+cr.count] = rm.CrossMet[i]
+		}
 		cr.count++
 		bi.cross[from] = cr
 	}
@@ -191,6 +251,7 @@ type srcKey struct {
 type regionTable struct {
 	ls   *leafSubgraph
 	dist [][]float32 // per entry (aligned to rm.LeafEntries), len(ls.nodes)
+	met  [][]float32 // road metres along the same time-optimal paths
 }
 
 func newRegionTableCache(cap int) *regionTableCache {
@@ -209,11 +270,13 @@ func (c *regionTableCache) getLocked(e *Stage2Engine, leaf int32) *regionTable {
 	}
 	ls := buildLeafSubgraph(e.Ov, e.Part, leaf)
 	ents := e.RM.LeafEntries(leaf)
-	t := &regionTable{ls: ls, dist: make([][]float32, len(ents))}
+	t := &regionTable{ls: ls, dist: make([][]float32, len(ents)), met: make([][]float32, len(ents))}
 	for i, ent := range ents {
 		d := make([]float32, len(ls.nodes))
-		ls.dijkstraFrom(ls.localOf[ent], d)
+		m := make([]float32, len(ls.nodes))
+		ls.dijkstraFromM(ls.localOf[ent], d, m)
 		t.dist[i] = d
+		t.met[i] = m
 	}
 	c.m[leaf] = t
 	c.order = append(c.order, leaf)
@@ -257,7 +320,9 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 		T:         limitSeconds,
 		Reached:   make(map[int32]*RegionLabel),
 		OriginArr: make(map[uint32]float32),
+		OriginMet: make(map[uint32]float32),
 		Seeds:     make(map[uint32]float32),
+		SeedMet:   make(map[uint32]float32),
 	}
 
 	origin := nearestNodeForMode(e.G, lat, lng, Drive)
@@ -268,16 +333,19 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 	out.seedBase = seed
 	if oi := e.Ov.Idx[origin]; oi != 0 {
 		out.Seeds[oi] = seed
+		out.SeedMet[oi] = 0
 	} else {
 		out.originChain = origin
-		a, sa, b, sb := chainDepartOffsets(e.G, e.Ov, origin)
+		a, sa, ma, b, sb, mb := chainDepartOffsets(e.G, e.Ov, origin)
 		if sa >= 0 {
 			out.Seeds[e.Ov.Idx[a]] = seed + sa
+			out.SeedMet[e.Ov.Idx[a]] = ma
 		}
 		if sb >= 0 {
 			boi := e.Ov.Idx[b]
 			if cur, ok := out.Seeds[boi]; !ok || seed+sb < cur {
 				out.Seeds[boi] = seed + sb
+				out.SeedMet[boi] = mb
 			}
 		}
 	}
@@ -285,8 +353,8 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 	// Phase 1: local exact Dijkstra within each seed's region.
 	t0 := time.Now()
 	type exitArr struct {
-		oi  uint32
-		arr float32
+		oi       uint32
+		arr, met float32
 	}
 	var exitArrs []exitArr
 	seededLeaves := map[int32]struct{}{}
@@ -298,7 +366,9 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 		seededLeaves[leaf] = struct{}{}
 		t := e.tables.get(e, leaf)
 		dist := make([]float32, len(t.ls.nodes))
-		t.ls.dijkstraFrom(t.ls.localOf[oi], dist)
+		metd := make([]float32, len(t.ls.nodes))
+		t.ls.dijkstraFromM(t.ls.localOf[oi], dist, metd)
+		sm := out.SeedMet[oi]
 		for i, d := range dist {
 			if d == f32Inf {
 				continue
@@ -310,35 +380,39 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 			node := t.ls.nodes[i]
 			if cur, ok := out.OriginArr[node]; !ok || arr < cur {
 				out.OriginArr[node] = arr
+				out.OriginMet[node] = sm + metd[i]
 			}
 		}
 		for _, x := range e.RM.LeafBoundary(leaf) {
-			if d := dist[t.ls.localOf[x]]; d != f32Inf && s+d <= limitSeconds {
-				exitArrs = append(exitArrs, exitArr{x, s + d})
+			xi := t.ls.localOf[x]
+			if d := dist[xi]; d != f32Inf && s+d <= limitSeconds {
+				exitArrs = append(exitArrs, exitArr{x, s + d, sm + metd[xi]})
 			}
 		}
 	}
 	out.LocalMs = float64(time.Since(t0).Microseconds()) / 1000
 
-	// Phase 2: boundary Dijkstra.
+	// Phase 2: boundary Dijkstra (seconds decide; metres ride along).
 	t1 := time.Now()
 	dist := make(map[uint32]float32)
+	distM := make(map[uint32]float32)
 	h := &miniHeap32{}
-	push := func(oi uint32, c float32) {
+	push := func(oi uint32, c, m float32) {
 		if c > limitSeconds {
 			return
 		}
 		if cur, ok := dist[oi]; !ok || c < cur {
 			dist[oi] = c
+			distM[oi] = m
 			heap.Push(h, heapItem32{oi, c})
 		}
 	}
 	for _, xa := range exitArrs {
-		push(xa.oi, xa.arr)
+		push(xa.oi, xa.arr, xa.met)
 	}
 	for oi, s := range out.Seeds {
 		if _, ok := e.BI.leafOf[oi]; ok {
-			push(oi, s)
+			push(oi, s, out.SeedMet[oi])
 		}
 	}
 	for h.Len() > 0 {
@@ -346,10 +420,11 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 		if d, ok := dist[cur.oi]; !ok || cur.c > d {
 			continue
 		}
+		curM := distM[cur.oi]
 		// Cross edges (this node as an exit).
 		if cr, ok := e.BI.cross[cur.oi]; ok {
 			for i := cr.start; i < cr.start+cr.count; i++ {
-				push(e.BI.crossTo[i], cur.c+e.BI.crossSec[i])
+				push(e.BI.crossTo[i], cur.c+e.BI.crossSec[i], curM+e.BI.crossMet[i])
 			}
 		}
 		// Matrix row (this node as an entry): relaxes EVERY boundary node of
@@ -362,7 +437,7 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 			for xi, x := range bnd {
 				m := e.RM.Mat[base+int64(xi)]
 				if m != f32Inf {
-					push(x, cur.c+m)
+					push(x, cur.c+m, curM+e.RM.MatM[base+int64(xi)])
 				}
 			}
 		}
@@ -381,9 +456,14 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 		lbl := out.Reached[leaf]
 		if lbl == nil {
 			lbl = newRegionLabel(e, leaf)
+			lbl.EntryMet = make([]float32, len(lbl.EntryArr))
+			for i := range lbl.EntryMet {
+				lbl.EntryMet[i] = f32Inf
+			}
 			out.Reached[leaf] = lbl
 		}
 		lbl.EntryArr[ei] = arr
+		lbl.EntryMet[ei] = distM[oi]
 	}
 	for leaf, lbl := range out.Reached {
 		ecc := e.RM.LeafEcc(leaf)
@@ -417,26 +497,37 @@ func newRegionLabel(e *Stage2Engine, leaf int32) *RegionLabel {
 // junctionArrival returns the exact arrival at base junction j, +Inf if
 // unreached.
 func (e *Stage2Engine) junctionArrival(lbl *ReachLabels, j NodeID) float32 {
+	s, _ := e.junctionArrivalM(lbl, j)
+	return s
+}
+
+// junctionArrivalM also returns the road metres along the winning path (+Inf
+// when metres are unavailable, e.g. decoded stored labels).
+func (e *Stage2Engine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, float32) {
 	oi := e.Ov.Idx[j]
 	if oi == 0 {
-		return f32Inf
+		return f32Inf, f32Inf
 	}
-	best := f32Inf
+	best, bestM := f32Inf, f32Inf
 	if a, ok := lbl.OriginArr[oi]; ok && a < best {
 		best = a
+		bestM = f32Inf
+		if m, ok := lbl.OriginMet[oi]; ok {
+			bestM = m
+		}
 	}
 	leaf := e.Part.LeafOf[oi]
 	if leaf < 0 {
-		return best
+		return best, bestM
 	}
 	rl, ok := lbl.Reached[leaf]
 	if !ok {
-		return best
+		return best, bestM
 	}
 	t := e.tables.get(e, leaf)
 	li, in := t.ls.localOf[oi]
 	if !in {
-		return best
+		return best, bestM
 	}
 	for i, arr := range rl.EntryArr {
 		if arr == f32Inf {
@@ -444,9 +535,13 @@ func (e *Stage2Engine) junctionArrival(lbl *ReachLabels, j NodeID) float32 {
 		}
 		if d := t.dist[i][li]; d != f32Inf && arr+d < best {
 			best = arr + d
+			bestM = f32Inf
+			if rl.EntryMet != nil {
+				bestM = rl.EntryMet[i] + t.met[i][li]
+			}
 		}
 	}
-	return best
+	return best, bestM
 }
 
 // Arrival returns the exact drive arrival seconds at (lat,lng), +Inf when out
@@ -461,18 +556,37 @@ func (e *Stage2Engine) Arrival(lbl *ReachLabels, lat, lng float64) float32 {
 
 // ArrivalAtBaseNode is Arrival for an already-snapped base node.
 func (e *Stage2Engine) ArrivalAtBaseNode(lbl *ReachLabels, v NodeID) float32 {
+	s, _ := e.ArrivalAtBaseNodeM(lbl, v)
+	return s
+}
+
+// ArrivalAtBaseNodeM also returns road metres along the winning path (+Inf
+// when unavailable).
+func (e *Stage2Engine) ArrivalAtBaseNodeM(lbl *ReachLabels, v NodeID) (float32, float32) {
 	if e.Ov.Idx[v] != 0 {
-		return e.junctionArrival(lbl, v)
+		return e.junctionArrivalM(lbl, v)
 	}
-	best := f32Inf
+	best, bestM := f32Inf, f32Inf
 	if a := e.Ov.ChainEndA[v]; a != 0 && e.Ov.OffFromA[v] >= 0 {
-		if ja := e.junctionArrival(lbl, a); ja+e.Ov.OffFromA[v] < best {
+		if ja, jm := e.junctionArrivalM(lbl, a); ja+e.Ov.OffFromA[v] < best {
 			best = ja + e.Ov.OffFromA[v]
+			bestM = f32Inf
+			if jm != f32Inf {
+				if cm := chainMetresFromEnd(e.G, e.Ov, a, v); cm >= 0 {
+					bestM = jm + cm
+				}
+			}
 		}
 	}
 	if b := e.Ov.ChainEndB[v]; b != 0 && e.Ov.OffFromB[v] >= 0 {
-		if jb := e.junctionArrival(lbl, b); jb+e.Ov.OffFromB[v] < best {
+		if jb, jm := e.junctionArrivalM(lbl, b); jb+e.Ov.OffFromB[v] < best {
 			best = jb + e.Ov.OffFromB[v]
+			bestM = f32Inf
+			if jm != f32Inf {
+				if cm := chainMetresFromEnd(e.G, e.Ov, b, v); cm >= 0 {
+					bestM = jm + cm
+				}
+			}
 		}
 	}
 	// Origin on the same chain: direct along-chain travel with no junction.
@@ -481,32 +595,44 @@ func (e *Stage2Engine) ArrivalAtBaseNode(lbl *ReachLabels, v NodeID) float32 {
 	// Aberdeenshire) — so walk the origin's actual chain to confirm v is on
 	// it and price the hop-exact departure cost.
 	if o := lbl.originChain; o != 0 && e.Ov.ChainEndA[o] == e.Ov.ChainEndA[v] && e.Ov.ChainEndB[o] == e.Ov.ChainEndB[v] {
-		if c := sameChainDepartCost(e.G, e.Ov, o, v); c >= 0 && lbl.seedBase+c < best {
+		if c, cm := sameChainDepartCostM(e.G, e.Ov, o, v); c >= 0 && lbl.seedBase+c < best {
 			best = lbl.seedBase + c
+			bestM = cm
 		}
 	}
-	return best
+	return best, bestM
 }
 
 // sameChainDepartCost walks from chain node o along its own chain in both
 // drivable directions, returning the drive seconds to v if v lies on the SAME
 // chain, else -1. Bounded by the chain length.
 func sameChainDepartCost(g *Graph, ov *Overlay, o, v NodeID) float32 {
+	s, _ := sameChainDepartCostM(g, ov, o, v)
+	return s
+}
+
+func sameChainDepartCostM(g *Graph, ov *Overlay, o, v NodeID) (float32, float32) {
 	if o == v {
-		return 0
+		return 0, 0
 	}
-	best := float32(-1)
+	hop := func(a, b NodeID) float32 {
+		na, nb := g.Nodes[a], g.Nodes[b]
+		return float32(haversineM(float64(na.Lat), float64(na.Lng), float64(nb.Lat), float64(nb.Lng)))
+	}
+	best, bestM := float32(-1), float32(-1)
 	for i := range g.EdgesFrom(o) {
 		e := &g.Edges[g.EdgeStart[o]+int32(i)]
 		if e.Seconds[Drive] < 0 {
 			continue
 		}
 		sum := e.Seconds[Drive]
+		msum := hop(o, e.To)
 		prev, cur := o, e.To
 		for ov.Idx[cur] == 0 {
 			if cur == v {
 				if best < 0 || sum < best {
 					best = sum
+					bestM = msum
 				}
 				break
 			}
@@ -522,10 +648,11 @@ func sameChainDepartCost(g *Graph, ov *Overlay, o, v NodeID) float32 {
 				break
 			}
 			sum += next.Seconds[Drive]
+			msum += hop(cur, next.To)
 			prev, cur = cur, next.To
 		}
 	}
-	return best
+	return best, bestM
 }
 
 // heapItem32 / miniHeap32: tiny heap keyed by overlay idx.

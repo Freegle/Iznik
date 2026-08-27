@@ -107,3 +107,70 @@ func TestStage2QueryExactnessBristol(t *testing.T) {
 		})
 	}
 }
+
+// TestStage2MetresBristol: road metres from the engine must track the base
+// search's DistM-style metres. Seconds are exact; metres follow the winning
+// path, so equal-seconds path ties allow small divergence — bounded here.
+func TestStage2MetresBristol(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	lbl := eng.QueryLabels(51.4545, -2.5879, 900)
+	origin := nearestNodeForMode(g, 51.4545, -2.5879, Drive)
+	base, baseM := baseDriveDijkstraM(g, origin, initialCostFor(Drive), 900)
+
+	checked, noMet, bigDev := 0, 0, 0
+	var worstFrac float64
+	for id, want := range base {
+		s, m := eng.ArrivalAtBaseNodeM(lbl, id)
+		if math.Abs(float64(s-want)) > 0.01 {
+			t.Fatalf("node %d secs mismatch %v vs %v", id, s, want)
+		}
+		wm := baseM[id]
+		if m == f32Inf {
+			noMet++
+			if noMet <= 5 {
+				if oi := eng.Ov.Idx[id]; oi != 0 {
+					leaf := eng.Part.LeafOf[oi]
+					rl := lbl.Reached[leaf]
+					_, hasOA := lbl.OriginArr[oi]
+					t.Logf("noMet junction id=%d leaf=%d label=%v entryMet=%v originArr=%v secs=%.1f", id, leaf, rl != nil, rl != nil && rl.EntryMet != nil, hasOA, want)
+				} else {
+					a, b := eng.Ov.ChainEndA[id], eng.Ov.ChainEndB[id]
+					ja, jma := eng.junctionArrivalM(lbl, a)
+					jb, jmb := eng.junctionArrivalM(lbl, b)
+					cma := chainMetresFromEnd(g, eng.Ov, a, id)
+					cmb := chainMetresFromEnd(g, eng.Ov, b, id)
+					t.Logf("noMet chain id=%d ends %d/%d endArr %.1f/%.1f endMet %.0f/%.0f chainMet %.0f/%.0f offs %.1f/%.1f secs=%.1f",
+						id, a, b, ja, jb, jma, jmb, cma, cmb, eng.Ov.OffFromA[id], eng.Ov.OffFromB[id], want)
+				}
+			}
+			continue
+		}
+		checked++
+		dev := math.Abs(float64(m - wm))
+		tol := math.Max(100, 0.05*float64(wm))
+		if dev > tol {
+			bigDev++
+			if frac := dev / math.Max(1, float64(wm)); frac > worstFrac {
+				worstFrac = frac
+			}
+			if bigDev <= 3 {
+				t.Logf("metre deviation node %d: engine %.0fm vs base %.0fm (secs %.1f)", id, m, wm, want)
+			}
+		}
+	}
+	if checked < 1000 {
+		t.Fatalf("degenerate: only %d metre answers (%d without metres)", checked, noMet)
+	}
+	// Equal-seconds ties can pick different geometry; allow a small fraction.
+	if frac := float64(bigDev) / float64(checked); frac > 0.01 {
+		t.Fatalf("%.2f%% of nodes deviate beyond max(100m, 5%%) (worst %.1f%%): metre propagation broken",
+			100*frac, 100*worstFrac)
+	}
+	if noMet > checked/10 {
+		t.Fatalf("metres missing on %d of %d reached nodes", noMet, noMet+checked)
+	}
+	t.Logf("metres OK: %d checked, %d tie deviations, %d without metres", checked, bigDev, noMet)
+}

@@ -118,7 +118,7 @@
 
         <!-- Distance warning -->
         <NoticeMessage
-          v-if="milesaway > faraway && message?.type === 'Offer'"
+          v-if="crowMiles > faraway && message?.type === 'Offer'"
           variant="warning"
           class="reply-card__notice"
         >
@@ -332,6 +332,10 @@ import { useUserStore } from '~/stores/user'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import { milesAway } from '~/composables/useDistance'
+import {
+  roadDistance,
+  roadMilesRounded,
+} from '~/composables/useDriveDistance'
 import { useMe } from '~/composables/useMe'
 import {
   useReplyStateMachine,
@@ -508,13 +512,31 @@ function fmt(val) {
     : d.format('D MMM YYYY')
 }
 
-const milesaway = computed(() => {
+// crowMiles feeds the far-away WARNING threshold (logic, deliberately kept
+// crow-flies and blur-stable); milesaway is the DISPLAY value and prefers
+// road distance from the reach engine.
+const crowMiles = computed(() => {
   return milesAway(
     me.value?.lat,
     me.value?.lng,
     message.value?.lat,
     message.value?.lng
   )
+})
+
+const roadDist = computed(() => {
+  if (!message.value?.lat) {
+    return null
+  }
+  return roadDistance(message.value.lat, message.value.lng).value
+})
+
+const milesaway = computed(() => {
+  const road = roadDist.value
+  if (road?.miles != null) {
+    return roadMilesRounded(road.miles)
+  }
+  return crowMiles.value
 })
 
 const alreadyAMember = computed(() => {

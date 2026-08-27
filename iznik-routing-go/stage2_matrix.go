@@ -15,6 +15,7 @@ package main
 
 import (
 	"container/heap"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -40,13 +41,16 @@ type RegionMatrices struct {
 	BndOff []int32
 	Bnd    []uint32
 	MatOff []int64   // len = leaves+1; Mat[MatOff[l]:] is entries×boundary row-major
-	Mat    []float32 // +Inf = internally unreachable
+	Mat    []float32 // seconds; +Inf = internally unreachable
+	MatM   []float32 // road metres along the time-optimal internal path
 	Ecc    []float32 // parallel to Entries; +Inf = entry does not cover region
 
-	// Cross edges between leaves (drive): from exit to entry with chain secs.
+	// Cross edges between leaves (drive): from exit to entry with chain secs
+	// and road metres.
 	CrossFrom []uint32
 	CrossTo   []uint32
 	CrossSecs []float32
+	CrossMet  []float32
 }
 
 func (rm *RegionMatrices) LeafEntries(l int32) []uint32 {
@@ -99,6 +103,7 @@ type leafSubgraph struct {
 	start   []int32
 	to      []int32
 	secs    []float32
+	mets    []float32 // road metres of the chain edge (same semantics as DistM)
 }
 
 func buildLeafSubgraph(ov *Overlay, part *Stage2Partition, leaf int32) *leafSubgraph {
@@ -125,6 +130,7 @@ func buildLeafSubgraph(ov *Overlay, part *Stage2Partition, leaf int32) *leafSubg
 	total := deg[len(nodes)]
 	ls.to = make([]int32, total)
 	ls.secs = make([]float32, total)
+	ls.mets = make([]float32, total)
 	fill := make([]int32, len(nodes))
 	for i, oi := range nodes {
 		for _, e := range ov.EdgesFrom(oi) {
@@ -135,6 +141,7 @@ func buildLeafSubgraph(ov *Overlay, part *Stage2Partition, leaf int32) *leafSubg
 				p := ls.start[i] + fill[i]
 				ls.to[p] = lv
 				ls.secs[p] = e.Seconds[Drive]
+				ls.mets[p] = e.Metres
 				fill[i]++
 			}
 		}
@@ -143,10 +150,21 @@ func buildLeafSubgraph(ov *Overlay, part *Stage2Partition, leaf int32) *leafSubg
 }
 
 // dijkstraFrom fills dist (len == len(ls.nodes)) with internal arrivals from
-// local source li (seed 0), +Inf where unreachable.
+// local source li (seed 0), +Inf where unreachable. When met is non-nil it is
+// filled with the road metres along the time-optimal path (DistM semantics).
 func (ls *leafSubgraph) dijkstraFrom(li int32, dist []float32) {
+	ls.dijkstraFromM(li, dist, nil)
+}
+
+func (ls *leafSubgraph) dijkstraFromM(li int32, dist, met []float32) {
 	for i := range dist {
 		dist[i] = f32Inf
+	}
+	if met != nil {
+		for i := range met {
+			met[i] = f32Inf
+		}
+		met[li] = 0
 	}
 	dist[li] = 0
 	h := &miniHeap{{li, 0}}
@@ -160,6 +178,9 @@ func (ls *leafSubgraph) dijkstraFrom(li int32, dist []float32) {
 			v := ls.to[p]
 			if nc < dist[v] {
 				dist[v] = nc
+				if met != nil {
+					met[v] = met[cur.li] + ls.mets[p]
+				}
 				heap.Push(h, miniHeapItem{v, nc})
 			}
 		}
@@ -200,6 +221,7 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 			rm.CrossFrom = append(rm.CrossFrom, oi)
 			rm.CrossTo = append(rm.CrossTo, e.To)
 			rm.CrossSecs = append(rm.CrossSecs, e.Seconds[Drive])
+			rm.CrossMet = append(rm.CrossMet, e.Metres)
 			exitSets[lf][oi] = struct{}{}
 			entrySets[lt][e.To] = struct{}{}
 		}
@@ -236,6 +258,7 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 		rm.MatOff[l+1] = rm.MatOff[l] + int64(len(ent)*len(bnd))
 	}
 	rm.Mat = make([]float32, rm.MatOff[nLeaves])
+	rm.MatM = make([]float32, rm.MatOff[nLeaves])
 	rm.Ecc = make([]float32, len(rm.Entries))
 
 	// Per-leaf entry Dijkstras, parallel across leaves.
@@ -251,9 +274,10 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 			ents := rm.LeafEntries(int32(l))
 			bnd := rm.LeafBoundary(int32(l))
 			dist := make([]float32, len(ls.nodes))
+			metd := make([]float32, len(ls.nodes))
 			nx := len(bnd)
 			for ei, ent := range ents {
-				ls.dijkstraFrom(ls.localOf[ent], dist)
+				ls.dijkstraFromM(ls.localOf[ent], dist, metd)
 				ecc := float32(0)
 				for _, d := range dist {
 					if d > ecc {
@@ -264,6 +288,7 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 				base := rm.MatOff[l] + int64(ei*nx)
 				for xi, ex := range bnd {
 					rm.Mat[base+int64(xi)] = dist[ls.localOf[ex]]
+					rm.MatM[base+int64(xi)] = metd[ls.localOf[ex]]
 				}
 			}
 		}(l)
@@ -276,13 +301,15 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 }
 
 // saveMatrices / loadMatrices: raw-slice artifact like the graph snapshot.
+const matricesMagic = "FRGM2SNAP" // v2: adds MatM (road metres)
+
 func saveMatrices(path string, rm *RegionMatrices) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	if _, err := f.WriteString(stage2SnapMagic); err != nil {
+	if _, err := f.WriteString(matricesMagic); err != nil {
 		return err
 	}
 	for _, s := range [][]int32{rm.EntryOff, rm.ExitOff, rm.BndOff} {
@@ -305,6 +332,9 @@ func saveMatrices(path string, rm *RegionMatrices) error {
 	if err := writeSlice(f, rm.Mat); err != nil {
 		return err
 	}
+	if err := writeSlice(f, rm.MatM); err != nil {
+		return err
+	}
 	if err := writeSlice(f, rm.Ecc); err != nil {
 		return err
 	}
@@ -314,7 +344,10 @@ func saveMatrices(path string, rm *RegionMatrices) error {
 	if err := writeSlice(f, rm.CrossTo); err != nil {
 		return err
 	}
-	return writeSlice(f, rm.CrossSecs)
+	if err := writeSlice(f, rm.CrossSecs); err != nil {
+		return err
+	}
+	return writeSlice(f, rm.CrossMet)
 }
 
 func loadMatrices(path string) (*RegionMatrices, error) {
@@ -323,9 +356,12 @@ func loadMatrices(path string) (*RegionMatrices, error) {
 		return nil, err
 	}
 	defer f.Close()
-	magic := make([]byte, len(stage2SnapMagic))
+	magic := make([]byte, len(matricesMagic))
 	if _, err := f.Read(magic); err != nil {
 		return nil, err
+	}
+	if string(magic) != matricesMagic {
+		return nil, fmt.Errorf("matrices artifact version mismatch (got %q)", magic)
 	}
 	rm := &RegionMatrices{}
 	if rm.EntryOff, err = readSlice[int32](f); err != nil {
@@ -352,6 +388,9 @@ func loadMatrices(path string) (*RegionMatrices, error) {
 	if rm.Mat, err = readSlice[float32](f); err != nil {
 		return nil, err
 	}
+	if rm.MatM, err = readSlice[float32](f); err != nil {
+		return nil, err
+	}
 	if rm.Ecc, err = readSlice[float32](f); err != nil {
 		return nil, err
 	}
@@ -362,6 +401,9 @@ func loadMatrices(path string) (*RegionMatrices, error) {
 		return nil, err
 	}
 	if rm.CrossSecs, err = readSlice[float32](f); err != nil {
+		return nil, err
+	}
+	if rm.CrossMet, err = readSlice[float32](f); err != nil {
 		return nil, err
 	}
 	return rm, nil

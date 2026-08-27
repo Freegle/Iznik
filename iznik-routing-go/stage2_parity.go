@@ -838,3 +838,73 @@ func stage2LeafCheckRun(jsonPath string, target NodeID, engine *Stage2Engine) {
 	}
 	fmt.Println("hop check complete")
 }
+
+// baseDriveDijkstraM is baseDriveDijkstra also accumulating road metres along
+// the time-optimal path (DistM semantics) for metre verification.
+func baseDriveDijkstraM(g *Graph, origin NodeID, seed float32, limit float32) (map[NodeID]float32, map[NodeID]float32) {
+	dist := map[NodeID]float32{origin: seed}
+	metres := map[NodeID]float32{origin: 0}
+	type qi struct {
+		id NodeID
+		c  float32
+	}
+	h := []qi{{origin, seed}}
+	push := func(x qi) {
+		h = append(h, x)
+		i := len(h) - 1
+		for i > 0 {
+			p := (i - 1) / 2
+			if h[p].c <= h[i].c {
+				break
+			}
+			h[p], h[i] = h[i], h[p]
+			i = p
+		}
+	}
+	pop := func() qi {
+		top := h[0]
+		last := len(h) - 1
+		h[0] = h[last]
+		h = h[:last]
+		i := 0
+		for {
+			l, r := 2*i+1, 2*i+2
+			s := i
+			if l < len(h) && h[l].c < h[s].c {
+				s = l
+			}
+			if r < len(h) && h[r].c < h[s].c {
+				s = r
+			}
+			if s == i {
+				break
+			}
+			h[i], h[s] = h[s], h[i]
+			i = s
+		}
+		return top
+	}
+	for len(h) > 0 {
+		cur := pop()
+		if d, ok := dist[cur.id]; ok && cur.c > d {
+			continue
+		}
+		cn := g.Nodes[cur.id]
+		for _, e := range g.EdgesFrom(cur.id) {
+			if e.Seconds[Drive] < 0 {
+				continue
+			}
+			nc := cur.c + e.Seconds[Drive]
+			if nc > limit {
+				continue
+			}
+			if d, ok := dist[e.To]; !ok || nc < d {
+				dist[e.To] = nc
+				tn := g.Nodes[e.To]
+				metres[e.To] = metres[cur.id] + float32(haversineM(float64(cn.Lat), float64(cn.Lng), float64(tn.Lat), float64(tn.Lng)))
+				push(qi{e.To, nc})
+			}
+		}
+	}
+	return dist, metres
+}

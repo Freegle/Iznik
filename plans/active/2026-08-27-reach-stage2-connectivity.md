@@ -247,3 +247,21 @@ existed to find, and both carry regression tests now.
   the 2.1GB base edge list.
 - The multi-level roll-up (tree labels above leaf level) if label sizes ever matter —
   at 0.6-3.8KB/post they do not yet.
+
+## Goal 2 (2026-08-27 late): use the engine for real site features, in this PR
+
+Directive: drive DISTANCE (road miles, not crow-flies) shown on the site for posts,
+chat and profiles; convert any existing function the engine radically improves. No
+deferrals. PR #1437 (electricals) releases after this PR; no shared files, branch is
+on master tip — rebase-after is conflict-free.
+
+| # | Task | Status | Notes |
+|---|------|--------|-------|
+| G1 | Metres through the engine (matrices v2, query, chains, seeds) | 🔄 | build green, core tests green |
+| G2 | /v1/drive-metrics (one-to-many) + /v1/drive-time engine fast path + tests | ⬜ | |
+| G3 | UK artifacts rebuild (matrices v2) + metre verification in sweep + rerun | ⬜ | |
+| G4 | iznik-server-go: /api/drivedistance batch proxy (session-auth, fallback) | ⬜ | |
+| G5 | Frontend: useDriveDistance batch composable; wire post cards, chat, profile | ⬜ | |
+| G6 | Fairness invariant: verify untouched (suite) + document for adoption phase | ⬜ | |
+| G7 | Docs + PR update | ⬜ | |
+| G8 | Full suites + push | ⬜ | |

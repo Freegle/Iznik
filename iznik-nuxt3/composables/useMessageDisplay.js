@@ -12,6 +12,10 @@ import {
   timeago,
 } from '~/composables/useTimeFormat'
 import { milesAway } from '~/composables/useDistance'
+import {
+  roadDistance,
+  roadMilesRounded,
+} from '~/composables/useDriveDistance'
 import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 
 /**
@@ -170,7 +174,21 @@ export function useMessageDisplay(messageId) {
     return t === 'just now' ? t : t ? `${t} ago` : ''
   })
 
+  // Road drive distance from the reach engine; null until (and unless) the
+  // engine answers, in which case it takes precedence over crow-flies.
+  const roadDist = computed(() => {
+    if (!me.value?.lat || !message.value?.lat) {
+      return null
+    }
+    return roadDistance(message.value.lat, message.value.lng).value
+  })
+
   const distanceText = computed(() => {
+    const road = roadDist.value
+    if (road?.miles != null) {
+      const mi = roadMilesRounded(road.miles)
+      return mi < 1 ? '<1mi' : `${Math.round(mi)}mi`
+    }
     const server = serverDistanceMiles.value
     if (server != null) {
       return server < 1 ? '<1mi' : `${Math.round(server)}mi`
@@ -191,6 +209,15 @@ export function useMessageDisplay(messageId) {
   })
 
   const distanceTextExpanded = computed(() => {
+    const road = roadDist.value
+    if (road?.miles != null) {
+      const mi = roadMilesRounded(road.miles)
+      if (mi < 1) {
+        return 'less than 1 mile by road'
+      }
+      const rounded = Math.round(mi)
+      return rounded === 1 ? '1 mile by road' : `${rounded} miles by road`
+    }
     const server = serverDistanceMiles.value
     if (server != null) {
       if (server < 1) {

@@ -1,5 +1,9 @@
 import pluralize from 'pluralize'
 import { milesAway } from '~/composables/useDistance'
+import {
+  roadDistance,
+  roadMilesRounded,
+} from '~/composables/useDriveDistance'
 import { computed } from '#imports'
 import { useChatStore } from '~/stores/chat'
 import { useUserStore } from '~/stores/user'
@@ -91,17 +95,31 @@ export function setupChat(selectedChatId, chatMessageId) {
     return last
   })
 
-  const milesaway = computed(() =>
-    milesAway(
+  // Prefer road distance (reach engine) for display; crow-flies fallback.
+  const roadDist = computed(() => {
+    if (!otheruser?.value?.lat && !otheruser?.value?.lng) {
+      return null
+    }
+    return roadDistance(otheruser.value.lat, otheruser.value.lng).value
+  })
+
+  const milesaway = computed(() => {
+    const road = roadDist.value
+    if (road?.miles != null) {
+      return roadMilesRounded(road.miles)
+    }
+    return milesAway(
       authStore.user?.lat,
       authStore.user?.lng,
       otheruser?.value?.lat,
       otheruser?.value?.lng
     )
-  )
+  })
 
-  const milesstring = computed(
-    () => pluralize('mile', milesaway.value, true) + ' away'
+  const milesstring = computed(() =>
+    roadDist.value?.miles != null
+      ? pluralize('mile', milesaway.value, true) + ' away by road'
+      : pluralize('mile', milesaway.value, true) + ' away'
   )
 
   const unseen = computed(() => chat?.value?.unseen)

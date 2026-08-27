@@ -146,6 +146,10 @@ import pluralize from 'pluralize'
 import { computed, defineAsyncComponent } from 'vue'
 import { useUserStore } from '~/stores/user'
 import { milesAway } from '~/composables/useDistance'
+import {
+  roadDistance,
+  roadMilesRounded,
+} from '~/composables/useDriveDistance'
 import { useMessageStore } from '~/stores/message'
 import { twem } from '~/composables/useTwem'
 import { useMe } from '~/composables/useMe'
@@ -209,7 +213,18 @@ const expectedrepliesText = computed(() => {
   return pluralize('freegler', user.value?.expectedreplies, true)
 })
 
+const roadDist = computed(() => {
+  if (!user.value?.lat && !user.value?.lng) {
+    return null
+  }
+  return roadDistance(user.value.lat, user.value.lng).value
+})
+
 const milesaway = computed(() => {
+  const road = roadDist.value
+  if (road?.miles != null) {
+    return pluralize('mile', roadMilesRounded(road.miles), true) + ' by road'
+  }
   const dist = milesAway(
     me.value?.lat,
     me.value?.lng,

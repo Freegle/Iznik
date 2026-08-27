@@ -157,3 +157,181 @@ func handleReachArrival() fiber.Handler {
 		return c.JSON(fiber.Map{"results": out})
 	}
 }
+
+type driveMetricsReq struct {
+	Lat        float64 `json:"lat"`
+	Lng        float64 `json:"lng"`
+	MaxMinutes float64 `json:"max_minutes"`
+	Targets    []struct {
+		ID  int64   `json:"id"`
+		Lat float64 `json:"lat"`
+		Lng float64 `json:"lng"`
+	} `json:"targets"`
+}
+
+// handleDriveMetrics answers road drive time AND road distance from one
+// origin to up to 1000 targets in a single query: one labeling query from the
+// origin, then a table lookup per target. This is what lets the site show
+// "N miles by road" instead of crow-flies on post lists, chat and profiles.
+func handleDriveMetrics() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		e := stage2Live
+		if e == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (STAGE2_DIR)")
+		}
+		var req driveMetricsReq
+		if err := c.BodyParser(&req); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "bad body")
+		}
+		if req.Lat == 0 || req.Lng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
+		}
+		if len(req.Targets) == 0 || len(req.Targets) > 1000 {
+			return fiber.NewError(fiber.StatusBadRequest, "1-1000 targets required")
+		}
+		minutes := req.MaxMinutes
+		if minutes <= 0 || minutes > 120 {
+			minutes = 120
+		}
+		start := time.Now()
+		lbl := e.QueryLabels(req.Lat, req.Lng, float32(minutes*60))
+		type res struct {
+			ID    int64    `json:"id"`
+			Mins  *float64 `json:"mins"`
+			Miles *float64 `json:"miles"`
+		}
+		out := make([]res, len(req.Targets))
+		for i, tg := range req.Targets {
+			out[i] = res{ID: tg.ID}
+			v := nearestNodeForMode(e.G, tg.Lat, tg.Lng, Drive)
+			if v == noNode {
+				continue
+			}
+			secs, mets := e.ArrivalAtBaseNodeM(lbl, v)
+			if secs == f32Inf || secs > lbl.T {
+				continue
+			}
+			mins := float64(secs) / 60
+			out[i].Mins = &mins
+			if mets != f32Inf {
+				miles := float64(mets) / 1609.344
+				out[i].Miles = &miles
+			}
+		}
+		return c.JSON(fiber.Map{
+			"results": out,
+			"ms":      float64(time.Since(start).Microseconds()) / 1000,
+		})
+	}
+}
+
+// engineDriveTime is the fast path for /v1/drive-time when the reach engine
+// is live and the mode is drive: exact, and milliseconds instead of a bounded
+// sweep. Returns handled=false to fall through to the sweep.
+func engineDriveTime(lat, lng, toLat, toLng, minutes float64, mode Mode) (fiber.Map, bool) {
+	e := stage2Live
+	if e == nil || mode != Drive {
+		return nil, false
+	}
+	dest := nearestNodeForMode(e.G, toLat, toLng, Drive)
+	if dest == noNode {
+		return fiber.Map{"reachable": false}, true
+	}
+	lbl := e.QueryLabels(lat, lng, float32(minutes*60))
+	secs, mets := e.ArrivalAtBaseNodeM(lbl, dest)
+	if secs == f32Inf || secs > lbl.T {
+		return fiber.Map{"reachable": false}, true
+	}
+	resp := fiber.Map{
+		"reachable": true,
+		"drive_min": float64(secs) / 60,
+	}
+	if mets != f32Inf {
+		resp["drive_miles"] = float64(mets) / 1609.344
+	}
+	return resp, true
+}
+
+// handleBlur is road-aware location blurring: instead of displacing a point
+// by up to R metres in any direction (which can jump an unbridged river and
+// make road distances lie wildly), pick a deterministic pseudo-random road
+// node whose ROAD distance from the true location is within [R/2, 3R/2].
+// The blurred point is always on the same side of any connectivity seam,
+// is never the true location (at least R/2 road metres away), and is stable
+// for the same input (no jitter between requests).
+//
+// This is the enabling primitive for routing-aware member blurring; adopting
+// it for user display is a separate (privacy-visible) decision.
+func handleBlur(g *Graph) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		lat := c.QueryFloat("lat")
+		lng := c.QueryFloat("lng")
+		metres := c.QueryFloat("metres")
+		if lat == 0 || lng == 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
+		}
+		if metres <= 0 || metres > 2000 {
+			metres = 400
+		}
+		origin := nearestNodeForMode(g, lat, lng, Drive)
+		if origin == noNode {
+			// No road nearby: nothing safer to offer than the input.
+			return c.JSON(fiber.Map{"lat": lat, "lng": lng, "roadm": 0})
+		}
+
+		lo, hi := float32(metres/2), float32(metres*1.5)
+		// Tiny metres-bounded exploration over the base graph (undirected in
+		// spirit: a blur target only needs to be road-CONNECTED, so out-edges
+		// suffice on all but pure-oneway pockets, where the ring just thins).
+		type qn struct {
+			id NodeID
+			m  float32
+		}
+		dist := map[NodeID]float32{origin: 0}
+		queue := []qn{{origin, 0}}
+		var ring []NodeID
+		var farthest NodeID
+		var farM float32
+		for qi := 0; qi < len(queue); qi++ {
+			cur := queue[qi]
+			if cur.m >= lo {
+				ring = append(ring, cur.id)
+			}
+			if cur.m > farM {
+				farM, farthest = cur.m, cur.id
+			}
+			if cur.m >= hi {
+				continue
+			}
+			cn := g.Nodes[cur.id]
+			for _, e := range g.EdgesFrom(cur.id) {
+				if e.Seconds[Drive] < 0 {
+					continue
+				}
+				tn := g.Nodes[e.To]
+				nm := cur.m + float32(haversineM(float64(cn.Lat), float64(cn.Lng), float64(tn.Lat), float64(tn.Lng)))
+				if d, seen := dist[e.To]; !seen || nm < d {
+					dist[e.To] = nm
+					queue = append(queue, qn{e.To, nm})
+				}
+			}
+		}
+		pick := farthest
+		pickM := farM
+		if len(ring) > 0 {
+			// Deterministic per input location: stable blur, no jitter.
+			seed := uint64(int64(lat*1e6))*6364136223846793005 + uint64(int64(lng*1e6))*1442695040888963407
+			pick = ring[seed%uint64(len(ring))]
+			pickM = dist[pick]
+		}
+		if pick == 0 || pick == origin {
+			return c.JSON(fiber.Map{"lat": lat, "lng": lng, "roadm": 0})
+		}
+		nd := g.Nodes[pick]
+		return c.JSON(fiber.Map{
+			"lat":   nd.Lat,
+			"lng":   nd.Lng,
+			"roadm": pickM,
+		})
+	}
+}
