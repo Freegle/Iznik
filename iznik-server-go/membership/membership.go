@@ -603,15 +603,21 @@ func GetMemberships(c *fiber.Ctx) error {
 			// so a fullname-only LIKE silently excludes them from name search even though
 			// enrichMembers builds their displayname from those columns. (Discourse 9518/371)
 			//
+			// Also match the CONCATENATED firstname+lastname: enrichMembers' displayname
+			// for these members is "firstname lastname" (the string ModTools actually shows
+			// a mod, and the one they type/paste back into search), which contains no
+			// substring equal to firstname or lastname alone, so the two LIKEs above still
+			// missed a full-name search even after 9518/371. (Discourse 9518/379)
+			//
 			// Same
 			// groupid==0 x filter toggles as 836dc8807739 above - 8 possible
 			// rendered forms, all proven by the retired ormharness
 			// (shapes.json / TestTier3Shapes_5f742c0fcf1f, removed in
 			// d22ba1d6c).
 			whereSQL := groupWhere + " AND m.collection = ?" + filterWhereSQL() +
-				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR ue.email LIKE ?)"
+				" AND (u.fullname LIKE ? OR u.firstname LIKE ? OR u.lastname LIKE ? OR CONCAT(u.firstname, ' ', u.lastname) LIKE ? OR ue.email LIKE ?)"
 			whereArgs := append(append([]interface{}{}, groupArgs...), collection,
-				searchPattern, searchPattern, searchPattern, searchPattern)
+				searchPattern, searchPattern, searchPattern, searchPattern, searchPattern)
 			// Same cursor handling as the numeric branch above - see comment there.
 			if contextID > 0 {
 				whereSQL += " AND m.id < ?"
