@@ -42,6 +42,7 @@ import (
 	"github.com/freegle/iznik-server-go/deprecation"
 	"github.com/freegle/iznik-server-go/domain"
 	"github.com/freegle/iznik-server-go/donations"
+	"github.com/freegle/iznik-server-go/electricals"
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/export"
 	"github.com/freegle/iznik-server-go/group"
@@ -273,6 +274,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} item.ImpactResponse
 		// @Failure 400 {object} fiber.Error "Missing or empty name"
 		rg.Get("/item/impact", item.Impact)
+
+		// Electricals statistics
+		// @Router /electricals/stats [get]
+		// @Summary Public statistics for electrical items on Freegle
+		// @Description Rolling twelve-month figures for electrical reuse: counts and share, tonnes and CO2e, most popular and most unusual items, success rate against non-electrical posts, and the condition split. Generated on a schedule by the Laravel command electricals:stats and served from electricals_stats; not computed per request.
+		// @Tags electricals
+		// @Produce json
+		// @Success 200 {object} map[string]interface{} "Generated statistics payload"
+		// @Failure 404 {object} fiber.Error "No statistics generated yet"
+		rg.Get("/electricals/stats", electricals.Stats)
 
 		// Chats
 		// @Router /chat [get]

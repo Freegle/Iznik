@@ -3,6 +3,7 @@
 namespace App\Console\Commands\Eee;
 
 use App\Services\EeeClassificationService;
+use App\Services\EeeProductionStore;
 use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use Illuminate\Console\Command;
@@ -30,6 +31,7 @@ class EeeClassifyNewCommand extends Command
         protected EeeClassificationService $classifier,
         protected EeeVisionService $vision,
         protected EeeSqliteService $sqlite,
+        protected EeeProductionStore $productionStore,
     ) {
         parent::__construct();
     }
@@ -93,12 +95,25 @@ class EeeClassifyNewCommand extends Command
         return Command::SUCCESS;
     }
 
+    /**
+     * Where to resume from.
+     *
+     * Reads production MySQL, not the dev SQLite file: this command runs from the
+     * scheduler on the production batch host, which has no such file, and pointing a
+     * production job at a dev artefact would silently reclassify everything every run.
+     *
+     * The mark is the newest messages.arrival already classified under this model and
+     * prompt, not the newest run time. A run takes minutes, and anything arriving during
+     * it would be skipped for ever if the mark were a wall-clock stamp.
+     */
     protected function getHighWaterMark(): string
     {
-        $pdo  = $this->sqlite->getPdo();
-        $mark = $pdo->query("SELECT MAX(run_at) FROM eee_classifications")->fetchColumn();
+        $mark = $this->productionStore->highWaterMark(
+            $this->vision->getModelName(),
+            $this->vision->getPromptVersion(),
+        );
 
-        // Default to 24 hours ago if no prior run exists.
+        // Default to 24 hours ago if nothing has been classified yet.
         return $mark ?: now()->subDay()->toDateTimeString();
     }
 }

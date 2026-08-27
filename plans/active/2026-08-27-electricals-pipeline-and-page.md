@@ -131,6 +131,22 @@ Record the threshold on the page so the number is interpretable.
 
 ---
 
+## Local test-environment divergence (not this branch)
+
+The Laravel suite fails locally on **pristine `origin/master`** with 95 Ripple failures of 420 and
+22 FirstReply of 92, identical to the counts seen on this branch. CircleCI is green on the same
+commit (`be74a3df3`, pipeline #11278). So:
+
+- this branch did not cause them, proven by reproducing them on a clean checkout
+- master's code is fine; this is local environment divergence
+
+Ruled out: the missing `freegle-spatial` container (started it, counts unchanged) and test-DB
+pollution (the filtered runs do `migrate:fresh` first). Not chased further because it is a
+separate problem from this work, but it means the only trustworthy local signal here is the
+filtered EEE run, which is green at 438/438.
+
+---
+
 ## Notes
 
 - Every new table gets a surrogate `id` even where a natural key exists.
