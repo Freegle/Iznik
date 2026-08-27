@@ -1990,6 +1990,39 @@ describe('ModMessage', () => {
       }
     })
 
+    // Discourse 9808/738: TrashNothing cross-posts a single item to N groups as N
+    // independent messages_groups rows - none created by the rippling engine, so
+    // rippled_in is 0 on all of them (#1379). isHomeGroup used to be based purely on
+    // earliest arrival, so a mod administering any group OTHER than the
+    // earliest-arrival one was told they were on a rippled-in copy, and rejecting with
+    // a standard message (e.g. "Out of area") wrongly showed the silent, no-message
+    // ripple-retraction confirmation instead of the normal compose-and-send flow.
+    it('treats every group of a TN cross-post as a home group, not just the earliest-arrival one', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            {
+              groupid: 999,
+              namedisplay: 'Group A',
+              collection: 'Pending',
+              arrival: rippleEarlier,
+              rippled_in: 0,
+            },
+            {
+              groupid: 789,
+              namedisplay: 'Group B',
+              collection: 'Pending',
+              arrival: rippleLater,
+              rippled_in: 0,
+            },
+          ],
+        }
+      )
+      expect(wrapper.vm.isRippledInToContextGroup).toBe(false)
+      expect(wrapper.vm.isHomeGroup).toBe(true)
+    })
+
     // Discourse #10024 post 2: a mod covering several communities browsing Approved
     // Messages (no explicit contextGroupid - the all-communities view) was shown "This
     // member's posts were moderated..." on a post that had already gone out. The

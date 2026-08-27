@@ -1126,12 +1126,18 @@ const currentGroupName = computed(() => {
   return gid ? groupStore.get(parseInt(gid))?.namedisplay : null
 })
 
-// Whether the copy being administered is the post's home/origin group. Delete and Delete
-// as Spam (which remove the post itself) are only offered here, not on a rippled-in copy.
-const isHomeGroup = computed(() => {
-  const origin = originGroupid.value
-  return origin == null || currentGroupid.value === origin
-})
+// Whether the copy being administered is a home group, i.e. its messages_groups row was
+// NOT created by the rippling engine - as opposed to a genuine rippled-in copy. Delete and
+// Delete as Spam (which remove the post itself), and rejecting with a normal compose-and-
+// send message, are only offered here; a rippled-in copy gets the silent, no-message
+// removal instead. This must use the same rippled_in-aware check as the rippled-in notice
+// above (isRippledInToContextGroup), not mere earliest-arrival: a TrashNothing cross-post
+// creates one independent, non-rippled messages_groups row per group (#1379), so picking a
+// single "origin" by earliest arrival wrongly treated every other group as rippled-in and
+// showed the ripple-retraction confirmation when rejecting a cross-post (Discourse 9808/738).
+const isHomeGroup = computed(
+  () => !isRippledIn(message.value?.groups, currentGroupid.value)
+)
 
 // Rippling-out: only OFFER/WANTED posts ripple, so only offer the reach map for those.
 // The modal itself explains when a post isn't rippling yet.
