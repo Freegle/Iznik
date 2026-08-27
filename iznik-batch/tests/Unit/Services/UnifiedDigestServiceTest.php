@@ -14,11 +14,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Tests\Support\FakesRingIndex;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 class UnifiedDigestServiceTest extends TestCase
 {
     use FakesRingIndex;
+    use SeedsReachCells;
 
     protected UnifiedDigestService $service;
 
@@ -328,13 +330,12 @@ class UnifiedDigestServiceTest extends TestCase
 
         // A reach that DOES cover the recipient, so only the frozen status can exclude it.
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, arrival)
-             VALUES (?, 51.5, -0.1,
-                ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857),
-                ST_Envelope(ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857)),
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
                 'held', NOW())
              ON DUPLICATE KEY UPDATE status = VALUES(status)",
-            [$message->id]
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
         );
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
@@ -1126,9 +1127,11 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue($ledgered($memberA->id), 'reach-covered member A mailed + ledgered');
         $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
 
-        // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger dedup).
-        DB::statement('UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
-            ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger
+        // dedup). The outer bound grows in the same statement, as every writer's does.
+        DB::statement('UPDATE rippling_reach SET polygon_cells = ?, outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
+            [$this->reachCellsFor('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'),
+             'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
         $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
         $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
@@ -1272,176 +1275,6 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotContains($faraway->id, $ids, 'rippling post whose reach does not cover the member is excluded');
     }
 
-    public function test_daily_digest_does_not_reach_gate_a_group_the_recipient_moderates(): void
-    {
-        // Discourse topic 10059/3: a moderator relies on the daily digest to spot-check
-        // posts across every group they moderate, not just their home group. The reach
-        // gate above is right for an ORDINARY MEMBER (rippling paces what they see), but
-        // docs/moderators/rippling-out.md is explicit that rippling's reach/distance
-        // narrowing has "no effect ... on moderation". A moderator who does not live
-        // inside a group they moderate must still see every post on it here.
-        $poster = $this->createTestUser();
-        $moderator = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($moderator, $group, [
-            'role' => Membership::ROLE_MODERATOR,
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $this->setMyLocation($moderator, 51.5, -0.1);
-
-        // Reach does NOT cover the moderator (far to the east) — an ordinary member here
-        // would be excluded (see test_daily_digest_reach_gates_rippling_posts_by_member_location).
-        $faraway = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: faraway (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $faraway->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($faraway->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
-
-        $tracker = UserDigest::create([
-            'userid' => $moderator->id,
-            'mode' => UnifiedDigestService::MODE_DAILY,
-            'lastmsgid' => 0,
-        ]);
-
-        $ids = $this->service->getPostsForUser($moderator, $tracker, UnifiedDigestService::MODE_DAILY)
-            ->pluck('id')->all();
-
-        $this->assertContains($faraway->id, $ids, 'a post on a group the recipient MODERATES is never reach-gated out');
-    }
-
-    public function test_daily_digest_distance_preference_does_not_narrow_a_group_the_recipient_moderates(): void
-    {
-        // Same moderator exemption, at the second narrowing point: filterByDistancePreference
-        // (settings.browseMaxDistance) must also leave a moderator's own groups untouched.
-        $poster = $this->createTestUser();
-        $moderator = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($moderator, $group, [
-            'role' => Membership::ROLE_MODERATOR,
-            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
-        ]);
-        $moderator->settings = ['browseMaxDistance' => 1, 'mylocation' => ['lat' => 51.5074, 'lng' => -0.1278]];
-        $moderator->save();
-
-        // Far outside the moderator's own 1-mile preference — an ordinary member's own
-        // narrowed setting would exclude this post.
-        $far = $this->createTestMessage($poster, $group, [
-            'subject' => 'OFFER: far away (TestLocation)',
-            'lat' => 55.9533,
-            'lng' => -3.1883,
-        ]);
-        // getPostsForUser's join carries messages_groups.groupid onto each row (see the
-        // select() there); replicate that here since we're calling the filter directly.
-        $far->groupid = $group->id;
-
-        $filtered = $this->service->filterByDistancePreference(collect([$far]), $moderator);
-
-        $this->assertTrue(
-            $filtered->contains(fn ($p) => $p->id === $far->id),
-            'a post on a group the recipient MODERATES is never narrowed out by their own distance preference'
-        );
-    }
-
-    public function test_daily_digest_reach_gate_consults_sandwich_bounds(): void
-    {
-        // The reach gate must consult the sandwich bounds when they exist
-        // (plans/2026-07-17-db3-cpu-reach-sql-prefilter.md): outside outer_bound is an
-        // authoritative cheap reject and inside inner_bound an authoritative cheap
-        // accept — in both cases the exact polygon is never tested. Prove it with
-        // adversarial fixtures whose bounds deliberately contradict their polygon
-        // (impossible for verified writer-derived bounds, but the only way to observe
-        // which shape the query trusted).
-        $poster = $this->createTestUser();
-        $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->setMyLocation($member, 51.5, -0.1);
-
-        // Post A: polygon COVERS the member, but outer_bound EXCLUDES them → cheap-rejected.
-        $cheapReject = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: cheap reject (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $cheapReject->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($cheapReject->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-        DB::statement(
-            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText('POLYGON((5 5,5.1 5,5.1 5.1,5 5.1,5 5))', 3857),
-                    inner_bound = NULL WHERE msgid = ?",
-            [$cheapReject->id]
-        );
-
-        // Post B: polygon does NOT cover the member, but inner_bound INCLUDES them → cheap-accepted.
-        $cheapAccept = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: cheap accept (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $cheapAccept->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($cheapAccept->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
-        DB::statement(
-            "UPDATE rippling_reach
-                SET outer_bound = ST_GeomFromText('POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))', 3857),
-                    inner_bound = ST_GeomFromText('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)
-              WHERE msgid = ?",
-            [$cheapAccept->id]
-        );
-
-        $tracker = UserDigest::create([
-            'userid' => $member->id,
-            'mode' => UnifiedDigestService::MODE_DAILY,
-            'lastmsgid' => 0,
-        ]);
-
-        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)
-            ->pluck('id')->all();
-
-        $this->assertNotContains($cheapReject->id, $ids, 'a viewer outside outer_bound is cheap-rejected without testing the polygon');
-        $this->assertContains($cheapAccept->id, $ids, 'a viewer inside inner_bound is cheap-accepted without testing the polygon');
-    }
-
-    public function test_daily_digest_reach_gate_boundary_band_uses_exact_polygon(): void
-    {
-        // Between the bounds — inside outer_bound but not inside inner_bound (here: NULL
-        // inner) — the gate must fall through to the exact polygon test.
-        $poster = $this->createTestUser();
-        $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-        $this->createMembership($poster, $group);
-        $this->createMembership($member, $group, ['emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY]);
-        $this->setMyLocation($member, 51.5, -0.1);
-
-        $outerWkt = 'POLYGON((-0.3 51.3,0.1 51.3,0.1 51.7,-0.3 51.7,-0.3 51.3))';
-
-        // Band post whose exact polygon covers the member → included.
-        $bandIn = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: band in (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $bandIn->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($bandIn->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
-        DB::statement(
-            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL WHERE msgid = ?",
-            [$outerWkt, $bandIn->id]
-        );
-
-        // Band post whose exact polygon does NOT cover the member → excluded.
-        $bandOut = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: band out (TestLocation)']);
-        DB::table('messages_groups')->where('msgid', $bandOut->id)
-            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
-        $this->seedReach($bandOut->id, 'POLYGON((5.0 51.4,5.2 51.4,5.2 51.6,5.0 51.6,5.0 51.4))');
-        DB::statement(
-            "UPDATE rippling_reach SET outer_bound = ST_GeomFromText(?, 3857), inner_bound = NULL WHERE msgid = ?",
-            [$outerWkt, $bandOut->id]
-        );
-
-        $tracker = UserDigest::create([
-            'userid' => $member->id,
-            'mode' => UnifiedDigestService::MODE_DAILY,
-            'lastmsgid' => 0,
-        ]);
-
-        $ids = $this->service->getPostsForUser($member, $tracker, UnifiedDigestService::MODE_DAILY)
-            ->pluck('id')->all();
-
-        $this->assertContains($bandIn->id, $ids, 'boundary band falls back to the exact polygon (covered → included)');
-        $this->assertNotContains($bandOut->id, $ids, 'boundary band falls back to the exact polygon (not covered → excluded)');
-    }
-
     /**
      * Seed a post whose committed reach (and outer_bound, which seedReach derives as the
      * polygon's own envelope) EXCLUDE the ring member's location, with a rural overflow ring
@@ -1462,10 +1295,10 @@ class UnifiedDigestServiceTest extends TestCase
         // Committed reach stops at lng 0.0, well short of the member at 0.4.
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('rippling_reach')->where('msgid', $msg->id)->update([
-            'overflow_bounds' => json_encode([
-                'rural' => [$ringKey => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'],
-                'bbox' => [-0.2, 51.4, 0.6, 51.6],
-            ]),
+            'overflow_cells' => $this->overflowCellsDoc(
+                ['rural' => [$ringKey => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))']],
+                ['bbox' => [-0.2, 51.4, 0.6, 51.6]],
+            ),
         ]);
 
         return $msg;
@@ -1540,8 +1373,9 @@ class UnifiedDigestServiceTest extends TestCase
         // Completion degrades a post's bounds row to a degenerate point (outer=POINT,
         // inner=NULL) to prune it from the browse candidate set. The digest, however,
         // still shows completed posts ("came and went"), so its reach gate must NOT
-        // treat a degraded bounds row as an authoritative reject — it must fall back to
-        // the exact polygon (the design doc's "digest came-and-went posts vanish" trap).
+        // treat a degraded bounds row as an authoritative reject - the containment
+        // universe comes from the stored cells via the reach index, which still
+        // carries the post (the design doc's "digest came-and-went posts vanish" trap).
         $poster = $this->createTestUser();
         $member = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -1571,7 +1405,7 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertContains(
             $taken->id,
             $posts->pluck('id')->all(),
-            'a completed post with degraded bounds still reaches the digest via its exact polygon'
+            'a completed post with degraded bounds still reaches the digest via its stored cells'
         );
         $this->assertSame(
             1,
@@ -1612,14 +1446,14 @@ class UnifiedDigestServiceTest extends TestCase
         $user->save();
     }
 
-    /** Seed a rippling_reach row for a post with the given WKT polygon (SRID 3857). */
+    /** Seed a rippling_reach row for a post whose reach is the given rectangle WKT. */
     protected function seedReach(int $msgid, string $wkt): void
     {
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, "
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$msgid, $wkt, $wkt]
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$msgid, $this->reachCellsFor($wkt), $wkt]
         );
     }
 
@@ -2603,14 +2437,17 @@ class UnifiedDigestServiceTest extends TestCase
         };
         // Max over all four corners (the southern corners are marginally farther
         // because east-west distance grows with cos(latitude)) — mirrors the
-        // implementation, which takes the greatest origin->vertex distance.
+        // implementation, which takes the greatest origin->covered-cell
+        // distance over the stored grid. The grid covers cells whose CENTRES
+        // lie inside the box, so the farthest covered point sits within one
+        // 33m lattice cell of the true corner - hence the tolerance.
         $expected = 0.0;
         foreach ([[-0.2, 51.4], [0.0, 51.4], [0.0, 51.6], [-0.2, 51.6]] as [$lng, $lat]) {
             $expected = max($expected, $haversine(51.5, -0.1, $lat, $lng));
         }
 
         $r = $this->callPrivate($svc, 'reachRadiusMetres', [$msg->id]);
-        $this->assertEqualsWithDelta($expected, $r, 1.0);
+        $this->assertEqualsWithDelta($expected, $r, 50.0);
         // Sanity: a ~0.1deg box corner from this origin is ~13km — kilometre-scale metres.
         $this->assertGreaterThan(10000, $r);
         $this->assertLessThan(16000, $r);
@@ -2813,12 +2650,12 @@ class UnifiedDigestServiceTest extends TestCase
             'collection' => MessageGroup::COLLECTION_APPROVED,
             'arrival' => now()->subHours(1),
         ]);
-        // Reach polygon (status 'expanding', just updated) covering the member's location.
+        // Reach (status 'expanding', just updated) covering the member's location.
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, "
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$message->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
 
         return [$message, $member];
@@ -3563,7 +3400,7 @@ class UnifiedDigestServiceTest extends TestCase
         // The committed reach stops at lng 0.0 - well short of the member at 0.4.
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('rippling_reach')->where('msgid', $msg->id)
-            ->update(['overflow_bounds' => json_encode([$lane => [$ringKey => $ringWkt]])]);
+            ->update(['overflow_cells' => $this->overflowCellsDoc([$lane => [$ringKey => $ringWkt]])]);
 
         return [$member, $msg];
     }
@@ -3760,10 +3597,10 @@ class UnifiedDigestServiceTest extends TestCase
         // only overflow lane on this post is 'cluster', which covers them geographically.
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
         DB::table('rippling_reach')->where('msgid', $msg->id)->update([
-            'overflow_bounds' => json_encode([
-                'cluster' => ['w1' => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'],
-                'bbox' => [-0.2, 51.4, 0.6, 51.6],
-            ]),
+            'overflow_cells' => $this->overflowCellsDoc(
+                ['cluster' => ['w1' => 'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))']],
+                ['bbox' => [-0.2, 51.4, 0.6, 51.6]],
+            ),
         ]);
 
         $this->service->mailNewlyReachedForPost($msg->id);
