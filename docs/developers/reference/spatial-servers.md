@@ -4,10 +4,10 @@ covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
   - iznik-routing-go/cmd/calibrate/**
-  - iznik-routing-go/stage2_overlay.go
-  - iznik-routing-go/stage2_partition.go
-  - iznik-routing-go/stage2_query.go
-  - iznik-routing-go/stage2_server.go
+  - iznik-routing-go/reach_overlay.go
+  - iznik-routing-go/reach_partition.go
+  - iznik-routing-go/reach_query.go
+  - iznik-routing-go/reach_server.go
 ---
 
 # Freegle's spatial servers — a plain-English overview
@@ -127,6 +127,14 @@ entrances), or not reached — and "is this member's address within reach?" is
 answered exactly from those notes in microseconds, including the case the old
 drawn shape got wrong: the far bank of an unbridged river is *out*, because
 you cannot drive there.
+
+The road network also fixed a small unfairness in privacy blurring: locations
+shown to other members are deliberately made approximate, and the old circular
+blur could accidentally move a point across a river it has no bridge over —
+which matters now that distances are road distances. Blurring is road-aware
+now: the approximate point is chosen along the roads, so it always stays on
+its own side of the water, and if the travel-time mapper is unavailable the
+old blur is used automatically.
 
 The full plain-English walkthrough, with the measurements and the
 multi-million-check verification against both a plain road search and

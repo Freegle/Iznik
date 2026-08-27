@@ -6,15 +6,15 @@ import (
 	"testing"
 )
 
-func TestStage2SnapshotRoundTrip(t *testing.T) {
+func TestReachSnapshotRoundTrip(t *testing.T) {
 	g := makeTestGrid(nil)
 	ov := BuildOverlay(g)
 
 	path := filepath.Join(t.TempDir(), "graph.snap")
-	if err := SaveStage2Snapshot(path, g, ov); err != nil {
+	if err := SaveReachSnapshot(path, g, ov); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	g2, ov2, err := LoadStage2Snapshot(path)
+	g2, ov2, err := LoadReachSnapshot(path)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

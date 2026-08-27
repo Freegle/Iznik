@@ -16,9 +16,9 @@ func TestReachEndpoints(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := stage2Live
-	stage2Live = eng
-	defer func() { stage2Live = prev }()
+	prev := reachLive
+	reachLive = eng
+	defer func() { reachLive = prev }()
 
 	app := newApp(g, "", false)
 
@@ -116,9 +116,9 @@ func TestReachEndpoints(t *testing.T) {
 
 func TestReachEndpointsUnconfigured(t *testing.T) {
 	g := makeTestGrid(nil)
-	prev := stage2Live
-	stage2Live = nil
-	defer func() { stage2Live = prev }()
+	prev := reachLive
+	reachLive = nil
+	defer func() { reachLive = prev }()
 	app := newApp(g, "", false)
 	req := httptest.NewRequest("GET", "/v1/reach-labels?lat=51&lng=-2&minutes=10", nil)
 	resp, err := app.Test(req, 10000)
@@ -132,9 +132,9 @@ func TestDriveMetricsEndpoint(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := stage2Live
-	stage2Live = eng
-	defer func() { stage2Live = prev }()
+	prev := reachLive
+	reachLive = eng
+	defer func() { reachLive = prev }()
 	app := newApp(g, "", false)
 
 	targets := []map[string]any{
@@ -189,8 +189,8 @@ func TestDriveTimeEngineFastPath(t *testing.T) {
 		t.Skip("short mode")
 	}
 	g, eng := buildBristolEngine(t)
-	prev := stage2Live
-	defer func() { stage2Live = prev }()
+	prev := reachLive
+	defer func() { reachLive = prev }()
 	app := newApp(g, "", false)
 
 	url := "/v1/drive-time?lat=51.4545&lng=-2.5879&tolat=51.4700&tolng=-2.6000&max_minutes=30"
@@ -211,9 +211,9 @@ func TestDriveTimeEngineFastPath(t *testing.T) {
 		return r.Reachable, r.DriveMin, r.DriveMiles
 	}
 
-	stage2Live = nil
+	reachLive = nil
 	okSweep, minSweep, _ := fetch()
-	stage2Live = eng
+	reachLive = eng
 	okEng, minEng, milesEng := fetch()
 
 	if !okSweep || !okEng {
@@ -354,5 +354,48 @@ func TestBlurNaNAndFloors(t *testing.T) {
 		if !ok || math.Abs(float64(m)-r.Roadm) > 50 {
 			t.Fatalf("blur %d: independent road distance %v (ok=%v) vs reported %f", i, m, ok, r.Roadm)
 		}
+	}
+}
+
+func TestBlurBatchMatchesSingle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g := loadBristol(t)
+	app := newApp(g, "", false)
+
+	pts := [][2]float64{{51.4545, -2.5879}, {51.4700, -2.6000}, {0, 0}}
+	body := map[string]any{"metres": 400, "points": []map[string]any{}}
+	for i, p := range pts {
+		body["points"] = append(body["points"].([]map[string]any), map[string]any{"id": i, "lat": p[0], "lng": p[1]})
+	}
+	raw, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/v1/blur-batch", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 30000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("blur-batch: err=%v status=%v", err, resp.StatusCode)
+	}
+	var br struct {
+		Results []struct {
+			ID    int64   `json:"id"`
+			Lat   float64 `json:"lat"`
+			Lng   float64 `json:"lng"`
+			Roadm float64 `json:"roadm"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&br); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for i, p := range pts[:2] {
+		la, ln, rm := roadBlurPoint(g, p[0], p[1], 400)
+		got := br.Results[i]
+		if got.Lat != la || got.Lng != ln || got.Roadm != rm {
+			t.Fatalf("point %d: batch (%f,%f,%f) vs single (%f,%f,%f)", i, got.Lat, got.Lng, got.Roadm, la, ln, rm)
+		}
+	}
+	// (0,0) sentinel passes through untouched.
+	if br.Results[2].Lat != 0 || br.Results[2].Lng != 0 || br.Results[2].Roadm != 0 {
+		t.Fatalf("null island must pass through: %+v", br.Results[2])
 	}
 }

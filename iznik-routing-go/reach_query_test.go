@@ -6,16 +6,16 @@ import (
 )
 
 // buildBristolEngine builds the full stage-2 stack over the bristol fixture.
-func buildBristolEngine(t *testing.T) (*Graph, *Stage2Engine) {
+func buildBristolEngine(t *testing.T) (*Graph, *ReachEngine) {
 	t.Helper()
 	g := loadBristol(t)
 	ov := BuildOverlay(g)
 	part := PartitionOverlay(g, ov, 3000, 0.25)
 	rm := BuildRegionMatrices(ov, part)
-	return g, NewStage2Engine(g, ov, part, rm)
+	return g, NewReachEngine(g, ov, part, rm)
 }
 
-func TestStage2QueryExactnessBristol(t *testing.T) {
+func TestReachQueryExactnessBristol(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
 	}
@@ -108,10 +108,10 @@ func TestStage2QueryExactnessBristol(t *testing.T) {
 	}
 }
 
-// TestStage2MetresBristol: road metres from the engine must track the base
+// TestReachMetresBristol: road metres from the engine must track the base
 // search's DistM-style metres. Seconds are exact; metres follow the winning
 // path, so equal-seconds path ties allow small divergence — bounded here.
-func TestStage2MetresBristol(t *testing.T) {
+func TestReachMetresBristol(t *testing.T) {
 	if testing.Short() {
 		t.Skip("short mode")
 	}

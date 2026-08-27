@@ -285,3 +285,23 @@ on master tip — rebase-after is conflict-free.
 - MAJOR road-miles honesty over blurred coords -> '~'/'about' qualifiers.
 - MINOR falsy-zero lat/lng guards -> null-safe.
 - Plan table staleness (this edit) + docs wording.
+
+## Goal 3 (2026-08-27 latest): naming, blur switchover, live test stack
+
+- Code renamed by FUNCTION not schedule: reach_*.go files, ReachEngine, `reach`
+  CLI verb, REACH_DIR env, data/reach artifacts, reach-fetch-prod.sh. Magic
+  string VALUES unchanged (on-disk artifacts stay valid); partition regenerated
+  under its own FRGP1SNAP magic.
+- Member/post display blurring switched to ROAD-AWARE at every call site (11):
+  new leaf package iznik-server-go/roadblur (batched /v1/blur-batch, cached,
+  3dp output contract kept, circular utils.Blur fallback per point when routing
+  cannot answer; fallback never cached so recovery is automatic). List paths
+  prewarm with one batch call. apiv2 suite 4,293 green incl. roadblur tests.
+- .dockerignore for iznik-routing-go: the 7GB data/ dir no longer enters the
+  image build context (it is volume-mounted).
+- Live test stack in this worktree, verified end-to-end against prod data:
+  spatial-live boots the engine from /data/reach in 5.2s (REACH_DIR_LIVE in
+  .env; derive-at-boot was also exercised live: 4m12s with a stale artifact,
+  save-back correctly warns on the ro mount), /v1/drive-metrics and /v1/blur
+  answering, apiv2-live restarted on the new code.
+  URL: http://freegle-dev-live.localhost:12165

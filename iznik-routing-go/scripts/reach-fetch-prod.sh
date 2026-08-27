@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-OUT="${1:-$ROOT/iznik-routing-go/data/stage2/prod}"
+OUT="${1:-$ROOT/iznik-routing-go/data/reach/prod}"
 mkdir -p "$OUT"
 
 export MYSQL_PWD="$(grep -E '^LIVE_DB_PASSWORD=' "$ROOT/.env" | cut -d= -f2-)"

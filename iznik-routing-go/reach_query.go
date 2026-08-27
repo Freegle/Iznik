@@ -1,6 +1,6 @@
 package main
 
-// Stage 2 query: reach as a labeling of the partition.
+// Reach engine query: reach as a labeling of the partition.
 //
 // Phase 1: snap the origin (a junction, or a chain node with departure-side
 // offsets walked on demand) and run exact local Dijkstras inside the seed
@@ -168,7 +168,7 @@ type boundaryIndex struct {
 	crossMet []float32
 }
 
-func buildBoundaryIndex(rm *RegionMatrices, part *Stage2Partition) *boundaryIndex {
+func buildBoundaryIndex(rm *RegionMatrices, part *ReachPartition) *boundaryIndex {
 	bi := &boundaryIndex{
 		leafOf:   make(map[uint32]int32),
 		entryIdx: make(map[uint32]int32),
@@ -210,11 +210,11 @@ func buildBoundaryIndex(rm *RegionMatrices, part *Stage2Partition) *boundaryInde
 	return bi
 }
 
-// Stage2Engine bundles the loaded artifacts.
-type Stage2Engine struct {
+// ReachEngine bundles the loaded artifacts.
+type ReachEngine struct {
 	G    *Graph
 	Ov   *Overlay
-	Part *Stage2Partition
+	Part *ReachPartition
 	RM   *RegionMatrices
 	BI   *boundaryIndex
 
@@ -236,8 +236,8 @@ type labelKey struct {
 
 const labelCacheCap = 256
 
-func NewStage2Engine(g *Graph, ov *Overlay, part *Stage2Partition, rm *RegionMatrices) *Stage2Engine {
-	return &Stage2Engine{
+func NewReachEngine(g *Graph, ov *Overlay, part *ReachPartition, rm *RegionMatrices) *ReachEngine {
+	return &ReachEngine{
 		G: g, Ov: ov, Part: part, RM: rm,
 		BI:         buildBoundaryIndex(rm, part),
 		tables:     newRegionTableCache(512),
@@ -247,7 +247,7 @@ func NewStage2Engine(g *Graph, ov *Overlay, part *Stage2Partition, rm *RegionMat
 
 // QueryLabelsCached is QueryLabels behind a small LRU for whole-minute
 // budgets. Callers must treat the result as read-only (all callers do).
-func (e *Stage2Engine) QueryLabelsCached(lat, lng float64, limitSeconds float32) *ReachLabels {
+func (e *ReachEngine) QueryLabelsCached(lat, lng float64, limitSeconds float32) *ReachLabels {
 	mins := int32(limitSeconds / 60)
 	if float32(mins*60) != limitSeconds {
 		return e.QueryLabels(lat, lng, limitSeconds) // fractional: no caching
@@ -311,13 +311,13 @@ func newRegionTableCache(cap int) *regionTableCache {
 	return &regionTableCache{cap: cap, m: make(map[int32]*regionTable), src: make(map[srcKey][]float32)}
 }
 
-func (c *regionTableCache) get(e *Stage2Engine, leaf int32) *regionTable {
+func (c *regionTableCache) get(e *ReachEngine, leaf int32) *regionTable {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.getLocked(e, leaf)
 }
 
-func (c *regionTableCache) getLocked(e *Stage2Engine, leaf int32) *regionTable {
+func (c *regionTableCache) getLocked(e *ReachEngine, leaf int32) *regionTable {
 	if t, ok := c.m[leaf]; ok {
 		// True LRU: refresh recency on hit so hot regions survive eviction.
 		for i, l := range c.order {
@@ -350,7 +350,7 @@ func (c *regionTableCache) getLocked(e *Stage2Engine, leaf int32) *regionTable {
 
 // sourceRow returns intra-region distances from an arbitrary junction of the
 // leaf (used for stored-label seeds), nil if the source is not in the leaf.
-func (c *regionTableCache) sourceRow(e *Stage2Engine, leaf int32, srcOi uint32) []float32 {
+func (c *regionTableCache) sourceRow(e *ReachEngine, leaf int32, srcOi uint32) []float32 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	k := srcKey{leaf, srcOi}
@@ -375,7 +375,7 @@ func (c *regionTableCache) sourceRow(e *Stage2Engine, leaf int32, srcOi uint32) 
 }
 
 // QueryLabels computes the reach labeling from (lat,lng) within limitSeconds.
-func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *ReachLabels {
+func (e *ReachEngine) QueryLabels(lat, lng float64, limitSeconds float32) *ReachLabels {
 	out := &ReachLabels{
 		T:         limitSeconds,
 		Reached:   make(map[int32]*RegionLabel),
@@ -545,7 +545,7 @@ func (e *Stage2Engine) QueryLabels(lat, lng float64, limitSeconds float32) *Reac
 	return out
 }
 
-func newRegionLabel(e *Stage2Engine, leaf int32) *RegionLabel {
+func newRegionLabel(e *ReachEngine, leaf int32) *RegionLabel {
 	ents := e.RM.LeafEntries(leaf)
 	lbl := &RegionLabel{EntryArr: make([]float32, len(ents))}
 	for i := range lbl.EntryArr {
@@ -556,14 +556,14 @@ func newRegionLabel(e *Stage2Engine, leaf int32) *RegionLabel {
 
 // junctionArrival returns the exact arrival at base junction j, +Inf if
 // unreached.
-func (e *Stage2Engine) junctionArrival(lbl *ReachLabels, j NodeID) float32 {
+func (e *ReachEngine) junctionArrival(lbl *ReachLabels, j NodeID) float32 {
 	s, _ := e.junctionArrivalM(lbl, j)
 	return s
 }
 
 // junctionArrivalM also returns the road metres along the winning path (+Inf
 // when metres are unavailable, e.g. decoded stored labels).
-func (e *Stage2Engine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, float32) {
+func (e *ReachEngine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, float32) {
 	oi := e.Ov.Idx[j]
 	if oi == 0 {
 		return f32Inf, f32Inf
@@ -606,7 +606,7 @@ func (e *Stage2Engine) junctionArrivalM(lbl *ReachLabels, j NodeID) (float32, fl
 
 // Arrival returns the exact drive arrival seconds at (lat,lng), +Inf when out
 // of reach. Membership = Arrival(...) <= labels.T.
-func (e *Stage2Engine) Arrival(lbl *ReachLabels, lat, lng float64) float32 {
+func (e *ReachEngine) Arrival(lbl *ReachLabels, lat, lng float64) float32 {
 	v := nearestNodeForMode(e.G, lat, lng, Drive)
 	if v == noNode {
 		return f32Inf
@@ -615,14 +615,14 @@ func (e *Stage2Engine) Arrival(lbl *ReachLabels, lat, lng float64) float32 {
 }
 
 // ArrivalAtBaseNode is Arrival for an already-snapped base node.
-func (e *Stage2Engine) ArrivalAtBaseNode(lbl *ReachLabels, v NodeID) float32 {
+func (e *ReachEngine) ArrivalAtBaseNode(lbl *ReachLabels, v NodeID) float32 {
 	s, _ := e.ArrivalAtBaseNodeM(lbl, v)
 	return s
 }
 
 // ArrivalAtBaseNodeM also returns road metres along the winning path (+Inf
 // when unavailable).
-func (e *Stage2Engine) ArrivalAtBaseNodeM(lbl *ReachLabels, v NodeID) (float32, float32) {
+func (e *ReachEngine) ArrivalAtBaseNodeM(lbl *ReachLabels, v NodeID) (float32, float32) {
 	if e.Ov.Idx[v] != 0 {
 		return e.junctionArrivalM(lbl, v)
 	}

@@ -1,6 +1,6 @@
 package main
 
-// Stage 2 parity harness: compare the labeling engine against (a) a flat
+// Reach engine parity harness: compare the labeling engine against (a) a flat
 // base-graph Dijkstra — must be EXACT — and (b) real prod polygon_cells blobs
 // exported over the read-only tunnel — expected to differ only in the two
 // structural projection classes:
@@ -88,13 +88,13 @@ func (p *prodPost) driveMinForTick() (float64, bool) {
 	return best, ok
 }
 
-func stage2ParityRun(dir string, engine *Stage2Engine) {
+func reachParityRun(dir string, engine *ReachEngine) {
 	posts, err := loadProdPosts(dir)
 	if err != nil {
-		log.Fatalf("stage2 parity: %v", err)
+		log.Fatalf("reach parity: %v", err)
 	}
 	if len(posts) == 0 {
-		log.Fatalf("stage2 parity: no posts in %s (run scripts/stage2-fetch-prod.sh)", dir)
+		log.Fatalf("reach parity: no posts in %s (run scripts/reach-fetch-prod.sh)", dir)
 	}
 	g := engine.G
 
@@ -327,35 +327,35 @@ func nearStoredEdge(cells []byte, col, row, dist int32) bool {
 	return false
 }
 
-// stage2LoadEngine loads all artifacts and builds the engine.
-func stage2LoadEngine() *Stage2Engine {
-	g, ov := stage2LoadOrBuild()
-	part, err := loadPartition("data/stage2/partition.snap")
+// reachLoadEngine loads all artifacts and builds the engine.
+func reachLoadEngine() *ReachEngine {
+	g, ov := reachLoadOrBuild()
+	part, err := loadPartition("data/reach/partition.snap")
 	if err != nil {
-		log.Fatalf("stage2: load partition (run `stage2 partition` first): %v", err)
+		log.Fatalf("reach: load partition (run `reach partition` first): %v", err)
 	}
 	var rm *RegionMatrices
-	if rm, err = loadMatrices("data/stage2/matrices.snap"); err != nil {
-		log.Printf("stage2: matrices not cached (%v), building", err)
+	if rm, err = loadMatrices("data/reach/matrices.snap"); err != nil {
+		log.Printf("reach: matrices not cached (%v), building", err)
 		rm = BuildRegionMatrices(ov, part)
-		if err := saveMatrices("data/stage2/matrices.snap", rm); err != nil {
-			log.Fatalf("stage2: save matrices: %v", err)
+		if err := saveMatrices("data/reach/matrices.snap", rm); err != nil {
+			log.Fatalf("reach: save matrices: %v", err)
 		}
 	}
-	return NewStage2Engine(g, ov, part, rm)
+	return NewReachEngine(g, ov, part, rm)
 }
 
-// stage2MatricesRun builds and reports on the matrices artifact.
-func stage2MatricesRun() {
-	g, ov := stage2LoadOrBuild()
-	part, err := loadPartition("data/stage2/partition.snap")
+// reachMatricesRun builds and reports on the matrices artifact.
+func reachMatricesRun() {
+	g, ov := reachLoadOrBuild()
+	part, err := loadPartition("data/reach/partition.snap")
 	if err != nil {
-		log.Fatalf("stage2: load partition (run `stage2 partition` first): %v", err)
+		log.Fatalf("reach: load partition (run `reach partition` first): %v", err)
 	}
 	_ = g
 	rm := BuildRegionMatrices(ov, part)
-	if err := saveMatrices("data/stage2/matrices.snap", rm); err != nil {
-		log.Fatalf("stage2: save matrices: %v", err)
+	if err := saveMatrices("data/reach/matrices.snap", rm); err != nil {
+		log.Fatalf("reach: save matrices: %v", err)
 	}
 
 	nLeaves := len(part.LeafNodes)
@@ -378,15 +378,15 @@ func stage2MatricesRun() {
 		}
 		return s[int(p*float64(len(s)-1))]
 	}
-	fmt.Printf("stage2 matrices: %d leaves; entries p50/p90/max %d/%d/%d; exits p50/p90/max %d/%d/%d\n",
+	fmt.Printf("reach matrices: %d leaves; entries p50/p90/max %d/%d/%d; exits p50/p90/max %d/%d/%d\n",
 		nLeaves, pctI(ents, .5), pctI(ents, .9), pctI(ents, 1), pctI(exts, .5), pctI(exts, .9), pctI(exts, 1))
-	fmt.Printf("stage2 matrices: matrix cells %d (%.1fMB float32); cross edges %d; covering entries %d/%d (%.1f%%)\n",
+	fmt.Printf("reach matrices: matrix cells %d (%.1fMB float32); cross edges %d; covering entries %d/%d (%.1f%%)\n",
 		len(rm.Mat), float64(len(rm.Mat))*4/1e6, len(rm.CrossFrom), fullCoverEntries, len(rm.Ecc),
 		100*float64(fullCoverEntries)/float64(max(1, len(rm.Ecc))))
 }
 
-func stage2QueryRun(lat, lng, minutes float64) {
-	engine := stage2LoadEngine()
+func reachQueryRun(lat, lng, minutes float64) {
+	engine := reachLoadEngine()
 	var ms runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&ms)
@@ -481,10 +481,10 @@ func baseDriveDijkstra(g *Graph, origin NodeID, seed float32, limit float32) map
 	return dist
 }
 
-// stage2ExactDebugRun re-runs the exactness sweep for one exported post and
+// reachExactDebugRun re-runs the exactness sweep for one exported post and
 // prints full diagnostics for every mismatching node — used to root-cause any
 // engine-vs-flat-Dijkstra divergence (which must be zero).
-func stage2ExactDebugRun(jsonPath string, engine *Stage2Engine) {
+func reachExactDebugRun(jsonPath string, engine *ReachEngine) {
 	dir := filepath.Dir(jsonPath)
 	posts, err := loadProdPosts(dir)
 	if err != nil {
@@ -552,24 +552,24 @@ func stage2ExactDebugRun(jsonPath string, engine *Stage2Engine) {
 	fmt.Printf("total mismatches shown %d (cap 12)\n", shown)
 }
 
-func leafSizeOf(part *Stage2Partition, leaf int32) int {
+func leafSizeOf(part *ReachPartition, leaf int32) int {
 	if leaf < 0 || int(leaf) >= len(part.LeafNodes) {
 		return -1
 	}
 	return len(part.LeafNodes[leaf])
 }
 
-func leafOfBase(e *Stage2Engine, j NodeID) int32 {
+func leafOfBase(e *ReachEngine, j NodeID) int32 {
 	if j == 0 || e.Ov.Idx[j] == 0 {
 		return -2
 	}
 	return e.Part.LeafOf[e.Ov.Idx[j]]
 }
 
-// stage2BoundaryDebugRun compares the engine's boundary-node arrivals with
+// reachBoundaryDebugRun compares the engine's boundary-node arrivals with
 // flat-Dijkstra truth for one post, printing the earliest divergences — the
 // point where the boundary graph first misses a faster path.
-func stage2BoundaryDebugRun(jsonPath string, engine *Stage2Engine) {
+func reachBoundaryDebugRun(jsonPath string, engine *ReachEngine) {
 	posts, err := loadProdPosts(filepath.Dir(jsonPath))
 	if err != nil {
 		log.Fatalf("boundarydebug: %v", err)
@@ -722,9 +722,9 @@ func baseDriveDijkstraPrev(g *Graph, origin NodeID, seed float32, limit float32)
 	return dist, prev
 }
 
-// stage2TracePathRun prints the true shortest path to a base node, projected
+// reachTracePathRun prints the true shortest path to a base node, projected
 // onto overlay junctions with partition annotations.
-func stage2TracePathRun(jsonPath string, target NodeID, engine *Stage2Engine) {
+func reachTracePathRun(jsonPath string, target NodeID, engine *ReachEngine) {
 	posts, _ := loadProdPosts(filepath.Dir(jsonPath))
 	var p *prodPost
 	for _, c := range posts {
@@ -767,9 +767,9 @@ func stage2TracePathRun(jsonPath string, target NodeID, engine *Stage2Engine) {
 	}
 }
 
-// stage2LeafCheckRun walks the true-path segment inside one leaf, verifying
+// reachLeafCheckRun walks the true-path segment inside one leaf, verifying
 // every overlay hop exists in the leaf subgraph with the base-path weight.
-func stage2LeafCheckRun(jsonPath string, target NodeID, engine *Stage2Engine) {
+func reachLeafCheckRun(jsonPath string, target NodeID, engine *ReachEngine) {
 	posts, _ := loadProdPosts(filepath.Dir(jsonPath))
 	var p *prodPost
 	for _, c := range posts {

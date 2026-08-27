@@ -20,6 +20,7 @@ import (
 	"github.com/freegle/iznik-server-go/location"
 	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
@@ -754,7 +755,7 @@ func GetUserById(id uint64, myid uint64) User {
 		latlng := GetLatLng(id)
 
 		if (latlng.Lat != 0) || (latlng.Lng != 0) {
-			lat, lng = utils.Blur((float64)(latlng.Lat), (float64)(latlng.Lng), utils.BLUR_USER)
+			lat, lng = roadblur.RoadBlur((float64)(latlng.Lat), (float64)(latlng.Lng), utils.BLUR_USER)
 		}
 	}()
 

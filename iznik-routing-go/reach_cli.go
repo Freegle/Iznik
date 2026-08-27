@@ -1,7 +1,7 @@
 package main
 
-// Stage 2 prototype CLI: `go run . stage2 <cmd>`. Not reachable in server
-// deployments (the server starts only when no stage2 arg is given), so this
+// Reach engine prototype CLI: `go run . reach <cmd>`. Not reachable in server
+// deployments (the server starts only when no reach arg is given), so this
 // carries no production risk while the prototype gate is evaluated.
 
 import (
@@ -14,54 +14,54 @@ import (
 	"sort"
 )
 
-const stage2SnapPath = "data/stage2/graph.snap"
+const reachSnapPath = "data/reach/graph.snap"
 
-func stage2Main(args []string) {
+func reachMain(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: stage2 <build|stats|partition|matrices|query|parity> [args]")
+		fmt.Fprintln(os.Stderr, "usage: reach <build|stats|partition|matrices|query|parity> [args]")
 		os.Exit(2)
 	}
 	switch args[0] {
 	case "build":
-		stage2Build()
+		reachBuildCmd()
 	case "stats":
-		stage2Stats()
+		reachStatsCmd()
 	case "partition":
-		stage2PartitionCmd(args[1:])
+		reachPartitionCmd(args[1:])
 	case "matrices":
-		stage2MatricesCmd(args[1:])
+		reachMatricesCmd(args[1:])
 	case "query":
-		stage2QueryCmd(args[1:])
+		reachQueryCmd(args[1:])
 	case "leafcheck":
-		stage2LeafCheckCmd(args[1:])
+		reachLeafCheckCmd(args[1:])
 	case "tracepath":
-		stage2TracePathCmd(args[1:])
+		reachTracePathCmd(args[1:])
 	case "boundarydebug":
-		stage2BoundaryDebugCmd(args[1:])
+		reachBoundaryDebugCmd(args[1:])
 	case "exactdebug":
-		stage2ExactDebugCmd(args[1:])
+		reachExactDebugCmd(args[1:])
 	case "graphmem":
-		stage2GraphMemCmd()
+		reachGraphMemCmd()
 	case "nodedebug":
-		stage2NodeDebugCmd(args[1:])
+		reachNodeDebugCmd(args[1:])
 	case "sweep":
-		stage2SweepCmd(args[1:])
+		reachSweepCmd(args[1:])
 	case "parity":
-		stage2ParityCmd(args[1:])
+		reachParityCmd(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "unknown stage2 command %q\n", args[0])
+		fmt.Fprintf(os.Stderr, "unknown reach command %q\n", args[0])
 		os.Exit(2)
 	}
 }
 
-// stage2LoadOrBuild returns the graph+overlay, from snapshot when present.
-func stage2LoadOrBuild() (*Graph, *Overlay) {
-	if _, err := os.Stat(stage2SnapPath); err == nil {
-		g, ov, err := LoadStage2Snapshot(stage2SnapPath)
+// reachLoadOrBuild returns the graph+overlay, from snapshot when present.
+func reachLoadOrBuild() (*Graph, *Overlay) {
+	if _, err := os.Stat(reachSnapPath); err == nil {
+		g, ov, err := LoadReachSnapshot(reachSnapPath)
 		if err == nil {
 			return g, ov
 		}
-		log.Printf("stage2: snapshot load failed (%v), rebuilding", err)
+		log.Printf("reach: snapshot load failed (%v), rebuilding", err)
 	}
 	pbf := getenv("OSM_PBF_PATH", "data/uk-latest.osm.pbf")
 	var dep *DeprivationIndex
@@ -70,25 +70,25 @@ func stage2LoadOrBuild() (*Graph, *Overlay) {
 	}
 	g, err := BuildGraph(pbf, dep)
 	if err != nil {
-		log.Fatalf("stage2: BuildGraph: %v", err)
+		log.Fatalf("reach: BuildGraph: %v", err)
 	}
 	ov := BuildOverlay(g)
-	if err := os.MkdirAll(filepath.Dir(stage2SnapPath), 0o755); err != nil {
-		log.Fatalf("stage2: mkdir: %v", err)
+	if err := os.MkdirAll(filepath.Dir(reachSnapPath), 0o755); err != nil {
+		log.Fatalf("reach: mkdir: %v", err)
 	}
-	if err := SaveStage2Snapshot(stage2SnapPath, g, ov); err != nil {
-		log.Fatalf("stage2: snapshot save: %v", err)
+	if err := SaveReachSnapshot(reachSnapPath, g, ov); err != nil {
+		log.Fatalf("reach: snapshot save: %v", err)
 	}
 	return g, ov
 }
 
-func stage2Build() {
-	g, ov := stage2LoadOrBuild()
+func reachBuildCmd() {
+	g, ov := reachLoadOrBuild()
 	printOverlayStats(g, ov)
 }
 
-func stage2Stats() {
-	g, ov := stage2LoadOrBuild()
+func reachStatsCmd() {
+	g, ov := reachLoadOrBuild()
 	printOverlayStats(g, ov)
 }
 
@@ -135,7 +135,7 @@ func printOverlayStats(g *Graph, ov *Overlay) {
 		return secs[i]
 	}
 
-	fmt.Printf("stage2 stats:\n")
+	fmt.Printf("reach stats:\n")
 	fmt.Printf("  base:    %d nodes / %d directed edges\n", n, len(g.Edges))
 	fmt.Printf("  overlay: %d junctions / %d chain edges (%.1fx node, %.1fx edge reduction)\n",
 		on, len(ov.Edges), float64(n)/float64(on), float64(len(g.Edges))/float64(len(ov.Edges)))
@@ -145,87 +145,87 @@ func printOverlayStats(g *Graph, ov *Overlay) {
 		pct(0.50), pct(0.90), pct(0.99), pct(1.0))
 }
 
-func stage2PartitionCmd(args []string) {
+func reachPartitionCmd(args []string) {
 	fs := flag.NewFlagSet("partition", flag.ExitOnError)
 	leaf := fs.Int("leaf", 10000, "maximum junctions per leaf region")
 	alpha := fs.Float64("alpha", 0.25, "inertial-flow source/sink fraction")
 	_ = fs.Parse(args)
-	stage2PartitionRun(*leaf, *alpha)
+	reachPartitionRun(*leaf, *alpha)
 }
 
-func stage2MatricesCmd(args []string) {
-	stage2MatricesRun()
+func reachMatricesCmd(args []string) {
+	reachMatricesRun()
 }
 
-func stage2QueryCmd(args []string) {
+func reachQueryCmd(args []string) {
 	fs := flag.NewFlagSet("query", flag.ExitOnError)
 	lat := fs.Float64("lat", 51.4545, "origin latitude")
 	lng := fs.Float64("lng", -2.5879, "origin longitude")
 	minutes := fs.Float64("minutes", 30, "drive-time budget in minutes")
 	_ = fs.Parse(args)
-	stage2QueryRun(*lat, *lng, *minutes)
+	reachQueryRun(*lat, *lng, *minutes)
 }
 
-func stage2ParityCmd(args []string) {
+func reachParityCmd(args []string) {
 	fs := flag.NewFlagSet("parity", flag.ExitOnError)
-	dir := fs.String("dir", "data/stage2/prod", "directory of exported prod posts")
+	dir := fs.String("dir", "data/reach/prod", "directory of exported prod posts")
 	_ = fs.Parse(args)
-	stage2ParityRun(*dir, stage2LoadEngine())
+	reachParityRun(*dir, reachLoadEngine())
 }
 
-func stage2ExactDebugCmd(args []string) {
+func reachExactDebugCmd(args []string) {
 	fs := flag.NewFlagSet("exactdebug", flag.ExitOnError)
 	path := fs.String("json", "", "path to one exported post .json")
 	_ = fs.Parse(args)
-	stage2ExactDebugRun(*path, stage2LoadEngine())
+	reachExactDebugRun(*path, reachLoadEngine())
 }
 
-func stage2BoundaryDebugCmd(args []string) {
+func reachBoundaryDebugCmd(args []string) {
 	fs := flag.NewFlagSet("boundarydebug", flag.ExitOnError)
 	path := fs.String("json", "", "path to one exported post .json")
 	_ = fs.Parse(args)
-	stage2BoundaryDebugRun(*path, stage2LoadEngine())
+	reachBoundaryDebugRun(*path, reachLoadEngine())
 }
 
-func stage2TracePathCmd(args []string) {
+func reachTracePathCmd(args []string) {
 	fs := flag.NewFlagSet("tracepath", flag.ExitOnError)
 	path := fs.String("json", "", "post json")
 	node := fs.Uint64("node", 0, "target base node id")
 	_ = fs.Parse(args)
-	stage2TracePathRun(*path, NodeID(*node), stage2LoadEngine())
+	reachTracePathRun(*path, NodeID(*node), reachLoadEngine())
 }
 
-func stage2LeafCheckCmd(args []string) {
+func reachLeafCheckCmd(args []string) {
 	fs := flag.NewFlagSet("leafcheck", flag.ExitOnError)
 	path := fs.String("json", "", "post json")
 	node := fs.Uint64("node", 0, "target base node id")
 	_ = fs.Parse(args)
-	stage2LeafCheckRun(*path, NodeID(*node), stage2LoadEngine())
+	reachLeafCheckRun(*path, NodeID(*node), reachLoadEngine())
 }
 
-func stage2SweepCmd(args []string) {
+func reachSweepCmd(args []string) {
 	fs := flag.NewFlagSet("sweep", flag.ExitOnError)
-	file := fs.String("file", "data/stage2/sweep.jsonl", "jsonl of exported origins")
+	file := fs.String("file", "data/reach/sweep.jsonl", "jsonl of exported origins")
 	synth := fs.Int("synthetic", 400, "max synthetic origins for untouched regions")
 	fuzz := fs.Int("fuzz", 600, "fictional origins (0 disables)")
 	_ = fs.Parse(args)
-	stage2SweepRun(*file, *synth, *fuzz, stage2LoadEngine())
+	reachSweepRun(*file, *synth, *fuzz, reachLoadEngine())
 }
 
-func stage2NodeDebugCmd(args []string) {
+func reachNodeDebugCmd(args []string) {
 	fs := flag.NewFlagSet("nodedebug", flag.ExitOnError)
 	lat := fs.Float64("lat", 0, "origin lat")
 	lng := fs.Float64("lng", 0, "origin lng")
 	minutes := fs.Float64("minutes", 30, "budget minutes")
 	node := fs.Uint64("node", 0, "target base node")
 	_ = fs.Parse(args)
-	stage2NodeDebugRun(*lat, *lng, *minutes, NodeID(*node), stage2LoadEngine())
+	reachNodeDebugRun(*lat, *lng, *minutes, NodeID(*node), reachLoadEngine())
 }
 
-// stage2GraphMemCmd measures the base graph's resident heap alone — the
+// reachGraphMemCmd measures the base graph's resident heap alone — the
 // like-for-like baseline for what the routing server holds today.
-func stage2GraphMemCmd() {
-	g, ov := stage2LoadOrBuild()
+func reachGraphMemCmd() {
+	g, ov := reachLoadOrBuild()
 	ov.BaseNode, ov.Idx, ov.EdgeStart, ov.Edges = nil, nil, nil, nil
 	ov.ChainEndA, ov.ChainEndB, ov.OffFromA, ov.OffFromB = nil, nil, nil, nil
 	var ms runtime.MemStats

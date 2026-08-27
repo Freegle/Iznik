@@ -3,6 +3,7 @@ package authority
 import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -28,9 +29,15 @@ func Messages(c *fiber.Ctx) error {
 		Order("unseen DESC, messages_spatial.arrival DESC, messages_spatial.msgid DESC").
 		Scan(&msgs)
 
+	// One batched routing call resolves every location's road-aware blur.
+	coords := make([][2]float64, 0, len(msgs))
+	for _, r := range msgs {
+		coords = append(coords, [2]float64{float64(r.Lat), float64(r.Lng)})
+	}
+	roadblur.RoadBlurPrewarm(coords, utils.BLUR_USER)
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.
-		msgs[ix].Lat, msgs[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+		msgs[ix].Lat, msgs[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 	}
 
 	return c.JSON(msgs)

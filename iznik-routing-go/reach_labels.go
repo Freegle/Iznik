@@ -1,9 +1,9 @@
 package main
 
-// Stage 2 label wire format ("FRL1"): the stored per-post reach representation
+// Reach engine label wire format ("FRL1"): the stored per-post reach representation
 // that replaces per-advance geometry recomputation. A blob is a few hundred
 // bytes to a few KB (measured 0.6-3.8KB on real posts) and answers membership
-// exactly via Stage2Engine.ArrivalFromStored.
+// exactly via ReachEngine.ArrivalFromStored.
 //
 // Live query labels carry OriginArr (every internal arrival in the origin's
 // seed regions) for speed; that is far too big to store. The stored form
@@ -82,7 +82,7 @@ func EncodeLabels(lbl *ReachLabels) []byte {
 
 // DecodeLabels parses a stored blob against the engine's current artifacts.
 // The result has no OriginArr; membership goes through the seed path.
-func (e *Stage2Engine) DecodeLabels(b []byte) (*ReachLabels, error) {
+func (e *ReachEngine) DecodeLabels(b []byte) (*ReachLabels, error) {
 	if len(b) < 4+4+4+4+2 || string(b[:4]) != labelsMagic {
 		return nil, fmt.Errorf("bad labels magic")
 	}
@@ -155,7 +155,7 @@ func le16(b []byte, v uint16) []byte {
 // seedArrival returns min over seeds of (seed departure cost + intra-region
 // distance seed→j) for a junction j in the same leaf as the seed. This is the
 // stored-form replacement for the live query's OriginArr.
-func (e *Stage2Engine) seedArrival(lbl *ReachLabels, j NodeID) float32 {
+func (e *ReachEngine) seedArrival(lbl *ReachLabels, j NodeID) float32 {
 	best := f32Inf
 	oi := e.Ov.Idx[j]
 	if oi == 0 {
@@ -188,7 +188,7 @@ func (e *Stage2Engine) seedArrival(lbl *ReachLabels, j NodeID) float32 {
 // ArrivalFromStored answers the exact arrival at (lat,lng) from a stored
 // label blob previously produced by EncodeLabels. Equivalent to Arrival on
 // the live query result.
-func (e *Stage2Engine) ArrivalFromStored(lbl *ReachLabels, lat, lng float64) float32 {
+func (e *ReachEngine) ArrivalFromStored(lbl *ReachLabels, lat, lng float64) float32 {
 	v := nearestNodeForMode(e.G, lat, lng, Drive)
 	if v == noNode {
 		return f32Inf
@@ -196,7 +196,7 @@ func (e *Stage2Engine) ArrivalFromStored(lbl *ReachLabels, lat, lng float64) flo
 	return e.arrivalAtBaseNodeStored(lbl, v)
 }
 
-func (e *Stage2Engine) arrivalAtBaseNodeStored(lbl *ReachLabels, v NodeID) float32 {
+func (e *ReachEngine) arrivalAtBaseNodeStored(lbl *ReachLabels, v NodeID) float32 {
 	junction := func(j NodeID) float32 {
 		best := e.junctionArrival(lbl, j)
 		if sa := e.seedArrival(lbl, j); sa < best {

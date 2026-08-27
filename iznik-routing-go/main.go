@@ -13,10 +13,10 @@ func getenv(key, def string) string {
 }
 
 func main() {
-	// Stage 2 prototype CLI (`go run . stage2 <cmd>`): offline tooling only,
+	// Reach engine prototype CLI (`go run . reach <cmd>`): offline tooling only,
 	// never reached by server deployments (no args there).
-	if len(os.Args) > 1 && os.Args[1] == "stage2" {
-		stage2Main(os.Args[2:])
+	if len(os.Args) > 1 && os.Args[1] == "reach" {
+		reachMain(os.Args[2:])
 		return
 	}
 
@@ -36,14 +36,14 @@ func main() {
 		}
 	}
 
-	// Stage 2 artifact boot: STAGE2_DIR set means load the prebuilt graph +
+	// Reach engine artifact boot: REACH_DIR set means load the prebuilt graph +
 	// reach engine in seconds instead of rebuilding from the PBF (which stays
-	// the fallback, and the only path when STAGE2_DIR is unset).
-	if g := stage2BootFromEnv(); g != nil {
+	// the fallback, and the only path when REACH_DIR is unset).
+	if g := reachBootFromEnv(); g != nil {
 		if dep != nil {
 			g.Deprivation = dep
 		}
-		log.Printf("spatial-server: loaded %d nodes, %d edges from stage2 artifacts", g.NodeCount(), len(g.Edges))
+		log.Printf("spatial-server: loaded %d nodes, %d edges from reach-engine artifacts", g.NodeCount(), len(g.Edges))
 		startServer(g)
 		return
 	}

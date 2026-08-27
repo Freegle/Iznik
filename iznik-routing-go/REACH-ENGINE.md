@@ -20,7 +20,7 @@ routing host three times in one day in August.
 Two things are wrong with the shape approach. It recomputes what it already knew,
 and a filled square is a fib: the far bank of an unbridged river gets filled
 because it is *near*, not because you can *drive* to it. The road network already
-knows the true answer. Stage 2 stores that answer directly.
+knows the true answer. Reach engine stores that answer directly.
 
 ## The graph, in plain English
 
@@ -116,7 +116,7 @@ That argument is checked by brute force, not trusted:
 The verification harnesses caught three real bugs during development (a path
 that re-enters a region through a second entry; the road-plus-footpath merge; a
 circular lane sharing both endpoints). They are kept in the tree as regression
-tooling — `stage2 parity`, `stage2 sweep` — and the arguments above are only as
+tooling — `reach parity`, `reach sweep` — and the arguments above are only as
 good as their continued green.
 
 ## Road distance on the site (implemented)
@@ -133,16 +133,17 @@ back to crow-flies automatically wherever the engine is not deployed. The
 far-away warning when replying deliberately still uses crow-flies: it is a
 logic threshold, and road distance over blurred coordinates can exaggerate.
 
-Which is the caveat that matters: displayed locations are BLURRED for privacy,
-and a few hundred metres of circular blur can put a point on the wrong side of
-a river — a tiny crow-flies error but a huge road-distance one. The engine
-makes the fix cheap: `GET /v1/blur` blurs ALONG the road network (a deterministic
-pseudo-random road node between R/2 and 3R/2 road-metres away, and at least
-R/4 crow-flies metres away so a hairpin lane cannot leave it deceptively
-close),
-so a blurred location stays on its own bank by construction. Switching member
-display blurring over to it is a deliberate, privacy-visible decision left
-open; the primitive and its tests are in.
+Displayed locations are BLURRED for privacy, and a few hundred metres of
+circular blur can put a point on the wrong side of a river — a tiny crow-flies
+error but a huge road-distance one. Member and post display blurring is
+therefore road-aware now: apiv2 blurs every displayed location through
+`POST /v1/blur-batch` (one batched call per list response, cached — blur is
+deterministic per location), which picks a pseudo-random road point between
+R/2 and 3R/2 ROAD metres away and at least R/4 crow-flies metres away, so a
+blurred location stays on its own bank by construction and a hairpin lane
+cannot leave it deceptively close. Output keeps the classic 3-decimal-place
+rounding. When the routing server cannot answer, the classic circular blur is
+the automatic fallback — behaviour degrades to exactly what it was before.
 
 ## Fairness is untouched
 

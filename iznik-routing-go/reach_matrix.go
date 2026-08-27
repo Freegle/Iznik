@@ -1,6 +1,6 @@
 package main
 
-// Stage 2 region matrices: for every leaf region, the directed boundary
+// Reach engine region matrices: for every leaf region, the directed boundary
 // (entries = nodes with a drive edge in from another leaf; exits = nodes with
 // a drive edge out to another leaf), the entry×exit through-time matrix over
 // region-INTERNAL drive edges, and a per-entry eccentricity for the
@@ -106,7 +106,7 @@ type leafSubgraph struct {
 	mets    []float32 // road metres of the chain edge (same semantics as DistM)
 }
 
-func buildLeafSubgraph(ov *Overlay, part *Stage2Partition, leaf int32) *leafSubgraph {
+func buildLeafSubgraph(ov *Overlay, part *ReachPartition, leaf int32) *leafSubgraph {
 	nodes := part.LeafNodes[leaf]
 	ls := &leafSubgraph{nodes: nodes, localOf: make(map[uint32]int32, len(nodes))}
 	for i, oi := range nodes {
@@ -188,7 +188,7 @@ func (ls *leafSubgraph) dijkstraFromM(li int32, dist, met []float32) {
 }
 
 // BuildRegionMatrices computes boundaries, matrices and eccentricities.
-func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
+func BuildRegionMatrices(ov *Overlay, part *ReachPartition) *RegionMatrices {
 	start := time.Now()
 	nLeaves := len(part.LeafNodes)
 	rm := &RegionMatrices{
@@ -295,7 +295,7 @@ func BuildRegionMatrices(ov *Overlay, part *Stage2Partition) *RegionMatrices {
 	}
 	wg.Wait()
 
-	log.Printf("stage2: matrices built in %v: %d entries / %d exits / %d matrix cells / %d cross edges over %d leaves",
+	log.Printf("reach: matrices built in %v: %d entries / %d exits / %d matrix cells / %d cross edges over %d leaves",
 		time.Since(start).Round(time.Millisecond), len(rm.Entries), len(rm.Exits), len(rm.Mat), len(rm.CrossFrom), nLeaves)
 	return rm
 }

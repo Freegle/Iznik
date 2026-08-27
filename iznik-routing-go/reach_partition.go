@@ -1,6 +1,6 @@
 package main
 
-// Stage 2 partitioner: nested bisection of the drive overlay by Inertial Flow
+// Reach engine partitioner: nested bisection of the drive overlay by Inertial Flow
 // (Schild & Sommer): project nodes onto a handful of axes, fix the extreme
 // alpha fraction each side as super-source/super-sink, run a unit-capacity
 // max-flow (Dinic), and take the min cut — max-flow min-cut duality finds the
@@ -137,8 +137,8 @@ type BisectStat struct {
 	Balance float64 `json:"balance"`
 }
 
-// Stage2Partition is the partition artifact.
-type Stage2Partition struct {
+// ReachPartition is the partition artifact.
+type ReachPartition struct {
 	// LeafOf[overlayIdx] = leaf id, -1 if the overlay node is not drive-usable.
 	LeafOf []int32
 	// LeafNodes[leaf] = overlay indices in the leaf.
@@ -183,11 +183,11 @@ func (sc *splitScratch) nextEpoch() {
 }
 
 // PartitionOverlay builds the nested partition of the drive overlay.
-func PartitionOverlay(g *Graph, ov *Overlay, leafMax int, alpha float64) *Stage2Partition {
+func PartitionOverlay(g *Graph, ov *Overlay, leafMax int, alpha float64) *ReachPartition {
 	start := time.Now()
 	ug := buildDriveUG(g, ov)
 	n := len(ug.overlayOf)
-	log.Printf("stage2: partition input: %d drive junctions / %d undirected edges", n, len(ug.edgeTo)/2)
+	log.Printf("reach: partition input: %d drive junctions / %d undirected edges", n, len(ug.edgeTo)/2)
 
 	p := &partitioner{
 		ug:      ug,
@@ -207,7 +207,7 @@ func PartitionOverlay(g *Graph, ov *Overlay, leafMax int, alpha float64) *Stage2
 
 	// Split into connected components first; partition each sizable one.
 	comps := p.components()
-	log.Printf("stage2: %d drive components (largest %d)", len(comps), comps[0].hi-comps[0].lo)
+	log.Printf("reach: %d drive components (largest %d)", len(comps), comps[0].hi-comps[0].lo)
 	for _, c := range comps {
 		lo, hi := c.lo, c.hi
 		p.wg.Add(1)
@@ -218,7 +218,7 @@ func PartitionOverlay(g *Graph, ov *Overlay, leafMax int, alpha float64) *Stage2
 	}
 	p.wg.Wait()
 
-	out := &Stage2Partition{
+	out := &ReachPartition{
 		LeafOf:    make([]int32, ov.NodeCount()+1),
 		LeafNodes: make([][]uint32, len(p.leaves)),
 		Stats:     p.stats,
@@ -235,7 +235,7 @@ func PartitionOverlay(g *Graph, ov *Overlay, leafMax int, alpha float64) *Stage2
 		}
 		out.LeafNodes[leaf] = lst
 	}
-	log.Printf("stage2: partition done in %v: %d leaves", time.Since(start).Round(time.Millisecond), len(out.LeafNodes))
+	log.Printf("reach: partition done in %v: %d leaves", time.Since(start).Round(time.Millisecond), len(out.LeafNodes))
 	return out
 }
 
@@ -460,7 +460,7 @@ func (p *partitioner) inertialFlowSplit(lo, hi int32) (int32, int, int, float64,
 	}
 	bestR := results[best]
 	if n > 500000 {
-		log.Printf("stage2: split n=%d: axis %d wins cut=%d balance=%.2f (phases %d, %v; all cuts %d/%d/%d/%d)",
+		log.Printf("reach: split n=%d: axis %d wins cut=%d balance=%.2f (phases %d, %v; all cuts %d/%d/%d/%d)",
 			n, best, bestR.cut, float64(min(bestR.aLen, n-bestR.aLen))/float64(n), bestR.phases, bestR.elapsed.Round(time.Millisecond),
 			results[0].cut, results[1].cut, results[2].cut, results[3].cut)
 	}
@@ -793,10 +793,10 @@ func min32(a, b int32) int32 {
 	return b
 }
 
-// stage2PartitionRun is the CLI entry: builds (or loads) the partition and
+// reachPartitionRun is the CLI entry: builds (or loads) the partition and
 // dumps measurement stats.
-func stage2PartitionRun(leafMax int, alpha float64) {
-	g, ov := stage2LoadOrBuild()
+func reachPartitionRun(leafMax int, alpha float64) {
+	g, ov := reachLoadOrBuild()
 	part := PartitionOverlay(g, ov, leafMax, alpha)
 
 	// Leaf size distribution.
@@ -828,18 +828,18 @@ func stage2PartitionRun(leafMax int, alpha float64) {
 		}
 		return cuts[int(p*float64(len(cuts)-1))]
 	}
-	fmt.Printf("stage2 partition: %d leaves, leaf size p10/p50/p90/max = %d/%d/%d/%d, depth max %d\n",
+	fmt.Printf("reach partition: %d leaves, leaf size p10/p50/p90/max = %d/%d/%d/%d, depth max %d\n",
 		len(part.LeafNodes), pct(0.10), pct(0.50), pct(0.90), pct(1.0), maxDepth)
-	fmt.Printf("stage2 partition: bisection cut p50/p90/max = %d/%d/%d over %d bisections\n",
+	fmt.Printf("reach partition: bisection cut p50/p90/max = %d/%d/%d over %d bisections\n",
 		cpct(0.50), cpct(0.90), cpct(1.0), len(cuts))
 
-	if err := os.MkdirAll("data/stage2", 0o755); err != nil {
+	if err := os.MkdirAll("data/reach", 0o755); err != nil {
 		log.Fatal(err)
 	}
-	if err := savePartition("data/stage2/partition.snap", part); err != nil {
-		log.Fatalf("stage2: save partition: %v", err)
+	if err := savePartition("data/reach/partition.snap", part); err != nil {
+		log.Fatalf("reach: save partition: %v", err)
 	}
-	f, err := os.Create("data/stage2/partition-stats.json")
+	f, err := os.Create("data/reach/partition-stats.json")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -849,13 +849,13 @@ func stage2PartitionRun(leafMax int, alpha float64) {
 	if err := enc.Encode(part.Stats); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("stage2: stats written to data/stage2/partition-stats.json")
+	log.Printf("reach: stats written to data/reach/partition-stats.json")
 }
 
 const partitionMagic = "FRGP1SNAP" // versioned independently of the graph snapshot
 
 // savePartition / loadPartition use the same raw-slice format as the graph snapshot.
-func savePartition(path string, part *Stage2Partition) error {
+func savePartition(path string, part *ReachPartition) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -888,7 +888,7 @@ func savePartition(path string, part *Stage2Partition) error {
 	return writeSlice(w, blob)
 }
 
-func loadPartition(path string) (*Stage2Partition, error) {
+func loadPartition(path string) (*ReachPartition, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -901,7 +901,7 @@ func loadPartition(path string) (*Stage2Partition, error) {
 	if string(magic) != partitionMagic {
 		return nil, fmt.Errorf("partition artifact version mismatch (got %q)", magic)
 	}
-	part := &Stage2Partition{}
+	part := &ReachPartition{}
 	if part.LeafOf, err = readSlice[int32](f); err != nil {
 		return nil, err
 	}

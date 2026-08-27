@@ -1,6 +1,6 @@
 package main
 
-// Stage 2 (connectivity-native reach) — overlay contraction.
+// Reach engine (connectivity-native reach) — overlay contraction.
 //
 // The overlay is the junction-only view of the road graph: every node that is,
 // for every transport mode it carries, a pure degree-2 pass-through between the
@@ -385,7 +385,7 @@ func BuildOverlay(g *Graph) *Overlay {
 	}
 	ov.EdgeStart[on+1] = int32(pos)
 
-	log.Printf("stage2: overlay built in %v: %d junctions / %d chain edges (base %d nodes / %d edges)",
+	log.Printf("reach: overlay built in %v: %d junctions / %d chain edges (base %d nodes / %d edges)",
 		time.Since(start).Round(time.Millisecond), on, len(ov.Edges), n, len(g.Edges))
 	return ov
 }

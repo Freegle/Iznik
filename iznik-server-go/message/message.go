@@ -28,6 +28,7 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -761,7 +762,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				}
 
 				// Protect anonymity of poster a bit.
-				message.Lat, message.Lng = utils.Blur(message.Lat, message.Lng, utils.BLUR_USER)
+				message.Lat, message.Lng = roadblur.RoadBlur(message.Lat, message.Lng, utils.BLUR_USER)
 
 				// source/fromip/fromcountry are mod-only fields.
 				if !isMod {
@@ -1521,9 +1522,15 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				markExpiredMessages(db, msgs)
 			}
 
+			// One batched routing call resolves every location's road-aware blur.
+			blurCoords := make([][2]float64, 0, len(msgs))
+			for _, r := range msgs {
+				blurCoords = append(blurCoords, [2]float64{float64(r.Lat), float64(r.Lng)})
+			}
+			roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 			for ix, r := range msgs {
 				// Protect anonymity of poster a bit.
-				msgs[ix].Lat, msgs[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+				msgs[ix].Lat, msgs[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 			}
 
 			return c.JSON(msgs)
@@ -2033,9 +2040,14 @@ func Search(c *fiber.Ctx) error {
 				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}
 
-			// Blur
+			// Blur: one batched routing call, then cache hits.
+			blurCoords2 := make([][2]float64, 0, len(res))
+			for _, r := range res {
+				blurCoords2 = append(blurCoords2, [2]float64{float64(r.Lat), float64(r.Lng)})
+			}
+			roadblur.RoadBlurPrewarm(blurCoords2, utils.BLUR_USER)
 			for ix, r := range res {
-				res[ix].Lat, res[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+				res[ix].Lat, res[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 			}
 		}
 	}

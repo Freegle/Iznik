@@ -1,6 +1,6 @@
 package main
 
-// Stage 2 UK-wide exactness sweep: for several hundred real posts bucketed
+// Reach engine UK-wide exactness sweep: for several hundred real posts bucketed
 // across the UK (one to three per half-degree cell, exported read-only), and
 // then a synthetic origin planted in every sizable partition region the posts
 // did not touch, compare the engine's arrivals — BOTH the live query result
@@ -53,7 +53,7 @@ func (s *sweepOrigin) budget() (float32, bool) {
 	return float32(best * 60), ok
 }
 
-func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
+func reachSweepRun(file string, maxSynthetic, fuzz int, engine *ReachEngine) {
 	f, err := os.Open(file)
 	if err != nil {
 		log.Fatalf("sweep: %v", err)
@@ -348,9 +348,9 @@ func stage2SweepRun(file string, maxSynthetic, fuzz int, engine *Stage2Engine) {
 		t.queryMs/float64(max(1, t.origins)), t.baseMs/float64(max(1, t.origins)), t.origins)
 }
 
-// stage2NodeDebugRun prints the full arrival breakdown for one node from one
+// reachNodeDebugRun prints the full arrival breakdown for one node from one
 // origin, against the base-graph truth — for root-causing sweep mismatches.
-func stage2NodeDebugRun(lat, lng, minutes float64, target NodeID, engine *Stage2Engine) {
+func reachNodeDebugRun(lat, lng, minutes float64, target NodeID, engine *ReachEngine) {
 	g, ov := engine.G, engine.Ov
 	T := float32(minutes * 60)
 	lbl := engine.QueryLabels(lat, lng, T)

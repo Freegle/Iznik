@@ -13,22 +13,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"os"
 	"time"
 
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
 )
-
-func routingMetricsURL() string {
-	if u := os.Getenv("ROUTING_EVAL_URL"); u != "" {
-		return u
-	}
-	// Deliberately NO SPATIAL_KNN_URL fallback: that variable points at the
-	// KNN index service (iznik-spatial-go), which does not serve
-	// /v1/drive-metrics — falling back to it silently misroutes.
-	return "http://spatial:8194"
-}
 
 // Short timeout: this decorates a UI that already has a crow-flies answer.
 var routingClient = &http.Client{Timeout: 3 * time.Second}
@@ -110,7 +100,7 @@ func DriveDistance(c *fiber.Ctx) error {
 	if latlng.Lat == 0 && latlng.Lng == 0 {
 		return c.JSON(fiber.Map{"results": []DriveResult{}})
 	}
-	results := FetchDriveMetrics(routingMetricsURL(), float64(latlng.Lat), float64(latlng.Lng), req.Targets)
+	results := FetchDriveMetrics(roadblur.RoutingURL(), float64(latlng.Lat), float64(latlng.Lng), req.Targets)
 	if results == nil {
 		results = []DriveResult{}
 	}

@@ -2,6 +2,7 @@ package message
 
 import (
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -262,9 +263,15 @@ func Bounds(c *fiber.Ctx) error {
 		msgs = msgs[:limit64]
 	}
 
+	// One batched routing call resolves every location's road-aware blur.
+	blurCoords := make([][2]float64, 0, len(msgs))
+	for _, r := range msgs {
+		blurCoords = append(blurCoords, [2]float64{float64(r.Lat), float64(r.Lng)})
+	}
+	roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.
-		msgs[ix].Lat, msgs[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+		msgs[ix].Lat, msgs[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 	}
 
 	return c.JSON(msgs)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -306,7 +307,7 @@ func ListMessages(c *fiber.Ctx) error {
 			msg.Attachments = attachments
 
 			// Blur location for privacy.
-			msg.Lat, msg.Lng = utils.Blur(msg.Lat, msg.Lng, utils.BLUR_USER)
+			msg.Lat, msg.Lng = roadblur.RoadBlur(msg.Lat, msg.Lng, utils.BLUR_USER)
 
 			mu.Lock()
 			messages[idx] = msg

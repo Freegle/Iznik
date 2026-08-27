@@ -1,6 +1,6 @@
 package main
 
-// Stage 2 snapshot: a fast binary cache of the built base graph + overlay so
+// Reach engine snapshot: a fast binary cache of the built base graph + overlay so
 // prototype iterations load in seconds instead of re-parsing the PBF (~90s+).
 // Raw same-architecture slice dumps with a magic+version header — this is a
 // local build artifact (like the PBF itself), not a wire format. The monthly
@@ -17,8 +17,8 @@ import (
 	"unsafe"
 )
 
-const stage2SnapMagic = "FRGS2SNAP"
-const stage2SnapVersion = uint32(1)
+const graphSnapMagic = "FRGS2SNAP"
+const graphSnapVersion = uint32(1)
 
 func writeSlice[T any](w io.Writer, s []T) error {
 	var t T
@@ -74,8 +74,8 @@ func bytesToBools(b []byte) []bool {
 	return out
 }
 
-// SaveStage2Snapshot writes the base graph + overlay to path.
-func SaveStage2Snapshot(path string, g *Graph, ov *Overlay) error {
+// SaveReachSnapshot writes the base graph + overlay to path.
+func SaveReachSnapshot(path string, g *Graph, ov *Overlay) error {
 	start := time.Now()
 	f, err := os.Create(path)
 	if err != nil {
@@ -84,10 +84,10 @@ func SaveStage2Snapshot(path string, g *Graph, ov *Overlay) error {
 	defer f.Close()
 	w := bufio.NewWriterSize(f, 1<<20)
 
-	if _, err := w.WriteString(stage2SnapMagic); err != nil {
+	if _, err := w.WriteString(graphSnapMagic); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.LittleEndian, stage2SnapVersion); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, graphSnapVersion); err != nil {
 		return err
 	}
 	if err := writeSlice(w, g.Nodes); err != nil {
@@ -130,12 +130,12 @@ func SaveStage2Snapshot(path string, g *Graph, ov *Overlay) error {
 		return err
 	}
 	fi, _ := f.Stat()
-	log.Printf("stage2: snapshot saved to %s (%.1fMB) in %v", path, float64(fi.Size())/1e6, time.Since(start).Round(time.Millisecond))
+	log.Printf("reach: snapshot saved to %s (%.1fMB) in %v", path, float64(fi.Size())/1e6, time.Since(start).Round(time.Millisecond))
 	return nil
 }
 
-// LoadStage2Snapshot reads a snapshot and rebuilds the derived spatial grid.
-func LoadStage2Snapshot(path string) (*Graph, *Overlay, error) {
+// LoadReachSnapshot reads a snapshot and rebuilds the derived spatial grid.
+func LoadReachSnapshot(path string) (*Graph, *Overlay, error) {
 	start := time.Now()
 	f, err := os.Open(path)
 	if err != nil {
@@ -144,19 +144,19 @@ func LoadStage2Snapshot(path string) (*Graph, *Overlay, error) {
 	defer f.Close()
 	r := bufio.NewReaderSize(f, 1<<20)
 
-	magic := make([]byte, len(stage2SnapMagic))
+	magic := make([]byte, len(graphSnapMagic))
 	if _, err := io.ReadFull(r, magic); err != nil {
 		return nil, nil, err
 	}
-	if string(magic) != stage2SnapMagic {
+	if string(magic) != graphSnapMagic {
 		return nil, nil, fmt.Errorf("bad snapshot magic %q", magic)
 	}
 	var ver uint32
 	if err := binary.Read(r, binary.LittleEndian, &ver); err != nil {
 		return nil, nil, err
 	}
-	if ver != stage2SnapVersion {
-		return nil, nil, fmt.Errorf("snapshot version %d, want %d", ver, stage2SnapVersion)
+	if ver != graphSnapVersion {
+		return nil, nil, fmt.Errorf("snapshot version %d, want %d", ver, graphSnapVersion)
 	}
 
 	g := &Graph{}
@@ -209,7 +209,7 @@ func LoadStage2Snapshot(path string) (*Graph, *Overlay, error) {
 			g.Grid.add(float64(nd.Lat), float64(nd.Lng), i)
 		}
 	}
-	log.Printf("stage2: snapshot loaded from %s in %v (%d nodes, %d overlay junctions)",
+	log.Printf("reach: snapshot loaded from %s in %v (%d nodes, %d overlay junctions)",
 		path, time.Since(start).Round(time.Millisecond), n, ov.NodeCount())
 	return g, ov, nil
 }
