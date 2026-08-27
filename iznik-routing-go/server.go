@@ -595,6 +595,10 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Post("/ripple-eval", gated(handleRippleEval(g, spatialURL)))
 	v1.Get("/posts-for-member", gated(handlePostsForMember(g, spatialURL)))
 	v1.Get("/digest-simulator", gated(handleDigestSimulator(g, spatialURL)))
+	// Stage 2 reach engine (503 until STAGE2_DIR is configured): labels are a
+	// graph computation (gated); arrival evaluation is table lookups (ungated).
+	v1.Get("/reach-labels", gated(handleReachLabels()))
+	v1.Post("/reach-arrival", handleReachArrival())
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	v1.Get("/groups/list", handleGroupsList())
 

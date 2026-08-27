@@ -36,6 +36,18 @@ func main() {
 		}
 	}
 
+	// Stage 2 artifact boot: STAGE2_DIR set means load the prebuilt graph +
+	// reach engine in seconds instead of rebuilding from the PBF (which stays
+	// the fallback, and the only path when STAGE2_DIR is unset).
+	if g := stage2BootFromEnv(); g != nil {
+		if dep != nil {
+			g.Deprivation = dep
+		}
+		log.Printf("spatial-server: loaded %d nodes, %d edges from stage2 artifacts", g.NodeCount(), len(g.Edges))
+		startServer(g)
+		return
+	}
+
 	log.Printf("spatial-server: loading graph from %s", pbfPath)
 	g, err := BuildGraph(pbfPath, dep)
 	if err != nil {

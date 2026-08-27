@@ -1,9 +1,13 @@
 ---
-last_reviewed: 2026-08-14
+last_reviewed: 2026-08-27
 covers:
   - iznik-routing-go/graph.go
   - iznik-routing-go/dijkstra.go
   - iznik-routing-go/cmd/calibrate/**
+  - iznik-routing-go/stage2_overlay.go
+  - iznik-routing-go/stage2_partition.go
+  - iznik-routing-go/stage2_query.go
+  - iznik-routing-go/stage2_server.go
 ---
 
 # Freegle's spatial servers — a plain-English overview
@@ -108,6 +112,26 @@ starting with those closest and rippling outwards over time, so a post gets seen
 by enough people to find a home without spamming everyone at once. The full
 thinking behind that is written up in
 [the rippling algorithm reference](rippling-algorithm.md).
+
+## The reach engine (new)
+
+The newest part of the travel-time mapper changes *how* a post's reach is
+worked out. Instead of re-drawing the reachable area from scratch every time a
+post's reach grows — a full road search each time — the road network is
+prepared once: runs of road with no junctions are folded together, and the
+country is cut into a few hundred regions along its naturally narrow places
+(the computer discovers for itself that only 8 roads connect across the
+Severn, 6 across the Forth). A post's reach then becomes a small note per
+region — fully reached, partly reached (with arrival times at the region's
+entrances), or not reached — and "is this member's address within reach?" is
+answered exactly from those notes in microseconds, including the case the old
+drawn shape got wrong: the far bank of an unbridged river is *out*, because
+you cannot drive there.
+
+The full plain-English walkthrough, with the measurements and the
+multi-million-check verification against both a plain road search and
+production's stored answers, is in
+[`iznik-routing-go/REACH-ENGINE.md`](../../../iznik-routing-go/REACH-ENGINE.md).
 
 ## What it does **not** do
 
