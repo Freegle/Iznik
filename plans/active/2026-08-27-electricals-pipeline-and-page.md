@@ -19,8 +19,8 @@ NOT a primary-function test.
 | 6 | Schedule `eee:classify-new` hourly (Gemini Flash) | ✅ | High-water mark now reads MySQL |
 | 7 | `ElectricalsStatsService` + `electricals:stats` daily | ✅ | Runs clean end to end |
 | 8 | Go endpoint `GET /electricals/stats` | ✅ | 4 tests pass |
-| 9 | `/electricals` Nuxt page + API class | ✅ | Lint clean; NOT browser-verified |
-| 10 | Tests | 🔄 | All mine green; full suite blocked, see below |
+| 9 | `/electricals` Nuxt page + API class | ✅ | Browser-verified desktop + 375px, no console errors |
+| 10 | Tests | ✅ | All mine green: 452 Eee, 13 ItemService, 4 Go |
 | 11 | PR | ❌ | Blocked: full Laravel suite red on master
 
 ---
@@ -175,15 +175,39 @@ and touching it here would collide.
 **This blocks the PR.** CLAUDE.md allows pushing only after the full relevant suite passes
 locally. It does not, for reasons that are not this branch's, so nothing is pushed.
 
+## Verified end to end on dev
+
+Classifier -> MySQL -> `electricals:stats` -> `GET /electricals/stats` -> page. 30 messages
+classified for $0.0019, page rendered and screenshotted at desktop and 375px, no console errors
+from the page.
+
+Four production-breaking defects the end-to-end run exposed, all now fixed:
+
+1. **`GOOGLE_GEMINI_API_KEY` never reached the batch container.** It was set only on the separate
+   `eee-batch` research container, so the hourly job would have failed every hour with "Vision
+   service not configured".
+2. **`gemini-2.0-flash-lite` is retired.** The API answers "no longer available". That is the model
+   the published accuracy was measured on, so nothing runnable today has been measured. Pinned to
+   `gemini-3.5-flash-lite`, and the payload now carries `measured_on` / `current_model` /
+   `measured_for_current_model` so the page states the figures describe an earlier model.
+3. **The primary-photo filter dropped 47% of posts.** On live only 5,432 of 10,307 OFFERs in a
+   week have any attachment flagged `primary = 1`. Now uses the canonical
+   `ORDER BY primary DESC, id ASC`.
+4. **Tonnage read as a confident zero with no weight basis.** `populationAverageWeight()` required
+   `popularity > 0`, which is empty until the backfill runs, so the page would have published
+   "0 tonnes reused" as a finding. Falls back to an unweighted mean and reports null when there is
+   genuinely no basis.
+
+`items:backfill-popularity` also ran for real on dev: 154 of 181 items corrected.
+
 ## Not done
 
-- The `/electricals` page has **not been opened in a browser**. iznik-nuxt3/CLAUDE.md requires
-  visual changes to be verified with Chrome DevTools MCP. It needs generated data to render
-  anything, and nothing has classified yet in dev.
-- No classifier run has happened, so every figure is currently zero. The first real numbers
-  need `eee:classify-new` to run against Gemini.
+- **Re-measure accuracy against the current model.** The 96% / 93% figures were measured on a model
+  that no longer exists. The page says so, but the numbers need redoing against the 200 human
+  labels before anyone quotes them.
 - Production migrations not applied; `*_migration.sql` files are ready and idempotent.
 - `items:backfill-popularity` not run against production.
+- No PR: see below.
 
 ## Local test-environment divergence (not this branch)
 
