@@ -14,11 +14,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Tests\Support\FakesRingIndex;
+use Tests\Support\SeedsReachCells;
 use Tests\TestCase;
 
 class UnifiedDigestServiceTest extends TestCase
 {
     use FakesRingIndex;
+    use SeedsReachCells;
 
     protected UnifiedDigestService $service;
 
@@ -328,13 +330,12 @@ class UnifiedDigestServiceTest extends TestCase
 
         // A reach that DOES cover the recipient, so only the frozen status can exclude it.
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, status, arrival)
-             VALUES (?, 51.5, -0.1,
-                ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857),
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
                 ST_Envelope(ST_GeomFromText('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))', 3857)),
                 'held', NOW())
              ON DUPLICATE KEY UPDATE status = VALUES(status)",
-            [$message->id]
+            [$message->id, $this->reachCellsFor('POLYGON((-10 40, 10 40, 10 60, -10 60, -10 40))')]
         );
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
@@ -1127,8 +1128,8 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
 
         // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger dedup).
-        DB::statement('UPDATE rippling_reach SET polygon = ST_GeomFromText(?, 3857) WHERE msgid = ?',
-            ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        DB::statement('UPDATE rippling_reach SET polygon_cells = ? WHERE msgid = ?',
+            [$this->reachCellsFor('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'), $msg->id]);
         $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
         $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
@@ -1615,11 +1616,14 @@ class UnifiedDigestServiceTest extends TestCase
     /** Seed a rippling_reach row for a post with the given WKT polygon (SRID 3857). */
     protected function seedReach(int $msgid, string $wkt): void
     {
+        // The grid is the only stored form of a reach, so a fixture that used to plant
+        // polygon WKT plants that same shape's cells. outer_bound stays: it is a cheap
+        // bounding box the digest gate tests before it looks at the grid at all.
         DB::statement(
-            "INSERT INTO rippling_reach (msgid, lat, lng, polygon, outer_bound, arrival, mode, tick, total_ticks, "
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
-            . "VALUES (?, 51.5, -0.1, ST_GeomFromText(?, 3857), ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
-            [$msgid, $wkt, $wkt]
+            . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
+            [$msgid, $this->reachCellsFor($wkt), $wkt]
         );
     }
 
