@@ -119,6 +119,32 @@ circular lane sharing both endpoints). They are kept in the tree as regression
 tooling — `stage2 parity`, `stage2 sweep` — and the arguments above are only as
 good as their continued green.
 
+## What else this structure unlocks
+
+The regions-plus-boundary-tables structure is the core of "Customizable Route
+Planning", the method built for general routing, so reach is only its first
+customer:
+
+- **Point-to-point drive times in ~1-3ms anywhere in the UK.** Snap both ends,
+  search locally inside each end's region, hop between the two boundaries via
+  the tables. Today's `/v1/drive-time` explores the entire disc around the
+  origin — a long cross-country question sweeps millions of points; this
+  answers it in milliseconds. The only missing artifact is the reverse
+  direction of the per-region tables (same ~2s build, transposed). The same
+  machinery makes the proximity-notes "is it quicker?" checks near-free.
+- **One-to-many and many-to-many.** Arrival from one origin to many points is
+  already the membership path; region-to-region time matrices compose from the
+  boundary tables in milliseconds — useful for volunteer/collection
+  assignment and clearance routing.
+- **Cheap metric updates.** When only the edge *times* change — a speed-model
+  recalibration, seasonal factors — the partition and graph stand; just the
+  2.6MB of tables rebuild, in under two seconds. Today that class of change
+  means rebuilding the graph on every host.
+- **Walk and cycle for free-ish.** The partition is topological, shared by all
+  modes; each extra mode is a metric fill of the same tables.
+- **Faster display isochrones** for the catchment and group endpoints, since
+  the labeling query is 25-250x the flat search.
+
 ## Artifacts and lifecycle
 
 Everything derived is a file: the contracted graph (4.7GB, loads in ~5s versus

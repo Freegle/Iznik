@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-07-31
+last_reviewed: 2026-08-27
 owner: Freegle dev team
 covers:
   - docs/ops/reference/database-read-write-split.md
