@@ -52,6 +52,20 @@ vi.mock('~/constants', () => ({
   BROWSE_MINUTES_FALLBACK_MAX: 30,
   BROWSE_MINUTES_MAX: 45,
   BROWSE_MINUTES_STEP: 5,
+  // The mock replaces the whole module, so the two distance axes have to be spelled out here too -
+  // DistanceSliders reads them to tell "linked" from "split".
+  DISTANCE_AXES: {
+    browse: {
+      minutesKey: 'browseMaxMinutes',
+      milesKey: 'browseMaxDistance',
+      bandCapped: true,
+    },
+    myPosts: {
+      minutesKey: 'myPostsMaxMinutes',
+      milesKey: 'myPostsMaxDistance',
+      bandCapped: false,
+    },
+  },
 }))
 
 // The time-based slider converts the chosen minutes to a crow-flies mile radius via the routing-backed

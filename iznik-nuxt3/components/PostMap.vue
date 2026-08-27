@@ -69,6 +69,15 @@
               :geojson="coverageGeoJSON"
               :options="isochroneOptions"
             />
+            <!-- How far away people can be and still see THIS member's posts, when they have set
+                 that separately from what they see. Drawn as an outline with no fill, under no
+                 circumstances filled: it is usually the WIDER of the two, so a second fill would
+                 wash out the shape that answers "what will I see". -->
+            <l-geo-json
+              v-if="myPostsReachGeoJSON"
+              :geojson="myPostsReachGeoJSON"
+              :options="myPostsReachOptions"
+            />
             <!-- Explicit WKT overrides (e.g. the fixed Essex boundary) are a nearby/override-only
                  concept, so they stay gated. -->
             <div v-if="showIsochrones">
@@ -405,6 +414,11 @@ const messagesForMap = computed(() => {
 // there's no known location, or if routing was unavailable.
 const { reachGeoJSON } = useReachOverlay()
 
+// The outbound half of the same control: how far away someone can be and still see this member's
+// posts. Only ever non-null once they have set it separately from what they see - while the two are
+// linked there is one shape and one slider, and drawing the same outline twice would just thicken it.
+const { reachGeoJSON: myPostsReachRaw } = useReachOverlay('myPosts')
+
 // A smoothed convex hull enclosing the posts currently shown, as an indication
 // of the area covered. The true reach is travel-time-based (not a simple
 // radius), so this is only an approximation - but it shrinks as the slider is
@@ -438,6 +452,24 @@ const coverageGeoJSON = computed(() => {
 
   return reachGeoJSON.value || hullGeoJSON.value
 })
+
+// Same teardown guard as coverageGeoJSON: vue-leaflet removes the old layers when the geojson
+// changes, and a removal landing after the renderer has gone throws inside leaflet. There is no
+// hull fallback here - an outbound reach we have not been given is simply not drawn.
+const myPostsReachGeoJSON = computed(() =>
+  destroyed.value ? null : myPostsReachRaw.value
+)
+
+// Outline only, dashed, no fill - see the template. Same colour as the inbound reach so the two
+// read as two extents of one thing rather than two unrelated areas, and dashed so which is which
+// is unambiguous where they nearly coincide.
+const myPostsReachOptions = computed(() => ({
+  fill: false,
+  color: ISOCHRONE_COLOR,
+  weight: 2,
+  opacity: 0.9,
+  dashArray: '6 5',
+}))
 
 const isochrones = computed(() => {
   // There's no longer a per-user isochrone polygon to fall back on - reach is worked

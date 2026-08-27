@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"spatial-server/cellset"
@@ -105,6 +106,15 @@ func TestOverflowSelect_BindsLanesInOrderAndNamesNoDroppedColumn(t *testing.T) {
 	}
 	if got := countSubstr(cols, "overflow_bounds"); got != 0 {
 		t.Errorf("select names the dropped overflow_bounds %d time(s): %s", got, cols)
+	}
+	// The scanner pairs columns positionally - one column per lane now that
+	// the WKT fallback is gone. Asserted by building the exact expected
+	// string, not by counting ", " separators: that is a trap this test fell
+	// into on its first run, since every cells extraction contains ", "
+	// INSIDE it ("overflow_cells, ?").
+	want := strings.TrimSuffix(strings.Repeat("JSON_UNQUOTE(JSON_EXTRACT(overflow_cells, ?)), ", len(lanes)), ", ")
+	if cols != want {
+		t.Errorf("select shape:\n got: %s\nwant: %s", cols, want)
 	}
 }
 

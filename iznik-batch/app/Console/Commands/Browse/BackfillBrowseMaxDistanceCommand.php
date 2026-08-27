@@ -115,6 +115,21 @@ class BackfillBrowseMaxDistanceCommand extends Command
     private const BAND_KEY = 'browseDensityBand';
 
     /**
+     * The OUTBOUND pair: how far away people can be and still see this member's posts, when they
+     * have separated that from what they see. Chosen minutes are the source of truth; the miles are
+     * derived from them by routing, exactly as on the inbound axis.
+     *
+     * Absent means the two axes are still LINKED, and every outbound reader
+     * (App\Services\Ripple\DistancePreferenceFilter::authorMaxDistanceMiles,
+     * iznik-server-go/utils/reachcap.go) then falls back to browseMaxDistance. This command
+     * reconciles the pair when it exists and never creates it - see reconcileOutbound. Must stay in
+     * step with DISTANCE_AXES in iznik-nuxt3/constants.js.
+     */
+    private const OUTBOUND_MINUTES_KEY = 'myPostsMaxMinutes';
+
+    private const OUTBOUND_MILES_KEY = 'myPostsMaxDistance';
+
+    /**
      * The bounds the time-based slider had before it became band-aware. The old top
      * stop is what a stored value has to be read against to know what fraction of
      * their range the member was asking for. Must stay in step with
@@ -188,6 +203,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
             'band_stamped' => 0,
             'no_location' => 0,
             'lookup_failed' => 0,
+            'outbound_corrected' => 0,
         ];
 
         $this->selection($sinceDays, $missingOnly)
@@ -204,7 +220,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
             });
 
         $this->info(sprintf(
-            '%d scanned: %d %s, %d band stamped, %d already consistent, %d skipped (no location), %d skipped (lookup failed).',
+            '%d scanned: %d %s, %d band stamped, %d already consistent, %d skipped (no location), %d skipped (lookup failed), %d outbound %s.',
             $stats['scanned'],
             $stats['corrected'],
             $dryRun ? 'would be corrected' : 'corrected',
@@ -212,6 +228,8 @@ class BackfillBrowseMaxDistanceCommand extends Command
             $stats['already_consistent'],
             $stats['no_location'],
             $stats['lookup_failed'],
+            $stats['outbound_corrected'],
+            $dryRun ? 'would be corrected' : 'corrected',
         ));
 
         if (! $dryRun && ($stats['corrected'] > 0 || $stats['band_stamped'] > 0)) {
@@ -340,12 +358,27 @@ class BackfillBrowseMaxDistanceCommand extends Command
             return;
         }
 
+        // The OUTBOUND axis drifts the same way the inbound one does - the stored radius was
+        // derived from where the member lived when they chose it - so it needs the same
+        // reconciliation. Done here, before the band work, because it depends on neither the band
+        // nor the rescale: its range is the ripple ceiling for every member. Deliberately never
+        // creates the key; see reconcileOutbound.
+        //
+        // It mutates the $settings array captured above rather than saving on its own: $settings
+        // was read before this point, so an independent save here would be silently reverted by
+        // whichever inbound write path runs below. Paths that return WITHOUT writing therefore have
+        // to flush it themselves - hence $outboundChanged.
+        $outboundChanged = $this->reconcileOutbound(
+            $user, $loc, $settings, $dryRun, $epsilon, $apiBase, $stats
+        );
+
         $cap = $this->capFor($loc);
         if ($cap['band'] === DensityService::BAND_UNKNOWN) {
             // Density could not be measured. Their band is precisely what this command
             // exists to apply, so a guess here is the one thing worse than leaving them
             // alone - it would be a cap nobody chose.
             $stats['lookup_failed']++;
+            $this->flushOutbound($user, $settings, $outboundChanged, $dryRun);
 
             return;
         }
@@ -363,6 +396,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
         $desired = $this->desiredDistance($loc, $desiredMinutes, $capMinutes, $apiBase);
         if ($desired === null) {
             $stats['lookup_failed']++;
+            $this->flushOutbound($user, $settings, $outboundChanged, $dryRun);
 
             return;
         }
@@ -385,6 +419,7 @@ class BackfillBrowseMaxDistanceCommand extends Command
             }
 
             $stats['already_consistent']++;
+            $this->flushOutbound($user, $settings, $outboundChanged, $dryRun);
 
             return;
         }
@@ -410,6 +445,89 @@ class BackfillBrowseMaxDistanceCommand extends Command
             $user->save();
         }
         $stats['corrected']++;
+    }
+
+    /**
+     * Reconcile the OUTBOUND pair (myPostsMaxMinutes -> myPostsMaxDistance): how far away people
+     * can be and still see this member's posts, when they have set that separately from what they
+     * see. Mutates $settings and reports whether it changed anything; the caller persists.
+     *
+     * NEVER creates the keys. Their absence is what "linked" means - every outbound reader falls
+     * back to browseMaxDistance when they are missing - so writing a value here would split a
+     * member's two axes apart without them asking, which is the one thing the split was designed
+     * not to do.
+     *
+     * No rescale and no band. The old fixed 5-30 slider predates this axis, so a stored value was
+     * always chosen against the current 5-45 scale; and the outbound range is the ripple ceiling
+     * for everyone, because a post's reach grows to the ceiling whatever band its origin is in.
+     * Passing the ceiling as the cap is also what makes desiredDistance() return the "no limit"
+     * sentinel at the top stop, which is what the top stop means on this axis.
+     */
+    private function reconcileOutbound(
+        User $user,
+        object $loc,
+        array &$settings,
+        bool $dryRun,
+        float $epsilon,
+        string $apiBase,
+        array &$stats
+    ): bool {
+        if (! array_key_exists(self::OUTBOUND_MINUTES_KEY, $settings)
+            || ! is_numeric($settings[self::OUTBOUND_MINUTES_KEY])) {
+            return false;
+        }
+
+        $ceiling = (int) round(DensityService::ceiling());
+        $minutes = max(self::MINUTES_MIN, min($ceiling, (int) $settings[self::OUTBOUND_MINUTES_KEY]));
+        $desired = $this->desiredDistance($loc, $minutes, $ceiling, $apiBase);
+        if ($desired === null) {
+            // Best-effort, exactly as the inbound pass is: a failed routing lookup leaves the
+            // stored pair alone rather than replacing it with a guess.
+            return false;
+        }
+
+        $current = $settings[self::OUTBOUND_MILES_KEY] ?? null;
+        if ($minutes === (int) $settings[self::OUTBOUND_MINUTES_KEY]
+            && $this->consistent($current, $desired, $epsilon)) {
+            return false;
+        }
+
+        $this->line(sprintf(
+            '%suser %d: outbound minutes %d -> %d (ceiling %d), %s %s -> %s',
+            $dryRun ? '[dry-run] ' : '',
+            $user->id,
+            (int) $settings[self::OUTBOUND_MINUTES_KEY],
+            $minutes,
+            $ceiling,
+            self::OUTBOUND_MILES_KEY,
+            $current === null ? 'NULL' : (string) $current,
+            (string) $desired,
+        ));
+
+        $stats['outbound_corrected']++;
+
+        if ($dryRun) {
+            return false;
+        }
+
+        $settings[self::OUTBOUND_MINUTES_KEY] = $minutes;
+        $settings[self::OUTBOUND_MILES_KEY] = $desired;
+
+        return true;
+    }
+
+    /**
+     * Persist an outbound correction on a path that is returning without an inbound write of its
+     * own. A no-op when there is nothing to flush, so the callers can stay unconditional.
+     */
+    private function flushOutbound(User $user, array $settings, bool $changed, bool $dryRun): void
+    {
+        if (! $changed || $dryRun) {
+            return;
+        }
+
+        $user->settings = $settings;
+        $user->save();
     }
 
     /**

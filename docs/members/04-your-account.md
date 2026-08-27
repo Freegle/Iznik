@@ -50,10 +50,16 @@ events. It is on by default and can be turned off in Settings.
 If you are in the app, you can also turn on a **daily push notification** of new posts.
 
 Above the email settings there is a **Feed** section with a "How far away" slider, marked
-Nearer at one end and Further at the other. It changes both what you see when browsing and
-what we email you about. How far "Further" actually reaches depends on how spread out
-freeglers are around your postcode, so it goes further in the countryside than in a city -
-[rippling out](rippling-out.md) explains why.
+Nearer at one end and Further at the other. It changes what you see when browsing, what we
+email you about, and how far away other people can be and still see your posts. How far
+"Further" actually reaches depends on how spread out freeglers are around your postcode, so it
+goes further in the countryside than in a city - [rippling out](rippling-out.md) explains why.
+
+If you want those to be different, choose **Set separately** under the slider. You then get two:
+"Posts I see" and "Who sees my posts". People often want the second one further than the first -
+you might only want to look at things in your own town, while still being happy for someone a
+few towns away to come and collect something you are giving away. Choose **Link them again** to
+go back to one slider.
 
 ## Your communities
 

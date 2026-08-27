@@ -467,4 +467,87 @@ class CellSetServiceTest extends TestCase
             'tracing and re-rasterising must not move a single covered cell'
         );
     }
+
+    /**
+     * subtractEncoded must agree BYTE-FOR-BYTE with the decode/subtract/encode
+     * path on every shape of overlap. It exists because decode()'s memory
+     * follows the covered AREA - one array entry per set cell - and the clip
+     * subtracts a REJECTING GROUP's area, which for a county-sized group is
+     * ~10M cells and about a gigabyte of PHP arrays. ripple:expand OOM'd six
+     * times in three hours on the first post-drop evening (2026-08-26) on
+     * exactly that, each crash wedging its overlap lock; the streaming walk
+     * holds only run boundaries (measured: a 12.96M-cell subtrahend in 4ms
+     * and ~16MB where decode() needed >1GB).
+     *
+     * Byte equality, not just same coverage: both paths keep A's frame and
+     * share one encoder, so any byte difference is a real divergence.
+     */
+    public function test_subtract_encoded_matches_the_decode_path_bytewise(): void
+    {
+        $svc = $this->service();
+        $grid = function (int $minCol, int $minRow, int $cols, int $rows, callable $setWhen): array {
+            $set = [];
+            for ($r = 0; $r < $rows; $r++) {
+                for ($c = 0; $c < $cols; $c++) {
+                    if ($setWhen($c, $r)) {
+                        $set[$r * $cols + $c] = true;
+                    }
+                }
+            }
+
+            return ['minCol' => $minCol, 'minRow' => $minRow, 'cols' => $cols, 'rows' => $rows, 'set' => $set];
+        };
+
+        $cases = [
+            'overlap, offset frames' => [
+                $grid(0, 0, 10, 8, fn ($c, $r) => $c >= 2 && $c <= 8 && $r >= 1 && $r <= 6),
+                $grid(5, 3, 10, 8, fn ($c, $r) => $c <= 4 && $r <= 3),
+            ],
+            'disjoint grids' => [
+                $grid(0, 0, 6, 6, fn () => true),
+                $grid(100, 100, 6, 6, fn () => true),
+            ],
+            'B covers A entirely (empty result grid)' => [
+                $grid(3, 3, 5, 5, fn ($c, $r) => ($c + $r) % 2 === 0),
+                $grid(0, 0, 20, 20, fn () => true),
+            ],
+            'first cell set (zero-length clear lead run)' => [
+                $grid(0, 0, 7, 7, fn () => true),
+                $grid(2, 2, 3, 3, fn () => true),
+            ],
+            'checkerboard vs stripes' => [
+                $grid(-5, -5, 12, 12, fn ($c, $r) => ($c + $r) % 2 === 0),
+                $grid(-3, -2, 8, 9, fn ($c) => $c % 3 === 0),
+            ],
+            'set run spanning row boundaries' => [
+                $grid(0, 0, 4, 6, fn ($c, $r) => $r >= 1 && $r <= 4),
+                $grid(1, 2, 2, 2, fn () => true),
+            ],
+            'negative lattice coordinates' => [
+                $grid(-1000, -2000, 15, 10, fn ($c) => $c > 3),
+                $grid(-995, -1998, 5, 5, fn () => true),
+            ],
+        ];
+
+        foreach ($cases as $name => [$a, $b]) {
+            $ea = $svc->encode($a);
+            $eb = $svc->encode($b);
+            $stream = $svc->subtractEncoded($ea, $eb);
+            $legacy = $svc->encode($svc->subtract($svc->decode($ea), $svc->decode($eb)));
+            $this->assertSame($legacy, $stream, "case: {$name}");
+            // And the result must still round-trip through decode.
+            $this->assertIsArray($svc->decode((string) $stream), "case: {$name} round-trip");
+        }
+    }
+
+    /** Unreadable input is null - the decode path's failure contract - never a throw. */
+    public function test_subtract_encoded_returns_null_on_garbage(): void
+    {
+        $svc = $this->service();
+        $good = $svc->encode($this->fullGrid(0, 0, 2, 2));
+
+        $this->assertNull($svc->subtractEncoded('XXXX', $good));
+        $this->assertNull($svc->subtractEncoded($good, 'junk'));
+        $this->assertNull($svc->subtractEncoded('', ''));
+    }
 }

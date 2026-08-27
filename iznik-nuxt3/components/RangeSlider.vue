@@ -1,17 +1,31 @@
 <template>
   <div class="range-slider" :class="'range-slider--' + variant">
-    <input
-      :id="id"
-      type="range"
-      class="range-slider__input"
-      :min="min"
-      :max="max"
-      :step="step"
-      :value="localValue"
-      :aria-label="ariaLabel"
-      @input="onInput"
-      @change="onChange"
-    />
+    <!-- The input holds the FUNCTIONAL range (min..max). When axisMax is wider than max the input
+         is narrowed to its share of the axis and the remainder is drawn as an inert grey stub, so
+         several sliders with different maxima can be stacked on one shared scale and still be read
+         against each other. The stub is not part of the input, so keyboard and assistive tech
+         cannot land on a value the caller has said is unavailable. -->
+    <div class="range-slider__track-row">
+      <input
+        :id="id"
+        type="range"
+        class="range-slider__input"
+        :min="min"
+        :max="max"
+        :step="step"
+        :value="localValue"
+        :aria-label="ariaLabel"
+        :style="usableWidth"
+        @input="onInput"
+        @change="onChange"
+      />
+      <div
+        v-if="hasDeadZone"
+        class="range-slider__deadzone"
+        :title="deadZoneTitle"
+        aria-hidden="true"
+      />
+    </div>
     <div v-if="leftLabel || rightLabel" class="range-slider__labels">
       <span class="range-slider__label">{{ leftLabel }}</span>
       <span class="range-slider__label">{{ rightLabel }}</span>
@@ -19,7 +33,7 @@
   </div>
 </template>
 <script setup>
-import { ref, watch } from '#imports'
+import { ref, watch, computed } from '#imports'
 // Generic, accessible native-range wrapper. Lifted out of the inline sliders that used
 // to be duplicated in MyPostsDonationAsk.vue/DonationAskStripe.vue (identical
 // .amount-slider/.slider-labels SCSS) so new sliders (e.g. the browse distance filter)
@@ -69,9 +83,36 @@ const props = defineProps({
     type: String,
     default: null,
   },
+  // The full scale this slider is drawn against, when that is wider than its own `max`. Defaults to
+  // `max` (no dead zone, geometry unchanged). Only affects layout: the reachable values stay
+  // min..max.
+  axisMax: {
+    type: Number,
+    default: null,
+  },
+  // Tooltip on the greyed stub, explaining why the rest of the scale is unavailable.
+  deadZoneTitle: {
+    type: String,
+    default: '',
+  },
 })
 
 const emit = defineEmits(['update:modelValue', 'change'])
+
+// A dead zone only exists when the caller gave a wider axis than this slider's own maximum, and
+// there is actually room between them.
+const hasDeadZone = computed(
+  () =>
+    props.axisMax !== null && props.axisMax > props.max && props.max > props.min
+)
+
+// The input's share of the shared axis. Flex-basis rather than width so the stub takes the rest
+// without either of them shrinking below its share.
+const usableWidth = computed(() => {
+  if (!hasDeadZone.value) return null
+  const share = (props.max - props.min) / (props.axisMax - props.min)
+  return { flex: `0 0 ${(share * 100).toFixed(4)}%` }
+})
 
 // The native <input type="range"> drag must NOT be fought by parent reactivity. If we bind
 // :value directly to modelValue, then every parent re-render during a drag (e.g. a recomputed
@@ -117,6 +158,31 @@ function onChange(e) {
 
 .range-slider {
   width: 100%;
+}
+
+/* Holds the input and (when the caller gave a wider axis) the greyed stub that continues the track
+   to the end of that axis. align-items: center keeps the 8px stub on the same centre line as the
+   input's 8px track, whose own box is taller because the thumb overflows it. */
+.range-slider__track-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+/* The unavailable tail of a shared axis. Inert: no pointer events, hidden from AT (the input's
+   aria-label and max already describe what is reachable). Dashed rather than solid so it reads as
+   "not part of this control" instead of "track you have not filled yet". */
+.range-slider__deadzone {
+  flex: 1 1 auto;
+  height: 8px;
+  margin: 0.75rem 0 0.25rem;
+  border-radius: 0 var(--radius-sm, 0.375rem) var(--radius-sm, 0.375rem) 0;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--color-gray-200, #e9ecef) 0 4px,
+    var(--color-gray-300, #dee2e6) 4px 8px
+  );
+  pointer-events: none;
 }
 
 .range-slider__input {
@@ -209,6 +275,11 @@ function onChange(e) {
 
 /* Larger touch target on mobile (easier to drag accurately). */
 @include media-breakpoint-down(sm) {
+  /* Keep the dead-zone stub the same height as the track it continues. */
+  .range-slider__deadzone {
+    height: 10px;
+  }
+
   .range-slider__input {
     height: 10px;
 

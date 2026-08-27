@@ -32,6 +32,19 @@ class ExpandCommand extends Command
     {
         $this->registerShutdownHandlers();
 
+        // INTERIM headroom, not a fix (2026-08-26, first post-drop evening).
+        // Bulk runs accumulate memory across hundreds of advances and were
+        // dying at the default 1GB roughly every 45 minutes, each death also
+        // wedging the run lock below for its full TTL - so expansion limped at
+        // ~a quarter of its cadence with 1,200+ posts overdue. The streaming
+        // clip subtract removed the biggest single consumer; what remains
+        // grows gradually (final straw is always a query-result buffer,
+        // Connection.php:411) and is being charted by the mem_mb field
+        // ExpandService now logs per advance. Doubling the ceiling keeps
+        // rippling alive while that curve identifies the leak; REMOVE once the
+        // per-advance memory is flat.
+        ini_set('memory_limit', '2048M');
+
         // Hard single-instance guard. The scheduler's withoutOverlapping() is unreliable for
         // runInBackground() jobs: the overlap mutex is released as soon as the foreground tick
         // forks the background process, so a fresh run launches every minute even while the

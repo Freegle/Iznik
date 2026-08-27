@@ -2548,16 +2548,13 @@ class ExpandService
             return;
         }
 
-        try {
-            $decoded = $this->cellSets->decode($row->polygon_cells);
-        } catch (\Throwable $e) {
-            Log::warning('ripple: reapplyClips could not decode stored cells; row left unclipped', [
-                'msgid' => $msgid, 'error' => $e->getMessage(),
-            ]);
-
-            return;
-        }
-
+        // subtractEncoded, NEVER decode(): decode's memory follows the covered
+        // AREA (one array entry per set cell), and the rejecting group's area
+        // here can be a county - ~10M cells, ~1GB of PHP arrays. Six
+        // ripple:expand OOMs in three hours on the first post-drop evening
+        // (2026-08-26) came from exactly this loop; the streaming subtract
+        // holds only the run boundaries.
+        $cells = (string) $row->polygon_cells;
         $clipped = false;
         foreach ($gids as $gid) {
             $gwkt = DB::table('groups')->where('id', $gid)->value(DB::raw('ST_AsText(polyindex)'));
@@ -2571,20 +2568,21 @@ class ExpandService
                 ]);
                 continue;
             }
-            try {
-                $decoded = $this->cellSets->subtract($decoded, $this->cellSets->decode($groupCells));
-                $clipped = true;
-            } catch (\Throwable $e) {
+            $next = $this->cellSets->subtractEncoded($cells, $groupCells);
+            if ($next === null) {
                 Log::warning('ripple: reapplyClips subtract failed; that clip skipped this tick', [
-                    'msgid' => $msgid, 'gid' => $gid, 'error' => $e->getMessage(),
+                    'msgid' => $msgid, 'gid' => $gid,
                 ]);
+                continue;
             }
+            $cells = $next;
+            $clipped = true;
         }
         if (!$clipped) {
             return;
         }
 
-        $update = ['polygon_cells' => $this->cellSets->encode($decoded)];
+        $update = ['polygon_cells' => $cells];
         if ($this->bounds->ready()) {
             $update['inner_bound'] = null;
         }
@@ -2614,7 +2612,6 @@ class ExpandService
 
         return $bytes;
     }
-
 
     /**
      * Blur a poster's origin by ~400m (BLUR_USER) before it drives the reach polygon, so the
@@ -2692,6 +2689,14 @@ class ExpandService
             'tick' => $tick,
             'drive_min' => $entry['drive_min'] ?? null,
             'cumulative_users' => $entry['cumulative_users'] ?? null,
+            // Memory growth diagnostics: ripple:expand accumulated its way to
+            // the 1GB limit over hundreds of advances on 2026-08-26 (post-drop
+            // evening) with no single poison post - the per-advance curve is
+            // what identifies WHICH advances leak and how fast. Cheap (two
+            // ints) and load-bearing until that is understood; see the
+            // incident notes on PR #1420.
+            'mem_mb' => (int) (memory_get_usage(true) / 1048576),
+            'mem_peak_mb' => (int) (memory_get_peak_usage(true) / 1048576),
         ]);
     }
 }
