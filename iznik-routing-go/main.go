@@ -13,6 +13,13 @@ func getenv(key, def string) string {
 }
 
 func main() {
+	// Stage 2 prototype CLI (`go run . stage2 <cmd>`): offline tooling only,
+	// never reached by server deployments (no args there).
+	if len(os.Args) > 1 && os.Args[1] == "stage2" {
+		stage2Main(os.Args[2:])
+		return
+	}
+
 	pbfPath := getenv("OSM_PBF_PATH", "")
 	if pbfPath == "" {
 		log.Fatal("OSM_PBF_PATH environment variable required")
