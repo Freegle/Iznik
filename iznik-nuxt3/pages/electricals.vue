@@ -95,8 +95,14 @@
 
           <!-- Success rate -->
           <b-card header="Do electricals find a new home?" class="mb-3">
-            <b-row v-if="stats.success.electrical && stats.success.other">
-              <b-col sm="6" class="text-center mb-3 mb-sm-0">
+            <!-- Render whichever side we have. Requiring both meant a missing
+                 comparison group blanked the electrical figure too. -->
+            <b-row v-if="stats.success.electrical || stats.success.other">
+              <b-col
+                v-if="stats.success.electrical"
+                sm="6"
+                class="text-center mb-3 mb-sm-0"
+              >
                 <div class="h2 mb-0">
                   {{ stats.success.electrical.taken_pct }}%
                 </div>
@@ -105,7 +111,7 @@
                   {{ stats.success.electrical.posts.toLocaleString() }} posts
                 </div>
               </b-col>
-              <b-col sm="6" class="text-center">
+              <b-col v-if="stats.success.other" sm="6" class="text-center">
                 <div class="h2 mb-0">{{ stats.success.other.taken_pct }}%</div>
                 <div class="text-muted">of everything else</div>
                 <div class="small text-muted">
@@ -113,9 +119,15 @@
                 </div>
               </b-col>
             </b-row>
-            <p class="small text-muted mb-0 mt-3">
+            <p
+              v-if="stats.success.electrical || stats.success.other"
+              class="small text-muted mb-0 mt-3"
+            >
               Only counts posts old enough to have settled, so nothing here is
               still waiting for a reply.
+            </p>
+            <p v-else class="small text-muted mb-0">
+              Not enough settled posts yet to compare.
             </p>
           </b-card>
 
@@ -142,9 +154,11 @@
               </b-tbody>
             </b-table-simple>
             <p class="small text-muted mb-0">
-              Condition is read from the photo and is right about
-              {{ accuracy.condition?.pct }}% of the time, checked against our
-              volunteers.
+              Condition is read from the photo. When our volunteers last checked
+              it, it was right about {{ accuracy.condition?.pct }}% of the time.
+              <span v-if="!accuracyIsCurrent">
+                That check was done on an earlier version of the model.
+              </span>
             </p>
           </b-card>
 
@@ -168,7 +182,7 @@
             </b-col>
             <b-col md="6">
               <b-card header="More unusual" class="h-100">
-                <b-list-group flush>
+                <b-list-group v-if="stats.unusual.items.length" flush>
                   <b-list-group-item
                     v-for="item in stats.unusual.items"
                     :key="item.name"
@@ -180,6 +194,9 @@
                     </b-badge>
                   </b-list-group-item>
                 </b-list-group>
+                <p v-if="!stats.unusual.items.length" class="text-muted mb-2">
+                  Nothing qualifies yet.
+                </p>
                 <p class="small text-muted mb-0 mt-2">
                   {{ stats.unusual.guard.note }}
                 </p>
