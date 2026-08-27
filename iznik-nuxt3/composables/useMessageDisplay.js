@@ -187,7 +187,9 @@ export function useMessageDisplay(messageId) {
     const road = roadDist.value
     if (road?.miles != null) {
       const mi = roadMilesRounded(road.miles)
-      return mi < 1 ? '<1mi' : `${Math.round(mi)}mi`
+      // '~': road distance is computed over privacy-blurred locations, so it
+      // is honest to present it as approximate.
+      return mi < 1 ? '<1mi' : `~${Math.round(mi)}mi`
     }
     const server = serverDistanceMiles.value
     if (server != null) {
@@ -213,10 +215,10 @@ export function useMessageDisplay(messageId) {
     if (road?.miles != null) {
       const mi = roadMilesRounded(road.miles)
       if (mi < 1) {
-        return 'less than 1 mile by road'
+        return 'less than a mile by road'
       }
       const rounded = Math.round(mi)
-      return rounded === 1 ? '1 mile by road' : `${rounded} miles by road`
+      return rounded === 1 ? 'about 1 mile by road' : `about ${rounded} miles by road`
     }
     const server = serverDistanceMiles.value
     if (server != null) {

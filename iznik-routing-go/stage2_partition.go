@@ -852,6 +852,8 @@ func stage2PartitionRun(leafMax int, alpha float64) {
 	log.Printf("stage2: stats written to data/stage2/partition-stats.json")
 }
 
+const partitionMagic = "FRGP1SNAP" // versioned independently of the graph snapshot
+
 // savePartition / loadPartition use the same raw-slice format as the graph snapshot.
 func savePartition(path string, part *Stage2Partition) error {
 	f, err := os.Create(path)
@@ -867,7 +869,7 @@ func savePartition(path string, part *Stage2Partition) error {
 		offs[i+1] = int64(len(flat))
 	}
 	w := f
-	if _, err := w.WriteString(stage2SnapMagic); err != nil {
+	if _, err := w.WriteString(partitionMagic); err != nil {
 		return err
 	}
 	if err := writeSlice(w, part.LeafOf); err != nil {
@@ -892,12 +894,12 @@ func loadPartition(path string) (*Stage2Partition, error) {
 		return nil, err
 	}
 	defer f.Close()
-	magic := make([]byte, len(stage2SnapMagic))
+	magic := make([]byte, len(partitionMagic))
 	if _, err := f.Read(magic); err != nil {
 		return nil, err
 	}
-	if string(magic) != stage2SnapMagic {
-		return nil, fmt.Errorf("bad partition magic")
+	if string(magic) != partitionMagic {
+		return nil, fmt.Errorf("partition artifact version mismatch (got %q)", magic)
 	}
 	part := &Stage2Partition{}
 	if part.LeafOf, err = readSlice[int32](f); err != nil {

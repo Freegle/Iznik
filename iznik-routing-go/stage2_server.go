@@ -19,10 +19,13 @@ package main
 //        (ungated: table lookups, no graph sweeps).
 
 import (
+	"container/heap"
 	"encoding/base64"
 	"fmt"
 	"log"
+	"math"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -194,7 +197,7 @@ func handleDriveMetrics() fiber.Handler {
 			minutes = 120
 		}
 		start := time.Now()
-		lbl := e.QueryLabels(req.Lat, req.Lng, float32(minutes*60))
+		lbl := e.QueryLabelsCached(req.Lat, req.Lng, float32(minutes*60))
 		type res struct {
 			ID    int64    `json:"id"`
 			Mins  *float64 `json:"mins"`
@@ -237,7 +240,7 @@ func engineDriveTime(lat, lng, toLat, toLng, minutes float64, mode Mode) (fiber.
 	if dest == noNode {
 		return fiber.Map{"reachable": false}, true
 	}
-	lbl := e.QueryLabels(lat, lng, float32(minutes*60))
+	lbl := e.QueryLabelsCached(lat, lng, float32(minutes*60))
 	secs, mets := e.ArrivalAtBaseNodeM(lbl, dest)
 	if secs == f32Inf || secs > lbl.T {
 		return fiber.Map{"reachable": false}, true
@@ -267,10 +270,13 @@ func handleBlur(g *Graph) fiber.Handler {
 		lat := c.QueryFloat("lat")
 		lng := c.QueryFloat("lng")
 		metres := c.QueryFloat("metres")
-		if lat == 0 || lng == 0 {
+		if lat == 0 || lng == 0 || math.IsNaN(lat) || math.IsNaN(lng) || math.IsInf(lat, 0) || math.IsInf(lng, 0) {
 			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
 		}
-		if metres <= 0 || metres > 2000 {
+		// NaN-proof clamp: any value NOT provably in range gets the default
+		// (a NaN fails every comparison, so `metres <= 0 || metres > 2000`
+		// would have let it straight through).
+		if !(metres > 0 && metres <= 2000) {
 			metres = 400
 		}
 		origin := nearestNodeForMode(g, lat, lng, Drive)
@@ -280,46 +286,62 @@ func handleBlur(g *Graph) fiber.Handler {
 		}
 
 		lo, hi := float32(metres/2), float32(metres*1.5)
-		// Tiny metres-bounded exploration over the base graph (undirected in
-		// spirit: a blur target only needs to be road-CONNECTED, so out-edges
-		// suffice on all but pure-oneway pockets, where the ring just thins).
-		type qn struct {
-			id NodeID
-			m  float32
-		}
+		crowFloor := metres / 4
+		// Metres-bounded Dijkstra over drive edges: a real priority queue with
+		// the standard stale-entry guard, so ring membership is judged on
+		// CONVERGED distances only (a FIFO sweep could admit a node on a stale
+		// long-way-round value whose true distance is under the privacy floor).
 		dist := map[NodeID]float32{origin: 0}
-		queue := []qn{{origin, 0}}
-		var ring []NodeID
+		h := &miniHeap{{int32(origin), 0}}
 		var farthest NodeID
 		var farM float32
-		for qi := 0; qi < len(queue); qi++ {
-			cur := queue[qi]
-			if cur.m >= lo {
-				ring = append(ring, cur.id)
+		for h.Len() > 0 {
+			cur := heap.Pop(h).(miniHeapItem)
+			id := NodeID(cur.li)
+			if d, ok := dist[id]; !ok || cur.c > d {
+				continue // stale entry
 			}
-			if cur.m > farM {
-				farM, farthest = cur.m, cur.id
+			if cur.c > farM {
+				farM, farthest = cur.c, id
 			}
-			if cur.m >= hi {
+			if cur.c >= hi {
 				continue
 			}
-			cn := g.Nodes[cur.id]
-			for _, e := range g.EdgesFrom(cur.id) {
+			cn := g.Nodes[id]
+			for _, e := range g.EdgesFrom(id) {
 				if e.Seconds[Drive] < 0 {
 					continue
 				}
 				tn := g.Nodes[e.To]
-				nm := cur.m + float32(haversineM(float64(cn.Lat), float64(cn.Lng), float64(tn.Lat), float64(tn.Lng)))
+				nm := cur.c + float32(haversineM(float64(cn.Lat), float64(cn.Lng), float64(tn.Lat), float64(tn.Lng)))
 				if d, seen := dist[e.To]; !seen || nm < d {
 					dist[e.To] = nm
-					queue = append(queue, qn{e.To, nm})
+					heap.Push(h, miniHeapItem{int32(e.To), nm})
 				}
 			}
 		}
+
+		// Candidates from FINAL distances only, with both floors enforced:
+		// road metres in [R/2, 3R/2] AND crow-flies displacement >= R/4 (a
+		// hairpin lane can put 200 road metres just 20 crow metres away,
+		// which is not a meaningful blur).
+		var ring []NodeID
+		for id, m := range dist {
+			if m < lo || m > hi || id == origin {
+				continue
+			}
+			nd := g.Nodes[id]
+			if haversineM(lat, lng, float64(nd.Lat), float64(nd.Lng)) < crowFloor {
+				continue
+			}
+			ring = append(ring, id)
+		}
+		// Deterministic per input location: stable blur, no jitter. Sort so
+		// map iteration order cannot change the pick.
+		sort.Slice(ring, func(i, j int) bool { return ring[i] < ring[j] })
 		pick := farthest
 		pickM := farM
 		if len(ring) > 0 {
-			// Deterministic per input location: stable blur, no jitter.
 			seed := uint64(int64(lat*1e6))*6364136223846793005 + uint64(int64(lng*1e6))*1442695040888963407
 			pick = ring[seed%uint64(len(ring))]
 			pickM = dist[pick]

@@ -16,7 +16,7 @@ vi.mock('#app', () => ({
   useRuntimeConfig: () => ({ public: { APIv2: 'https://api.test' } }),
 }))
 
-let mockUser = { lat: 51.45, lng: -2.58 }
+let mockUser = { id: 1, lat: 51.45, lng: -2.58 }
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({ user: mockUser }),
 }))
@@ -31,7 +31,7 @@ const microtasks = () => new Promise((resolve) => setTimeout(resolve, 0))
 describe('useDriveDistance', () => {
   beforeEach(() => {
     mockDistances.mockReset()
-    mockUser = { lat: 51.45, lng: -2.58 }
+    mockUser = { id: 1, lat: 51.45, lng: -2.58 }
   })
 
   it('batches all synchronous registrations into one call and fills refs', async () => {
@@ -91,6 +91,23 @@ describe('useDriveDistance', () => {
 
     expect(r.value).toBeNull()
     expect(mockDistances).not.toHaveBeenCalled()
+  })
+
+  it('resets the cache when the viewing user changes', async () => {
+    const { roadDistance } = await load()
+    mockDistances.mockResolvedValue({
+      results: [{ id: 0, mins: 5, miles: 2 }],
+    })
+
+    roadDistance(51.47, -2.6)
+    await microtasks()
+    expect(mockDistances).toHaveBeenCalledTimes(1)
+
+    // Same coords, different user: must NOT serve the old user's distance.
+    mockUser = { id: 2, lat: 52.0, lng: -1.0 }
+    roadDistance(51.47, -2.6)
+    await microtasks()
+    expect(mockDistances).toHaveBeenCalledTimes(2)
   })
 
   it('rounds road miles like the crow-flies display', async () => {

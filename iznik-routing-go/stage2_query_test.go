@@ -174,3 +174,34 @@ func TestStage2MetresBristol(t *testing.T) {
 	}
 	t.Logf("metres OK: %d checked, %d tie deviations, %d without metres", checked, bigDev, noMet)
 }
+
+func TestQueryLabelsCached(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	fresh := eng.QueryLabels(51.4545, -2.5879, 900)
+	c1 := eng.QueryLabelsCached(51.4545, -2.5879, 900)
+	c2 := eng.QueryLabelsCached(51.4545, -2.5879, 900)
+	if c1 != c2 {
+		t.Fatal("second cached call should return the same object")
+	}
+	// Same answers as a fresh query at a spread of nodes.
+	checked := 0
+	for id := NodeID(1); id <= NodeID(g.NodeCount()); id += 97 {
+		a := eng.ArrivalAtBaseNode(fresh, id)
+		b := eng.ArrivalAtBaseNode(c1, id)
+		if a != b {
+			t.Fatalf("node %d: cached %v vs fresh %v", id, b, a)
+		}
+		checked++
+	}
+	if checked < 500 {
+		t.Fatalf("degenerate: %d nodes", checked)
+	}
+	// Fractional budgets bypass the cache (still correct).
+	f1 := eng.QueryLabelsCached(51.4545, -2.5879, 900.5)
+	if f1 == c1 {
+		t.Fatal("fractional budget must not reuse the whole-minute cache entry")
+	}
+}

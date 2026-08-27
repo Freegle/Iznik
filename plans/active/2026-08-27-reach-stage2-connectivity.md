@@ -257,11 +257,31 @@ on master tip — rebase-after is conflict-free.
 
 | # | Task | Status | Notes |
 |---|------|--------|-------|
-| G1 | Metres through the engine (matrices v2, query, chains, seeds) | 🔄 | build green, core tests green |
-| G2 | /v1/drive-metrics (one-to-many) + /v1/drive-time engine fast path + tests | ⬜ | |
-| G3 | UK artifacts rebuild (matrices v2) + metre verification in sweep + rerun | ⬜ | |
-| G4 | iznik-server-go: /api/drivedistance batch proxy (session-auth, fallback) | ⬜ | |
-| G5 | Frontend: useDriveDistance batch composable; wire post cards, chat, profile | ⬜ | |
-| G6 | Fairness invariant: verify untouched (suite) + document for adoption phase | ⬜ | |
-| G7 | Docs + PR update | ⬜ | |
-| G8 | Full suites + push | ⬜ | |
+| G1 | Metres through the engine (matrices v2, query, chains, seeds) | ✅ | UK sweep: 5,167,704 metre checks, 0 missing, 0.005% tie deviations |
+| G2 | /v1/drive-metrics (one-to-many) + /v1/drive-time engine fast path + tests | ✅ | engine == sweep on same pair; drive_miles added; label LRU |
+| G3 | UK artifacts rebuild (matrices v2) + metre verification in sweep + rerun | ✅ | FRGM2SNAP; sweep green |
+| G4 | iznik-server-go: /api/drivedistance batch proxy (session-auth, fallback) | ✅ | route wired + route-level 401/400/200 tests (a silent-noop registration was caught by the adversarial round) |
+| G5 | Frontend: useDriveDistance batch composable; wire post cards, chat, profile | ✅ | event-driven microtask batching; user-epoch cache; honesty qualifiers |
+| G6 | Fairness invariant: verify untouched (suite) + document for adoption phase | ✅ | 0 fairness/overflow/deprivation files touched; 37/37 tests pass |
+| G7 | Docs + PR update | ✅ | README, REACH-ENGINE, spatial-servers, architecture |
+| G8 | Full suites + push | ✅ | routing local; server-go + vitest containerized |
+
+### Adversarial review round 2 (whole PR, 20 agents): 13 confirmed, 13 fixed
+- CRITICAL /drivedistance never registered (silent-noop edit under a blocked
+  hook) -> registered + route-level test so deregistration is loud.
+- CRITICAL /v1/blur metres=NaN bypassed the clamp -> NaN-proof clamp + test.
+- MAJOR blur FIFO stale-entry could break the R/2 privacy floor -> proper
+  Dijkstra (heap + staleness), ring from converged distances, plus a crow-flies
+  R/4 floor for hairpin lanes; floors verified independently in tests.
+- MAJOR SPATIAL_KNN_URL fallback misroute -> removed (KNN service does not
+  serve drive-metrics).
+- MAJOR drive-metrics repeat-cost -> engine label LRU (browsing page after
+  page hits cache, not a fresh query).
+- MAJOR table cache was FIFO-not-LRU -> true LRU.
+- MAJOR partition.snap unversioned -> FRGP1SNAP magic.
+- MAJOR ChatFooter far-away warning had silently gone road-preferring ->
+  crowmilesaway exported from useChat; both warning surfaces now crow-flies.
+- MAJOR FE cache ignored viewer identity -> user-epoch reset + test.
+- MAJOR road-miles honesty over blurred coords -> '~'/'about' qualifiers.
+- MINOR falsy-zero lat/lng guards -> null-safe.
+- Plan table staleness (this edit) + docs wording.

@@ -103,22 +103,29 @@ export function setupChat(selectedChatId, chatMessageId) {
     return roadDistance(otheruser.value.lat, otheruser.value.lng).value
   })
 
-  const milesaway = computed(() => {
-    const road = roadDist.value
-    if (road?.miles != null) {
-      return roadMilesRounded(road.miles)
-    }
-    return milesAway(
+  // crowmilesaway: pure crow-flies, for LOGIC thresholds (far-away warnings)
+  // — deliberately not road-preferring, so blur distortion and engine
+  // availability can never change what gets warned about.
+  const crowmilesaway = computed(() =>
+    milesAway(
       authStore.user?.lat,
       authStore.user?.lng,
       otheruser?.value?.lat,
       otheruser?.value?.lng
     )
+  )
+
+  const milesaway = computed(() => {
+    const road = roadDist.value
+    if (road?.miles != null) {
+      return roadMilesRounded(road.miles)
+    }
+    return crowmilesaway.value
   })
 
   const milesstring = computed(() =>
     roadDist.value?.miles != null
-      ? pluralize('mile', milesaway.value, true) + ' away by road'
+      ? 'about ' + pluralize('mile', milesaway.value, true) + ' away by road'
       : pluralize('mile', milesaway.value, true) + ' away'
   )
 
@@ -148,6 +155,7 @@ export function setupChat(selectedChatId, chatMessageId) {
     lastfromme,
     tooSoonToNudge,
     milesaway,
+    crowmilesaway,
     milesstring,
     chatmessage,
     chatStore,

@@ -42,6 +42,7 @@ import (
 	"github.com/freegle/iznik-server-go/deprecation"
 	"github.com/freegle/iznik-server-go/domain"
 	"github.com/freegle/iznik-server-go/donations"
+	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/emailtracking"
 	"github.com/freegle/iznik-server-go/export"
 	"github.com/freegle/iznik-server-go/group"
@@ -879,6 +880,12 @@ func SetupRoutes(app *fiber.App) {
 		// Location Search (GET /locations - search by lat/lng, typeahead, or bounding box)
 		rg.Get("/locations", location.SearchLocations)
 		rg.Get("/town/near", town.Near)
+
+		// Road drive time/distance from the logged-in member to a batch of
+		// points, via the routing server's reach engine. Fail-soft: empty
+		// results when the engine is unavailable (clients show crow-flies).
+		// @Router /drivedistance [post]
+		rg.Post("/drivedistance", driving.DriveDistance)
 
 		// Location Write Operations
 		rg.Put("/locations", location.CreateLocation)

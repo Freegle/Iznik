@@ -136,8 +136,10 @@ logic threshold, and road distance over blurred coordinates can exaggerate.
 Which is the caveat that matters: displayed locations are BLURRED for privacy,
 and a few hundred metres of circular blur can put a point on the wrong side of
 a river — a tiny crow-flies error but a huge road-distance one. The engine
-makes the fix cheap: `GET /v1/blur` blurs ALONG the road network (a
-deterministic pseudo-random road node between R/2 and 3R/2 road-metres away),
+makes the fix cheap: `GET /v1/blur` blurs ALONG the road network (a deterministic
+pseudo-random road node between R/2 and 3R/2 road-metres away, and at least
+R/4 crow-flies metres away so a hairpin lane cannot leave it deceptively
+close),
 so a blurred location stays on its own bank by construction. Switching member
 display blurring over to it is a deliberate, privacy-visible decision left
 open; the primitive and its tests are in.
@@ -178,6 +180,28 @@ customer:
   modes; each extra mode is a metric fill of the same tables.
 - **Faster display isochrones** for the catchment and group endpoints, since
   the labeling query is 25-250x the flat search.
+
+## Fast "what is near me" for messages, chitchat, anything
+
+Finding nearby things fast is a different problem from pricing travel, and it
+already has the right tool: the KNN index service (iznik-spatial-go) is built
+for point lookups over datasets that change by the minute. The road graph
+should not replace it — a per-origin travel summary is not an index. The wins
+come from combining them:
+
+- **Road-true ordering, today**: the index shortlists candidates crow-flies
+  (nearby messages, chitchat threads, freeglers); one `/v1/drive-metrics`
+  call prices the whole shortlist by road; the ordering and any "within X"
+  threshold become road-true. No schema changes needed.
+- **Leaf-tagging, the adoption-phase design**: stamp every located thing with
+  its partition region id at creation (`LeafOf` lookup, O(1), one small
+  integer column). "Things roughly reachable from me" then becomes "things
+  whose region is in my labels' reached set" — a single `IN (...)` clause
+  that is road-aware by construction (the far bank's region is simply not in
+  the list), replacing crow-radius and cell-containment prefilters. Exact
+  membership still goes through the labels where it matters. This belongs to
+  the batch-adoption phase because it needs a column and feed-query changes;
+  the primitive it depends on (region ids + labels) ships here.
 
 ## Artifacts and lifecycle
 

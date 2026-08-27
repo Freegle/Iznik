@@ -22,6 +22,7 @@ const MAX_BATCH = 100
 const cache = new Map() // "lat,lng" -> ref({ mins, miles } | null)
 let queue = [] // [{ key, lat, lng }]
 let flushScheduled = false
+let lastUserKey = null
 
 function flush() {
   flushScheduled = false
@@ -62,12 +63,24 @@ function flush() {
 // becomes { mins, miles } for driving from the logged-in member's home to
 // (lat, lng). Same coordinates always return the same (cached) ref.
 export function roadDistance(lat, lng) {
-  if (import.meta.server || !lat || !lng) {
+  // == null catches null/undefined without discarding a legitimate 0
+  // (the Greenwich meridian crosses inhabited England).
+  if (import.meta.server || lat == null || lng == null) {
     return ref(null)
   }
   const authStore = useAuthStore()
-  if (!authStore.user?.lat && !authStore.user?.lng) {
+  const me = authStore.user
+  if (me?.lat == null && me?.lng == null) {
     return ref(null)
+  }
+
+  // Results are distances FROM THE VIEWER'S HOME: a different login, or a
+  // changed home location, must never see the previous identity's cache.
+  const userKey = `${me.id}:${me.lat}:${me.lng}`
+  if (userKey !== lastUserKey) {
+    cache.clear()
+    queue = []
+    lastUserKey = userKey
   }
 
   const key = lat.toFixed(5) + ',' + lng.toFixed(5)
@@ -102,4 +115,5 @@ export function _resetDriveDistanceForTest() {
   cache.clear()
   queue = []
   flushScheduled = false
+  lastUserKey = null
 }

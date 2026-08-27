@@ -219,21 +219,74 @@ type Stage2Engine struct {
 	BI   *boundaryIndex
 
 	tables *regionTableCache
+
+	// labelCache: recent QueryLabels results keyed by (origin snap node,
+	// whole-minute budget). Labels are immutable once built, so repeated
+	// origins (a member browsing page after page) cost a lookup, not a
+	// query. Guarded by labelMu; ~KBs per entry.
+	labelMu    sync.Mutex
+	labelOrder []labelKey
+	labelCache map[labelKey]*ReachLabels
 }
+
+type labelKey struct {
+	origin NodeID
+	mins   int32
+}
+
+const labelCacheCap = 256
 
 func NewStage2Engine(g *Graph, ov *Overlay, part *Stage2Partition, rm *RegionMatrices) *Stage2Engine {
 	return &Stage2Engine{
 		G: g, Ov: ov, Part: part, RM: rm,
-		BI:     buildBoundaryIndex(rm, part),
-		tables: newRegionTableCache(512),
+		BI:         buildBoundaryIndex(rm, part),
+		tables:     newRegionTableCache(512),
+		labelCache: make(map[labelKey]*ReachLabels),
 	}
+}
+
+// QueryLabelsCached is QueryLabels behind a small LRU for whole-minute
+// budgets. Callers must treat the result as read-only (all callers do).
+func (e *Stage2Engine) QueryLabelsCached(lat, lng float64, limitSeconds float32) *ReachLabels {
+	mins := int32(limitSeconds / 60)
+	if float32(mins*60) != limitSeconds {
+		return e.QueryLabels(lat, lng, limitSeconds) // fractional: no caching
+	}
+	origin := nearestNodeForMode(e.G, lat, lng, Drive)
+	if origin == noNode {
+		return e.QueryLabels(lat, lng, limitSeconds)
+	}
+	k := labelKey{origin, mins}
+	e.labelMu.Lock()
+	if lbl, ok := e.labelCache[k]; ok {
+		for i, kk := range e.labelOrder {
+			if kk == k {
+				e.labelOrder = append(append(e.labelOrder[:i], e.labelOrder[i+1:]...), k)
+				break
+			}
+		}
+		e.labelMu.Unlock()
+		return lbl
+	}
+	e.labelMu.Unlock()
+	lbl := e.QueryLabels(lat, lng, limitSeconds)
+	e.labelMu.Lock()
+	e.labelCache[k] = lbl
+	e.labelOrder = append(e.labelOrder, k)
+	if len(e.labelOrder) > labelCacheCap {
+		old := e.labelOrder[0]
+		e.labelOrder = e.labelOrder[1:]
+		delete(e.labelCache, old)
+	}
+	e.labelMu.Unlock()
+	return lbl
 }
 
 // regionTableCache: lazy per-region entry→node internal distance tables, plus
 // arbitrary-source rows for stored-label seed evaluation. Post-independent, so
-// shared across queries; LRU-capped; guarded by a coarse mutex (a miss holds
-// the lock while it builds ~ms-scale tables — acceptable at current QPS, and
-// trivially shardable later).
+// shared across queries; true LRU (a hit refreshes recency); guarded by a
+// coarse mutex (a miss holds the lock while it builds ~ms-scale tables —
+// acceptable at current QPS, and trivially shardable later).
 type regionTableCache struct {
 	mu       sync.Mutex
 	cap      int
@@ -266,6 +319,13 @@ func (c *regionTableCache) get(e *Stage2Engine, leaf int32) *regionTable {
 
 func (c *regionTableCache) getLocked(e *Stage2Engine, leaf int32) *regionTable {
 	if t, ok := c.m[leaf]; ok {
+		// True LRU: refresh recency on hit so hot regions survive eviction.
+		for i, l := range c.order {
+			if l == leaf {
+				c.order = append(append(c.order[:i], c.order[i+1:]...), leaf)
+				break
+			}
+		}
 		return t
 	}
 	ls := buildLeafSubgraph(e.Ov, e.Part, leaf)

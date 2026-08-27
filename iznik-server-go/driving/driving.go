@@ -24,9 +24,9 @@ func routingMetricsURL() string {
 	if u := os.Getenv("ROUTING_EVAL_URL"); u != "" {
 		return u
 	}
-	if u := os.Getenv("SPATIAL_KNN_URL"); u != "" {
-		return u
-	}
+	// Deliberately NO SPATIAL_KNN_URL fallback: that variable points at the
+	// KNN index service (iznik-spatial-go), which does not serve
+	// /v1/drive-metrics — falling back to it silently misroutes.
 	return "http://spatial:8194"
 }
 

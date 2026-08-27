@@ -291,3 +291,68 @@ func TestBlurRoadAware(t *testing.T) {
 		t.Fatal("distinct inputs blurred to the identical point")
 	}
 }
+
+func TestBlurNaNAndFloors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g := loadBristol(t)
+	app := newApp(g, "", false)
+
+	// metres=NaN must fall back to the 400m default, not poison the search.
+	req := httptest.NewRequest("GET", "/v1/blur?lat=51.4545&lng=-2.5879&metres=NaN", nil)
+	resp, err := app.Test(req, 30000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("blur NaN: err=%v status=%v", err, resp.StatusCode)
+	}
+	var r struct {
+		Lat   float64 `json:"lat"`
+		Lng   float64 `json:"lng"`
+		Roadm float64 `json:"roadm"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if r.Roadm < 200 || r.Roadm > 600 {
+		t.Fatalf("NaN metres: roadm %f outside default ring", r.Roadm)
+	}
+
+	// lat=NaN is a 400.
+	req = httptest.NewRequest("GET", "/v1/blur?lat=NaN&lng=-2.5879", nil)
+	resp, _ = app.Test(req, 30000)
+	if resp.StatusCode != 400 {
+		t.Fatalf("NaN lat: status %v, want 400", resp.StatusCode)
+	}
+
+	// Floors over a spread of origins: converged road metres within the ring
+	// AND crow displacement over the floor, verified independently.
+	for i, org := range [][2]float64{{51.4545, -2.5879}, {51.4700, -2.6000}, {51.4400, -2.5600}, {51.4650, -2.5500}} {
+		url := fmt.Sprintf("/v1/blur?lat=%f&lng=%f&metres=400", org[0], org[1])
+		req := httptest.NewRequest("GET", url, nil)
+		resp, err := app.Test(req, 30000)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("blur %d: err=%v status=%v", i, err, resp.StatusCode)
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if r.Roadm == 0 {
+			continue // no-road / degenerate fallback: returns input
+		}
+		if r.Roadm < 200 || r.Roadm > 600 {
+			t.Fatalf("blur %d: roadm %f outside [200,600]", i, r.Roadm)
+		}
+		crow := haversineM(org[0], org[1], r.Lat, r.Lng)
+		if crow < 100 {
+			t.Fatalf("blur %d: crow displacement %fm under the 100m floor", i, crow)
+		}
+		// Independent check: converged road distance from the origin snap.
+		origin := nearestNodeForMode(g, org[0], org[1], Drive)
+		_, baseM := baseDriveDijkstraM(g, origin, 0, 900)
+		blurred := nearestNodeForMode(g, r.Lat, r.Lng, Drive)
+		m, ok := baseM[blurred]
+		if !ok || math.Abs(float64(m)-r.Roadm) > 50 {
+			t.Fatalf("blur %d: independent road distance %v (ok=%v) vs reported %f", i, m, ok, r.Roadm)
+		}
+	}
+}

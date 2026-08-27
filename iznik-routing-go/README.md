@@ -36,7 +36,7 @@ All endpoints are available on both ports. On the external port (8196) every `/v
 | `GET /v1/reach-labels?lat=&lng=&minutes=` | Reach engine: compute a post's per-region reach labels (returns the stored-form bytes, base64). 503 until `STAGE2_DIR` is configured |
 | `POST /v1/reach-arrival` | Reach engine: exact arrival seconds + in-reach flag for up to 1000 points, evaluated from label bytes (JSON body `{labels, points[]}`) |
 | `POST /v1/drive-metrics` | Reach engine: road drive minutes AND road miles from one origin to up to 1000 targets in a single call (one labeling query + table lookups). Powers the site's road-distance display via apiv2 `/drivedistance` |
-| `GET /v1/blur?lat=&lng=&metres=` | Road-aware location blur: a deterministic pseudo-random road node within [R/2, 3R/2] ROAD metres of the input — never jumps an unbridged river the way circular blur can. Engine-independent (works without `STAGE2_DIR`) |
+| `GET /v1/blur?lat=&lng=&metres=` | Road-aware location blur: a deterministic pseudo-random road node whose CONVERGED road distance is within [R/2, 3R/2] metres AND whose crow-flies displacement is at least R/4 — never jumps an unbridged river the way circular blur can, and never sits deceptively close along a hairpin. Engine-independent (works without `STAGE2_DIR`) |
 | `GET /v1/posts-for-member?lat=&lng=&date=&max_minutes=` | The posts a member at this location would be shown (`date` defaults to today, `max_minutes` to 30) |
 | `GET /v1/digest-simulator?lat=&lng=&max_minutes=&w_closeness=&w_freshness=&w_budget=&w_anchor=&cap=&group_by_poster=` | Simulate a member's ranked digest with tunable scoring weights and a result cap |
 | `GET /swagger` | Browsable OpenAPI reference (Redoc). Raw spec at `/swagger/swagger.json` |

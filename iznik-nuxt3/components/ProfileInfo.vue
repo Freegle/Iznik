@@ -223,7 +223,7 @@ const roadDist = computed(() => {
 const milesaway = computed(() => {
   const road = roadDist.value
   if (road?.miles != null) {
-    return pluralize('mile', roadMilesRounded(road.miles), true) + ' by road'
+    return 'about ' + pluralize('mile', roadMilesRounded(road.miles), true) + ' by road'
   }
   const dist = milesAway(
     me.value?.lat,
