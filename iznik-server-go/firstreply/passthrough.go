@@ -149,6 +149,16 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 	// database/sql idiom), not GORM's chain Scan(&dest): that variant treats a
 	// []byte destination as a slice of rows to scan into (one uint8 per row),
 	// not a single BLOB value, and either errors or silently mis-populates it.
+	// Stored labels decide first (labels-truth): the maximum reach is the
+	// label at its own full budget, exactly. Falls through to the cells (and
+	// then the conservative default) wherever no label exists or routing is
+	// unavailable.
+	if verdicts := rippling.LabelVerdictsAtBudget(lat, lng, []uint64{refmsgid}, "max"); len(verdicts) > 0 {
+		if v, ok := verdicts[refmsgid]; ok {
+			return v == rippling.LabelVerdictIn
+		}
+	}
+
 	var cells []byte
 	if err := db.Table("rippling_reach").
 		Select("max_polygon_cells").

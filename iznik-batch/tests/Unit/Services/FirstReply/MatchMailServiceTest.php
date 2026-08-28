@@ -818,4 +818,83 @@ class MatchMailServiceTest extends TestCase
             'user2' => $other->id,
         ]);
     }
+
+
+    private function callCellBand(int $msgid, array $rows): array
+    {
+        $m = new \ReflectionMethod(MatchMailService::class, 'applyCellBand');
+
+        return $m->invoke(app(MatchMailService::class), $msgid, $rows);
+    }
+
+    public function test_band_is_answered_from_stored_labels_when_present(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = $this->createTestMessage($user, $group);
+        $schedule = json_encode([
+            ['tick' => 1, 'drive_min' => 5],
+            ['tick' => 2, 'drive_min' => 30],
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, reach_labels, outer_bound, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ?, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 2,
+                     0, 30, ?, NOW(), 'expanding', NOW(), NOW())",
+            [$message->id, 'label-bytes', self::TICK1, $schedule]
+        );
+
+        // Current budget = tick 1 = 5 min = 300s. Candidate 1 arrives at 400s:
+        // past the current edge but eventually reached - kept, ordered by the
+        // 100s past the edge. Candidate 2 never arrives - dropped. Candidate 3
+        // is already inside the current reach - dropped.
+        \Illuminate\Support\Facades\Http::fake(['*reach-arrival*' => \Illuminate\Support\Facades\Http::response([
+            'results' => [
+                ['arrival' => 400, 'in' => false],
+                ['arrival' => null, 'in' => false],
+                ['arrival' => 100, 'in' => true],
+            ],
+        ])]);
+
+        $rows = [
+            (object) ['id' => 1, 'dist' => null, 'cand_lat' => 51.6, 'cand_lng' => -0.1],
+            (object) ['id' => 2, 'dist' => null, 'cand_lat' => 55.0, 'cand_lng' => -3.0],
+            (object) ['id' => 3, 'dist' => null, 'cand_lat' => 51.5, 'cand_lng' => -0.1],
+        ];
+        $kept = $this->callCellBand($message->id, $rows);
+
+        $this->assertCount(1, $kept);
+        $this->assertSame(1, (int) $kept[0]->id);
+        $this->assertEqualsWithDelta(100.0, (float) $kept[0]->dist, 0.001);
+    }
+
+    public function test_band_falls_back_to_cells_when_routing_cannot_answer(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = $this->createTestMessage($user, $group);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, reach_labels, polygon_cells, max_polygon_cells, outer_bound, arrival,
+                mode, tick, total_ticks, total_freeglers, max_drive_min, schedule, next_expansion_at,
+                status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ?, ?, ?, ST_GeomFromText(?, 3857), NOW(),
+                     'drive', 1, 2, 0, 30, NULL, NOW(), 'expanding', NOW(), NOW())",
+            [$message->id, 'label-bytes', $this->reachCellsFor(self::TICK1),
+                $this->reachCellsFor(self::TICK3), self::TICK1]
+        );
+        \Illuminate\Support\Facades\Http::fake(['*reach-arrival*' => \Illuminate\Support\Facades\Http::response(null, 500)]);
+
+        $rows = [
+            // Outside the current reach, inside the eventual one - the band.
+            (object) ['id' => 1, 'dist' => null, 'cand_lat' => 51.9, 'cand_lng' => 0.8],
+            // Already inside the current reach.
+            (object) ['id' => 2, 'dist' => null, 'cand_lat' => 51.5, 'cand_lng' => -0.1],
+        ];
+        $kept = $this->callCellBand($message->id, $rows);
+
+        $this->assertCount(1, $kept);
+        $this->assertSame(1, (int) $kept[0]->id);
+    }
 }

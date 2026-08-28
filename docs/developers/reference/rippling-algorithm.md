@@ -329,6 +329,37 @@ The read side decides which paths apply in one place, `rippling/overflowviewer.g
 post reached another POST's location (`message/postmatches.go`, which feeds the matched-posts
 email), and a ring cannot admit somebody who is not standing anywhere.
 
+### Stored labels decide membership (labels-truth)
+
+Where a post has stored reach-engine labels (`rippling_reach.reach_labels`, written at
+ripple-in and by `ripple:backfill-reach-labels`), the label's exact road-network verdict at
+the post's current tick budget is the DECIDING membership record; the cell grid is the
+prefilter and the verdict only for unlabelled posts (and for everything when routing is
+unavailable - fail-soft, so the cutover self-activates per post as the backfill progresses).
+
+The one authority is routing `POST /v1/reach-eval` (`iznik-routing-go/reach_eval.go`):
+member point + candidate msgids in, `in`/`out`/`nolabels` per candidate out. It also honours
+`rejected_groups` (a member inside a rejected group's area is `out` whatever the label says -
+the durable record of a per-group mod retraction), evaluates at `budget:"max"` for
+eventual-reach questions, and with `discover:true` returns label-admitted posts the caller's
+candidate list MISSED (from `rippling_reach_leaves` - the band where grids under-cover the
+true road reach; the candidate list may be empty).
+
+Client wiring: apiv2 `rippling/labelverdicts.go` (`LabelVerdicts`,
+`LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate),
+`reachContainmentSQL` (feed + badge: narrow grid admissions, union discoveries),
+`message/search.go` and `firstreply/passthrough.go` (labels at max budget first). Batch
+`Ripple/ReachService::labelVerdicts` / `labelVerdictsWithDiscover` / `reachArrivalBatch`
+feed the daily digest's containment universe (same narrowing + union),
+`MaxReachService::isWithinMaxReach` and `MatchMailService::applyCellBand` (one
+reach-arrival call bands every candidate by seconds past the current edge).
+
+Disk: `ripple:drop-cell-grids` NULLs `max_polygon_cells` for labelled rows (every reader is
+labels-first; without the grid they fail closed during a routing outage, the conservative
+direction for extra-mail decisions). `polygon_cells` is still materialised every tick for
+every row: it is the source `iznik-spatial-go`'s reach containment index is built from, so
+draining it would leave the badge/feed prefilter serving stale or absent reach.
+
 A surface that consults a lane the others do not is the defect this structure exists to
 prevent, in either direction: mailing someone a post the site then hides from them, or showing
 someone a post they are never told about.

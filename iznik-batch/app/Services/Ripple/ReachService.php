@@ -709,39 +709,149 @@ class ReachService
      * @param  array<int, int|string>  $msgids
      * @return array<int, string>
      */
-    public function labelVerdicts(float $lat, float $lng, array $msgids): array
+    public function labelVerdicts(float $lat, float $lng, array $msgids, string $budget = ''): array
     {
-        if ($msgids === [] || ($lat === 0.0 && $lng === 0.0)) {
-            return [];
+        return $this->labelEval($lat, $lng, $msgids, $budget, false)['verdicts'];
+    }
+
+    /**
+     * As labelVerdicts, but also returns 'discovered': labelled posts NOT in
+     * $msgids whose stored labels admit this member - the band where the grid
+     * prefilter under-covers the true road reach. Both empty on any failure.
+     *
+     * @param  array<int, int|string>  $msgids
+     * @return array{verdicts: array<int, string>, discovered: array<int, int>}
+     */
+    public function labelVerdictsWithDiscover(float $lat, float $lng, array $msgids): array
+    {
+        return $this->labelEval($lat, $lng, $msgids, '', true);
+    }
+
+    /**
+     * @param  array<int, int|string>  $msgids
+     * @return array{verdicts: array<int, string>, discovered: array<int, int>}
+     */
+    private function labelEval(float $lat, float $lng, array $msgids, string $budget, bool $discover): array
+    {
+        $none = ['verdicts' => [], 'discovered' => []];
+        // An empty candidate list still discovers: a member covered by NO
+        // grid can still be admitted by a stored label.
+        if (($msgids === [] && !$discover) || ($lat === 0.0 && $lng === 0.0)) {
+            return $none;
         }
         $out = [];
-        foreach (array_chunk(array_values($msgids), 1000) as $chunk) {
+        $discovered = [];
+        $chunks = array_chunk(array_values($msgids), 1000) ?: [[]];
+        foreach ($chunks as $i => $chunk) {
             try {
                 $response = Http::timeout(3)->post("{$this->url}/v1/reach-eval", [
                     'lat' => $lat,
                     'lng' => $lng,
                     'msgids' => array_map('intval', $chunk),
+                    'budget' => $budget,
+                    // Only the first chunk discovers: the discovery set is a
+                    // property of the member, not of the candidate chunking.
+                    'discover' => $discover && $i === 0,
                 ]);
             } catch (\Throwable $e) {
                 Log::warning("ripple: reach-eval fetch failed: {$e->getMessage()}");
 
-                return [];
+                return $none;
             }
             if (!$response->successful()) {
                 if (!in_array($response->status(), [503, 404], true)) {
                     Log::warning("ripple: reach-eval HTTP {$response->status()}");
                 }
 
-                return [];
+                return $none;
             }
             foreach ($response->json('results') ?? [] as $r) {
                 if (isset($r['msgid'], $r['verdict']) && in_array($r['verdict'], ['in', 'out'], true)) {
                     $out[(int) $r['msgid']] = $r['verdict'];
                 }
             }
+            foreach ($response->json('discovered') ?? [] as $r) {
+                if (isset($r['msgid'])) {
+                    $discovered[] = (int) $r['msgid'];
+                }
+            }
+        }
+
+        return ['verdicts' => $out, 'discovered' => $discovered];
+    }
+
+    /**
+     * Evaluate a stored label blob at many member points in one routing call
+     * (POST /v1/reach-arrival): returns per-point ['arrival' => ?float,
+     * 'in' => bool] at budget $tSecs (0 < t <= the label's own budget).
+     * Null on any failure - callers fall back to their cell tests.
+     *
+     * @param  array<int, array{0: float, 1: float}>  $points  [lat, lng]
+     * @return ?array<int, array{arrival: ?float, in: bool}>
+     */
+    public function reachArrivalBatch(string $labelBytes, float $tSecs, array $points): ?array
+    {
+        if ($labelBytes === '' || $points === []) {
+            return null;
+        }
+        $out = [];
+        foreach (array_chunk($points, 1000, true) as $chunk) {
+            try {
+                $response = Http::timeout(5)->post("{$this->url}/v1/reach-arrival", [
+                    'labels' => base64_encode($labelBytes),
+                    't' => $tSecs,
+                    'points' => array_map(
+                        fn ($p) => ['lat' => (float) $p[0], 'lng' => (float) $p[1]],
+                        array_values($chunk)
+                    ),
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning("ripple: reach-arrival fetch failed: {$e->getMessage()}");
+
+                return null;
+            }
+            if (!$response->successful()) {
+                if (!in_array($response->status(), [503, 404], true)) {
+                    Log::warning("ripple: reach-arrival HTTP {$response->status()}");
+                }
+
+                return null;
+            }
+            $results = $response->json('results');
+            if (!is_array($results) || count($results) !== count($chunk)) {
+                return null;
+            }
+            $keys = array_keys($chunk);
+            foreach ($results as $i => $r) {
+                $out[$keys[$i]] = [
+                    'arrival' => isset($r['arrival']) ? (float) $r['arrival'] : null,
+                    'in' => (bool) ($r['in'] ?? false),
+                ];
+            }
         }
 
         return $out;
+    }
+
+    /**
+     * The post's CURRENT tick drive-time budget in seconds, from its stored
+     * schedule (falling back to the maximum when unparseable - a too-wide
+     * budget only re-admits what the maximum already contains).
+     */
+    public function currentBudgetSecs(int $tick, float $maxDriveMin, ?string $schedule): float
+    {
+        if ($schedule) {
+            $entries = json_decode($schedule, true);
+            if (is_array($entries)) {
+                foreach ($entries as $en) {
+                    if ((int) ($en['tick'] ?? 0) === $tick && (float) ($en['drive_min'] ?? 0) > 0) {
+                        return ((float) $en['drive_min']) * 60.0;
+                    }
+                }
+            }
+        }
+
+        return $maxDriveMin * 60.0;
     }
 
     /** Both label stores exist (deploy can precede the schema change). */

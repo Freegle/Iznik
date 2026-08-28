@@ -103,6 +103,18 @@ class MaxReachService
             // full decode is 317ms/128MB on a production-sized reach, and this
             // is the reply gate). Undecidable bytes fail closed - the
             // conservative default this gate has always had.
+            // Labels-truth first: the maximum reach is the stored label at
+            // its own full budget, exactly (and the current reach is a subset
+            // of it, so one max-budget verdict answers the whole
+            // current-OR-eventual question). Falls through to the cells - and
+            // then the conservative default - wherever no label exists or
+            // routing is unavailable.
+            $verdicts = app(\App\Services\Ripple\ReachService::class)
+                ->labelVerdicts($lat, $lng, [$msgid], 'max');
+            if (isset($verdicts[$msgid])) {
+                return $verdicts[$msgid] === 'in';
+            }
+
             $row = DB::table('rippling_reach')
                 ->select('polygon_cells', 'max_polygon_cells')
                 ->where('msgid', $msgid)
@@ -213,7 +225,7 @@ class MaxReachService
             ->when(
                 $indexed,
                 fn ($q) => $q->where('has_max_reach', 0),
-                fn ($q) => $q->when($this->cellsAvailable(), fn ($q2) => $q2->whereNull('max_polygon_cells'))
+                fn ($q) => $q->when($this->cellsAvailable(), fn ($q2) => $q2->whereNull('max_polygon_cells')->whereNull('reach_labels'))
             )
             ->whereNotNull('schedule')
             // Only posts still expanding: a done post's current reach IS its
@@ -314,7 +326,7 @@ class MaxReachService
                 ->select('schedule')
                 ->where('msgid', $msgid)
                 // Same "lacks a max reach" rule as populate().
-                ->when($this->cellsAvailable(), fn ($q) => $q->whereNull('max_polygon_cells'))
+                ->when($this->cellsAvailable(), fn ($q) => $q->whereNull('max_polygon_cells')->whereNull('reach_labels'))
                 ->whereNotNull('schedule')
                 ->first();
 

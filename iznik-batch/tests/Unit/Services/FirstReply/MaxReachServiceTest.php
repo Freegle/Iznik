@@ -311,4 +311,39 @@ class MaxReachServiceTest extends TestCase
             'a failed rasterise must leave the row unfilled for the next pass'
         );
     }
+
+
+    public function test_max_reach_prefers_the_stored_label_verdict(): void
+    {
+        // The cells say INSIDE_TICK1 is within reach; the stored label knows
+        // better (the far bank of an estuary) and its verdict decides.
+        $msgid = $this->seedRipplingPost();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
+        \Illuminate\Support\Facades\Http::fake(['*reach-eval*' => \Illuminate\Support\Facades\Http::response([
+            'results' => [['msgid' => $msgid, 'verdict' => 'out']],
+        ])]);
+
+        $this->assertFalse($this->service()->isWithinMaxReach(
+            $msgid, self::INSIDE_TICK1[0], self::INSIDE_TICK1[1]
+        ), 'an OUT label verdict must override in-reach cells');
+
+        // The gate asks about the EVENTUAL reach, so the label is evaluated at
+        // its own full budget, not the current tick.
+        \Illuminate\Support\Facades\Http::assertSent(
+            fn ($req) => str_contains($req->url(), 'reach-eval') && ($req['budget'] ?? '') === 'max'
+        );
+    }
+
+    public function test_max_reach_keeps_the_cells_verdict_without_a_label(): void
+    {
+        $msgid = $this->seedRipplingPost();
+        $this->service()->populate();
+        \Illuminate\Support\Facades\Http::fake(['*reach-eval*' => \Illuminate\Support\Facades\Http::response([
+            'results' => [['msgid' => $msgid, 'verdict' => 'nolabels']],
+        ])]);
+
+        $this->assertTrue($this->service()->isWithinMaxReach(
+            $msgid, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]
+        ), 'with no stored label the max cell grid decides');
+    }
 }

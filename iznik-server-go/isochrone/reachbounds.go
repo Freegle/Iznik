@@ -46,14 +46,13 @@ func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []in
 		for i, id := range in {
 			ids[i] = uint64(id)
 		}
-		if verdicts := rippling.LabelVerdicts(float64(lat), float64(lng), ids); len(verdicts) > 0 {
-			kept := in[:0]
-			for _, id := range in {
-				if verdicts[uint64(id)] != rippling.LabelVerdictOut {
-					kept = append(kept, id)
-				}
-			}
-			in = kept
+		verdicts, discovered := rippling.LabelVerdictsWithDiscover(float64(lat), float64(lng), ids)
+		in = rippling.DropLabelOut(in, verdicts)
+		// Discovered = labelled posts the grid prefilter missed (the band
+		// where grids under-cover the true road reach). The SQL's own
+		// visibility conjuncts still apply to them like any other id.
+		for _, id := range discovered {
+			in = append(in, int64(id))
 		}
 		// GORM renders an empty slice as IN (NULL) — matches nothing — which
 		// is right for a viewer no reach covers (the ring arm may still admit).

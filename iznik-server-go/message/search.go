@@ -649,6 +649,9 @@ func searchReachArmIDs(db *gorm.DB, lng, lat float64) []uint64 {
 			// coarse-raster row); do not silently hide posts.
 			fmt.Printf("search: %d partial reach ids with no legacy geometry to resolve them\n", len(partial))
 		}
+		// Labels-truth: the same narrowing the feed applies, so search can
+		// never surface a post browse hides.
+		in = rippling.DropLabelOut(in, rippling.LabelVerdicts(lat, lng, in))
 		db.Table("rippling_reach rr").
 			Select("ms.msgid").
 			Joins("INNER JOIN messages_spatial ms ON ms.msgid = rr.msgid").

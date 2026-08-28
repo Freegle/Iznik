@@ -69,6 +69,49 @@ func TestLabelVerdictsOverrideCells(t *testing.T) {
 	roadblur.ResetRoutingBreaker()
 }
 
+// The discover arm: verdicts narrow the candidate list AND the response's
+// discovered ids come back for the caller to union in - including when the
+// candidate list is EMPTY (a member no grid covers can still be admitted by a
+// stored label).
+func TestLabelVerdictsWithDiscover(t *testing.T) {
+	var lastBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/reach-eval" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&lastBody)
+		// Like the real endpoint: verdicts only for the asked candidates,
+		// discoveries regardless.
+		results := []map[string]any{}
+		if asked, _ := lastBody["msgids"].([]any); len(asked) > 0 {
+			results = append(results, map[string]any{"msgid": 1, "verdict": "out"})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results":    results,
+			"discovered": []map[string]any{{"msgid": 7, "verdict": "in"}},
+		})
+	}))
+	defer srv.Close()
+	prevURL := os.Getenv("ROUTING_EVAL_URL")
+	defer os.Setenv("ROUTING_EVAL_URL", prevURL)
+	os.Setenv("ROUTING_EVAL_URL", srv.URL)
+	roadblur.ResetRoutingBreaker()
+
+	verdicts, discovered := rippling.LabelVerdictsWithDiscover(51.5, -0.1, []uint64{1, 2})
+	assert.Equal(t, rippling.LabelVerdictOut, verdicts[1])
+	assert.Equal(t, []uint64{7}, discovered)
+	assert.Equal(t, true, lastBody["discover"], "the request must ask the server to discover")
+
+	// Empty candidate list: the call still happens and still discovers.
+	lastBody = nil
+	verdicts, discovered = rippling.LabelVerdictsWithDiscover(51.5, -0.1, nil)
+	assert.Empty(t, verdicts)
+	assert.Equal(t, []uint64{7}, discovered)
+	assert.NotNil(t, lastBody, "an empty candidate list must still ask the server")
+	roadblur.ResetRoutingBreaker()
+}
+
 // The feed's id-list narrowing: OUT drops, in/nolabels keep, nil no-ops.
 func TestDropLabelOut(t *testing.T) {
 	ids := []uint64{1, 2, 3}

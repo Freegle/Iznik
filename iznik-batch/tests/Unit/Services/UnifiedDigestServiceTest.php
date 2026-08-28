@@ -422,6 +422,48 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent'], 'with no stored label the cell verdict decides');
     }
 
+    public function test_daily_digest_discovers_a_labelled_post_the_grid_missed(): void
+    {
+        // The under-coverage band: the post's cell grid does NOT cover this
+        // recipient, so the grid gate alone would exclude it - but its stored
+        // label admits them by road, and the discover arm re-admits it, the
+        // same union the browse feed applies.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // Cells well away from the recipient at (51.5, -0.1).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, 0.7, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((0.5 51.3, 0.9 51.3, 0.9 51.7, 0.5 51.7, 0.5 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [],
+            'discovered' => [['msgid' => $message->id, 'verdict' => 'in']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'a label-admitted post the grid missed must still be mailed');
+    }
+
     public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
     {
         // A messages_likes 'View' (in-app view, or an opened/clicked digest via

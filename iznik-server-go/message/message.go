@@ -2792,12 +2792,13 @@ func ClipReachForRejectedGroup(db *gorm.DB, msgid, gid uint64) {
 // may reply everywhere.
 func clipReachCellsOnly(db *gorm.DB, msgid, gid uint64) {
 	var row struct {
-		Cells    []byte  `gorm:"column:cells"`
-		GroupWkt *string `gorm:"column:group_wkt"`
+		Cells     []byte  `gorm:"column:cells"`
+		GroupWkt  *string `gorm:"column:group_wkt"`
+		HasLabels bool    `gorm:"column:has_labels"`
 	}
 	if err := db.Table("rippling_reach mr").
 		Joins("JOIN `groups` g ON g.id = ?", gid).
-		Select("mr.polygon_cells AS cells, ST_AsText(g.polyindex) AS group_wkt").
+		Select("mr.polygon_cells AS cells, ST_AsText(g.polyindex) AS group_wkt, mr.reach_labels IS NOT NULL AS has_labels").
 		Where("mr.msgid = ? AND g.polyindex IS NOT NULL AND ST_GeometryType(g.polyindex) <> 'POINT'", msgid).
 		Scan(&row).Error; err != nil {
 		log.Printf("clip cells: fetch failed for msgid=%d gid=%d: %v", msgid, gid, err)
@@ -2808,6 +2809,12 @@ func clipReachCellsOnly(db *gorm.DB, msgid, gid uint64) {
 		return
 	}
 	if len(row.Cells) == 0 {
+		if row.HasLabels {
+			// Labels-truth: the rejected_groups record (written above) is
+			// enforced by the label evaluator, so with the grid drained
+			// there is nothing left to clip and nothing left unclipped.
+			return
+		}
 		log.Printf("clip cells: msgid=%d has no stored cells; reach left unclipped for gid=%d", msgid, gid)
 		return
 	}

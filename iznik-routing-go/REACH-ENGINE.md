@@ -202,12 +202,15 @@ customer:
   refresh), stored labels and leaves are re-fetched with
   `ripple:backfill-reach-labels --all`; until that runs, readers fall back to
   the stored cells exactly as for a post with no labels yet.
-- Deliberately NOT switched in this PR, because it would make an existing
-  function slower, not faster: the chat reply gate and per-post membership
-  checks stay on the in-process cell-grid probe (microseconds, no network).
-  Making labels the deciding record there needs a local evaluator in apiv2 or
-  acceptance of an HTTP hop per check — that is the labels-truth cutover, and
-  the stored labels and leaves tables above are its ready foundation.
+- The labels-truth cutover (`POST /v1/reach-eval`): where a stored label
+  exists, its exact verdict at the post's current tick budget IS the
+  membership record — the reply gate, browse feed, badge, search, digest and
+  first-reply targeting all ask this endpoint (one batched HTTP hop per list,
+  breaker-guarded) and keep their cell-grid verdict only for unlabelled posts
+  or when routing is down. It honours `rejected_groups` area subtractions,
+  evaluates at `budget:"max"` for eventual-reach questions, and `discover`
+  surfaces label-admitted posts a grid prefilter missed (via
+  `rippling_reach_leaves`).
 
 ## Fast "what is near me" for messages, chitchat, anything
 

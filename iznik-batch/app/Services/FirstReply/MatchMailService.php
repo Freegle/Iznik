@@ -746,9 +746,10 @@ class MatchMailService
                -- reach is going to be told anyway, by the ordinary ripple, so
                -- mailing them spends a slot and a mail to change nothing.
                -- The whole point of this mail is to reach past the current
-               -- edge. SQL only requires a max reach to exist; the band itself
-               -- is applied by applyCellBand from the stored grids.
-               AND rr.max_polygon_cells IS NOT NULL
+               -- edge. SQL only requires an eventual-reach record to exist -
+               -- stored labels or the max cell grid (drained to NULL once a
+               -- row is labelled); the band itself is applied by applyCellBand.
+               AND (rr.reach_labels IS NOT NULL OR rr.max_polygon_cells IS NOT NULL)
                AND NOT EXISTS (
                      SELECT 1 FROM firstreply_scouts fs
                      WHERE fs.userid = u.id AND fs.sent_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
@@ -831,8 +832,52 @@ class MatchMailService
 
         $reach = DB::table('rippling_reach')
             ->where('msgid', $msgid)
-            ->first(['polygon_cells', 'max_polygon_cells']);
-        if ($reach === null || $reach->max_polygon_cells === null) {
+            ->first(['polygon_cells', 'max_polygon_cells', 'reach_labels', 'tick', 'max_drive_min', 'schedule']);
+        if ($reach === null) {
+            return [];
+        }
+
+        // Labels-truth first: ONE routing call evaluates the stored label at
+        // every candidate point - arrival within the label's full budget means
+        // inside the EVENTUAL reach; the in-flag at the current tick budget
+        // means inside the CURRENT one. The band is exactly "arrived
+        // eventually AND not yet current", ordered by how soon past the edge
+        // they are. Falls through to the cell grids when the post has no
+        // label or routing cannot answer.
+        if ($reach->reach_labels !== null) {
+            $svc = app(\App\Services\Ripple\ReachService::class);
+            $currentSecs = $svc->currentBudgetSecs(
+                (int) $reach->tick, (float) $reach->max_drive_min, $reach->schedule
+            );
+            $points = [];
+            foreach ($rows as $i => $r) {
+                if ($r->cand_lat !== null && $r->cand_lng !== null) {
+                    $points[$i] = [(float) $r->cand_lat, (float) $r->cand_lng];
+                }
+            }
+            $evals = $svc->reachArrivalBatch((string) $reach->reach_labels, $currentSecs, $points);
+            if ($evals !== null) {
+                $kept = [];
+                foreach ($points as $i => $p) {
+                    $ev = $evals[$i] ?? null;
+                    if ($ev === null || $ev['arrival'] === null) {
+                        continue; // never reached, even eventually
+                    }
+                    if ($ev['in']) {
+                        continue; // already inside the current reach
+                    }
+                    $r = $rows[$i];
+                    // Ordering key: seconds past the current edge (the cells
+                    // form used metres-to-edge; both mean "nearest first").
+                    $r->dist = max(0.0, $ev['arrival'] - $currentSecs);
+                    $kept[] = $r;
+                }
+
+                return $kept;
+            }
+        }
+
+        if ($reach->max_polygon_cells === null) {
             return [];
         }
 

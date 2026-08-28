@@ -608,4 +608,34 @@ class ReachServiceTest extends TestCase
 
         Http::assertSent(fn ($request) => str_contains($request->url(), 'cluster_max_wedges=3'));
     }
+
+
+    public function test_label_verdicts_with_discover_returns_both_lists(): void
+    {
+        Http::fake(['*reach-eval*' => Http::response([
+            'results' => [['msgid' => 1, 'verdict' => 'out'], ['msgid' => 2, 'verdict' => 'nolabels']],
+            'discovered' => [['msgid' => 7, 'verdict' => 'in'], ['msgid' => 8, 'verdict' => 'in']],
+        ])]);
+
+        $eval = app(ReachService::class)->labelVerdictsWithDiscover(51.5, -0.1, [1, 2]);
+
+        // 'nolabels' is absence (the caller keeps its grid verdict), 'out' is a verdict.
+        $this->assertSame([1 => 'out'], $eval['verdicts']);
+        $this->assertSame([7, 8], $eval['discovered']);
+        Http::assertSent(fn ($req) => ($req['discover'] ?? false) === true);
+    }
+
+    public function test_label_verdicts_with_discover_calls_even_with_no_candidates(): void
+    {
+        // A member covered by NO grid can still be admitted by a stored label,
+        // so an empty candidate list must still ask the routing server.
+        Http::fake(['*reach-eval*' => Http::response([
+            'results' => [],
+            'discovered' => [['msgid' => 7, 'verdict' => 'in']],
+        ])]);
+
+        $eval = app(ReachService::class)->labelVerdictsWithDiscover(51.5, -0.1, []);
+
+        $this->assertSame([7], $eval['discovered']);
+    }
 }
