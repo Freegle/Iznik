@@ -1865,9 +1865,6 @@ func TestPostSessionRelated(t *testing.T) {
 // POST /session - Admin Impersonation (force-login)
 // ---------------------------------------------------------------------------
 
-
-
-
 // getSessionWork calls GET /api/session and returns the "work" map.
 func getSessionWork(t *testing.T, token string) map[string]interface{} {
 	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
@@ -3063,7 +3060,7 @@ func TestWorkCountChatReviewRecipientMatching(t *testing.T) {
 	prefix := uniquePrefix("wc_chat_recip")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix + "_other")
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
@@ -3093,7 +3090,7 @@ func TestWorkCountChatReviewSenderOnlyNotCounted(t *testing.T) {
 	prefix := uniquePrefix("wc_chat_sender")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
-	otherGroupID := CreateTestGroup(t, prefix + "_other")
+	otherGroupID := CreateTestGroup(t, prefix+"_other")
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
@@ -3960,8 +3957,8 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 // This covers the fix for Discourse topic 9654 post 10 (newly-promoted mod flood).
 func TestTopicActiveWithin(t *testing.T) {
 	now := time.Now().UTC()
-	recent := now.AddDate(0, 0, -5).Format(time.RFC3339)   // 5 days ago — within window
-	old := now.AddDate(0, 0, -60).Format(time.RFC3339)     // 60 days ago — outside window
+	recent := now.AddDate(0, 0, -5).Format(time.RFC3339)                      // 5 days ago — within window
+	old := now.AddDate(0, 0, -60).Format(time.RFC3339)                        // 60 days ago — outside window
 	boundary := now.AddDate(0, 0, -30).Add(-time.Second).Format(time.RFC3339) // just outside
 
 	t.Run("recent bumped_at → active", func(t *testing.T) {
@@ -4003,4 +4000,147 @@ func TestTopicActiveWithin(t *testing.T) {
 		assert.False(t, session.TopicActiveWithin(boundary, boundary, boundary, now.AddDate(0, 0, -30)),
 			"timestamp exactly at/before since must be inactive")
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Login / Logout audit logs
+// ---------------------------------------------------------------------------
+
+// TestLoginWritesLoginLog covers the gap that made Discourse #10072
+// ("frequently being logged out of ModTools") hard to investigate: V1 wrote a
+// User/Login row on every successful login and apiv2 wrote none, so a
+// moderator's own log showed nothing and the only evidence was raw sessions
+// rows.
+func TestLoginWritesLoginLog(t *testing.T) {
+	prefix := uniquePrefix("login_log")
+	email := fmt.Sprintf("%s@test.com", prefix)
+	userID := CreateTestUser(t, prefix, "User")
+
+	db := database.DBConn
+	salt := os.Getenv("PASSWORD_SALT")
+	if salt == "" {
+		salt = "zzzz"
+	}
+	h := sha1.New()
+	h.Write([]byte("testpassword" + salt))
+	db.Exec("INSERT INTO users_logins (userid, type, uid, credentials, salt) VALUES (?, 'Native', ?, ?, ?)",
+		userID, strconv.FormatUint(userID, 10), hex.EncodeToString(h.Sum(nil)), salt)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"email":    email,
+		"password": "testpassword",
+	})
+
+	req := httptest.NewRequest("POST", "/api/session", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	// The site header every client sends (stores/loggingContext.js). Freegle and
+	// ModTools log in separately from one account, so which app signed in is the
+	// question the log has to answer.
+	req.Header.Set("X-Freegle-Site", "MT")
+	resp, err := getApp().Test(req, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var text string
+	db.Raw("SELECT text FROM logs WHERE user = ? AND type = ? AND subtype = ? ORDER BY id DESC LIMIT 1",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_LOGIN).Scan(&text)
+
+	assert.Contains(t, text, "Using email/password", "V1's wording, so ModTools' log view reads the same either side of the migration")
+	assert.Contains(t, text, "MT", "which app signed in")
+
+	// The series pairs this row with the Logout that eventually closes it.
+	var series uint64
+	db.Raw("SELECT series FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&series)
+	assert.NotZero(t, series)
+	assert.Contains(t, text, strconv.FormatUint(series, 10), "series of the session just created")
+
+	// byuser is set too: V1 set only byuser, and GetLogs matches on either.
+	var byuser uint64
+	db.Raw("SELECT byuser FROM logs WHERE user = ? AND type = ? AND subtype = ? ORDER BY id DESC LIMIT 1",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_LOGIN).Scan(&byuser)
+	assert.Equal(t, userID, byuser)
+}
+
+// TestLoginLinkWritesLoginLog checks the link-login path carries V1's own
+// wording for it rather than the password one.
+func TestLoginLinkWritesLoginLog(t *testing.T) {
+	prefix := uniquePrefix("login_link_log")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	lpBody, _ := json.Marshal(map[string]interface{}{
+		"action": "LostPassword",
+		"email":  fmt.Sprintf("%s@test.com", prefix),
+	})
+	lpReq := httptest.NewRequest("POST", "/api/session", bytes.NewReader(lpBody))
+	lpReq.Header.Set("Content-Type", "application/json")
+	getApp().Test(lpReq)
+
+	var linkKey string
+	db.Raw("SELECT credentials FROM users_logins WHERE userid = ? AND type = 'Link' LIMIT 1", userID).Scan(&linkKey)
+	assert.NotEmpty(t, linkKey)
+
+	body, _ := json.Marshal(map[string]interface{}{"u": userID, "k": linkKey})
+	req := httptest.NewRequest("POST", "/api/session", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var text string
+	db.Raw("SELECT text FROM logs WHERE user = ? AND type = ? AND subtype = ? ORDER BY id DESC LIMIT 1",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_LOGIN).Scan(&text)
+	assert.Contains(t, text, "Using link")
+}
+
+// TestDeleteSessionWritesLogoutLog is the other half: a logout has to be
+// distinguishable from a session that simply vanished, which is the whole
+// question when someone reports being logged out unexpectedly.
+func TestDeleteSessionWritesLogoutLog(t *testing.T) {
+	prefix := uniquePrefix("logout_log")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	series := userID*1000 + 3
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, series)
+	var sessionID uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&sessionID)
+
+	req := httptest.NewRequest("DELETE", "/api/session?jwt="+GetToken(userID, sessionID), nil)
+	req.Header.Set("X-Freegle-Site", "FD")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var text string
+	db.Raw("SELECT text FROM logs WHERE user = ? AND type = ? AND subtype = ? ORDER BY id DESC LIMIT 1",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_LOGOUT).Scan(&text)
+	assert.Contains(t, text, "Series "+strconv.FormatUint(series, 10), "V1's wording, and the join key back to the Login row")
+	assert.Contains(t, text, "FD")
+}
+
+// TestDeleteSessionLogsWhenNothingDeleted: a logout that cannot scope itself
+// deletes nothing (Discourse #9748) and used to leave no trace at all. That is
+// precisely the state worth seeing, so it is logged as such.
+func TestDeleteSessionLogsWhenNothingDeleted(t *testing.T) {
+	prefix := uniquePrefix("logout_log_none")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, userID*1000+4)
+	var sessionID uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&sessionID)
+
+	// A JWT with no session id, and no Authorization2 header: nothing identifies
+	// which session to close.
+	req := httptest.NewRequest("DELETE", "/api/session?jwt="+GetToken(userID, 0), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var remaining int64
+	db.Raw("SELECT COUNT(*) FROM sessions WHERE id = ?", sessionID).Scan(&remaining)
+	assert.Equal(t, int64(1), remaining, "an unscopeable logout must not evict the user's other logins")
+
+	var text string
+	db.Raw("SELECT text FROM logs WHERE user = ? AND type = ? AND subtype = ? ORDER BY id DESC LIMIT 1",
+		userID, log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_LOGOUT).Scan(&text)
+	assert.Contains(t, text, "unidentified")
 }
