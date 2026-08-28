@@ -75,6 +75,11 @@ class AppServiceProvider extends ServiceProvider
         // cache per batch job rather than one per call site.
         $this->app->singleton(\App\Services\Mail\MailSuppressionService::class);
 
+        // Trash Nothing rate-limits per API key, and one tn:sync run calls
+        // three different TN endpoints with that one key. The throttle only
+        // works if all of them share it, so it has to be a singleton.
+        $this->app->singleton(\App\Services\TrashNothing\Sync\TrashNothingRateLimiter::class);
+
         // Scheduler overlap mutex backend. Default (LOCK_STORE=flock) binds
         // FlockEventMutex — OS-level flock that auto-releases on process death.
         // Setting LOCK_STORE=redis (or another cache store) binds a TTL-based cache

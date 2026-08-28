@@ -21,13 +21,6 @@ return [
     // track UK wall-clock pin to this zone so Laravel resolves BST/GMT.
     'timezone' => env('FREEGLE_TIMEZONE', 'Europe/London'),
 
-    'digest' => [
-        // Score multiplier for a daily-digest post the recipient has already had a
-        // chance to see (an in-app view, or an opened/clicked digest that contained
-        // it). Below 1 sinks seen posts beneath fresh ones without hard-dropping them.
-        'seen_penalty' => (float) env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
-    ],
-
     'api' => [
         'base_url' => env('FREEGLE_API_BASE_URL', 'https://api.ilovefreegle.org'),
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
@@ -258,6 +251,75 @@ return [
         'api_key' => env('FREEGLE_TN_API_KEY', ''),
         'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+        // MASTER CUTOVER SWITCH for TN group posts. Default false (disabled) so the
+        // email path stays authoritative until parity is confirmed. Flipping it to
+        // true moves the whole post pipeline over in one step:
+        //
+        //   - tn:sync runs PostSyncer, so posts are ingested from the TN API
+        //     (TNSyncCommand).
+        //   - The email path STOPS routing TN group posts — they are still archived,
+        //     which is what makes the archive an independent witness
+        //     (TnEmailRoutingGate; callers IncomingMailController/IncomingMailCommand).
+        //   - tn:verify-email-coverage starts running hourly, checking the archive
+        //     against what the API path ingested (routes/console.php).
+        //   - TN posts become eligible for rippling, because the API path ingests only
+        //     the source post and discards TN's per-group copies, so the post now lives
+        //     on ONE group and Freegle's own rippling does the cross-posting
+        //     (Ripple\ExpandService::rippleIntoNewGroups).
+        //   - The tn:sync (posts) scheduled-outcome check becomes live
+        //     (ScheduledOutcomeRegistry).
+        //
+        // Deliberately ONE flag rather than the staged pair the plan first envisaged:
+        // API-on-with-email-still-routing double-writes the same post, and
+        // email-off-with-API-off drops TN posts entirely. Neither half is safe alone,
+        // and pre-cutover comparison is done with `tn:sync --dry-run` / tn:parity-check
+        // instead, neither of which needs the email path switched off.
+        'ingest_posts_via_api' => env('FREEGLE_TN_INGEST_POSTS_VIA_API', false),
+
+        // Minimum gap between ANY two Trash Nothing API requests, in
+        // microseconds. TN allows 2 requests/second and rate-limits per API
+        // key, so this is enforced once for the whole run by
+        // TrashNothingRateLimiter rather than per endpoint. Set to 0 to
+        // disable (the test suite does, via phpunit.xml — Http::fake() never
+        // reaches TN, and 750ms per faked request would add minutes).
+        'min_request_interval_us' => (int) env('FREEGLE_TN_MIN_REQUEST_INTERVAL_US', 750000),
+
+        // Post-cutover coverage verification — tn:verify-email-coverage.
+        // See plans/tn-api-post-ingestion.md section S.
+        'verify_coverage' => [
+            // How far behind real time the verification window runs. Bounded
+            // above by the incoming-archive retention (mail:cleanup-archive,
+            // 48h): lag + window + headroom for a missed run must stay well
+            // inside it, or files are deleted before they are ever checked.
+            'lag_hours' => (int) env('FREEGLE_TN_VERIFY_LAG_HOURS', 8),
+
+            // Window length. Matches the schedule interval so consecutive runs
+            // tile the timeline with no gap.
+            'window_hours' => (int) env('FREEGLE_TN_VERIFY_WINDOW_HOURS', 1),
+
+            // Backward overlap, so a post landing on a window boundary is never
+            // lost between two runs. Re-checking an already-covered post is
+            // free and idempotent, so this errs generous — same reasoning as
+            // the sync's own overlap (section B).
+            'overlap_minutes' => (int) env('FREEGLE_TN_VERIFY_OVERLAP_MINUTES', 15),
+
+            // Write genuinely-missing posts back via the API path (section
+            // S.5). Defaults FALSE deliberately: ship the verifier
+            // report-only until the observed miss population matches what
+            // section S.4 predicts, then enable writes.
+            'auto_ingest' => env('FREEGLE_TN_VERIFY_AUTO_INGEST', false),
+
+            // Rail 4. Above this many genuine misses in one run, ingest
+            // NOTHING and alert instead: a mass miss means the sync is broken,
+            // and quietly backfilling hundreds of hours-late posts is worse
+            // than paging a human.
+            'auto_ingest_max' => (int) env('FREEGLE_TN_VERIFY_AUTO_INGEST_MAX', 20),
+
+            // Rail 5. Refuse to backfill a post whose TN date is older than
+            // this — a very stale post surfacing suddenly is more likely a data
+            // problem than a real miss.
+            'max_age_hours' => (int) env('FREEGLE_TN_VERIFY_MAX_AGE_HOURS', 72),
+        ],
     ],
 
     // Discourse forum REST API (V1 discourse_not_signed_up.php).
@@ -375,6 +437,17 @@ return [
         // The scheduled `mail:digest:unified --mode=daily` is inert until this
         // is set; an explicit `--user=` bypasses the gate for manual sampling.
         'daily_allowlist' => env('FREEGLE_DIGEST_DAILY_ALLOWLIST', ''),
+
+        // Score multiplier for a daily-digest post the recipient has already had a
+        // chance to see (an in-app view, or an opened/clicked digest that contained
+        // it). Below 1 sinks seen posts beneath fresh ones without hard-dropping them.
+        //
+        // Lived in a SECOND 'digest' key earlier in this file until 2026-08-14. PHP
+        // keeps only the last duplicate, so that block was discarded wholesale and
+        // FREEGLE_DIGEST_SEEN_PENALTY did nothing at all — UnifiedDigestService only
+        // behaved because config()'s own default (the same 0.15) covered the gap.
+        // Keep every digest setting in this one array.
+        'seen_penalty' => (float) env('FREEGLE_DIGEST_SEEN_PENALTY', 0.15),
     ],
 
     // Firebase Cloud Messaging for push notifications
@@ -1226,6 +1299,14 @@ return [
         'background_tasks_max_age_minutes' => (int) env('FREEGLE_MONITORING_BG_TASKS_MAX_AGE_MIN', 10),
         // Number of such stale-pending tasks tolerated before breaching.
         'background_tasks_backlog_threshold' => (int) env('FREEGLE_MONITORING_BG_TASKS_BACKLOG', 0),
+
+        // tn:sync — alert if no TrashNothing post has been ingested into
+        // `messages` (tnpostid set) within this many hours. TN is a high-volume
+        // feed, so a gap this long means TN is down or our ingestion is failing
+        // every cycle. Only evaluated when FREEGLE_TN_INGEST_POSTS_VIA_API is on.
+        'tn_posts_max_age_hours' => (int) env('FREEGLE_MONITORING_TN_POSTS_MAX_AGE_HOURS', 6),
+        // Minimum TN posts expected within that window.
+        'tn_posts_min_expected' => (int) env('FREEGLE_MONITORING_TN_POSTS_MIN', 1),
 
         // spam:refresh-mobile-cidrs — alert if the monthly UK-mobile CIDR
         // refresh hasn't written a row within this many days.

@@ -1639,6 +1639,13 @@ services:
       - FREEGLE_MOD_SITE=http://modtools-dev-local.localhost:${PORT_MODTOOLS_DEV_LOCAL:-3003}
       - FREEGLE_API_BASE_URL=http://localhost:${PORT_APIV2:-8193}
       - FREEGLE_DELIVERY_URL=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
+      # Dev batch uploads photos to the LOCAL tusd, like apiv2 does. Without
+      # this the config default (uploads.ilovefreegle.org) applies, so any dev
+      # job that attaches an image — tn:sync, tn:parity-check replaying real TN
+      # posts — writes to the production upload store, and pays a WAN round
+      # trip per photo. batch-prod sets the production value explicitly.
+      - TUS_UPLOADER=http://tusd:8080/tus
+      - UPLOADS=http://tusd:8080/tus/
       # Community News: research credential (metered key OR a `claude setup-token`
       # subscription token, which wins when set) + global kill switch.
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}

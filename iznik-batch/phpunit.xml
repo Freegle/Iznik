@@ -32,6 +32,16 @@
         <include>
             <directory>app</directory>
         </include>
+        <exclude>
+            <!-- OpenAPI-generated TrashNothing API client (lib/, test/, docs/
+                 produced by openapi-generator, not hand-written). Counting its
+                 thousands of generated lines as uncovered source dropped the
+                 whole suite's coverage figure by ~1.9% the moment it landed,
+                 which says nothing about the code we actually maintain. Our
+                 hand-written wrapper around the client stays included. -->
+            <directory>app/Services/TrashNothing/PublicApi/lib</directory>
+            <directory>app/Services/TrashNothing/PublicApi/test</directory>
+        </exclude>
     </source>
     <php>
         <ini name="memory_limit" value="2048M"/>
@@ -63,5 +73,8 @@
         <env name="NIGHTWATCH_ENABLED" value="false"/>
         <env name="FREEGLE_MAIL_ENABLED_TYPES" value="Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter" force="true"/>
         <env name="VIEW_CHECK_TIMESTAMPS" value="false" force="true"/>
+        <!-- The TN API throttle would sleep 750ms before every Http::fake()d
+             request. Tests that exercise the throttle set their own interval. -->
+        <env name="FREEGLE_TN_MIN_REQUEST_INTERVAL_US" value="0" force="true"/>
     </php>
 </phpunit>

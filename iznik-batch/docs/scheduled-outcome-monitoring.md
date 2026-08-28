@@ -137,13 +137,14 @@ checks at all. The batch image ships `openssh-client` for this
 
 ## Implemented checks
 
-Eleven per-job checks across all four primitives, plus one `HostHealthCheck`
+Twelve per-job checks across all four primitives, plus one `HostHealthCheck`
 per ssh target in `FREEGLE_MONITORING_HOSTS` (see "Host health checks" above):
 
 | Task | Primitive | Signal | Notes |
 |---|---|---|---|
 | `stats:generate-daily` | `ProducedSinceCheck` | `stats` rows with `date >= yesterday` (London), floor 1 | Active 06:00–24:00 so it isn't checked before the 02:30 run. Strongest fire-once signal in the system (one `REPLACE` per group/type/day). |
 | `mail:digest:unified --mode=daily` | `ProducedSinceCheck` | `users_digests.lastsent` today WHERE `mode='daily'`, floor 1 | Gated `enabledWhen(daily_allowlist != '')` — inert (skipped) until the daily pilot is switched on. Active 13:00–24:00 (after the 07:00–12:00 send window). |
+| `tn:sync` (posts) | `ProducedSinceCheck` | `messages` rows with `tnpostid IS NOT NULL` and `arrival` within 6h, floor 1 | Gated `enabledWhen(FREEGLE_TN_INGEST_POSTS_VIA_API)` — inert while posts still arrive by the V1 email path. TN is high-volume, so an empty window means TN is down or ingestion is failing every cycle. A `ProducedSinceCheck` rather than freshness so the query stays inside an `arrival` range — `MAX(arrival) WHERE tnpostid IS NOT NULL` would scan years of `messages`. |
 | `queue:background-tasks` | `BacklogCheck` | `background_tasks` rows `processed_at IS NULL AND failed_at IS NULL AND attempts < 3` older than 10 min | Go-API → Laravel task bridge; a stuck worker is the failure mode, not an empty queue. |
 | `messages:contentcheck` | `BacklogCheck` | `messages_groups` (joined to live `messages`/`users`) `collection='Pending' AND contentcheck_checked_at IS NULL AND deleted=0` older than 15 min | Moderation pipeline. The joins mirror the worker's exact selection so rows it permanently skips (deleted message / null fromuser) don't false-alarm. |
 | `chats:process-incoming` | `BacklogCheck` | `chat_messages` `processingrequired=1` (by `date`) older than 15 min | Worker clears `processingrequired` on every visited row (success or fail). |
@@ -177,7 +178,7 @@ Legend: ✅ implemented · 🔵 already covered elsewhere · 🟡 monitorable, d
 |---|---|
 | *(all jobs at once — scheduler death)* | 🔵 `scheduler-heartbeat` Sentry Cron |
 | Aggregate outgoing/incoming email flow | 🔵 `monitor:email-health` (`email_tracking.sent_at` stall + volume floor, 24/7) |
-| `tn:sync` | 🔵 self-alerts via its own `alertIfSyncStale` → Sentry (ratings staleness >12h) |
+| `tn:sync` (ratings/user changes) | 🔵 self-alerts via its own `alertIfSyncStale` → Sentry (staleness >12h). In-process only: it fires only if the command completes a run, so post ingestion additionally has the ✅ outcome check above, which still alerts when `tn:sync` is crashing, wedged on its lock, or not scheduled. |
 | `monitor:scheduled-outcomes` itself | 🔵 `->sentryMonitor()` heartbeat |
 
 Because every email-sending job flows through `email_tracking.sent_at`,

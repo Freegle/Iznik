@@ -6,6 +6,7 @@ use App\Services\LokiService;
 use App\Services\Mail\Incoming\IncomingArchiveService;
 use App\Services\Mail\Incoming\IncomingMailService;
 use App\Services\Mail\Incoming\MailParserService;
+use App\Services\TrashNothing\Verify\TnEmailRoutingGate;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
@@ -21,7 +22,8 @@ class IncomingMailController extends Controller
     public function __construct(
         private readonly MailParserService $parser,
         private readonly IncomingMailService $mailService,
-        private readonly IncomingArchiveService $archiveService
+        private readonly IncomingArchiveService $archiveService,
+        private readonly TnEmailRoutingGate $routingGate
     ) {}
 
     /**
@@ -52,6 +54,18 @@ class IncomingMailController extends Controller
         try {
             // Parse the email
             $parsed = $this->parser->parse($rawEmail, $sender, $recipient);
+
+            // Post-cutover: TN group posts are ingested via the API instead, so
+            // don't route them through the (frozen) email path. Archiving above
+            // already happened, which is what tn:verify-email-coverage checks
+            // against. See plans/tn-api-post-ingestion.md section S.2.
+            if ($this->routingGate->shouldSkipRouting($parsed)) {
+                if ($archivePath) {
+                    $this->archiveService->recordOutcome($archivePath, TnEmailRoutingGate::OUTCOME_SKIPPED);
+                }
+
+                return response('OK', 200);
+            }
 
             // Route the email
             $result = $this->mailService->route($parsed);

@@ -1,0 +1,39 @@
+{
+  "num_pages": 1,
+  "posts": [
+    {
+      "post_id": "tn-parity-l2-shared",
+      "group_id": null,
+      "user_id": 88020003,
+      "title": "Shared Widget",
+      "content": "A widget present on both paths.",
+      "date": "2026-07-10T10:00:00Z",
+      "type": "offer",
+      "outcome": null,
+      "latitude": 22.0000,
+      "longitude": 22.0000,
+      "footer": null,
+      "photos": [],
+      "expiration": null,
+      "reselling": false,
+      "url": "https://trashnothing.com/post/tn-parity-l2-shared"
+    },
+    {
+      "post_id": "tn-parity-l2-extra",
+      "group_id": null,
+      "user_id": 88020004,
+      "title": "Extra API-Only Widget",
+      "content": "A widget the API path saw that no email ever arrived for.",
+      "date": "2026-07-10T10:05:00Z",
+      "type": "offer",
+      "outcome": null,
+      "latitude": 22.0000,
+      "longitude": 22.0000,
+      "footer": null,
+      "photos": [],
+      "expiration": null,
+      "reselling": false,
+      "url": "https://trashnothing.com/post/tn-parity-l2-extra"
+    }
+  ]
+}

@@ -269,6 +269,7 @@ class ExpandService
             'removed' => 0, 'skipped' => 0, 'errors' => 0, 'rippled_in' => 0, 'mailed' => 0,
             'memberships_added' => 0, 'pulled_on_leave' => 0,
             'pulled_on_removal' => 0, 'memberships_removed' => 0,
+            'tn_duplicate_sat_out' => 0,
         ];
 
         // A scoped run ($onlyMsgid or $withinPolyWkt) targets a chosen subset of posts (controlled/area
@@ -1755,6 +1756,14 @@ class ExpandService
             // message sharing its post id with another live one sits out until
             // tn:merge-crossposts has collapsed the set. Self-limiting: once a set is
             // merged there is nothing to match and this never fires again.
+            //
+            // Note this is decided by what the database holds, NOT by
+            // freegle.trashnothing.ingest_posts_via_api: during the cutover an API-ingested
+            // message can land beside unmerged email-era copies of the same item and sits out
+            // exactly like any other member of such a set - flipping the flag does not release
+            // it, collapsing the set does. Counted as tn_duplicate_sat_out so a cutover window
+            // where that is happening at volume shows up in `ripple:expand complete` rather
+            // than being invisible; the fix is to run tn:merge-crossposts, not to change this.
             $sharesTnPostId = DB::table('messages')
                 ->join('messages as other', function ($join) {
                     $join->on('other.tnpostid', '=', 'messages.tnpostid')
@@ -1767,6 +1776,7 @@ class ExpandService
                 ->exists();
 
             if ($sharesTnPostId) {
+                $stats['tn_duplicate_sat_out'] = ($stats['tn_duplicate_sat_out'] ?? 0) + 1;
                 return;
             }
 

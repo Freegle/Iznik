@@ -984,11 +984,16 @@ class ExpandServiceTest extends TestCase
             ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
         );
 
-        $this->service()->process(false, 500);
+        $stats = $this->service()->process(false, 500);
 
         $this->assertNull(
             DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
             'a message sharing its TN post id with a live copy must not ripple into new groups'
+        );
+        $this->assertGreaterThanOrEqual(
+            1,
+            $stats['tn_duplicate_sat_out'],
+            'a post held back by an unmerged set is counted, not held back silently'
         );
 
         // The converse - that a TN post with no live copy DOES ripple into exactly this
@@ -1811,14 +1816,14 @@ class ExpandServiceTest extends TestCase
     }
 
     /**
-     * A TN post (tnpostid IS NOT NULL AND tnpostid != '') must never be rippled into
-     * new groups. TN still cross-posts the same item to multiple Freegle groups itself,
-     * so rippling in would duplicate the post across even more groups.
-     */
-    /**
      * A TrashNothing item is one message like any other, so it ripples like any other. Only a
      * message sharing its post id with another live one sits out - see
      * test_a_tn_message_with_a_live_duplicate_does_not_ripple_into_new_groups.
+     *
+     * Deliberately sets no flag: rippling does not read
+     * freegle.trashnothing.ingest_posts_via_api at all, so this must hold whichever way the
+     * cutover switch is set - test_an_api_era_tn_post_with_an_unmerged_email_era_copy_sits_out
+     * is the other half.
      */
     public function test_a_tn_post_with_no_live_duplicate_ripples_like_any_other(): void
     {
@@ -1841,6 +1846,60 @@ class ExpandServiceTest extends TestCase
         $this->assertNotNull(
             DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
             'a TN post with no live duplicate is rippled into a group its reach covers'
+        );
+    }
+
+    /**
+     * The cutover window, where both eras coexist. Once posts are ingested from the TN API a
+     * TN post lives on ONE group - the API path takes only TN's source post and discards its
+     * per-group copies (GroupPostIngestionService::REASON_CROSSPOST) - but the email-era
+     * copies of that same item are still in the database until tn:merge-crossposts collapses
+     * them, and an API-ingested message landing beside one is still a set.
+     *
+     * So it sits out, with the cutover flag ON. Nothing about rippling is gated on that flag,
+     * and the set - not the flag - is what has to be dealt with. Counted in the run stats so
+     * the hold-back is visible rather than silent.
+     */
+    public function test_an_api_era_tn_post_with_an_unmerged_email_era_copy_sits_out(): void
+    {
+        config(['freegle.trashnothing.ingest_posts_via_api' => true]);
+        $this->fakeRouting(3);
+        $msgid = $this->seedSpatialPost(now()->subMinutes(30));
+
+        $tnPostId = 'tn-cutover-'.uniqid();
+        DB::table('messages')->where('id', $msgid)->update([
+            'tnpostid' => $tnPostId,
+            'sourceheader' => 'TN-API',
+        ]);
+
+        // The email-era copy of the same item, not yet merged away.
+        DB::table('messages')->insertGetId([
+            'date' => now(),
+            'arrival' => now(),
+            'source' => 'Email',
+            'sourceheader' => 'TN-Web',
+            'subject' => 'OFFER: Singular Ripple Fixture (London)',
+            'tnpostid' => $tnPostId,
+            'type' => 'Offer',
+        ]);
+
+        // Group whose area intersects the fake reach.
+        $groupB = $this->createTestGroup();
+        DB::statement(
+            "UPDATE `groups` SET publish = 1, polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+            ['POLYGON((-0.18 51.52,-0.12 51.52,-0.12 51.58,-0.18 51.58,-0.18 51.52))', 3857, $groupB->id]
+        );
+
+        $stats = $this->service()->process(false, 500);
+
+        $this->assertNull(
+            DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $groupB->id)->first(),
+            'an API-ingested TN post still sharing its post id with a live email-era copy must not ripple'
+        );
+        $this->assertGreaterThanOrEqual(
+            1,
+            $stats['tn_duplicate_sat_out'],
+            'the hold-back is counted, so a cutover window holding posts back is visible in the run stats'
         );
     }
 

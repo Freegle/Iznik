@@ -6,7 +6,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\User;
 use App\Models\UserEmail;
-use App\Services\Mail\Incoming\MailParserService;
+use App\Services\Mail\Incoming\IncomingArchiveReader;
 use App\Services\Mail\Incoming\StripQuotedService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -36,7 +36,12 @@ class RecoverDroppedMergedUserMailCommand extends Command
 
     private ?string $prefix = null;
 
-    public function handle(MailParserService $parser, StripQuotedService $stripQuoted): int
+    public function __construct(private readonly IncomingArchiveReader $archive)
+    {
+        parent::__construct();
+    }
+
+    public function handle(StripQuotedService $stripQuoted): int
     {
         $execute = $this->option('execute');
         $this->prefix = $this->option('prefix');
@@ -55,22 +60,17 @@ class RecoverDroppedMergedUserMailCommand extends Command
 
                 return 1;
             }
-            $result = $this->processArchiveFile($singleFile, $parser, $stripQuoted, $execute);
+            $result = $this->processArchiveFile($singleFile, $stripQuoted, $execute);
             $this->info("Result: {$result}");
 
             return $result === 'error' ? 1 : 0;
         }
 
-        $archiveDir = storage_path('incoming-archive');
-
-        if (! is_dir($archiveDir)) {
-            $this->error('Archive directory not found: '.$archiveDir);
+        if (! $this->archive->exists()) {
+            $this->error('Archive directory not found: '.$this->archive->directory());
 
             return 1;
         }
-
-        $dateDirs = scandir($archiveDir);
-        sort($dateDirs);
 
         $fromDate = $this->option('from-date');
         $toDate = $this->option('to-date') ?? date('Y-m-d');
@@ -79,36 +79,14 @@ class RecoverDroppedMergedUserMailCommand extends Command
         $skipped = 0;
         $errors = 0;
 
-        foreach ($dateDirs as $dateDir) {
-            if ($dateDir === '.' || $dateDir === '..') {
-                continue;
-            }
-            if ($fromDate && $dateDir < $fromDate) {
-                continue;
-            }
-            if ($toDate && $dateDir > $toDate) {
-                continue;
-            }
-
-            $fullDir = $archiveDir.'/'.$dateDir;
-            if (! is_dir($fullDir)) {
-                continue;
-            }
-
-            $files = scandir($fullDir);
-            foreach ($files as $file) {
-                if (! str_ends_with($file, '.json')) {
-                    continue;
-                }
-
-                $result = $this->processArchiveFile($fullDir.'/'.$file, $parser, $stripQuoted, $execute);
-                match ($result) {
-                    'recovered' => $recovered++,
-                    'skipped' => $skipped++,
-                    'error' => $errors++,
-                    default => null,
-                };
-            }
+        foreach ($this->archive->files($fromDate ?: null, $toDate ?: null) as $path) {
+            $result = $this->processArchiveFile($path, $stripQuoted, $execute);
+            match ($result) {
+                'recovered' => $recovered++,
+                'skipped' => $skipped++,
+                'error' => $errors++,
+                default => null,
+            };
         }
 
         $this->newLine();
@@ -123,11 +101,10 @@ class RecoverDroppedMergedUserMailCommand extends Command
 
     private function processArchiveFile(
         string $path,
-        MailParserService $parser,
         StripQuotedService $stripQuoted,
         bool $execute
     ): string {
-        $data = json_decode(@file_get_contents($path), true);
+        $data = $this->archive->read($path);
         if ($data === null) {
             return 'skipped';
         }
@@ -165,14 +142,14 @@ class RecoverDroppedMergedUserMailCommand extends Command
         }
 
         // Decode the raw email
-        $rawEmail = base64_decode($data['raw_email'] ?? '');
-        if (empty($rawEmail)) {
+        $rawEmail = $this->archive->rawEmail($data);
+        if ($rawEmail === null) {
             return 'skipped';
         }
 
         // Find the sender
         try {
-            $parsed = $parser->parse($rawEmail, $from, $to);
+            $parsed = $this->archive->parse($rawEmail, $data);
         } catch (\Throwable $e) {
             $this->error("  Parse error in {$path}: {$e->getMessage()}");
 

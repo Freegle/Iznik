@@ -1,13 +1,14 @@
 package message
 
 import (
+	"strconv"
+	"time"
+
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
-	"strconv"
-	"time"
 )
 
 func Groups(c *fiber.Ctx) error {
@@ -71,30 +72,34 @@ func Groups(c *fiber.Ctx) error {
 	// verbatim once it contains a space) already proven elsewhere in this
 	// codebase for a parenthesized UNION subquery.
 	derivedTable := "(" +
-		"SELECT ST_Y(point) AS lat, " +
-		"ST_X(point) AS lng, " +
+		"SELECT ST_Y(ANY_VALUE(point)) AS lat, " +
+		"ST_X(ANY_VALUE(point)) AS lng, " +
 		"messages_spatial.msgid AS id, " +
-		"messages_spatial.successful, " +
-		"messages_spatial.promised, " +
-		"messages_spatial.groupid, " +
-		"messages_spatial.msgtype AS type, " +
+		// A cross-posted message has one messages_spatial row per group (audit §G1/H1),
+		// so this arm must collapse them the same way the own-messages arm below does
+		// (GROUP BY + aggregates) — otherwise it appears once per group in mygroups.
+		"MAX(messages_spatial.successful) AS successful, " +
+		"MAX(messages_spatial.promised) AS promised, " +
+		"ANY_VALUE(messages_spatial.groupid) AS groupid, " +
+		"ANY_VALUE(messages_spatial.msgtype) AS type, " +
 		// fromuser drives the `mine` flag below. The client pins the viewer's own posts to
 		// the top of every sort order and lifts them into the "posts by you" row, and this
 		// feed is what "All my communities" and a single-group view render - so without it
 		// own posts were pinned on the nearby feed and buried here.
 		"m.fromuser AS fromuser, " +
-		"messages_spatial.arrival, " +
+		"MAX(messages_spatial.arrival) AS arrival, " +
 		// posted = the ORIGINAL post time (messages.arrival), stable across rippling.
 		// The client's "Newest posted" sort keys on posted; messages_spatial.arrival is
 		// ripple-BUMPED, so without posted the mygroups feed fell back to it and the
 		// selected sort appeared not to be applied (Discourse 9844, mygroups variant).
 		// Mirrors the nearby/reach feed (isochrone/message.go).
 		"m.arrival AS posted, " +
-		"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen " +
+		"MAX(CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END) AS unseen " +
 		"FROM messages_spatial " +
 		"INNER JOIN messages m ON m.id = messages_spatial.msgid " +
 		"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? " +
 		"WHERE 1=1 " + spatialGroupFilter +
+		"GROUP BY messages_spatial.msgid, m.arrival " +
 		"UNION " +
 		"SELECT lat, lng, messages.id, " +
 		"ANY_VALUE(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, " +
