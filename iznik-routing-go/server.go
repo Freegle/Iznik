@@ -394,7 +394,13 @@ func handleGroupProximity(g *Graph) fiber.Handler {
 		if !okS {
 			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 		}
-		closest, furthest, ok := groupProximity(g, lat, lng, seeds, mode, float32(minutes*60))
+		// Reach-engine fast path (drive): two label queries instead of two
+		// bounded full-graph sweeps — this call backs the proximity-notes
+		// cron, whose sweeps were a measured ~12 CPU-hours/day standing tax.
+		closest, furthest, ok, handled := engineGroupProximity(lat, lng, seeds, mode, float32(minutes*60))
+		if !handled {
+			closest, furthest, ok = groupProximity(g, lat, lng, seeds, mode, float32(minutes*60))
+		}
 		if !ok {
 			return c.JSON(fiber.Map{"reachable": false})
 		}
@@ -608,6 +614,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Post("/drive-metrics", gated(handleDriveMetrics()))
 	v1.Get("/blur", handleBlur(g))
 	v1.Post("/blur-batch", handleBlurBatch(g))
+	v1.Get("/leaf", handleLeaf())
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	v1.Get("/groups/list", handleGroupsList())
 

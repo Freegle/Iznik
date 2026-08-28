@@ -35,7 +35,7 @@ type RegionLabel struct {
 
 // ReachLabels is the stored per-post reach representation. Live queries also
 // carry road METRES along every time-optimal path (DistM semantics) so
-// consumers can show road distance; the stored FRL1 form keeps seconds only
+// consumers can show road distance; the stored FRL2 form keeps seconds only
 // (membership needs nothing else) and decoded labels leave the metre maps nil.
 type ReachLabels struct {
 	T       float32
@@ -220,6 +220,11 @@ type ReachEngine struct {
 
 	tables *regionTableCache
 
+	// partFP identifies the partition build the engine is serving: leaf ids
+	// are bisection-order artifacts, so any stored label is only meaningful
+	// against the exact partition it was computed on. FNV-1a over LeafOf.
+	partFP uint64
+
 	// labelCache: recent QueryLabels results keyed by (origin snap node,
 	// whole-minute budget). Labels are immutable once built, so repeated
 	// origins (a member browsing page after page) cost a lookup, not a
@@ -242,7 +247,24 @@ func NewReachEngine(g *Graph, ov *Overlay, part *ReachPartition, rm *RegionMatri
 		BI:         buildBoundaryIndex(rm, part),
 		tables:     newRegionTableCache(512),
 		labelCache: make(map[labelKey]*ReachLabels),
+		partFP:     partitionFingerprint(part),
 	}
+}
+
+// partitionFingerprint hashes the leaf assignment itself (FNV-1a over LeafOf),
+// so two partition files that assign every overlay node the same region agree,
+// and any other pair differ.
+func partitionFingerprint(part *ReachPartition) uint64 {
+	const offset64, prime64 = 0xcbf29ce484222325, 0x100000001b3
+	h := uint64(offset64)
+	for _, l := range part.LeafOf {
+		v := uint32(l)
+		for shift := 0; shift < 32; shift += 8 {
+			h ^= uint64(byte(v >> shift))
+			h *= prime64
+		}
+	}
+	return h
 }
 
 // QueryLabelsCached is QueryLabels behind a small LRU for whole-minute

@@ -182,6 +182,33 @@ customer:
 - **Faster display isochrones** for the catchment and group endpoints, since
   the labeling query is 25-250x the flat search.
 
+## Existing functions now served by the engine
+
+- `/v1/drive-time` (point-to-point) and `/v1/group-proximity` — the call behind
+  the "this post is quicker to get to" proximity notes, whose two bounded
+  full-graph sweeps were a measured ~12 CPU-hours/day standing tax — both
+  answer from two label queries in milliseconds when the engine is live, with
+  the sweeps kept as fallbacks. Engine-vs-sweep agreement is tested.
+- Reach labels are STORED for every new post at initialisation (and
+  backfillable: `ripple:backfill-reach-labels`): the batch fetches
+  `/v1/reach-labels` once at the post's maximum budget and stores the blob in
+  `rippling_reach.reach_labels` plus its reached regions in
+  `rippling_reach_leaves`. Labels never need recomputing as the reach grows —
+  each tick just raises the budget used to evaluate them (`/v1/reach-arrival`
+  accepts a `t` override for exactly this).
+- Region ids are bisection-order artifacts of ONE partition build, so every
+  stored blob embeds the partition's fingerprint and the engine refuses to
+  evaluate a blob from a different build. After a partition rebuild (e.g. a map
+  refresh), stored labels and leaves are re-fetched with
+  `ripple:backfill-reach-labels --all`; until that runs, readers fall back to
+  the stored cells exactly as for a post with no labels yet.
+- Deliberately NOT switched in this PR, because it would make an existing
+  function slower, not faster: the chat reply gate and per-post membership
+  checks stay on the in-process cell-grid probe (microseconds, no network).
+  Making labels the deciding record there needs a local evaluator in apiv2 or
+  acceptance of an HTTP hop per check — that is the labels-truth cutover, and
+  the stored labels and leaves tables above are its ready foundation.
+
 ## Fast "what is near me" for messages, chitchat, anything
 
 Finding nearby things fast is a different problem from pricing travel, and it

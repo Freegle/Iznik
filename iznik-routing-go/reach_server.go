@@ -93,7 +93,7 @@ func handleReachLabels() fiber.Handler {
 		}
 		start := time.Now()
 		lbl := e.QueryLabels(lat, lng, float32(minutes*60))
-		blob := EncodeLabels(lbl)
+		blob := e.EncodeLabels(lbl)
 		full, partial := 0, 0
 		for _, rl := range lbl.Reached {
 			if rl.Full {
@@ -102,10 +102,16 @@ func handleReachLabels() fiber.Handler {
 				partial++
 			}
 		}
+		leaves := make([]int32, 0, len(lbl.Reached))
+		for leaf := range lbl.Reached {
+			leaves = append(leaves, leaf)
+		}
+		sort.Slice(leaves, func(i, j int) bool { return leaves[i] < leaves[j] })
 		return c.JSON(fiber.Map{
 			"labels":  base64.StdEncoding.EncodeToString(blob),
 			"t":       lbl.T,
 			"regions": len(lbl.Reached),
+			"leaves":  leaves,
 			"full":    full,
 			"partial": partial,
 			"bytes":   len(blob),
@@ -116,6 +122,12 @@ func handleReachLabels() fiber.Handler {
 
 type reachArrivalReq struct {
 	Labels string `json:"labels"`
+	// T optionally overrides the budget for the in-reach flag (seconds,
+	// clamped to the blob's own T): labels are computed once at the maximum
+	// budget, and each expansion tick just raises the effective T. A pointer
+	// so an explicit t:0 (nothing is in reach yet) is distinct from omitting
+	// it (use the blob's full budget).
+	T      *float64 `json:"t"`
 	Points []struct {
 		Lat float64 `json:"lat"`
 		Lng float64 `json:"lng"`
@@ -143,6 +155,15 @@ func handleReachArrival() fiber.Handler {
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, fmt.Sprintf("labels: %v", err))
 		}
+		effT := lbl.T
+		if req.T != nil {
+			if *req.T < 0 {
+				return fiber.NewError(fiber.StatusBadRequest, "t must be >= 0")
+			}
+			if float32(*req.T) < effT {
+				effT = float32(*req.T)
+			}
+		}
 		type res struct {
 			Arrival *float32 `json:"arrival"`
 			In      bool     `json:"in"`
@@ -154,7 +175,7 @@ func handleReachArrival() fiber.Handler {
 				out[i] = res{nil, false}
 			} else {
 				a := arr
-				out[i] = res{&a, arr <= lbl.T}
+				out[i] = res{&a, arr <= effT}
 			}
 		}
 		return c.JSON(fiber.Map{"results": out})
@@ -405,5 +426,101 @@ func handleBlurBatch(g *Graph) fiber.Handler {
 			out[i] = res{ID: p.ID, Lat: blat, Lng: blng, Roadm: roadm}
 		}
 		return c.JSON(fiber.Map{"results": out})
+	}
+}
+
+// engineGroupProximity is groupProximity answered from the reach engine when
+// it is live (drive mode): two label queries replace two bounded full-graph
+// sweeps. Returns handled=false to fall through to the sweep (engine off, or
+// a non-drive mode).
+func engineGroupProximity(lat, lng float64, seeds []NodeID, mode Mode, maxSecs float32) (ProxPoint, ProxPoint, bool, bool) {
+	e := reachLive
+	if e == nil || mode != Drive || len(seeds) == 0 {
+		return ProxPoint{}, ProxPoint{}, false, false
+	}
+
+	// P: the group point with the smallest road time from the offer.
+	lbl := e.QueryLabelsCached(lat, lng, maxSecs)
+	pNode := noNode
+	var pCost float32
+	for _, s := range seeds {
+		if c := e.ArrivalAtBaseNode(lbl, s); c <= maxSecs {
+			if pNode == noNode || c < pCost {
+				pNode, pCost = s, c
+			}
+		}
+	}
+	if pNode == noNode {
+		return ProxPoint{}, ProxPoint{}, false, true // offer can't reach the group
+	}
+	closest := ProxPoint{
+		Lat: float64(e.G.Nodes[pNode].Lat), Lng: float64(e.G.Nodes[pNode].Lng),
+		DriveMin: float64(pCost) / 60,
+	}
+
+	// Q: the group point with the largest road time FROM P.
+	lblP := e.QueryLabelsCached(closest.Lat, closest.Lng, maxSecs)
+	qNode := noNode
+	var qCost float32 = -1
+	for _, s := range seeds {
+		if c := e.ArrivalAtBaseNode(lblP, s); c <= maxSecs && c > qCost {
+			qNode, qCost = s, c
+		}
+	}
+	if qNode == noNode {
+		return ProxPoint{}, ProxPoint{}, false, true
+	}
+	furthest := ProxPoint{
+		Lat: float64(e.G.Nodes[qNode].Lat), Lng: float64(e.G.Nodes[qNode].Lng),
+		DriveMin: float64(qCost) / 60,
+	}
+	return closest, furthest, true, true
+}
+
+// handleLeaf answers which partition region(s) a point belongs to: one leaf
+// for a junction, one or two for a mid-lane point (its lane's two ends can
+// sit in different regions across a cut). -1 entries are dropped. Used to
+// tag members/posts so feeds can prefilter road-aware with an IN clause.
+func handleLeaf() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		e := reachLive
+		if e == nil {
+			return fiber.NewError(fiber.StatusServiceUnavailable, "reach engine not configured (REACH_DIR)")
+		}
+		lat := c.QueryFloat("lat")
+		lng := c.QueryFloat("lng")
+		if lat == 0 || lng == 0 || math.IsNaN(lat) || math.IsNaN(lng) {
+			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
+		}
+		v := nearestNodeForMode(e.G, lat, lng, Drive)
+		if v == noNode {
+			return c.JSON(fiber.Map{"leaves": []int32{}})
+		}
+		var leaves []int32
+		add := func(j NodeID) {
+			if j == 0 {
+				return
+			}
+			if oi := e.Ov.Idx[j]; oi != 0 {
+				if l := e.Part.LeafOf[oi]; l >= 0 {
+					for _, x := range leaves {
+						if x == l {
+							return
+						}
+					}
+					leaves = append(leaves, l)
+				}
+			}
+		}
+		if e.Ov.Idx[v] != 0 {
+			add(v)
+		} else {
+			add(e.Ov.ChainEndA[v])
+			add(e.Ov.ChainEndB[v])
+		}
+		if leaves == nil {
+			leaves = []int32{}
+		}
+		return c.JSON(fiber.Map{"leaves": leaves})
 	}
 }

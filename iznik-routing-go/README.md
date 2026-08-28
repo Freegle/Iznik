@@ -38,6 +38,7 @@ All endpoints are available on both ports. On the external port (8196) every `/v
 | `POST /v1/drive-metrics` | Reach engine: road drive minutes AND road miles from one origin to up to 1000 targets in a single call (one labeling query + table lookups). Powers the site's road-distance display via apiv2 `/drivedistance` |
 | `GET /v1/blur?lat=&lng=&metres=` | Road-aware location blur: a deterministic pseudo-random road point whose CONVERGED road distance is within [R/2, 3R/2] metres AND whose crow-flies displacement is at least R/4 — never jumps an unbridged river the way circular blur can, and never sits deceptively close along a hairpin. Engine-independent (works without `REACH_DIR`) |
 | `POST /v1/blur-batch` | The batch face of blur (up to 1000 points, JSON `{metres, points[]}`): apiv2 blurs every member/post display location through this, one call per list response |
+| `GET /v1/leaf?lat=&lng=` | Which partition region(s) a point belongs to (two for a mid-lane point straddling a region cut) — the tagging primitive for road-aware feed prefilters |
 | `GET /v1/posts-for-member?lat=&lng=&date=&max_minutes=` | The posts a member at this location would be shown (`date` defaults to today, `max_minutes` to 30) |
 | `GET /v1/digest-simulator?lat=&lng=&max_minutes=&w_closeness=&w_freshness=&w_budget=&w_anchor=&cap=&group_by_poster=` | Simulate a member's ranked digest with tunable scoring weights and a result cap |
 | `GET /swagger` | Browsable OpenAPI reference (Redoc). Raw spec at `/swagger/swagger.json` |
@@ -45,6 +46,14 @@ All endpoints are available on both ports. On the external port (8196) every `/v
 See [the rippling algorithm reference](../docs/developers/reference/rippling-algorithm.md) for the thinking behind the ripple / digest endpoints.
 
 ---
+
+## Deprecated endpoints
+
+`GET /v1/digest-simulator` and `GET /v1/posts-for-member` have no remaining
+callers (the ModTools digest-simulator front end was removed; posts-for-member
+was never adopted). Both endpoints are kept because old clients may persist,
+but they get no further work and are candidates for removal in a future
+release.
 
 ## Reach engine
 

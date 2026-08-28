@@ -1,6 +1,6 @@
 package main
 
-// Reach engine label wire format ("FRL1"): the stored per-post reach representation
+// Reach engine label wire format ("FRL2"): the stored per-post reach representation
 // that replaces per-advance geometry recomputation. A blob is a few hundred
 // bytes to a few KB (measured 0.6-3.8KB on real posts) and answers membership
 // exactly via ReachEngine.ArrivalFromStored.
@@ -13,7 +13,8 @@ package main
 //
 // Layout, little-endian:
 //
-//	magic  "FRL1"
+//	magic  "FRL2"
+//	partFP     uint64  (fingerprint of the partition the leaf ids refer to)
 //	T          float32
 //	originChain uint32  (base node id of an absorbed origin, 0 if junction)
 //	seedBase   float32
@@ -30,12 +31,16 @@ import (
 	"sort"
 )
 
-const labelsMagic = "FRL1"
+const labelsMagic = "FRL2"
 
-// EncodeLabels serialises a query result to the stored form.
-func EncodeLabels(lbl *ReachLabels) []byte {
+// EncodeLabels serialises a query result to the stored form. The blob embeds
+// the engine's partition fingerprint: leaf ids are assignment-order artifacts
+// of ONE partition build, so labels stored under one partition must never be
+// evaluated against another (DecodeLabels rejects them).
+func (e *ReachEngine) EncodeLabels(lbl *ReachLabels) []byte {
 	out := make([]byte, 0, 512)
 	out = append(out, labelsMagic...)
+	out = le64(out, e.partFP)
 	out = le32(out, math.Float32bits(lbl.T))
 	out = le32(out, uint32(lbl.originChain))
 	out = le32(out, math.Float32bits(lbl.seedBase))
@@ -83,12 +88,16 @@ func EncodeLabels(lbl *ReachLabels) []byte {
 // DecodeLabels parses a stored blob against the engine's current artifacts.
 // The result has no OriginArr; membership goes through the seed path.
 func (e *ReachEngine) DecodeLabels(b []byte) (*ReachLabels, error) {
-	if len(b) < 4+4+4+4+2 || string(b[:4]) != labelsMagic {
+	if len(b) < 4+8+4+4+4+2 || string(b[:4]) != labelsMagic {
 		return nil, fmt.Errorf("bad labels magic")
 	}
 	p := 4
 	rd32 := func() uint32 { v := binary.LittleEndian.Uint32(b[p:]); p += 4; return v }
 	rd16 := func() uint16 { v := binary.LittleEndian.Uint16(b[p:]); p += 2; return v }
+	if fp := binary.LittleEndian.Uint64(b[p:]); fp != e.partFP {
+		return nil, fmt.Errorf("labels were computed against a different partition build (re-run ripple:backfill-reach-labels --all after a partition rebuild)")
+	}
+	p += 8
 	lbl := &ReachLabels{
 		Reached: make(map[int32]*RegionLabel),
 		Seeds:   make(map[uint32]float32),
@@ -138,6 +147,12 @@ func (e *ReachEngine) DecodeLabels(b []byte) (*ReachLabels, error) {
 		lbl.Reached[leaf] = rl
 	}
 	return lbl, nil
+}
+
+func le64(b []byte, v uint64) []byte {
+	var t [8]byte
+	binary.LittleEndian.PutUint64(t[:], v)
+	return append(b, t[:]...)
 }
 
 func le32(b []byte, v uint32) []byte {

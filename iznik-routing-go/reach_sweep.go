@@ -106,7 +106,7 @@ func reachSweepRun(file string, maxSynthetic, fuzz int, engine *ReachEngine) {
 		q0 := time.Now()
 		lbl := engine.QueryLabels(o.Lat, o.Lng, T)
 		qMs := float64(time.Since(q0).Microseconds()) / 1000
-		blob := EncodeLabels(lbl)
+		blob := engine.EncodeLabels(lbl)
 		stored, err := engine.DecodeLabels(blob)
 		if err != nil {
 			log.Fatalf("sweep: decode round trip failed for %d: %v", o.Msgid, err)

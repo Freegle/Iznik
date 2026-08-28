@@ -305,3 +305,49 @@ on master tip — rebase-after is conflict-free.
   save-back correctly warns on the ro mount), /v1/drive-metrics and /v1/blur
   answering, apiv2-live restarted on the new code.
   URL: http://freegle-dev-live.localhost:12165
+
+## Goal 4 (2026-08-28): existing functions moved onto the engine
+
+- H1 ✅ Deprecations: /v1/digest-simulator and /v1/posts-for-member have no
+  remaining callers (ModTools digest-simulator front end removed;
+  posts-for-member never adopted). Kept live because old clients may persist;
+  marked deprecated in the README.
+- H2 ✅ /v1/group-proximity answered from the engine when live (two label
+  queries replace the two bounded sweeps behind the proximity-notes cron, a
+  measured ~12 CPU-hours/day). Sweep kept as fallback; engine-vs-sweep
+  agreement tested (TestGroupProximityEngineMatchesSweep).
+- H3 ✅ /v1/leaf (region tagging primitive, mid-lane points can return two);
+  reach-labels response now carries the reached leaves; /v1/reach-arrival takes
+  a per-tick `t` budget override.
+- H4 ✅ Labels STORED per post: ReachService::storeReachLabels at
+  ExpandService init (best-effort, cells remain the fallback), migration pair
+  (reach_labels MEDIUMBLOB ALGORITHM=INSTANT + rippling_reach_leaves), and
+  ripple:backfill-reach-labels for existing posts. ReachLabelsTest covers
+  store/replace/503/malformed/backfill/--all.
+- H5 infra-only, H6 ❌-by-design (reply gate stays on the in-process µs probe;
+  an HTTP hop per check would make an existing function slower).
+- H7 ✅ Suites: routing go test ok; full Laravel 6007/6007 (first run exposed
+  6 failures: 5 = new-test FK + missing DB facade import in ReachService,
+  fixed; 1 = THIS WORKTREE's iznik DB was never seeded so spatial-knn had 0
+  groups and 503'd /v1/groups/intersecting — seeded via
+  scripts/setup-test-database.sh, restarted spatial-knn, green).
+
+### Adversarial review round 3 (Goal-4 diff, 10 agents): 6 distinct confirmed, 6 fixed
+- MAJOR storeReachLabels wrote blob+leaves as three autocommit statements; a
+  mid-write failure left labels non-null with no leaves, unretryable (backfill
+  keys on labels IS NULL) -> one DB::transaction.
+- MAJOR rippling_reach_leaves had no FK; purge hard-deletes messages ->
+  FOREIGN KEY (msgid) REFERENCES messages ON DELETE CASCADE like its siblings.
+- MAJOR stored labels/leaves are tied to ONE partition build (leaf ids are
+  bisection-order artifacts) with only a range check -> FRL2 format embeds a
+  partition fingerprint (FNV-1a over LeafOf); DecodeLabels rejects a blob from
+  a different build; backfill --all is the operator path after a rebuild;
+  documented in REACH-ENGINE.md.
+- MAJOR backfill whereIn('status',[...,'held',...]) used a value not in the
+  enum and permanently excluded 'done' rows -> status filter dropped (every
+  budgeted row is a candidate), ->get() -> ->cursor() (millions of rows).
+- MEDIUM reachLabelsReady() cached a transient Schema-check error as
+  permanently-not-ready for the process -> only successful checks cached.
+- LOW reach-arrival t:0 was indistinguishable from omitted t -> pointer field;
+  explicit 0 is a real budget, negative is 400. All fixes test-covered;
+  routing suite + filtered Laravel green, full suite re-running.

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -397,5 +398,189 @@ func TestBlurBatchMatchesSingle(t *testing.T) {
 	// (0,0) sentinel passes through untouched.
 	if br.Results[2].Lat != 0 || br.Results[2].Lng != 0 || br.Results[2].Roadm != 0 {
 		t.Fatalf("null island must pass through: %+v", br.Results[2])
+	}
+}
+
+// TestGroupProximityEngineMatchesSweep: the engine path must agree with the
+// flat two-sweep implementation for the same offer + seed set. The flat path
+// prunes to a bounding box, so where they differ the engine must be finding a
+// strictly better (shorter) road — never a worse one.
+func TestGroupProximityEngineMatchesSweep(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	prev := reachLive
+	reachLive = eng
+	defer func() { reachLive = prev }()
+
+	// Synthetic "group": a spread of drive-snappable junctions east of centre.
+	var seeds []NodeID
+	for v := NodeID(1); v <= NodeID(g.NodeCount()) && len(seeds) < 120; v += 211 {
+		if eng.Ov.Idx[v] != 0 && (g.DriveSnappable == nil || g.DriveSnappable[v]) {
+			nd := g.Nodes[v]
+			if nd.Lng > -2.58 && nd.Lat > 51.43 && nd.Lat < 51.49 {
+				seeds = append(seeds, v)
+			}
+		}
+	}
+	if len(seeds) < 25 {
+		t.Fatalf("degenerate seed set: %d", len(seeds))
+	}
+
+	for _, offer := range [][2]float64{{51.4545, -2.5879}, {51.4700, -2.6100}} {
+		maxSecs := float32(1800)
+		ec, ef, eok, handled := engineGroupProximity(offer[0], offer[1], seeds, Drive, maxSecs)
+		if !handled {
+			t.Fatal("engine path should handle drive mode")
+		}
+		fc, ff, fok := groupProximity(g, offer[0], offer[1], seeds, Drive, maxSecs)
+		if eok != fok {
+			t.Fatalf("reachable disagreement: engine %v sweep %v", eok, fok)
+		}
+		if !eok {
+			continue
+		}
+		if math.Abs(ec.DriveMin-fc.DriveMin) > 0.02 {
+			if ec.DriveMin > fc.DriveMin {
+				t.Fatalf("engine P %.3fmin worse than sweep %.3fmin", ec.DriveMin, fc.DriveMin)
+			}
+			t.Logf("engine found better P: %.3f vs %.3f (sweep bbox clipped)", ec.DriveMin, fc.DriveMin)
+		}
+		// Q is defined relative to P; only compare when P agreed.
+		if ec.Lat == fc.Lat && ec.Lng == fc.Lng {
+			if math.Abs(ef.DriveMin-ff.DriveMin) > 0.02 && ef.DriveMin < ff.DriveMin {
+				t.Fatalf("engine Q %.3fmin shorter than sweep %.3fmin: engine missed a farther point", ef.DriveMin, ff.DriveMin)
+			}
+		}
+	}
+}
+
+func TestLeafEndpointAndBudgetOverride(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	g, eng := buildBristolEngine(t)
+	prev := reachLive
+	reachLive = eng
+	defer func() { reachLive = prev }()
+	app := newApp(g, "", false)
+
+	// Leaf lookup for a junction point.
+	req := httptest.NewRequest("GET", "/v1/leaf?lat=51.4545&lng=-2.5879", nil)
+	resp, err := app.Test(req, 30000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("leaf: err=%v status=%v", err, resp.StatusCode)
+	}
+	var lr struct {
+		Leaves []int32 `json:"leaves"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(lr.Leaves) == 0 {
+		t.Fatal("no leaves for a road point")
+	}
+
+	// Labels carry the reached leaf list, and the member's leaf must be in it
+	// when the member is in reach (the prefilter-superset property).
+	lreq := httptest.NewRequest("GET", "/v1/reach-labels?lat=51.4545&lng=-2.5879&minutes=12", nil)
+	lresp, _ := app.Test(lreq, 30000)
+	var lab struct {
+		Labels string  `json:"labels"`
+		Leaves []int32 `json:"leaves"`
+		T      float32 `json:"t"`
+	}
+	if err := json.NewDecoder(lresp.Body).Decode(&lab); err != nil {
+		t.Fatalf("decode labels: %v", err)
+	}
+	if len(lab.Leaves) == 0 {
+		t.Fatal("labels response has no leaves")
+	}
+	found := false
+	for _, l := range lab.Leaves {
+		for _, m := range lr.Leaves {
+			if l == m {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("origin's own leaf missing from reached leaves")
+	}
+
+	// Budget override: a nearby point in reach at full T, out at t=60s.
+	body := fmt.Sprintf(`{"labels":%q,"t":60,"points":[{"lat":51.4700,"lng":-2.6000}]}`, lab.Labels)
+	areq := httptest.NewRequest("POST", "/v1/reach-arrival", strings.NewReader(body))
+	areq.Header.Set("Content-Type", "application/json")
+	aresp, _ := app.Test(areq, 30000)
+	var ar struct {
+		Results []struct {
+			Arrival *float32 `json:"arrival"`
+			In      bool     `json:"in"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(aresp.Body).Decode(&ar); err != nil {
+		t.Fatalf("decode arrival: %v", err)
+	}
+	if len(ar.Results) != 1 || ar.Results[0].Arrival == nil {
+		t.Fatalf("bad arrival response: %+v", ar)
+	}
+	if ar.Results[0].In {
+		t.Fatalf("t=60s override should exclude a %.0fs arrival", *ar.Results[0].Arrival)
+	}
+
+	// t:0 is a real budget (nothing in reach), NOT the same as omitting t.
+	for _, c := range []struct {
+		body   string
+		wantIn bool
+	}{
+		{fmt.Sprintf(`{"labels":%q,"t":0,"points":[{"lat":51.4700,"lng":-2.6000}]}`, lab.Labels), false},
+		{fmt.Sprintf(`{"labels":%q,"points":[{"lat":51.4700,"lng":-2.6000}]}`, lab.Labels), true},
+	} {
+		zreq := httptest.NewRequest("POST", "/v1/reach-arrival", strings.NewReader(c.body))
+		zreq.Header.Set("Content-Type", "application/json")
+		zresp, _ := app.Test(zreq, 30000)
+		var zr struct {
+			Results []struct {
+				In bool `json:"in"`
+			} `json:"results"`
+		}
+		if err := json.NewDecoder(zresp.Body).Decode(&zr); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(zr.Results) != 1 || zr.Results[0].In != c.wantIn {
+			t.Fatalf("body %s: in=%v want %v", c.body[len(c.body)-60:], zr.Results[0].In, c.wantIn)
+		}
+	}
+
+	// A negative t is rejected.
+	nreq := httptest.NewRequest("POST", "/v1/reach-arrival",
+		strings.NewReader(fmt.Sprintf(`{"labels":%q,"t":-1,"points":[{"lat":51.47,"lng":-2.6}]}`, lab.Labels)))
+	nreq.Header.Set("Content-Type", "application/json")
+	nresp, _ := app.Test(nreq, 30000)
+	if nresp.StatusCode != 400 {
+		t.Fatalf("negative t: expected 400, got %d", nresp.StatusCode)
+	}
+}
+
+// Stored labels are only meaningful against the partition they were computed
+// on: leaf ids are bisection-order artifacts. A blob whose embedded partition
+// fingerprint differs from the live engine's must be rejected, not evaluated.
+func TestLabelsRejectDifferentPartitionBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	_, eng := buildBristolEngine(t)
+	lbl := eng.QueryLabels(51.4545, -2.5879, 720)
+	blob := eng.EncodeLabels(lbl)
+	if _, err := eng.DecodeLabels(blob); err != nil {
+		t.Fatalf("same-partition round trip failed: %v", err)
+	}
+	// Flip one fingerprint byte: decode must fail with the partition message.
+	bad := append([]byte(nil), blob...)
+	bad[4] ^= 0xff
+	if _, err := eng.DecodeLabels(bad); err == nil {
+		t.Fatal("decode accepted a blob from a different partition build")
 	}
 }
