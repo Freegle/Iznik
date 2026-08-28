@@ -1,4 +1,4 @@
-Community News for {{ $areaName }}
+Community News near you
 ==============================
 
 {{ trim($intro) }}
