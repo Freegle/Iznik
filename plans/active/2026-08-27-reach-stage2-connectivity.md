@@ -351,3 +351,37 @@ on master tip — rebase-after is conflict-free.
 - LOW reach-arrival t:0 was indistinguishable from omitted t -> pointer field;
   explicit 0 is a real budget, negative is 400. All fixes test-covered;
   routing suite + filtered Laravel green, full suite re-running.
+
+### Adversarial review round 4 (distance round, 17 agents): 13 confirmed, 13 fixed
+- HIGH count endpoints (nearbyCount/myGroupsCount) looped per-candidate
+  RoadBlur with no prewarm -> prewarmCandidateBlur (one batched call) in both
+  loops + the mygroups no-location arm.
+- HIGH chitchat slider claimed "Anywhere" for every legacy member while their
+  feed stayed filtered to the old radius -> adoptLegacyMetres: bisects the
+  stored metres onto the minutes scale via the slider's own routing lookup,
+  persists both keys once, leaves the stored radius untouched ('nearby' maps
+  to the narrow stop, display-only).
+- MED search (vector + hybrid keyword supplement) still circular-blurred ->
+  roadblur + prewarm; every surface now exposes the same blurred point.
+- MED addSummaryRoadMetrics sent unbounded targets but routing caps requests
+  at 1000 (a 5k mygroups feed 400'd and lost ALL metrics) -> FetchDriveMetrics
+  chunks at 1000 (tested 2500 -> 1000/1000/500).
+- MED two sequential 3s-timeout routing round trips on hot paths with no
+  breaker -> process-wide routing circuit breaker (roadblur owns it, driving
+  consults it; 30s cooldown; a down routing server costs hot requests zero
+  added latency). Batch side: ReachService::driveMetrics gets a 5-minute
+  static breaker + 3s timeout so a digest run cannot stall per email.
+- MED plain-text digest rendered "about 3 miles by road away," -> conditional
+  suffix in the text template.
+- MED unrouted dead GetMessages (dead on master too; my addRoadMetrics patch
+  in it never ran) -> deleted; the routed handler (GetMessagesWithHistory)
+  carries the metrics.
+- MED secondary map markers ran the minutes check before the UNLIMITED
+  sentinel -> sentinel first, matching the primary filter.
+- MED summary roadmiles could survive next to record coords and sort by a
+  number the badge does not show -> the record's answer replaces the
+  summary's even when null.
+- LOW-MED all-or-nothing client fallback was per-invocation across API
+  chunks -> per-response.
+- Rejected (1): SSR roadAnswersVersion sharing - verifier showed the
+  increment is harmless cross-request (monotonic counter, no user data).

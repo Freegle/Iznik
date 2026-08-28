@@ -743,6 +743,7 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			// No known location: distance/score can't be measured, so keep the prior behaviour
 			// (blurred coords, Distance/Score left at zero). The distance slider is hidden
 			// client-side without a location, so nothing here depends on Distance.
+			prewarmCandidateBlur(candidates)
 			for _, cand := range candidates {
 				blurLat, blurLng := roadblur.RoadBlur(cand.Lat, cand.Lng, utils.BLUR_USER)
 				res = append(res, message.MessageSummary{
@@ -859,6 +860,7 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 		Scan(&candidates)
 
 	var count uint64 = 0
+	prewarmCandidateBlur(candidates)
 	for _, cand := range candidates {
 		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
 		if distanceMiles <= maxDistanceMiles {
@@ -1018,6 +1020,7 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	}
 
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
+	prewarmCandidateBlur(cands)
 	for _, cand := range cands {
 		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
 		if distanceMiles <= maxDistanceMiles {
@@ -1026,6 +1029,17 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	}
 
 	return count
+}
+
+// prewarmCandidateBlur resolves every candidate's road-aware blur in one
+// batched routing call, so per-row blurredDistanceMiles calls are cache hits
+// instead of one network round trip each.
+func prewarmCandidateBlur(cands []reachCandidateRow) {
+	coords := make([][2]float64, 0, len(cands))
+	for _, c := range cands {
+		coords = append(coords, [2]float64{float64(c.Lat), float64(c.Lng)})
+	}
+	roadblur.RoadBlurPrewarm(coords, utils.BLUR_USER)
 }
 
 // addSummaryRoadMetrics fills Roadmins/Roadmiles on feed summaries with ONE

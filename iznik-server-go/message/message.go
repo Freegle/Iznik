@@ -429,39 +429,6 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 
 	return latest
 }
-
-func GetMessages(c *fiber.Ctx) error {
-	ids := strings.Split(c.Params("ids"), ",")
-	myid := user.WhoAmI(c)
-	isPartner := false
-	if key := c.Query("partner"); key != "" {
-		if _, _, _, err := user.ValidatePartnerKey(database.DBConn, key); err == nil {
-			isPartner = true
-		}
-	}
-
-	if len(ids) < 20 {
-		messages := GetMessagesByIds(myid, ids, isPartner)
-		addRoadMetrics(myid, messages)
-
-		if len(ids) == 1 {
-			if len(messages) == 1 {
-				return c.JSON(messages[0])
-			} else {
-				return fiber.NewError(fiber.StatusNotFound, "Message not found")
-			}
-		} else {
-			return c.JSON(messages)
-		}
-	} else {
-		return fiber.NewError(fiber.StatusBadRequest, "Steady on")
-	}
-}
-
-// rippleEnabled reports whether the rippling-out feature is switched on. Mirrors the Laravel
-// config('freegle.ripple.enabled') / RIPPLE_ENABLED env so the whole feature ships dark and is
-// flipped on with one env var (default off). While off, the reach/reply-eligibility path below is
-// skipped entirely, so the API is byte-for-byte identical to pre-rippling.
 func rippleEnabled() bool {
 	v := os.Getenv("RIPPLE_ENABLED")
 	return v == "true" || v == "1"

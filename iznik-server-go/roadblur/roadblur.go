@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/freegle/iznik-server-go/utils"
@@ -39,6 +40,26 @@ func RoutingURL() string {
 
 // Short timeout: display decoration, never worth stalling a response for.
 var routingClient = &http.Client{Timeout: 3 * time.Second}
+
+// Circuit breaker for the routing server, shared by every road-metrics
+// caller in this process (blur here, drive metrics in the driving package).
+// After a failed call, further routing requests are skipped for a cooldown
+// and everything falls back to crow-flies/circular immediately - a down
+// routing server must cost each hot request ZERO added latency, not one
+// 3-second timeout per call site.
+var routingDownUntil atomic.Int64
+
+const routingCooldown = 30 * time.Second
+
+// RoutingHealthy reports whether routing calls should be attempted.
+func RoutingHealthy() bool {
+	return time.Now().UnixNano() >= routingDownUntil.Load()
+}
+
+// MarkRoutingFailure starts the cooldown after a failed routing call.
+func MarkRoutingFailure() {
+	routingDownUntil.Store(time.Now().Add(routingCooldown).UnixNano())
+}
 
 const blurCacheCap = 200000
 
@@ -90,12 +111,17 @@ func fetchBlurBatch(routingURL string, dist float64, pts []blurPoint) [][2]float
 	if err != nil {
 		return nil
 	}
+	if !RoutingHealthy() {
+		return nil
+	}
 	resp, err := routingClient.Post(routingURL+"/v1/blur-batch", "application/json", bytes.NewReader(body))
 	if err != nil {
+		MarkRoutingFailure()
 		return nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		MarkRoutingFailure()
 		return nil
 	}
 	var parsed struct {
@@ -200,4 +226,11 @@ func resetBlurForTest() {
 	defer blurMu.Unlock()
 	blurCache = map[string][2]float64{}
 	blurOrder = nil
+	routingDownUntil.Store(0)
+}
+
+// ResetRoutingBreaker clears the routing-failure cooldown. Tests only: a
+// deliberately-failed call in one test must not open the breaker for the next.
+func ResetRoutingBreaker() {
+	routingDownUntil.Store(0)
 }

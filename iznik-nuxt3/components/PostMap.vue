@@ -531,6 +531,10 @@ const messageIds = computed(() => {
 const secondaryMessagesForMap = computed(() => {
   const minuteCheck = browseSliderMinuteCheck()
   const withinDistance = (m) => {
+    // Unlimited first: with no distance limit chosen, nothing may be
+    // filtered, whatever the road-minutes budget would say (the primary
+    // list's filterMessagesByDistance short-circuits the same way).
+    if (props.selectedMaxDistance === BROWSE_DISTANCE_UNLIMITED) return true
     const road = minuteCheck ? minuteCheck(m) : null
     if (road !== null) return road
     return isWithinDistance(m.distance, props.selectedMaxDistance)

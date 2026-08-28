@@ -40,9 +40,29 @@ type DriveResult struct {
 }
 
 // FetchDriveMetrics asks the routing server for road time/distance from one
-// origin to the targets. Any failure returns nil (fall back to crow-flies).
+// origin to the targets. Any failure returns nil for that chunk (fall back to
+// crow-flies). Chunked at the routing server's 1000-target request cap - a
+// feed can be far bigger (a heavy-membership mygroups view is thousands of
+// posts), and an uncapped request would 400 and lose road metrics for ALL of
+// them. Skips straight to nil while the shared routing circuit breaker is
+// open, so a down routing server costs no added latency here.
 func FetchDriveMetrics(routingURL string, lat, lng float64, targets []Target) []DriveResult {
-	if len(targets) == 0 {
+	const chunkCap = 1000
+	var out []DriveResult
+	for start := 0; start < len(targets); start += chunkCap {
+		end := start + chunkCap
+		if end > len(targets) {
+			end = len(targets)
+		}
+		if res := fetchDriveMetricsChunk(routingURL, lat, lng, targets[start:end]); res != nil {
+			out = append(out, res...)
+		}
+	}
+	return out
+}
+
+func fetchDriveMetricsChunk(routingURL string, lat, lng float64, targets []Target) []DriveResult {
+	if len(targets) == 0 || !roadblur.RoutingHealthy() {
 		return nil
 	}
 	body, err := json.Marshal(fiber.Map{
@@ -56,10 +76,12 @@ func FetchDriveMetrics(routingURL string, lat, lng float64, targets []Target) []
 	}
 	resp, err := routingClient.Post(routingURL+"/v1/drive-metrics", "application/json", bytes.NewReader(body))
 	if err != nil {
+		roadblur.MarkRoutingFailure()
 		return nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		roadblur.MarkRoutingFailure()
 		return nil
 	}
 	var parsed struct {

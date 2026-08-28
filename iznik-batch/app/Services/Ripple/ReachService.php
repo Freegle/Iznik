@@ -645,9 +645,20 @@ class ReachService
      * @param  array<int|string, array{0: float, 1: float}>  $targets
      * @return array<int|string, float>
      */
+    /** After a failed drive-metrics call, skip further ones until this time -
+     *  a digest run sends thousands of emails, and without a breaker a down
+     *  routing server would cost the full HTTP timeout on every one. */
+    private static float $driveMetricsDownUntil = 0.0;
+
+    /** Tests only: a tripped breaker must not leak into later tests. */
+    public static function resetDriveMetricsBreaker(): void
+    {
+        self::$driveMetricsDownUntil = 0.0;
+    }
+
     public function driveMetrics(float $lat, float $lng, array $targets): array
     {
-        if ($targets === []) {
+        if ($targets === [] || microtime(true) < self::$driveMetricsDownUntil) {
             return [];
         }
         $body = [];
@@ -659,17 +670,19 @@ class ReachService
             $i++;
         }
         try {
-            $response = Http::timeout(5)->post("{$this->url}/v1/drive-metrics", [
+            $response = Http::timeout(3)->post("{$this->url}/v1/drive-metrics", [
                 'lat' => $lat,
                 'lng' => $lng,
                 'targets' => $body,
             ]);
         } catch (\Throwable $e) {
+            self::$driveMetricsDownUntil = microtime(true) + 300;
             Log::warning("ripple: drive-metrics fetch failed: {$e->getMessage()}");
 
             return [];
         }
         if (!$response->successful()) {
+            self::$driveMetricsDownUntil = microtime(true) + 300;
             if (!in_array($response->status(), [503, 404], true)) {
                 Log::warning("ripple: drive-metrics HTTP {$response->status()}");
             }

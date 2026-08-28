@@ -85,16 +85,27 @@ func TestRoadBlurFallsBackToCircular(t *testing.T) {
 	}
 	srv.Close()
 
-	// Dead server: same circular fallback, and the failure is not cached (a
-	// later working server would be used — simulated by a fresh stub).
+	// Dead server: same circular fallback.
 	la, ln = RoadBlur(51.45, -2.58, 400)
 	if la != wantLat || ln != wantLng {
 		t.Fatalf("dead-server fallback should equal utils.Blur")
 	}
+
+	// The failure opened the circuit breaker: within the cooldown, even a
+	// now-working server is NOT retried - a down routing server must cost
+	// hot requests zero added latency, not one timeout per call.
 	calls := 0
 	srv2 := stubBlurServer(t, &calls)
 	defer srv2.Close()
 	os.Setenv("ROUTING_EVAL_URL", srv2.URL)
+	la, ln = RoadBlur(51.45, -2.58, 400)
+	if calls != 0 || la != wantLat || ln != wantLng {
+		t.Fatalf("breaker open: expected circular fallback with no call, calls=%d", calls)
+	}
+
+	// After the cooldown (reset here), the working server is used again and
+	// nothing about the failure was cached.
+	ResetRoutingBreaker()
 	la, ln = RoadBlur(51.45, -2.58, 400)
 	if calls != 1 || ln != -2.58+0.001 {
 		t.Fatalf("recovery should retry road-aware: calls=%d point %f,%f", calls, la, ln)

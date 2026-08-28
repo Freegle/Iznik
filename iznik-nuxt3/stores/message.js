@@ -193,6 +193,8 @@ export const useMessageStore = defineStore('message', {
 
         // Process each chunk
         const fetched = []
+        const anyRoadChunks = []
+        const bareChunks = []
         for (const chunk of chunks) {
           this.fetchingCount++
 
@@ -219,6 +221,14 @@ export const useMessageStore = defineStore('message', {
                 }
               })
               fetched.push(...msgs)
+              // Per API response, not per invocation: one chunk's routing
+              // call can fail server-side while another's succeeds, and the
+              // failed chunk's records still deserve the client fallback.
+              if (msgs.some((m) => m.roadmins != null)) {
+                anyRoadChunks.push(msgs)
+              } else {
+                bareChunks.push(msgs)
+              }
             } else if (typeof msgs === 'object') {
               this.list[msgs.id] = msgs
               if (this.list[msgs.id]) {
@@ -249,17 +259,17 @@ export const useMessageStore = defineStore('message', {
         // feed's locked sort) that new road answers exist, and only
         // client-fetch for records an older server left bare - normally
         // none, so a page load makes NO /drivedistance calls at all.
-        const anyRoad = fetched.some((m) => m.roadmins != null)
-        if (anyRoad) {
+        if (anyRoadChunks.length) {
           roadAnswersVersion.value++
         }
-        // All-or-nothing fallback: if ANY record carries road metrics the
-        // server-side routing ran, and the bare ones are posts the engine
-        // genuinely cannot answer - asking again from the client just
-        // repeats the null. Only when NO record has metrics (an older
-        // server) is the client-side batched lookup worth making.
-        if (!anyRoad) {
-          prewarmRoadDistances(fetched)
+        // All-or-nothing fallback PER RESPONSE: if any record in a response
+        // carries road metrics the server-side routing ran for it, and its
+        // bare records are posts the engine genuinely cannot answer - asking
+        // again from the client just repeats the null. A response with NO
+        // metrics (older server, or its routing call failed) gets the
+        // client-side batched lookup instead.
+        for (const chunkMsgs of bareChunks) {
+          prewarmRoadDistances(chunkMsgs)
         }
 
         // Batch-fetch the groups these messages belong to in one request, so the per-post

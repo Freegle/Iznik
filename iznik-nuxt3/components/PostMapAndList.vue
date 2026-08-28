@@ -448,9 +448,11 @@ function sortMessages(messages) {
       out.lat = full.lat
       out.lng = full.lng
       out.roadCoords = true
-      if (full.roadmiles != null) {
-        out.roadmiles = full.roadmiles
-      }
+      // The record's answer REPLACES the summary's, even when the record has
+      // none (roadmiles becomes undefined): the badge renders from the
+      // record, so a surviving summary value would sort by a number the card
+      // does not show.
+      out.roadmiles = full.roadmiles ?? undefined
     }
     return out
   })

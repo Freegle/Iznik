@@ -51,6 +51,10 @@ abstract class TestCase extends BaseTestCase
 
         parent::setUp();
 
+        // A tripped drive-metrics circuit breaker (static, process-wide) must
+        // not leak from one test into the next.
+        \App\Services\Ripple\ReachService::resetDriveMetricsBreaker();
+
         // MailSuppressionService is a singleton that caches the active
         // suppression set in-process for a minute, which is right in a batch
         // job over tens of thousands of members and wrong here: a test that
