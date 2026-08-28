@@ -1818,6 +1818,29 @@ func handleRatingReviewed(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRe
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// linkDonationsToUser attaches donations made under this payer email that were
+// never matched to an account (userid IS NULL) to the given user. V1 did this on
+// every addEmail (User::assignUserToToDonation), so a payer address added after
+// the donation — e.g. by support once a Gift Aid declaration reveals it — picks
+// up the donation history immediately rather than waiting for the weekly
+// donations:correct-userids reconciliation in batch. Exact Payer match only,
+// like V1; the weekly job handles canonical-form matches. SELECT first and
+// update by primary key so a no-op add sends nothing for the cluster to
+// replicate.
+func linkDonationsToUser(db *gorm.DB, email string, userid uint64) {
+	email = strings.TrimSpace(email)
+	if email == "" || userid == 0 {
+		return
+	}
+
+	var ids []uint64
+	db.Table("users_donations").Where("Payer = ? AND userid IS NULL", email).Pluck("id", &ids)
+
+	for _, id := range ids {
+		db.Table("users_donations").Where("id = ? AND userid IS NULL", id).Update("userid", userid)
+	}
+}
+
 func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest) error {
 	if req.Email == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email is required")
@@ -1861,6 +1884,7 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 				db.Table("users_emails").Where("id = ?", existingID).Update("preferred", primaryVal)
 				db.Table("users_emails").Where("userid = ? AND id != ?", targetID, existingID).Update("preferred", gorm.Expr("0"))
 			}
+			linkDonationsToUser(db, email, targetID)
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": existingID})
 		}
 
@@ -1889,6 +1913,7 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 			db.Table("users_emails").Where("userid = ? AND id != ?", targetID, existingID).Update("preferred", gorm.Expr("0"))
 		}
 
+		linkDonationsToUser(db, email, targetID)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": existingID})
 	}
 
@@ -1920,6 +1945,7 @@ func handleAddEmail(c *fiber.Ctx, db *gorm.DB, myid uint64, req UserPostRequest)
 		db.Table("users_emails").Where("userid = ? AND email != ?", targetID, email).Update("preferred", gorm.Expr("0"))
 	}
 
+	linkDonationsToUser(db, email, targetID)
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "emailid": emailID})
 }
 
