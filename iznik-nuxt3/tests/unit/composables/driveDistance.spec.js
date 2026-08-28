@@ -86,6 +86,23 @@ describe('useDriveDistance', () => {
     expect(a.value).toEqual({ mins: 5, miles: 1.5 })
   })
 
+  it('bumps roadAnswersVersion once per answered batch (locked-sort resort signal)', async () => {
+    const { roadDistance, roadAnswersVersion } = await load()
+    const v0 = roadAnswersVersion.value
+    mockDistances.mockResolvedValue({
+      results: [{ id: 0, mins: 5, miles: 1.5 }],
+    })
+    roadDistance(51.47, -2.6)
+    await microtasks()
+    expect(roadAnswersVersion.value).toBe(v0 + 1)
+
+    // A batch with NO usable answers must not bump (no reorder to do).
+    mockDistances.mockResolvedValue({ results: [{ id: 0, mins: null }] })
+    roadDistance(51.48, -2.61)
+    await microtasks()
+    expect(roadAnswersVersion.value).toBe(v0 + 1)
+  })
+
   it('separate render passes make separate batched calls, cache hits none', async () => {
     const { roadDistance } = await load()
     mockDistances.mockResolvedValue({

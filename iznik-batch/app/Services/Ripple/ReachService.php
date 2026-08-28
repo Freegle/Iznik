@@ -634,6 +634,58 @@ class ReachService
         return true;
     }
 
+    /**
+     * Road drive miles from one origin to a set of points, via the routing
+     * server's reach engine (POST /v1/drive-metrics). $targets is
+     * [id => [lat, lng]]; returns [id => miles] for the points the engine
+     * answered. Empty array on any failure (503 = engine not deployed, quiet):
+     * callers fall back to crow-flies. Used by the digest and matched-posts
+     * emails so the distances members read match the road miles the site shows.
+     *
+     * @param  array<int|string, array{0: float, 1: float}>  $targets
+     * @return array<int|string, float>
+     */
+    public function driveMetrics(float $lat, float $lng, array $targets): array
+    {
+        if ($targets === []) {
+            return [];
+        }
+        $body = [];
+        $keys = [];
+        $i = 0;
+        foreach ($targets as $key => $t) {
+            $body[] = ['id' => $i, 'lat' => (float) $t[0], 'lng' => (float) $t[1]];
+            $keys[$i] = $key;
+            $i++;
+        }
+        try {
+            $response = Http::timeout(5)->post("{$this->url}/v1/drive-metrics", [
+                'lat' => $lat,
+                'lng' => $lng,
+                'targets' => $body,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: drive-metrics fetch failed: {$e->getMessage()}");
+
+            return [];
+        }
+        if (!$response->successful()) {
+            if (!in_array($response->status(), [503, 404], true)) {
+                Log::warning("ripple: drive-metrics HTTP {$response->status()}");
+            }
+
+            return [];
+        }
+        $out = [];
+        foreach ($response->json('results') ?? [] as $r) {
+            if (isset($r['id'], $keys[$r['id']]) && isset($r['miles']) && $r['miles'] !== null) {
+                $out[$keys[$r['id']]] = (float) $r['miles'];
+            }
+        }
+
+        return $out;
+    }
+
     /** Both label stores exist (deploy can precede the schema change). */
     private static ?bool $reachLabelsReady = null;
 

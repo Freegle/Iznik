@@ -70,6 +70,25 @@ describe('sortBrowseMessages', () => {
   })
 
   describe('Nearby (Closest) sort', () => {
+    it('orders by ROAD miles when the accessor answers, crow per item otherwise', () => {
+      // Badges show road miles when the engine answered, so Closest must order by
+      // the same number: 'roadNear' (10 crow but 4 by road) sorts before
+      // 'roadFar' (9 crow but 9.5 by road). 'unknown' has no road answer yet and
+      // keeps its crow position.
+      const msgs = [
+        { id: 'roadFar', distance: 9, arrival: '2024-01-01T00:00:00Z' },
+        { id: 'roadNear', distance: 10, arrival: '2024-01-01T00:00:00Z' },
+        { id: 'unknown', distance: 6, arrival: '2024-01-01T00:00:00Z' },
+      ]
+      const road = { roadFar: 9.5, roadNear: 4 }
+      const ids = sortBrowseMessages(
+        msgs,
+        'Nearby',
+        (m) => road[m.id] ?? null
+      ).map((m) => m.id)
+      expect(ids).toEqual(['roadNear', 'unknown', 'roadFar'])
+    })
+
     it('orders nearest-first by the server distance', () => {
       const msgs = [
         { id: 'far', distance: 12, arrival: '2024-01-01T00:00:00Z' },

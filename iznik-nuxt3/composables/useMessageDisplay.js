@@ -172,8 +172,14 @@ export function useMessageDisplay(messageId) {
   })
 
   // Road drive distance from the reach engine; null until (and unless) the
-  // engine answers, in which case it takes precedence over crow-flies.
+  // engine answers, in which case it takes precedence over crow-flies. The
+  // message fetch ships roadmins/roadmiles computed server-side in the same
+  // batched call that blurred the coordinates - use those first and only fall
+  // back to the client-side batched lookup for older server responses.
   const roadDist = computed(() => {
+    if (message.value?.roadmins != null) {
+      return { mins: message.value.roadmins, miles: message.value.roadmiles }
+    }
     if (!me.value?.lat || !message.value?.lat) {
       return null
     }

@@ -128,6 +128,7 @@ import { useReachOverlay } from '~/composables/useReachOverlay'
 import {
   isWithinDistance,
   filterMessagesByDistance,
+  browseSliderMinuteCheck,
 } from '~/composables/useDistance'
 import { distinctGroupIds } from '~/composables/useMessageDedup'
 import { BROWSE_DISTANCE_UNLIMITED, ISOCHRONE_COLOR } from '~/constants'
@@ -400,7 +401,11 @@ const groupsInBounds = computed(() => {
 // what the map markers and the coverage hull are drawn from, so the map tracks
 // the slider the same way the list does.
 const distanceFilteredMessages = computed(() => {
-  return filterMessagesByDistance(messageList.value, props.selectedMaxDistance)
+  return filterMessagesByDistance(
+    messageList.value,
+    props.selectedMaxDistance,
+    browseSliderMinuteCheck()
+  )
 })
 
 const messagesForMap = computed(() => {
@@ -524,8 +529,12 @@ const messageIds = computed(() => {
 })
 
 const secondaryMessagesForMap = computed(() => {
-  const withinDistance = (m) =>
-    isWithinDistance(m.distance, props.selectedMaxDistance)
+  const minuteCheck = browseSliderMinuteCheck()
+  const withinDistance = (m) => {
+    const road = minuteCheck ? minuteCheck(m) : null
+    if (road !== null) return road
+    return isWithinDistance(m.distance, props.selectedMaxDistance)
+  }
 
   if (secondaryMessageList.value?.length > 200) {
     // So many posts that the precise numbers no longer matter that much.  So return all the ones we have fetched

@@ -50,7 +50,7 @@ export function useReachDistance(
   onPersisted,
   { withPolygon = false, axis = 'browse' } = {}
 ) {
-  const { minutesKey, milesKey, bandCapped } = DISTANCE_AXES[axis]
+  const { minutesKey, milesKey, metresKey, bandCapped } = DISTANCE_AXES[axis]
   const authStore = useAuthStore()
   const { me } = useMe()
   const runtimeConfig = useRuntimeConfig()
@@ -219,6 +219,7 @@ export function useReachDistance(
     if (atTop && maxMinutes.value >= BROWSE_MINUTES_MAX) {
       settings[minutesKey] = minutes
       settings[milesKey] = BROWSE_DISTANCE_UNLIMITED
+      if (metresKey) settings[metresKey] = 0 // the axis's API form of "anywhere"
       sliderValue.value = minutes
       await authStore.saveAndGet({ settings })
       if (onPersisted) onPersisted(BROWSE_DISTANCE_UNLIMITED)
@@ -234,6 +235,7 @@ export function useReachDistance(
     if (atTop) sliderValue.value = minutes
     if (radius !== null) {
       settings[milesKey] = radius
+      if (metresKey) settings[metresKey] = Math.round(radius * 1609.344)
     } else {
       // The derivation failed (no known location, or the routing call errored).
       // The old cached radius belongs to a DIFFERENT slider position - keeping
@@ -243,6 +245,7 @@ export function useReachDistance(
       // successful slider change - or the browse:backfill-max-distance batch
       // command - restores a derived cap.
       settings[milesKey] = BROWSE_DISTANCE_UNLIMITED
+      if (metresKey) settings[metresKey] = 0
     }
     await authStore.saveAndGet({ settings })
     if (onPersisted)

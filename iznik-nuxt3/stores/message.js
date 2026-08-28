@@ -7,7 +7,10 @@ import { useUserStore } from '~/stores/user'
 import { useNearbyStore } from '~/stores/nearby'
 import { useGroupStore } from '~/stores/group'
 import { useMiscStore } from '~/stores/misc'
-import { prewarmRoadDistances } from '~/composables/useDriveDistance'
+import {
+  prewarmRoadDistances,
+  roadAnswersVersion,
+} from '~/composables/useDriveDistance'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
@@ -189,6 +192,7 @@ export const useMessageStore = defineStore('message', {
         }
 
         // Process each chunk
+        const fetched = []
         for (const chunk of chunks) {
           this.fetchingCount++
 
@@ -214,10 +218,7 @@ export const useMessageStore = defineStore('message', {
                   this.list[msg.id].addedToCache = Math.round(Date.now() / 1000)
                 }
               })
-              // One road-distance call for the whole page, so the cards
-              // rendering later (one by one as they scroll in) hit cache
-              // instead of each sending a one-target request.
-              prewarmRoadDistances(msgs)
+              fetched.push(...msgs)
             } else if (typeof msgs === 'object') {
               this.list[msgs.id] = msgs
               if (this.list[msgs.id]) {
@@ -240,6 +241,25 @@ export const useMessageStore = defineStore('message', {
               this.fetching[id] = null
             })
           }
+        }
+
+        // Road distances: the server ships roadmins/roadmiles with each
+        // message (computed in the same batched call that blurred the
+        // coords). Signal consumers that snapshot an order (the browse
+        // feed's locked sort) that new road answers exist, and only
+        // client-fetch for records an older server left bare - normally
+        // none, so a page load makes NO /drivedistance calls at all.
+        const anyRoad = fetched.some((m) => m.roadmins != null)
+        if (anyRoad) {
+          roadAnswersVersion.value++
+        }
+        // All-or-nothing fallback: if ANY record carries road metrics the
+        // server-side routing ran, and the bare ones are posts the engine
+        // genuinely cannot answer - asking again from the client just
+        // repeats the null. Only when NO record has metrics (an older
+        // server) is the client-side batched lookup worth making.
+        if (!anyRoad) {
+          prewarmRoadDistances(fetched)
         }
 
         // Batch-fetch the groups these messages belong to in one request, so the per-post

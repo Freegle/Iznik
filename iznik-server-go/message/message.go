@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/item"
@@ -241,9 +242,16 @@ type Message struct {
 	MessageURL         string              `json:"url"`
 	Successful         bool                `json:"successful"`
 	Refchatids         []uint64            `json:"refchatids" gorm:"-"`
-	Locationid         uint64              `json:"-"`
-	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
-	Item               *item.Item          `json:"item" gorm:"-"`
+	// Road drive time/distance from the VIEWER's home to this post's blurred
+	// location, filled by one batched routing call per message fetch (nil when
+	// the viewer is logged out, has no location, or the reach engine cannot
+	// answer - clients then show crow-flies). Shipping it with the message
+	// saves the client a /drivedistance round trip per rendered card.
+	Roadmins   *float64           `json:"roadmins,omitempty" gorm:"-"`
+	Roadmiles  *float64           `json:"roadmiles,omitempty" gorm:"-"`
+	Locationid uint64             `json:"-"`
+	Location   *location.Location `json:"location,omitempty" gorm:"-"`
+	Item       *item.Item         `json:"item" gorm:"-"`
 	// DEPRECATED, for bundled app clients only. A hold belongs to a (message, group)
 	// pair (messages_groups.heldby, exposed as groups[].heldby); there is no correct
 	// message-wide value for a post that reached several groups, and supplying one
@@ -434,6 +442,7 @@ func GetMessages(c *fiber.Ctx) error {
 
 	if len(ids) < 20 {
 		messages := GetMessagesByIds(myid, ids, isPartner)
+		addRoadMetrics(myid, messages)
 
 		if len(ids) == 1 {
 			if len(messages) == 1 {
@@ -469,6 +478,36 @@ func defaultSearchMode() string {
 		return "keyword"
 	}
 	return "vector"
+}
+
+// addRoadMetrics fills Roadmins/Roadmiles from the viewer's home for a batch
+// of already-blurred messages: ONE routing call for the whole fetch, so the
+// client never needs a per-card /drivedistance round trip. Best-effort - any
+// failure just leaves the fields nil and clients fall back to crow-flies.
+func addRoadMetrics(myid uint64, messages []Message) {
+	if myid == 0 || len(messages) == 0 {
+		return
+	}
+	latlng := user.GetLatLng(myid)
+	if latlng.Lat == 0 && latlng.Lng == 0 {
+		return
+	}
+	targets := make([]driving.Target, 0, len(messages))
+	for ix := range messages {
+		if messages[ix].Lat != 0 || messages[ix].Lng != 0 {
+			targets = append(targets, driving.Target{
+				ID:  int64(ix),
+				Lat: float64(messages[ix].Lat),
+				Lng: float64(messages[ix].Lng),
+			})
+		}
+	}
+	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), float64(latlng.Lat), float64(latlng.Lng), targets) {
+		if r.Mins != nil && r.ID >= 0 && int(r.ID) < len(messages) {
+			messages[r.ID].Roadmins = r.Mins
+			messages[r.ID].Roadmiles = r.Miles
+		}
+	}
 }
 
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {

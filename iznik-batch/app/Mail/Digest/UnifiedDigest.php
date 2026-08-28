@@ -7,6 +7,7 @@ use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\AvatarResolver;
+use App\Mail\Traits\RoadDistances;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\Membership;
 use App\Models\Message;
@@ -33,6 +34,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     use AmpEmail;
     use AvatarResolver;
     use LoggableEmail;
+    use RoadDistances;
     use TrackableEmail;
 
     public string $userSite;
@@ -904,6 +906,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 ->get(['id', 'nameshort', 'namefull'])->keyBy('id')->all()
             : [];
 
+        // One routing call for the whole digest: road miles per post, matching
+        // what the site shows. Posts the engine cannot answer keep crow-flies.
+        $this->fillRoadMiles($userLat, $userLng, $this->posts->map(fn ($p) => $p['message']));
+
         return $this->posts->map(fn ($post, $index) => $this->prepareCard(
             $post['message'],
             $post['postedToGroups'],
@@ -1070,8 +1076,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $arrivalIso = $arrival->toIso8601String();
 
         // Calculate distance from user.
-        $distanceText = null;
-        if ($userLat !== null && $userLng !== null && $message->lat && $message->lng) {
+        $distanceText = $this->roadDistanceText((int) $message->id);
+        if ($distanceText === null && $userLat !== null && $userLng !== null && $message->lat && $message->lng) {
             $miles = $this->haversineDistance($userLat, $userLng, (float) $message->lat, (float) $message->lng);
             $distanceText = $miles < 1 ? '< 1 mile' : round($miles) . ' miles';
         }

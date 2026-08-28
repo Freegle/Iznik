@@ -129,6 +129,17 @@ export const DISTANCE_AXES = {
     milesKey: 'myPostsMaxDistance',
     bandCapped: false,
   },
+  // ChitChat's "how far away" filter - the same travel-time model as browse.
+  // metresKey: the chitchat feed API takes a crow radius in METRES (0 =
+  // anywhere), so the slider ALSO writes the derived radius there, keeping the
+  // feed request, the navbar count and any older client reading newsfeedarea
+  // coherent with the slider.
+  chitchat: {
+    minutesKey: 'newsfeedMinutes',
+    milesKey: 'newsfeedDistance',
+    metresKey: 'newsfeedarea',
+    bandCapped: false,
+  },
 }
 
 // Colour for the reach/isochrone-style map polygons (the former per-user

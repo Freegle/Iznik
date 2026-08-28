@@ -661,6 +661,7 @@ func GetMessagesWithHistory(c *fiber.Ctx) error {
 	}
 
 	messages := GetMessagesByIds(myid, ids, isPartner)
+	addRoadMetrics(myid, messages)
 
 	if len(ids) == 1 {
 		if len(messages) == 1 {

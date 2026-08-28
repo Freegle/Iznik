@@ -20,6 +20,11 @@ import { useAuthStore } from '~/stores/auth'
 
 const MAX_BATCH = 100
 
+// Bumped once per answered batch. Event-driven signal for consumers that
+// freeze an ordering (see PostMapAndList's locked sort) and need to know
+// when road distances have newly arrived.
+export const roadAnswersVersion = ref(0)
+
 // Module-level cache and queue: shared across all components.
 const cache = new Map() // "lat,lng" -> ref({ mins, miles } | null)
 let queue = [] // [{ key, lat, lng }]
@@ -43,18 +48,30 @@ function flush() {
   }
   const api = Api(runtimeConfig)
   const targets = batch.map((b, i) => ({ id: i, lat: b.lat, lng: b.lng }))
+  // Deliberately loud: with the server shipping road metrics on feeds and
+  // records, a page should normally make NO client /drivedistance calls -
+  // each one of these means some path returned coordinates without metrics.
+  console.log(`[drivedistance] client call, ${targets.length} target(s)`)
 
   api.driving
     .distances(targets)
     .then((ret) => {
       const results = ret?.results || []
+      let filled = false
       batch.forEach((b, i) => {
         const r = results.find((x) => x.id === i)
         if (r && r.mins !== null && r.mins !== undefined) {
           cache.get(b.key).value = { mins: r.mins, miles: r.miles ?? null }
+          filled = true
         }
         // else: leave null - crow-flies fallback.
       })
+      if (filled) {
+        // Consumers that SNAPSHOT an order (the browse feed's locked sort)
+        // watch this to know new road answers exist - refs alone cannot
+        // reach them once the snapshot is taken.
+        roadAnswersVersion.value++
+      }
     })
     .catch(() => {
       // Fail soft: refs stay null, crow-flies shows.

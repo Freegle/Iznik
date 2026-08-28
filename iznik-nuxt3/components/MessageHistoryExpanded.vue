@@ -124,6 +124,10 @@ const fromuser = computed(() => {
 })
 
 const roadDist = computed(() => {
+  if (message.value?.roadmins != null) {
+    // Shipped with the message fetch itself (server-side batched call).
+    return { mins: message.value.roadmins, miles: message.value.roadmiles }
+  }
   if (!message.value?.lat) {
     return null
   }
