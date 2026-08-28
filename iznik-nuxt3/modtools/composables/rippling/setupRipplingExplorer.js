@@ -12,6 +12,7 @@
 //   legendMode   — ref ('outbound' | 'inbound' | 'catchment') set by the tab/direction
 //                  toggles, so the key on the map matches what is drawn
 import { watch } from 'vue'
+import { attribution, osmtile } from '~/composables/useMap'
 import {
   chaikinSmooth,
   geoToLeaflet,
@@ -76,14 +77,10 @@ export async function setupRipplingExplorer({
   ]
 
   map = L.map('rippling-map', { zoomControl: true }).setView([52.5, -1.8], 7)
-  L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    {
-      attribution: '© OpenStreetMap © CartoDB',
-      subdomains: 'abcd',
-      maxZoom: 19,
-    }
-  ).addTo(map)
+  L.tileLayer(osmtile(), {
+    attribution: attribution(),
+    maxZoom: 19,
+  }).addTo(map)
 
   // The ACTUAL stored reach outline (per-post reach modal only): what the engine actually
   // holds, as opposed to what the schedule says it should - the two diverge when a reach is
