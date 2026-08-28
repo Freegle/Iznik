@@ -15,10 +15,33 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/roadblur"
 )
 
 var leafClient = &http.Client{Timeout: 3 * time.Second}
+
+// The leaf column may not exist yet: the code can deploy before the
+// migration runs (and a dev stack can point at a production database that
+// has not had it). Every reader/writer of newsfeed.leaf is gated on this
+// one-time schema check - without it, the feed query errored on the missing
+// column and served an EMPTY feed, which is far worse than serving the
+// classic radius behaviour.
+var (
+	leafColumnOnce   sync.Once
+	leafColumnExists bool
+)
+
+func hasLeafColumn() bool {
+	leafColumnOnce.Do(func() {
+		var n int
+		database.DBConn.Raw(
+			"SELECT COUNT(*) FROM information_schema.COLUMNS " +
+				"WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'newsfeed' AND COLUMN_NAME = 'leaf'").Scan(&n)
+		leafColumnExists = n > 0
+	})
+	return leafColumnExists
+}
 
 // leafFor asks the routing server which region a point belongs to. Returns
 // nil (store NULL) when the engine is not deployed or cannot answer - the

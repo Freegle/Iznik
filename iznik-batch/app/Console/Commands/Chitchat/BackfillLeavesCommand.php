@@ -47,15 +47,18 @@ class BackfillLeavesCommand extends Command
             ->whereNotNull('position')
             ->where('timestamp', '>=', now()->subDays(31));
 
-        $this->info((clone $query)->count() . ' rows need tagging.');
+        $total = (clone $query)->count();
+        $this->info("{$total} rows need tagging.");
         if ($this->option('dry-run')) {
             return Command::SUCCESS;
         }
         if ($limit > 0) {
             $query->limit($limit);
+            $total = min($total, $limit);
         }
 
         $done = $failed = 0;
+        $startedAt = microtime(true);
         foreach ($query->cursor() as $row) {
             $leaf = null;
             try {
@@ -77,6 +80,12 @@ class BackfillLeavesCommand extends Command
                 $done++;
             } else {
                 $failed++;
+            }
+            $processed = $done + $failed;
+            if ($processed % 200 === 0) {
+                $rate = $processed / max(0.001, microtime(true) - $startedAt);
+                $this->info(sprintf('%d/%d (%d%%), %d failed, %.1f rows/s',
+                    $processed, $total, (int) (100 * $processed / max(1, $total)), $failed, $rate));
             }
             if ($sleepUs > 0) {
                 usleep($sleepUs);

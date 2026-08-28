@@ -119,12 +119,14 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 		"eventid":        eventid,
 		"volunteeringid": volunteeringid,
 		"position":       gorm.Expr("ST_GeomFromText(?, ?)", fmt.Sprintf("POINT(%f %f)", *lng, *lat), utils.SRID),
-		"leaf":           leafFor(*lat, *lng),
 		"location":       location,
 		"hidden":         gorm.Expr(hidden),
 		"deleted":        gorm.Expr("NULL"),
 		"reviewrequired": gorm.Expr("0"),
 		"pinned":         gorm.Expr("0"),
+	}
+	if hasLeafColumn() {
+		row["leaf"] = leafFor(*lat, *lng)
 	}
 	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		log.Printf("Failed to create newsfeed entry: %v", err)

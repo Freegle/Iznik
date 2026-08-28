@@ -51,21 +51,33 @@ class BackfillReachLabelsCommand extends Command
             $query->whereNull('reach_labels');
         }
 
-        $this->info((clone $query)->count() . ' rows need labels.');
+        $total = (clone $query)->count();
+        $this->info("{$total} rows need labels.");
         if ($limit > 0) {
             $query->limit($limit);
+            $total = min($total, $limit);
         }
         if ($this->option('dry-run')) {
             return Command::SUCCESS;
         }
 
         $done = $failed = 0;
+        $startedAt = microtime(true);
         // cursor(): production has millions of reach rows; never load them all.
         foreach ($query->cursor() as $row) {
             if ($reach->storeReachLabels((int) $row->msgid, (float) $row->lat, (float) $row->lng, (float) $row->max_drive_min)) {
                 $done++;
             } else {
                 $failed++;
+            }
+            $processed = $done + $failed;
+            if ($processed % 500 === 0) {
+                $rate = $processed / max(0.001, microtime(true) - $startedAt);
+                $eta = $total > $processed && $rate > 0
+                    ? gmdate('G\h i\m', (int) (($total - $processed) / $rate))
+                    : '-';
+                $this->info(sprintf('%d/%d (%d%%), %d failed, %.1f rows/s, ETA %s',
+                    $processed, $total, (int) (100 * $processed / max(1, $total)), $failed, $rate, $eta));
             }
             if ($sleepUs > 0) {
                 usleep($sleepUs);
