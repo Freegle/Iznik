@@ -524,3 +524,50 @@ func handleLeaf() fiber.Handler {
 		return c.JSON(fiber.Map{"leaves": leaves})
 	}
 }
+
+// engineOrFlatIsochrone serves a drive isochrone from the reach engine when
+// it is live (label query + table expansion, no full-graph sweep), and the
+// classic Dijkstra otherwise or for other modes. Same reached-nodes contract
+// either way, so polygons/bands/bounds downstream are unchanged.
+func engineOrFlatIsochrone(g *Graph, lat, lng float64, secs float32, mode Mode) IsochroneResult {
+	if e := reachLive; e != nil && mode == Drive {
+		lbl := e.QueryLabelsCached(lat, lng, secs)
+		return IsochroneResult{ReachedNodes: e.ReachedNodes(lbl, secs)}
+	}
+	return Isochrone(g, lat, lng, secs, mode)
+}
+
+// engineOrFlatMultiSource is the group-boundary form: one label query per
+// seed, min-merged at the LABEL level (a few KB each), then one expansion -
+// instead of one full-graph multi-source sweep.
+func engineOrFlatMultiSource(g *Graph, seeds []NodeID, secs float32, mode Mode) IsochroneResult {
+	e := reachLive
+	if e == nil || mode != Drive || len(seeds) == 0 {
+		return multiSourceIsochrone(g, seeds, secs, mode)
+	}
+	var merged *ReachLabels
+	type chainSeed struct {
+		node NodeID
+		base float32
+	}
+	var chainSeeds []chainSeed
+	for _, s := range seeds {
+		lbl := e.QueryLabelsFromNode(s, secs)
+		// The merge collapses per-seed origin-chain info, so remember each
+		// mid-chain seed for the along-chain refinement after expansion.
+		if lbl.originChain != 0 {
+			chainSeeds = append(chainSeeds, chainSeed{lbl.originChain, lbl.seedBase})
+		}
+		if merged == nil {
+			merged = lbl
+		} else {
+			MergeLabels(merged, lbl)
+		}
+	}
+	merged.originChain = 0 // per-seed refinement below covers them all
+	reached := e.ReachedNodes(merged, secs)
+	for _, cs := range chainSeeds {
+		e.refineOriginChain(reached, cs.node, cs.base, secs)
+	}
+	return IsochroneResult{ReachedNodes: reached}
+}

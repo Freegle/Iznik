@@ -172,6 +172,19 @@ func handleFairness(g *Graph) fiber.Handler {
 
 		mode := parseMode(c.Query("mode", "walk"))
 
+		// Reach-engine fast path (drive): the label query + table expansion
+		// replaces the bounded full-graph sweep; the quintile weighting and
+		// polygons run unchanged on the same reached set.
+		if e := reachLive; e != nil && mode == Drive {
+			limitSecs := float32(minutes * 60)
+			maxLimit := limitSecs * (1 + float32(clampFairnessWeight(fairness)))
+			origin := nearestNodeForMode(g, lat, lng, Drive)
+			if origin != noNode {
+				lbl := e.QueryLabelsFromNode(origin, maxLimit)
+				reached := e.ReachedNodes(lbl, maxLimit)
+				return c.JSON(fairnessFromReached(g, origin, reached, limitSecs, mode, float32(clampFairnessWeight(fairness))))
+			}
+		}
 		result := FairnessIsochrone(g, lat, lng, float32(minutes*60), mode, float32(fairness))
 		return c.JSON(result)
 	}
@@ -212,7 +225,7 @@ func handleCatchment(g *Graph) fiber.Handler {
 			if !ok {
 				return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 			}
-			iso := multiSourceIsochrone(g, seeds, secs, mode)
+			iso := engineOrFlatMultiSource(g, seeds, secs, mode)
 			poly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes, mode))
 			// Drive-time bands (heatmap): how rapidly a post from each area would ripple in.
 			bands := catchmentBands(g, iso, secs, mode, 6)
@@ -228,7 +241,7 @@ func handleCatchment(g *Graph) fiber.Handler {
 		if err != nil || lng == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
-		iso := Isochrone(g, lat, lng, secs, mode)
+		iso := engineOrFlatIsochrone(g, lat, lng, secs, mode)
 		res := NetworkResolution(g, iso.ReachedNodes, mode)
 		poly := IsochronePolygon(g, iso.ReachedNodes, res)
 		// Sandwich bounds for the reach containment queries (see bounds.go): derived on

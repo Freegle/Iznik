@@ -398,6 +398,12 @@ func (c *regionTableCache) sourceRow(e *ReachEngine, leaf int32, srcOi uint32) [
 
 // QueryLabels computes the reach labeling from (lat,lng) within limitSeconds.
 func (e *ReachEngine) QueryLabels(lat, lng float64, limitSeconds float32) *ReachLabels {
+	return e.QueryLabelsFromNode(nearestNodeForMode(e.G, lat, lng, Drive), limitSeconds)
+}
+
+// QueryLabelsFromNode is QueryLabels with the origin given as a graph node -
+// the group-boundary catchment seeds from specific nodes, not a lat/lng snap.
+func (e *ReachEngine) QueryLabelsFromNode(origin NodeID, limitSeconds float32) *ReachLabels {
 	out := &ReachLabels{
 		T:         limitSeconds,
 		Reached:   make(map[int32]*RegionLabel),
@@ -407,7 +413,6 @@ func (e *ReachEngine) QueryLabels(lat, lng float64, limitSeconds float32) *Reach
 		SeedMet:   make(map[uint32]float32),
 	}
 
-	origin := nearestNodeForMode(e.G, lat, lng, Drive)
 	if origin == noNode {
 		return out
 	}
