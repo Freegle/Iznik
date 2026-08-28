@@ -103,8 +103,10 @@ somebody's reply is not the place to discover that.
 newest first, `LIMIT 200`, once a minute. Once every expanding post *has* one the predicate
 matches nothing - and a `LIMIT` that is never satisfied cannot stop a scan early, so the
 planner's unaided choice walks the whole `updated_at` index to prove the empty set: 55,990 row
-lookups in a ~50GB table, 2m09s on an idle db1, on the read node. That is the live state
-today: `expanding AND max_polygon_cells IS NULL` is exactly zero rows.
+lookups in a ~50GB table, 2m09s on an idle db1, on the read node. Since labels-truth,
+`expanding AND max_polygon_cells IS NULL` is NOT an empty set: labelled rows deliberately
+never get a max grid (their stored label answers the gate at its full budget), so this
+count grows with the label backfill and says nothing about the sweep being stuck.
 
 There are two correct forms, and which applies is a schema fact rather than a preference,
 guarded by `MaxReachCandidateIndex::ready()`. Measured on a 55,015-row clone matching
@@ -514,7 +516,7 @@ them in a quiet channel would mean nobody ever answers them.
 
 | Table | What |
 |---|---|
-| `rippling_reach.max_polygon_cells` | the reach the post ends up with, as a compact cell grid (rippling reference §9b/§9c) - a run-stream probe with no network call, read by `isWithinMaxReach`/`ShouldPassThrough`. NULL means "no wider reach known yet" and every reader falls back to current-reach behaviour |
+| `rippling_reach.max_polygon_cells` | the reach the post ends up with, as a compact cell grid (rippling reference §9b/§9c) - a run-stream probe with no network call. `isWithinMaxReach`/`ShouldPassThrough` ask the stored LABEL at its full budget first and only fall back to this grid; for a labelled row NULL means "the label answers this" (the sweep skips labelled rows and the drain command clears them), and only for an unlabelled row does it mean "no wider reach known yet" |
 | `rippling_reach.min_tick` | a floor the expander must not sit below, set when a matched member replies. NULL = expand on elapsed time alone, exactly as before |
 | `users_searches_embeddings` | a saved search term as a vector, embedded as a DOCUMENT so it shares the post threshold |
 | `chat_prompts` | options and answer for a `Prompt` chat message |
@@ -548,7 +550,8 @@ The Go API needs `FIRSTREPLY_ENABLED` and `FIRSTREPLY_PASSTHROUGH_ENABLED` too, 
 in-app reply path is enforced there.
 
 Sensible order: turn on `FIRSTREPLY_ENABLED` alone first so `firstreply:maxreach` can drain,
-then the passthrough (which needs `max_polygon_cells` to do anything), then match mail.
+then the passthrough (which answers from stored labels wherever they exist, and needs
+`max_polygon_cells` only for unlabelled rows), then match mail.
 
 ### One cap, and it should never bind
 

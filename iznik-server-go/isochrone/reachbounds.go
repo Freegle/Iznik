@@ -84,9 +84,11 @@ type reachProbe struct {
 	admitted map[uint64]struct{}
 }
 
-// keep answers the probe for one candidate row. Undecidable cells fail
-// closed: post-drop a healthy row always has cells, so an unreadable blob is
-// a row that must not decide anything.
+// keep answers the probe for one candidate row. Undecidable cells do not
+// admit here - but a RETIRED grid (labels-truth drained it) is a healthy,
+// designed state, and filterProbed (isochrone/message.go) routes exactly
+// those undecided rows through one batched label evaluation before giving
+// up, so an empty blob is never treated as corruption.
 func (p *reachProbe) keep(msgid uint64, cells []byte) bool {
 	if _, ok := p.admitted[msgid]; ok {
 		return true

@@ -1241,7 +1241,10 @@ class UnifiedDigestServiceTest extends TestCase
             'primary' => 1, 'archived' => 0,
         ]);
         $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update(['reach_labels' => 'label-bytes']);
 
+        // The stored label decides who is reached: at first only A's point
+        // (seedReach's box ends at lng 0.0, so A at -0.1 is in, B at 0.5 out).
         $this->service->mailNewlyReachedForPost($msg->id);
 
         $ledgered = fn ($uid) => DB::table('rippling_reach_notified')
@@ -1249,11 +1252,12 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue($ledgered($memberA->id), 'reach-covered member A mailed + ledgered');
         $this->assertFalse($ledgered($memberB->id), 'out-of-reach member B not yet mailed');
 
-        // Reach grows to cover B; the re-run mails B and does NOT re-mail A (ledger
-        // dedup). The outer bound grows in the same statement, as every writer's does.
-        DB::statement('UPDATE rippling_reach SET polygon_cells = ?, outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
-            [$this->reachCellsFor('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))'),
-             'POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        // The reach grows to cover B (the label now admits B's point; the
+        // outer bound grows as every writer keeps it growing). The re-run
+        // mails B and does NOT re-mail A (ledger dedup).
+        DB::statement('UPDATE rippling_reach SET outer_bound = ST_Envelope(ST_GeomFromText(?, 3857)) WHERE msgid = ?',
+            ['POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))', $msg->id]);
+        $this->reachArrivalBox = $this->wktBounds('POLYGON((-0.2 51.4,0.6 51.4,0.6 51.6,-0.2 51.6,-0.2 51.4))');
         $before = DB::table('rippling_reach_notified')->where('msgid', $msg->id)->count();
         $this->service->mailNewlyReachedForPost($msg->id);
         $this->assertTrue($ledgered($memberB->id), 'newly-reached member B mailed on re-run');
@@ -1577,6 +1581,47 @@ class UnifiedDigestServiceTest extends TestCase
             . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 1, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$msgid, $this->reachCellsFor($wkt), $wkt]
         );
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
+
+        // The newly-reached mail evaluates the stored label per candidate
+        // point (reach-arrival); fake it to admit points inside the seeded
+        // box. Http::fake merges first-match-wins (null falls through), so
+        // ONE callback is installed and it reads $this->reachArrivalBox -
+        // a test that grows the reach updates the property, not the fake.
+        $this->reachArrivalBox = $this->wktBounds($wkt);
+        if (!$this->reachArrivalFakeInstalled) {
+            $this->reachArrivalFakeInstalled = true;
+            Http::fake(function ($request) {
+                if (!str_contains($request->url(), 'reach-arrival')) {
+                    return null;
+                }
+                [$minLng, $minLat, $maxLng, $maxLat] = $this->reachArrivalBox;
+                $results = [];
+                foreach ($request['points'] ?? [] as $pt) {
+                    $lat = (float) ($pt['lat'] ?? 0);
+                    $lng = (float) ($pt['lng'] ?? 0);
+                    $in = $lat >= $minLat && $lat <= $maxLat && $lng >= $minLng && $lng <= $maxLng;
+                    $results[] = ['arrival' => $in ? 100 : null, 'in' => $in];
+                }
+
+                return Http::response(['results' => $results]);
+            });
+        }
+    }
+
+    /** The box the faked reach-arrival admits; seedReach sets it. */
+    private array $reachArrivalBox = [0.0, 0.0, 0.0, 0.0];
+
+    private bool $reachArrivalFakeInstalled = false;
+
+    /** [minLng, minLat, maxLng, maxLat] of a simple WKT polygon. */
+    private function wktBounds(string $wkt): array
+    {
+        preg_match_all('/(-?\d+\.?\d*) (-?\d+\.?\d*)/', $wkt, $m, PREG_SET_ORDER);
+        $lngs = array_map(fn ($p) => (float) $p[1], $m);
+        $lats = array_map(fn ($p) => (float) $p[2], $m);
+
+        return [min($lngs), min($lats), max($lngs), max($lats)];
     }
 
     /**
@@ -2779,6 +2824,21 @@ class UnifiedDigestServiceTest extends TestCase
             . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
+
+        // The stored label admits every asked point: the reach-mail pass is
+        // under test, not the geometry.
+        Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-arrival')) {
+                return null;
+            }
+            $results = array_map(
+                fn ($pt) => ['arrival' => 100, 'in' => true],
+                $request['points'] ?? []
+            );
+
+            return Http::response(['results' => $results]);
+        });
 
         return [$message, $member];
     }
@@ -3730,6 +3790,46 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertTrue(
             $this->wasMailed($msg->id, $member->id),
             'a member a cluster wedge admits is mailed, exactly as browse and reply admit them'
+        );
+    }
+
+
+    public function test_newly_reached_mail_answers_from_the_label_for_a_retired_grid(): void
+    {
+        // A retired grid (label stored, squares drained): the "you are now in
+        // reach" mail evaluates the stored label at every candidate point in
+        // one routing call, instead of probing squares that no longer exist.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group);
+        $this->setMyLocation($member, 51.5, -0.1);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: retired reach mail (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)
+            ->update(['collection' => MessageGroup::COLLECTION_APPROVED, 'arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id, 'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'primary' => 1, 'archived' => 0,
+        ]);
+        $this->seedReach($msg->id, 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))');
+        DB::table('rippling_reach')->where('msgid', $msg->id)->update([
+            'reach_labels' => 'label-bytes', 'polygon_cells' => null,
+            'tick' => 1, 'max_drive_min' => 30, 'schedule' => null,
+        ]);
+
+        Http::fake(['*reach-arrival*' => Http::response([
+            'results' => [['arrival' => 120, 'in' => true]],
+        ])]);
+
+        $this->service->mailNewlyReachedForPost($msg->id);
+
+        $this->assertTrue(
+            DB::table('rippling_reach_notified')->where('msgid', $msg->id)->where('userid', $member->id)->exists(),
+            'the label admitted the member, so they are mailed and ledgered'
         );
     }
 }

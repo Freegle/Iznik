@@ -71,13 +71,7 @@ func sampleNodesInRings(g *Graph, rings [][][2]float64) []NodeID {
 		}
 	}
 	inside := func(lng, lat float64) bool {
-		crossings := 0
-		for _, ring := range rings {
-			if pointInRing(lng, lat, ring) {
-				crossings++
-			}
-		}
-		return crossings%2 == 1
+		return pointInRings(lng, lat, rings)
 	}
 	var nodes []NodeID
 	for ci := int16(minLat / gridRes); ci <= int16(maxLat/gridRes); ci++ {

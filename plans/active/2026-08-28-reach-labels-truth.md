@@ -43,13 +43,10 @@ as `ripple:backfill-reach-labels` progresses - no flag day.
 ## Deliberately unchanged
 
 - Retraction + group targeting: polygon/cell GEOMETRY questions, stay so.
-- polygon_cells (CURRENT reach grid) is still materialised every tick for
-  every row: it is the SOURCE the spatial server's reach containment index
-  (iznik-spatial-go dataset_reach.go) is built from - the badge/feed/digest
-  prefilter - and the routing-down fallback. Draining it would leave the
-  spatial index serving stale or absent reach. It only becomes droppable if
-  that index is rebuilt to answer from labels (i.e. the routing server takes
-  over containment), which changes the outage story and is NOT this PR.
+- polygon_cells is materialised every tick ONLY for rows that are not yet
+  retired (no label, or no union threshold): for those rows it still feeds
+  the spatial containment index and the routing-down fallback. Retired rows
+  drain it (see the endgame section) and the index removes them.
 
 ## Disk (measured on prod 2026-08-28)
 
@@ -109,6 +106,38 @@ its delivered adjustments. In this PR:
   rows (done/stopped rows).
 - Degraded-path labels rescue (filterProbed); mod overlay engine-isochrone
   fallback; reply-gate quiet fail-closed for drained rows.
+
+## Dead-code / residual-grid review round (2026-08-28, later)
+
+Four reviewers again ("look for dead code, any residual grid function that
+should be graph"); everything confirmed was fixed:
+
+- CRITICAL: ReachQueryService::isWithinReach (external reply hold/release)
+  and UnifiedDigestService::mailNewlyReachedForPost were still cells-only -
+  both now ask the stored label first (retired rows work; union flag rides
+  the newly-reached SQL).
+- search's degraded arm gets the same label rescue as the feed's
+  (rippling.RescueUndecided, shared so they cannot drift).
+- Retired rows stop paying per-tick geometry: unionByThreshold (stored
+  number instead of ST_Intersection/ST_Area), reapplyClips skipped,
+  bounds->sync retired fast path (was 6 round trips incl. discarding the
+  fresh inner bound), advance row carries retirement state (no per-row
+  gridRetired query).
+- Deleted dead code: spatial /v1/reach/admits (+AdmitsPoints+test),
+  BuildRaster/BuildRasterDim WKT rasterizer (~250 lines) + agreement tests.
+- Dedup: message/reach.go uses rippling.ParseSchedule; routing pointInRings
+  shared by eval + union sampler.
+- SCHEMA-DROP TOLERANCE: every reader/writer of polygon_cells /
+  max_polygon_cells / has_max_reach is guarded on column existence (Go:
+  rippling.ReachCellsExpr/MaxReachCellsExpr; PHP: per-service memos; the
+  spatial reach dataset serves empty). The DROP is OPERATOR-RUN SQL (table
+  rebuild - never executed by code), documented in the PR body; the digest
+  reach-radius falls back to the outer bound envelope so scoring survives
+  the drop.
+- Docs corrected: first-reply.md (empty-set claim, NULL semantics, turn-on
+  order), spatial README (retired rows leave the index), rippling-algorithm
+  (only-stored-form + writes-fail claims scoped to unretired rows),
+  reachbounds comment, plan self-contradiction removed below.
 
 ## Status
 

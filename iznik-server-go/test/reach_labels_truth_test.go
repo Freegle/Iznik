@@ -13,19 +13,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// Labels-truth cutover: where a stored label exists, ITS verdict decides
-// membership - overriding the cell grid in both directions - and where it
-// does not (or routing is down), the cell verdict stands unchanged.
-func TestLabelVerdictsOverrideCells(t *testing.T) {
+// The stored label IS the reach record: its verdict decides membership, and
+// where there is no verdict - label not stored yet, or the routing server
+// unreachable - the member is NOT in reach. There is no grid fallback;
+// routing is a dependency, by design.
+func TestLabelVerdictsDecideMembership(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("labelstruth")
 	userID, _ := CreateFullTestUser(t, prefix)
 	msgID := CreateTestMessage(t, userID, CreateTestGroup(t, prefix+"_g"), "OFFER: labels truth item", 51.5, -0.1)
 
-	// Cells say the point IS in reach.
-	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound) VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText("+
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, outer_bound) VALUES (?, 51.5, -0.1, ST_Envelope(ST_GeomFromText("+
 		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)))",
-		msgID, mustRasterize(t, "POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))"))
+		msgID)
 	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
 
 	stub := func(verdict string) *httptest.Server {
@@ -48,24 +48,27 @@ func TestLabelVerdictsOverrideCells(t *testing.T) {
 		return m[msgID].InReach
 	}
 
-	// The label says OUT: it wins over the in-reach cells (the far bank).
-	srv := stub("out")
+	srv := stub("in")
 	os.Setenv("ROUTING_EVAL_URL", srv.URL)
 	roadblur.ResetRoutingBreaker()
-	assert.False(t, check(), "an OUT label verdict must override in-reach cells")
+	assert.True(t, check(), "an IN verdict admits")
 	srv.Close()
 
-	// No labels yet: the cell verdict stands.
+	srv = stub("out")
+	os.Setenv("ROUTING_EVAL_URL", srv.URL)
+	roadblur.ResetRoutingBreaker()
+	assert.False(t, check(), "an OUT verdict refuses")
+	srv.Close()
+
 	srv = stub("nolabels")
 	os.Setenv("ROUTING_EVAL_URL", srv.URL)
 	roadblur.ResetRoutingBreaker()
-	assert.True(t, check(), "with no stored label the cell verdict decides")
+	assert.False(t, check(), "no stored label = not in reach; there is no grid to fall back to")
 	srv.Close()
 
-	// Routing down entirely: fail soft to the cell verdict.
 	roadblur.ResetRoutingBreaker()
 	os.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
-	assert.True(t, check(), "routing unavailable must not change behaviour")
+	assert.False(t, check(), "routing unreachable = not in reach; routing is a dependency")
 	roadblur.ResetRoutingBreaker()
 }
 
@@ -137,6 +140,35 @@ func TestLabelVerdicts4xxDoesNotTripBreaker(t *testing.T) {
 	verdicts := rippling.LabelVerdicts(51.5, -0.1, []uint64{1})
 	assert.Empty(t, verdicts)
 	assert.True(t, roadblur.RoutingHealthy(), "a 404 must not open the shared breaker")
+	roadblur.ResetRoutingBreaker()
+}
+
+// The degraded-path rescue both the feed's probe filter and search's
+// degraded arm share: rows whose grid cannot answer get one batched label
+// evaluation, and only definite IN survives. Routing down keeps nothing -
+// only the spatial index AND routing failing together hides retired posts.
+func TestRescueUndecided(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{"msgid": 1, "verdict": "in"},
+				{"msgid": 2, "verdict": "out"},
+				{"msgid": 3, "verdict": "nolabels"},
+			},
+		})
+	}))
+	defer srv.Close()
+	prevURL := os.Getenv("ROUTING_EVAL_URL")
+	defer os.Setenv("ROUTING_EVAL_URL", prevURL)
+	os.Setenv("ROUTING_EVAL_URL", srv.URL)
+	roadblur.ResetRoutingBreaker()
+
+	got := rippling.RescueUndecided(51.5, -0.1, []uint64{1, 2, 3})
+	assert.Equal(t, []uint64{1}, got)
+
+	os.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
+	roadblur.ResetRoutingBreaker()
+	assert.Empty(t, rippling.RescueUndecided(51.5, -0.1, []uint64{1, 2, 3}))
 	roadblur.ResetRoutingBreaker()
 }
 

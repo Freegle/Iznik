@@ -2796,6 +2796,11 @@ func clipReachCellsOnly(db *gorm.DB, msgid, gid uint64) {
 		GroupWkt  *string `gorm:"column:group_wkt"`
 		HasLabels bool    `gorm:"column:has_labels"`
 	}
+	if !rippling.PolygonCellsReady(db) {
+		// The retired grid columns are gone: the rejected_groups record is
+		// the durable retraction and the label evaluator enforces it.
+		return
+	}
 	if err := db.Table("rippling_reach mr").
 		Joins("JOIN `groups` g ON g.id = ?", gid).
 		Select("mr.polygon_cells AS cells, ST_AsText(g.polyindex) AS group_wkt, mr.reach_labels IS NOT NULL AS has_labels").

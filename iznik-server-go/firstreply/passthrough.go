@@ -153,30 +153,16 @@ func ShouldPassThrough(db *gorm.DB, refmsgid uint64, lng, lat float64) bool {
 	// label at its own full budget, exactly. Falls through to the cells (and
 	// then the conservative default) wherever no label exists or routing is
 	// unavailable.
+	// The stored label at its own full budget IS the eventual reach. No
+	// verdict (label not stored yet, or routing unreachable) holds the
+	// reply - the conservative default this gate has always had. There is
+	// no grid fallback.
 	if verdicts := rippling.LabelVerdictsAtBudget(lat, lng, []uint64{refmsgid}, "max"); len(verdicts) > 0 {
 		if v, ok := verdicts[refmsgid]; ok {
 			return v == rippling.LabelVerdictIn
 		}
 	}
 
-	var cells []byte
-	if err := db.Table("rippling_reach").
-		Select("max_polygon_cells").
-		Where("msgid = ?", refmsgid).
-		Row().Scan(&cells); err == nil && cells != nil {
-		// CellSetContains, not DecodeCellSet+Contains: decoding builds the
-		// whole grid to test one bit, which on a production-sized reach is
-		// 885KB and seven million iterations - on the reply gate, per reply.
-		// A blob that cannot answer must not silently pass every reply
-		// through, so it falls back to the exact test below.
-		if inside, ok := rippling.CellSetContains(cells, lng, lat); ok {
-			return inside
-		}
-	}
-
-	// max_polygon_cells is populated by the firstreply:maxreach batch pass
-	// and is NULL until it gets there, so a row without usable cells simply
-	// holds the reply - the conservative default this gate has always had.
 	return false
 }
 

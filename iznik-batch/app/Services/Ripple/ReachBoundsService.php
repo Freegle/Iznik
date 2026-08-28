@@ -66,6 +66,22 @@ class ReachBoundsService
         return "ST_Buffer(ST_Simplify($polyExpr, " . self::TOLERANCE . '), -' . self::TOLERANCE . ')';
     }
 
+    /** Deploy-tolerance: does the retired grid column still exist? Once. */
+    private static ?bool $gridColumn = null;
+
+    private function gridColumnReady(): bool
+    {
+        if (self::$gridColumn === null) {
+            try {
+                self::$gridColumn = Schema::hasColumn('rippling_reach', 'polygon_cells');
+            } catch (\Throwable) {
+                self::$gridColumn = false;
+            }
+        }
+
+        return self::$gridColumn;
+    }
+
     public function ready(): bool
     {
         if (self::$columnsExist === null) {
@@ -92,7 +108,7 @@ class ReachBoundsService
      * INNER_MIN_AREA_RATIO) or no inner at all ends as a polygon-derived inner, never
      * as NULL, because NULL sends every in-outer viewer to the full polygon test.
      */
-    public function sync(int $msgid, ?string $outerWkt = null, ?string $innerWkt = null): void
+    public function sync(int $msgid, ?string $outerWkt = null, ?string $innerWkt = null, bool $retired = false): void
     {
         if (!$this->ready()) {
             return;
@@ -119,6 +135,18 @@ class ReachBoundsService
         }
         if (!$stored) {
             $this->syncFromPolygon($msgid);
+
+            return;
+        }
+
+        if ($retired) {
+            // A retired row has no grid: every verify below reads it and can
+            // only answer "cannot say", costing three round trips to conclude
+            // nothing and then DISCARDING the inner bound just written. The
+            // routing-provided bounds are trusted directly; the one real step
+            // kept is widening the outer with the origin group's area, since
+            // the provided outer bounds the raw isochrone only.
+            $this->unionOuterWithOriginGroup($msgid);
 
             return;
         }
@@ -159,6 +187,9 @@ class ReachBoundsService
      */
     private function reachSource(int $msgid): ?array
     {
+        if (!$this->gridColumnReady()) {
+            return null;
+        }
         $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
         if ($cells === null || $cells === '') {
             return null;
@@ -400,7 +431,9 @@ class ReachBoundsService
             // form of ST_Envelope, needing neither a trace nor the spatial
             // server. No cells at all leaves the previous outer (safe-loose)
             // and clears the inner.
-            $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+            $cells = $this->gridColumnReady()
+                ? DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells')
+                : null;
             $bbox = $cells === null || $cells === '' ? null : app(CellSetService::class)->boundsWkt($cells);
             if ($bbox === null) {
                 $this->nullInner($msgid);

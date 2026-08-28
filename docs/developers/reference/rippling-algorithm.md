@@ -351,7 +351,8 @@ treat out+origin_area as NO verdict and let the cell grid - which holds the unio
 A member point that does not snap to the road network answers all-`nolabels` (200), and the
 Go client trips the shared routing breaker only on 5xx faults (404/503 are expected states);
 the PHP client carries the same 5-minute breaker the drive-metrics path uses, because the
-digest asks once per recipient.
+digest asks once per recipient. NO VERDICT MEANS NOT IN REACH on every deciding gate -
+there is no cell fallback anywhere.
 
 Client wiring: apiv2 `rippling/labelverdicts.go` (`LabelVerdicts`,
 `LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate)
@@ -392,10 +393,13 @@ evaluator answers everything the current-reach grid did, and the grid retires pe
   each blob to the build that can read it (`decodeLabelsAnyBuild`; `rippling_reach_leaves.fp`
   scopes leaf candidates per build, NULL matching loosely). A map refresh thus becomes a
   rolling label migration instead of a site-wide nolabels window.
-- **Degradation**: a spatial-index outage alone does not hide drained posts (the degraded
-  feed path batch-evaluates undecidable rows against the labels); only spatial AND routing
-  down together fails closed. The moderator reach-map overlay draws the engine's drive
-  isochrone for drained rows.
+- **Routing is a dependency**: reach verdicts come from the stored labels and nowhere
+  else - the cell fallbacks were removed (2026-08-28, "assume availability is fine...
+  remove any fallback code"). Routing down means reach-gated posts are hidden, replies to
+  them held, and reach mail skipped until it returns; breakers stop the callers paying
+  timeouts meanwhile. The grids' one remaining role is the candidate prefilter (the
+  spatial containment index) until each post's discover arm replaces it. The moderator
+  reach-map overlay draws the engine's drive isochrone for drained rows.
 
 A surface that consults a lane the others do not is the defect this structure exists to
 prevent, in either direction: mailing someone a post the site then hides from them, or showing
@@ -1230,8 +1234,9 @@ silent:
 nothing ever queries the bytes in SQL; they are opaque to MySQL and decoded in application
 code. They began as purely additive mirrors, so that a deploy ahead of a backfill was a
 no-op with every reader falling back to the geometry or its §9a hash. **They are now the
-only stored form (§9c)**; the fallbacks remain solely for the window before the operator
-drops the columns.
+only stored GRID form (§9c)** - and under labels-truth the stored LABEL supersedes the grid
+per row (the grid-removal endgame section above), so for a retired row `reach_labels` is
+the only stored reach at all.
 
 | Column | Mirrors | Written by | Read by | Backfill |
 |---|---|---|---|---|
@@ -1353,11 +1358,12 @@ byte-identical, and must not be asserted to be - the stored grid's header record
 source polygon's envelope, which is legitimately wider than the covered extent a trace
 reproduces.
 
-**Writes now fail rather than degrade.** While the polygon existed, a failed rasterise left
-`polygon_cells` NULL and readers fell back. With the grid as the only stored form, a failed
-rasterise fails the tick: the post keeps its previous reach and is retried next sweep.
-Reach growth pausing while the spatial server is down is acceptable at a half-hourly
-cadence; a reach silently vanishing is not.
+**Writes fail rather than degrade - for rows the grid still serves.** While the polygon
+existed, a failed rasterise left `polygon_cells` NULL and readers fell back. With the grid
+as the only stored form for an UNLABELLED row, a failed rasterise fails the tick: the post
+keeps its previous reach and is retried next sweep. A RETIRED row (label + union threshold
+stored) is the deliberate exception: its writers bind NULL by design and skip the rasterise
+entirely - the label is its reach record.
 
 **Verification.** `ripple:verify-cells-parity` asks the OLD question and the NEW question
 of the same row at the same points, per read case, and reports where they differ and by how

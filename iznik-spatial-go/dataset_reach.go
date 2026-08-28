@@ -65,7 +65,35 @@ func scanReachRaw(rows *sql.Rows) (reachRawRow, error) {
 	return r, rows.Scan(&r.msgid, &r.status, &r.cells, &r.retired)
 }
 
+// gridColumnsPresent reports whether the retired grid columns still exist.
+// After the operator's final drop this dataset has nothing to index - every
+// row is served by the routing server's label evaluation - so it loads empty
+// and the deltas no-op, quietly. Checked once per process.
+var (
+	gridColsOnce    sync.Once
+	gridColsPresent bool
+)
+
+func gridColumnsPresent(mysqlDB *sql.DB) bool {
+	gridColsOnce.Do(func() {
+		var n int
+		if err := mysqlDB.QueryRow(
+			`SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'polygon_cells'`,
+		).Scan(&n); err == nil {
+			gridColsPresent = n > 0
+		}
+		if !gridColsPresent {
+			log.Printf("reach: polygon_cells dropped - dataset retired, serving empty")
+		}
+	})
+	return gridColsPresent
+}
+
 func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
+	if !gridColumnsPresent(mysqlDB) {
+		return InsertItems(idx, nil, nil)
+	}
 	// Load ALL non-held statuses; held rows are simply absent (the delta
 	// re-adds them if released).
 	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.status != 'held'`))
@@ -142,6 +170,9 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 // ones. Clips and expansions both arrive as plain updates: the item is
 // rebuilt from the row's current cells, so there is no drift to reconcile.
 func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) error {
+	if !gridColumnsPresent(mysqlDB) {
+		return nil
+	}
 	rows, err := mysqlDB.Query(reachSelect(`WHERE rr.updated_at > ?`), since.UTC())
 	if err != nil {
 		return fmt.Errorf("reach delta query: %w", err)
@@ -354,41 +385,6 @@ func (d *ReachDataset) Containing(idx *Index, lng, lat float64) (in []int64, par
 		}
 	}
 	return in, partial, nil
-}
-
-// ReachPoint is one candidate location for AdmitsPoints.
-type ReachPoint struct {
-	Lng float64 `json:"lng"`
-	Lat float64 `json:"lat"`
-}
-
-// AdmitsPoints is the committed-reach question from the MAIL's end: one post,
-// many candidate members, which of them does its current reach cover? The
-// twin of ReachOverflowDataset.AdmitsPoints, so the digest asks both halves
-// of "would the site show this member the post" of the same authority.
-//
-// known=false means the post has no live entry here (no reach row, held, or
-// the index simply has not caught up) — the caller decides what that means;
-// the mail fails closed on it. `uncertain` carries the points a legacy
-// coarse-raster row cannot decide (boundary band): pre-drop callers may
-// exact-test those, post-drop they cannot occur.
-func (d *ReachDataset) AdmitsPoints(idx *Index, msgid int64, points []ReachPoint) (admitted []int, uncertain []int, known bool, err error) {
-	item, err := idx.GetByExtID(msgid)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	if item == nil || item.WKB == nil {
-		return nil, nil, false, nil
-	}
-	for i, p := range points {
-		switch classifyReachBlob(item.WKB, p.Lng, p.Lat) {
-		case cellIn:
-			admitted = append(admitted, i)
-		case cellPartial:
-			uncertain = append(uncertain, i)
-		}
-	}
-	return admitted, uncertain, true, nil
 }
 
 // No DriftChecker: the per-tick reconcile above is strictly stronger — it

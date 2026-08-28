@@ -194,7 +194,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 func reachExtentSelect(db *gorm.DB, probe *reachProbe) string {
 	sel := reachEnvelopeExpr(db) + " AS reach_wkt"
 	if probe != nil {
-		sel += ", rr.polygon_cells AS reach_cells"
+		sel += ", " + rippling.ReachCellsExpr(db) + " AS reach_cells"
 	}
 	return sel
 }
@@ -230,9 +230,12 @@ func filterProbed(cands []reachCandidateRow, probe *reachProbe) []reachCandidate
 		for i, c := range undecided {
 			ids[i] = c.ID
 		}
-		verdicts := rippling.LabelVerdicts(probe.lat, probe.lng, ids)
+		in := map[uint64]bool{}
+		for _, id := range rippling.RescueUndecided(probe.lat, probe.lng, ids) {
+			in[id] = true
+		}
 		for _, c := range undecided {
-			if verdicts[c.ID] == rippling.LabelVerdictIn {
+			if in[c.ID] {
 				kept = append(kept, c)
 			}
 		}
@@ -252,7 +255,7 @@ func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reach
 	query, probe := reachCandidateQuery(db, myid, latlng, true)
 	sel := "ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id"
 	if probe != nil {
-		sel += ", rr.polygon_cells AS reach_cells"
+		sel += ", " + rippling.ReachCellsExpr(db) + " AS reach_cells"
 	}
 	query.Select(sel).Scan(&candidates)
 	return filterProbed(candidates, probe)
@@ -1019,7 +1022,7 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 			// the cells probe instead - same rows the feed would render.
 			var cands []reachCandidateRow
 			countQuery.
-				Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, rr.polygon_cells AS reach_cells").
+				Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, " + rippling.ReachCellsExpr(db) + " AS reach_cells").
 				Scan(&cands)
 			return uint64(len(filterProbed(cands, probe)))
 		}

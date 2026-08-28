@@ -39,53 +39,31 @@ func ReachMembership(db *gorm.DB, msgids []uint64, lng, lat float64) (map[uint64
 	}
 
 	var rows []struct {
-		Msgid     uint64     `gorm:"column:msgid"`
-		Lat       *float64   `gorm:"column:lat"`
-		Lng       *float64   `gorm:"column:lng"`
-		Schedule  *string    `gorm:"column:schedule"`
-		Arrival   *time.Time `gorm:"column:arrival"`
-		Cells     []byte     `gorm:"column:cells"`
-		HasLabels bool       `gorm:"column:has_labels"`
+		Msgid    uint64     `gorm:"column:msgid"`
+		Lat      *float64   `gorm:"column:lat"`
+		Lng      *float64   `gorm:"column:lng"`
+		Schedule *string    `gorm:"column:schedule"`
+		Arrival  *time.Time `gorm:"column:arrival"`
 	}
 	if err := db.Table("rippling_reach rr").
-		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival, rr.polygon_cells AS cells, rr.reach_labels IS NOT NULL AS has_labels").
+		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival").
 		Where("rr.msgid IN ?", msgids).
 		Scan(&rows).Error; err != nil {
 		log.Printf("reach membership fetch failed: %v", err)
 		return out, err
 	}
 
-	// Stored labels are the deciding record wherever they exist: the exact
-	// road-network answer at the post's current budget, from ONE batched
-	// routing call. Posts the backfill has not reached (and every post, when
-	// routing is unavailable) keep the cell-grid verdict below.
+	// The stored label IS the reach record: the exact road-network answer at
+	// the post's current budget, from ONE batched routing call. No verdict -
+	// a post whose label has not been stored yet, or the routing server
+	// being unreachable - means NOT in reach. There is no grid fallback;
+	// routing is a dependency here, by design.
 	verdicts := LabelVerdicts(lat, lng, msgids)
 
-	var undecided []uint64
 	for _, r := range rows {
 		info := ReachRowInfo{Msgid: r.Msgid, Lat: r.Lat, Lng: r.Lng, Schedule: r.Schedule, Arrival: r.Arrival}
-		if v, ok := verdicts[r.Msgid]; ok {
-			info.InReach = v == LabelVerdictIn
-			out[r.Msgid] = info
-			continue
-		}
-		if in, ok := CellSetContains(r.Cells, lng, lat); ok {
-			info.InReach = in
-			out[r.Msgid] = info
-			continue
-		}
-		// No usable cells. For a labelled row that is the RETIRED-grid
-		// state (labels-truth drained it) during a routing outage: fail
-		// closed, quietly - the designed double-failure direction. For an
-		// unlabelled row it is an anomaly worth saying out loud.
+		info.InReach = verdicts[r.Msgid] == LabelVerdictIn
 		out[r.Msgid] = info
-		if !r.HasLabels {
-			undecided = append(undecided, r.Msgid)
-		}
-	}
-
-	if len(undecided) > 0 {
-		log.Printf("reach membership: %d rows undecidable with no legacy fallback (msgids %v)", len(undecided), undecided)
 	}
 
 	return out, nil

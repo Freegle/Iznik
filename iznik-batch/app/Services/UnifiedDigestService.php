@@ -919,19 +919,38 @@ class UnifiedDigestService
             // parameters come FIRST in the array below.
             // The containment test per candidate member. The SQL narrows by
             // the stored OUTER BOUND (a superset), and exactness lives in
-            // PHP: the message's cell grid is fetched ONCE and every
-            // surviving candidate's point is probed against it - the same
-            // stored bytes every other surface answers from.
-            $probeCells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
+            // PHP: the post's stored LABEL is evaluated at every surviving
+            // candidate's point in one routing call - the reach record, with
+            // no grid fallback. No label, or routing unreachable, means
+            // nobody is newly-reached this round; the next sweep re-asks.
+            // For a union-active post the origin group's whole area is
+            // admitted, so that flag rides along per candidate.
+            $reachSvc = app(\App\Services\Ripple\ReachService::class);
+            $reachRow = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+            $probeLabels = $reachRow->reach_labels ?? null;
+            $currentSecs = $reachRow !== null
+                ? $reachSvc->currentBudgetSecs((int) ($reachRow->tick ?? 0), (float) ($reachRow->max_drive_min ?? 0), $reachRow->schedule ?? null)
+                : 0.0;
+            $unionSecs = $reachRow->origin_union_secs ?? null;
+            $unionActive = $unionSecs !== null && (float) $unionSecs >= 0 && $currentSecs >= (float) $unionSecs;
             $containSql = "(ST_GeometryType(mr.outer_bound) <> 'POINT' AND ST_Contains(mr.outer_bound, $point))";
             $mrJoin = '';
+            $originAreaFlag = '';
+            if ($unionActive) {
+                $originAreaFlag = ", COALESCE(ST_Contains((SELECT g2.polyindex FROM messages_groups mg2
+                        JOIN `groups` g2 ON g2.id = mg2.groupid
+                        WHERE mg2.msgid = mr.msgid AND mg2.deleted = 0
+                          AND g2.polyindex IS NOT NULL AND ST_GeometryType(g2.polyindex) <> 'POINT'
+                        ORDER BY mg2.arrival ASC LIMIT 1), $point), 0) AS in_origin_area";
+            }
 
             // in_primary: from the outer bound, refined by the PHP probe
             // below. density_band rides along for the ring index whenever
             // either consumer needs post-filtering.
             $primaryFlag = ", $containSql AS in_primary"
-                . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band";
-            $primaryParams = [$srid];
+                . ", JSON_UNQUOTE(JSON_EXTRACT(u.settings, '$.browseDensityBand')) AS density_band"
+                . $originAreaFlag;
+            $primaryParams = $unionActive ? [$srid, $srid] : [$srid];
 
             // status <> 'held': a frozen reach belongs to a post whose origin copy has been
             // pulled back for moderation. Browse, the badge and search hide it, so mailing it
@@ -971,18 +990,29 @@ class UnifiedDigestService
                 )
             ));
 
-            // Refine the outer-bound superset to the exact reach: probe
-            // each candidate's point against the message's cell grid. A
-            // candidate the probe rejects (or cannot decide - unreadable
-            // bytes admit nobody) is only a recipient if a ring admits
-            // them, exactly like a candidate outside the reach.
-            $cellSets = app(\App\Services\Ripple\CellSetService::class);
-            foreach ($recipientRows as $row) {
-                $in = false;
-                if ($probeCells !== null && $probeCells !== ''
-                    && $row->resolved_lat !== null && $row->resolved_lng !== null) {
-                    $in = $cellSets->containsEncoded($probeCells, (float) $row->resolved_lng, (float) $row->resolved_lat) === true;
+            // Refine the outer-bound superset to the exact reach. Labels
+            // first: ONE routing call evaluates the stored label at every
+            // candidate point at the current budget, and a union-active
+            // post also admits candidates inside its origin group's area.
+            // The cell grid remains the fallback for unlabelled posts or
+            // when routing cannot answer; a candidate nothing can decide is
+            // only a recipient if a ring admits them, exactly like a
+            // candidate outside the reach.
+            $labelIn = [];
+            if ($probeLabels !== null && $probeLabels !== '' && $currentSecs > 0) {
+                $points = [];
+                foreach ($recipientRows as $i => $row) {
+                    if ($row->resolved_lat !== null && $row->resolved_lng !== null) {
+                        $points[$i] = [(float) $row->resolved_lat, (float) $row->resolved_lng];
+                    }
                 }
+                $evals = $points !== [] ? $reachSvc->reachArrivalBatch((string) $probeLabels, $currentSecs, $points) : [];
+                foreach ($points as $i => $p) {
+                    $labelIn[$i] = (bool) (($evals[$i]['in'] ?? false));
+                }
+            }
+            foreach ($recipientRows as $i => $row) {
+                $in = ($labelIn[$i] ?? false) || !empty($row->in_origin_area);
                 $row->in_primary = ((int) ($row->in_primary ?? 0) === 1 && $in) ? 1 : 0;
             }
             $recipientRows = $recipientRows->filter(
@@ -2332,7 +2362,9 @@ class UnifiedDigestService
         $default = (float) config('freegle.ripple.score.default_reach_metres', 30000);
 
         $row = DB::selectOne(
-            'SELECT rr.lng AS ox, rr.lat AS oy, rr.polygon_cells AS cells FROM rippling_reach rr WHERE rr.msgid = ?',
+            'SELECT rr.lng AS ox, rr.lat AS oy,
+                    ST_AsText(ST_Envelope(rr.outer_bound)) AS outer_env
+               FROM rippling_reach rr WHERE rr.msgid = ?',
             [$msgid]
         );
 
@@ -2340,25 +2372,32 @@ class UnifiedDigestService
     }
 
     /**
-     * One row's reach radius: the stored cell grid (a streaming walk of its
-     * run endpoints - see CellSetService::maxDistanceMetresFrom), the
-     * configured default when it cannot say.
+     * One row's reach radius: the OUTER BOUND envelope's furthest corner
+     * from the origin - the column every writer keeps refreshed - else the
+     * configured default.
      */
     private function reachRadiusFromRow(?object $row, float $default): float
     {
         if (!$row) {
             return $default;
         }
-        if (($row->cells ?? null) !== null && $row->cells !== '') {
-            $metres = app(\App\Services\Ripple\CellSetService::class)
-                ->maxDistanceMetresFrom($row->cells, (float) $row->ox, (float) $row->oy);
-            if ($metres !== null && $metres > 0) {
-                return $metres;
+        if (!empty($row->outer_env) && preg_match_all('/(-?\d+\.?\d*) (-?\d+\.?\d*)/', (string) $row->outer_env, $m, PREG_SET_ORDER)) {
+            $best = 0.0;
+            foreach ($m as $pt) {
+                $d = $this->haversineMetres((float) $row->oy, (float) $row->ox, (float) $pt[2], (float) $pt[1]);
+                if ($d > $best) {
+                    $best = $d;
+                }
+            }
+            if ($best > 0) {
+                return $best;
             }
         }
 
         return $default;
     }
+
+
 
     /**
      * Prime {@see $reachRadiusCache} for a whole batch of posts in a SINGLE query.
@@ -2388,7 +2427,8 @@ class UnifiedDigestService
 
         foreach (array_chunk($ids, 500) as $chunk) {
             $rows = DB::table('rippling_reach')
-                ->select('msgid', 'lng as ox', 'lat as oy', 'polygon_cells as cells')
+                ->select('msgid', 'lng as ox', 'lat as oy')
+                ->addSelect(DB::raw('ST_AsText(ST_Envelope(outer_bound)) AS outer_env'))
                 ->whereIn('msgid', $chunk)
                 ->get()
                 ->all();

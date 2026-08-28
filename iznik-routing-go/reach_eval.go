@@ -514,8 +514,13 @@ func groupAreaContains(gid int64, lat, lng float64) bool {
 	if len(rings) == 0 {
 		return false
 	}
-	// Pure even-odd over every ring: correct for holes AND for the disjoint
-	// parts of a MULTIPOLYGON (whose rings are flattened into one list).
+	return pointInRings(lng, lat, rings)
+}
+
+// pointInRings is pure even-odd over every ring: correct for holes AND for
+// the disjoint parts of a MULTIPOLYGON (whose rings are flattened into one
+// list). The one containment loop the eval and the union sampler share.
+func pointInRings(lng, lat float64, rings [][][2]float64) bool {
 	crossings := 0
 	for _, ring := range rings {
 		if pointInRing(lng, lat, ring) {

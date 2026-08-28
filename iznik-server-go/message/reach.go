@@ -270,17 +270,13 @@ type reachRow struct {
 
 // currentBudgetMins mirrors the schedule arithmetic every evaluator uses:
 // the schedule entry for the current tick, the row's maximum as fallback.
+// One decoder for the schedule wire shape - rippling.ParseSchedule - so this
+// cannot drift from the other readers of the same JSON.
 func currentBudgetMins(tick int, maxDriveMin float64, schedule *string) float64 {
-	if schedule != nil && *schedule != "" {
-		var entries []struct {
-			Tick     int     `json:"tick"`
-			DriveMin float64 `json:"drive_min"`
-		}
-		if err := json.Unmarshal([]byte(*schedule), &entries); err == nil {
-			for _, en := range entries {
-				if en.Tick == tick && en.DriveMin > 0 {
-					return en.DriveMin
-				}
+	if schedule != nil {
+		for _, en := range rippling.ParseSchedule(*schedule) {
+			if en.Tick == tick && en.DriveMin > 0 {
+				return en.DriveMin
 			}
 		}
 	}
@@ -372,7 +368,7 @@ func Reach(c *fiber.Ctx) error {
 	// acceptable display nuance on a moderation overlay.
 	var row reachRow
 	found := db.Table("rippling_reach rr").
-		Select("rr.tick, rr.total_ticks, rr.status, rr.arrival, rr.next_expansion_at, rr.polygon_cells AS cells, "+
+		Select("rr.tick, rr.total_ticks, rr.status, rr.arrival, rr.next_expansion_at, "+rippling.ReachCellsExpr(db)+" AS cells, "+
 			"rr.reach_labels IS NOT NULL AS has_labels, rr.lat, rr.lng, rr.max_drive_min, rr.schedule").
 		Where("rr.msgid = ?", id).
 		Scan(&row)

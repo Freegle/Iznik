@@ -51,6 +51,12 @@ class DropCellGridsCommand extends Command
             return Command::SUCCESS;
         }
 
+        if (!\Illuminate\Support\Facades\Schema::hasColumn('rippling_reach', 'max_polygon_cells')) {
+            $this->info('Grid columns already dropped; nothing to drain.');
+
+            return Command::SUCCESS;
+        }
+
         $limit = (int) $this->option('limit');
         $sleepUs = max(0, (int) $this->option('sleep-ms')) * 1000;
 

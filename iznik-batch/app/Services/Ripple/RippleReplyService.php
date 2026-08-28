@@ -319,20 +319,18 @@ class RippleReplyService
      */
     private function milesOutsideReach(int $msgid, float $lat, float $lng): ?float
     {
-        // The stored cell grid answers this with one keyed blob read and a
-        // streaming walk of its run stream (distance to the nearest covered
-        // cell, exact at the 33m lattice - noise against the miles this
-        // feeds): no megabyte polygon fetched, no ST_Distance.
+        // The stored label answers whether the replier is inside the current
+        // reach: inside means zero miles outside it. Beyond that the label
+        // gives seconds, not miles, so the caller's documented origin-distance
+        // measure takes over (null here). No grid; routing unreachable is
+        // also null, and the caller's fallback keeps the delay stamped.
         try {
-            $cells = DB::table('rippling_reach')->where('msgid', $msgid)->value('polygon_cells');
-            if ($cells !== null && $cells !== '') {
-                $metres = app(CellSetService::class)->distanceToNearestCellMetres($cells, $lng, $lat);
-                if ($metres !== null) {
-                    return $metres / 1609.344;
-                }
+            $verdicts = app(ReachService::class)->labelVerdicts($lat, $lng, [$msgid]);
+            if (($verdicts[$msgid] ?? '') === 'in') {
+                return 0.0;
             }
         } catch (\Throwable $e) {
-            Log::warning("ripple: milesOutsideReach cells read failed for {$msgid}: {$e->getMessage()}");
+            Log::warning("ripple: milesOutsideReach label check failed for {$msgid}: {$e->getMessage()}");
         }
 
         return null;

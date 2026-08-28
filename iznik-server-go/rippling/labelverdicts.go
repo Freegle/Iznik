@@ -23,6 +23,25 @@ const (
 	LabelVerdictOut = "out"
 )
 
+// RescueUndecided returns the subset of ids whose stored label verdicts the
+// member IN. This is the degraded-path rescue: when the spatial index is down
+// and a row's grid cannot answer (a RETIRED grid has none), one batched label
+// evaluation decides instead - shared by the feed's probe filter and search's
+// degraded arm so the two cannot drift.
+func RescueUndecided(lat, lng float64, ids []uint64) []uint64 {
+	if len(ids) == 0 {
+		return nil
+	}
+	verdicts := LabelVerdicts(lat, lng, ids)
+	var kept []uint64
+	for _, id := range ids {
+		if verdicts[id] == LabelVerdictIn {
+			kept = append(kept, id)
+		}
+	}
+	return kept
+}
+
 // DropLabelOut narrows an id list by label verdicts: ids the labels decided
 // OUT are removed; everything else (in, or no labels) is kept. nil verdicts
 // return the list untouched.
