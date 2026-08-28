@@ -1476,6 +1476,13 @@ class ExpandService
                         }
                     };
                     $initStore($storeWkt);
+                    // Reach-engine labels: computed once here at the maximum budget,
+                    // never recomputed as the reach grows. Best-effort (readers fall
+                    // back to the stored cells; the backfill command retries).
+                    $this->reach->storeReachLabels(
+                        (int) $row->msgid, $lat, $lng,
+                        (float) ($schedule['max_drive_min'] ?? 0)
+                    );
                     // Routing-provided bounds (tighter than derived) upgrade the columns,
                     // verified against the stored polygon.
                     if ($tickGeom['outer'] !== null) {

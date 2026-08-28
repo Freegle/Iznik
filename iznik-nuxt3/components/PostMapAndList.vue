@@ -133,8 +133,15 @@ import { useGroupStore } from '~/stores/group'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '~/stores/misc'
 import { getDistance } from '~/composables/useMap'
-import { filterMessagesByDistance } from '~/composables/useDistance'
+import {
+  filterMessagesByDistance,
+  browseSliderMinuteCheck,
+} from '~/composables/useDistance'
 import { sortBrowseMessages } from '~/composables/useMessageSort'
+import {
+  roadDistance,
+  roadAnswersVersion,
+} from '~/composables/useDriveDistance'
 import { MAX_MAP_ZOOM, BROWSE_DISTANCE_UNLIMITED } from '~/constants'
 import { useMessageStore } from '~/stores/message'
 import { useNearbyStore } from '~/stores/nearby'
@@ -367,7 +374,11 @@ const messagesForList = computed(() => {
   // response before the API returned it) always pass, so we don't hide anything on a
   // stale/partial response. Shared with PostMap's own marker/coverage filtering so the
   // list and the map can never disagree about which posts are within range.
-  msgs = filterMessagesByDistance(msgs, props.selectedMaxDistance)
+  msgs = filterMessagesByDistance(
+    msgs,
+    props.selectedMaxDistance,
+    browseSliderMinuteCheck()
+  )
 
   return msgs
 })
@@ -421,12 +432,45 @@ function sortMessages(messages) {
   // 28 Jul, 26 Jul, 25 Jul, 25 Jul by the original arrival. Only old, rippled or reposted posts
   // diverge, which is why the top of the feed looked right and the tail did not.
   const enriched = (messages || []).map((m) => {
-    if (m?.visibleSince) return m
     const full = messageStore.byId(m?.id)
-    return full?.visibleSince ? { ...m, visibleSince: full.visibleSince } : m
+    let out = m
+    if (!m?.visibleSince && full?.visibleSince) {
+      out = { ...out, visibleSince: full.visibleSince }
+    }
+    // The distance badge shows road miles for the FULL record's blurred
+    // coordinates; the feed summary carries a DIFFERENT blurred point (it is
+    // blurred from the spatial row, not the message row), up to a few hundred
+    // metres away - enough to swap neighbouring cards. "Closest" must order
+    // by the same number the badges print, so prefer the full record's
+    // coordinates once it has loaded.
+    if (full?.lat != null) {
+      out = out === m ? { ...m } : out
+      out.lat = full.lat
+      out.lng = full.lng
+      out.roadCoords = true
+      // The record's answer REPLACES the summary's, even when the record has
+      // none (roadmiles becomes undefined): the badge renders from the
+      // record, so a surviving summary value would sort by a number the card
+      // does not show.
+      out.roadmiles = full.roadmiles ?? undefined
+    }
+    return out
   })
 
-  return sortBrowseMessages(enriched, props.selectedSort)
+  return sortBrowseMessages(
+    enriched,
+    props.selectedSort,
+    // Only the full record's coordinates: the summary carries a DIFFERENT
+    // blurred point, and ordering by its road miles would disagree with the
+    // badges (which print the full record's) and cause an extra visible
+    // reshuffle when the records load.
+    (m) => {
+      if (m?.roadmiles != null) return m.roadmiles
+      return m?.roadCoords
+        ? (roadDistance(m.lat, m.lng).value?.miles ?? null)
+        : null
+    }
+  )
 }
 
 const sortedMessagesOnMap = computed(() => {
@@ -520,10 +564,18 @@ const closestGroups = computed(() => {
 })
 
 // Watchers
-// Update the locked sort order when the set of message IDs changes
+// Update the locked sort order when the set of message IDs changes, and ALSO
+// when a batch of road-distance answers arrives: the first sort of a fresh
+// feed runs before the (batched, async) road distances are back, so a lock
+// taken then has frozen crow-flies order under road-mile badges - "Closest"
+// showed 10 miles above 9 (the sort and the badges disagreed). Re-sorting on
+// roadAnswersVersion converges the order onto what the badges say, then goes
+// quiet: once answers are cached, re-sorting an unchanged set with unchanged
+// keys is a no-op (Array.sort is stable), so positions stay stable exactly
+// as the lock intends.
 watch(
-  messagesOnMap,
-  (newMessages) => {
+  [messagesOnMap, roadAnswersVersion],
+  ([newMessages], [oldMessages, oldVersion]) => {
     if (!newMessages?.length) {
       lockedSortOrder.value = null
       return
@@ -531,16 +583,42 @@ watch(
 
     const currentIds = new Set(newMessages.map((m) => m.id))
 
-    // Check if we need to update the locked order: no locked order yet, or IDs have changed
     const needsUpdate =
       !lockedSortOrder.value ||
+      // Road answers can only refine the DISTANCE order; under any other
+      // sort a re-lock would instead pick up unseen-flag changes and move
+      // posts the member has just read - the very reshuffle the lock exists
+      // to prevent.
+      (roadAnswersVersion.value !== oldVersion &&
+        props.selectedSort === 'Nearby') ||
       lockedSortOrder.value.length !== currentIds.size ||
       !lockedSortOrder.value.every((id) => currentIds.has(id))
 
     if (needsUpdate) {
-      // Sort and lock in the order
       const sorted = sortMessages(newMessages)
-      lockedSortOrder.value = sorted.map((m) => m.id)
+      const ids = sorted.map((m) => m.id)
+      // Only replace the lock when the ORDER actually changed: each answered
+      // road-distance batch triggers this watcher, and blindly assigning a
+      // fresh array re-rendered the whole grid (flicker, scroll jumping to
+      // the top) even when every card was already in the right place.
+      const same =
+        lockedSortOrder.value &&
+        lockedSortOrder.value.length === ids.length &&
+        lockedSortOrder.value.every((id, i) => id === ids[i])
+      if (!same) {
+        // Deliberately loud: every one of these is a full list re-render, and
+        // they are only expected when the feed SET changes (load, search, map
+        // move) - never repeatedly during a settled page.
+        console.log(
+          '[browse] sort order re-locked:',
+          !lockedSortOrder.value
+            ? 'initial'
+            : lockedSortOrder.value.length !== ids.length
+              ? `set size ${lockedSortOrder.value.length} -> ${ids.length}`
+              : 'order changed (road answers arrived)'
+        )
+        lockedSortOrder.value = ids
+      }
     }
   },
   { immediate: true }
@@ -587,8 +665,13 @@ watch(
     // Only reset the infinite scroll when the actual list of message IDs changes,
     // not when other properties (like unseen status) change. This prevents the
     // scroll position from being lost when messages are marked as seen.
-    const newIds = JSON.stringify(newVal.map((m) => m.id))
+    const newIds = JSON.stringify(newVal.map((m) => m.id).sort())
     if (lastFilteredIds.value !== newIds) {
+      // The SET of posts changed (map move, search, feed refresh) - reset the
+      // infinite scroll. A pure reorder of the same set (road distances
+      // refining the Closest order) must NOT reset: bumping the :key
+      // remounts the whole list, which collapses it for a frame and clamps
+      // the member's scroll position back to the top.
       lastFilteredIds.value = newIds
       infiniteId.value++
     }
@@ -612,8 +695,11 @@ function messagesChanged(messages) {
     if (!messages || !messagesOnMap.value) {
       changed = true
     } else {
-      const oldids = messagesOnMap.value.map((m) => m.id)
-      const newids = messages.map((m) => m.id)
+      // Sorted compare: only a change in WHICH posts are shown is a new
+      // list. A same-set reorder must not remount the list (see the
+      // filtered-ids watcher above for why).
+      const oldids = messagesOnMap.value.map((m) => m.id).sort()
+      const newids = messages.map((m) => m.id).sort()
 
       if (JSON.stringify(oldids) !== JSON.stringify(newids)) {
         changed = true

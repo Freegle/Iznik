@@ -1,414 +1,687 @@
 {
-  "produces": [
-    "application/json"
-  ],
-  "schemes": [
-    "http"
-  ],
-  "swagger": "2.0",
-  "info": {
-    "description": "A routing and isochrone service for finding reachable areas from a given\nlocation using walk, cycle, and drive travel modes based on OpenStreetMap data.",
-    "title": "Freegle Routing \u0026 Isochrone API",
-    "version": "1.0.0"
-  },
-  "basePath": "/",
-  "paths": {
-    "/demo": {
-      "get": {
-        "description": "Returns an interactive HTML demo page for the routing service.",
-        "produces": [
-          "text/html"
-        ],
-        "tags": [
-          "demo"
-        ],
-        "summary": "Demo page",
-        "operationId": "getDemoPage",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          }
-        }
-      }
-    },
-    "/health": {
-      "get": {
-        "description": "Returns the health status of the routing service including the number of\nloaded graph nodes.",
-        "tags": [
-          "health"
-        ],
-        "summary": "Health check",
-        "operationId": "routingHealthCheck",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          }
-        }
-      }
-    },
-    "/v1/digest-simulator": {
-      "get": {
-        "description": "Simulates the content of a digest email for a member at a given location,\noptionally grouping results by poster.",
-        "tags": [
-          "routing"
-        ],
-        "summary": "Digest email simulator",
-        "operationId": "getDigestSimulator",
-        "parameters": [
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Latitude of member's location",
-            "name": "lat",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Longitude of member's location",
-            "name": "lng",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "boolean",
-            "description": "Whether to group results by poster (true/false)",
-            "name": "group_by_poster",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/routingErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/fairness": {
-      "get": {
-        "description": "Computes a fairness-adjusted isochrone that down-weights densely-connected\nareas relative to sparse areas, improving equity of reach estimates.",
-        "tags": [
-          "routing"
-        ],
-        "summary": "Fairness-weighted isochrone",
-        "operationId": "getFairnessIsochrone",
-        "parameters": [
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Latitude of origin point",
-            "name": "lat",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Longitude of origin point",
-            "name": "lng",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Travel-time budget in minutes (default 15)",
-            "name": "minutes",
-            "in": "query"
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Fairness weighting factor 0–1 (default 0)",
-            "name": "fairness",
-            "in": "query"
-          },
-          {
-            "type": "string",
-            "description": "Travel mode (walk, cycle, drive; default walk)",
-            "name": "mode",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/routingErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/groups/nearby": {
-      "get": {
-        "description": "Returns a GeoJSON FeatureCollection of freegle groups whose area overlaps\nwith or is near the given lat/lng point.",
-        "tags": [
-          "routing"
-        ],
-        "summary": "Nearby groups",
-        "operationId": "getNearbyGroups",
-        "parameters": [
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Latitude of query point",
-            "name": "lat",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Longitude of query point",
-            "name": "lng",
-            "in": "query",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/routingErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/isochrone": {
-      "get": {
-        "description": "Computes walk, cycle, and drive isochrone polygons for a given lat/lng point\nand travel-time budget.",
-        "tags": [
-          "routing"
-        ],
-        "summary": "Compute isochrone",
-        "operationId": "getIsochrone",
-        "parameters": [
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Latitude of origin point (required)",
-            "name": "lat",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Longitude of origin point (required)",
-            "name": "lng",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Travel-time budget in minutes (default 15, max 120)",
-            "name": "minutes",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/routingErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/nearby-freeglers": {
-      "get": {
-        "description": "Computes the isochrone polygon for the origin and returns all freeglers whose\napproximate location falls within it. Results are capped at 2000 points.",
-        "tags": [
-          "routing"
-        ],
-        "summary": "Nearby freeglers",
-        "operationId": "getNearbyFreeglers",
-        "parameters": [
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Latitude of origin point",
-            "name": "lat",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Longitude of origin point",
-            "name": "lng",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Travel-time budget in minutes (default 15)",
-            "name": "minutes",
-            "in": "query"
-          },
-          {
-            "type": "string",
-            "description": "Travel mode (walk, cycle, drive; default walk)",
-            "name": "mode",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/routingErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/posts-for-member": {
-      "get": {
-        "description": "Returns freegle posts whose origin is reachable within the given travel time\nfrom the member's location, for a given date window.",
-        "tags": [
-          "routing"
-        ],
-        "summary": "Posts reachable by a member",
-        "operationId": "getPostsForMember",
-        "parameters": [
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Latitude of member's location",
-            "name": "lat",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Longitude of member's location",
-            "name": "lng",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Maximum travel time in minutes",
-            "name": "max_minutes",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "string",
-            "description": "Date filter (YYYY-MM-DD)",
-            "name": "date",
-            "in": "query",
-            "required": true
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/routingErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/ripple-eval": {
-      "post": {
-        "description": "Accepts a proposed ripple schedule as JSON and returns evaluation metrics.",
-        "tags": [
-          "routing"
-        ],
-        "summary": "Evaluate ripple schedule",
-        "operationId": "postRippleEval",
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/routingErrorResponse"
-          }
-        }
-      }
-    },
-    "/v1/ripple-schedule": {
-      "get": {
-        "description": "Returns a time-bucketed schedule of how many freeglers are reachable at each\ntravel-time step from the origin, used to pace ripple email sends.",
-        "tags": [
-          "routing"
-        ],
-        "summary": "Ripple send schedule",
-        "operationId": "getRippleSchedule",
-        "parameters": [
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Latitude of origin point",
-            "name": "lat",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Longitude of origin point",
-            "name": "lng",
-            "in": "query",
-            "required": true
-          },
-          {
-            "type": "integer",
-            "description": "Number of time steps (default 30)",
-            "name": "ticks",
-            "in": "query"
-          },
-          {
-            "type": "number",
-            "format": "double",
-            "description": "Maximum travel time in minutes (default 30)",
-            "name": "max_minutes",
-            "in": "query"
-          },
-          {
-            "type": "string",
-            "description": "Send-curve shape (e.g. step-70; default step-70)",
-            "name": "curve",
-            "in": "query"
-          },
-          {
-            "type": "string",
-            "description": "Travel mode (walk, cycle, drive; default drive)",
-            "name": "mode",
-            "in": "query"
-          }
-        ],
-        "responses": {
-          "200": {
-            "$ref": "#/responses/routingGenericResponse"
-          },
-          "400": {
-            "$ref": "#/responses/routingErrorResponse"
-          }
-        }
-      }
+ "produces": [
+  "application/json"
+ ],
+ "schemes": [
+  "http"
+ ],
+ "swagger": "2.0",
+ "info": {
+  "description": "A routing and isochrone service for finding reachable areas from a given\nlocation using walk, cycle, and drive travel modes based on OpenStreetMap data.",
+  "title": "Freegle Routing & Isochrone API",
+  "version": "1.0.0"
+ },
+ "basePath": "/",
+ "paths": {
+  "/demo": {
+   "get": {
+    "description": "Returns an interactive HTML demo page for the routing service.",
+    "produces": [
+     "text/html"
+    ],
+    "tags": [
+     "demo"
+    ],
+    "summary": "Demo page",
+    "operationId": "getDemoPage",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     }
     }
+   }
   },
-  "responses": {
-    "routingErrorResponse": {
-      "description": "routingErrorResponse is a JSON error response"
-    },
-    "routingGenericResponse": {
-      "description": "routingGenericResponse is a generic JSON response"
+  "/health": {
+   "get": {
+    "description": "Returns the health status of the routing service including the number of\nloaded graph nodes.",
+    "tags": [
+     "health"
+    ],
+    "summary": "Health check",
+    "operationId": "routingHealthCheck",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     }
     }
+   }
+  },
+  "/v1/digest-simulator": {
+   "get": {
+    "description": "Simulates the content of a digest email for a member at a given location,\noptionally grouping results by poster.\n\nDEPRECATED: no remaining callers (the ModTools digest-simulator front end was removed; posts-for-member was never adopted). Kept because old clients may persist; no further work.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Digest email simulator",
+    "operationId": "getDigestSimulator",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude of member's location",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude of member's location",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "boolean",
+      "description": "Whether to group results by poster (true/false)",
+      "name": "group_by_poster",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/v1/fairness": {
+   "get": {
+    "description": "Computes a fairness-adjusted isochrone that down-weights densely-connected\nareas relative to sparse areas, improving equity of reach estimates.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Fairness-weighted isochrone",
+    "operationId": "getFairnessIsochrone",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude of origin point",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude of origin point",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Travel-time budget in minutes (default 15)",
+      "name": "minutes",
+      "in": "query"
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Fairness weighting factor 0\u20131 (default 0)",
+      "name": "fairness",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Travel mode (walk, cycle, drive; default walk)",
+      "name": "mode",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/groups/nearby": {
+   "get": {
+    "description": "Returns a GeoJSON FeatureCollection of freegle groups whose area overlaps\nwith or is near the given lat/lng point.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Nearby groups",
+    "operationId": "getNearbyGroups",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude of query point",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude of query point",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/isochrone": {
+   "get": {
+    "description": "Computes walk, cycle, and drive isochrone polygons for a given lat/lng point\nand travel-time budget.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Compute isochrone",
+    "operationId": "getIsochrone",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude of origin point (required)",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude of origin point (required)",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Travel-time budget in minutes (default 15, max 120)",
+      "name": "minutes",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/nearby-freeglers": {
+   "get": {
+    "description": "Computes the isochrone polygon for the origin and returns all freeglers whose\napproximate location falls within it. Results are capped at 2000 points.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Nearby freeglers",
+    "operationId": "getNearbyFreeglers",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude of origin point",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude of origin point",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Travel-time budget in minutes (default 15)",
+      "name": "minutes",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Travel mode (walk, cycle, drive; default walk)",
+      "name": "mode",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/posts-for-member": {
+   "get": {
+    "description": "Returns freegle posts whose origin is reachable within the given travel time\nfrom the member's location, for a given date window.\n\nDEPRECATED: no remaining callers (the ModTools digest-simulator front end was removed; posts-for-member was never adopted). Kept because old clients may persist; no further work.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Posts reachable by a member",
+    "operationId": "getPostsForMember",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude of member's location",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude of member's location",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Maximum travel time in minutes",
+      "name": "max_minutes",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "string",
+      "description": "Date filter (YYYY-MM-DD)",
+      "name": "date",
+      "in": "query",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    },
+    "deprecated": true
+   }
+  },
+  "/v1/ripple-eval": {
+   "post": {
+    "description": "Accepts a proposed ripple schedule as JSON and returns evaluation metrics.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Evaluate ripple schedule",
+    "operationId": "postRippleEval",
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/ripple-schedule": {
+   "get": {
+    "description": "Returns a time-bucketed schedule of how many freeglers are reachable at each\ntravel-time step from the origin, used to pace ripple email sends.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Ripple send schedule",
+    "operationId": "getRippleSchedule",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude of origin point",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude of origin point",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "integer",
+      "description": "Number of time steps (default 30)",
+      "name": "ticks",
+      "in": "query"
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Maximum travel time in minutes (default 30)",
+      "name": "max_minutes",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Send-curve shape (e.g. step-70; default step-70)",
+      "name": "curve",
+      "in": "query"
+     },
+     {
+      "type": "string",
+      "description": "Travel mode (walk, cycle, drive; default drive)",
+      "name": "mode",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/reach-labels": {
+   "get": {
+    "description": "Reach engine: compute a post's reach LABELS - the compact per-region record from which membership is answered exactly - at the given travel-time budget. Returns the stored-form bytes (base64), the reached region ids (leaves), and size/summary fields. Labels are computed once at a post's maximum budget and never recomputed as its reach grows.",
+    "tags": [
+     "reach"
+    ],
+    "summary": "Compute reach labels",
+    "operationId": "getReachLabels",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude of the post",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude of the post",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Travel-time budget in minutes",
+      "name": "minutes",
+      "in": "query",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     },
+     "503": {
+      "description": "Reach engine not configured (REACH_DIR unset)"
+     }
+    }
+   }
+  },
+  "/v1/reach-arrival": {
+   "post": {
+    "description": "Reach engine: exact arrival seconds and in-reach flag for up to 1000 points, evaluated from label bytes previously returned by /v1/reach-labels. Body: {labels: base64, points: [{lat,lng}], t?: seconds}. The optional t overrides the budget for the in-reach flag (clamped to the labels' own budget; an explicit 0 is a real zero budget). Labels from a different partition build are rejected with 400.",
+    "tags": [
+     "reach"
+    ],
+    "summary": "Evaluate stored reach labels",
+    "operationId": "postReachArrival",
+    "parameters": [
+     {
+      "name": "body",
+      "in": "body",
+      "required": true,
+      "schema": {
+       "type": "object"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     },
+     "503": {
+      "description": "Reach engine not configured (REACH_DIR unset)"
+     }
+    }
+   }
+  },
+  "/v1/drive-metrics": {
+   "post": {
+    "description": "Reach engine: road drive MINUTES and MILES from one origin to up to 1000 targets in a single call (one labeling query plus table lookups). Body: {lat, lng, targets: [{id?, lat, lng}]}. Powers the site's road-distance display via apiv2 POST /drivedistance.",
+    "tags": [
+     "reach"
+    ],
+    "summary": "Batch road drive time and distance",
+    "operationId": "postDriveMetrics",
+    "parameters": [
+     {
+      "name": "body",
+      "in": "body",
+      "required": true,
+      "schema": {
+       "type": "object"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     },
+     "503": {
+      "description": "Reach engine not configured (REACH_DIR unset)"
+     }
+    }
+   }
+  },
+  "/v1/blur": {
+   "get": {
+    "description": "Road-aware location blur: a deterministic pseudo-random ROAD point whose converged road distance from the true point is within [R/2, 3R/2] metres and whose crow-flies displacement is at least R/4 - never jumps an unbridged river the way circular blur can. Works without the reach engine (REACH_DIR not required). metres defaults to the standard display blur.",
+    "tags": [
+     "blur"
+    ],
+    "summary": "Road-aware blur, one point",
+    "operationId": "getBlur",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Blur radius R in metres (0-2000)",
+      "name": "metres",
+      "in": "query"
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/blur-batch": {
+   "post": {
+    "description": "The batch form of /v1/blur: up to 1000 points in one call. Body: {metres, points: [{lat,lng}]}. apiv2 blurs every member/post display location through this, one call per list response.",
+    "tags": [
+     "blur"
+    ],
+    "summary": "Road-aware blur, batch",
+    "operationId": "postBlurBatch",
+    "parameters": [
+     {
+      "name": "body",
+      "in": "body",
+      "required": true,
+      "schema": {
+       "type": "object"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
+  },
+  "/v1/leaf": {
+   "get": {
+    "description": "Reach engine: which road-network partition region(s) a point belongs to - one region id for a junction point, one or two for a mid-lane point whose lane ends straddle a region cut. The tagging primitive for road-aware 'near me' feed prefilters.",
+    "tags": [
+     "reach"
+    ],
+    "summary": "Region membership of a point",
+    "operationId": "getLeaf",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Latitude",
+      "name": "lat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Longitude",
+      "name": "lng",
+      "in": "query",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     },
+     "503": {
+      "description": "Reach engine not configured (REACH_DIR unset)"
+     }
+    }
+   }
+  },
+  "/v1/drive-time": {
+   "get": {
+    "description": "Point-to-point road drive time. Contract unchanged from the original endpoint; when the reach engine is live it is answered exactly from two label queries in milliseconds and the response additionally carries drive_miles (road distance). Falls back to the bounded road search otherwise.",
+    "tags": [
+     "routing"
+    ],
+    "summary": "Point-to-point drive time",
+    "operationId": "getDriveTime",
+    "parameters": [
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Origin latitude",
+      "name": "fromlat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Origin longitude",
+      "name": "fromlng",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Destination latitude",
+      "name": "tolat",
+      "in": "query",
+      "required": true
+     },
+     {
+      "type": "number",
+      "format": "double",
+      "description": "Destination longitude",
+      "name": "tolng",
+      "in": "query",
+      "required": true
+     }
+    ],
+    "responses": {
+     "200": {
+      "$ref": "#/responses/routingGenericResponse"
+     },
+     "400": {
+      "$ref": "#/responses/routingErrorResponse"
+     }
+    }
+   }
   }
+ },
+ "responses": {
+  "routingErrorResponse": {
+   "description": "routingErrorResponse is a JSON error response"
+  },
+  "routingGenericResponse": {
+   "description": "routingGenericResponse is a generic JSON response"
+  }
+ }
 }

@@ -72,6 +72,18 @@ it in boundary-matrix size and semantic patches. Revised design is graph-native 
 6. Gate before committing: prototype the partitioner on the real UK graph — measure cut
    sizes (urban vs trunk vs estuary), matrix totals, build time; and the membership-test
    path end-to-end for one post against today's cell answer.
+   **GATE RUN 2026-08-27 — PASS** (`plans/active/2026-08-27-reach-stage2-connectivity.md`,
+   branch feature/reach-stage2-connectivity): overlay 56.9M→12.93M junctions (29s, 4.7GB
+   artifact reloading in 5s); Inertial-Flow/Dinic partition of the 7.86M-junction drive
+   mainland in 4m22s with cut p50/p90/max = 9/17/85 and single-digit estuary seams found
+   autonomously (Severn 8, Forth 6, Humber/Mersey 9); UK-wide entry×boundary matrices
+   2.6MB total; labeling query 1-2ms warm vs 286-310ms flat (labels 0.6-3.8KB/post);
+   membership exact vs flat Dijkstra (0/571k probes on 13 real prod posts via the
+   tunnel), and 100% of divergence vs stored prod cells decomposed into the predicted
+   projection classes (grid fill of roadless ground 12.75%, frontier quantization 0.8%,
+   trace-resolution smoothing 0.27%). Two engine defects the gate caught are fixed and
+   regression-tested: boundary matrices must span entry→every boundary node, and
+   mode-disjoint parallel base edges must block contraction.
 
 Stage 1 is unaffected by this revision: delta schedules remove RECOMPUTATION regardless of
 representation (they are compute-once-committed, not grid-committed); the stored delta

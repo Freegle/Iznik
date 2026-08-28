@@ -62,6 +62,8 @@ export const REPLY_TIME_TOOLTIP =
   'How long they usually take to reply to a message'
 export const DISTANCE_TOOLTIP =
   'Roughly how far away they are, as the crow flies rather than by road'
+export const DISTANCE_TOOLTIP_ROAD =
+  'Roughly how far away they are by road. Approximate: locations are blurred for privacy'
 
 export const RECENT_MESSAGES = 31
 export const OWN_POSTS_AGE = 120
@@ -125,6 +127,17 @@ export const DISTANCE_AXES = {
   myPosts: {
     minutesKey: 'myPostsMaxMinutes',
     milesKey: 'myPostsMaxDistance',
+    bandCapped: false,
+  },
+  // ChitChat's "how far away" filter - the same travel-time model as browse.
+  // metresKey: the chitchat feed API takes a crow radius in METRES (0 =
+  // anywhere), so the slider ALSO writes the derived radius there, keeping the
+  // feed request, the navbar count and any older client reading newsfeedarea
+  // coherent with the slider.
+  chitchat: {
+    minutesKey: 'newsfeedMinutes',
+    milesKey: 'newsfeedDistance',
+    metresKey: 'newsfeedarea',
     bandCapped: false,
   },
 }

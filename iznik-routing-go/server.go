@@ -172,6 +172,19 @@ func handleFairness(g *Graph) fiber.Handler {
 
 		mode := parseMode(c.Query("mode", "walk"))
 
+		// Reach-engine fast path (drive): the label query + table expansion
+		// replaces the bounded full-graph sweep; the quintile weighting and
+		// polygons run unchanged on the same reached set.
+		if e := reachLive; e != nil && mode == Drive {
+			limitSecs := float32(minutes * 60)
+			maxLimit := limitSecs * (1 + float32(clampFairnessWeight(fairness)))
+			origin := nearestNodeForMode(g, lat, lng, Drive)
+			if origin != noNode {
+				lbl := e.QueryLabelsFromNode(origin, maxLimit)
+				reached := e.ReachedNodes(lbl, maxLimit)
+				return c.JSON(fairnessFromReached(g, origin, reached, limitSecs, mode, float32(clampFairnessWeight(fairness))))
+			}
+		}
 		result := FairnessIsochrone(g, lat, lng, float32(minutes*60), mode, float32(fairness))
 		return c.JSON(result)
 	}
@@ -212,7 +225,7 @@ func handleCatchment(g *Graph) fiber.Handler {
 			if !ok {
 				return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 			}
-			iso := multiSourceIsochrone(g, seeds, secs, mode)
+			iso := engineOrFlatMultiSource(g, seeds, secs, mode)
 			poly := IsochronePolygon(g, iso.ReachedNodes, NetworkResolution(g, iso.ReachedNodes, mode))
 			// Drive-time bands (heatmap): how rapidly a post from each area would ripple in.
 			bands := catchmentBands(g, iso, secs, mode, 6)
@@ -228,7 +241,7 @@ func handleCatchment(g *Graph) fiber.Handler {
 		if err != nil || lng == 0 {
 			return fiber.NewError(fiber.StatusBadRequest, "lng required")
 		}
-		iso := Isochrone(g, lat, lng, secs, mode)
+		iso := engineOrFlatIsochrone(g, lat, lng, secs, mode)
 		res := NetworkResolution(g, iso.ReachedNodes, mode)
 		poly := IsochronePolygon(g, iso.ReachedNodes, res)
 		// Sandwich bounds for the reach containment queries (see bounds.go): derived on
@@ -295,6 +308,12 @@ func handleDriveTime(g *Graph) fiber.Handler {
 			minutes = 60
 		}
 		mode := parseMode(c.Query("mode", "drive"))
+
+		// Reach-engine fast path: exact answer in milliseconds, with road
+		// miles included, when the engine is live (drive mode only).
+		if resp, handled := engineDriveTime(lat, lng, toLat, toLng, minutes, mode); handled {
+			return c.JSON(resp)
+		}
 
 		dest := nearestNodeForMode(g, toLat, toLng, mode)
 		if dest == noNode {
@@ -388,7 +407,13 @@ func handleGroupProximity(g *Graph) fiber.Handler {
 		if !okS {
 			return fiber.NewError(fiber.StatusNotFound, "group not found or has no polygon")
 		}
-		closest, furthest, ok := groupProximity(g, lat, lng, seeds, mode, float32(minutes*60))
+		// Reach-engine fast path (drive): two label queries instead of two
+		// bounded full-graph sweeps — this call backs the proximity-notes
+		// cron, whose sweeps were a measured ~12 CPU-hours/day standing tax.
+		closest, furthest, ok, handled := engineGroupProximity(lat, lng, seeds, mode, float32(minutes*60))
+		if !handled {
+			closest, furthest, ok = groupProximity(g, lat, lng, seeds, mode, float32(minutes*60))
+		}
 		if !ok {
 			return c.JSON(fiber.Map{"reachable": false})
 		}
@@ -595,6 +620,14 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Post("/ripple-eval", gated(handleRippleEval(g, spatialURL)))
 	v1.Get("/posts-for-member", gated(handlePostsForMember(g, spatialURL)))
 	v1.Get("/digest-simulator", gated(handleDigestSimulator(g, spatialURL)))
+	// Reach engine reach engine (503 until REACH_DIR is configured): labels are a
+	// graph computation (gated); arrival evaluation is table lookups (ungated).
+	v1.Get("/reach-labels", gated(handleReachLabels()))
+	v1.Post("/reach-arrival", handleReachArrival())
+	v1.Post("/drive-metrics", gated(handleDriveMetrics()))
+	v1.Get("/blur", handleBlur(g))
+	v1.Post("/blur-batch", handleBlurBatch(g))
+	v1.Get("/leaf", handleLeaf())
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	v1.Get("/groups/list", handleGroupsList())
 

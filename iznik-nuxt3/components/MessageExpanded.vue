@@ -172,7 +172,7 @@
                   <span
                     v-if="distanceText"
                     v-b-tooltip.hover.click.blur="{
-                      title: 'Show on map',
+                      title: (distanceTooltip || '') + '. Tap to show on map',
                       customClass: 'mobile-tooltip',
                     }"
                     class="location"
@@ -723,6 +723,7 @@ const {
   gotAttachments,
   attachmentCount,
   timeAgo,
+  distanceTooltip,
   fullTimeAgo,
   distanceText,
   replyCount,

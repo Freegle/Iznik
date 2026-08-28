@@ -7,12 +7,12 @@ import "strings"
 // nothing useful, so we replace the whole output with the expansion.
 // Keys are the full lowercased raw query.
 var phraseMap = map[string][]string{
-	"white goods":   {"fridge", "freezer", "washing", "dishwasher", "tumble", "cooker", "oven"},
-	"flat screen":   {"tv", "television", "flatscreen", "monitor"},
-	"flat screens":  {"tv", "television", "flatscreen", "monitor"},
-	"big screen":    {"tv", "television", "flatscreen"},
-	"smart tv":      {"tv", "television", "flatscreen"},
-	"second hand":   {}, // intentionally empty — falls through to normal GetWords
+	"white goods":  {"fridge", "freezer", "washing", "dishwasher", "tumble", "cooker", "oven"},
+	"flat screen":  {"tv", "television", "flatscreen", "monitor"},
+	"flat screens": {"tv", "television", "flatscreen", "monitor"},
+	"big screen":   {"tv", "television", "flatscreen"},
+	"smart tv":     {"tv", "television", "flatscreen"},
+	"second hand":  {}, // intentionally empty — falls through to normal GetWords
 }
 
 // synonymMap maps a single normalised word to additional words to search
@@ -86,9 +86,9 @@ var synonymMap = map[string][]string{
 	// BBQ / Barbecue — abbreviation vs full spelling, two alternate spellings.
 	// 25 "bbq" + 9 "barbecue"/"barbeque" indexed offers, zero overlap confirmed live.
 	// User searched all three variants in rapid succession (live monitoring, 2026-05-30).
-	"bbq":       {"barbecue", "barbeque"},
-	"barbecue":  {"bbq", "barbeque"},
-	"barbeque":  {"bbq", "barbecue"},
+	"bbq":      {"barbecue", "barbeque"},
+	"barbecue": {"bbq", "barbeque"},
+	"barbeque": {"bbq", "barbecue"},
 
 	// Luggage / Suitcase — 6 "luggage" + 45 "suitcase" offers, zero overlap confirmed live.
 	// User searched "luggage" 34 times in a session, unable to find the 45 suitcase offers.

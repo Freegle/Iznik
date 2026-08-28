@@ -106,6 +106,14 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 		}
 	}
 
+	return fairnessFromReached(g, origin, dist, limitSecs, mode, fairnessWeight)
+}
+
+// fairnessFromReached is everything after the reached-set: quintile
+// partitioning, polygons and the score. Split out so the reach engine can
+// supply the arrivals from a label query instead of the full-graph Dijkstra -
+// the weighting logic itself has exactly one implementation either way.
+func fairnessFromReached(g *Graph, origin NodeID, dist map[NodeID]float32, limitSecs float32, mode Mode, fairnessWeight float32) FairnessResult {
 	// ── Partition nodes ───────────────────────────────────────────────────────
 	standardNodes := make(map[NodeID]float32, len(dist))
 	var qNodes [6]map[NodeID]float32

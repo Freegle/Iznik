@@ -7,13 +7,17 @@
 //
 //   messages     - array of feed summary objects
 //   selectedSort - 'Unseen' | 'Nearby' | anything else (treated as Newest-first)
+//   roadMiles    - optional (m) => miles|null accessor. When the badge shows ROAD
+//                  miles, "Closest" must order by the same number, or the list reads
+//                  10, 9, 9 and looks unsorted. Falls back to the server's crow
+//                  distance per item while the engine has not answered for it yet.
 //
 // Whatever the sort, a paid pinned clearance (m.pinned) leads the feed and then the viewer's
 // own recent posts (m.mine, flagged by the server) come next, newest-first, so members can
 // always find their own posts instead of losing them in the reach order (Discourse 9933).
 //
 // Returns a NEW array; the input is not mutated (matches the old messages.slice()).
-export function sortBrowseMessages(messages, selectedSort) {
+export function sortBrowseMessages(messages, selectedSort, roadMiles = null) {
   const list = messages || []
 
   // "Nearby" (labelled "Closest") orders nearest-first by the SERVER's per-post distance
@@ -57,7 +61,13 @@ export function sortBrowseMessages(messages, selectedSort) {
   // fall back to arbitrary DB order rather than most-recent-first.
   const decorated = list.map((m) => ({
     m,
-    dist: isNearby && Number.isFinite(m.distance) ? m.distance : Infinity,
+    dist: !isNearby
+      ? Infinity
+      : (() => {
+          const road = roadMiles ? roadMiles(m) : null
+          if (Number.isFinite(road)) return road
+          return Number.isFinite(m.distance) ? m.distance : Infinity
+        })(),
     ts: needsRecency || m.mine ? recencyTs(m) : 0,
   }))
 

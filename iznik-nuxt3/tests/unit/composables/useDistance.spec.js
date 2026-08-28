@@ -131,6 +131,25 @@ describe('filterMessagesByDistance', () => {
     expect(result.map((m) => m.id).sort()).toEqual([1, 3])
   })
 
+  it('road minuteCheck wins over the crow radius in both directions', () => {
+    // Post 2 is crow-inside (5<=5) but a long drive: dropped. Post 3 is
+    // crow-outside (10>5) but a quick drive: kept. Posts the engine has not
+    // answered for (null) keep the crow behaviour.
+    const check = (m) => (m.id === 2 ? false : m.id === 3 ? true : null)
+    const result = filterMessagesByDistance(posts, 5, check)
+    expect(result.map((m) => m.id).sort()).toEqual([1, 3, 4, 5])
+  })
+
+  it('minuteCheck is not consulted when unlimited (referential no-op stays)', () => {
+    const check = () => false
+    const result = filterMessagesByDistance(
+      posts,
+      BROWSE_DISTANCE_UNLIMITED,
+      check
+    )
+    expect(result).toBe(posts)
+  })
+
   it('handles an empty list', () => {
     expect(filterMessagesByDistance([], 5)).toEqual([])
   })

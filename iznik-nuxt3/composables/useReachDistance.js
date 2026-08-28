@@ -50,7 +50,7 @@ export function useReachDistance(
   onPersisted,
   { withPolygon = false, axis = 'browse' } = {}
 ) {
-  const { minutesKey, milesKey, bandCapped } = DISTANCE_AXES[axis]
+  const { minutesKey, milesKey, metresKey, bandCapped } = DISTANCE_AXES[axis]
   const authStore = useAuthStore()
   const { me } = useMe()
   const runtimeConfig = useRuntimeConfig()
@@ -170,7 +170,51 @@ export function useReachDistance(
   // top ("no limit") while the stored radius kept filtering to the old, narrower travel time - the
   // same divergence that had members seeing only old posts. So we persist the correction once,
   // rather than displaying one thing and filtering by another.
+  // A member from before this axis was time-based has a stored radius but no
+  // minutes: for the chitchat axis that is settings.newsfeedarea in METRES
+  // (or the legacy string 'nearby'). Without this, the slider claimed
+  // "Anywhere" for every such member while their feed stayed filtered to the
+  // old radius - misrepresenting the filter and inviting an accidental
+  // widening. Invert the radius onto the minutes scale with a short
+  // bisection over the same routing lookup the slider itself uses, show the
+  // handle there, and persist BOTH keys so this runs once per member. The
+  // stored metres value is deliberately left untouched: the feed keeps
+  // filtering to exactly the radius they chose.
+  async function adoptLegacyMetres() {
+    if (!metresKey) return false
+    const settings = me.value?.settings
+    if (!settings || typeof settings[minutesKey] === 'number') return false
+    const legacy = settings[metresKey]
+    if (legacy === 'nearby') {
+      // Old "Nearby" = their own area: the narrow end of the scale. Shown,
+      // not persisted - their first drag writes real values.
+      sliderValue.value = BROWSE_MINUTES_MIN
+      return true
+    }
+    const metres = Number(legacy)
+    if (!Number.isFinite(metres) || metres <= 0) return false
+    const wantMiles = metres / 1609.344
+    let lo = BROWSE_MINUTES_MIN
+    let hi = maxMinutes.value
+    for (let i = 0; i < 3; i++) {
+      const mid = Math.round((lo + hi) / 2)
+      const r = await reachRadiusFor(mid)
+      if (r === null) return false // routing unavailable: leave the slider alone
+      if (r < wantMiles) lo = mid
+      else hi = mid
+    }
+    const minutes = Math.round((lo + hi) / 2)
+    sliderValue.value = positionFor(minutes)
+    settings[minutesKey] = minutes
+    settings[milesKey] = wantMiles
+    await authStore.saveAndGet({ settings })
+    return true
+  }
+
   async function loadCap() {
+    if (await adoptLegacyMetres()) {
+      return
+    }
     const asked = savedMinutes.value
     await fetchNear(asked)
 
@@ -219,6 +263,7 @@ export function useReachDistance(
     if (atTop && maxMinutes.value >= BROWSE_MINUTES_MAX) {
       settings[minutesKey] = minutes
       settings[milesKey] = BROWSE_DISTANCE_UNLIMITED
+      if (metresKey) settings[metresKey] = 0 // the axis's API form of "anywhere"
       sliderValue.value = minutes
       await authStore.saveAndGet({ settings })
       if (onPersisted) onPersisted(BROWSE_DISTANCE_UNLIMITED)
@@ -234,6 +279,7 @@ export function useReachDistance(
     if (atTop) sliderValue.value = minutes
     if (radius !== null) {
       settings[milesKey] = radius
+      if (metresKey) settings[metresKey] = Math.round(radius * 1609.344)
     } else {
       // The derivation failed (no known location, or the routing call errored).
       // The old cached radius belongs to a DIFFERENT slider position - keeping
@@ -243,6 +289,7 @@ export function useReachDistance(
       // successful slider change - or the browse:backfill-max-distance batch
       // command - restores a derived cap.
       settings[milesKey] = BROWSE_DISTANCE_UNLIMITED
+      if (metresKey) settings[metresKey] = 0
     }
     await authStore.saveAndGet({ settings })
     if (onPersisted)

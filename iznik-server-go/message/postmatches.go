@@ -6,6 +6,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
@@ -169,7 +170,7 @@ func PostMatches(c *fiber.Ctx) error {
 		if blocked[cnd.Msgid] {
 			continue
 		}
-		lat, lng := utils.Blur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
+		lat, lng := roadblur.RoadBlur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,
 			Groupid: cnd.Groupid,

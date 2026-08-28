@@ -51,6 +51,7 @@ import StatusAPI from './StatusAPI.js'
 import StoriesAPI from './StoriesAPI.js'
 import SystemLogsAPI from './SystemLogsAPI.js'
 import TeamAPI from './TeamAPI.js'
+import DrivingAPI from './DrivingAPI.js'
 import TownAPI from './TownAPI.js'
 import TrystAPI from './TrystAPI.js'
 import UserAPI from './UserAPI.js'
@@ -104,6 +105,7 @@ export default (config) => {
     stories: new StoriesAPI(options),
     systemlogs: new SystemLogsAPI(options),
     team: new TeamAPI(options),
+    driving: new DrivingAPI(options),
     town: new TownAPI(options),
     tryst: new TrystAPI(options),
     user: new UserAPI(options),
