@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -205,16 +206,35 @@ func reachEnvelopeExpr(db *gorm.DB) string {
 }
 
 // filterProbed applies the degraded-path cells probe to fetched candidates;
-// a nil probe returns them untouched.
+// a nil probe returns them untouched. Rows the probe cannot decide (a
+// RETIRED grid: the row's label + union threshold replaced its cells) get
+// one batched label evaluation - so a spatial-server outage alone does not
+// hide drained posts; only spatial AND routing down together does, and that
+// double failure fails closed.
 func filterProbed(cands []reachCandidateRow, probe *reachProbe) []reachCandidateRow {
 	if probe == nil {
 		return cands
 	}
 	kept := cands[:0]
+	var undecided []reachCandidateRow
 	for _, c := range cands {
 		if probe.keep(c.ID, c.ReachCells) {
 			c.ReachCells = nil // not needed downstream; drop the blob early
 			kept = append(kept, c)
+		} else if len(c.ReachCells) == 0 {
+			undecided = append(undecided, c)
+		}
+	}
+	if len(undecided) > 0 {
+		ids := make([]uint64, len(undecided))
+		for i, c := range undecided {
+			ids[i] = c.ID
+		}
+		verdicts := rippling.LabelVerdicts(probe.lat, probe.lng, ids)
+		for _, c := range undecided {
+			if verdicts[c.ID] == rippling.LabelVerdictIn {
+				kept = append(kept, c)
+			}
 		}
 	}
 	return kept

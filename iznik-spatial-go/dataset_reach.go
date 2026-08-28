@@ -43,20 +43,26 @@ func (d *ReachDataset) Name() string { return "reach" }
 func (d *ReachDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *ReachDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
-// reachSelect builds the row query.
+// reachSelect builds the row query. `retired` = the row's grid has been
+// drained under labels-truth (stored label + union threshold answer
+// everything): such rows leave this index entirely - containment for them is
+// served by the routing server's label evaluation (the discover arm).
 func reachSelect(where string) string {
-	return "SELECT rr.msgid, rr.status, rr.polygon_cells FROM rippling_reach rr " + where
+	return "SELECT rr.msgid, rr.status, rr.polygon_cells, " +
+		"(rr.reach_labels IS NOT NULL AND rr.polygon_cells IS NULL) AS retired " +
+		"FROM rippling_reach rr " + where
 }
 
 type reachRawRow struct {
-	msgid  int64
-	status string
-	cells  []byte
+	msgid   int64
+	status  string
+	cells   []byte
+	retired bool
 }
 
 func scanReachRaw(rows *sql.Rows) (reachRawRow, error) {
 	var r reachRawRow
-	return r, rows.Scan(&r.msgid, &r.status, &r.cells)
+	return r, rows.Scan(&r.msgid, &r.status, &r.cells, &r.retired)
 }
 
 func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
@@ -84,6 +90,10 @@ func (d *ReachDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 		go func() {
 			defer wg.Done()
 			for r := range in {
+				if r.retired {
+					// Drained under labels-truth: not this index's row.
+					continue
+				}
 				item, ok := buildReachItem(r.msgid, r.status, r.cells)
 				if !ok {
 					atomic.AddInt64(&skipped, 1)
@@ -146,6 +156,16 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 			skipped++
 			continue
 		}
+		if r.retired {
+			// A writer drained this row's grid (labels-truth): remove it -
+			// a skipped upsert would leave the PREVIOUS tick's smaller
+			// reach serving stale answers forever.
+			if err := idx.DeleteByExtID(r.msgid); err != nil {
+				log.Printf("reach delta: remove retired msgid=%d: %v", r.msgid, err)
+			}
+			removed++
+			continue
+		}
 		item, ok := buildReachItem(r.msgid, r.status, r.cells)
 		if !ok {
 			skipped++
@@ -185,7 +205,10 @@ func (d *ReachDataset) ApplyDelta(mysqlDB *sql.DB, idx *Index, since time.Time) 
 // reconcile diffs the index's extids against rippling_reach's live msgids:
 // index-only entries are deleted, source-only msgids are fetched and built.
 func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
-	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'`)
+	// Retired rows (grid drained under labels-truth) are OUT of the source
+	// set, so their stale index entries are deleted like any other.
+	rows, err := mysqlDB.Query(`SELECT msgid FROM rippling_reach WHERE status != 'held'
+		AND NOT (reach_labels IS NOT NULL AND polygon_cells IS NULL)`)
 	if err != nil {
 		return fmt.Errorf("reach reconcile ids: %w", err)
 	}
@@ -230,12 +253,12 @@ func (d *ReachDataset) reconcile(mysqlDB *sql.DB, idx *Index) error {
 		}
 		row := mysqlDB.QueryRow(reachSelect(`WHERE rr.msgid = ?`), id)
 		var r reachRawRow
-		if scanErr := row.Scan(&r.msgid, &r.status, &r.cells); scanErr != nil {
+		if scanErr := row.Scan(&r.msgid, &r.status, &r.cells, &r.retired); scanErr != nil {
 			// Row vanished between the id list and this fetch: fine, next tick.
 			continue
 		}
 		item, ok := buildReachItem(r.msgid, r.status, r.cells)
-		if !ok || r.status == "held" {
+		if !ok || r.status == "held" || r.retired {
 			continue
 		}
 		if err := InsertItems(idx, []Item{item}, nil); err != nil {

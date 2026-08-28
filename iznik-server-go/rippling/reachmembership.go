@@ -39,15 +39,16 @@ func ReachMembership(db *gorm.DB, msgids []uint64, lng, lat float64) (map[uint64
 	}
 
 	var rows []struct {
-		Msgid    uint64     `gorm:"column:msgid"`
-		Lat      *float64   `gorm:"column:lat"`
-		Lng      *float64   `gorm:"column:lng"`
-		Schedule *string    `gorm:"column:schedule"`
-		Arrival  *time.Time `gorm:"column:arrival"`
-		Cells    []byte     `gorm:"column:cells"`
+		Msgid     uint64     `gorm:"column:msgid"`
+		Lat       *float64   `gorm:"column:lat"`
+		Lng       *float64   `gorm:"column:lng"`
+		Schedule  *string    `gorm:"column:schedule"`
+		Arrival   *time.Time `gorm:"column:arrival"`
+		Cells     []byte     `gorm:"column:cells"`
+		HasLabels bool       `gorm:"column:has_labels"`
 	}
 	if err := db.Table("rippling_reach rr").
-		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival, rr.polygon_cells AS cells").
+		Select("rr.msgid, rr.lat, rr.lng, rr.schedule, rr.arrival, rr.polygon_cells AS cells, rr.reach_labels IS NOT NULL AS has_labels").
 		Where("rr.msgid IN ?", msgids).
 		Scan(&rows).Error; err != nil {
 		log.Printf("reach membership fetch failed: %v", err)
@@ -73,10 +74,14 @@ func ReachMembership(db *gorm.DB, msgids []uint64, lng, lat float64) (map[uint64
 			out[r.Msgid] = info
 			continue
 		}
-		// No usable cells - cannot happen for healthy rows (every writer
-		// stores cells); fail closed, and say so rather than silently.
+		// No usable cells. For a labelled row that is the RETIRED-grid
+		// state (labels-truth drained it) during a routing outage: fail
+		// closed, quietly - the designed double-failure direction. For an
+		// unlabelled row it is an anomaly worth saying out loud.
 		out[r.Msgid] = info
-		undecided = append(undecided, r.Msgid)
+		if !r.HasLabels {
+			undecided = append(undecided, r.Msgid)
+		}
 	}
 
 	if len(undecided) > 0 {

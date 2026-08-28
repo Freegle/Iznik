@@ -23,6 +23,7 @@ import (
 // --all re-backfill), so a short TTL is purely a rewrite-visibility bound.
 type evalLabelEntry struct {
 	lbl     *ReachLabels // nil = row has no usable labels
+	eng     *ReachEngine // the build that decoded lbl (arrivals only mean anything there)
 	expires time.Time
 }
 
@@ -37,7 +38,14 @@ type evalBudgetEntry struct {
 	rejected  []int64 // group ids whose areas are subtracted from this reach
 	held      bool    // frozen (back in moderation): never discoverable
 	originGid int64   // the post's origin group (its area is union-admitted)
-	expires   time.Time
+	// Road-native origin-group union threshold (reach_union.go):
+	// unionKnown=false (column NULL) = not computed yet, keep the
+	// transitional origin_area no-verdict behaviour; unionSecs=unionNever =
+	// computed, the union never activates; >=0 = the budget at which the
+	// origin group's whole area becomes admitted.
+	unionKnown bool
+	unionSecs  float32
+	expires    time.Time
 }
 
 var (
@@ -55,14 +63,41 @@ const (
 
 // evalRow is one candidate's stored state, however loaded.
 type evalRow struct {
-	msgid     uint64
-	blob      []byte
-	tick      int
-	maxMin    float64
-	schedule  string
-	rejected  string // rejected_groups JSON: group areas subtracted from this reach
-	held      bool   // status='held': frozen, hidden on every surface
-	originGid int64  // the post's origin group id (0 = unknown)
+	msgid      uint64
+	blob       []byte
+	tick       int
+	maxMin     float64
+	schedule   string
+	rejected   string // rejected_groups JSON: group areas subtracted from this reach
+	held       bool   // status='held': frozen, hidden on every surface
+	originGid  int64  // the post's origin group id (0 = unknown)
+	unionKnown bool   // origin_union_secs column non-NULL
+	unionSecs  float32
+}
+
+// Schema guards: the columns land by migration after this code deploys, so
+// the loaders must work both ways (the same deploy-before-migrate posture as
+// newsfeed.leaf). Checked once per process.
+var (
+	schemaOnce      sync.Once
+	hasUnionSecsCol bool
+	hasLeavesFPCol  bool
+)
+
+func checkEvalSchema() {
+	schemaOnce.Do(func() {
+		db := groupsDB
+		if db == nil {
+			return
+		}
+		var n int
+		if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'origin_union_secs'").Scan(&n); err == nil {
+			hasUnionSecsCol = n > 0
+		}
+		if err := db.QueryRow("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'rippling_reach_leaves' AND column_name = 'fp'").Scan(&n); err == nil {
+			hasLeavesFPCol = n > 0
+		}
+	})
 }
 
 // evalRowLoader fetches candidate rows; a var so tests can inject rows
@@ -73,14 +108,19 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 	if db == nil {
 		return nil, errNoEvalDB
 	}
+	checkEvalSchema()
 	ph := make([]string, len(ids))
 	args := make([]interface{}, len(ids))
 	for i, id := range ids {
 		ph[i] = "?"
 		args[i] = id
 	}
+	unionSel := "NULL"
+	if hasUnionSecsCol {
+		unionSel = "rr.origin_union_secs"
+	}
 	rows, err := db.Query(
-		"SELECT rr.msgid, rr.reach_labels, rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, "+
+		"SELECT rr.msgid, rr.reach_labels, rr.tick, rr.max_drive_min, rr.schedule, rr.rejected_groups, rr.status, "+unionSel+", "+
 			"(SELECT mg.groupid FROM messages_groups mg WHERE mg.msgid = rr.msgid AND mg.deleted = 0 ORDER BY mg.arrival ASC LIMIT 1) "+
 			"FROM rippling_reach rr WHERE rr.msgid IN ("+
 			strings.Join(ph, ",")+")", args...)
@@ -92,10 +132,10 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 	for rows.Next() {
 		var r evalRow
 		var blob []byte
-		var maxMin sql.NullFloat64
+		var maxMin, unionSecs sql.NullFloat64
 		var origin sql.NullInt64
 		var schedule, rejected, status sql.NullString
-		if err := rows.Scan(&r.msgid, &blob, &r.tick, &maxMin, &schedule, &rejected, &status, &origin); err != nil {
+		if err := rows.Scan(&r.msgid, &blob, &r.tick, &maxMin, &schedule, &rejected, &status, &unionSecs, &origin); err != nil {
 			continue
 		}
 		r.blob = blob
@@ -104,6 +144,8 @@ var evalRowLoader = func(ids []uint64) ([]evalRow, error) {
 		r.rejected = rejected.String
 		r.held = status.String == "held"
 		r.originGid = origin.Int64
+		r.unionKnown = unionSecs.Valid
+		r.unionSecs = float32(unionSecs.Float64)
 		out = append(out, r)
 	}
 	return out, nil
@@ -159,13 +201,18 @@ func handleReachEval() fiber.Handler {
 			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
 		}
 
-		// One snap for the member, shared across every candidate. A point
-		// that does not snap (off-network address, geocoding slop) degrades
-		// to "no verdicts" - the callers keep their cell-grid answers - the
-		// same graceful shape blur, leaf and drive-metrics use. A 4xx here
-		// would trip the callers' shared routing breaker on one member's
-		// ordinary location.
+		// One snap for the member per BUILD, shared across every candidate:
+		// a blob only evaluates on the build that decoded it, so a member
+		// node is needed on each loaded build. A point that does not snap
+		// (off-network address, geocoding slop) degrades to "no verdicts" -
+		// the callers keep their cell-grid answers - the same graceful shape
+		// blur, leaf and drive-metrics use. A 4xx here would trip the
+		// callers' shared routing breaker on one member's ordinary location.
 		v := nearestNodeForMode(e.G, req.Lat, req.Lng, Drive)
+		vPrev := noNode
+		if reachPrev != nil {
+			vPrev = nearestNodeForMode(reachPrev.G, req.Lat, req.Lng, Drive)
+		}
 		if v == noNode {
 			results := make([]reachEvalResult, 0, len(req.Msgids))
 			for _, id := range req.Msgids {
@@ -217,6 +264,17 @@ func handleReachEval() fiber.Handler {
 			if !ok || le.lbl == nil {
 				return reachEvalResult{Msgid: id, Verdict: "nolabels"}
 			}
+			// The blob evaluates only on the build that decoded it.
+			eng, node := le.eng, v
+			if eng == nil {
+				eng = e
+			}
+			if eng != e {
+				node = vPrev
+			}
+			if node == noNode {
+				return reachEvalResult{Msgid: id, Verdict: "nolabels"}
+			}
 			if discovering && be.held {
 				// A frozen reach is hidden on every surface; discover must
 				// not resurrect it. (Explicitly-asked candidates keep their
@@ -232,14 +290,26 @@ func handleReachEval() fiber.Handler {
 			if useMax {
 				budget = be.maxSecs
 			}
-			arr := e.ArrivalAtBaseNode(le.lbl, v)
+			arr := eng.ArrivalAtBaseNode(le.lbl, node)
 			if arr <= budget {
 				a := arr
 				return reachEvalResult{Msgid: id, Verdict: "in", Arrival: &a}
 			}
+			inOriginArea := be.originGid != 0 && areaHit[be.originGid]
+			if inOriginArea && be.unionKnown {
+				// Road-native union (reach_union.go): once the budget passes
+				// the stored threshold, the origin group's whole area is
+				// admitted - the definitive answer, no cells needed.
+				if be.unionSecs >= 0 && budget >= be.unionSecs {
+					return reachEvalResult{Msgid: id, Verdict: "in"}
+				}
+				return reachEvalResult{Msgid: id, Verdict: "out"}
+			}
 			return reachEvalResult{
 				Msgid: id, Verdict: "out",
-				OriginArea: be.originGid != 0 && areaHit[be.originGid],
+				// Transitional (threshold not computed yet): flag it so the
+				// callers let the cell grid - which holds the union - decide.
+				OriginArea: inOriginArea,
 			}
 		}
 
@@ -259,7 +329,7 @@ func handleReachEval() fiber.Handler {
 		// live posts than the cap is one no feed page would exhaust anyway.
 		var discovered []reachEvalResult
 		if req.Discover {
-			cands := leafCandidates(v, e)
+			cands := leafCandidates(v, vPrev, e)
 			var fresh []uint64
 			for _, id := range cands {
 				if !asked[id] {
@@ -318,9 +388,10 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 		seen[r.msgid] = true
 
 		var lbl *ReachLabels
+		var lblEng *ReachEngine
 		if len(r.blob) > 0 {
-			if decoded, err := e.DecodeLabels(r.blob); err == nil {
-				lbl = decoded
+			if decoded, eng, err := decodeLabelsAnyBuild(r.blob); err == nil {
+				lbl, lblEng = decoded, eng
 			}
 		}
 		var rejected []int64
@@ -333,14 +404,16 @@ func evalLoad(e *ReachEngine, ids []uint64) error {
 			// TTL rather than pinning "no labels" for the full label TTL.
 			ttl = evalBudgetTTL
 		}
-		evalLabels[r.msgid] = evalLabelEntry{lbl: lbl, expires: now.Add(ttl)}
+		evalLabels[r.msgid] = evalLabelEntry{lbl: lbl, eng: lblEng, expires: now.Add(ttl)}
 		evalBudgets[r.msgid] = evalBudgetEntry{
-			secs:      currentBudgetSecs(r.tick, r.maxMin, r.schedule),
-			maxSecs:   float32(r.maxMin * 60),
-			rejected:  rejected,
-			held:      r.held,
-			originGid: r.originGid,
-			expires:   now.Add(evalBudgetTTL),
+			secs:       currentBudgetSecs(r.tick, r.maxMin, r.schedule),
+			maxSecs:    float32(r.maxMin * 60),
+			rejected:   rejected,
+			held:       r.held,
+			originGid:  r.originGid,
+			unionKnown: r.unionKnown,
+			unionSecs:  r.unionSecs,
+			expires:    now.Add(evalBudgetTTL),
 		}
 	}
 	// Ids with no reach row at all: cache as no-labels so repeats stay cheap.
@@ -408,7 +481,9 @@ var (
 	groupAreaCache = map[int64]groupAreaEntry{}
 )
 
-func groupAreaContains(gid int64, lat, lng float64) bool {
+// groupAreaRings loads (cached) the group's area as a flat ring list; nil
+// when the group has no polygonal area or the database is unavailable.
+func groupAreaRings(gid int64) [][][2]float64 {
 	now := time.Now()
 	groupAreaMu.Lock()
 	entry, ok := groupAreaCache[gid]
@@ -431,13 +506,18 @@ func groupAreaContains(gid int64, lat, lng float64) bool {
 		}
 		groupAreaMu.Unlock()
 	}
-	if len(entry.rings) == 0 {
+	return entry.rings
+}
+
+func groupAreaContains(gid int64, lat, lng float64) bool {
+	rings := groupAreaRings(gid)
+	if len(rings) == 0 {
 		return false
 	}
 	// Pure even-odd over every ring: correct for holes AND for the disjoint
 	// parts of a MULTIPOLYGON (whose rings are flattened into one list).
 	crossings := 0
-	for _, ring := range entry.rings {
+	for _, ring := range rings {
 		if pointInRing(lng, lat, ring) {
 			crossings++
 		}
@@ -458,14 +538,30 @@ var (
 )
 
 // leafRowLoader fetches the posts whose stored leaves include one region; a
-// var so tests can inject candidates without a database.
+// var so tests can inject candidates without a database. Leaf ids are
+// build-local, so once the fp column exists rows are filtered to the loaded
+// builds - NULL fp (rows from before the column, or whose blob predates the
+// stamp) matches loosely: a false candidate only costs a lookup, because the
+// verdict still comes from the blob itself.
 var leafRowLoader = func(leaf int32) []uint64 {
 	db := groupsDB
 	if db == nil {
 		return nil
 	}
+	checkEvalSchema()
+	q := "SELECT msgid FROM rippling_reach_leaves WHERE leaf = ?"
+	args := []interface{}{leaf}
+	if hasLeavesFPCol && reachLive != nil {
+		if reachPrev != nil {
+			q += " AND (fp IS NULL OR fp IN (?, ?))"
+			args = append(args, reachLive.partFP, reachPrev.partFP)
+		} else {
+			q += " AND (fp IS NULL OR fp = ?)"
+			args = append(args, reachLive.partFP)
+		}
+	}
 	var ids []uint64
-	rows, err := db.Query("SELECT msgid FROM rippling_reach_leaves WHERE leaf = ?", leaf)
+	rows, err := db.Query(q, args...)
 	if err == nil {
 		for rows.Next() {
 			var id uint64
@@ -478,16 +574,19 @@ var leafRowLoader = func(leaf int32) []uint64 {
 	return ids
 }
 
-func leafCandidates(v NodeID, e *ReachEngine) []uint64 {
-	// The member's region(s): one for a junction, up to two for a mid-chain
-	// point straddling a cut (same rule as /v1/leaf).
+func leafCandidates(v, vPrev NodeID, e *ReachEngine) []uint64 {
+	// The member's region(s) on EVERY loaded build: one per junction, up to
+	// two for a mid-chain point straddling a cut (same rule as /v1/leaf).
+	// Leaf numbers are build-local; querying the union of both builds' leaf
+	// numbers with the loose fp filter gives a superset of candidates, and
+	// the label evaluation decides each one exactly.
 	var leaves []int32
-	add := func(j NodeID) {
+	addOn := func(eng *ReachEngine, j NodeID) {
 		if j == 0 {
 			return
 		}
-		if oi := e.Ov.Idx[j]; oi != 0 {
-			if l := e.Part.LeafOf[oi]; l >= 0 {
+		if oi := eng.Ov.Idx[j]; oi != 0 {
+			if l := eng.Part.LeafOf[oi]; l >= 0 {
 				for _, x := range leaves {
 					if x == l {
 						return
@@ -497,12 +596,19 @@ func leafCandidates(v NodeID, e *ReachEngine) []uint64 {
 			}
 		}
 	}
-	if e.Ov.Idx[v] != 0 {
-		add(v)
-	} else {
-		add(e.Ov.ChainEndA[v])
-		add(e.Ov.ChainEndB[v])
+	forEngine := func(eng *ReachEngine, node NodeID) {
+		if eng == nil || node == noNode {
+			return
+		}
+		if eng.Ov.Idx[node] != 0 {
+			addOn(eng, node)
+		} else {
+			addOn(eng, eng.Ov.ChainEndA[node])
+			addOn(eng, eng.Ov.ChainEndB[node])
+		}
 	}
+	forEngine(e, v)
+	forEngine(reachPrev, vPrev)
 
 	now := time.Now()
 	var out []uint64

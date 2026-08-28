@@ -593,6 +593,10 @@ class ReachService
                     'lat' => $lat,
                     'lng' => $lng,
                     'minutes' => $maxMinutes,
+                    // With the msgid the routing server also answers the
+                    // road-native origin-group union (origin_union_secs +
+                    // the group area's regions), stored alongside.
+                    'msgid' => $msgid,
                 ]);
         } catch (\Throwable $e) {
             Log::warning("ripple: reach-labels fetch failed: {$e->getMessage()}", ['msgid' => $msgid]);
@@ -614,16 +618,35 @@ class ReachService
             Log::warning('ripple: reach-labels response malformed', ['msgid' => $msgid]);
             return false;
         }
+        // Union-admitted regions ride along with the reached ones, so members
+        // the union admits DISCOVER the post; dedupe against the label's own.
+        foreach ($body['union_leaves'] ?? [] as $leaf) {
+            if (!in_array((int) $leaf, $leaves, false)) {
+                $leaves[] = (int) $leaf;
+            }
+        }
+        $update = ['reach_labels' => $labels];
+        if (array_key_exists('origin_union_secs', $body) && self::unionColumnsReady()) {
+            $update['origin_union_secs'] = (float) $body['origin_union_secs'];
+        }
+        $fp = self::unionColumnsReady() && !empty($body['fp']) ? (string) $body['fp'] : null;
         try {
             // One transaction: the blob and its leaves commit together. A blob
             // without its leaves would permanently hide the post from the leaf
             // prefilter, because every retry path keys off reach_labels IS NULL.
-            DB::transaction(function () use ($msgid, $labels, $leaves) {
-                DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => $labels]);
+            DB::transaction(function () use ($msgid, $update, $leaves, $fp) {
+                DB::table('rippling_reach')->where('msgid', $msgid)->update($update);
                 DB::table('rippling_reach_leaves')->where('msgid', $msgid)->delete();
                 foreach (array_chunk($leaves, 500) as $chunk) {
                     DB::table('rippling_reach_leaves')->insertOrIgnore(
-                        collect($chunk)->map(fn ($leaf) => ['msgid' => $msgid, 'leaf' => (int) $leaf])->all()
+                        collect($chunk)->map(function ($leaf) use ($msgid, $fp) {
+                            $row = ['msgid' => $msgid, 'leaf' => (int) $leaf];
+                            if ($fp !== null) {
+                                $row['fp'] = $fp;
+                            }
+
+                            return $row;
+                        })->all()
                     );
                 }
             });
@@ -631,6 +654,95 @@ class ReachService
             Log::warning("ripple: reach-labels store failed: {$e->getMessage()}", ['msgid' => $msgid]);
             return false;
         }
+        return true;
+    }
+
+    /** Deploy-before-migrate guard for the endgame columns; checked once. */
+    private static ?bool $unionColsReady = null;
+
+    private static function unionColumnsReady(): bool
+    {
+        if (self::$unionColsReady === null) {
+            try {
+                self::$unionColsReady = Schema::hasColumn('rippling_reach', 'origin_union_secs')
+                    && Schema::hasColumn('rippling_reach_leaves', 'fp');
+            } catch (\Throwable) {
+                self::$unionColsReady = false;
+            }
+        }
+
+        return self::$unionColsReady;
+    }
+
+    /**
+     * The backfill face of the union computation, for a post whose labels are
+     * ALREADY stored: one POST /v1/reach-union with the stored blob computes
+     * origin_union_secs + the group area's regions; the row is updated, the
+     * union regions merged into its leaves, and its existing leaves stamped
+     * with the build fingerprint the blob decoded on. False on any failure -
+     * the row keeps origin_union_secs NULL and the transitional behaviour.
+     */
+    public function storeUnionSecs(int $msgid): bool
+    {
+        if (!self::unionColumnsReady()) {
+            return false;
+        }
+        $row = DB::table('rippling_reach')->select('reach_labels')->where('msgid', $msgid)->first();
+        if ($row === null || $row->reach_labels === null) {
+            return false;
+        }
+        try {
+            $response = Http::timeout($this->requestTimeout)
+                ->post("{$this->url}/v1/reach-union", [
+                    'labels' => base64_encode((string) $row->reach_labels),
+                    'msgid' => $msgid,
+                ]);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: reach-union fetch failed: {$e->getMessage()}", ['msgid' => $msgid]);
+
+            return false;
+        }
+        if (!$response->successful()) {
+            // 503/404 = not deployed yet; 422 = the blob belongs to a build
+            // the routing server no longer holds (re-run the label backfill).
+            if (!in_array($response->status(), [503, 404, 422], true)) {
+                Log::warning("ripple: reach-union HTTP {$response->status()}", ['msgid' => $msgid]);
+            }
+
+            return false;
+        }
+        $body = $response->json() ?? [];
+        if (!array_key_exists('origin_union_secs', $body)) {
+            return false;
+        }
+        $secs = (float) $body['origin_union_secs'];
+        $unionLeaves = array_map('intval', $body['union_leaves'] ?? []);
+        $fp = !empty($body['fp']) ? (string) $body['fp'] : null;
+        try {
+            DB::transaction(function () use ($msgid, $secs, $unionLeaves, $fp) {
+                DB::table('rippling_reach')->where('msgid', $msgid)->update(['origin_union_secs' => $secs]);
+                if ($fp !== null) {
+                    DB::table('rippling_reach_leaves')->where('msgid', $msgid)->whereNull('fp')->update(['fp' => $fp]);
+                }
+                foreach (array_chunk($unionLeaves, 500) as $chunk) {
+                    DB::table('rippling_reach_leaves')->insertOrIgnore(
+                        collect($chunk)->map(function ($leaf) use ($msgid, $fp) {
+                            $row = ['msgid' => $msgid, 'leaf' => (int) $leaf];
+                            if ($fp !== null) {
+                                $row['fp'] = $fp;
+                            }
+
+                            return $row;
+                        })->all()
+                    );
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::warning("ripple: reach-union store failed: {$e->getMessage()}", ['msgid' => $msgid]);
+
+            return false;
+        }
+
         return true;
     }
 

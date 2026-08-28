@@ -211,6 +211,13 @@ customer:
   evaluates at `budget:"max"` for eventual-reach questions, and `discover`
   surfaces label-admitted posts a grid prefilter missed (via
   `rippling_reach_leaves`).
+- The grid-removal endgame: the origin-group union goes road-native
+  (`reach_union.go` - one `origin_union_secs` threshold per post instead of
+  per-tick geometry), the per-tick writers stop materialising the cell grid
+  for union-ready rows (the spatial containment index REMOVES drained rows;
+  the discover arm serves them), and `REACH_DIR_PREV` keeps the previous
+  partition build resident so a map refresh is a rolling label migration
+  (`decodeLabelsAnyBuild`) rather than an estate-wide invalidation.
 
 ## Fast "what is near me" for messages, chitchat, anything
 

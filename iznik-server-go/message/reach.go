@@ -3,12 +3,16 @@ package message
 import (
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -254,8 +258,60 @@ type reachRow struct {
 	Arrival         *string
 	NextExpansionAt *string
 	Polygon         *string
-	// Cells is the stored cell grid, vectorized for display when present.
-	Cells []byte `gorm:"column:cells"`
+	// Cells is the stored cell grid, vectorized for display when present. A
+	// retired grid (HasLabels, no cells) draws the engine isochrone instead.
+	Cells       []byte  `gorm:"column:cells"`
+	HasLabels   bool    `gorm:"column:has_labels"`
+	Lat         float64 `gorm:"column:lat"`
+	Lng         float64 `gorm:"column:lng"`
+	MaxDriveMin float64 `gorm:"column:max_drive_min"`
+	Schedule    *string `gorm:"column:schedule"`
+}
+
+// currentBudgetMins mirrors the schedule arithmetic every evaluator uses:
+// the schedule entry for the current tick, the row's maximum as fallback.
+func currentBudgetMins(tick int, maxDriveMin float64, schedule *string) float64 {
+	if schedule != nil && *schedule != "" {
+		var entries []struct {
+			Tick     int     `json:"tick"`
+			DriveMin float64 `json:"drive_min"`
+		}
+		if err := json.Unmarshal([]byte(*schedule), &entries); err == nil {
+			for _, en := range entries {
+				if en.Tick == tick && en.DriveMin > 0 {
+					return en.DriveMin
+				}
+			}
+		}
+	}
+	return maxDriveMin
+}
+
+var reachIsoClient = &http.Client{Timeout: 5 * time.Second}
+
+// engineIsochroneGeoJSON fetches the drive isochrone polygon for a retired
+// row's display boundary. Empty string on any failure - the overlay simply
+// has no polygon, exactly as a missing grid behaved.
+func engineIsochroneGeoJSON(lat, lng, minutes float64) string {
+	if minutes <= 0 || !roadblur.RoutingHealthy() {
+		return ""
+	}
+	resp, err := reachIsoClient.Get(fmt.Sprintf("%s/v1/isochrone?lat=%f&lng=%f&minutes=%d",
+		roadblur.RoutingURL(), lat, lng, int(minutes+0.5)))
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var parsed struct {
+		Drive json.RawMessage `json:"drive"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil || len(parsed.Drive) == 0 {
+		return ""
+	}
+	return string(parsed.Drive)
 }
 
 // reachDisplayToleranceDegrees is the simplify tolerance for the reach
@@ -310,15 +366,23 @@ func Reach(c *fiber.Ctx) error {
 	// The map overlay's boundary comes from the stored cell grid, traced back
 	// to a vector by the spatial server (spatial.VectorizeCells - the one
 	// place that judgement lives) at a display tolerance comparable to the
-	// old geometry's density.
+	// old geometry's density. A RETIRED grid (labels-truth drained it) draws
+	// the engine's own drive isochrone at the current budget instead - the
+	// road-exact boundary, minus the origin-group union sliver, which is an
+	// acceptable display nuance on a moderation overlay.
 	var row reachRow
 	found := db.Table("rippling_reach rr").
-		Select("rr.tick, rr.total_ticks, rr.status, rr.arrival, rr.next_expansion_at, rr.polygon_cells AS cells").
+		Select("rr.tick, rr.total_ticks, rr.status, rr.arrival, rr.next_expansion_at, rr.polygon_cells AS cells, "+
+			"rr.reach_labels IS NOT NULL AS has_labels, rr.lat, rr.lng, rr.max_drive_min, rr.schedule").
 		Where("rr.msgid = ?", id).
 		Scan(&row)
 	if found.RowsAffected > 0 {
 		if len(row.Cells) > 0 {
 			if _, geojson, err := spatial.VectorizeCells(row.Cells, reachDisplayToleranceDegrees); err == nil {
+				row.Polygon = &geojson
+			}
+		} else if row.HasLabels && row.Lat != 0 && row.Lng != 0 {
+			if geojson := engineIsochroneGeoJSON(row.Lat, row.Lng, currentBudgetMins(row.Tick, row.MaxDriveMin, row.Schedule)); geojson != "" {
 				row.Polygon = &geojson
 			}
 		}

@@ -438,10 +438,18 @@ class ExpandService
             // the cap just excluded).
             $withOverflowCells = $this->overflowCellsColumnReady();
             $ovCellsSet = $withOverflowCells ? ', overflow_cells = ?' : '';
-            $cells = $this->cellSets->rasterize($storeWkt);
-            if ($cells === null) {
-                $stats['skipped']++;
-                continue;
+            if ($this->gridRetired((int) $row->msgid)) {
+                // Labels + union threshold answer everything the grid did;
+                // stop re-materialising it (NULL drains the blob) and skip
+                // the rasterise round trip. The spatial index removes the
+                // row and containment is served from the stored label.
+                $cells = null;
+            } else {
+                $cells = $this->cellSets->rasterize($storeWkt);
+                if ($cells === null) {
+                    $stats['skipped']++;
+                    continue;
+                }
             }
             $shrinkSql = fn (string $set): string => 'UPDATE rippling_reach
                     SET polygon_cells = ?' . $set . ',
@@ -1650,12 +1658,18 @@ class ExpandService
                          WHERE msgid = ?';
                     $advanceTail = [$this->tickReachableIdsJson($entry), $target, $next, $status, $row->msgid];
                     $advanceStore = function (string $wkt) use ($advanceSql, $advanceTail, $row): void {
-                        // A failed rasterise fails the advance: the post
-                        // keeps its previous reach and is retried next
-                        // sweep. Never write a reach nobody can read.
-                        $cells = $this->cellSets->rasterize($wkt);
-                        if ($cells === null) {
-                            throw new \RuntimeException('rasterise failed; advance left for the next pass');
+                        if ($this->gridRetired((int) $row->msgid)) {
+                            // Labels + union threshold answer everything the
+                            // grid did; drain it and skip the rasterise.
+                            $cells = null;
+                        } else {
+                            // A failed rasterise fails the advance: the post
+                            // keeps its previous reach and is retried next
+                            // sweep. Never write a reach nobody can read.
+                            $cells = $this->cellSets->rasterize($wkt);
+                            if ($cells === null) {
+                                throw new \RuntimeException('rasterise failed; advance left for the next pass');
+                            }
                         }
                         $lead = [$cells];
                         [$boundsSet, $boundsParams] = $this->boundsSetSql($wkt);
@@ -2390,10 +2404,14 @@ class ExpandService
                 // rasterise skips the row rather than writing a reach nobody
                 // can read.
                 [$boundsSet, $boundsParams] = $this->boundsSetSql($storeWkt);
-                $cells = $this->cellSets->rasterize($storeWkt);
-                if ($cells === null) {
-                    $stats['skipped']++;
-                    continue;
+                if ($this->gridRetired((int) $row->msgid)) {
+                    $cells = null;
+                } else {
+                    $cells = $this->cellSets->rasterize($storeWkt);
+                    if ($cells === null) {
+                        $stats['skipped']++;
+                        continue;
+                    }
                 }
                 $lead = [$cells];
                 $backfillSql = fn (string $set): string => 'UPDATE rippling_reach
@@ -2594,6 +2612,28 @@ class ExpandService
             $update['inner_bound'] = null;
         }
         DB::table('rippling_reach')->where('msgid', $msgid)->update($update);
+    }
+
+    /**
+     * Grid retirement, per row: once a post has BOTH its stored label and its
+     * road-native union threshold (origin_union_secs, including -1 = never),
+     * the label evaluator answers everything the current-reach grid did -
+     * membership, the origin-group union, rejections - so the writers above
+     * stop materialising the grid (NULL drains the blob) and skip the
+     * rasterise round trip. Rows without the threshold keep their grid: it
+     * still carries the union those members depend on. False on any doubt.
+     */
+    private function gridRetired(int $msgid): bool
+    {
+        try {
+            return DB::table('rippling_reach')
+                ->where('msgid', $msgid)
+                ->whereNotNull('reach_labels')
+                ->whereNotNull('origin_union_secs')
+                ->exists();
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /** Per-request cache: a rejecting group's own area is expensive to rasterise and does not change within one run. */

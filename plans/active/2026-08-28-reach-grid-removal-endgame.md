@@ -84,4 +84,16 @@ built from polygon_cells).
 
 ## Status
 
-- Plan only. Blocked on #1446 merge + backfill + drain soak.
+- DELIVERED IN #1446 (user decision 2026-08-28: "do it in that pr"), with two
+  adjustments over the plan above:
+  - No new containment endpoint: the discover arm IS routing-served
+    containment, merged with the grid index by the callers - so the flip is
+    per row (grid retires as labels+union land), parity-safe at every
+    intermediate state, with no coverage flag.
+  - Union simplification: the membership test stays point-in-polygon at eval;
+    only the activation threshold (origin_union_secs, 90% of the group's road
+    nodes) and the discovery regions needed road form.
+- Remaining OPS (not code): run a second routing instance for redundancy;
+  provision REACH_DIR_PREV at the first post-deploy partition rebuild.
+- Known non-goal carried: chitchat's newsfeed.leaf tags still reference the
+  live build only and need their backfill re-run after a partition rebuild.

@@ -85,4 +85,25 @@ class DropCellGridsCommandTest extends TestCase
             ->count();
         $this->assertSame(1, $drained, '--limit must bound how many rows one run drains');
     }
+
+
+    public function test_current_grid_drains_only_with_the_union_threshold(): void
+    {
+        // The max grid drains for any labelled row; the CURRENT grid drains
+        // only once the road-native union threshold exists - until then it
+        // still carries the origin-group union those members depend on.
+        $labelledOnly = $this->seedRow('label-bytes');
+        $unionReady = $this->seedRow('label-bytes');
+        DB::table('rippling_reach')->where('msgid', $unionReady)->update(['origin_union_secs' => 300]);
+
+        $this->artisan('ripple:drop-cell-grids', ['--sleep-ms' => 0])->assertSuccessful();
+
+        $lo = DB::table('rippling_reach')->where('msgid', $labelledOnly)->first();
+        $this->assertNull($lo->max_polygon_cells);
+        $this->assertNotNull($lo->polygon_cells, 'no union threshold yet: the current grid must stay');
+
+        $ur = DB::table('rippling_reach')->where('msgid', $unionReady)->first();
+        $this->assertNull($ur->max_polygon_cells);
+        $this->assertNull($ur->polygon_cells, 'union-ready: the label answers everything, the grid drains');
+    }
 }

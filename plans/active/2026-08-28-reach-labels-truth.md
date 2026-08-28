@@ -92,7 +92,26 @@ Four parallel reviewers; all confirmed findings fixed + tested:
   TestLabelVerdicts4xxDoesNotTripBreaker, TestLabelNarrowAndDiscover, PHP
   breaker/origin/multi-chunk/sparse-keys/--limit/indexed-scan tests.
 
+## Grid-removal endgame (2026-08-28, "do it in that pr")
+
+See plans/active/2026-08-28-reach-grid-removal-endgame.md for the design and
+its delivered adjustments. In this PR:
+
+- origin_union_secs (migration 000003) computed at label store
+  (/v1/reach-labels?msgid=) and backfilled (/v1/reach-union, second pass of
+  ripple:backfill-reach-labels); eval verdicts become DEFINITIVE for
+  union-known rows (origin_area flag only transitional for NULL).
+- rippling_reach_leaves.fp + dual-build engine (REACH_DIR_PREV,
+  decodeLabelsAnyBuild): map refresh = rolling label migration.
+- Per-row grid retirement: ExpandService writers NULL polygon_cells + skip
+  rasterise for union-ready rows; dataset_reach REMOVES labelled+drained rows
+  (delta + reconcile); drop-cell-grids drains current grids for union-ready
+  rows (done/stopped rows).
+- Degraded-path labels rescue (filterProbed); mod overlay engine-isochrone
+  fallback; reply-gate quiet fail-closed for drained rows.
+
 ## Status
 
-- All wiring + review fixes DONE. Routing suite green (full, local).
+- Labels-truth + review round + endgame all built. Routing suite green
+  (full, local, incl. TestReachUnionEndgame + TestReachEvalDualBuild).
 - apiv2 go + laravel suites: running at time of writing; commit follows green.

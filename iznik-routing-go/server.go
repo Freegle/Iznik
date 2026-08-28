@@ -624,6 +624,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	// graph computation (gated); arrival evaluation is table lookups (ungated).
 	v1.Get("/reach-labels", gated(handleReachLabels()))
 	v1.Post("/reach-arrival", handleReachArrival())
+	v1.Post("/reach-union", handleReachUnion())
 	v1.Post("/drive-metrics", gated(handleDriveMetrics()))
 	v1.Get("/blur", handleBlur(g))
 	v1.Post("/blur-batch", handleBlurBatch(g))

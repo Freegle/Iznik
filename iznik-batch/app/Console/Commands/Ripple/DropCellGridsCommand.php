@@ -7,23 +7,27 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
 /**
- * The disk-reclaim step of the labels-truth cutover: NULL the MAX-reach cell
- * grid (max_polygon_cells, ~20KB/row measured on production) for every post
- * whose stored label now decides its reach. Every max-cells reader (the
- * first-reply passthrough gate, MaxReachService, MatchMail's band) asks the
- * stored label FIRST and only falls back to this grid, so a labelled row's
- * max grid is dead weight; without it those readers fail closed during a
- * routing outage, which is the conservative direction for what are all
- * extra-mail decisions.
+ * The disk-reclaim step of the labels-truth cutover, in two grades:
  *
- * polygon_cells (the CURRENT reach grid) is deliberately NOT drained: it is
- * the source the spatial server's reach containment index is built from (the
- * browse feed / badge / digest prefilter), so it stays materialised every
- * tick until that index can answer from labels.
+ * - max_polygon_cells (~20KB/row measured on production) drains for every
+ *   post with a stored label: every max-cells reader (the first-reply
+ *   passthrough gate, MaxReachService, MatchMail's band) asks the label
+ *   FIRST and only falls back to this grid, so a labelled row's max grid is
+ *   dead weight; without it those readers fail closed during a routing
+ *   outage, the conservative direction for what are all extra-mail decisions.
  *
- * Run AFTER ripple:backfill-reach-labels has completed and the labels-truth
- * code has soaked. Follow with OPTIMIZE TABLE rippling_reach (online,
- * InnoDB) to hand the space back.
+ * - polygon_cells (the CURRENT reach grid, ~17.5KB/row) drains only for rows
+ *   that ALSO have their road-native union threshold (origin_union_secs,
+ *   from the backfill's second pass): the label evaluator then answers
+ *   everything this grid did - membership, the origin-group union,
+ *   rejections - and the spatial containment index REMOVES drained rows
+ *   (containment for them is served by the routing server's discover arm).
+ *   The per-tick writers drain expanding rows organically; this command
+ *   covers the done/stopped rows no writer touches.
+ *
+ * Run AFTER ripple:backfill-reach-labels (both its passes) has completed and
+ * the labels-truth code has soaked. Follow with OPTIMIZE TABLE
+ * rippling_reach (online, InnoDB) to hand the space back.
  *
  * Safe to re-run; rows without labels are never touched, and the maxreach
  * backfill skips labelled rows so drained grids are not rewritten.
@@ -53,10 +57,15 @@ class DropCellGridsCommand extends Command
         $query = DB::table('rippling_reach')
             ->select('msgid')
             ->whereNotNull('reach_labels')
-            ->whereNotNull('max_polygon_cells');
+            ->where(function ($q) {
+                $q->whereNotNull('max_polygon_cells')
+                    ->orWhere(function ($q2) {
+                        $q2->whereNotNull('polygon_cells')->whereNotNull('origin_union_secs');
+                    });
+            });
 
         $total = (clone $query)->count();
-        $this->info("{$total} labelled rows still carry a max-reach cell grid.");
+        $this->info("{$total} labelled rows still carry a drainable cell grid.");
         if ($this->option('dry-run')) {
             return Command::SUCCESS;
         }
@@ -68,9 +77,16 @@ class DropCellGridsCommand extends Command
         $done = 0;
         $startedAt = microtime(true);
         foreach ($query->cursor() as $row) {
-            DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
-                'max_polygon_cells' => null,
-            ]);
+            // keep-raw: the current grid drains only when the union threshold
+            // is present, decided per row inside the UPDATE so a re-run after
+            // the union backfill picks up exactly the newly-eligible rows.
+            DB::statement(
+                'UPDATE rippling_reach
+                    SET max_polygon_cells = NULL,
+                        polygon_cells = IF(origin_union_secs IS NOT NULL, NULL, polygon_cells)
+                  WHERE msgid = ?',
+                [$row->msgid]
+            );
             $done++;
             if ($done % 500 === 0) {
                 $rate = $done / max(0.001, microtime(true) - $startedAt);

@@ -248,4 +248,10 @@ func TestReachSelectNamesNoDroppedColumn(t *testing.T) {
 	if !strings.Contains(sel, "rr.polygon_cells") {
 		t.Fatalf("select must read the cells: %s", sel)
 	}
+	// Labels-truth grid retirement: the select must carry the retired flag,
+	// so a drained row is REMOVED (delta) or never loaded - a skipped upsert
+	// would leave the previous tick's smaller reach serving stale answers.
+	if !strings.Contains(sel, "reach_labels IS NOT NULL AND rr.polygon_cells IS NULL") {
+		t.Fatalf("select must carry the retired expression: %s", sel)
+	}
 }

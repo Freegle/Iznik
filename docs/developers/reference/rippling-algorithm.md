@@ -364,11 +364,38 @@ feed the daily digest's containment universe (same narrowing + union),
 `MaxReachService::isWithinMaxReach` and `MatchMailService::applyCellBand` (one
 reach-arrival call bands every candidate by seconds past the current edge).
 
-Disk: `ripple:drop-cell-grids` NULLs `max_polygon_cells` for labelled rows (every reader is
-labels-first; without the grid they fail closed during a routing outage, the conservative
-direction for extra-mail decisions). `polygon_cells` is still materialised every tick for
-every row: it is the source `iznik-spatial-go`'s reach containment index is built from, so
-draining it would leave the badge/feed prefilter serving stale or absent reach.
+### The grid-removal endgame
+
+Once a post has BOTH its stored label and its road-native union threshold, the label
+evaluator answers everything the current-reach grid did, and the grid retires per row:
+
+- **Road-native origin-group union**: the geometric rule ("include the origin group's whole
+  area once the isochrone covers >=90% of it", `ExpandService::unionWithOriginGroupArea`)
+  becomes ONE number per post - `rippling_reach.origin_union_secs`, the smallest budget at
+  which the stored label reaches 90% of the group area's road nodes (`reach_union.go`;
+  computed at label store via `/v1/reach-labels?msgid=`, backfilled via `POST
+  /v1/reach-union` in `ripple:backfill-reach-labels`'s second pass). Eval then gives the
+  DEFINITIVE verdict: below the threshold the area is not union-admitted, at or above it a
+  member standing there is in. NULL (not yet computed) keeps the transitional
+  `origin_area`-flag behaviour where the cells decide; -1 = never activates. The group
+  area's partition regions are merged into `rippling_reach_leaves` so union-admitted
+  members DISCOVER the post.
+- **Per-row grid retirement**: the `ripple:expand` writers stop materialising
+  `polygon_cells` (and skip the rasterise round trip) for union-ready rows;
+  `ripple:drop-cell-grids` drains the max grid for any labelled row and the current grid
+  for union-ready ones (covering done/stopped rows no writer touches). The spatial reach
+  containment index treats a labelled row with drained cells as REMOVE - containment for
+  it is served by the routing server's discover arm - never as skip, which would have left
+  the previous tick's smaller reach serving stale answers.
+- **Dual-build engine**: labels embed their partition build's fingerprint, and a routing
+  server started with `REACH_DIR_PREV` alongside `REACH_DIR` holds both builds, routing
+  each blob to the build that can read it (`decodeLabelsAnyBuild`; `rippling_reach_leaves.fp`
+  scopes leaf candidates per build, NULL matching loosely). A map refresh thus becomes a
+  rolling label migration instead of a site-wide nolabels window.
+- **Degradation**: a spatial-index outage alone does not hide drained posts (the degraded
+  feed path batch-evaluates undecidable rows against the labels); only spatial AND routing
+  down together fails closed. The moderator reach-map overlay draws the engine's drive
+  isochrone for drained rows.
 
 A surface that consults a lane the others do not is the defect this structure exists to
 prevent, in either direction: mailing someone a post the site then hides from them, or showing
