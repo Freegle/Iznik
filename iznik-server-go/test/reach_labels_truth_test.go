@@ -1,0 +1,80 @@
+package test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"testing"
+
+	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
+	"github.com/stretchr/testify/assert"
+)
+
+// Labels-truth cutover: where a stored label exists, ITS verdict decides
+// membership - overriding the cell grid in both directions - and where it
+// does not (or routing is down), the cell verdict stands unchanged.
+func TestLabelVerdictsOverrideCells(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("labelstruth")
+	userID, _ := CreateFullTestUser(t, prefix)
+	msgID := CreateTestMessage(t, userID, CreateTestGroup(t, prefix+"_g"), "OFFER: labels truth item", 51.5, -0.1)
+
+	// Cells say the point IS in reach.
+	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound) VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText("+
+		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)))",
+		msgID, mustRasterize(t, "POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))"))
+	defer db.Exec("DELETE FROM rippling_reach WHERE msgid = ?", msgID)
+
+	stub := func(verdict string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/v1/reach-eval" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{{"msgid": msgID, "verdict": verdict}},
+			})
+		}))
+	}
+	prevURL := os.Getenv("ROUTING_EVAL_URL")
+	defer os.Setenv("ROUTING_EVAL_URL", prevURL)
+
+	check := func() bool {
+		m, err := rippling.ReachMembership(db, []uint64{msgID}, -0.1, 51.5)
+		assert.NoError(t, err)
+		return m[msgID].InReach
+	}
+
+	// The label says OUT: it wins over the in-reach cells (the far bank).
+	srv := stub("out")
+	os.Setenv("ROUTING_EVAL_URL", srv.URL)
+	roadblur.ResetRoutingBreaker()
+	assert.False(t, check(), "an OUT label verdict must override in-reach cells")
+	srv.Close()
+
+	// No labels yet: the cell verdict stands.
+	srv = stub("nolabels")
+	os.Setenv("ROUTING_EVAL_URL", srv.URL)
+	roadblur.ResetRoutingBreaker()
+	assert.True(t, check(), "with no stored label the cell verdict decides")
+	srv.Close()
+
+	// Routing down entirely: fail soft to the cell verdict.
+	roadblur.ResetRoutingBreaker()
+	os.Setenv("ROUTING_EVAL_URL", "http://127.0.0.1:1")
+	assert.True(t, check(), "routing unavailable must not change behaviour")
+	roadblur.ResetRoutingBreaker()
+}
+
+// The feed's id-list narrowing: OUT drops, in/nolabels keep, nil no-ops.
+func TestDropLabelOut(t *testing.T) {
+	ids := []uint64{1, 2, 3}
+	assert.Equal(t, []uint64{1, 2, 3}, rippling.DropLabelOut(append([]uint64(nil), ids...), nil))
+	got := rippling.DropLabelOut(append([]uint64(nil), ids...), map[uint64]string{
+		1: rippling.LabelVerdictIn, 2: rippling.LabelVerdictOut,
+	})
+	assert.Equal(t, []uint64{1, 3}, got)
+}

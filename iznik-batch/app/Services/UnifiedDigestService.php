@@ -2070,6 +2070,23 @@ class UnifiedDigestService
             [$ringRescue, $ringParams] = $this->ringRescueIds($user, $latlng);
             $containing = app(\App\Services\Ripple\CellSetService::class)
                 ->reachContaining($latlng[0], $latlng[1]) ?? [];
+            // Stored labels are the deciding record wherever they exist: drop
+            // any grid-admitted post whose label says this member is NOT
+            // reachable by road at the post's current budget - the same
+            // narrowing, from the same one-call authority, the browse feed
+            // applies, so the digest can never mail what browse hides.
+            // Posts without labels, and everything when routing is
+            // unavailable, keep the grid verdict.
+            if ($containing !== []) {
+                $labelVerdicts = app(\App\Services\Ripple\ReachService::class)
+                    ->labelVerdicts((float) $latlng[0], (float) $latlng[1], $containing);
+                if ($labelVerdicts !== []) {
+                    $containing = array_values(array_filter(
+                        $containing,
+                        fn ($id) => ($labelVerdicts[(int) $id] ?? '') !== 'out'
+                    ));
+                }
+            }
             $inSql = '';
             $inParams = [];
             if ($containing !== []) {

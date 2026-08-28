@@ -628,6 +628,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/blur", handleBlur(g))
 	v1.Post("/blur-batch", handleBlurBatch(g))
 	v1.Get("/leaf", handleLeaf())
+	v1.Post("/reach-eval", handleReachEval())
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	v1.Get("/groups/list", handleGroupsList())
 

@@ -342,6 +342,86 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent'], 'a post under moderation must not be digested');
     }
 
+    public function test_daily_digest_drops_a_post_whose_stored_label_says_out(): void
+    {
+        // Labels-truth: the stored road-network label is the deciding record.
+        // The cell grid covers this recipient (over-coverage - the far bank of
+        // an estuary), but the label knows they cannot drive there within the
+        // post's current budget, so the digest must not mail it - the same
+        // narrowing browse applies, so mail can never carry what browse hides.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        // Cells that DO cover the recipient at (51.5, -0.1).
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [['msgid' => $message->id, 'verdict' => 'out']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(0, $stats['emails_sent'], 'an OUT label verdict must override in-reach cells');
+    }
+
+    public function test_daily_digest_keeps_a_post_with_no_stored_label(): void
+    {
+        // Not backfilled yet (or the routing server predates labels): the
+        // cell-grid verdict stands unchanged.
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+        $this->setMyLocation($recipient, 51.5, -0.1);
+
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $message = $this->createTestMessage($poster, $group);
+
+        DB::statement(
+            "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, status, arrival)
+             VALUES (?, 51.5, -0.1, ?,
+                ST_Envelope(ST_GeomFromText('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))', 3857)),
+                'expanding', NOW())
+             ON DUPLICATE KEY UPDATE status = VALUES(status)",
+            [$message->id, $this->reachCellsFor('POLYGON((-0.3 51.3, 0.1 51.3, 0.1 51.7, -0.3 51.7, -0.3 51.3))')]
+        );
+
+        Http::fake(['*/v1/reach-eval*' => Http::response([
+            'results' => [['msgid' => $message->id, 'verdict' => 'nolabels']],
+        ])]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+        $this->assertEquals(1, $stats['emails_sent'], 'with no stored label the cell verdict decides');
+    }
+
     public function test_daily_digest_flags_already_seen_posts_for_the_recipient(): void
     {
         // A messages_likes 'View' (in-app view, or an opened/clicked digest via

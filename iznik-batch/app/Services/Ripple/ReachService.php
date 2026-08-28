@@ -699,6 +699,51 @@ class ReachService
         return $out;
     }
 
+    /**
+     * Stored-label membership verdicts from the routing server: msgid =>
+     * 'in'|'out' for every candidate whose stored label decided it exactly
+     * (at the post's CURRENT tick budget); candidates without labels are
+     * absent and keep their cell-grid verdict. Empty array on any failure -
+     * callers change nothing.
+     *
+     * @param  array<int, int|string>  $msgids
+     * @return array<int, string>
+     */
+    public function labelVerdicts(float $lat, float $lng, array $msgids): array
+    {
+        if ($msgids === [] || ($lat === 0.0 && $lng === 0.0)) {
+            return [];
+        }
+        $out = [];
+        foreach (array_chunk(array_values($msgids), 1000) as $chunk) {
+            try {
+                $response = Http::timeout(3)->post("{$this->url}/v1/reach-eval", [
+                    'lat' => $lat,
+                    'lng' => $lng,
+                    'msgids' => array_map('intval', $chunk),
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning("ripple: reach-eval fetch failed: {$e->getMessage()}");
+
+                return [];
+            }
+            if (!$response->successful()) {
+                if (!in_array($response->status(), [503, 404], true)) {
+                    Log::warning("ripple: reach-eval HTTP {$response->status()}");
+                }
+
+                return [];
+            }
+            foreach ($response->json('results') ?? [] as $r) {
+                if (isset($r['msgid'], $r['verdict']) && in_array($r['verdict'], ['in', 'out'], true)) {
+                    $out[(int) $r['msgid']] = $r['verdict'];
+                }
+            }
+        }
+
+        return $out;
+    }
+
     /** Both label stores exist (deploy can precede the schema change). */
     private static ?bool $reachLabelsReady = null;
 

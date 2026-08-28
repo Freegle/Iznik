@@ -54,9 +54,20 @@ func ReachMembership(db *gorm.DB, msgids []uint64, lng, lat float64) (map[uint64
 		return out, err
 	}
 
+	// Stored labels are the deciding record wherever they exist: the exact
+	// road-network answer at the post's current budget, from ONE batched
+	// routing call. Posts the backfill has not reached (and every post, when
+	// routing is unavailable) keep the cell-grid verdict below.
+	verdicts := LabelVerdicts(lat, lng, msgids)
+
 	var undecided []uint64
 	for _, r := range rows {
 		info := ReachRowInfo{Msgid: r.Msgid, Lat: r.Lat, Lng: r.Lng, Schedule: r.Schedule, Arrival: r.Arrival}
+		if v, ok := verdicts[r.Msgid]; ok {
+			info.InReach = v == LabelVerdictIn
+			out[r.Msgid] = info
+			continue
+		}
 		if in, ok := CellSetContains(r.Cells, lng, lat); ok {
 			info.InReach = in
 			out[r.Msgid] = info

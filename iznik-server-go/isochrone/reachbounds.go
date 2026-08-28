@@ -36,6 +36,25 @@ func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []in
 			// them. Surface it rather than silently dropping posts.
 			log.Printf("reach containment: %d partial ids with no legacy geometry to resolve them", len(partial))
 		}
+		// Stored labels are the deciding record wherever they exist: drop any
+		// grid-admitted post whose label says the member is NOT reachable by
+		// road at the post's current budget - the estuary's far bank. Posts
+		// without labels, and everything when routing is unavailable, keep
+		// the grid verdict; overflow rings re-admit on top of this list
+		// exactly as they always have (composeReachOverflow).
+		ids := make([]uint64, len(in))
+		for i, id := range in {
+			ids[i] = uint64(id)
+		}
+		if verdicts := rippling.LabelVerdicts(float64(lat), float64(lng), ids); len(verdicts) > 0 {
+			kept := in[:0]
+			for _, id := range in {
+				if verdicts[uint64(id)] != rippling.LabelVerdictOut {
+					kept = append(kept, id)
+				}
+			}
+			in = kept
+		}
 		// GORM renders an empty slice as IN (NULL) — matches nothing — which
 		// is right for a viewer no reach covers (the ring arm may still admit).
 		return "AND ms.msgid IN (?) ", []interface{}{in}, false
