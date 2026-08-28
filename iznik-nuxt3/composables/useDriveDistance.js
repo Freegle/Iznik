@@ -3,13 +3,15 @@
 // the routing server's reach engine can answer.
 //
 // Batch-first and event-driven: components call roadDistance(lat, lng) as
-// they render; every request registered during the same synchronous render
-// pass is flushed as a SINGLE /drivedistance call in a microtask at the end
-// of that JS turn (no wall-clock windows, no timers to race). A list of 40
-// cards rendering in one pass is one HTTP call. Results are cached per
-// coordinate for the session. Everything fails soft: logged out, engine not
-// deployed, request error - the returned ref simply stays null and callers
-// keep showing crow-flies.
+// they render, and everything queued by the time the browser next paints is
+// flushed as a SINGLE /drivedistance call (requestAnimationFrame, so cards
+// that mount across several microtasks within one frame still share a call;
+// no wall-clock timers to race). Stores that receive a page of posts call
+// prewarmRoadDistances() with the whole page, so the per-card calls are
+// cache hits by the time the cards render. Results are cached per coordinate
+// for the session. Everything fails soft: logged out, engine not deployed,
+// request error - the returned ref simply stays null and callers keep
+// showing crow-flies.
 
 import { ref } from 'vue'
 import { useRuntimeConfig } from '#app'
@@ -94,10 +96,33 @@ export function roadDistance(lat, lng) {
   return r
 }
 
+// prewarmRoadDistances queues every coordinate in a list of posts/users in
+// one go, so the whole page becomes one /drivedistance call and the cards
+// rendering later (often one by one, as they scroll into view) hit the
+// cache instead of each sending a one-target request. Call it wherever a
+// list response lands in a store. Items without coordinates are skipped.
+export function prewarmRoadDistances(items) {
+  if (import.meta.server || !items?.length) {
+    return
+  }
+  for (const it of items) {
+    if (it && it.lat != null && it.lng != null) {
+      roadDistance(it.lat, it.lng)
+    }
+  }
+}
+
 function scheduleFlush() {
   if (!flushScheduled) {
     flushScheduled = true
-    queueMicrotask(flush)
+    // A frame boundary, not a timer: everything that queued while this frame
+    // was being built - however many microtasks it took - flushes together.
+    // (Microtask fallback for environments without rAF: SSR, unit tests.)
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(flush)
+    } else {
+      queueMicrotask(flush)
+    }
   }
 }
 

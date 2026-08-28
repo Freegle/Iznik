@@ -12,10 +12,7 @@ import {
   timeago,
 } from '~/composables/useTimeFormat'
 import { milesAway } from '~/composables/useDistance'
-import {
-  roadDistance,
-  roadMilesRounded,
-} from '~/composables/useDriveDistance'
+import { roadDistance, roadMilesRounded } from '~/composables/useDriveDistance'
 import { buildKeywordRegex } from '~/composables/useKeywordRegex'
 
 /**
@@ -218,7 +215,9 @@ export function useMessageDisplay(messageId) {
         return 'less than a mile by road'
       }
       const rounded = Math.round(mi)
-      return rounded === 1 ? 'about 1 mile by road' : `about ${rounded} miles by road`
+      return rounded === 1
+        ? 'about 1 mile by road'
+        : `about ${rounded} miles by road`
     }
     const server = serverDistanceMiles.value
     if (server != null) {
@@ -242,6 +241,19 @@ export function useMessageDisplay(messageId) {
     }
     const rounded = Math.round(miles)
     return rounded === 1 ? '1 mile' : `${rounded} miles`
+  })
+
+  // Mouseover explanation for the distance badge: says what the number IS
+  // (road vs straight-line, and that it is approximate over blurred
+  // locations), not just that it exists.
+  const distanceTooltip = computed(() => {
+    if (roadDist.value?.miles != null) {
+      return 'Roughly how far this is from your home by road. Distances are approximate because locations are blurred for privacy'
+    }
+    if (distanceText.value == null) {
+      return null
+    }
+    return 'Roughly how far this is from your home, in a straight line. Distances are approximate because locations are blurred for privacy'
   })
 
   const replyCount = computed(() => {
@@ -307,6 +319,7 @@ export function useMessageDisplay(messageId) {
     fullTimeAgo,
     distanceText,
     distanceTextExpanded,
+    distanceTooltip,
     isPinned,
     replyCount,
     replyTooltip,

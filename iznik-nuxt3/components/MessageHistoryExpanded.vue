@@ -43,8 +43,13 @@
         </nuxt-link>
       </div>
       <SupporterInfo v-if="fromuser?.supporter" class="d-inline" />
-      <div v-if="milesaway" class="align-middle" @click="showProfileModal">
-        About {{ milesPlural }} away
+      <div
+        v-if="milesaway"
+        :title="milesIsRoad ? DISTANCE_TOOLTIP_ROAD : DISTANCE_TOOLTIP"
+        class="align-middle"
+        @click="showProfileModal"
+      >
+        About {{ milesPlural }} away<span v-if="milesIsRoad"> by road</span>
       </div>
       <div
         v-for="group in message.groups"
@@ -78,10 +83,8 @@
 import { ref, computed } from 'vue'
 import pluralize from 'pluralize'
 import { milesAway } from '~/composables/useDistance'
-import {
-  roadDistance,
-  roadMilesRounded,
-} from '~/composables/useDriveDistance'
+import { DISTANCE_TOOLTIP, DISTANCE_TOOLTIP_ROAD } from '~/constants'
+import { roadDistance, roadMilesRounded } from '~/composables/useDriveDistance'
 import { useUserStore } from '~/stores/user'
 import ProfileImage from '~/components/ProfileImage'
 import { useMessageStore } from '~/stores/message'
@@ -138,6 +141,8 @@ const milesaway = computed(() => {
 const milesPlural = computed(() => {
   return pluralize('mile', milesaway.value, true)
 })
+
+const milesIsRoad = computed(() => roadDist.value?.miles != null)
 
 const openOfferPlural = computed(() => {
   return message.value && fromuser.value && fromuser.value.info

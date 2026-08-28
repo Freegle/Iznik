@@ -1,9 +1,6 @@
 import pluralize from 'pluralize'
 import { milesAway } from '~/composables/useDistance'
-import {
-  roadDistance,
-  roadMilesRounded,
-} from '~/composables/useDriveDistance'
+import { roadDistance, roadMilesRounded } from '~/composables/useDriveDistance'
 import { computed } from '#imports'
 import { useChatStore } from '~/stores/chat'
 import { useUserStore } from '~/stores/user'
@@ -123,9 +120,15 @@ export function setupChat(selectedChatId, chatMessageId) {
     return crowmilesaway.value
   })
 
+  // True when milesaway/milesstring are showing ROAD distance (the engine
+  // answered); tooltips must describe the number actually shown.
+  const milesIsRoad = computed(() => roadDist.value?.miles != null)
+
+  // No leading "about": both templates that render this supply their own
+  // qualifier ("About <strong>…</strong>", "…is about … from you").
   const milesstring = computed(() =>
     roadDist.value?.miles != null
-      ? 'about ' + pluralize('mile', milesaway.value, true) + ' away by road'
+      ? pluralize('mile', milesaway.value, true) + ' away by road'
       : pluralize('mile', milesaway.value, true) + ' away'
   )
 
@@ -156,6 +159,7 @@ export function setupChat(selectedChatId, chatMessageId) {
     tooSoonToNudge,
     milesaway,
     crowmilesaway,
+    milesIsRoad,
     milesstring,
     chatmessage,
     chatStore,

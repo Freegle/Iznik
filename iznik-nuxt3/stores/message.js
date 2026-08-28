@@ -7,6 +7,7 @@ import { useUserStore } from '~/stores/user'
 import { useNearbyStore } from '~/stores/nearby'
 import { useGroupStore } from '~/stores/group'
 import { useMiscStore } from '~/stores/misc'
+import { prewarmRoadDistances } from '~/composables/useDriveDistance'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
@@ -213,6 +214,10 @@ export const useMessageStore = defineStore('message', {
                   this.list[msg.id].addedToCache = Math.round(Date.now() / 1000)
                 }
               })
+              // One road-distance call for the whole page, so the cards
+              // rendering later (one by one as they scroll in) hit cache
+              // instead of each sending a one-target request.
+              prewarmRoadDistances(msgs)
             } else if (typeof msgs === 'object') {
               this.list[msgs.id] = msgs
               if (this.list[msgs.id]) {

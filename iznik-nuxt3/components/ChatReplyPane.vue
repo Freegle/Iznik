@@ -67,7 +67,9 @@
             </span>
             <span
               v-if="milesaway"
-              v-b-tooltip.bottom="DISTANCE_TOOLTIP"
+              v-b-tooltip.bottom="
+                milesIsRoad ? DISTANCE_TOOLTIP_ROAD : DISTANCE_TOOLTIP
+              "
               class="reply-stat-chip"
             >
               <v-icon icon="map-marker-alt" class="reply-stat-icon" />
@@ -332,10 +334,7 @@ import { useUserStore } from '~/stores/user'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import { milesAway } from '~/composables/useDistance'
-import {
-  roadDistance,
-  roadMilesRounded,
-} from '~/composables/useDriveDistance'
+import { roadDistance, roadMilesRounded } from '~/composables/useDriveDistance'
 import { useMe } from '~/composables/useMe'
 import {
   useReplyStateMachine,
@@ -361,6 +360,7 @@ import {
   LAST_SEEN_TOOLTIP,
   REPLY_TIME_TOOLTIP,
   DISTANCE_TOOLTIP,
+  DISTANCE_TOOLTIP_ROAD,
 } from '~/constants'
 
 const NewFreegler = defineAsyncComponent(
@@ -538,6 +538,10 @@ const milesaway = computed(() => {
   }
   return crowMiles.value
 })
+
+// The tooltip must describe the number actually shown: road when the engine
+// answered, crow-flies otherwise.
+const milesIsRoad = computed(() => roadDist.value?.miles != null)
 
 const alreadyAMember = computed(() => {
   let found = false

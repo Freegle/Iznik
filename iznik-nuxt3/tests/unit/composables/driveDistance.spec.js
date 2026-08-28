@@ -32,6 +32,10 @@ describe('useDriveDistance', () => {
   beforeEach(() => {
     mockDistances.mockReset()
     mockUser = { id: 1, lat: 51.45, lng: -2.58 }
+    // The composable coalesces on a frame boundary in the browser; make the
+    // test environment's frame fire on the microtask queue so awaiting
+    // microtasks() drains the flush deterministically.
+    vi.stubGlobal('requestAnimationFrame', (cb) => queueMicrotask(cb))
   })
 
   it('batches all synchronous registrations into one call and fills refs', async () => {
@@ -54,6 +58,32 @@ describe('useDriveDistance', () => {
     expect(a.value).toEqual({ mins: 12.5, miles: 4.2 })
     expect(b.value).toBeNull() // unreachable: crow-flies fallback
     expect(aDup).toBe(a)
+  })
+
+  it('prewarming a page of posts is one call and cards then hit cache', async () => {
+    const { roadDistance, prewarmRoadDistances } = await load()
+    mockDistances.mockResolvedValue({
+      results: [
+        { id: 0, mins: 5, miles: 1.5 },
+        { id: 1, mins: 8, miles: 2.5 },
+      ],
+    })
+
+    // The store receives a page of posts...
+    prewarmRoadDistances([
+      { lat: 51.47, lng: -2.6 },
+      { lat: 51.3, lng: -2.3 },
+      { lat: null, lng: null }, // no coords: skipped
+    ])
+    await microtasks()
+    expect(mockDistances).toHaveBeenCalledTimes(1)
+    expect(mockDistances.mock.calls[0][0]).toHaveLength(2)
+
+    // ...and the cards rendering later are cache hits: no further calls.
+    const a = roadDistance(51.47, -2.6)
+    await microtasks()
+    expect(mockDistances).toHaveBeenCalledTimes(1)
+    expect(a.value).toEqual({ mins: 5, miles: 1.5 })
   })
 
   it('separate render passes make separate batched calls, cache hits none', async () => {

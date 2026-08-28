@@ -82,10 +82,10 @@
         <div class="info-row">
           <MessageTag :id="id" :inline="true" class="title-tag ps-1 pe-1" />
           <div class="info-icons">
-            <span v-if="hasLocation" class="location">
+            <span v-if="hasLocation" :title="distanceTooltip" class="location">
               <v-icon icon="map-marker-alt" />{{ locationText }}
             </span>
-            <span class="time"
+            <span :title="postedTooltip" class="time"
               ><v-icon icon="clock" />{{ timeAgo || '...' }}</span
             >
           </div>
@@ -117,10 +117,10 @@
         {{ descriptionText || 'Click to see more details.' }}
       </div>
       <div class="content-meta">
-        <span v-if="hasLocation" class="meta-location">
+        <span v-if="hasLocation" :title="distanceTooltip" class="meta-location">
           <v-icon icon="map-marker-alt" />{{ locationText }}
         </span>
-        <span class="meta-time">
+        <span :title="postedTooltip" class="meta-time">
           <v-icon icon="clock" />{{ displayTimeAgo || '...' }}
         </span>
       </div>
@@ -171,8 +171,10 @@ const {
   attachmentCount,
   timeAgo,
   timeAgoExpanded,
+  fullTimeAgo,
   distanceText,
   distanceTextExpanded,
+  distanceTooltip,
   isPinned,
   isOffer,
   isWanted,
@@ -221,6 +223,11 @@ const descriptionText = computed(() => {
   if (text.length <= maxLen) return text
   return text.substring(0, maxLen).trim() + '...'
 })
+
+// "17 hours" alone reads ambiguously; the mouseover says what it means.
+const postedTooltip = computed(
+  () => fullTimeAgo.value || 'When this was posted'
+)
 
 const locationText = computed(() => {
   // Show area name if available, otherwise distance
