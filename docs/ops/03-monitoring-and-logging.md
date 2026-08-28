@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-23
+last_reviewed: 2026-08-28
 owner: Freegle dev team
 covers:
   - docs/ops/reference/logging.md
@@ -23,6 +23,10 @@ Loki and are queried with LogQL.
 
 For moderators and support, a **Log Viewer** in ModTools surfaces the relevant logs
 without needing direct Loki access.
+
+Not everything audit-shaped is in Loki. Sign-in and sign-out are rows in the MySQL `logs`
+table, kept for a year, and are what to reach for when someone reports being logged out
+unexpectedly - see [./reference/logging.md](./reference/logging.md).
 
 Timestamps are in nanoseconds and label values must be quoted; see the query examples and
 the Go wrapper referenced in [./reference/logging.md](./reference/logging.md).

@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-23
+last_reviewed: 2026-08-28
 owner: Freegle dev team
 covers:
   - iznik-server-go/API-GUIDE.md
