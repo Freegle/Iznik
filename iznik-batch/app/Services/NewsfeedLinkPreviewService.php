@@ -100,7 +100,11 @@ class NewsfeedLinkPreviewService
         return $ips;
     }
 
-    protected function isFetchableUrl(string $url): bool
+    /**
+     * Public so other server-side fetchers of untrusted URLs (SourceFreshness)
+     * reuse this guard rather than growing a second copy of it.
+     */
+    public function isFetchableUrl(string $url): bool
     {
         $parts = parse_url($url);
         $scheme = strtolower($parts['scheme'] ?? '');
