@@ -340,15 +340,25 @@ unavailable - fail-soft, so the cutover self-activates per post as the backfill 
 The one authority is routing `POST /v1/reach-eval` (`iznik-routing-go/reach_eval.go`):
 member point + candidate msgids in, `in`/`out`/`nolabels` per candidate out. It also honours
 `rejected_groups` (a member inside a rejected group's area is `out` whatever the label says -
-the durable record of a per-group mod retraction), evaluates at `budget:"max"` for
-eventual-reach questions, and with `discover:true` returns label-admitted posts the caller's
-candidate list MISSED (from `rippling_reach_leaves` - the band where grids under-cover the
-true road reach; the candidate list may be empty).
+the durable record of a per-group mod retraction; POLYGON and MULTIPOLYGON areas alike),
+evaluates at `budget:"max"` for eventual-reach questions, and with `discover:true` returns
+label-admitted posts the caller's candidate list MISSED (from `rippling_reach_leaves` - the
+band where grids under-cover the true road reach; the candidate list may be empty, and held
+posts are never discovered). An `out` for a member standing in the post's ORIGIN group's
+area carries `origin_area: true`: the stored reach deliberately unions that area in once the
+isochrone covers most of it (`ExpandService::unionWithOriginGroupArea`), so both clients
+treat out+origin_area as NO verdict and let the cell grid - which holds the union - decide.
+A member point that does not snap to the road network answers all-`nolabels` (200), and the
+Go client trips the shared routing breaker only on 5xx faults (404/503 are expected states);
+the PHP client carries the same 5-minute breaker the drive-metrics path uses, because the
+digest asks once per recipient.
 
 Client wiring: apiv2 `rippling/labelverdicts.go` (`LabelVerdicts`,
-`LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate),
-`reachContainmentSQL` (feed + badge: narrow grid admissions, union discoveries),
-`message/search.go` and `firstreply/passthrough.go` (labels at max budget first). Batch
+`LabelVerdictsWithDiscover`, `DropLabelOut`) feeds `rippling.ReachMembership` (reply gate)
+and `isochrone/reachbounds.go`'s `labelNarrowAndDiscover` - the ONE transform (narrow grid
+admissions, union discoveries) both the feed's containment list and the badge count go
+through, so they cannot disagree - plus `message/search.go` (same narrowing and union) and
+`firstreply/passthrough.go` (labels at max budget first). Batch
 `Ripple/ReachService::labelVerdicts` / `labelVerdictsWithDiscover` / `reachArrivalBatch`
 feed the daily digest's containment universe (same narrowing + union),
 `MaxReachService::isWithinMaxReach` and `MatchMailService::applyCellBand` (one

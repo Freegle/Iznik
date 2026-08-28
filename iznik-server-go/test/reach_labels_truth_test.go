@@ -82,14 +82,20 @@ func TestLabelVerdictsWithDiscover(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&lastBody)
 		// Like the real endpoint: verdicts only for the asked candidates,
-		// discoveries regardless.
+		// discoveries regardless. Msgid 9 is out but inside the post's
+		// origin group's area (union-admitted); msgid 1 is a plain out that
+		// ALSO appears in the discovered list (as it can when the candidate
+		// list spans chunks) - the out verdict must win.
 		results := []map[string]any{}
 		if asked, _ := lastBody["msgids"].([]any); len(asked) > 0 {
-			results = append(results, map[string]any{"msgid": 1, "verdict": "out"})
+			results = append(results,
+				map[string]any{"msgid": 1, "verdict": "out"},
+				map[string]any{"msgid": 9, "verdict": "out", "origin_area": true},
+			)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"results":    results,
-			"discovered": []map[string]any{{"msgid": 7, "verdict": "in"}},
+			"discovered": []map[string]any{{"msgid": 7, "verdict": "in"}, {"msgid": 1, "verdict": "in"}},
 		})
 	}))
 	defer srv.Close()
@@ -98,17 +104,39 @@ func TestLabelVerdictsWithDiscover(t *testing.T) {
 	os.Setenv("ROUTING_EVAL_URL", srv.URL)
 	roadblur.ResetRoutingBreaker()
 
-	verdicts, discovered := rippling.LabelVerdictsWithDiscover(51.5, -0.1, []uint64{1, 2})
+	verdicts, discovered := rippling.LabelVerdictsWithDiscover(51.5, -0.1, []uint64{1, 2, 9})
 	assert.Equal(t, rippling.LabelVerdictOut, verdicts[1])
-	assert.Equal(t, []uint64{7}, discovered)
+	_, has9 := verdicts[9]
+	assert.False(t, has9, "out+origin_area is NO verdict - the cell grid holds the union and decides")
+	assert.Equal(t, []uint64{7}, discovered, "a discovered id the verdicts narrowed away must not come back")
 	assert.Equal(t, true, lastBody["discover"], "the request must ask the server to discover")
 
 	// Empty candidate list: the call still happens and still discovers.
 	lastBody = nil
 	verdicts, discovered = rippling.LabelVerdictsWithDiscover(51.5, -0.1, nil)
 	assert.Empty(t, verdicts)
-	assert.Equal(t, []uint64{7}, discovered)
+	assert.Equal(t, []uint64{7, 1}, discovered, "no verdicts were asked, so nothing narrows the discoveries")
 	assert.NotNil(t, lastBody, "an empty candidate list must still ask the server")
+	roadblur.ResetRoutingBreaker()
+}
+
+// A 4xx from reach-eval (a routing server that predates the endpoint, a
+// rejected body) must NOT trip the routing breaker - it is shared with blur
+// and drive-time display, so tripping it on one member's request would
+// degrade those for everyone.
+func TestLabelVerdicts4xxDoesNotTripBreaker(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	prevURL := os.Getenv("ROUTING_EVAL_URL")
+	defer os.Setenv("ROUTING_EVAL_URL", prevURL)
+	os.Setenv("ROUTING_EVAL_URL", srv.URL)
+	roadblur.ResetRoutingBreaker()
+
+	verdicts := rippling.LabelVerdicts(51.5, -0.1, []uint64{1})
+	assert.Empty(t, verdicts)
+	assert.True(t, roadblur.RoutingHealthy(), "a 404 must not open the shared breaker")
 	roadblur.ResetRoutingBreaker()
 }
 

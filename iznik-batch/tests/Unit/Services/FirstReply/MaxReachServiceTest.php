@@ -346,4 +346,38 @@ class MaxReachServiceTest extends TestCase
             $msgid, self::INSIDE_TICK3_ONLY[0], self::INSIDE_TICK3_ONLY[1]
         ), 'with no stored label the max cell grid decides');
     }
+
+
+    public function test_populate_fills_cumulative_users_for_labelled_rows_without_a_grid(): void
+    {
+        $msgid = $this->seedRipplingPost();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
+
+        $stats = $this->service()->populate();
+
+        $this->assertSame(1, $stats['labelled_cumulative']);
+        $row = DB::table('rippling_reach')->where('msgid', $msgid)->first();
+        $this->assertSame(4000, (int) $row->max_cumulative_users, 'the schedule final tick audience feeds the nudge');
+        $this->assertNull($row->max_polygon_cells, 'a labelled row needs no grid - its label answers the gate');
+    }
+
+    public function test_indexed_candidate_scan_skips_labelled_rows(): void
+    {
+        // has_max_reach is generated from max_polygon_cells alone, so without
+        // an explicit exclusion the indexed sweep would re-select - and
+        // re-fill - every labelled row whose drained grid it just NULLed.
+        $msgid = $this->seedRipplingPost();
+        DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => 'label-bytes']);
+
+        \App\Services\Ripple\MaxReachCandidateIndex::fake(ready: true);
+        try {
+            $stats = $this->service()->populate();
+            $this->assertSame(0, $stats['filled'], 'a labelled row must not have its max grid rewritten');
+            $this->assertNull(
+                DB::table('rippling_reach')->where('msgid', $msgid)->value('max_polygon_cells')
+            );
+        } finally {
+            \App\Services\Ripple\MaxReachCandidateIndex::reset();
+        }
+    }
 }

@@ -224,7 +224,11 @@ class MaxReachService
             // walk. Verified by EXPLAIN, both ways.
             ->when(
                 $indexed,
-                fn ($q) => $q->where('has_max_reach', 0),
+                // has_max_reach is generated from max_polygon_cells alone, so
+                // the labelled-row exclusion must be explicit here too: a
+                // labelled row whose max grid was DRAINED (ripple:drop-cell-grids)
+                // would otherwise be re-selected - and re-filled - every sweep.
+                fn ($q) => $q->where('has_max_reach', 0)->whereNull('reach_labels'),
                 fn ($q) => $q->when($this->cellsAvailable(), fn ($q2) => $q2->whereNull('max_polygon_cells')->whereNull('reach_labels'))
             )
             ->whereNotNull('schedule')
@@ -247,6 +251,12 @@ class MaxReachService
         if (!$this->available()) {
             return $stats;
         }
+
+        // Labelled rows skip the grid fill (their label answers the gate),
+        // but max_cumulative_users - the "will be shown to around N more
+        // people" nudge - still needs feeding. It is a plain read of the
+        // cached schedule's final tick: no routing call, no grid.
+        $stats['labelled_cumulative'] = $this->fillCumulativeForLabelled($limit);
 
         $rows = $this->candidateQuery($limit)->get()->all();
 
@@ -460,6 +470,41 @@ class MaxReachService
      * row stays unfilled for the next pass, exactly like a failed routing
      * call.
      */
+    /**
+     * max_cumulative_users for rows the label answers: the schedule's final
+     * tick already carries the audience count, so no routing call and no
+     * grid materialisation - just the one column the engagement nudge reads.
+     */
+    private function fillCumulativeForLabelled(int $limit): int
+    {
+        $filled = 0;
+        try {
+            $rows = DB::table('rippling_reach')
+                ->select('msgid', 'schedule')
+                ->whereNotNull('reach_labels')
+                ->whereNull('max_cumulative_users')
+                ->whereNotNull('schedule')
+                ->where('status', 'expanding')
+                ->limit($limit)
+                ->get();
+            foreach ($rows as $row) {
+                $ticks = json_decode((string) $row->schedule, true);
+                $final = is_array($ticks) && !empty($ticks) ? $this->finalTick($ticks) : null;
+                if ($final === null || !isset($final['cumulative_users'])) {
+                    continue;
+                }
+                DB::table('rippling_reach')->where('msgid', $row->msgid)->update([
+                    'max_cumulative_users' => (int) $final['cumulative_users'],
+                ]);
+                $filled++;
+            }
+        } catch (\Throwable $e) {
+            Log::warning('firstreply: labelled cumulative fill failed', ['error' => $e->getMessage()]);
+        }
+
+        return $filled;
+    }
+
     private function storeMaxPolygon(int $msgid, string $wkt, ?int $cumulative): void
     {
         $cells = $this->cellSets->rasterize($wkt);

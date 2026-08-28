@@ -96,9 +96,13 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 		func() {
 			defer resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
-				// 503 = engine or labels store not configured: expected until
-				// the artifacts are deployed, not a routing failure.
-				if resp.StatusCode != http.StatusServiceUnavailable {
+				// The breaker is SHARED with blur and drive-time display, so
+				// only a server-side fault may trip it. 503 = engine or
+				// labels store not configured (expected until the artifacts
+				// deploy); any 4xx = this request (a 404 routing server that
+				// predates the endpoint, a rejected body) - neither says the
+				// routing server is unhealthy.
+				if resp.StatusCode >= 500 && resp.StatusCode != http.StatusServiceUnavailable {
 					roadblur.MarkRoutingFailure()
 				}
 				out = nil
@@ -106,8 +110,9 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 			}
 			var parsed struct {
 				Results []struct {
-					Msgid   uint64 `json:"msgid"`
-					Verdict string `json:"verdict"`
+					Msgid      uint64 `json:"msgid"`
+					Verdict    string `json:"verdict"`
+					OriginArea bool   `json:"origin_area"`
 				} `json:"results"`
 				Discovered []struct {
 					Msgid uint64 `json:"msgid"`
@@ -118,6 +123,13 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 				return
 			}
 			for _, r := range parsed.Results {
+				// out+origin_area = the member stands in the post's origin
+				// group's area, which the stored reach deliberately unions
+				// in: treat as NO verdict, so the cell grid (which holds
+				// that union) decides - on every surface.
+				if r.Verdict == LabelVerdictOut && r.OriginArea {
+					continue
+				}
 				if r.Verdict == LabelVerdictIn || r.Verdict == LabelVerdictOut {
 					out[r.Msgid] = r.Verdict
 				}
@@ -129,6 +141,19 @@ func labelEval(lat, lng float64, msgids []uint64, budget string, discover bool) 
 		if out == nil {
 			return nil, nil
 		}
+	}
+	// A discovered id can also ride in a LATER chunk of the candidate list,
+	// where its own verdict may be "out" (discover only sees the first
+	// chunk's asked set). The verdict wins: never re-admit what the labels
+	// narrowed away.
+	if len(discovered) > 0 {
+		kept := discovered[:0]
+		for _, id := range discovered {
+			if out[id] != LabelVerdictOut {
+				kept = append(kept, id)
+			}
+		}
+		discovered = kept
 	}
 	return out, discovered
 }

@@ -69,4 +69,20 @@ class DropCellGridsCommandTest extends TestCase
             DB::table('rippling_reach')->where('msgid', $labelled)->value('max_polygon_cells')
         );
     }
+
+
+    public function test_limit_bounds_the_drain(): void
+    {
+        // The canary knob an operator relies on for a paced production run.
+        $a = $this->seedRow('label-bytes');
+        $b = $this->seedRow('label-bytes');
+
+        $this->artisan('ripple:drop-cell-grids', ['--limit' => 1, '--sleep-ms' => 0])->assertSuccessful();
+
+        $drained = DB::table('rippling_reach')
+            ->whereIn('msgid', [$a, $b])
+            ->whereNull('max_polygon_cells')
+            ->count();
+        $this->assertSame(1, $drained, '--limit must bound how many rows one run drains');
+    }
 }

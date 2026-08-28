@@ -638,4 +638,62 @@ class ReachServiceTest extends TestCase
 
         $this->assertSame([7], $eval['discovered']);
     }
+
+
+    public function test_label_eval_breaker_stops_calls_after_a_server_fault(): void
+    {
+        Http::fake(['*reach-eval*' => Http::response(null, 500)]);
+
+        $svc = app(ReachService::class);
+        $this->assertSame([], $svc->labelVerdicts(51.5, -0.1, [1]));
+        // The 500 opened the breaker: the next call must not touch HTTP at
+        // all - a digest run asks once per RECIPIENT, and thousands of 3s
+        // timeouts against a browning-out routing server would stall mail.
+        $this->assertSame([], $svc->labelVerdicts(51.5, -0.1, [2]));
+        Http::assertSentCount(1);
+
+        ReachService::resetLabelEvalBreaker();
+    }
+
+    public function test_label_eval_404_and_503_do_not_trip_the_breaker(): void
+    {
+        Http::fake(['*reach-eval*' => Http::response(null, 404)]);
+
+        $svc = app(ReachService::class);
+        $this->assertSame([], $svc->labelVerdicts(51.5, -0.1, [1]));
+        $this->assertSame([], $svc->labelVerdicts(51.5, -0.1, [2]));
+        // Expected states (endpoint not deployed yet) answer instantly, so
+        // every call still goes out.
+        Http::assertSentCount(2);
+    }
+
+    public function test_label_verdicts_skips_out_in_origin_group_area(): void
+    {
+        // out+origin_area = the member stands in the post's origin group's
+        // area, which the stored reach deliberately unions in: no verdict,
+        // the cell grid decides.
+        Http::fake(['*reach-eval*' => Http::response([
+            'results' => [
+                ['msgid' => 1, 'verdict' => 'out'],
+                ['msgid' => 2, 'verdict' => 'out', 'origin_area' => true],
+            ],
+        ])]);
+
+        $this->assertSame([1 => 'out'], app(ReachService::class)->labelVerdicts(51.5, -0.1, [1, 2]));
+    }
+
+    public function test_discovered_ids_narrowed_by_a_later_chunk_are_dropped(): void
+    {
+        // 1001 candidates = two chunks. Chunk 0 discovers id 1001 (it was
+        // not in chunk 0's asked set); chunk 1 then verdicts 1001 'out'.
+        // The verdict wins: never re-admit what the labels narrowed away.
+        Http::fake(['*reach-eval*' => Http::sequence()
+            ->push(['results' => [], 'discovered' => [['msgid' => 1001, 'verdict' => 'in']]])
+            ->push(['results' => [['msgid' => 1001, 'verdict' => 'out']], 'discovered' => []]),
+        ]);
+
+        $eval = app(ReachService::class)->labelVerdictsWithDiscover(51.5, -0.1, range(1, 1001));
+
+        $this->assertSame(['verdicts' => [1001 => 'out'], 'discovered' => []], $eval);
+    }
 }

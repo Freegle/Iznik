@@ -38,22 +38,12 @@ func reachContainmentSQL(db *gorm.DB, lng, lat float32) (where string, args []in
 		}
 		// Stored labels are the deciding record wherever they exist: drop any
 		// grid-admitted post whose label says the member is NOT reachable by
-		// road at the post's current budget - the estuary's far bank. Posts
-		// without labels, and everything when routing is unavailable, keep
-		// the grid verdict; overflow rings re-admit on top of this list
-		// exactly as they always have (composeReachOverflow).
-		ids := make([]uint64, len(in))
-		for i, id := range in {
-			ids[i] = uint64(id)
-		}
-		verdicts, discovered := rippling.LabelVerdictsWithDiscover(float64(lat), float64(lng), ids)
-		in = rippling.DropLabelOut(in, verdicts)
-		// Discovered = labelled posts the grid prefilter missed (the band
-		// where grids under-cover the true road reach). The SQL's own
-		// visibility conjuncts still apply to them like any other id.
-		for _, id := range discovered {
-			in = append(in, int64(id))
-		}
+		// road at the post's current budget - the estuary's far bank - and
+		// union in the posts the grid prefilter missed. Posts without labels,
+		// and everything when routing is unavailable, keep the grid verdict;
+		// overflow rings re-admit on top of this list exactly as they always
+		// have (composeReachOverflow).
+		in = labelNarrowAndDiscover(lat, lng, in)
 		// GORM renders an empty slice as IN (NULL) — matches nothing — which
 		// is right for a viewer no reach covers (the ring arm may still admit).
 		return "AND ms.msgid IN (?) ", []interface{}{in}, false
@@ -103,6 +93,26 @@ func (p *reachProbe) keep(msgid uint64, cells []byte) bool {
 	}
 	in, ok := rippling.CellSetContains(cells, p.lng, p.lat)
 	return ok && in
+}
+
+// labelNarrowAndDiscover applies the labels-truth transform to a
+// grid-admitted id list: drop ids whose stored label verdicts the member
+// OUT at the post's current budget, and append the labelled posts the grid
+// prefilter missed (discover). The feed and the badge count both go through
+// here, so they can never disagree about which posts the labels admit. The
+// SQL's own visibility conjuncts (held status, spatial joins) still apply
+// to every id, discovered ones included.
+func labelNarrowAndDiscover(lat, lng float32, in []int64) []int64 {
+	ids := make([]uint64, len(in))
+	for i, id := range in {
+		ids[i] = uint64(id)
+	}
+	verdicts, discovered := rippling.LabelVerdictsWithDiscover(float64(lat), float64(lng), ids)
+	in = rippling.DropLabelOut(in, verdicts)
+	for _, id := range discovered {
+		in = append(in, int64(id))
+	}
+	return in
 }
 
 // reachOrOverflowSQL is reachContainmentSQL plus, when any overflow ring applies to this

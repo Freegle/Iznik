@@ -897,4 +897,45 @@ class MatchMailServiceTest extends TestCase
         $this->assertCount(1, $kept);
         $this->assertSame(1, (int) $kept[0]->id);
     }
+
+
+    public function test_band_labels_arm_keeps_sparse_candidate_keys_aligned(): void
+    {
+        // Rows without a resolvable location leave GAPS in the points array
+        // (keys 0 and 2 here, no 1). The arrival results must map back onto
+        // the RIGHT rows through the sparse keys, or the band would order -
+        // and pick - the wrong candidates.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = $this->createTestMessage($user, $group);
+        $schedule = json_encode([['tick' => 1, 'drive_min' => 5]]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, reach_labels, outer_bound, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ?, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 1,
+                     0, 30, ?, NOW(), 'expanding', NOW(), NOW())",
+            [$message->id, 'label-bytes', self::TICK1, $schedule]
+        );
+
+        // Two points sent (rows 0 and 2); row 1 has no location. Row 0 is
+        // already in reach; row 2 is the band candidate.
+        \Illuminate\Support\Facades\Http::fake(['*reach-arrival*' => \Illuminate\Support\Facades\Http::response([
+            'results' => [
+                ['arrival' => 100, 'in' => true],
+                ['arrival' => 500, 'in' => false],
+            ],
+        ])]);
+
+        $rows = [
+            (object) ['id' => 10, 'dist' => null, 'cand_lat' => 51.5, 'cand_lng' => -0.1],
+            (object) ['id' => 11, 'dist' => null, 'cand_lat' => null, 'cand_lng' => null],
+            (object) ['id' => 12, 'dist' => null, 'cand_lat' => 51.9, 'cand_lng' => 0.8],
+        ];
+        $kept = $this->callCellBand($message->id, $rows);
+
+        $this->assertCount(1, $kept);
+        $this->assertSame(12, (int) $kept[0]->id, 'the arrival for the second POINT belongs to the third ROW');
+        $this->assertEqualsWithDelta(200.0, (float) $kept[0]->dist, 0.001);
+    }
 }

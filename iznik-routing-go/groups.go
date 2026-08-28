@@ -77,6 +77,38 @@ func wktPolygonToCoords(wkt string) ([][][2]float64, error) {
 	return rings, nil
 }
 
+// wktAreaRings parses a WKT POLYGON or MULTIPOLYGON (coordinates stored as
+// degrees, lng lat) into one flat ring list. Containment over the result must
+// use pure even-odd counting, which is correct both for holes and for the
+// disjoint parts of a multipolygon.
+func wktAreaRings(wkt string) ([][][2]float64, error) {
+	trimmed := strings.TrimSpace(wkt)
+	if i := strings.Index(trimmed, ";"); i >= 0 {
+		trimmed = strings.TrimSpace(trimmed[i+1:])
+	}
+	if strings.HasPrefix(strings.ToUpper(trimmed), "MULTIPOLYGON") {
+		start := strings.Index(trimmed, "(")
+		end := strings.LastIndex(trimmed, ")")
+		if start < 0 || end < start {
+			return nil, fmt.Errorf("malformed WKT")
+		}
+		var rings [][][2]float64
+		for _, poly := range splitRings(trimmed[start+1 : end]) {
+			poly = strings.TrimSpace(strings.Trim(strings.TrimSpace(poly), ","))
+			if poly == "" {
+				continue
+			}
+			r, err := wktPolygonToCoords("POLYGON" + poly)
+			if err != nil {
+				return nil, err
+			}
+			rings = append(rings, r...)
+		}
+		return rings, nil
+	}
+	return wktPolygonToCoords(trimmed)
+}
+
 func splitRings(s string) []string {
 	var rings []string
 	depth := 0

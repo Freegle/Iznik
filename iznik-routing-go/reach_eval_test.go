@@ -128,6 +128,11 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 				out = append(out, evalRow{msgid: 6, blob: blob, tick: 2, maxMin: 30, schedule: schedule})
 			case 7: // discover: label does NOT admit at the current budget
 				out = append(out, evalRow{msgid: 7, blob: blob, tick: 1, maxMin: 30, schedule: schedule})
+			case 8: // discover: admitted by its label but FROZEN (held)
+				out = append(out, evalRow{msgid: 8, blob: blob, tick: 2, maxMin: 30, schedule: schedule, held: true})
+			case 9: // beyond the current budget, but the member stands in the
+				// post's ORIGIN group's area, which the stored reach unions in
+				out = append(out, evalRow{msgid: 9, blob: blob, tick: 1, maxMin: 30, schedule: schedule, originGid: 55})
 			}
 		}
 		return out, nil
@@ -192,10 +197,12 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	}
 	resetReachEvalForTest()
 
-	// Discover: the leaf loader offers 1 (already asked), 6 (admitted) and
-	// 7 (label says out at its current budget). Only 6 comes back.
+	// Discover: the leaf loader offers 1 (already asked), 6 (admitted),
+	// 7 (label says out at its current budget) and 8 (admitted but held -
+	// frozen posts are hidden on every surface and must not be resurrected).
+	// Only 6 comes back.
 	prevLeaf := leafRowLoader
-	leafRowLoader = func(leaf int32) []uint64 { return []uint64{1, 6, 7} }
+	leafRowLoader = func(leaf int32) []uint64 { return []uint64{1, 6, 7, 8} }
 	defer func() { leafRowLoader = prevLeaf }()
 	got, disc := call(map[string]any{
 		"lat": memberLat, "lng": memberLng, "msgids": []uint64{1}, "discover": true,
@@ -206,5 +213,98 @@ func TestReachEvalMaxRejectedDiscover(t *testing.T) {
 	if len(disc) != 1 || disc[0] != 6 {
 		t.Fatalf("discovered: got %v want [6]", disc)
 	}
-	fmt.Println("max/rejected/discover ok")
+	resetReachEvalForTest()
+
+	// An EMPTY candidate list with discover still answers (a member covered
+	// by no grid can still be admitted by a stored label) - through the real
+	// handler, not a stub.
+	got, disc = call(map[string]any{
+		"lat": memberLat, "lng": memberLng, "msgids": []uint64{}, "discover": true,
+	})
+	if len(got) != 0 {
+		t.Fatalf("empty-candidates run: unexpected verdicts %v", got)
+	}
+	if len(disc) != 1 || disc[0] != 6 {
+		t.Fatalf("empty-candidates discovered: got %v want [6]", disc)
+	}
+	resetReachEvalForTest()
+
+	// Origin-group union: out at the current budget, but flagged so callers
+	// let the cell grid (which holds the union) decide.
+	groupAreaMu.Lock()
+	groupAreaCache[55] = groupAreaEntry{
+		rings: [][][2]float64{{
+			{memberLng - 0.01, memberLat - 0.01}, {memberLng + 0.01, memberLat - 0.01},
+			{memberLng + 0.01, memberLat + 0.01}, {memberLng - 0.01, memberLat + 0.01},
+			{memberLng - 0.01, memberLat - 0.01},
+		}},
+		expires: time.Now().Add(time.Hour),
+	}
+	groupAreaMu.Unlock()
+	app := newApp(g, "", false)
+	b, _ := json.Marshal(map[string]any{"lat": memberLat, "lng": memberLng, "msgids": []uint64{9}})
+	req := httptest.NewRequest("POST", "/v1/reach-eval", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := app.Test(req, 60000)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("origin-area call: err=%v status=%v", err, resp.StatusCode)
+	}
+	var parsedOrigin struct {
+		Results []reachEvalResult `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&parsedOrigin); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(parsedOrigin.Results) != 1 || parsedOrigin.Results[0].Verdict != "out" || !parsedOrigin.Results[0].OriginArea {
+		t.Fatalf("origin-area msgid 9: got %+v want out+origin_area", parsedOrigin.Results)
+	}
+	resetReachEvalForTest()
+
+	// A member point that does not snap to the road network degrades to
+	// all-nolabels (200), never a 4xx - a 4xx would trip the callers' shared
+	// routing breaker on one member's ordinary location.
+	got, disc = call(map[string]any{
+		"lat": 51.0, "lng": -8.0, "msgids": []uint64{1}, "discover": true,
+	})
+	if got[1] != "nolabels" || len(disc) != 0 {
+		t.Fatalf("ocean point: got %v disc %v want nolabels/none", got, disc)
+	}
+	fmt.Println("max/rejected/discover/held/empty/origin/ocean ok")
+}
+
+// POLYGON and MULTIPOLYGON group areas both subtract, including even-odd
+// holes - a MULTIPOLYGON that silently parsed to nothing would let a
+// moderator's per-group retraction leak.
+func TestWktAreaRings(t *testing.T) {
+	poly, err := wktAreaRings("POLYGON((0 0, 4 0, 4 4, 0 4, 0 0),(1 1, 3 1, 3 3, 1 3, 1 1))")
+	if err != nil || len(poly) != 2 {
+		t.Fatalf("polygon: rings=%d err=%v", len(poly), err)
+	}
+	multi, err := wktAreaRings("MULTIPOLYGON(((0 0, 4 0, 4 4, 0 4, 0 0),(1 1, 3 1, 3 3, 1 3, 1 1)),((10 10, 12 10, 12 12, 10 12, 10 10)))")
+	if err != nil || len(multi) != 3 {
+		t.Fatalf("multipolygon: rings=%d err=%v", len(multi), err)
+	}
+	evenOdd := func(rings [][][2]float64, lng, lat float64) bool {
+		n := 0
+		for _, r := range rings {
+			if pointInRing(lng, lat, r) {
+				n++
+			}
+		}
+		return n%2 == 1
+	}
+	cases := []struct {
+		lng, lat float64
+		want     bool
+	}{
+		{0.5, 0.5, true}, // first part, outside the hole
+		{2, 2, false},    // inside the hole
+		{11, 11, true},   // second part
+		{7, 7, false},    // between the parts
+	}
+	for _, c := range cases {
+		if got := evenOdd(multi, c.lng, c.lat); got != c.want {
+			t.Fatalf("(%v,%v): got %v want %v", c.lng, c.lat, got, c.want)
+		}
+	}
 }

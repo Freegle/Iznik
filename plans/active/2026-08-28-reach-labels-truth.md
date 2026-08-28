@@ -71,14 +71,28 @@ backfill skips labelled rows so drained grids are not rewritten. Follow with
 3. `php artisan ripple:drop-cell-grids --dry-run`, then for real.
 4. `OPTIMIZE TABLE rippling_reach;` (online, InnoDB).
 
+## Adversarial review round (2026-08-28 late)
+
+Four parallel reviewers; all confirmed findings fixed + tested:
+- MULTIPOLYGON rejected areas (wktAreaRings + pure even-odd containment).
+- evalMu held across MySQL (areas resolved outside the lock).
+- Row-mutable state (rejected/held/tick/origin gid) on the 60s TTL.
+- origin_area union rule: out inside the post's origin group's area = NO
+  verdict; both clients skip it, the cell grid (which holds the union) decides.
+- Badge now shares labelNarrowAndDiscover with the feed; search unions
+  discoveries too.
+- Non-snapping member point answers nolabels (200); Go breaker only on 5xx;
+  PHP labelEval gets the 5-min breaker.
+- Discover: held never discovered, fan-out capped 1000, later-chunk out
+  verdict beats a discovery (both clients).
+- MaxReach indexed sweep skips labelled rows (has_max_reach knows nothing of
+  labels); fillCumulativeForLabelled feeds max_cumulative_users from the
+  schedule so the engagement nudge keeps working.
+- Tests: TestWktAreaRings, origin/ocean/held/empty arms,
+  TestLabelVerdicts4xxDoesNotTripBreaker, TestLabelNarrowAndDiscover, PHP
+  breaker/origin/multi-chunk/sparse-keys/--limit/indexed-scan tests.
+
 ## Status
 
-- routing endpoint + tests: DONE (TestReachEvalVerdicts,
-  TestReachEvalMaxRejectedDiscover).
-- apiv2 gate/feed/search/passthrough wiring + tests: DONE
-  (TestLabelVerdictsOverrideCells, TestLabelVerdictsWithDiscover,
-  TestDropLabelOut).
-- batch digest/maxreach/matchmail/drain wiring + tests: DONE (digest
-  drops-label-out / keeps-nolabels / discovers-missed; maxreach labels-first;
-  matchmail labels band + cells fallback; drop-cell-grids drains max only).
-- Suites: go running; laravel + routing local pending.
+- All wiring + review fixes DONE. Routing suite green (full, local).
+- apiv2 go + laravel suites: running at time of writing; commit follows green.

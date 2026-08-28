@@ -952,6 +952,14 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	// rasters, and SQL only runs keyed lookups over the returned ids. Any
 	// failure falls through to the degraded path below.
 	spatialIn, spatialPartial, useSpatial := spatialReachIDs(db, latlng)
+	if useSpatial {
+		// The same labels-truth transform the feed applies
+		// (labelNarrowAndDiscover): without it the badge counts posts whose
+		// label verdicts the member out, and misses discovered posts the
+		// feed shows - the exact badge/feed disagreement this path exists
+		// to prevent.
+		spatialIn = labelNarrowAndDiscover(latlng.Lat, latlng.Lng, spatialIn)
+	}
 
 	// The rasters answer only the committed reach. The feed additionally admits
 	// via the viewer's overflow ring (reachOrOverflowSQL), so the badge must ask

@@ -650,6 +650,19 @@ class ReachService
      *  routing server would cost the full HTTP timeout on every one. */
     private static float $driveMetricsDownUntil = 0.0;
 
+    /**
+     * Reach-eval circuit breaker, same shape as the drive-metrics one below:
+     * the digest/push loops call labelEval once per RECIPIENT, so without a
+     * breaker a down or browning-out routing server costs the full HTTP
+     * timeout on every one of thousands of sequential mails.
+     */
+    private static float $labelEvalDownUntil = 0.0;
+
+    public static function resetLabelEvalBreaker(): void
+    {
+        self::$labelEvalDownUntil = 0.0;
+    }
+
     /** Tests only: a tripped breaker must not leak into later tests. */
     public static function resetDriveMetricsBreaker(): void
     {
@@ -739,6 +752,9 @@ class ReachService
         if (($msgids === [] && !$discover) || ($lat === 0.0 && $lng === 0.0)) {
             return $none;
         }
+        if (microtime(true) < self::$labelEvalDownUntil) {
+            return $none;
+        }
         $out = [];
         $discovered = [];
         $chunks = array_chunk(array_values($msgids), 1000) ?: [[]];
@@ -754,21 +770,34 @@ class ReachService
                     'discover' => $discover && $i === 0,
                 ]);
             } catch (\Throwable $e) {
+                self::$labelEvalDownUntil = microtime(true) + 300;
                 Log::warning("ripple: reach-eval fetch failed: {$e->getMessage()}");
 
                 return $none;
             }
             if (!$response->successful()) {
+                // 503 (engine not configured yet) and 404 (routing server
+                // predates the endpoint) are expected states, not outages -
+                // they answer instantly, so no breaker for them either.
                 if (!in_array($response->status(), [503, 404], true)) {
+                    self::$labelEvalDownUntil = microtime(true) + 300;
                     Log::warning("ripple: reach-eval HTTP {$response->status()}");
                 }
 
                 return $none;
             }
             foreach ($response->json('results') ?? [] as $r) {
-                if (isset($r['msgid'], $r['verdict']) && in_array($r['verdict'], ['in', 'out'], true)) {
-                    $out[(int) $r['msgid']] = $r['verdict'];
+                if (!isset($r['msgid'], $r['verdict']) || !in_array($r['verdict'], ['in', 'out'], true)) {
+                    continue;
                 }
+                // out+origin_area = the member stands in the post's origin
+                // group's area, which the stored reach deliberately unions in
+                // (ExpandService::unionWithOriginGroupArea): treat as NO
+                // verdict, so the cell grid - which holds that union - decides.
+                if ($r['verdict'] === 'out' && !empty($r['origin_area'])) {
+                    continue;
+                }
+                $out[(int) $r['msgid']] = $r['verdict'];
             }
             foreach ($response->json('discovered') ?? [] as $r) {
                 if (isset($r['msgid'])) {
@@ -776,6 +805,15 @@ class ReachService
                 }
             }
         }
+
+        // A discovered id can also ride in a LATER chunk of the candidate
+        // list, where its own verdict may be 'out' (discover only sees the
+        // first chunk's asked set). The verdict wins: never re-admit what
+        // the labels narrowed away.
+        $discovered = array_values(array_filter(
+            $discovered,
+            fn ($id) => ($out[$id] ?? '') !== 'out'
+        ));
 
         return ['verdicts' => $out, 'discovered' => $discovered];
     }
