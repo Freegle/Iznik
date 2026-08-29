@@ -62,6 +62,17 @@ class ElectricalsStatsService
 
     public function __construct(protected EeeVisionService $vision) {}
 
+    /**
+     * One row per message: the newest classification under the model wins.
+     *
+     * messages_eee keys on (msgid, model, prompt_version), so a message reclassified
+     * after a prompt change keeps its old row alongside the new one. Counting both would
+     * count the message twice — and disagree with itself whenever the two verdicts
+     * differ, which is exactly the case reclassification exists for. Correlated on the
+     * unique key, so it is one indexed probe per candidate row.
+     */
+    protected const LATEST_ROW = 'e.id = (SELECT MAX(e2.id) FROM messages_eee e2 WHERE e2.msgid = e.msgid AND e2.model = e.model)';
+
     public function build(): array
     {
         $model  = $this->vision->getModelName();
@@ -101,7 +112,8 @@ class ElectricalsStatsService
              WHERE e.model = ?
                AND e.is_eee IS NOT NULL
                AND m.arrival >= ? AND m.arrival < ?
-               AND m.type = ? AND m.deleted IS NULL',
+               AND m.type = ? AND m.deleted IS NULL
+               AND ' . self::LATEST_ROW,
             [$model, $from, $to, 'Offer']
         );
 
@@ -139,6 +151,7 @@ class ElectricalsStatsService
                SELECT DISTINCT mo.msgid, COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight
                FROM messages_outcomes mo
                INNER JOIN messages_eee e ON e.msgid = mo.msgid AND e.model = ? AND e.is_eee = 1
+                     AND ' . self::LATEST_ROW . '
                INNER JOIN messages_groups mg ON mg.msgid = mo.msgid AND mg.rippled_in = 0
                INNER JOIN messages_items mi ON mi.msgid = mo.msgid
                LEFT JOIN items i ON i.id = mi.itemid
@@ -166,7 +179,7 @@ class ElectricalsStatsService
             'mean_item_kg'               => ($haveWeights && $items > 0) ? round($kg / $items, 1) : null,
             'carbon_proxy_gbp_per_tonne' => self::CARBON_VALUE_PER_TONNE_GBP,
             'basis'                      => 'items.weight catalog, population mean where unknown; '
-                                            . 'not the vision model, whose per-item weight is 65% accurate',
+                                            . 'not the vision model, whose per-item weight is not accurate enough to publish',
         ];
     }
 
@@ -210,6 +223,8 @@ class ElectricalsStatsService
             ->join('items as i', 'i.id', '=', 'mi.itemid')
             ->where('e.model', $model)
             ->where('e.is_eee', 1)
+            // keep-raw: correlated MAX subquery (see LATEST_ROW); no builder form.
+            ->whereRaw(self::LATEST_ROW)
             ->where('m.arrival', '>=', $from)
             ->where('m.arrival', '<', $to)
             ->where('m.type', 'Offer')
@@ -251,6 +266,7 @@ class ElectricalsStatsService
              INNER JOIN items i ON i.id = mi.itemid
              INNER JOIN messages_groups mg ON mg.msgid = m.id AND mg.rippled_in = 0
              WHERE e.model = ? AND e.is_eee = 1
+               AND ' . self::LATEST_ROW . '
                AND m.arrival >= ? AND m.arrival < ?
                AND m.type = ? AND m.deleted IS NULL
                AND CHAR_LENGTH(i.name) <= ?
@@ -310,6 +326,7 @@ class ElectricalsStatsService
              LEFT JOIN messages_outcomes mo ON mo.msgid = m.id
              WHERE e.model = ?
                AND e.is_eee IS NOT NULL
+               AND ' . self::LATEST_ROW . '
                AND m.arrival >= ? AND m.arrival < ?
                AND m.type = ? AND m.deleted IS NULL
              GROUP BY e.is_eee',
@@ -352,6 +369,7 @@ class ElectricalsStatsService
              LEFT JOIN messages_outcomes mo ON mo.msgid = m.id
              WHERE e.model = ? AND e.is_eee = 1
                AND e.item_condition IS NOT NULL
+               AND ' . self::LATEST_ROW . '
                AND m.arrival >= ? AND m.arrival < ?
                AND m.type = ? AND m.deleted IS NULL
              GROUP BY e.item_condition',
@@ -386,6 +404,7 @@ class ElectricalsStatsService
              INNER JOIN messages m ON m.id = e.msgid
              WHERE e.model = ?
                AND e.is_eee IS NOT NULL
+               AND ' . self::LATEST_ROW . '
                AND m.arrival >= ?
                AND m.type = ? AND m.deleted IS NULL
              GROUP BY month
@@ -430,14 +449,18 @@ class ElectricalsStatsService
         $current  = $this->vision->getModelName();
         $measured = $current === self::ACCURACY_MEASURED_ON;
 
+        // Size (72%, volunteer quorum, 228 items) and weight (65%, 227 items) are below
+        // the publication bar. They are kept out of the payload entirely, not just off
+        // the page: the API serves this JSON raw, so anything in it is published — a
+        // "publish: false" figure in the payload would still be one curl away.
         return [
             'measured_on'                => self::ACCURACY_MEASURED_ON,
             'current_model'              => $current,
             'measured_for_current_model' => $measured,
             'is_electrical' => ['pct' => 96, 'basis' => '193 human labels', 'publish' => true],
             'condition'     => ['pct' => 93, 'basis' => 'volunteer quorum, 218 items', 'publish' => true],
-            'size'          => ['pct' => 72, 'basis' => 'volunteer quorum, 228 items', 'publish' => false],
-            'weight'        => ['pct' => 65, 'basis' => 'volunteer quorum, 227 items', 'publish' => false],
+            'size'          => ['publish' => false],
+            'weight'        => ['publish' => false],
         ];
     }
 }

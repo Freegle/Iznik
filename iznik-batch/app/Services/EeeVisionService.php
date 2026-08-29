@@ -275,13 +275,16 @@ class EeeVisionService
         $imageUserText = $this->buildImageUserText();
         $model  = $this->getModelName();
         $apiKey = config('freegle.eee.gemini_api_key');
-        $url    = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+        // Key in a header, never the URL: HTTP-client exceptions embed the request URL in
+        // their message, so a ?key= query string puts the live key in the logs on any
+        // connection-level failure.
+        $url    = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent";
 
         $imageResults = $this->poolApiCalls(
             $jobs,
             $this->fetchImagesMany($jobs),
             fn($r) => $this->extractGeminiRaw($r),
-            fn($pool, $job, $img) => $pool->timeout(90)->post($url, [
+            fn($pool, $job, $img) => $pool->withHeaders(['x-goog-api-key' => $apiKey])->timeout(90)->post($url, [
                 'system_instruction' => ['parts' => [['text' => $imageSystem]]],
                 'contents'           => [['parts' => [
                     ['text' => $imageUserText],
@@ -294,7 +297,7 @@ class EeeVisionService
         $textResults = $this->poolTextApiCalls(
             $jobs,
             fn($r) => $this->extractGeminiRaw($r),
-            fn($pool, $job) => $pool->timeout(30)->post($url, [
+            fn($pool, $job) => $pool->withHeaders(['x-goog-api-key' => $apiKey])->timeout(30)->post($url, [
                 'system_instruction' => ['parts' => [['text' => $textSystem]]],
                 'contents'           => [['parts' => [['text' => $this->buildTextUserText($job['context'])]]]],
                 'generationConfig'   => ['response_mime_type' => 'application/json', 'temperature' => 0.1],
@@ -674,7 +677,8 @@ PROMPT;
 
         $model   = $this->getModelName();
         $apiKey  = config('freegle.eee.gemini_api_key');
-        $url     = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+        // Key in a header, never the URL — see analyseManyGemini.
+        $url     = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent";
 
         $payload = [
             'system_instruction' => ['parts' => [['text' => $system]]],
@@ -688,7 +692,7 @@ PROMPT;
         ];
 
         try {
-            $response = Http::timeout(60)->post($url, $payload);
+            $response = Http::withHeaders(['x-goog-api-key' => $apiKey])->timeout(60)->post($url, $payload);
 
             if (!$response->successful()) {
                 Log::warning('EeeVisionService Gemini image error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
@@ -796,7 +800,8 @@ PROMPT;
     {
         $model  = $this->getModelName();
         $apiKey = config('freegle.eee.gemini_api_key');
-        $url    = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+        // Key in a header, never the URL — see analyseManyGemini.
+        $url    = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent";
 
         $payload = [
             'system_instruction' => ['parts' => [['text' => $system]]],
@@ -805,7 +810,7 @@ PROMPT;
         ];
 
         try {
-            $response = Http::timeout(30)->post($url, $payload);
+            $response = Http::withHeaders(['x-goog-api-key' => $apiKey])->timeout(30)->post($url, $payload);
 
             if (!$response->successful()) {
                 Log::warning('EeeVisionService Gemini text error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);

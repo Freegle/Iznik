@@ -112,7 +112,6 @@ class EeeComponentService
     protected const NAMED_NOT_EEE = [
         '/\bgas (cooker|hob|oven|stove|range|ring)\b/i',
         '/\bpetrol\s*(lawn)?\s*mower\b/i',
-        '/\bpetrol lawnmower\b/i',
         '/\bpetrol (strimmer|trimmer|chainsaw|hedge ?cutter|blower)\b/i',
     ];
 
@@ -1348,20 +1347,35 @@ class EeeComponentService
      */
     public function lookup(string $rawComponent): ?array
     {
+        return $this->lookupWithStatus($rawComponent)['match'];
+    }
+
+    /**
+     * Lookup plus whether the answer can be trusted. `failed` is true when the embedding
+     * call itself failed: "no match" then means "could not look", not "looked and found
+     * nothing", and the caller must not treat it as evidence of absence.
+     *
+     * @return array{match: ?array, failed: bool}
+     */
+    protected function lookupWithStatus(string $rawComponent): array
+    {
         $raw = strtolower(trim($rawComponent));
-        if (empty($raw)) return null;
+        if (empty($raw)) return ['match' => null, 'failed' => false];
 
         // Exact match first.
         $exact = $this->sqlite->getComponentTypeByName($raw);
         if ($exact) {
-            return ['canonical_name' => $exact['canonical_name'], 'category' => $exact['category'], 'similarity' => 1.0];
+            return [
+                'match'  => ['canonical_name' => $exact['canonical_name'], 'category' => $exact['category'], 'similarity' => 1.0],
+                'failed' => false,
+            ];
         }
 
         // Vector similarity search.
         $embedding = $this->fetchEmbedding($raw);
-        if (!$embedding) return null;
+        if (!$embedding) return ['match' => null, 'failed' => true];
 
-        return $this->findNearest($embedding, self::SIMILARITY_THRESHOLD);
+        return ['match' => $this->findNearest($embedding, self::SIMILARITY_THRESHOLD), 'failed' => false];
     }
 
     /**
@@ -1379,14 +1393,16 @@ class EeeComponentService
      */
     public function classifyComponents(array $components, string $itemName = ''): array
     {
-        $categories  = [];
-        $unmatched   = [];
-        $hasPrimary  = false;
-        $hasDistinct = false;
-        $hasSupp     = false;
+        $categories   = [];
+        $unmatched    = [];
+        $hasPrimary   = false;
+        $hasDistinct  = false;
+        $hasSupp      = false;
+        $lookupFailed = false;
 
         foreach ($components as $raw) {
-            $match = $this->lookup($raw);
+            $status = $this->lookupWithStatus($raw);
+            $match  = $status['match'];
             if ($match) {
                 $categories[$raw] = $match;
                 switch ($match['category']) {
@@ -1396,6 +1412,7 @@ class EeeComponentService
                 }
             } else {
                 $unmatched[] = $raw;
+                $lookupFailed = $lookupFailed || $status['failed'];
             }
         }
 
@@ -1419,6 +1436,12 @@ class EeeComponentService
             $reason = $hasPrimary ? 'primary' : ($hasDistinct ? 'distinct_function' : 'supplementary');
         } elseif (empty($components)) {
             $isEee = null;
+        } elseif ($lookupFailed) {
+            // At least one observed component was never actually looked up, because the
+            // embedding service failed. "Not electrical" here would be a confident verdict
+            // built on an outage; return unknown, and the caller decides whether to retry.
+            $isEee  = null;
+            $reason = 'lookup_unavailable';
         } else {
             $isEee  = false;
             $reason = 'no_electrical_components';

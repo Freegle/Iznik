@@ -58,5 +58,8 @@ func Stats(c *fiber.Ctx) error {
 	}
 
 	c.Set("Content-Type", "application/json")
+	// Regenerated once a day, so an hour of shared caching is free accuracy-wise and is
+	// the only thing standing between a public no-args GET and the database.
+	c.Set("Cache-Control", "public, max-age=3600")
 	return c.SendString(row.Payload)
 }

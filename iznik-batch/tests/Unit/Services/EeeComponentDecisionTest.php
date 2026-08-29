@@ -16,8 +16,8 @@ use Tests\TestCase;
  * A primary-function test is NOT the rule and must not creep back in. The cases
  * below are chosen so that a primary-function test fails at least five of them.
  *
- * lookup() is stubbed to autoCategory() so these tests exercise the decision logic
- * rather than the embedding index, which needs the database.
+ * lookupWithStatus() is stubbed to autoCategory() so these tests exercise the decision
+ * logic rather than the embedding index, which needs the database.
  */
 class EeeComponentDecisionTest extends TestCase
 {
@@ -30,13 +30,16 @@ class EeeComponentDecisionTest extends TestCase
         $sqlite = $this->createMock(EeeSqliteService::class);
 
         $this->service = new class($sqlite) extends EeeComponentService {
-            public function lookup(string $raw): ?array
+            protected function lookupWithStatus(string $raw): array
             {
                 $category = $this->autoCategory($raw);
 
-                return $category === 'unknown'
-                    ? null
-                    : ['canonical_name' => $raw, 'category' => $category];
+                return [
+                    'match'  => $category === 'unknown'
+                        ? null
+                        : ['canonical_name' => $raw, 'category' => $category],
+                    'failed' => false,
+                ];
             }
         };
     }
@@ -215,5 +218,69 @@ class EeeComponentDecisionTest extends TestCase
 
         $this->assertFalse($result['is_eee']);
         $this->assertTrue($result['contains_eee_components']);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Lookup outages
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * When the embedding service fails, an unmatched component means "could not
+     * look", not "looked and found nothing" — so the verdict must be unknown, not
+     * a confident "not electrical" built on an outage.
+     */
+    public function test_failed_lookups_yield_unknown_not_false(): void
+    {
+        $sqlite  = $this->createMock(EeeSqliteService::class);
+        $failing = new class($sqlite) extends EeeComponentService {
+            protected function lookupWithStatus(string $raw): array
+            {
+                return ['match' => null, 'failed' => true];
+            }
+        };
+
+        $result = $failing->classifyComponents(['mystery widget'], 'unknown thing');
+
+        $this->assertNull($result['is_eee']);
+        $this->assertSame('lookup_unavailable', $result['is_eee_reason']);
+    }
+
+    /**
+     * A genuine no-match (the embedding worked, nothing similar exists) stays a
+     * real negative: the outage path must not swallow ordinary non-electrical items.
+     */
+    public function test_genuine_no_match_still_reads_not_electrical(): void
+    {
+        $result = $this->decide('coffee table', ['completely unknown thing']);
+
+        $this->assertFalse($result['is_eee']);
+        $this->assertSame('no_electrical_components', $result['is_eee_reason']);
+    }
+
+    /**
+     * A positive match still decides even when another component's lookup failed:
+     * the outage only matters when it is the difference between verdicts.
+     */
+    public function test_positive_match_beats_a_failed_lookup(): void
+    {
+        $sqlite = $this->createMock(EeeSqliteService::class);
+        $mixed  = new class($sqlite) extends EeeComponentService {
+            protected function lookupWithStatus(string $raw): array
+            {
+                if ($raw === 'power cable') {
+                    return [
+                        'match'  => ['canonical_name' => $raw, 'category' => 'primary_eee'],
+                        'failed' => false,
+                    ];
+                }
+
+                return ['match' => null, 'failed' => true];
+            }
+        };
+
+        $result = $mixed->classifyComponents(['power cable', 'mystery widget'], 'lamp');
+
+        $this->assertTrue($result['is_eee']);
+        $this->assertSame('primary', $result['is_eee_reason']);
     }
 }

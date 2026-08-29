@@ -21,7 +21,7 @@ NOT a primary-function test.
 | 8 | Go endpoint `GET /electricals/stats` | ✅ | 4 tests pass |
 | 9 | `/electricals` Nuxt page + API class | ✅ | Browser-verified desktop + 375px, no console errors |
 | 10 | Tests | ✅ | All mine green: 452 Eee, 13 ItemService, 4 Go |
-| 11 | PR | ❌ | Blocked: full Laravel suite red on master
+| 11 | PR | ✅ | #1437 open; master merged in; adversarial-review findings fixed 2026-08-29
 
 ---
 
@@ -205,7 +205,11 @@ SELECT COLUMN_NAME FROM information_schema.COLUMNS
   labels before anyone quotes them.
 - Production migrations not applied; `*_migration.sql` files are ready and idempotent.
 - `items:backfill-popularity` not run against production.
-- No PR: see below.
+- Component index not built on the production batch host (`php artisan
+  eee:build-component-index`, needs `OPENAI_API_KEY`). `eee:classify-new` refuses to run
+  until it exists, so this is a launch gate, not a nice-to-have.
+- History not backfilled: the hourly job starts from now, so the page's twelve-month
+  window fills up slowly unless a manual `--since` backfill is run (spend decision).
 
 ## Local test-environment divergence (not this branch)
 

@@ -334,10 +334,22 @@ class EeeClassificationService
             return null;
         }
 
+        // Approved, undeleted posts only, whoever the caller is: this service sends the
+        // post's photo and text to an external API, so content no moderator has passed
+        // (held, spam, rejected) must never reach it. Once approved a post stays in the
+        // Approved collection, so backfills over history pass this check too.
         $message = DB::table('messages as m')
             ->leftJoin('messages_items as mi', 'mi.msgid', '=', 'm.id')
             ->leftJoin('items as i', 'i.id', '=', 'mi.itemid')
             ->where('m.id', $messageid)
+            ->whereNull('m.deleted')
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))
+                  ->from('messages_groups')
+                  ->whereColumn('messages_groups.msgid', 'm.id')
+                  ->where('messages_groups.collection', 'Approved')
+                  ->where('messages_groups.deleted', 0);
+            })
             ->select(['m.id', 'm.subject', 'm.textbody', 'i.name as item_name'])
             ->first();
 
@@ -425,6 +437,12 @@ class EeeClassificationService
             'run_at'                   => now()->toIso8601String(),
             'data_sources'             => json_encode(['image' => false, 'type_lookup' => true, 'text' => !empty($textSignals['eee']), 'chat' => false]),
             'is_eee'                   => $type['is_eee'],
+            // The production row reads is_eee_from_components, not is_eee. This path only
+            // fires for a homogeneous non-EEE type with zero EEE minority, so the type
+            // consensus IS the component observation; without this key the row would be
+            // stored as NULL and excluded from every statistic.
+            'is_eee_from_components'   => $type['is_eee'],
+            'is_eee_reason'            => 'type_consensus',
             'is_eee_confidence'        => $type['is_eee_confidence'],
             'is_eee_reasoning'         => 'Applied from item-type consensus.',
             'weee_category'            => $type['weee_category'],
@@ -473,6 +491,15 @@ class EeeClassificationService
         } elseif (!$this->componentService->needsBuilding()) {
             $components = array_filter(array_map('trim', explode(';', $compDesc)));
             $verdict = $this->componentService->classifyComponents($components, $itemName);
+
+            // Transient: the embedding service was down, so the observed components could
+            // not be decided. A stored NULL would never be revisited (a row exists, so the
+            // incremental run skips the message for ever). Fail the message instead —
+            // nothing is stored, and the next run retries it at the cost of one more call.
+            if (($verdict['is_eee_reason'] ?? null) === 'lookup_unavailable') {
+                throw new \RuntimeException("Component lookup unavailable for message {$message->id} — retry next run.");
+            }
+
             $isEeeFromComponents = $verdict['is_eee'] !== null ? ($verdict['is_eee'] ? 1 : 0) : null;
             $isEeeReason = $verdict['is_eee_reason'] ?? null;
         } else {

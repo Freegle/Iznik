@@ -89,20 +89,23 @@ class EeeProductionStore
     }
 
     /**
-     * Newest message arrival already classified under this model and prompt, for the
+     * Newest approval clock already classified under this model and prompt, for the
      * incremental run's high-water mark.
      *
-     * Reads `messages.arrival` rather than `classified_at`, because the mark has to be a
-     * position in the message stream, not a wall-clock time. Using the classification time
-     * would skip anything that arrived while the previous run was in flight.
+     * The clock is the same one the incremental run selects on — when the post was
+     * approved, falling back to group arrival for auto-approved posts — because the mark
+     * has to be a position in the approval stream, not a wall-clock time. Reading a
+     * different clock here than the selection uses would skip or rescan whole runs.
      */
     public function highWaterMark(string $model, string $promptVersion): ?string
     {
         $mark = DB::table('messages_eee')
-            ->join('messages', 'messages.id', '=', 'messages_eee.msgid')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_eee.msgid')
             ->where('messages_eee.model', $model)
             ->where('messages_eee.prompt_version', $promptVersion)
-            ->max('messages.arrival');
+            ->where('messages_groups.collection', 'Approved')
+            // keep-raw: MAX over a COALESCE of two columns; no builder expression form.
+            ->max(DB::raw('COALESCE(messages_groups.approvedat, messages_groups.arrival)'));
 
         return $mark ?: null;
     }

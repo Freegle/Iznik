@@ -33,7 +33,10 @@
                   ELECTRICALS
                 </h3>
               </b-col>
-              <b-col class="text-center">
+              <b-col
+                v-if="stats.counts.electrical_pct !== null"
+                class="text-center"
+              >
                 <v-icon icon="chart-bar" class="green titleicon" />
                 <h3 class="green">
                   {{ stats.counts.electrical_pct }}%
@@ -84,10 +87,19 @@
               We look at the photo on each item somebody offers and work out
               whether it is electrical. Of
               {{ stats.counts.classified.toLocaleString() }} items we looked at
-              in the last 12 months,
-              {{ stats.counts.electrical.toLocaleString() }} were. Checked
-              against items sorted by hand, we get this right
-              {{ stats.accuracy.is_electrical.pct }}% of the time.
+              {{ rangeLabel }},
+              {{ stats.counts.electrical.toLocaleString() }} were.
+              <template v-if="accuracyIsCurrent">
+                Checked against items sorted by hand, we get this right
+                {{ stats.accuracy.is_electrical.pct }}% of the time.
+              </template>
+              <template v-else>
+                When we last checked this approach against items sorted by
+                hand it was right
+                {{ stats.accuracy.is_electrical.pct }}% of the time; that
+                check used an earlier version of the software and has not yet
+                been repeated on the current one.
+              </template>
             </p>
           </b-card-text>
         </b-card>
@@ -100,7 +112,7 @@
           <b-card-text>
             <h3>Weights</h3>
             <p>
-              The electricals given away in the last 12 months weighed
+              The electricals given away {{ rangeLabel }} weighed
               {{ stats.impact.tonnes.toLocaleString() }} tonnes. That is
               {{ stats.impact.tonnes_co2e.toLocaleString() }} tonnes of CO2 kept
               out of the air, worth £{{
@@ -169,8 +181,18 @@
               </b-tbody>
             </b-table-simple>
             <p class="text-muted small mb-0">
-              Condition comes from the photo, and matches what our volunteers
-              said {{ stats.accuracy.condition.pct }}% of the time.
+              <template v-if="accuracyIsCurrent">
+                Condition comes from the photo, and matches what our
+                volunteers said
+                {{ stats.accuracy.condition.pct }}% of the time.
+              </template>
+              <template v-else>
+                Condition comes from the photo. When we last checked this
+                approach it matched what our volunteers said
+                {{ stats.accuracy.condition.pct }}% of the time; that check
+                used an earlier version of the software and has not yet been
+                repeated on the current one.
+              </template>
             </p>
           </b-card-text>
         </b-card>
@@ -223,7 +245,8 @@
         </b-row>
 
         <p class="text-muted small mt-2">
-          Covers the last 12 months. Worked out on {{ generatedOn }}.
+          Covers the last {{ windowMonths }} months. Worked out on
+          {{ generatedOn }}.
         </p>
       </div>
     </b-col>
@@ -256,7 +279,15 @@ const {
   error,
 } = await useAsyncData('electricals-stats', () => api.electricals.stats())
 
-const rangeLabel = 'in the last 12 months'
+const windowMonths = computed(() => stats.value?.window?.months ?? 12)
+const rangeLabel = computed(() => `in the last ${windowMonths.value} months`)
+
+// The stored accuracy figures record which model they were measured on; when
+// that is not the model now running, the page must present them as a check
+// of the approach, not of this run.
+const accuracyIsCurrent = computed(
+  () => stats.value?.accuracy?.measured_for_current_model === true
+)
 
 // Damaged sits second deliberately: that broken things still get taken is the
 // point of the table, and burying it under the unremarkable majority loses it.

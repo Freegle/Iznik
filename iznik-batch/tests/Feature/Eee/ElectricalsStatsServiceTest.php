@@ -6,6 +6,7 @@ use App\Services\ElectricalsStatsService;
 use App\Services\EeeVisionService;
 use App\Services\ItemService;
 use Illuminate\Support\Facades\DB;
+use ReflectionMethod;
 use Tests\TestCase;
 
 /**
@@ -147,18 +148,85 @@ class ElectricalsStatsServiceTest extends TestCase
      */
     public function test_rippled_copies_do_not_multiply_counts(): void
     {
+        // Taken, so the post enters the impact query - the one that joins
+        // messages_groups and so is the one the fan-out can actually multiply.
+        $msgid = $this->offer('Kettle', 1, $this->recent(), 'Taken');
+
+        // Ripple copies: same message, other groups, flagged as rippled in.
+        foreach (range(1, 2) as $ignored) {
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $this->idOf($this->createTestGroup()),
+                'arrival'    => $this->recent(),
+                'collection' => 'Approved',
+                'rippled_in' => 1,
+            ]);
+        }
+
+        $build = $this->stats->build();
+
+        $this->assertSame(1, $build['counts']['electrical']);
+        $this->assertSame(1, $build['impact']['items_taken'], 'a post reaching three groups is one item');
+    }
+
+    /**
+     * messages_eee keys on (msgid, model, prompt_version), so reclassifying after a
+     * prompt change keeps the old row alongside the new one. The message must count
+     * once, and the newest verdict must be the one that counts.
+     */
+    public function test_reclassification_under_a_new_prompt_counts_once_and_newest_wins(): void
+    {
         $msgid = $this->offer('Kettle', 1, $this->recent());
 
-        // A ripple copy: same message, another group, flagged as rippled in.
-        DB::table('messages_groups')->insert([
-            'msgid'      => $msgid,
-            'groupid'    => $this->idOf($this->createTestGroup()),
-            'arrival'    => $this->recent(),
-            'collection' => 'Approved',
-            'rippled_in' => 1,
+        // Reclassified later under a newer prompt: verdict flipped to not electrical.
+        DB::table('messages_eee')->insert([
+            'msgid'          => $msgid,
+            'is_eee'         => 0,
+            'model'          => $this->model,
+            'prompt_version' => '2',
+            'classified_at'  => now()->toDateTimeString(),
         ]);
 
-        $this->assertSame(1, $this->stats->build()['counts']['electrical']);
+        $counts = $this->stats->build()['counts'];
+
+        $this->assertSame(1, $counts['classified'], 'one message must not count twice');
+        $this->assertSame(0, $counts['electrical'], 'the newest classification must win');
+    }
+
+    /** Catalog weights drive the tonnage, and the maths has to hold together. */
+    public function test_impact_tonnage_uses_catalog_weights(): void
+    {
+        $heavy = $this->offer('Washing Machine', 1, $this->recent(), 'Taken');
+        $light = $this->offer('Kettle Deluxe', 1, $this->recent(), 'Taken');
+
+        DB::table('items')
+            ->whereIn('id', DB::table('messages_items')->where('msgid', $heavy)->pluck('itemid'))
+            ->update(['weight' => 600]);
+        DB::table('items')
+            ->whereIn('id', DB::table('messages_items')->where('msgid', $light)->pluck('itemid'))
+            ->update(['weight' => 400]);
+
+        $impact = $this->stats->build()['impact'];
+
+        $this->assertSame(2, $impact['items_taken']);
+        $this->assertSame(1.0, $impact['tonnes']);
+        $this->assertSame(500.0, $impact['mean_item_kg']);
+    }
+
+    /**
+     * The fallback weight for uncatalogued items is popularity-weighted: a kettle
+     * should count for more in the mean than an obscure one-off.
+     */
+    public function test_population_average_weight_prefers_popularity_weighting(): void
+    {
+        DB::table('items')->insert([
+            ['name' => 'pw-common-item', 'weight' => 100, 'popularity' => 9],
+            ['name' => 'pw-rare-item', 'weight' => 10, 'popularity' => 1],
+        ]);
+
+        $method = new ReflectionMethod($this->stats, 'populationAverageWeight');
+
+        $this->assertSame(91.0, (float) $method->invoke($this->stats));
     }
 
     public function test_success_rate_compares_electrical_with_the_rest(): void

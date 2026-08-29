@@ -89,6 +89,33 @@ func TestElectricalsStats_404WhenNothingGenerated(t *testing.T) {
 	assert.Equal(t, 404, status)
 }
 
+// A corrupted stored payload must be a loud 500, never served: the page would otherwise
+// render from garbage, and the JSON validity check is the only guard between the two.
+func TestElectricalsStats_500OnMalformedStoredPayload(t *testing.T) {
+	clearElectricalsStats(t)
+	defer clearElectricalsStats(t)
+
+	insertElectricalsStats(t, `{"counts": truncated`)
+
+	status, body := fetchElectricalsStats(t)
+	assert.Equal(t, 500, status)
+	assert.Contains(t, body, "not valid JSON")
+}
+
+// Regenerated daily, so responses carry an hour of shared caching - the only thing
+// standing between a public no-args GET and the database.
+func TestElectricalsStats_SetsCacheControl(t *testing.T) {
+	clearElectricalsStats(t)
+	defer clearElectricalsStats(t)
+
+	insertElectricalsStats(t, `{"generation":"cached"}`)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET", "/apiv2/electricals/stats", nil))
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "public, max-age=3600", resp.Header.Get("Cache-Control"))
+}
+
 // The payload is stored as generated and must not be reshaped in transit: the page reads
 // nested structures the handler knows nothing about.
 func TestElectricalsStats_PassesNestedStructureThrough(t *testing.T) {

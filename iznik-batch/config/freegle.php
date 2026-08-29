@@ -1299,9 +1299,12 @@ return [
         'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
         'claude_model'      => env('EEE_CLAUDE_MODEL', 'claude-sonnet-4-6'),
 
-        // Google Gemini.
+        // Google Gemini. The default must be a model that still exists: the gemini-2.0
+        // family is retired, and a retired default means every call 404s — which the
+        // driver treats as a soft failure, so the hourly job "succeeds" classifying
+        // nothing on any host that has not set EEE_GEMINI_MODEL.
         'gemini_api_key'  => env('GOOGLE_GEMINI_API_KEY', ''),
-        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-2.0-flash'),
+        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-3.5-flash-lite'),
 
         // OpenAI.
         'openai_api_key'  => env('OPENAI_API_KEY', ''),
