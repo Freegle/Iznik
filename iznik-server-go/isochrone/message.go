@@ -9,6 +9,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/rippling"
 	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -193,7 +194,7 @@ func fetchReachCandidates(db *gorm.DB, myid uint64, latlng utils.LatLng, unseenO
 func reachExtentSelect(db *gorm.DB, probe *reachProbe) string {
 	sel := reachEnvelopeExpr(db) + " AS reach_wkt"
 	if probe != nil {
-		sel += ", rr.polygon_cells AS reach_cells"
+		sel += ", " + rippling.ReachCellsExpr(db) + " AS reach_cells"
 	}
 	return sel
 }
@@ -205,16 +206,38 @@ func reachEnvelopeExpr(db *gorm.DB) string {
 }
 
 // filterProbed applies the degraded-path cells probe to fetched candidates;
-// a nil probe returns them untouched.
+// a nil probe returns them untouched. Rows the probe cannot decide (a
+// RETIRED grid: the row's label + union threshold replaced its cells) get
+// one batched label evaluation - so a spatial-server outage alone does not
+// hide drained posts; only spatial AND routing down together does, and that
+// double failure fails closed.
 func filterProbed(cands []reachCandidateRow, probe *reachProbe) []reachCandidateRow {
 	if probe == nil {
 		return cands
 	}
 	kept := cands[:0]
+	var undecided []reachCandidateRow
 	for _, c := range cands {
 		if probe.keep(c.ID, c.ReachCells) {
 			c.ReachCells = nil // not needed downstream; drop the blob early
 			kept = append(kept, c)
+		} else if len(c.ReachCells) == 0 {
+			undecided = append(undecided, c)
+		}
+	}
+	if len(undecided) > 0 {
+		ids := make([]uint64, len(undecided))
+		for i, c := range undecided {
+			ids[i] = c.ID
+		}
+		in := map[uint64]bool{}
+		for _, id := range rippling.RescueUndecided(probe.lat, probe.lng, ids) {
+			in[id] = true
+		}
+		for _, c := range undecided {
+			if in[c.ID] {
+				kept = append(kept, c)
+			}
 		}
 	}
 	return kept
@@ -232,7 +255,7 @@ func reachCandidatePoints(db *gorm.DB, myid uint64, latlng utils.LatLng) []reach
 	query, probe := reachCandidateQuery(db, myid, latlng, true)
 	sel := "ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id"
 	if probe != nil {
-		sel += ", rr.polygon_cells AS reach_cells"
+		sel += ", " + rippling.ReachCellsExpr(db) + " AS reach_cells"
 	}
 	query.Select(sel).Scan(&candidates)
 	return filterProbed(candidates, probe)
@@ -952,6 +975,14 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	// rasters, and SQL only runs keyed lookups over the returned ids. Any
 	// failure falls through to the degraded path below.
 	spatialIn, spatialPartial, useSpatial := spatialReachIDs(db, latlng)
+	if useSpatial {
+		// The same labels-truth transform the feed applies
+		// (labelNarrowAndDiscover): without it the badge counts posts whose
+		// label verdicts the member out, and misses discovered posts the
+		// feed shows - the exact badge/feed disagreement this path exists
+		// to prevent.
+		spatialIn = labelNarrowAndDiscover(latlng.Lat, latlng.Lng, spatialIn)
+	}
 
 	// The rasters answer only the committed reach. The feed additionally admits
 	// via the viewer's overflow ring (reachOrOverflowSQL), so the badge must ask
@@ -991,7 +1022,7 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 			// the cells probe instead - same rows the feed would render.
 			var cands []reachCandidateRow
 			countQuery.
-				Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, rr.polygon_cells AS reach_cells").
+				Select("ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, ms.msgid AS id, " + rippling.ReachCellsExpr(db) + " AS reach_cells").
 				Scan(&cands)
 			return uint64(len(filterProbed(cands, probe)))
 		}

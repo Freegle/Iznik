@@ -86,6 +86,43 @@ class BackfillReachLabelsCommand extends Command
 
         $this->info("Stored labels for {$done} rows; {$failed} failed (retry after the reach engine is deployed).");
 
+        // Second pass: the road-native origin-group union threshold for rows
+        // whose labels are already stored but predate origin_union_secs. One
+        // POST per row from the stored blob - no label refetch. Rows the
+        // first pass just filled got theirs inline and are not re-asked.
+        $unionQuery = DB::table('rippling_reach')
+            ->select('msgid')
+            ->whereNotNull('reach_labels')
+            ->whereNull('origin_union_secs');
+        $unionTotal = (clone $unionQuery)->count();
+        $this->info("{$unionTotal} labelled rows need a union threshold.");
+        if ($limit > 0) {
+            $unionQuery->limit($limit);
+            $unionTotal = min($unionTotal, $limit);
+        }
+        $uDone = $uFailed = 0;
+        $startedAt = microtime(true);
+        foreach ($unionQuery->cursor() as $row) {
+            if ($reach->storeUnionSecs((int) $row->msgid)) {
+                $uDone++;
+            } else {
+                $uFailed++;
+            }
+            $processed = $uDone + $uFailed;
+            if ($processed % 500 === 0) {
+                $rate = $processed / max(0.001, microtime(true) - $startedAt);
+                $eta = $unionTotal > $processed && $rate > 0
+                    ? gmdate('G\h i\m', (int) (($unionTotal - $processed) / $rate))
+                    : '-';
+                $this->info(sprintf('union %d/%d (%d%%), %d failed, %.1f rows/s, ETA %s',
+                    $processed, $unionTotal, (int) (100 * $processed / max(1, $unionTotal)), $uFailed, $rate, $eta));
+            }
+            if ($sleepUs > 0) {
+                usleep($sleepUs);
+            }
+        }
+        $this->info("Stored union thresholds for {$uDone} rows; {$uFailed} failed.");
+
         return Command::SUCCESS;
     }
 }

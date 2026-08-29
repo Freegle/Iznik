@@ -26,7 +26,6 @@ class MatchMailServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        MaxReachService::forgetAvailability();
         // The match mail really goes through the digest spool, because the ledger
         // and the reach-notified stamp are both keyed on who was ACTUALLY mailed
         // rather than who was picked.
@@ -40,6 +39,46 @@ class MatchMailServiceTest extends TestCase
         $this->apiMatchIds = [];
         $this->apiSearchUserIds = [];
         $this->refreshApiFake();
+
+        // The routing server, faked by POINT for the band question: inside
+        // TICK1 = already reached (in); inside TICK3 = reached eventually
+        // (arrival past the current edge, further points later); outside
+        // TICK3 = never. Http::fake merges first-stub-wins, so tests that
+        // need a different answer set $this->arrivalOverride instead of
+        // re-faking: 'fail' answers 500, an array answers those results.
+        $this->arrivalOverride = null;
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-arrival')) {
+                return null;
+            }
+            if ($this->arrivalOverride === 'fail') {
+                return \Illuminate\Support\Facades\Http::response(null, 500);
+            }
+            if (is_array($this->arrivalOverride)) {
+                return \Illuminate\Support\Facades\Http::response(['results' => $this->arrivalOverride]);
+            }
+            $t = (float) ($request['t'] ?? 300);
+            $results = [];
+            foreach ($request['points'] ?? [] as $pt) {
+                $lat = (float) ($pt['lat'] ?? 0);
+                $lng = (float) ($pt['lng'] ?? 0);
+                $inTick1 = $lat >= 51.45 && $lat <= 51.55 && $lng >= -0.15 && $lng <= -0.05;
+                $inTick3 = $lat >= 51.0 && $lat <= 52.0 && $lng >= -1.0 && $lng <= 1.0;
+                if (!$inTick3) {
+                    $results[] = ['arrival' => null, 'in' => false];
+                } elseif ($inTick1) {
+                    $results[] = ['arrival' => 100, 'in' => true];
+                } else {
+                    // Arrival grows with distance from the current reach, so
+                    // nearest-first ordering is preserved.
+                    $d = abs($lng - -0.1) + abs($lat - 51.5);
+                    $results[] = ['arrival' => $t + $d * 1000, 'in' => false];
+                }
+            }
+
+            return \Illuminate\Support\Facades\Http::response(['results' => $results]);
+        });
+        // (see arrivalOverride property below)
 
         config([
             'freegle.firstreply.enabled' => true,
@@ -103,6 +142,9 @@ class MatchMailServiceTest extends TestCase
         $this->refreshApiFake();
     }
 
+    /** When set: 'fail' = reach-arrival answers 500; array = those results. */
+    private $arrivalOverride = null;
+
     private function service(): MatchMailService
     {
         return app(MatchMailService::class);
@@ -151,10 +193,7 @@ class MatchMailServiceTest extends TestCase
                      NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor(self::TICK1), self::TICK1, $schedule]
         );
-
-        if ($populateMaxReach) {
-            app(MaxReachService::class)->populate();
-        }
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
 
         return $message;
     }
@@ -817,5 +856,121 @@ class MatchMailServiceTest extends TestCase
             'user1' => $userId,
             'user2' => $other->id,
         ]);
+    }
+
+
+    private function callCellBand(int $msgid, array $rows): array
+    {
+        $m = new \ReflectionMethod(MatchMailService::class, 'applyCellBand');
+
+        return $m->invoke(app(MatchMailService::class), $msgid, $rows);
+    }
+
+    public function test_band_is_answered_from_stored_labels_when_present(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = $this->createTestMessage($user, $group);
+        $schedule = json_encode([
+            ['tick' => 1, 'drive_min' => 5],
+            ['tick' => 2, 'drive_min' => 30],
+        ]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, reach_labels, outer_bound, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ?, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 2,
+                     0, 30, ?, NOW(), 'expanding', NOW(), NOW())",
+            [$message->id, 'label-bytes', self::TICK1, $schedule]
+        );
+
+        // Current budget = tick 1 = 5 min = 300s. Candidate 1 arrives at 400s:
+        // past the current edge but eventually reached - kept, ordered by the
+        // 100s past the edge. Candidate 2 never arrives - dropped. Candidate 3
+        // is already inside the current reach - dropped.
+        $this->arrivalOverride = [
+            ['arrival' => 400, 'in' => false],
+            ['arrival' => null, 'in' => false],
+            ['arrival' => 100, 'in' => true],
+        ];
+
+        $rows = [
+            (object) ['id' => 1, 'dist' => null, 'cand_lat' => 51.6, 'cand_lng' => -0.1],
+            (object) ['id' => 2, 'dist' => null, 'cand_lat' => 55.0, 'cand_lng' => -3.0],
+            (object) ['id' => 3, 'dist' => null, 'cand_lat' => 51.5, 'cand_lng' => -0.1],
+        ];
+        $kept = $this->callCellBand($message->id, $rows);
+
+        $this->assertCount(1, $kept);
+        $this->assertSame(1, (int) $kept[0]->id);
+        $this->assertEqualsWithDelta(100.0, (float) $kept[0]->dist, 0.001);
+    }
+
+    public function test_band_is_empty_when_routing_cannot_answer(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = $this->createTestMessage($user, $group);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, reach_labels, polygon_cells, max_polygon_cells, outer_bound, arrival,
+                mode, tick, total_ticks, total_freeglers, max_drive_min, schedule, next_expansion_at,
+                status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ?, ?, ?, ST_GeomFromText(?, 3857), NOW(),
+                     'drive', 1, 2, 0, 30, NULL, NOW(), 'expanding', NOW(), NOW())",
+            [$message->id, 'label-bytes', $this->reachCellsFor(self::TICK1),
+                $this->reachCellsFor(self::TICK3), self::TICK1]
+        );
+        $this->arrivalOverride = 'fail';
+
+        $rows = [
+            (object) ['id' => 1, 'dist' => null, 'cand_lat' => 51.9, 'cand_lng' => 0.8],
+            (object) ['id' => 2, 'dist' => null, 'cand_lat' => 51.5, 'cand_lng' => -0.1],
+        ];
+        $kept = $this->callCellBand($message->id, $rows);
+
+        // This is an EXTRA mail: routing unreachable means nobody gets it
+        // this round, and the ordinary reach mail still covers the member
+        // when the ripple arrives. There is no grid to fall back to.
+        $this->assertCount(0, $kept);
+    }
+
+
+    public function test_band_labels_arm_keeps_sparse_candidate_keys_aligned(): void
+    {
+        // Rows without a resolvable location leave GAPS in the points array
+        // (keys 0 and 2 here, no 1). The arrival results must map back onto
+        // the RIGHT rows through the sparse keys, or the band would order -
+        // and pick - the wrong candidates.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = $this->createTestMessage($user, $group);
+        $schedule = json_encode([['tick' => 1, 'drive_min' => 5]]);
+        DB::statement(
+            "INSERT INTO rippling_reach
+               (msgid, lat, lng, reach_labels, outer_bound, arrival, mode, tick, total_ticks,
+                total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at)
+             VALUES (?, 51.5, -0.1, ?, ST_GeomFromText(?, 3857), NOW(), 'drive', 1, 1,
+                     0, 30, ?, NOW(), 'expanding', NOW(), NOW())",
+            [$message->id, 'label-bytes', self::TICK1, $schedule]
+        );
+
+        // Two points sent (rows 0 and 2); row 1 has no location. Row 0 is
+        // already in reach; row 2 is the band candidate.
+        $this->arrivalOverride = [
+            ['arrival' => 100, 'in' => true],
+            ['arrival' => 500, 'in' => false],
+        ];
+
+        $rows = [
+            (object) ['id' => 10, 'dist' => null, 'cand_lat' => 51.5, 'cand_lng' => -0.1],
+            (object) ['id' => 11, 'dist' => null, 'cand_lat' => null, 'cand_lng' => null],
+            (object) ['id' => 12, 'dist' => null, 'cand_lat' => 51.9, 'cand_lng' => 0.8],
+        ];
+        $kept = $this->callCellBand($message->id, $rows);
+
+        $this->assertCount(1, $kept);
+        $this->assertSame(12, (int) $kept[0]->id, 'the arrival for the second POINT belongs to the third ROW');
+        $this->assertEqualsWithDelta(200.0, (float) $kept[0]->dist, 0.001);
     }
 }

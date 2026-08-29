@@ -78,7 +78,8 @@ func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	// Out of reach: the reply is ACCEPTED (not rejected) and HELD.
+	// The label refuses the replier: the reply is ACCEPTED (not rejected) and HELD.
+	stubReachEvalMax(t, "out")
 	assert.Equal(t, fiber.StatusOK, post(), "in-app reply is accepted (not rejected) when outside the post's reach")
 
 	var held struct {
@@ -102,11 +103,9 @@ func TestCreateChatMessage_ReachBlockedReplyHeld(t *testing.T) {
 		assert.NotEqual(t, held.Chatmsgid, m.ID, "the poster must not see the held reply until it is released")
 	}
 
-	// Reach grows to cover the replier → the reply is delivered normally (no new hold row).
-	db.Exec("UPDATE rippling_reach SET polygon_cells = ?, "+
-		"outer_bound = ST_Envelope(ST_GeomFromText("+
-		"'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))', 3857)), "+
-		"inner_bound = NULL WHERE msgid = ?", mustRasterize(t, "POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))"), msgID)
+	// The reach grows to cover the replier (the label now admits) → the
+	// reply is delivered normally (no new hold row).
+	stubReachEvalMax(t, "in")
 	assert.Equal(t, fiber.StatusOK, post(), "in-app reply accepted once the reach covers the replier")
 	var heldCount int
 	db.Raw("SELECT COUNT(*) FROM rippling_held_replies WHERE msgid = ? AND replieruserid = ?",
@@ -295,6 +294,9 @@ func TestCreateChatMessage_AttributionLadder(t *testing.T) {
 		originGroup)
 	db.Exec("INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound) VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText("+
 		"'POLYGON((-0.3 51.3,0.7 51.3,0.7 51.7,-0.3 51.7,-0.3 51.3))', 3857)))", msgID, mustRasterize(t, "POLYGON((-0.3 51.3,0.7 51.3,0.7 51.7,-0.3 51.7,-0.3 51.3))"))
+	// The label admits the replier: this test is about attribution, and the
+	// reply must be DELIVERED (not reach-held) for the ladder to run.
+	stubReachEvalMax(t, "in")
 	// The post rippled into a second group just now.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, rippled_in) "+
 		"VALUES (?, ?, NOW(), 'Approved', 0, 1)", msgID, rippledGroup)

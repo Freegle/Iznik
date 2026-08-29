@@ -197,48 +197,6 @@ func TestBuildReachItem_CellsOrSkip(t *testing.T) {
 	}
 }
 
-// AdmitsPoints: the committed-reach twin of the ring admits call.
-func TestReachAdmitsPoints(t *testing.T) {
-	idx, err := CreateIndex(":memory:")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer idx.Close()
-
-	wkt := "POLYGON((0 0, 0.03 0, 0.03 0.03, 0 0.03, 0 0))"
-	item, ok := buildReachItem(4001, "expanding", cellsBlobOf(t, wkt))
-	if !ok {
-		t.Fatal(err)
-	}
-	if err := InsertItems(idx, []Item{item}, nil); err != nil {
-		t.Fatal(err)
-	}
-
-	d := &ReachDataset{}
-	pts := []ReachPoint{
-		{Lng: 0.015, Lat: 0.015},  // inside
-		{Lng: 0.05, Lat: 0.05},    // outside
-		{Lng: 0.001, Lat: 0.001},  // inside, near corner
-		{Lng: -0.001, Lat: 0.015}, // outside, west
-	}
-	admitted, uncertain, known, err := d.AdmitsPoints(idx, 4001, pts)
-	if err != nil || !known {
-		t.Fatalf("admits failed: err=%v known=%v", err, known)
-	}
-	if len(uncertain) != 0 {
-		t.Fatalf("cells-backed admits must have no uncertain points: %v", uncertain)
-	}
-	if len(admitted) != 2 || admitted[0] != 0 || admitted[1] != 2 {
-		t.Fatalf("expected points 0 and 2 admitted, got %v", admitted)
-	}
-
-	// Unknown msgid: not an error, known=false, so the caller fails closed.
-	_, _, known, err = d.AdmitsPoints(idx, 999999, pts)
-	if err != nil || known {
-		t.Fatalf("missing post must answer known=false, got known=%v err=%v", known, err)
-	}
-}
-
 // The SELECT must reference no dropped legacy column.
 func TestReachSelectNamesNoDroppedColumn(t *testing.T) {
 	sel := reachSelect("WHERE rr.status != 'held'")
@@ -247,5 +205,11 @@ func TestReachSelectNamesNoDroppedColumn(t *testing.T) {
 	}
 	if !strings.Contains(sel, "rr.polygon_cells") {
 		t.Fatalf("select must read the cells: %s", sel)
+	}
+	// Labels-truth grid retirement: the select must carry the retired flag,
+	// so a drained row is REMOVED (delta) or never loaded - a skipped upsert
+	// would leave the previous tick's smaller reach serving stale answers.
+	if !strings.Contains(sel, "reach_labels IS NOT NULL AND rr.polygon_cells IS NULL") {
+		t.Fatalf("select must carry the retired expression: %s", sel)
 	}
 }

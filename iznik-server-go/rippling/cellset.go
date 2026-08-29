@@ -269,10 +269,13 @@ func appendCellSetVarint(out []byte, v uint64) []byte {
 var polygonCellsOnce sync.Once
 var polygonCellsExists bool
 
-// PolygonCellsReady reports whether rippling_reach.polygon_cells has been
-// migrated - the CURRENT-reach cell set (as opposed to MaxPolygonCellsReady's
-// eventual-reach one). Checked once per process, same discipline as
-// ReachBoundsReady.
+// PolygonCellsReady reports whether rippling_reach.polygon_cells still
+// EXISTS: true through the whole grid era, false once the operator drops the
+// retired grid columns at the end of the labels-truth cutover. Every select
+// naming the column goes through this (or MaxPolygonCellsReady), so the drop
+// breaks nothing - the cells probes simply always answer "cannot say" and
+// the label paths, which decide everything by then, carry on. Checked once
+// per process, same discipline as ReachBoundsReady.
 func PolygonCellsReady(db *gorm.DB) bool {
 	polygonCellsOnce.Do(func() {
 		var n int64
@@ -282,6 +285,18 @@ func PolygonCellsReady(db *gorm.DB) bool {
 		polygonCellsExists = n > 0
 	})
 	return polygonCellsExists
+}
+
+// ReachCellsExpr is the SQL expression for reading the current-reach grid
+// off a "rippling_reach rr" table alias: the column while it exists, NULL
+// after the operator drops the retired grid columns - so every reader keeps
+// compiling SQL that runs on both schemas, and a NULL simply means "the
+// cells cannot say", which every probe already treats as undecided.
+func ReachCellsExpr(db *gorm.DB) string {
+	if PolygonCellsReady(db) {
+		return "rr.polygon_cells"
+	}
+	return "NULL"
 }
 
 func floorDivCellSet(v, step float64) float64 {

@@ -31,8 +31,6 @@ class FirstReplyPassthroughTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        MaxReachService::forgetAvailability();
-        MaxReachService::forgetCellsAvailability();
         DB::statement('DELETE FROM rippling_held_replies');
         DB::statement('DELETE FROM rippling_reach');
 
@@ -43,7 +41,40 @@ class FirstReplyPassthroughTest extends TestCase
             'freegle.firstreply.passthrough.enabled' => true,
             'freegle.firstreply.passthrough.max_existing_repliers' => 1,
         ]);
+
+        // The routing server, faked by POINT: the label admits everywhere the
+        // post will eventually reach and refuses NEVER_REACHED. The gate is
+        // under test, not the geometry - that is proven routing-side.
+        // Http::fake merges first-stub-wins, so tests needing a different
+        // answer set $this->verdictOverride instead of re-faking.
+        $this->verdictOverride = null;
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-eval')) {
+                return null;
+            }
+            $lat = (float) ($request['lat'] ?? 0);
+            $lng = (float) ($request['lng'] ?? 0);
+            if ($this->verdictOverride !== null) {
+                $verdict = $this->verdictOverride;
+            } elseif (($request['budget'] ?? '') === 'max') {
+                // The eventual reach: everywhere except NEVER_REACHED.
+                $verdict = abs($lat - self::NEVER_REACHED[0]) < 0.01 ? 'out' : 'in';
+            } else {
+                // The current reach: only INSIDE_NOW.
+                $in = abs($lat - self::INSIDE_NOW[0]) < 0.01 && abs($lng - self::INSIDE_NOW[1]) < 0.01;
+                $verdict = $in ? 'in' : 'out';
+            }
+            $results = array_map(
+                fn ($id) => ['msgid' => (int) $id, 'verdict' => $verdict],
+                $request['msgids'] ?? []
+            );
+
+            return \Illuminate\Support\Facades\Http::response(['results' => $results]);
+        });
     }
+
+    /** When set, every reach-eval answer uses this verdict. */
+    private ?string $verdictOverride = null;
 
     private function service(): RippleReplyService
     {
@@ -70,8 +101,7 @@ class FirstReplyPassthroughTest extends TestCase
                      NOW(), 'drive', 1, 3, 4000, 30, ?, NOW(), 'expanding', NOW(), NOW())",
             [$message->id, $this->reachCellsFor(self::TICK1), self::TICK1, $schedule]
         );
-
-        app(MaxReachService::class)->populate();
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
 
         return [(int) $message->id, $poster];
     }
@@ -164,16 +194,12 @@ class FirstReplyPassthroughTest extends TestCase
         );
     }
 
-    public function test_unpopulated_max_reach_leaves_the_hold_in_place(): void
+    public function test_no_stored_label_leaves_the_hold_in_place(): void
     {
-        // A row whose max reach has not been populated yet must change nothing:
-        // NULL max_polygon_cells means "no wider reach known", and the hold
-        // stands.
+        // A post whose label has not been stored yet must change nothing:
+        // no verdict means "no wider reach known", and the hold stands.
         [$msgid] = $this->seedRipplingPost();
-        DB::statement(
-            'UPDATE rippling_reach SET max_polygon_cells = NULL WHERE msgid = ?',
-            [$msgid]
-        );
+        $this->verdictOverride = 'nolabels';
 
         $this->assertTrue(
             $this->service()->shouldHold($msgid, self::REACHED_LATER[0], self::REACHED_LATER[1])

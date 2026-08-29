@@ -135,13 +135,23 @@ class AutoApproveServiceTest extends TestCase
             'arrival' => now()->subHours(49),
             'contentcheck_checked_at' => now(),
         ]);
-        // Reach (status 'done') covering the member's location.
+        // Reach (status 'done') covering the member's location; the stored
+        // label is the record and the faked routing server admits the point.
         DB::statement(
             "INSERT INTO rippling_reach (msgid, lat, lng, polygon_cells, outer_bound, arrival, mode, tick, total_ticks, "
             . "total_freeglers, max_drive_min, schedule, next_expansion_at, status, created_at, updated_at) "
             . "VALUES (?, 51.5, -0.1, ?, ST_Envelope(ST_GeomFromText(?, 3857)), NOW(), 'drive', 3, 3, 0, 30, NULL, NULL, 'done', NOW(), NOW())",
             [$message->id, $this->reachCellsFor('POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))'), 'POLYGON((-0.2 51.4,0.0 51.4,0.0 51.6,-0.2 51.6,-0.2 51.4))']
         );
+        DB::table('rippling_reach')->where('msgid', $message->id)->update(['reach_labels' => 'label-bytes']);
+        \Illuminate\Support\Facades\Http::fake(function ($request) {
+            if (!str_contains($request->url(), 'reach-arrival')) {
+                return null;
+            }
+            $results = array_map(fn ($pt) => ['arrival' => 100, 'in' => true], $request['points'] ?? []);
+
+            return \Illuminate\Support\Facades\Http::response(['results' => $results]);
+        });
 
         $this->service->process();
 

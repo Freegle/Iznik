@@ -16,12 +16,12 @@ import (
 )
 
 // The single-point reach gates — replyeligible on the message list and the
-// chat reply hold — answer from the post's stored cell grid alone
-// (rippling.ReachMembership): one keyed read, one run-stream probe. The
-// sandwich bounds are a browse-narrowing device and must NOT decide these
-// gates, so the fixtures here are ADVERSARIAL — bounds contradicting the
-// grid, impossible for verified writer-derived bounds — to prove the grid,
-// not the bounds, was trusted.
+// chat reply hold — answer from the post's stored LABEL alone
+// (rippling.ReachMembership). The sandwich bounds are a browse-narrowing
+// device and must NOT decide these gates, so the fixtures here are
+// ADVERSARIAL — bounds contradicting the label — to prove the label, not
+// the bounds, was trusted. No verdict (no label, or routing down) means
+// NOT in reach: there is no grid fallback.
 
 // TestReplyEligibleGridGate: the message-list reach probe (replyeligible).
 func TestReplyEligibleGridGate(t *testing.T) {
@@ -46,25 +46,28 @@ func TestReplyEligibleGridGate(t *testing.T) {
 		return msgs[0].ReplyEligible
 	}
 
-	// The grid covers the viewer while the outer bound (adversarially)
-	// excludes them: the grid decides, so they are eligible.
 	insertReachCells(t, mid, coversViewerWkt)
-	setOuterBound(mid, farAwayWkt)
-	assert.Nil(t, eligibility(), "a viewer the grid covers is eligible whatever the bounds say")
 
-	// The grid misses the viewer while the outer bound (adversarially)
-	// covers them: still the grid decides — blocked.
-	insertReachCells(t, mid, missesViewerWkt)
+	// The label admits while the outer bound (adversarially) excludes: the
+	// label decides, so they are eligible.
+	stubReachEvalMax(t, "in")
+	setOuterBound(mid, farAwayWkt)
+	assert.Nil(t, eligibility(), "a viewer the label admits is eligible whatever the bounds say")
+
+	// The label refuses while the outer bound (adversarially) covers:
+	// still the label decides — blocked.
+	stubReachEvalMax(t, "out")
 	setOuterBound(mid, bigCoversViewerWkt)
-	if e := eligibility(); assert.NotNil(t, e, "grid misses → replyeligible set") {
-		assert.False(t, *e, "a viewer the grid misses is reach-blocked whatever the bounds say")
+	if e := eligibility(); assert.NotNil(t, e, "label refuses → replyeligible set") {
+		assert.False(t, *e, "a viewer the label refuses is reach-blocked whatever the bounds say")
 	}
 
-	// Degraded bounds (completion pruning) change nothing for this gate: the
-	// grid still answers, so a viewer inside it stays eligible.
-	insertReachCells(t, mid, coversViewerWkt)
+	// No label stored: not in reach - there is no grid to fall back to.
+	stubReachEvalMax(t, "nolabels")
 	degradeBounds(mid)
-	assert.Nil(t, eligibility(), "degraded bounds do not blind the single-point gate")
+	if e := eligibility(); assert.NotNil(t, e, "no verdict → replyeligible set") {
+		assert.False(t, *e, "no stored label means not in reach, by design")
+	}
 }
 
 // TestChatReplyGateGridGate: the write-path reply hold answers from the grid too.
@@ -113,17 +116,18 @@ func TestChatReplyGateGridGate(t *testing.T) {
 		return n
 	}
 
-	// The grid covers the replier while the outer bound (adversarially)
-	// excludes them: delivered, not held — the grid decides.
 	insertReachCells(t, msgID, coversViewerWkt)
+
+	// The label admits while the outer bound (adversarially) excludes:
+	// delivered, not held — the label decides.
+	stubReachEvalMax(t, "in")
 	setOuterBound(msgID, farAwayWkt)
 	assert.Equal(t, fiber.StatusOK, post())
-	assert.Equal(t, 0, heldCount(), "a replier the grid covers is in reach whatever the bounds say — not held")
+	assert.Equal(t, 0, heldCount(), "a replier the label admits is in reach whatever the bounds say — not held")
 
-	// The grid misses the replier while the outer bound (adversarially)
-	// covers them: held.
-	insertReachCells(t, msgID, missesViewerWkt)
+	// The label refuses while the outer bound (adversarially) covers: held.
+	stubReachEvalMax(t, "out")
 	setOuterBound(msgID, bigCoversViewerWkt)
 	assert.Equal(t, fiber.StatusOK, post())
-	assert.Equal(t, 1, heldCount(), "a replier the grid misses is out of reach whatever the bounds say — held")
+	assert.Equal(t, 1, heldCount(), "a replier the label refuses is out of reach whatever the bounds say — held")
 }

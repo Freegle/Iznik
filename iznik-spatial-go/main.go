@@ -282,57 +282,6 @@ func main() {
 		return c.JSON(fiber.Map{"wkt": wkt, "geojson": json.RawMessage(gj)})
 	})
 
-	// POST /v1/reach/admits — the committed-reach question from the MAIL's
-	// end, twin of /v1/reachoverflow/admits: one post, many candidate member
-	// points, which does its CURRENT reach cover?
-	// Body: {"msgid": N, "points": [{"lng": x, "lat": y}]}
-	// Returns indexes: admitted (definitely covered), uncertain (a legacy
-	// coarse-raster row's boundary band - impossible once every row carries
-	// cells), and known=false when the post has no live entry here at all,
-	// which callers treat as fail-closed.
-	api.Post("/v1/reach/admits", func(c *fiber.Ctx) error {
-		state, ok := srv.getDataset("reach")
-		if !ok {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
-		}
-		ds, ok := state.ds.(*ReachDataset)
-		if !ok {
-			return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{"error": "dataset does not answer admits"})
-		}
-
-		var body struct {
-			Msgid  int64        `json:"msgid"`
-			Points []ReachPoint `json:"points"`
-		}
-		if err := c.BodyParser(&body); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "bad body: " + err.Error()})
-		}
-		if body.Msgid <= 0 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "msgid required"})
-		}
-
-		var admitted, uncertain []int
-		known := false
-		err := state.withIndex(func(idx *Index) error {
-			var e error
-			admitted, uncertain, known, e = ds.AdmitsPoints(idx, body.Msgid, body.Points)
-			return e
-		})
-		if err == errIndexNotReady {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
-		}
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-		}
-		if admitted == nil {
-			admitted = []int{}
-		}
-		if uncertain == nil {
-			uncertain = []int{}
-		}
-		return c.JSON(fiber.Map{"admitted": admitted, "uncertain": uncertain, "known": known})
-	})
-
 	// POST /v1/groups/intersecting — encoded cell bytes in, the groups whose
 	// area shares at least one covered cell out, each flagged with whether
 	// the grid lies entirely WITHIN that group. The cell form of the
