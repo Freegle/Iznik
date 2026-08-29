@@ -43,14 +43,32 @@ func (d *ReachDataset) Name() string { return "reach" }
 func (d *ReachDataset) RebuildInterval() time.Duration { return 24 * time.Hour }
 func (d *ReachDataset) DeltaInterval() time.Duration   { return 2 * time.Minute }
 
-// reachSelect builds the row query. `retired` = the row's grid has been
-// drained under labels-truth (stored label + union threshold answer
-// everything): such rows leave this index entirely - containment for them is
-// served by the routing server's label evaluation (the discover arm).
+// reachSelect builds the row query. `retired` = labels-truth answers
+// everything for this row, so it leaves this index entirely - containment for
+// it is served by the routing server's label evaluation (the discover arm).
+//
+// A row retires when it is union-ready (stored label + origin_union_secs,
+// including -1 = never), NOT only once its grid blob has been NULLed:
+// retirement must not depend on the doomed grid columns, or on the paced
+// row-by-row drain that NULLs them (each NULL is a full Galera row-image
+// writeset - pure cost for columns whose end state is an operator DROP).
+// The drained-grid arm stays so rows drained before this change, or in a
+// schema where origin_union_secs has not landed yet, retire exactly as
+// before.
 func reachSelect(where string) string {
 	return "SELECT rr.msgid, rr.status, rr.polygon_cells, " +
-		"(rr.reach_labels IS NOT NULL AND rr.polygon_cells IS NULL) AS retired " +
+		retiredExpr(unionColPresent) + " AS retired " +
 		"FROM rippling_reach rr " + where
+}
+
+// retiredExpr is reachSelect's retirement predicate; split out so the
+// with/without-origin_union_secs schemas are both testable. unionCol is
+// probed once per process alongside gridColumnsPresent.
+func retiredExpr(unionCol bool) string {
+	if unionCol {
+		return "(rr.reach_labels IS NOT NULL AND (rr.polygon_cells IS NULL OR rr.origin_union_secs IS NOT NULL))"
+	}
+	return "(rr.reach_labels IS NOT NULL AND rr.polygon_cells IS NULL)"
 }
 
 type reachRawRow struct {
@@ -72,6 +90,7 @@ func scanReachRaw(rows *sql.Rows) (reachRawRow, error) {
 var (
 	gridColsOnce    sync.Once
 	gridColsPresent bool
+	unionColPresent bool
 )
 
 func gridColumnsPresent(mysqlDB *sql.DB) bool {
@@ -85,6 +104,14 @@ func gridColumnsPresent(mysqlDB *sql.DB) bool {
 		}
 		if !gridColsPresent {
 			log.Printf("reach: polygon_cells dropped - dataset retired, serving empty")
+		}
+		// Same once: does the union-readiness column exist? Decides which
+		// retirement predicate reachSelect compiles (see retiredExpr).
+		if err := mysqlDB.QueryRow(
+			`SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = DATABASE() AND table_name = 'rippling_reach' AND column_name = 'origin_union_secs'`,
+		).Scan(&n); err == nil {
+			unionColPresent = n > 0
 		}
 	})
 	return gridColsPresent

@@ -209,7 +209,26 @@ func TestReachSelectNamesNoDroppedColumn(t *testing.T) {
 	// Labels-truth grid retirement: the select must carry the retired flag,
 	// so a drained row is REMOVED (delta) or never loaded - a skipped upsert
 	// would leave the previous tick's smaller reach serving stale answers.
-	if !strings.Contains(sel, "reach_labels IS NOT NULL AND rr.polygon_cells IS NULL") {
+	if !strings.Contains(sel, "AS retired") {
 		t.Fatalf("select must carry the retired expression: %s", sel)
+	}
+}
+
+// Retirement must not depend on the doomed grid columns: a union-ready row
+// (label + origin_union_secs, -1 included via IS NOT NULL) retires with its
+// grid still populated, so the KNN cutover needs no row-by-row drain. The
+// no-union-column schema keeps the drained-grid predicate exactly as before.
+func TestRetiredExprUnionReadyBeatsGridPresence(t *testing.T) {
+	with := retiredExpr(true)
+	if !strings.Contains(with, "rr.origin_union_secs IS NOT NULL") ||
+		!strings.Contains(with, "rr.polygon_cells IS NULL OR") {
+		t.Fatalf("union-aware predicate must retire on union-readiness OR a drained grid: %s", with)
+	}
+	without := retiredExpr(false)
+	if strings.Contains(without, "origin_union_secs") {
+		t.Fatalf("pre-migration schema must not name origin_union_secs: %s", without)
+	}
+	if !strings.Contains(without, "rr.reach_labels IS NOT NULL AND rr.polygon_cells IS NULL") {
+		t.Fatalf("pre-migration schema keeps the drained-grid predicate: %s", without)
 	}
 }
