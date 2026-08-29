@@ -24,6 +24,19 @@
 # over Google credential results, so the implementing class keeps its methods.
 -keep class * implements ee.forgr.capacitor.social.login.ModifiedMainActivityForSocialLoginPlugin { *; }
 
+# The session-restore plugin (Block Store). It lives in org.freegle.blockstore - a namespace
+# the ModTools package rewrite does NOT touch, so naming it here is safe for both apps.
+# Capacitor's consumer rules should keep @CapacitorPlugin classes and their @PluginMethod
+# methods already, but this plugin is the difference between "logged in on the next device"
+# and a silent login prompt, and a consumer-rule regression would be invisible until then:
+# every failure path in useSessionRestore.js is a caught exception that only logs to the
+# WebView console. Same belt-and-braces reasoning as the MainActivity rule below.
+-keep class org.freegle.blockstore.** { *; }
+
+# Play Services Block Store, which the plugin calls. Google ships consumer rules with the
+# library; kept explicitly for the same silent-failure reason as above.
+-keep class com.google.android.gms.auth.blockstore.** { *; }
+
 # The push plugin resolves the launcher activity with
 # Class.forName(getPackageName() + ".MainActivity") for background notifications, and catches
 # the failure - a stripped or renamed MainActivity would mean silently no background pushes.

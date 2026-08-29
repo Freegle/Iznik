@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-26
+last_reviewed: 2026-08-28
 covers:
   - iznik-batch/app/Services/Ripple/**
   - iznik-batch/app/Console/Commands/Ripple/**
@@ -596,7 +596,13 @@ For each due post, `ripple:expand`:
 - **`initialiseNew`** (tick 0) fetches the post's schedule in slim form (per-tick drive-time,
   audience count and reached-group ids - no polygons, which kept a dense-city schedule call
   to a few KB instead of ~24MB), fetches the first tick's polygon as a single catchment
-  call, creates the `rippling_reach` row and does the first ripple-in.
+  call, creates the `rippling_reach` row and does the first ripple-in. It also stores the
+  post's reach-engine labels (`ReachService::storeReachLabels`): one `/v1/reach-labels`
+  fetch at the post's maximum budget, written transactionally to
+  `rippling_reach.reach_labels` plus the reached region ids in `rippling_reach_leaves`.
+  Best-effort - a routing server without the engine is a quiet no-op, every reader still
+  answers from the stored cells, and `ripple:backfill-reach-labels` retries later (with
+  `--all` after a partition rebuild, which renumbers the region ids the labels refer to).
 - **`advanceDue`** advances to the next hazard tick: one catchment call materialises that
   tick's polygon, and the stored per-tick reached-group ids drive the ripple-in - no
   schedule recomputation. The target is normally elapsed time alone, but

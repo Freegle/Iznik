@@ -1173,11 +1173,25 @@ class ExpandServiceTest extends TestCase
         // could not compute" and never id-retracts (see test_empty_reachable_set_never_id_retracts).
         [$msgid, $rippledId] = $this->seedRippledCopyWithReach([999999999]);
 
+        // Same stub as the "keeps" case below, and required for this test to mean
+        // what its name says. Without it groupsIntersecting() makes a REAL call to
+        // the spatial server, which knows nothing of the fixture groups: it answers
+        // null, retractOutOfReachCopies bails with retract_check_unavailable and
+        // retracts nothing. Stubbed, the polygon reports the group as still covered
+        // (its area intersects the reach), so the node-set gate is the only thing
+        // that can retract it - which is the behaviour under test.
+        $this->fakeSpatialHttp();
+
         $stats = [];
         $this->service()->retractOutOfReachCopies($msgid, false, $stats);
 
         $copy = DB::table('messages_groups')->where('msgid', $msgid)->where('groupid', $rippledId)->first();
         $this->assertSame(1, (int) $copy->deleted, 'a rippled group outside the reachable set is retracted');
+        $this->assertArrayNotHasKey(
+            'retract_check_unavailable',
+            $stats,
+            'the spatial question must actually have been answered, not skipped'
+        );
     }
 
     public function test_reachable_gate_keeps_a_rippled_group_inside_the_reachable_set(): void

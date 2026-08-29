@@ -16,7 +16,7 @@ parameters:
   use_katapult:
     type: boolean
     default: false
-    description: "Set to true to run tests on a Katapult cloud runner (freegle/katapult-runner)"
+    description: "Set to true to run tests on an ephemeral cloud runner (freegle/katapult-runner resource class; Katapult or Hetzner per RUNNER_PROVIDER)"
   build_modtools_production:
     type: boolean
     default: false
@@ -79,7 +79,7 @@ orbs:
   # source is what carries it, and master picks it up when this branch lands -
   # master must not pin 1.1.383 before then, because it also carries the cap8
   # push-fork rename that only exists on this branch.
-  freegle: freegle/tests@1.1.384
+  freegle: freegle/tests@1.1.385
 
 jobs:
   mark-ci-passed:
@@ -349,8 +349,10 @@ workflows:
       #         only:
       #           - production
 
-  # Katapult cloud runner test — the default CI path (check-runner sets use_katapult=true
-  # for all normal pushes). Branch filters here must match build-test-local/build-test-cloud
+  # Ephemeral cloud runner test — the default CI path (check-runner sets use_katapult=true
+  # for all normal pushes; the freegle/katapult-runner resource class is claimed by
+  # Katapult or Hetzner runners per RUNNER_PROVIDER).
+  # Branch filters here must match build-test-local/build-test-cloud
   # so production and modtools are skipped (they use deploy-apps and have no tests to run).
   build-test-katapult:
     when: << pipeline.parameters.use_katapult >>

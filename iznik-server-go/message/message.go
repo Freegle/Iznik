@@ -19,6 +19,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/item"
@@ -28,6 +29,7 @@ import (
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/rippling"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -240,9 +242,16 @@ type Message struct {
 	MessageURL         string              `json:"url"`
 	Successful         bool                `json:"successful"`
 	Refchatids         []uint64            `json:"refchatids" gorm:"-"`
-	Locationid         uint64              `json:"-"`
-	Location           *location.Location  `json:"location,omitempty" gorm:"-"`
-	Item               *item.Item          `json:"item" gorm:"-"`
+	// Road drive time/distance from the VIEWER's home to this post's blurred
+	// location, filled by one batched routing call per message fetch (nil when
+	// the viewer is logged out, has no location, or the reach engine cannot
+	// answer - clients then show crow-flies). Shipping it with the message
+	// saves the client a /drivedistance round trip per rendered card.
+	Roadmins   *float64           `json:"roadmins,omitempty" gorm:"-"`
+	Roadmiles  *float64           `json:"roadmiles,omitempty" gorm:"-"`
+	Locationid uint64             `json:"-"`
+	Location   *location.Location `json:"location,omitempty" gorm:"-"`
+	Item       *item.Item         `json:"item" gorm:"-"`
 	// DEPRECATED, for bundled app clients only. A hold belongs to a (message, group)
 	// pair (messages_groups.heldby, exposed as groups[].heldby); there is no correct
 	// message-wide value for a post that reached several groups, and supplying one
@@ -420,38 +429,6 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 
 	return latest
 }
-
-func GetMessages(c *fiber.Ctx) error {
-	ids := strings.Split(c.Params("ids"), ",")
-	myid := user.WhoAmI(c)
-	isPartner := false
-	if key := c.Query("partner"); key != "" {
-		if _, _, _, err := user.ValidatePartnerKey(database.DBConn, key); err == nil {
-			isPartner = true
-		}
-	}
-
-	if len(ids) < 20 {
-		messages := GetMessagesByIds(myid, ids, isPartner)
-
-		if len(ids) == 1 {
-			if len(messages) == 1 {
-				return c.JSON(messages[0])
-			} else {
-				return fiber.NewError(fiber.StatusNotFound, "Message not found")
-			}
-		} else {
-			return c.JSON(messages)
-		}
-	} else {
-		return fiber.NewError(fiber.StatusBadRequest, "Steady on")
-	}
-}
-
-// rippleEnabled reports whether the rippling-out feature is switched on. Mirrors the Laravel
-// config('freegle.ripple.enabled') / RIPPLE_ENABLED env so the whole feature ships dark and is
-// flipped on with one env var (default off). While off, the reach/reply-eligibility path below is
-// skipped entirely, so the API is byte-for-byte identical to pre-rippling.
 func rippleEnabled() bool {
 	v := os.Getenv("RIPPLE_ENABLED")
 	return v == "true" || v == "1"
@@ -468,6 +445,36 @@ func defaultSearchMode() string {
 		return "keyword"
 	}
 	return "vector"
+}
+
+// addRoadMetrics fills Roadmins/Roadmiles from the viewer's home for a batch
+// of already-blurred messages: ONE routing call for the whole fetch, so the
+// client never needs a per-card /drivedistance round trip. Best-effort - any
+// failure just leaves the fields nil and clients fall back to crow-flies.
+func addRoadMetrics(myid uint64, messages []Message) {
+	if myid == 0 || len(messages) == 0 {
+		return
+	}
+	latlng := user.GetLatLng(myid)
+	if latlng.Lat == 0 && latlng.Lng == 0 {
+		return
+	}
+	targets := make([]driving.Target, 0, len(messages))
+	for ix := range messages {
+		if messages[ix].Lat != 0 || messages[ix].Lng != 0 {
+			targets = append(targets, driving.Target{
+				ID:  int64(ix),
+				Lat: float64(messages[ix].Lat),
+				Lng: float64(messages[ix].Lng),
+			})
+		}
+	}
+	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), float64(latlng.Lat), float64(latlng.Lng), targets) {
+		if r.Mins != nil && r.ID >= 0 && int(r.ID) < len(messages) {
+			messages[r.ID].Roadmins = r.Mins
+			messages[r.ID].Roadmiles = r.Miles
+		}
+	}
 }
 
 func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
@@ -761,7 +768,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				}
 
 				// Protect anonymity of poster a bit.
-				message.Lat, message.Lng = utils.Blur(message.Lat, message.Lng, utils.BLUR_USER)
+				message.Lat, message.Lng = roadblur.RoadBlur(message.Lat, message.Lng, utils.BLUR_USER)
 
 				// source/fromip/fromcountry are mod-only fields.
 				if !isMod {
@@ -1521,9 +1528,15 @@ func GetMessagesForUser(c *fiber.Ctx) error {
 				markExpiredMessages(db, msgs)
 			}
 
+			// One batched routing call resolves every location's road-aware blur.
+			blurCoords := make([][2]float64, 0, len(msgs))
+			for _, r := range msgs {
+				blurCoords = append(blurCoords, [2]float64{float64(r.Lat), float64(r.Lng)})
+			}
+			roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 			for ix, r := range msgs {
 				// Protect anonymity of poster a bit.
-				msgs[ix].Lat, msgs[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+				msgs[ix].Lat, msgs[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 			}
 
 			return c.JSON(msgs)
@@ -2033,9 +2046,14 @@ func Search(c *fiber.Ctx) error {
 				res = GetWordsSounds(db, words, SEARCH_LIMIT, groupids, universeIDs, msgtype, float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			}
 
-			// Blur
+			// Blur: one batched routing call, then cache hits.
+			blurCoords2 := make([][2]float64, 0, len(res))
+			for _, r := range res {
+				blurCoords2 = append(blurCoords2, [2]float64{float64(r.Lat), float64(r.Lng)})
+			}
+			roadblur.RoadBlurPrewarm(blurCoords2, utils.BLUR_USER)
 			for ix, r := range res {
-				res[ix].Lat, res[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+				res[ix].Lat, res[ix].Lng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 			}
 		}
 	}

@@ -7,6 +7,10 @@ import { useUserStore } from '~/stores/user'
 import { useNearbyStore } from '~/stores/nearby'
 import { useGroupStore } from '~/stores/group'
 import { useMiscStore } from '~/stores/misc'
+import {
+  prewarmRoadDistances,
+  roadAnswersVersion,
+} from '~/composables/useDriveDistance'
 
 // Debounce delay for batching message fetches (ms)
 const BATCH_DELAY = 50
@@ -188,6 +192,9 @@ export const useMessageStore = defineStore('message', {
         }
 
         // Process each chunk
+        const fetched = []
+        const anyRoadChunks = []
+        const bareChunks = []
         for (const chunk of chunks) {
           this.fetchingCount++
 
@@ -213,6 +220,15 @@ export const useMessageStore = defineStore('message', {
                   this.list[msg.id].addedToCache = Math.round(Date.now() / 1000)
                 }
               })
+              fetched.push(...msgs)
+              // Per API response, not per invocation: one chunk's routing
+              // call can fail server-side while another's succeeds, and the
+              // failed chunk's records still deserve the client fallback.
+              if (msgs.some((m) => m.roadmins != null)) {
+                anyRoadChunks.push(msgs)
+              } else {
+                bareChunks.push(msgs)
+              }
             } else if (typeof msgs === 'object') {
               this.list[msgs.id] = msgs
               if (this.list[msgs.id]) {
@@ -235,6 +251,25 @@ export const useMessageStore = defineStore('message', {
               this.fetching[id] = null
             })
           }
+        }
+
+        // Road distances: the server ships roadmins/roadmiles with each
+        // message (computed in the same batched call that blurred the
+        // coords). Signal consumers that snapshot an order (the browse
+        // feed's locked sort) that new road answers exist, and only
+        // client-fetch for records an older server left bare - normally
+        // none, so a page load makes NO /drivedistance calls at all.
+        if (anyRoadChunks.length) {
+          roadAnswersVersion.value++
+        }
+        // All-or-nothing fallback PER RESPONSE: if any record in a response
+        // carries road metrics the server-side routing ran for it, and its
+        // bare records are posts the engine genuinely cannot answer - asking
+        // again from the client just repeats the null. A response with NO
+        // metrics (older server, or its routing call failed) gets the
+        // client-side batched lookup instead.
+        for (const chunkMsgs of bareChunks) {
+          prewarmRoadDistances(chunkMsgs)
         }
 
         // Batch-fetch the groups these messages belong to in one request, so the per-post

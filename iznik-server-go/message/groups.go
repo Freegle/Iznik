@@ -2,6 +2,7 @@ package message
 
 import (
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -130,9 +131,15 @@ func Groups(c *fiber.Ctx) error {
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 	hasLoc := latlng.Lat != 0 || latlng.Lng != 0
 
+	// One batched routing call resolves every location's road-aware blur.
+	blurCoords := make([][2]float64, 0, len(msgs))
+	for _, r := range msgs {
+		blurCoords = append(blurCoords, [2]float64{float64(r.Lat), float64(r.Lng)})
+	}
+	roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 	for ix, r := range msgs {
 		// Protect anonymity of poster a bit.
-		blurLat, blurLng := utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+		blurLat, blurLng := roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 		msgs[ix].Lat, msgs[ix].Lng = blurLat, blurLng
 
 		// Flag the viewer's own posts, exactly as the nearby feed does

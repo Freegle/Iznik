@@ -609,6 +609,45 @@ func TestPostUserAddEmail(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+func TestPostUserAddEmailLinksDonations(t *testing.T) {
+	// V1 linked unmatched donations to the user on every addEmail
+	// (User::assignUserToToDonation): a donation made under an email before that
+	// email was on any account sits with userid NULL, and adding the email
+	// claims it. Donations already linked to another account must not move.
+	db := database.DBConn
+	prefix := uniquePrefix("addemaildon")
+	userID := CreateTestUser(t, prefix, "User")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	_, token := CreateTestSession(t, userID)
+
+	newEmail := prefix + "_payer@test.com"
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, timestamp, TransactionID) VALUES (NULL, ?, ?, 5.00, NOW(), ?)",
+		newEmail, prefix, prefix+"_txn1")
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, timestamp, TransactionID) VALUES (?, ?, ?, 10.00, NOW(), ?)",
+		otherID, newEmail, prefix, prefix+"_txn2")
+
+	payload := map[string]interface{}{
+		"action": "AddEmail",
+		"id":     userID,
+		"email":  newEmail,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// The unmatched donation is now linked to the user.
+	var linked int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ? AND TransactionID = ?", userID, prefix+"_txn1").Scan(&linked)
+	assert.Equal(t, int64(1), linked)
+
+	// The donation on the other account stays put.
+	var kept int64
+	db.Raw("SELECT COUNT(*) FROM users_donations WHERE userid = ? AND TransactionID = ?", otherID, prefix+"_txn2").Scan(&kept)
+	assert.Equal(t, int64(1), kept)
+}
+
 func TestPostUserAddEmailAlreadyUsed(t *testing.T) {
 	prefix := uniquePrefix("addemaildup")
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")

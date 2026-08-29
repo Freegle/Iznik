@@ -455,7 +455,7 @@ commands:
             # that saturates the disk (95% util) and starves the CircleCI runner of I/O,
             # causing it to miss heartbeats → infrastructure_fail.
             # Database cleanliness is handled by setup-test-database.sh which issues
-            # DROP DATABASE / CREATE DATABASE on self-hosted runners (including Katapult)
+            # DROP DATABASE / CREATE DATABASE on self-hosted runners (including cloud runner VMs)
             # so each pipeline starts with a fresh schema without the InnoDB init cost.
             docker-compose down --remove-orphans || true
             # On self-hosted runner, also clean up containers from old CI runs that used
@@ -470,12 +470,12 @@ commands:
             fi
 
             # Ensure local Docker registry mirrors are in daemon.json.
-            # Must run for ALL runner types (Katapult cloud + self-hosted).
+            # Must run for ALL runner types (cloud runner VMs + self-hosted).
             # 5002 = build-layer cache (insecure-registries only).
             # 5000 = Docker Hub pull-through mirror: must be in registry-mirrors so
             # Docker routes infrastructure image pulls (percona, redis, traefik, etc.)
             # through the local cache instead of hitting Docker Hub directly.
-            # Without 5000 in registry-mirrors the Katapult VM IP hits Docker Hub's
+            # Without 5000 in registry-mirrors the runner VM IP hits Docker Hub's
             # anonymous pull rate limit (100/6h per IP) and docker-compose up fails.
             NEEDS_DAEMON_UPDATE=false
             grep -q "5002" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
@@ -550,8 +550,9 @@ commands:
             # Pre-pull shared base images once before any parallel builds start.
             # freegle-base: used by freegle-prod-local, modtools-prod-local, etc.
             # freegle-batch-base: used by batch — contains compiled PHP extensions/PECL/MJML.
-            #   On Katapult, the cache server GHCR mirror (185.44.254.6:5001) serves both
-            #   images locally, so pulls are fast even on ephemeral VMs with no layer cache.
+            #   The cache VM's GHCR mirror (185.44.254.6:5001) is wired up only on
+            #   Katapult-provisioned VMs; Hetzner runners pull straight from ghcr.io
+            #   (see scripts/hetzner/cloud-init.yaml).
             echo "Pre-pulling shared base images (timeout 180s each)..."
             timeout 180 docker pull ghcr.io/freegle/freegle-base:latest \
               || echo "⚠️  freegle-base pre-pull timed out — builds will re-attempt"
@@ -569,8 +570,8 @@ commands:
             IS_WSL=false
             grep -qi "microsoft\|wsl" /proc/version 2>/dev/null && IS_WSL=true
 
-            # On Katapult: pull previously built images from the local cache registry so
-            # BuildKit finds cache hits via --cache-from even on fresh VMs.
+            # On cloud runner VMs: pull previously built images from the local cache registry
+            # so BuildKit finds cache hits via --cache-from even on fresh VMs.
             # Generates a compose override that adds cache_from: to each service.
             INLINE_CACHE_FLAG=""
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
@@ -634,10 +635,10 @@ commands:
             BATCH_PID=$!
 
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
-              # Katapult runner (native Linux, 16+ CPUs / 48GB RAM):
+              # Cloud runner VM (native Linux, 16+ CPUs):
               # Build all container groups in parallel — each group is independent.
               # BuildKit's internal scheduler further parallelises steps within each build.
-              echo "Katapult: building all container groups in parallel..."
+              echo "Cloud runner: building all container groups in parallel..."
               GO_LOG=$(mktemp) NUXT_LOG=$(mktemp) OTHER_LOG=$(mktemp)
 
               # Go API container (independent — no shared layers with Nuxt)
@@ -659,7 +660,7 @@ commands:
               # spatial-knn and spatial are NOT brought up from a registry image — they
               # build from local source. They must be built explicitly here: otherwise
               # `docker-compose up` reuses whatever image already exists on a pooled
-              # Katapult VM, which can be a stale build from before a source change (e.g.
+              # runner VM, which can be a stale build from before a source change (e.g.
               # missing the admin /v1/:dataset/upsert route → integration-seed tests 404).
               # The Dockerfile's COPY busts on source change, so cache_from keeps this fast.
               docker-compose build $INLINE_CACHE_FLAG playwright status spatial-knn spatial > "$OTHER_LOG" 2>&1 &
@@ -747,7 +748,7 @@ commands:
             cat "$BATCH_LOG" | tail -5
 
             # Push built images to local cache registry in background — doesn't block startup.
-            # These provide --cache-from sources for fresh Katapult VMs on subsequent runs.
+            # These provide --cache-from sources for fresh runner VMs on subsequent runs.
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
               (
                 CACHE_REG="185.44.254.6:5002"
@@ -794,7 +795,7 @@ commands:
             rm -rf ./iznik-batch/vendor/
 
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
-            # Retry the bringup. On Katapult cloud instances the Docker Hub pull-through
+            # Retry the bringup. On ephemeral cloud runners the Docker Hub pull-through
             # mirror (185.44.254.6:5000) is sometimes not loaded by the running dockerd (see
             # the mirror setup above), so :latest image pulls (mjml, percona, ...) hit Docker
             # Hub's anonymous rate limit (toomanyrequests) and this up fails. That is a
@@ -1550,7 +1551,7 @@ commands:
 
             # The tested modules require nothing outside Node's stdlib, so there is
             # no npm install here - verified by running with node_modules removed.
-            # Prefer the runner's own Node; Katapult VMs may not have one, so fall
+            # Prefer the runner's own Node; cloud runner VMs may not have one, so fall
             # back to a container rather than installing a toolchain.
             if command -v node >/dev/null 2>&1 && \
                node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 20 ? 0 : 1)' 2>/dev/null; then
@@ -2415,7 +2416,7 @@ jobs:
           reason: "Running Vitest unit tests (fail-fast before parallel tests)"
 
       # Run all tests in parallel via status API.
-      # On Katapult: Vitest also runs here (no sequential pre-step).
+      # On cloud runners: Vitest also runs here (no sequential pre-step).
       # On WSL/cloud: Vitest already ran as a sequential pre-step above.
       - run:
           name: Run iznik-batch, Playwright, Go, and Vitest tests in parallel

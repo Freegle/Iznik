@@ -51,7 +51,7 @@ will have.
 | `api` | apiv2 | One line per request: endpoint, method, status, duration, `user_id`, `session_id` |
 | `api_headers` | apiv2 | Request/response headers for the same request, split out because they are bulky |
 | `client` | Browser, relayed via `POST /clientlog` | Browser-side events and errors. **Carries `session_id` but no `user_id`** |
-| `logs_table` | apiv2 | Rows mirrored from the MySQL `logs` table - carries `type` and `subtype` |
+| `logs_table` | nothing, currently | Was meant to mirror the MySQL `logs` table. `misc.LokiClient.LogFromLogsTable` exists but **has no caller**, so this source is empty - read the `logs` table itself (see below) |
 | `email` | Laravel | Outbound mail: recipient, type, spool outcome |
 | `incoming_mail` | Laravel | Inbound mail routing decisions |
 | `bounce` | Laravel | Bounce processing |
@@ -93,6 +93,32 @@ Set per stream in `conf/loki-config.yaml`, and deliberately mirrors the retentio
 **Old data is simply not there.** A support case about something three weeks ago will find
 nothing in `api` or `client`, and that is expected rather than a fault. `reject_old_samples`
 is off so historical backfill is accepted.
+
+The `{subtype=...}` rows above are aspirational: nothing writes the `logs_table` source, so
+those streams are empty and the retention never bites.
+
+## Login and logout
+
+Sign-in and sign-out are audited in the MySQL `logs` table, not in Loki: `type='User'` with
+`subtype='Login'` or `'Logout'`, `user` and `byuser` both set to the member. `PurgeService`
+keeps them for a year.
+
+apiv2 writes them from one place each - `auth.CreateSessionAndJWT` (every login path funnels
+through it) and `session.DeleteSession`. `text` carries V1's wording for how they signed in
+("Using email/password", "Using link", "Using Google <uid>", ...) plus two things V1 did not
+record: the `X-Freegle-Site` tag, so a Freegle login is distinguishable from a ModTools one,
+and the session series, which pairs a login with the logout that eventually closes it. A logout
+that could not work out which session to close says so rather than writing nothing.
+
+```sql
+SELECT timestamp, subtype, text FROM logs
+WHERE user = <userid> AND type = 'User' AND subtype IN ('Login', 'Logout')
+ORDER BY id DESC LIMIT 50;
+```
+
+Between the V1 retirement and 2026-08-28 apiv2 wrote neither, so there is a hole in this data
+for that period; a member reporting repeated logouts in it can only be traced through raw
+`sessions` rows.
 
 ## How it gets there
 
@@ -469,7 +495,9 @@ sudo journalctl -u alloy -f
 # API errors in the last hour
 {source="api", status_code=~"5.."}
 
-# Login events for a specific user
+# Login events for a specific user - NOTE: logs_table has no writer, so this
+# returns nothing today. Query the MySQL logs table instead (see "Login and
+# logout" above).
 {source="logs_table", subtype="Login"} |= "user_id\":12345"
 
 # API headers for debugging a specific endpoint

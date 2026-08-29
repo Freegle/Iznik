@@ -7,7 +7,9 @@ import (
 
 	"github.com/freegle/iznik-server-go/browsecount"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/driving"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -87,16 +89,17 @@ type reachCandidateRow struct {
 	ReachCells []byte `gorm:"column:reach_cells"`
 }
 
-// blurredDistanceMiles blurs this post's real coordinates (utils.Blur, deterministic — the
-// same post always yields the same blurred point) and returns the great-circle distance from
-// the viewer to that BLURRED point, in miles, alongside the blurred point itself. This is the
-// SINGLE place that computes "how far away is this post": both the feed (toSummary, for the
-// exposed `distance` field and the score's `close` term) and the count's distance filter
-// (nearbyCount) call it, so the badge and the list can never disagree about which posts are
-// within a given limit — a real bug class this replaces (two independently-written distance
-// calcs drifting at the boundary).
+// blurredDistanceMiles blurs this post's real coordinates (roadblur.RoadBlur, deterministic —
+// the same post always yields the same blurred point, and the SAME point the full message
+// record exposes, so the feed summary and the card badge can never disagree) and returns the
+// great-circle distance from the viewer to that BLURRED point, in miles, alongside the blurred
+// point itself. This is the SINGLE place that computes "how far away is this post": both the
+// feed (toSummary, for the exposed `distance` field and the score's `close` term) and the
+// count's distance filter (nearbyCount) call it, so the badge and the list can never disagree
+// about which posts are within a given limit — a real bug class this replaces (two
+// independently-written distance calcs drifting at the boundary).
 func (r reachCandidateRow) blurredDistanceMiles(viewerLat, viewerLng float64) (blurLat, blurLng, distanceMiles float64) {
-	blurLat, blurLng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
+	blurLat, blurLng = roadblur.RoadBlur(r.Lat, r.Lng, utils.BLUR_USER)
 	distanceMiles = utils.Haversine(viewerLat, viewerLng, blurLat, blurLng)
 	return
 }
@@ -454,9 +457,21 @@ func Messages(c *fiber.Ctx) error {
 		// `unseen`), so unseenOnly is false; nearbyCount uses the same helper with
 		// unseenOnly=true so the two can never disagree on what "in reach" means.
 		reachCands := fetchReachCandidates(db, myid, latlng, false)
+		// One batched routing call resolves every candidate's road-aware blur;
+		// the per-row calls inside toSummary are then cache hits.
+		blurCoords := make([][2]float64, 0, len(reachCands))
+		for _, cand := range reachCands {
+			blurCoords = append(blurCoords, [2]float64{float64(cand.Lat), float64(cand.Lng)})
+		}
+		roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 		for _, cand := range reachCands {
 			res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
 		}
+		// Road drive metrics for the whole feed in ONE routing call, so
+		// "Closest" is road-ordered from the first paint with no client
+		// round trips and no later re-sort (the full records carry the
+		// same values for the same blurred points).
+		addSummaryRoadMetrics(viewerLat, viewerLng, res)
 
 		// Pre-warm the browse-search reach cache with the membership we just computed:
 		// the search's reach arm is this same predicate, and members search moments
@@ -707,9 +722,15 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
 			weights := LoadScoreWeights()
 			env := LoadScoreEnv()
+			blurCoords := make([][2]float64, 0, len(candidates))
+			for _, cand := range candidates {
+				blurCoords = append(blurCoords, [2]float64{float64(cand.Lat), float64(cand.Lng)})
+			}
+			roadblur.RoadBlurPrewarm(blurCoords, utils.BLUR_USER)
 			for _, cand := range candidates {
 				res = append(res, cand.toSummary(viewerLat, viewerLng, weights, env, myid))
 			}
+			addSummaryRoadMetrics(viewerLat, viewerLng, res)
 			// Rippling relevance order (score desc, arrival tie-break), mirroring the nearby
 			// arm, so the client's "New to you" sort has a meaningful score to rank on.
 			sort.SliceStable(res, func(i, j int) bool {
@@ -722,8 +743,9 @@ func myGroupsMessages(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 			// No known location: distance/score can't be measured, so keep the prior behaviour
 			// (blurred coords, Distance/Score left at zero). The distance slider is hidden
 			// client-side without a location, so nothing here depends on Distance.
+			prewarmCandidateBlur(candidates)
 			for _, cand := range candidates {
-				blurLat, blurLng := utils.Blur(cand.Lat, cand.Lng, utils.BLUR_USER)
+				blurLat, blurLng := roadblur.RoadBlur(cand.Lat, cand.Lng, utils.BLUR_USER)
 				res = append(res, message.MessageSummary{
 					ID:           cand.ID,
 					Successful:   cand.Successful,
@@ -838,6 +860,7 @@ func myGroupsCount(db *gorm.DB, myid uint64, maxDistanceMiles float64) uint64 {
 		Scan(&candidates)
 
 	var count uint64 = 0
+	prewarmCandidateBlur(candidates)
 	for _, cand := range candidates {
 		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
 		if distanceMiles <= maxDistanceMiles {
@@ -997,6 +1020,7 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	}
 
 	viewerLat, viewerLng := float64(latlng.Lat), float64(latlng.Lng)
+	prewarmCandidateBlur(cands)
 	for _, cand := range cands {
 		_, _, distanceMiles := cand.blurredDistanceMiles(viewerLat, viewerLng)
 		if distanceMiles <= maxDistanceMiles {
@@ -1005,4 +1029,41 @@ func nearbyCount(myid uint64, maxDistanceMiles float64) uint64 {
 	}
 
 	return count
+}
+
+// prewarmCandidateBlur resolves every candidate's road-aware blur in one
+// batched routing call, so per-row blurredDistanceMiles calls are cache hits
+// instead of one network round trip each.
+func prewarmCandidateBlur(cands []reachCandidateRow) {
+	coords := make([][2]float64, 0, len(cands))
+	for _, c := range cands {
+		coords = append(coords, [2]float64{float64(c.Lat), float64(c.Lng)})
+	}
+	roadblur.RoadBlurPrewarm(coords, utils.BLUR_USER)
+}
+
+// addSummaryRoadMetrics fills Roadmins/Roadmiles on feed summaries with ONE
+// routing call from the viewer to every post's blurred point. Best-effort:
+// on any routing failure the fields stay nil and clients fall back to
+// crow-flies (and to their own batched lookup, which also fails soft).
+func addSummaryRoadMetrics(viewerLat, viewerLng float64, res []message.MessageSummary) {
+	if len(res) == 0 {
+		return
+	}
+	targets := make([]driving.Target, 0, len(res))
+	for ix := range res {
+		if res[ix].Lat != 0 || res[ix].Lng != 0 {
+			targets = append(targets, driving.Target{
+				ID:  int64(ix),
+				Lat: res[ix].Lat,
+				Lng: res[ix].Lng,
+			})
+		}
+	}
+	for _, r := range driving.FetchDriveMetrics(roadblur.RoutingURL(), viewerLat, viewerLng, targets) {
+		if r.Mins != nil && r.ID >= 0 && int(r.ID) < len(res) {
+			res[r.ID].Roadmins = r.Mins
+			res[r.ID].Roadmiles = r.Miles
+		}
+	}
 }

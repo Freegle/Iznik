@@ -7,6 +7,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/roadblur"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -251,7 +252,7 @@ func Similar(c *fiber.Ctx) error {
 			continue // a rippled copy of an item already included
 		}
 		seen[dedupKey] = true
-		lat, lng := utils.Blur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
+		lat, lng := roadblur.RoadBlur(cnd.Lat, cnd.Lng, utils.BLUR_USER)
 		out = append(out, SimilarResult{
 			Msgid:   cnd.Msgid,
 			Groupid: cnd.Groupid,

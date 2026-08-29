@@ -591,7 +591,7 @@ func handleEmailPasswordLogin(c *fiber.Ctx, email string, password string) error
 		})
 	}
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, userID, auth.LoginMethodPassword)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
@@ -632,7 +632,7 @@ func handleLinkLogin(c *fiber.Ctx, uid uint64, key string) error {
 		})
 	}
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(uid)
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, uid, auth.LoginMethodLink)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}
@@ -2245,6 +2245,40 @@ func PatchSession(c *fiber.Ctx) error {
 	})
 }
 
+// logLogout writes the User/Logout audit row, the counterpart of the User/Login
+// row auth.CreateSessionAndJWT writes. V1 wrote "Series $series"
+// (include/session/Session.php); the same series is recorded here so a logout can
+// be paired with the login that opened it, which is how you tell "logged out of
+// ModTools" from "logged out of Freegle" for one account.
+//
+// A logout that could identify neither the series nor the session row deletes
+// nothing (Discourse #9748) - it is still logged, because a client asking to log
+// out and being unable to say which session is exactly the state worth seeing.
+func logLogout(c *fiber.Ctx, myid uint64, sessionId uint64, series uint64) {
+	var text string
+
+	switch {
+	case series > 0:
+		text = "Series " + strconv.FormatUint(series, 10)
+	case sessionId > 0:
+		text = "Session " + strconv.FormatUint(sessionId, 10) + ", series unknown"
+	default:
+		text = "Session unidentified - nothing deleted"
+	}
+
+	if site := auth.RequestSite(c); site != "" {
+		text += " (" + site + ")"
+	}
+
+	log2.Log(log2.LogEntry{
+		Type:    log2.LOG_TYPE_USER,
+		Subtype: log2.LOG_SUBTYPE_LOGOUT,
+		User:    &myid,
+		Byuser:  &myid,
+		Text:    &text,
+	})
+}
+
 // DeleteSession logs the user out by destroying their session.
 //
 // @Summary Logout
@@ -2307,6 +2341,8 @@ func DeleteSession(c *fiber.Ctx) error {
 		// If the current session cannot be identified at all, do NOT delete every
 		// session for the user. A logout that can't scope itself must no-op rather
 		// than evict the user from every device and app (Discourse #9748).
+
+		logLogout(c, myid, sessionId, series)
 	}
 
 	return c.JSON(fiber.Map{

@@ -125,6 +125,9 @@ func CreateNewsfeedEntry(nfType string, userid uint64, groupid uint64, eventid *
 		"reviewrequired": gorm.Expr("0"),
 		"pinned":         gorm.Expr("0"),
 	}
+	if hasLeafColumn() {
+		row["leaf"] = leafFor(*lat, *lng)
+	}
 	if err := db.Table("newsfeed").Create(row).Error; err != nil {
 		log.Printf("Failed to create newsfeed entry: %v", err)
 		return 0, err

@@ -50,7 +50,11 @@ export const useNewsfeedStore = defineStore('newsfeed', {
     async fetchCount(distance, log = true) {
       this.lastDistance = distance
       distance = distance || 'anywhere'
-      const ret = await api(this.config).news.count(distance, log)
+      const ret = await api(this.config).news.count(
+        distance,
+        log,
+        useAuthStore().user?.settings?.newsfeedMinutes
+      )
       this.count = ret?.count || 0
       return this.count
     },
@@ -197,7 +201,8 @@ export const useNewsfeedStore = defineStore('newsfeed', {
         distance,
         undefined,
         undefined,
-        allNewsletters ? 'all' : undefined
+        allNewsletters ? 'all' : undefined,
+        useAuthStore().user?.settings?.newsfeedMinutes
       )
       return this.feed
     },

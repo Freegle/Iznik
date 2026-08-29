@@ -883,6 +883,8 @@ services:
       # the container stays up for routing-go tests without the 2.5GB UK graph.
       - OSM_PBF_PATH=${OSM_PBF_PATH:-/data/uk-latest.osm.pbf}
       - DEPRIVATION_CSV=${DEPRIVATION_CSV:-/data/uk_lsoa_quintile.csv}
+      # Reach engine artifacts (see iznik-routing-go/REACH-ENGINE.md); empty = off.
+      - REACH_DIR=${REACH_DIR:-}
       - MYSQL_HOST=percona
       - MYSQL_PORT=3306
       - MYSQL_USER=root
@@ -1074,6 +1076,9 @@ services:
       - SPATIAL_KNN_URL=http://spatial-knn-live:8194
       - OSM_PBF_PATH=/data/uk-latest.osm.pbf
       - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
+      # Reach engine artifacts (graph/partition/matrices snapshots). Empty =
+      # engine off, PBF boot as before. See iznik-routing-go/REACH-ENGINE.md.
+      - REACH_DIR=${REACH_DIR_LIVE:-}
       - MYSQL_HOST=db-live
       - MYSQL_PORT=${LIVE_DB_PORT:-1234}
       - MYSQL_USER=${LIVE_DB_USER:-root}

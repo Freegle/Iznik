@@ -3,8 +3,10 @@
 namespace App\Services\Ripple;
 
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Computes a post's rippled-out reach from the routing server
@@ -569,6 +571,153 @@ class ReachService
      * older servers or when a small reach eroded to no inner — callers fall back to
      * SQL derivation (ReachBoundsService).
      */
+    /**
+     * Fetch and store the reach-engine LABELS for a post: the compact per-region
+     * record from which membership is answered exactly (routing /v1/reach-labels),
+     * plus the reached region ids for the feed prefilter. Labels are computed ONCE
+     * at the post's maximum budget; every later tick just raises the effective
+     * budget when evaluating them, so nothing is ever recomputed as reach grows.
+     *
+     * Best-effort and additive: on any failure the post simply has no labels yet
+     * (readers fall back to the stored cells) and the backfill command
+     * (ripple:backfill-reach-labels) or the next init retries. Never throws.
+     */
+    public function storeReachLabels(int $msgid, float $lat, float $lng, float $maxMinutes): bool
+    {
+        if ($maxMinutes <= 0 || !$this->reachLabelsReady()) {
+            return false;
+        }
+        try {
+            $response = Http::timeout($this->requestTimeout)
+                ->get("{$this->url}/v1/reach-labels", [
+                    'lat' => $lat,
+                    'lng' => $lng,
+                    'minutes' => $maxMinutes,
+                ]);
+        } catch (\Throwable $e) {
+            Log::warning("ripple: reach-labels fetch failed: {$e->getMessage()}", ['msgid' => $msgid]);
+            return false;
+        }
+        if (!$response->successful()) {
+            // 503 = reach engine not configured; 404 = routing server predates the
+            // endpoint. Both are expected until the artifacts are deployed, so stay
+            // quiet about them.
+            if (!in_array($response->status(), [503, 404], true)) {
+                Log::warning("ripple: reach-labels HTTP {$response->status()}", ['msgid' => $msgid]);
+            }
+            return false;
+        }
+        $body = $response->json() ?? [];
+        $labels = base64_decode((string) ($body['labels'] ?? ''), true);
+        $leaves = $body['leaves'] ?? null;
+        if ($labels === false || $labels === '' || !is_array($leaves)) {
+            Log::warning('ripple: reach-labels response malformed', ['msgid' => $msgid]);
+            return false;
+        }
+        try {
+            // One transaction: the blob and its leaves commit together. A blob
+            // without its leaves would permanently hide the post from the leaf
+            // prefilter, because every retry path keys off reach_labels IS NULL.
+            DB::transaction(function () use ($msgid, $labels, $leaves) {
+                DB::table('rippling_reach')->where('msgid', $msgid)->update(['reach_labels' => $labels]);
+                DB::table('rippling_reach_leaves')->where('msgid', $msgid)->delete();
+                foreach (array_chunk($leaves, 500) as $chunk) {
+                    DB::table('rippling_reach_leaves')->insertOrIgnore(
+                        collect($chunk)->map(fn ($leaf) => ['msgid' => $msgid, 'leaf' => (int) $leaf])->all()
+                    );
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::warning("ripple: reach-labels store failed: {$e->getMessage()}", ['msgid' => $msgid]);
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Road drive miles from one origin to a set of points, via the routing
+     * server's reach engine (POST /v1/drive-metrics). $targets is
+     * [id => [lat, lng]]; returns [id => miles] for the points the engine
+     * answered. Empty array on any failure (503 = engine not deployed, quiet):
+     * callers fall back to crow-flies. Used by the digest and matched-posts
+     * emails so the distances members read match the road miles the site shows.
+     *
+     * @param  array<int|string, array{0: float, 1: float}>  $targets
+     * @return array<int|string, float>
+     */
+    /** After a failed drive-metrics call, skip further ones until this time -
+     *  a digest run sends thousands of emails, and without a breaker a down
+     *  routing server would cost the full HTTP timeout on every one. */
+    private static float $driveMetricsDownUntil = 0.0;
+
+    /** Tests only: a tripped breaker must not leak into later tests. */
+    public static function resetDriveMetricsBreaker(): void
+    {
+        self::$driveMetricsDownUntil = 0.0;
+    }
+
+    public function driveMetrics(float $lat, float $lng, array $targets): array
+    {
+        if ($targets === [] || microtime(true) < self::$driveMetricsDownUntil) {
+            return [];
+        }
+        $body = [];
+        $keys = [];
+        $i = 0;
+        foreach ($targets as $key => $t) {
+            $body[] = ['id' => $i, 'lat' => (float) $t[0], 'lng' => (float) $t[1]];
+            $keys[$i] = $key;
+            $i++;
+        }
+        try {
+            $response = Http::timeout(3)->post("{$this->url}/v1/drive-metrics", [
+                'lat' => $lat,
+                'lng' => $lng,
+                'targets' => $body,
+            ]);
+        } catch (\Throwable $e) {
+            self::$driveMetricsDownUntil = microtime(true) + 300;
+            Log::warning("ripple: drive-metrics fetch failed: {$e->getMessage()}");
+
+            return [];
+        }
+        if (!$response->successful()) {
+            self::$driveMetricsDownUntil = microtime(true) + 300;
+            if (!in_array($response->status(), [503, 404], true)) {
+                Log::warning("ripple: drive-metrics HTTP {$response->status()}");
+            }
+
+            return [];
+        }
+        $out = [];
+        foreach ($response->json('results') ?? [] as $r) {
+            if (isset($r['id'], $keys[$r['id']]) && isset($r['miles']) && $r['miles'] !== null) {
+                $out[$keys[$r['id']]] = (float) $r['miles'];
+            }
+        }
+
+        return $out;
+    }
+
+    /** Both label stores exist (deploy can precede the schema change). */
+    private static ?bool $reachLabelsReady = null;
+
+    private function reachLabelsReady(): bool
+    {
+        if (self::$reachLabelsReady === null) {
+            try {
+                // Only a successful check is cached: a transient DB error here
+                // must not mark the schema absent for the rest of the process.
+                self::$reachLabelsReady = Schema::hasColumn('rippling_reach', 'reach_labels')
+                    && Schema::hasTable('rippling_reach_leaves');
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+
+        return self::$reachLabelsReady;
+    }
+
     public function catchmentGeometry(float $lat, float $lng, float $minutes): ?array
     {
         try {
