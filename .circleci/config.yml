@@ -14,7 +14,7 @@ parameters:
   use_katapult:
     type: boolean
     default: false
-    description: "Set to true to run tests on a Katapult cloud runner"
+    description: "Set to true to run tests on an ephemeral cloud runner (freegle/katapult-runner resource class; Katapult or Hetzner per RUNNER_PROVIDER)"
   build_modtools_production:
     type: boolean
     default: false
@@ -147,11 +147,13 @@ jobs:
               exit 0
             fi
 
-            # === Runner provider: Hetzner (RUNNER_PROVIDER=hetzner) or Katapult (default) ===
-            # Hetzner: create an ephemeral cpx62 that boots into a CircleCI runner registered under
-            # freegle/katapult-runner (drop-in — build-test-katapult claims it). It self-destructs on
-            # idle (see scripts/hetzner/cloud-init.yaml). Cap at 2 concurrent runners. Used while
-            # Katapult can't provision (billing) or as a permanent replacement.
+            # === Runner provider: selected by the RUNNER_PROVIDER project env var ===
+            # "hetzner" (the current setting in the CircleCI project env) provisions an ephemeral
+            # Hetzner cpx62 that boots into a CircleCI runner registered under
+            # freegle/katapult-runner, the resource class build-test-katapult claims, so it is a
+            # drop-in for a Katapult VM. It self-destructs on idle (see
+            # scripts/hetzner/cloud-init.yaml). Cap at 2 concurrent runners.
+            # Unset or "katapult" falls through to the Katapult provisioning below.
             if [ "${RUNNER_PROVIDER:-katapult}" = "hetzner" ]; then
               HTOKEN="${HETZNER_API_TOKEN:?HETZNER_API_TOKEN env var not set}"
               HAPI="https://api.hetzner.cloud/v1"
@@ -182,7 +184,8 @@ jobs:
               exit 0
             fi
 
-            # Katapult is the default runner for all CI builds.
+            # Katapult provisioning path: reached only when RUNNER_PROVIDER is unset or
+            # "katapult". Dormant while RUNNER_PROVIDER=hetzner is set (see above).
             KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-DUMMY_KATAPULT_API_TOKEN_ROTATE_AND_SET_ENV}"
             KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
             KATAPULT_API="https://api.katapult.io/core/v1"
@@ -267,7 +270,8 @@ jobs:
               echo "At VM cap ($MAX_VMS) — routing job to existing runner pool"
             fi
 
-            # Always route to Katapult resource class. If no runner is free the job
+            # Always route to the freegle/katapult-runner resource class (claimed by
+            # Katapult or Hetzner runners alike). If no runner is free the job
             # queues until one finishes — no fallback to the local runner.
             echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
             cat /tmp/pipeline-params.json

@@ -9,22 +9,111 @@ use Illuminate\Support\Facades\Log;
  * Component knowledge base for deterministic EEE classification.
  *
  * The model observes electrical components in images; this service maps those
- * raw strings to canonical component types with categories:
- *   primary_eee      — primary function of the item requires electricity (motor, compressor, heating element)
- *   supplementary_eee — incidental electrical parts (clock, ignition, indicator lights)
- *   non_electrical   — mechanical/structural parts with no electrical function
- *   unknown          — needs manual review
+ * raw strings to canonical component types, categorised by what the component
+ * implies about the HOST item.
  *
- * EEE decision rule:
- *   ANY primary_eee component present  → is_eee = true
- *   Only supplementary_eee components  → is_eee deferred to text signals
- *   No EEE components at all           → is_eee = false
+ * WHICH DEFINITION THIS IMPLEMENTS
+ *
+ * There is no single clean legal test, and we should not pretend otherwise.
+ * The Environment Agency's scope guidance (gov.uk, "Electrical and electronic
+ * equipment (EEE) covered by the WEEE Regulations", updated 12 August 2025) is
+ * definitive only for the products it names, and its stated reasoning is
+ * internally inconsistent: it excludes clothing with novelty lights because
+ * "they can still work properly as clothing without the electrical functions",
+ * yet includes fish tanks with a pump and gym tops with a heart rate monitor,
+ * which fail that same test. It also says, flatly, that "where a product has
+ * several functions and only one needs an electrical current, the product may
+ * still be EEE" — which rules out a pure primary-function test.
+ *
+ * So: where the guidance names a product, follow it. Where it does not, follow
+ * Material Focus's line, since they are the consumer of this data — "anything
+ * with a plug, battery or cable". That is also the definition already shipped
+ * in the delivered dataset (Freegle/material-focus scripts/annotate_llm.py):
+ * "runs on mains power, batteries, or is an electrical component/accessory",
+ * with toys counted when battery or electric, and fairy lights counted.
+ * Material Focus assert that line but publish no methodology justifying it.
+ *
+ * Named and definitive, so hard-coded either way:
+ *   IN  — fish tanks with a light, heater or pump; spa and hydrotherapy baths;
+ *         loft ladders with electronic controls; roller screens with electronic
+ *         winders; riser chairs and hospital beds with movement controls
+ *   OUT — gas cookers whose electrics are only a clock or igniter; petrol lawn
+ *         mowers and gas stoves needing only a spark
+ *
+ * Categories:
+ *   primary_eee          — basic function of the item requires electricity
+ *                          (motor, compressor, heating element)
+ *   distinct_function_eee — a substantive electrical function alongside a
+ *                          non-electrical basic function (tank pump, spa jets,
+ *                          riser actuator, heart rate monitor). Named by the
+ *                          guidance as EEE, so decisive.
+ *   supplementary_eee    — electricity only supports or controls a non-electrical
+ *                          basic function (gas ignition, clock, indicator light).
+ *                          Still makes the item EEE under the adopted line; the
+ *                          split is kept so the page can explain WHY an item
+ *                          counted, and so NAMED_NOT_EEE can be applied only to
+ *                          items whose electrics are purely support/control.
+ *   non_electrical       — mechanical/structural parts with no electrical function
+ *   unknown              — needs manual review
+ *
+ * EEE decision rule (Material Focus line, per the decision note):
+ *   item name matches a NAMED_EEE product          → is_eee = true
+ *   item name matches a NAMED_NOT_EEE product AND
+ *     no primary/distinct component present        → is_eee = false
+ *   ANY electrical component of any category       → is_eee = true
+ *   no components observed at all                  → is_eee = null (unknown)
+ *   components observed, none electrical           → is_eee = false
+ *
+ * The supplementary category no longer defers. Under the adopted line a plug, a
+ * battery or a cable is enough, so supplementary components make the item EEE.
+ * The only things that pull an item back out are the products the guidance names,
+ * which is why those are matched on the item name rather than inferred.
+ *
+ * See plans/2026-08-25-eee-definition-decision.md for the reasoning, and
+ * plans/eee-identification.md for the research history.
  */
 class EeeComponentService
 {
     protected const EMBEDDING_MODEL = 'text-embedding-3-small';
     protected const EMBEDDING_DIMS  = 1536;
     protected const SIMILARITY_THRESHOLD = 0.60;
+
+    /**
+     * Products the Environment Agency names as EEE even though their basic function
+     * is not electrical. Matched on the item name, because the whole point is that
+     * the component alone does not settle it.
+     *
+     * Source: gov.uk "Electrical and electronic equipment (EEE) covered by the WEEE
+     * Regulations", updated 12 August 2025.
+     */
+    protected const NAMED_EEE = [
+        '/\bfish tank\b/i',
+        '/\baquarium\b/i',
+        '/\b(spa|hydrotherapy|whirlpool|massage) bath\b/i',
+        '/\bhot tub\b/i',
+        '/\bloft ladder\b/i',
+        '/\broller (screen|blind)\b/i',
+        '/\bgym equipment\b/i',
+        '/\b(exercise|static) bike\b/i',
+        '/\btreadmill\b/i',
+        '/\b(cross|elliptical) trainer\b/i',
+        '/\browing machine\b/i',
+        '/\bgames? console\b/i',
+        '/\briser (chair|recliner)\b/i',
+        '/\bhospital bed\b/i',
+    ];
+
+    /**
+     * Products the guidance names as NOT EEE, because the electricity only starts or
+     * supports a function that gas or petrol actually performs. Applied only when no
+     * primary or distinct-function component is present, so an electric cooker or a
+     * fan oven is not caught by the "cooker" wording.
+     */
+    protected const NAMED_NOT_EEE = [
+        '/\bgas (cooker|hob|oven|stove|range|ring)\b/i',
+        '/\bpetrol\s*(lawn)?\s*mower\b/i',
+        '/\bpetrol (strimmer|trimmer|chainsaw|hedge ?cutter|blower)\b/i',
+    ];
 
     /** Keyword rules for initial auto-categorisation (regex on lowercase canonical name). */
     protected const CATEGORY_RULES = [
@@ -529,6 +618,34 @@ class EeeComponentService
             '/\bchristmas lights\b/i',
             '/\bfairy lights\b/i',
         ],
+        // ── Limb 3: a substantive electrical function alongside a non-electrical
+        // basic function. The Environment Agency names fish tanks, spa baths,
+        // loft ladders with electronic controls, roller screens with electronic
+        // winders and riser chairs as EEE on exactly this basis.
+        'distinct_function_eee' => [
+            // Powered water/air circulation: fish tanks, ponds, spa baths.
+            // Checked before non_electrical so "filter pump" is not swallowed
+            // by the passive '/\bfilter\b/' rule.
+            '/\b(filter|filtration|pond|tank|aquarium|circulation|air|water) pump\b/i',
+            '/\bpump (and|&) filter\b/i',
+            '/\bpump filter\b/i',
+            '/\bpowered filter\b/i',
+            '/\b(aerator|air stone|airstone)\b/i',
+            '/\bprotein skimmer\b/i',
+            // Spa / hydrotherapy jets and blowers
+            '/\b(whirlpool|spa|hydrotherapy|massage|water|air) jets?\b/i',
+            '/\bjet nozzles?\b/i',
+            '/\bair blower\b/i',
+            // Powered movement fitted to otherwise non-electrical furniture
+            '/\b(riser|recliner|lift) (actuator|mechanism|motor)\b/i',
+            '/\bpowered (recliner|riser|winder|actuator)\b/i',
+            '/\belectric winder\b/i',
+            '/\bbed (actuator|adjustment motor)\b/i',
+            // Wearable / equipment sensors that are a fundamental feature
+            '/\bheart rate (monitor|sensor|strap)\b/i',
+            '/\b(fitness|activity) (tracker|sensor)\b/i',
+            '/\bstep counter\b/i',
+        ],
         'supplementary_eee' => [
             // Display / indicators
             '/digital (display|clock|timer)/',
@@ -680,7 +797,7 @@ class EeeComponentService
             '/\bpower indicator led\b/i',
             '/\bstandby.*indicator led\b/i',
             '/\bindicator (led|light|button|lamp)\b/i',
-            // Ambient / accent lighting (supplementary decorative feature)
+            // Ambient / accent lighting
             '/\bambient light (feature|strip)\b/i',
             // Fluorescent tube connectors
             '/\bbi.pin fluorescent tube connector\b/i',
@@ -1000,6 +1117,8 @@ class EeeComponentService
         ],
         'non_electrical' => [
             '/\bdrain hose\b/',
+            // Passive filter elements only. Powered filtration units ("filter pump")
+            // match distinct_function_eee first, which is checked before this.
             '/\bfilter\b(?! electronic)/',
             '/\bfabric\b/',
             '/\bdoor seal\b/',
@@ -1228,20 +1347,35 @@ class EeeComponentService
      */
     public function lookup(string $rawComponent): ?array
     {
+        return $this->lookupWithStatus($rawComponent)['match'];
+    }
+
+    /**
+     * Lookup plus whether the answer can be trusted. `failed` is true when the embedding
+     * call itself failed: "no match" then means "could not look", not "looked and found
+     * nothing", and the caller must not treat it as evidence of absence.
+     *
+     * @return array{match: ?array, failed: bool}
+     */
+    protected function lookupWithStatus(string $rawComponent): array
+    {
         $raw = strtolower(trim($rawComponent));
-        if (empty($raw)) return null;
+        if (empty($raw)) return ['match' => null, 'failed' => false];
 
         // Exact match first.
         $exact = $this->sqlite->getComponentTypeByName($raw);
         if ($exact) {
-            return ['canonical_name' => $exact['canonical_name'], 'category' => $exact['category'], 'similarity' => 1.0];
+            return [
+                'match'  => ['canonical_name' => $exact['canonical_name'], 'category' => $exact['category'], 'similarity' => 1.0],
+                'failed' => false,
+            ];
         }
 
         // Vector similarity search.
         $embedding = $this->fetchEmbedding($raw);
-        if (!$embedding) return null;
+        if (!$embedding) return ['match' => null, 'failed' => true];
 
-        return $this->findNearest($embedding, self::SIMILARITY_THRESHOLD);
+        return ['match' => $this->findNearest($embedding, self::SIMILARITY_THRESHOLD), 'failed' => false];
     }
 
     /**
@@ -1250,30 +1384,88 @@ class EeeComponentService
      * @param  string[]  $components  Raw component strings from the model
      * @return array{is_eee: bool|null, contains_eee_components: bool, categories: array, unmatched: array}
      */
-    public function classifyComponents(array $components): array
+    /**
+     * Decide is_eee from observed components plus the item name.
+     *
+     * $itemName is optional but should be passed wherever it is known: it is the only
+     * way to apply the products the guidance names, which is the one place the
+     * adopted Material Focus line yields to government.
+     */
+    public function classifyComponents(array $components, string $itemName = ''): array
     {
-        $categories  = [];
-        $unmatched   = [];
-        $hasPrimary  = false;
-        $hasSupp     = false;
+        $categories   = [];
+        $unmatched    = [];
+        $hasPrimary   = false;
+        $hasDistinct  = false;
+        $hasSupp      = false;
+        $lookupFailed = false;
 
         foreach ($components as $raw) {
-            $match = $this->lookup($raw);
+            $status = $this->lookupWithStatus($raw);
+            $match  = $status['match'];
             if ($match) {
                 $categories[$raw] = $match;
-                if ($match['category'] === 'primary_eee')      $hasPrimary = true;
-                if ($match['category'] === 'supplementary_eee') $hasSupp    = true;
+                switch ($match['category']) {
+                    case 'primary_eee':           $hasPrimary  = true; break;
+                    case 'distinct_function_eee': $hasDistinct = true; break;
+                    case 'supplementary_eee':     $hasSupp     = true; break;
+                }
             } else {
                 $unmatched[] = $raw;
+                $lookupFailed = $lookupFailed || $status['failed'];
             }
         }
 
+        $hasAnyElectrical = $hasPrimary || $hasDistinct || $hasSupp;
+        $reason           = null;
+
+        if ($itemName !== '' && $this->matchesNamed($itemName, self::NAMED_EEE)) {
+            // Named by the guidance as EEE regardless of what the photo shows.
+            $isEee  = true;
+            $reason = 'named_eee';
+        } elseif ($itemName !== ''
+                  && !$hasPrimary
+                  && !$hasDistinct
+                  && $this->matchesNamed($itemName, self::NAMED_NOT_EEE)) {
+            // Named as not EEE, and nothing beyond support/control was observed.
+            $isEee  = false;
+            $reason = 'named_not_eee';
+        } elseif ($hasAnyElectrical) {
+            // Material Focus line: a plug, a battery or a cable is enough.
+            $isEee  = true;
+            $reason = $hasPrimary ? 'primary' : ($hasDistinct ? 'distinct_function' : 'supplementary');
+        } elseif (empty($components)) {
+            $isEee = null;
+        } elseif ($lookupFailed) {
+            // At least one observed component was never actually looked up, because the
+            // embedding service failed. "Not electrical" here would be a confident verdict
+            // built on an outage; return unknown, and the caller decides whether to retry.
+            $isEee  = null;
+            $reason = 'lookup_unavailable';
+        } else {
+            $isEee  = false;
+            $reason = 'no_electrical_components';
+        }
+
         return [
-            'is_eee'                  => $hasPrimary ? true : ($hasSupp ? null : (empty($components) ? null : false)),
-            'contains_eee_components' => $hasPrimary || $hasSupp,
+            'is_eee'                  => $isEee,
+            'is_eee_reason'           => $reason,
+            'contains_eee_components' => $hasAnyElectrical,
             'categories'              => $categories,
             'unmatched'               => $unmatched,
         ];
+    }
+
+    /** True if $name matches any pattern in $patterns. */
+    protected function matchesNamed(string $name, array $patterns): bool
+    {
+        $lower = strtolower(trim($name));
+        foreach ($patterns as $pattern) {
+            if (preg_match($pattern, $lower)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────

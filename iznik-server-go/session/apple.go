@@ -150,7 +150,7 @@ func handleAppleLogin(c *fiber.Ctx, identityToken, appleUserID, email, firstName
 
 	// Apple does not provide profile pictures — no saveProfileImage call needed.
 
-	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
+	persistent, jwtString, err := auth.CreateSessionAndJWT(c, userID, auth.SocialLoginMethod("Apple", sub))
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 	}

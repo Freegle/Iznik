@@ -13,6 +13,7 @@ import AddressAPI from './AddressAPI.js'
 import AdminsAPI from './AdminsAPI.js'
 import AlertAPI from './AlertAPI.js'
 import AuthorityAPI from './AuthorityAPI.js'
+import ElectricalsAPI from './ElectricalsAPI.js'
 import BanditAPI from './BanditAPI.js'
 import BrowseAPI from './BrowseAPI.js'
 import CharityAPI from './CharityAPI.js'
@@ -67,6 +68,7 @@ export default (config) => {
     admins: new AdminsAPI(options),
     alert: new AlertAPI(options),
     authority: new AuthorityAPI(options),
+    electricals: new ElectricalsAPI(options),
     bandit: new BanditAPI(options),
     browse: new BrowseAPI(options),
     charity: new CharityAPI(options),

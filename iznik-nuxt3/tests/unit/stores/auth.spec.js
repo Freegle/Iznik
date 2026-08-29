@@ -191,6 +191,24 @@ describe('auth store', () => {
     })
   })
 
+  describe('wipeAuth', () => {
+    it('clears credentials, the user, and the Block Store copy', () => {
+      store.setAuth('dead-jwt', 'dead-persistent')
+      store.setUser({ id: 123 })
+      mockClearRestoredSession.mockClear()
+
+      store.wipeAuth()
+
+      expect(store.auth.jwt).toBeNull()
+      expect(store.auth.persistent).toBeNull()
+      expect(store.user).toBeNull()
+      // Without this, an Android device whose localStorage was evicted keeps
+      // re-adopting the same dead token from Block Store and loops back to
+      // the login screen.
+      expect(mockClearRestoredSession).toHaveBeenCalled()
+    })
+  })
+
   describe('adoptRestoredSession', () => {
     it('adopts the session a previous device left in Block Store', async () => {
       mockRestoreSessionFromDevice.mockResolvedValue('transferred-persistent')

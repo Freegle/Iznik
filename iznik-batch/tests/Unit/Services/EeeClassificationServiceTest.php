@@ -4,6 +4,7 @@ namespace Tests\Unit\Services;
 
 use App\Services\EeeClassificationService;
 use App\Services\EeeComponentService;
+use App\Services\EeeProductionStore;
 use App\Services\EeeSqliteService;
 use App\Services\EeeVisionService;
 use ReflectionMethod;
@@ -34,8 +35,9 @@ class EeeClassificationServiceTest extends TestCase
         $vision    = $this->createMock(EeeVisionService::class);
         $sqlite    = $this->createMock(EeeSqliteService::class);
         $component = $this->createMock(EeeComponentService::class);
+        $store     = $this->createMock(EeeProductionStore::class);
 
-        $this->service = new EeeClassificationService($vision, $sqlite, $component);
+        $this->service = new EeeClassificationService($vision, $sqlite, $component, $store);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

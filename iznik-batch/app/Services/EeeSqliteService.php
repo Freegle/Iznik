@@ -201,6 +201,12 @@ class EeeSqliteService
         if (!in_array('is_eee_from_components', $clsCols)) {
             $this->pdo->exec("ALTER TABLE eee_classifications ADD COLUMN is_eee_from_components INTEGER");
         }
+        // Why the rule reached its verdict, so the dashboard can show it:
+        // named_eee | named_not_eee | primary | distinct_function | supplementary |
+        // no_electrical_components.
+        if (!in_array('is_eee_reason', $clsCols)) {
+            $this->pdo->exec("ALTER TABLE eee_classifications ADD COLUMN is_eee_reason TEXT");
+        }
 
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_messageid ON eee_classifications(messageid)");
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_is_eee ON eee_classifications(is_eee)");

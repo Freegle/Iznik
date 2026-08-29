@@ -21,8 +21,10 @@ class CommunityNewsResearchService
 {
     private const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 
-    public function __construct(private CommunityNewsSourceService $sources)
-    {
+    public function __construct(
+        private CommunityNewsSourceService $sources,
+        private SourceFreshness $freshness,
+    ) {
     }
 
     /**
@@ -50,7 +52,29 @@ class CommunityNewsResearchService
             return ['ok' => true, 'items' => count($items), 'intro' => $intro, 'preview' => $items];
         }
 
+        $stored = 0;
         foreach ($items as $it) {
+            if ($this->alreadyResearched($area, $it['url'])) {
+                Log::info('CommunityNews: skipping a URL already researched for this area', [
+                    'area' => $area->id,
+                    'url' => $it['url'],
+                ]);
+                continue;
+            }
+
+            // The date filters downstream only catch events already over; this
+            // catches the opposite, a stale source written up as current.
+            $stale = $this->freshness->staleReason($it['url'], $it['date'] ?? null);
+            if ($stale !== null) {
+                Log::info('CommunityNews: rejecting an item with a stale source', [
+                    'area' => $area->id,
+                    'title' => $it['title'],
+                    'url' => $it['url'],
+                    'reason' => $stale,
+                ]);
+                continue;
+            }
+
             CommunityNewsItem::create([
                 'areaid' => $area->id,
                 'title' => mb_substr($it['title'], 0, 250),
@@ -62,6 +86,7 @@ class CommunityNewsResearchService
                 'event_date' => $it['date'] ?? null,
                 'researched_at' => now(),
             ]);
+            $stored++;
         }
 
         $area->update([
@@ -69,7 +94,7 @@ class CommunityNewsResearchService
             'intro' => $intro !== '' ? $intro : $area->intro,
         ]);
 
-        return ['ok' => true, 'items' => count($items), 'intro' => $intro];
+        return ['ok' => true, 'items' => $stored, 'intro' => $intro];
     }
 
     /**
@@ -97,6 +122,29 @@ class CommunityNewsResearchService
         }
 
         return $this->parse($finalText, $maxItems);
+    }
+
+    /**
+     * True when this area has already had this exact URL written up recently.
+     *
+     * Research runs every few days and keeps re-finding the same pages, so the
+     * same story lands repeatedly: the 2014 RiverFest article was harvested for
+     * Hove twice within six days, and the second copy is the one that reached
+     * the newsfeed. Bounded rather than forever so a genuinely annual event can
+     * come round again.
+     */
+    private function alreadyResearched(CommunityNewsArea $area, ?string $url): bool
+    {
+        if ($url === null || trim($url) === '') {
+            return false;
+        }
+
+        $days = max(1, (int) config('freegle.communitynews.source_dedup_days', 180));
+
+        return CommunityNewsItem::where('areaid', $area->id)
+            ->where('url', $url)
+            ->where('researched_at', '>', now()->subDays($days))
+            ->exists();
     }
 
     /**
@@ -424,6 +472,7 @@ class CommunityNewsResearchService
 
         Rules:
         - Only include things you actually found via search, each with a real source URL. Never invent an event, date, place or link.
+        - Check every source is CURRENT before you use it. Local events recur every year and old write-ups rank well in search, so an article about a PREVIOUS year's edition looks exactly like this year's. Check when the page was published and what year its text and any poster image give; if it describes an earlier year, or you cannot tell that it is about the coming weeks, leave the item out. Never carry a date forward from an old article into this year.
         - Keep everything genuinely LOCAL to {$name} (or clearly within it). If you can't find enough real local material, return fewer items — quality over quantity.
         - Do NOT include repair cafés or Restart/Fixit-style repair events — Freegle already lists these separately (synced from the Restart Project and Repair Café Wales), so they would be duplicates.
         - UK English. Light, second-person, roughly 40-60 words per item: what it is and why someone might fancy it. No hashtags, no marketing-speak, at most the occasional emoji.

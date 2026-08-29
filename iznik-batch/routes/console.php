@@ -243,6 +243,47 @@ Schedule::command('spatial:update-data')
     ->sendOutputTo(cronLog('spatial:update-data'))
     ->runInBackground();
 
+// Classify newly-approved OFFERs as electrical or not, with Gemini Flash.
+//
+// Feeds the /electricals page. Hourly rather than more often because the page reports
+// rolling twelve-month figures, so freshness inside the day buys nothing.
+//
+// --limit=1000 is comfortably above the real arrival rate: live runs ~1,560 distinct
+// OFFERs a day, i.e. ~65 an hour. (Counting messages_groups suggests 5-6k a day, but that
+// is the rippling fan-out - one row per group a post reaches - not distinct posts.) The
+// limit is a backstop against a backlog after an outage flooding the API in one pass, and
+// the command tracks its own high-water mark, so a capped run simply resumes next hour.
+Schedule::command('eee:classify-new --limit=1000')
+    ->hourly()
+    ->withoutOverlapping(120)
+    ->sendOutputTo(cronLog('eee:classify-new'))
+    ->runInBackground();
+
+// Regenerate the public /electricals page payload.
+//
+// Daily, not hourly: every figure is a rolling twelve-month aggregate, so intra-day
+// freshness would cost a heavy pass over messages joined to messages_eee, messages_items
+// and messages_outcomes and change nothing a reader could see. Runs after
+// eee:classify-new has had the night to catch up.
+Schedule::command('electricals:stats')
+    ->dailyAt('05:10')
+    ->withoutOverlapping(240)
+    ->sendOutputTo(cronLog('electricals:stats'))
+    ->runInBackground();
+
+// Recompute items.popularity from messages_items.
+//
+// ItemService maintains this forwards now, but a weekly reconciliation keeps it honest:
+// the column had drifted to near-zero because the increment was missing altogether, and
+// it feeds the popularity-weighted mean item weight in AuthorityStatsService,
+// StatsGenerationService and the Go item/impact endpoint. Sets rather than adds, so it
+// simply corrects any drift.
+Schedule::command('items:backfill-popularity')
+    ->weeklyOn(0, '03:40')
+    ->withoutOverlapping(240)
+    ->sendOutputTo(cronLog('items:backfill-popularity'))
+    ->runInBackground();
+
 // Auto-approve pending messages after 48 hours.
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')

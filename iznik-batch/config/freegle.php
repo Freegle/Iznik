@@ -515,6 +515,27 @@ return [
         // How many days a researched item stays eligible for posting/emailing.
         'item_freshness_days' => (int) env('COMMUNITY_NEWS_ITEM_FRESHNESS_DAYS', 10),
 
+        // Staleness guards (SourceFreshness): stop the research model dressing up
+        // an old source as something happening now.
+        //
+        // How old a dated news ARTICLE may be and still be announcing a current
+        // event. Only applied to og:type=article pages carrying an explicit
+        // article:published_time - on an evergreen page that date is just when
+        // the page was created, and trusting it rejects live events.
+        'source_max_age_days' => (int) env('COMMUNITY_NEWS_SOURCE_MAX_AGE_DAYS', 365),
+
+        // How long the same URL stays deduped within one area, so repeated
+        // research runs don't write up the same story again and again.
+        'source_dedup_days' => (int) env('COMMUNITY_NEWS_SOURCE_DEDUP_DAYS', 180),
+
+        // Read the year off the source's own picture and drop the item when the
+        // picture advertises an earlier one (the 2014 RiverFest poster). Needs
+        // anthropic_api_key; silently skipped without it.
+        'check_image_year' => (bool) env('COMMUNITY_NEWS_CHECK_IMAGE_YEAR', true),
+        // Deliberately a small, fast model: this is short OCR-shaped work run
+        // once per researched item, not the research itself. Override to raise it.
+        'vision_model' => env('COMMUNITY_NEWS_VISION_MODEL', 'claude-haiku-4-5'),
+
         // Curated per-place source store (JSON files). Research seeds the model
         // with these known-good local feeds, health-checks them each run, and
         // re-discovers new ones roughly quarterly. See
@@ -1278,9 +1299,12 @@ return [
         'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
         'claude_model'      => env('EEE_CLAUDE_MODEL', 'claude-sonnet-4-6'),
 
-        // Google Gemini.
+        // Google Gemini. The default must be a model that still exists: the gemini-2.0
+        // family is retired, and a retired default means every call 404s — which the
+        // driver treats as a soft failure, so the hourly job "succeeds" classifying
+        // nothing on any host that has not set EEE_GEMINI_MODEL.
         'gemini_api_key'  => env('GOOGLE_GEMINI_API_KEY', ''),
-        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-2.0-flash'),
+        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-3.5-flash-lite'),
 
         // OpenAI.
         'openai_api_key'  => env('OPENAI_API_KEY', ''),

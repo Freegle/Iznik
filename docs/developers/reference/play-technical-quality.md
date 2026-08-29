@@ -1,5 +1,5 @@
 ---
-last_reviewed: 2026-08-27
+last_reviewed: 2026-08-28
 owner: Freegle dev team
 covers:
   - iznik-nuxt3/android/app/build.gradle
@@ -66,10 +66,44 @@ choice of default file is not cosmetic.
 
 R8 breaks things by removing or renaming what only reflection or JS reaches. Capacitor,
 Firebase, Facebook, Stripe and play-services all ship their own consumer rules;
-`proguard-rules.pro` adds the WebView share bridge, the social-login activity interface and
-the push plugin's `Class.forName` on MainActivity. **Before a release goes out, smoke-test on a
-device:** Google, Facebook and Apple sign-in; push and the home-screen badge; camera and
-share-into-app; the Stripe donation flow.
+`proguard-rules.pro` adds the WebView share bridge, the social-login activity interface, the
+push plugin's `Class.forName` on MainActivity, and the Block Store plugin. **Before a release
+goes out, smoke-test on a device:** Google, Facebook and Apple sign-in; push and the
+home-screen badge; camera and share-into-app; the Stripe donation flow.
+
+### What the minified build was measured to keep
+
+Measured 2026-08-28 on release (R8) builds of both identities, from the R8 outputs in
+`android/app/build/outputs/mapping/release/` and from running the APKs on an emulator:
+
+| Kept | Freegle | ModTools |
+|---|---|---|
+| `org.freegle.blockstore.BlockStorePlugin` class name | unrenamed | unrenamed |
+| its `setSession` / `getSession` / `clearSession` | unrenamed | unrenamed |
+| 7 `ee.forgr.capacitor.social.login.*` classes | unrenamed | unrenamed |
+| `MainActivity` and `IHaveModifiedTheMainActivityForTheUseWithSocialLoginPlugin()` | kept | kept |
+| `ShareIntentBridge.consume()` | unrenamed (class renamed) | unrenamed (class renamed) |
+
+At runtime, in the minified build, a full Block Store round trip (`setSession` -> `getSession`
+-> `clearSession` -> `getSession`) and `SocialLogin.initialize` both succeed, and the emulator
+reaches `com.google.android.gms.auth.blockstore.service.START`. Two things this measurement
+settles:
+
+- Capacitor's own consumer rule (`-keep public class * extends com.getcapacitor.Plugin { *; }`)
+  already covered the plugin before we named it: a build with the explicit rules removed keeps
+  the same names. The rules in `proguard-rules.pro` are insurance against a consumer-rule
+  regression, not a fix, and R8 was never the cause of a lost session.
+- The `-keep class org.freegle.blockstore.**` rule survives the ModTools package rewrite,
+  which only ever touches `org.ilovefreegle.*`.
+
+Reproducing it needs no Nuxt build: put any `index.html` in the configured `webDir`, `npx cap
+sync android`, then `./gradlew :app:assembleRelease` with the four `ANDROID_KEYSTORE_*` gradle
+properties pointed at `~/.android/debug.keystore`. A page calling
+`window.Capacitor.nativePromise('BlockStore', 'getSession', {})` exercises the minified native
+code through the real bridge. Note that a debug-signed build makes Play Services refuse the
+end-to-end-encryption check (`GoogleCertificatesRslt: not allowed`), so `cloudBackup` comes
+back false; the plugin's failure path handles that and stores locally, which is the same thing
+that happens on a device with no screen lock.
 
 The mapping file travels inside the AAB, so Play deobfuscates native crash reports itself.
 Sentry only ever sees WebView JS stacks, which R8 does not touch.
@@ -98,6 +132,17 @@ How it fits together:
   `GET /session` mints one.
 - `logout()` deletes the Block Store entry. Without that, a later device restore would sign a
   user back in after they deliberately signed out.
+- So does an **implicit** logout, via `authStore.wipeAuth()`: a 401 on the authoritative
+  `/session` check, or `fetchUser` finding auth genuinely invalid. Only explicit logout used to
+  clear it, which left a dead token in Block Store that boot would re-adopt.
+
+That last one matters because the two stores have different lifetimes. Measured on an emulator
+(2026-08-28): deleting the WebView's `app_webview/Default/Local Storage` leaves the Block Store
+entry intact, and the next cold start reads it straight back. A dead token there therefore
+outlives the localStorage wipe that was supposed to remove it, and the app re-adopts it, gets
+401, wipes localStorage again, and returns to the login screen - which is what Discourse
+#10072 reported. (A full app-data clear is different: Play Services drops the Block Store entry
+too, on `PACKAGE_DATA_CLEARED`.)
 
 The native side is `android/app/src/main/java/org/freegle/blockstore/BlockStorePlugin.java`,
 registered in `MainActivity.onCreate` before `super.onCreate` (a plugin declared in this
