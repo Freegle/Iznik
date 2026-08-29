@@ -35,7 +35,16 @@ class EeeClassifyNewCommandTest extends TestCase
         $this->poison     = [];
         $this->indexEmpty = false;
 
+        // The command's selection reads raw `messages`, so stray rows committed
+        // outside the per-test transaction get selected and "classified" by the
+        // mock - which turned an all-failures run into a partial success and
+        // defeated the exit-code assertion. Own the whole table; the deletes
+        // roll back with this test's transaction.
+        DB::table('messages_outcomes')->delete();
+        DB::table('messages_items')->delete();
         DB::table('messages_eee')->delete();
+        DB::table('messages_groups')->delete();
+        DB::table('messages')->delete();
 
         $vision = $this->createMock(EeeVisionService::class);
         $vision->method('isConfigured')->willReturn(true);

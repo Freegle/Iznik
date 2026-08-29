@@ -254,7 +254,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute, useRuntimeConfig, useHead, useAsyncData } from '#imports'
 import Api from '~/api'
 import ExternalLink from '~/components/ExternalLink.vue'
@@ -277,7 +277,19 @@ const {
   data: stats,
   pending,
   error,
+  refresh,
 } = await useAsyncData('electricals-stats', () => api.electricals.stats())
+
+// A transient API failure at render time (an apiv2 restart, or the window
+// before the first stats generation ever ran) gets serialized into the
+// transferred state, and hydration trusts that state - so the error would
+// stick until the user navigated away and back. Retry once on the client
+// instead of wearing a stale failure.
+onMounted(() => {
+  if (!stats.value && !pending.value) {
+    refresh()
+  }
+})
 
 const windowMonths = computed(() => stats.value?.window?.months ?? 12)
 const rangeLabel = computed(() => `in the last ${windowMonths.value} months`)

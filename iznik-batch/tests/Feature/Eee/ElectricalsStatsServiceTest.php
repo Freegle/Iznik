@@ -36,7 +36,16 @@ class ElectricalsStatsServiceTest extends TestCase
         $this->stats = new ElectricalsStatsService($vision);
         $this->items = new ItemService();
 
+        // The coverage denominators count raw `messages` rows, so this suite
+        // must own the whole table: rows committed outside the per-test
+        // transaction (other suites write through committed connections)
+        // inflate total_offers and skew every pct/scale assertion. Deletes
+        // run inside this test's transaction, so they roll back afterwards.
+        DB::table('messages_outcomes')->delete();
+        DB::table('messages_items')->delete();
         DB::table('messages_eee')->delete();
+        DB::table('messages_groups')->delete();
+        DB::table('messages')->delete();
     }
 
     /**
