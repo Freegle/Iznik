@@ -43,6 +43,8 @@ class EeeSyncClassificationsCommand extends Command
         $dryRun = (bool) $this->option('dry-run');
 
         if (!$dryRun && !$secret) {
+            \App\Support\EeeAlarm::raise('sync-secret',
+                'eee:sync-classifications cannot run: EEE_SYNC_SECRET is not set');
             $this->error('EEE_SYNC_SECRET env var is required.');
             return self::FAILURE;
         }
@@ -93,6 +95,10 @@ class EeeSyncClassificationsCommand extends Command
                 ->post($url . '/api/admin/sync-classifications', ['rows' => $payload]);
 
             if (!$resp->successful()) {
+                if (in_array($resp->status(), [401, 403], true)) {
+                    \App\Support\EeeAlarm::raise('sync-credential',
+                        'eee:sync-classifications rejected by eee-browser (HTTP ' . $resp->status() . ') - EEE_SYNC_SECRET mismatch?');
+                }
                 $this->error(sprintf('Batch %d failed: HTTP %d %s', $i, $resp->status(), $resp->body()));
                 return self::FAILURE;
             }

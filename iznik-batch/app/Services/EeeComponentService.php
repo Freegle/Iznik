@@ -1302,7 +1302,7 @@ class EeeComponentService
      * Build the component index from observed component strings in eee_classifications.
      * Idempotent: skips strings already in the index.
      */
-    public function buildIndex(callable $progress = null): array
+    public function buildIndex(?callable $progress = null): array
     {
         $rawStrings = $this->collectRawStrings();
 
@@ -1517,7 +1517,7 @@ class EeeComponentService
     }
 
     /** Batch-fetch embeddings via OpenAI text-embedding-3-small (max 2048 per call). */
-    protected function fetchEmbeddingsBatch(array $texts, callable $progress = null): array
+    protected function fetchEmbeddingsBatch(array $texts, ?callable $progress = null): array
     {
         $apiKey  = config('freegle.eee.openai_api_key');
         $model   = self::EMBEDDING_MODEL;
@@ -1533,6 +1533,12 @@ class EeeComponentService
 
                 if (!$response->successful()) {
                     Log::error('EeeComponentService embed failed', ['status' => $response->status(), 'body' => $response->body()]);
+                    if (in_array($response->status(), [401, 403], true)) {
+                        // Credential rejected: every later chunk fails the same way,
+                        // and downstream every verdict quietly becomes NULL - escalate.
+                        \App\Support\EeeAlarm::raise('embed-credential',
+                            'OpenAI embeddings key rejected (HTTP ' . $response->status() . ') - component categorisation is dark until OPENAI_API_KEY is fixed');
+                    }
                     foreach (array_keys($chunk) as $origIdx) {
                         $results[$origIdx] = null;
                     }

@@ -53,6 +53,10 @@ class EeeClassifyNewCommand extends Command
         $dryRun = (bool) $this->option('dry-run');
 
         if (!$dryRun && !$this->vision->isConfigured()) {
+            // Scheduled hourly on prod: an unconfigured service here means the
+            // pipeline is dark, not that someone is experimenting - escalate.
+            \App\Support\EeeAlarm::raise('vision-unconfigured',
+                'eee:classify-new cannot run: vision service not configured (GOOGLE_GEMINI_API_KEY?)');
             $this->error('Vision service not configured.');
             return Command::FAILURE;
         }
@@ -62,6 +66,8 @@ class EeeClassifyNewCommand extends Command
         // Refusing to run leaves the high-water mark where it is, so the same posts are
         // picked up once the index exists — instead of being spent on and lost for ever.
         if (!$dryRun && $this->componentIndex->needsBuilding()) {
+            \App\Support\EeeAlarm::raise('index-empty',
+                'eee:classify-new refusing to run: component index is empty - run eee:build-component-index');
             $this->error('Component index is empty — run eee:build-component-index first.');
             return Command::FAILURE;
         }
@@ -148,7 +154,16 @@ class EeeClassifyNewCommand extends Command
             $this->warn("{$failures} messages failed and will be retried next run — see the log.");
         }
 
-        return ($processed === 0 && $failures > 0) ? Command::FAILURE : Command::SUCCESS;
+        if ($processed === 0 && $failures > 0) {
+            // Every attempt failed: a rejected key, retired model or dead endpoint
+            // all land here while the run itself "succeeds" item by item. The
+            // per-item causes are in the log; the event is the dead-man switch.
+            \App\Support\EeeAlarm::raise('all-failed',
+                "eee:classify-new: every classification failed this run ({$failures} attempts) - check the API key/model; per-item errors in the log");
+            return Command::FAILURE;
+        }
+
+        return Command::SUCCESS;
     }
 
     /**

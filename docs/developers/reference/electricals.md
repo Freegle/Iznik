@@ -71,6 +71,17 @@ counting it as "not electrical".
    deliberate manual step (`eee:classify-new --since=...` with a raised limit, run
    in tranches).
 
+## Alerting
+
+The pipeline fails soft per item, and nothing routes Laravel logs to Sentry, so a
+dark pipeline used to look like a healthy one (the `gemini-2.0` retirement went
+unnoticed this way). `App\Support\EeeAlarm` now escalates the pipeline-dark states
+to Sentry directly, once per run: an unconfigured vision service, an empty
+component index, a run where every classification failed (rejected key, retired
+model, dead endpoint), a 401/403 from the OpenAI embeddings API, and a missing or
+rejected `EEE_SYNC_SECRET` on the sync commands. Per-item detail stays in the
+Laravel log; the Sentry event is the dead-man switch.
+
 ## Privacy
 
 Only approved, undeleted posts are classified, enforced both in the hourly

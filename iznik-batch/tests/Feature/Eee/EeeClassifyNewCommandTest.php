@@ -167,4 +167,49 @@ class EeeClassifyNewCommandTest extends TestCase
         $this->assertContains($good, $this->classified, 'messages after the failure must still be processed');
         $this->assertNotContains($bad, $this->classified);
     }
+
+    public function test_a_run_where_everything_fails_raises_the_alarm(): void
+    {
+        // A rejected key or retired model fails every item while each failure is
+        // swallowed per-message; the run must escalate rather than "succeed dark".
+        $a = $this->makeOffer();
+        $b = $this->makeOffer();
+        $this->poison = [$a, $b];
+
+        $captured = [];
+        \App\Support\EeeAlarm::reset();
+        \App\Support\EeeAlarm::$captureWith = function (string $m) use (&$captured) {
+            $captured[] = $m;
+        };
+
+        try {
+            $this->runCommand()->assertExitCode(1);
+        } finally {
+            \App\Support\EeeAlarm::reset();
+        }
+
+        $this->assertCount(1, $captured, 'exactly one event for the whole failed run');
+        $this->assertStringContainsString('every classification failed', $captured[0]);
+    }
+
+    public function test_the_empty_index_refusal_raises_the_alarm(): void
+    {
+        $this->indexEmpty = true;
+        $this->makeOffer();
+
+        $captured = [];
+        \App\Support\EeeAlarm::reset();
+        \App\Support\EeeAlarm::$captureWith = function (string $m) use (&$captured) {
+            $captured[] = $m;
+        };
+
+        try {
+            $this->runCommand()->assertExitCode(1);
+        } finally {
+            \App\Support\EeeAlarm::reset();
+        }
+
+        $this->assertCount(1, $captured);
+        $this->assertStringContainsString('component index is empty', $captured[0]);
+    }
 }
