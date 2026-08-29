@@ -92,6 +92,19 @@ export const useAuthStore = defineStore('auth', {
 
       return true
     },
+    // An implicit logout: the server has told us these credentials are invalid
+    // (401 or an empty result on the authoritative /session check). Clear
+    // everything an explicit logout clears, including the Block Store copy.
+    // Leaving Block Store behind meant an Android device whose localStorage was
+    // evicted could keep re-adopting the same dead token, 401 again, and loop
+    // back to the login screen indefinitely.
+    wipeAuth() {
+      this.setAuth(null, null)
+      this.setUser(null)
+      // Deliberately not awaited, like saveSessionForRestore in setAuth: it
+      // never rejects, and the wipe must not add latency to error handling.
+      clearRestoredSession()
+    },
     setUser(value) {
       if (value) {
         // Remember that we have successfully logged in at some point.
@@ -509,8 +522,7 @@ export const useAuthStore = defineStore('auth', {
         }
       } else if (!serverError) {
         // No user returned and no server error — auth is genuinely invalid.
-        this.setAuth(null, null)
-        this.setUser(null)
+        this.wipeAuth()
       }
 
       this.loginStateKnown = true

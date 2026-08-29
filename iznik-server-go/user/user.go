@@ -2063,7 +2063,7 @@ func PutUser(c *fiber.Ctx) error {
 		// If they provided a correct password, treat signup as login — avoids
 		// forcing users to switch to the login screen and re-enter credentials.
 		if req.Password != "" && auth.VerifyPassword(existingUID, req.Password) {
-			persistent, jwtString, err := auth.CreateSessionAndJWT(existingUID)
+			persistent, jwtString, err := auth.CreateSessionAndJWT(c, existingUID, auth.LoginMethodPassword)
 			if err != nil {
 				return fiber.NewError(fiber.StatusInternalServerError, "Failed to create session")
 			}
