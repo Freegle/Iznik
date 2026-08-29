@@ -34,7 +34,7 @@ class EeeClassifyNewCommand extends Command
         protected EeeVisionService $vision,
         protected EeeSqliteService $sqlite,
         protected EeeProductionStore $productionStore,
-        protected EeeComponentService $components,
+        protected EeeComponentService $componentIndex,
     ) {
         parent::__construct();
     }
@@ -61,7 +61,7 @@ class EeeClassifyNewCommand extends Command
         // observed, nothing to decide them against) and excluded from every statistic.
         // Refusing to run leaves the high-water mark where it is, so the same posts are
         // picked up once the index exists — instead of being spent on and lost for ever.
-        if (!$dryRun && $this->components->needsBuilding()) {
+        if (!$dryRun && $this->componentIndex->needsBuilding()) {
             $this->error('Component index is empty — run eee:build-component-index first.');
             return Command::FAILURE;
         }

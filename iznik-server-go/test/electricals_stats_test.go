@@ -89,17 +89,22 @@ func TestElectricalsStats_404WhenNothingGenerated(t *testing.T) {
 	assert.Equal(t, 404, status)
 }
 
-// A corrupted stored payload must be a loud 500, never served: the page would otherwise
-// render from garbage, and the JSON validity check is the only guard between the two.
-func TestElectricalsStats_500OnMalformedStoredPayload(t *testing.T) {
+// A corrupted payload cannot reach the handler through this schema at all: the column is
+// MySQL JSON, so the database itself refuses invalid JSON at INSERT. This pins that
+// guarantee - if the column type ever loosens to TEXT, this test starts failing and the
+// handler's own validity check (500, "not valid JSON") becomes the only guard.
+func TestElectricalsStats_MalformedPayloadIsUnstorable(t *testing.T) {
 	clearElectricalsStats(t)
 	defer clearElectricalsStats(t)
 
-	insertElectricalsStats(t, `{"counts": truncated`)
+	err := database.DBConn.Exec(
+		"INSERT INTO electricals_stats (generated_at, payload) VALUES (NOW(), ?)",
+		`{"counts": truncated`,
+	).Error
+	require.Error(t, err, "the JSON column type must reject invalid JSON")
 
-	status, body := fetchElectricalsStats(t)
-	assert.Equal(t, 500, status)
-	assert.Contains(t, body, "not valid JSON")
+	status, _ := fetchElectricalsStats(t)
+	assert.Equal(t, 404, status, "nothing was stored, so nothing may be served")
 }
 
 // Regenerated daily, so responses carry an hour of shared caching - the only thing

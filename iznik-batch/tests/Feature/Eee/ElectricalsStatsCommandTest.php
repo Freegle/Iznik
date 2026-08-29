@@ -58,7 +58,8 @@ class ElectricalsStatsCommandTest extends TestCase
         $rows = DB::table('electricals_stats')->orderBy('id')->get();
 
         $this->assertCount(3, $rows, 'the new row plus the two newest old ones');
-        $this->assertSame('{"n":4}', $rows[0]->payload);
-        $this->assertSame('{"n":5}', $rows[1]->payload);
+        // Decoded, not string-compared: the JSON column type normalises whitespace.
+        $this->assertSame(4, json_decode($rows[0]->payload)->n);
+        $this->assertSame(5, json_decode($rows[1]->payload)->n);
     }
 }

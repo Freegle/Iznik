@@ -79,7 +79,7 @@ class EeeClassifyNewCommandTest extends TestCase
         return $id;
     }
 
-    private function run(): \Illuminate\Testing\PendingCommand
+    private function runCommand(): \Illuminate\Testing\PendingCommand
     {
         return $this->artisan('eee:classify-new', ['--since' => '2000-01-01 00:00:00']);
     }
@@ -92,7 +92,7 @@ class EeeClassifyNewCommandTest extends TestCase
         $groupGone  = $this->makeOffer(['deleted' => 1]);
         $wanted     = $this->makeOffer([], ['type' => 'Wanted']);
 
-        $this->run()->assertExitCode(0);
+        $this->runCommand()->assertExitCode(0);
 
         $this->assertContains($approved, $this->classified);
         $this->assertNotContains($pending, $this->classified, 'unapproved content must never be sent out');
@@ -122,7 +122,7 @@ class EeeClassifyNewCommandTest extends TestCase
             'classified_at'  => now()->toDateTimeString(),
         ]);
 
-        $this->run()->assertExitCode(0);
+        $this->runCommand()->assertExitCode(0);
 
         $this->assertNotContains($done, $this->classified);
         $this->assertContains($otherPrompt, $this->classified);
@@ -150,7 +150,7 @@ class EeeClassifyNewCommandTest extends TestCase
         $this->indexEmpty = true;
         $this->makeOffer();
 
-        $this->run()->assertExitCode(1);
+        $this->runCommand()->assertExitCode(1);
 
         $this->assertSame([], $this->classified, 'nothing may be spent while every verdict would be null');
     }
@@ -162,7 +162,7 @@ class EeeClassifyNewCommandTest extends TestCase
 
         $this->poison = [$bad];
 
-        $this->run()->assertExitCode(0);
+        $this->runCommand()->assertExitCode(0);
 
         $this->assertContains($good, $this->classified, 'messages after the failure must still be processed');
         $this->assertNotContains($bad, $this->classified);

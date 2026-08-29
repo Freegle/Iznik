@@ -169,7 +169,8 @@ class EeeProductionStoreTest extends TestCase
 
         $mark = $this->store->highWaterMark('test-model', '1');
 
-        $this->assertSame($approvedAt, $mark, 'the late approval must set the mark');
+        // MySQL returns the aggregate with microseconds; only the seconds matter.
+        $this->assertSame($approvedAt, substr((string) $mark, 0, 19), 'the late approval must set the mark');
         $this->assertNull($this->store->highWaterMark('test-model', '2'), 'other prompts have no mark');
     }
 }
