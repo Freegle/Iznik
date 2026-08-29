@@ -159,8 +159,31 @@ class SyncWhatJobsClickabilityTest extends TestCase
         DB::statement('DROP TABLE IF EXISTS jobs_new');
     }
 
+    /** @test */
+    public function test_insertJobs_handles_null_title(): void
+    {
+        // parseFeed yields title=null for feed jobs with an empty <title> and
+        // jobs.title is nullable; scoring must treat that as "no keyword
+        // signal", not crash (2026-08-29: a null title TypeError'd getKeywords()
+        // and killed the whole sync, freezing jobs.seenat for >24h).
+        DB::table('jobs_keywords')->insert(['keyword' => 'web developer', 'count' => 5]);
+
+        $svc = new WhatJobsService();
+        $svc->prepareTempTable();
+        $svc->insertJobs([
+            $this->jobRow('clickability-test-insert-3', null),
+        ], $this->srid);
+
+        $row = DB::table('jobs_new')->where('job_reference', 'clickability-test-insert-3')->first();
+
+        $this->assertNotNull($row, 'a feed job with a null title should still insert');
+        $this->assertEquals(0.0, (float) $row->clickability, 'null title carries no keyword signal so scores 0');
+
+        DB::statement('DROP TABLE IF EXISTS jobs_new');
+    }
+
     /** Full job-row shape insertJobs() consumes (mirrors parseFeed's yield). */
-    private function jobRow(string $ref, string $title): array
+    private function jobRow(string $ref, ?string $title): array
     {
         return [
             'location' => 'Leeds', 'title' => $title, 'city' => 'Leeds', 'state' => 'West Yorkshire',

@@ -1679,8 +1679,14 @@ class WhatJobsService
         return $rows ? (float) $rows[0]->count : 1.0;
     }
 
-    private function getKeywords(string $str): array
+    private function getKeywords(?string $str): array
     {
+        // Feed jobs can arrive with no title (parseFeed yields title=null and
+        // jobs.title is nullable) — no title means no keyword signal.
+        if ($str === null) {
+            return [];
+        }
+
         $words = array_values(array_filter(
             array_map(fn ($w) => preg_replace('/[^A-Za-z]/', '', $w), explode(' ', $str)),
             fn ($w) => strlen($w) > 2
